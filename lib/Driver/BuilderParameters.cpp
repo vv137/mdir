@@ -10,11 +10,11 @@ namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
 llvm::Error Builder::collectParameters() {
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     if (llvm::Error error = builder->collectBareParameters(*this))
       return error;
 
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     if (llvm::Error error = builder->collectBareConstants(*this))
       return error;
   return llvm::Error::success();
@@ -73,7 +73,7 @@ llvm::Error Builder::adoptArrays() {
       fillCharges(field);
   for (Program::Table &table : program.tables)
     if (table.values.empty()) {
-      bool filled = llvm::any_of(registerTermBuilders(), [&](const TermBuilder *builder) {
+      bool filled = llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
         return builder->refillTable(*this, table);
       });
       if (!filled && (table.name == "lj_sigma" || table.name == "lj_epsilon" ||
@@ -85,7 +85,7 @@ llvm::Error Builder::adoptArrays() {
       for (Program::Field &field : set.fields)
         if (field.values.empty() && field.name == "qq")
           fillPairProducts(field);
-    for (const TermBuilder *builder : registerTermBuilders())
+    for (const TermBuilder *builder : getTermBuilders())
       builder->refillTupleSet(*this, set);
   }
   // Nothing is left without its numbers: an array that a value of a
@@ -154,20 +154,6 @@ void Builder::collectTopologyArrays() {
   for (unsigned type : topology.types)
     types.values.push_back(type);
   program.fields.push_back(std::move(types));
-  // The atomic numbers that a learned potential takes
-  // (D270), in the order of the particles that the program
-  // keeps, as the other fields; a model in stages takes them too
-  // (D294).
-  if (!control.models.empty() || !control.stagedModels.empty()) {
-    Program::Field numbers;
-    numbers.name = "model_z";
-    numbers.isInteger = true;
-    for (size_t i = 0; i != count; ++i)
-      numbers.values.push_back(i < topology.atomicNumbers.size()
-                                   ? topology.atomicNumbers[i]
-                                   : 0);
-    program.fields.push_back(std::move(numbers));
-  }
   (void)count;
 
   for (const TermBuilder *builder : termBuildersByParameterRank())
@@ -208,7 +194,7 @@ void Builder::collectTopologyArrays() {
         field.rows.push_back({seed.sites[a], seed.scales[a], 0.0});
       program.gradientFields.push_back(std::move(field));
     }
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     builder->collectTopologyTables(*this);
 
   auto addSet = [&](StringRef name, unsigned arity) -> Program::TupleSet & {
@@ -279,7 +265,7 @@ void Builder::collectTopologyArrays() {
       set.fields[xi0].values.push_back(term.xi0);
     }
   }
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     builder->collectTupleSets(*this);
   // The field of zeros that `@tunable` takes for each of those fields.
   if (!program.gradientFields.empty()) {
@@ -483,7 +469,7 @@ llvm::Error Builder::collectTopologyConstants() {
     program.dispersionEnergy = energy + (shifted ? shift : 0.0);
     program.dispersionFixedEnergy = shifted ? shiftFixed : 0.0;
     program.dispersionVirial = 6.0 * energy;
-    for (const TermBuilder *builder : registerTermBuilders())
+    for (const TermBuilder *builder : getTermBuilders())
       if (llvm::Error error = builder->collectDispersionConstants(*this))
         return error;
     collectObservedTails();
@@ -560,7 +546,7 @@ void Builder::collectObservedTails() {
   // on the volume (D210, #224).
   program.observableVolumeConstants.assign(control.observables.size(), 0.0);
   program.observableFixedConstants.assign(control.observables.size(), 0.0);
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     builder->collectObservedConstants(*this);
 }
 
@@ -1113,13 +1099,13 @@ llvm::Error Builder::collectTunableGradient() {
     double tail = getTopologyDispersion(false);
     program.gradientShiftEnergy = tail;
     program.gradientShiftFixedEnergy = tail * getShiftFixedFactor();
-    for (const TermBuilder *builder : registerTermBuilders())
+    for (const TermBuilder *builder : getTermBuilders())
       builder->collectGradientShiftConstants(*this);
   }
   for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations)) {
     Program::GradientOutcome outcome = Program::GradientOutcome::Zero;
     bool registered = false;
-    for (const TermBuilder *builder : registerTermBuilders()) {
+    for (const TermBuilder *builder : getTermBuilders()) {
       auto result = builder->collectTunableOutcome(*this, static_cast<unsigned>(k));
       if (!result)
         return result.takeError();

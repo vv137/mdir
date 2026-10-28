@@ -20,9 +20,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getTripletTermBuilder() {
-  static const TripletTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createTripletTermBuilder() {
+  return std::make_unique<TripletTermBuilder>();
 }
 
 llvm::Error

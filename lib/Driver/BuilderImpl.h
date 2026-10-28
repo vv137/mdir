@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 
 using namespace mdir::driver;
 namespace prolate = mdir::prolate;
@@ -150,6 +151,10 @@ public:
   virtual ~TermInputs() = default;
   virtual const System &getSystem() const = 0;
   virtual const Control &getControl() const = 0;
+  virtual Element getStateElement() const = 0;
+  virtual Element getForceElement() const = 0;
+  virtual bool hasSites() const = 0;
+  virtual bool hasConstraints() const = 0;
   virtual const PairTermPlan &getPairPlan() const = 0;
   virtual llvm::ArrayRef<Parameter> getTypeParameters() const = 0;
   virtual llvm::ArrayRef<Program::Table> getParameterTables() const = 0;
@@ -265,6 +270,39 @@ struct TermCorrection {
   StringRef scale, indent, x, prefix, f, fResult, u, uResult, w, wResult;
 };
 
+/// Inputs and output names of a hosted force/energy/virial evaluation.
+struct TermEvaluation {
+  StringRef indent, x, cell, prefix, f, fResult, u, uResult, w, tag;
+};
+
+/// Specialized preparation borrows no mutable program collections.
+class TermPreparation {
+public:
+  virtual ~TermPreparation() = default;
+  virtual llvm::Error validate(const TermInputs &) const = 0;
+  virtual llvm::Error prepare(const TermInputs &, llvm::raw_ostream &) const = 0;
+};
+class TermHostEvaluation {
+public:
+  virtual ~TermHostEvaluation() = default;
+  virtual bool applies(const TermInputs &) const = 0;
+  virtual void emitDeclarations(const TermInputs &, llvm::raw_ostream &) const = 0;
+  virtual std::string emit(const TermInputs &, llvm::raw_ostream &,
+                            const TermEvaluation &) const = 0;
+};
+struct TermRoles {
+  const TermPreparation *preparation = nullptr;
+  const TermHostEvaluation *hostEvaluation = nullptr;
+};
+
+/// Adds either a conventional named contribution or an explicit SSA result.
+struct TermPotentialAddition {
+  llvm::function_ref<void(StringRef)> named;
+  llvm::function_ref<void(StringRef, StringRef)> result;
+  void operator()(StringRef name) const { named(name); }
+  void append(StringRef value, StringRef sum) const { result(value, sum); }
+};
+
 /// Hooks for the term kinds already moved out of the central builder
 /// (D359). The explicit list fixes their emission order.
 class TermBuilder {
@@ -275,6 +313,7 @@ public:
     bool alchemicalOnly;
   };
   virtual ~TermBuilder() = default;
+  const TermRoles &getRoles() const { return roles; }
   virtual int parameterRank() const { return 0; }
   virtual int potentialRank() const { return 0; }
   virtual int topologyRank() const { return 0; }
@@ -312,11 +351,10 @@ public:
   virtual void emitStoredTerms(TermEmission &, StringRef, int &) const {}
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
-      llvm::function_ref<void(StringRef)>) const {}
+      const TermPotentialAddition &) const {}
   virtual void emitTermPotentials(TermEmission &) const {}
   virtual void appendTermNames(const TermInputs &,
                                std::vector<std::string> &) const {}
-  virtual void emitEntry(TermEmission &) const {}
   virtual bool hasCoordinateOutput(const TermInputs &) const { return false; }
   virtual void emitAuxiliaryPotentials(TermEmission &) const {}
   virtual void emitOutput(TermEmission &, const TermOutput &) const {}
@@ -328,23 +366,30 @@ public:
                                                 int, StringRef) const {
     return std::nullopt;
   }
+protected:
+  TermRoles roles;
+
 };
 
-llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
-const TermBuilder &getExternalTermBuilder();
-const TermBuilder &getPullTermBuilder();
-const TermBuilder &getRestraintTermBuilder();
-const TermBuilder &getBornTermBuilder();
-const TermBuilder &getTupleTermBuilder();
-const TermBuilder &getPairTermBuilder();
-const TermBuilder &getTripletTermBuilder();
+using TermBuilderFactory = std::unique_ptr<TermBuilder> (*)();
+llvm::ArrayRef<TermBuilderFactory> registerTermBuilders();
+std::unique_ptr<TermBuilder> createExternalTermBuilder();
+std::unique_ptr<TermBuilder> createPullTermBuilder();
+std::unique_ptr<TermBuilder> createRestraintTermBuilder();
+std::unique_ptr<TermBuilder> createBornTermBuilder();
+std::unique_ptr<TermBuilder> createTupleTermBuilder();
+std::unique_ptr<TermBuilder> createPairTermBuilder();
+std::unique_ptr<TermBuilder> createTripletTermBuilder();
+std::unique_ptr<TermBuilder> createModelTermBuilder();
 llvm::Expected<PairTermTail> getCustomPairTail(const TermInputs &, unsigned,
                                              const llvm::StringMap<double> &);
 double getCustomPairTails(const TermInputs &, const llvm::StringMap<double> &, bool);
 double getCustomPairTailDerivative(const TermInputs &, unsigned, StringRef,
                                    double, bool, bool);
-std::vector<const TermBuilder *> termBuildersByParameterRank();
-std::vector<const TermBuilder *> termBuildersByPotentialRank();
+std::vector<const TermBuilder *> termBuildersByParameterRank(
+    llvm::ArrayRef<const TermBuilder *>);
+std::vector<const TermBuilder *> termBuildersByPotentialRank(
+    llvm::ArrayRef<const TermBuilder *>);
 
 class Builder : private TermEmission {
 public:
@@ -353,6 +398,10 @@ public:
         os(program.module) {
     if (control.dependentTerms && system.topology)
       dependent = getDependentTerms(control, system);
+    for (auto factory : mdir::driver::builder::registerTermBuilders()) {
+      ownedTermBuilders.push_back(factory());
+      termBuilders.push_back(ownedTermBuilders.back().get());
+    }
   }
 
   llvm::Error build();
@@ -367,6 +416,21 @@ public:
 private:
   const System &getSystem() const override { return system; }
   const Control &getControl() const override { return control; }
+  Element getStateElement() const override { return program.state; }
+  Element getForceElement() const override { return program.force; }
+  llvm::ArrayRef<const TermBuilder *> getTermBuilders() const { return termBuilders; }
+  std::vector<const TermBuilder *> termBuildersByParameterRank() const {
+    return mdir::driver::builder::termBuildersByParameterRank(getTermBuilders());
+  }
+  std::vector<const TermBuilder *> termBuildersByPotentialRank() const {
+    return mdir::driver::builder::termBuildersByPotentialRank(getTermBuilders());
+  }
+  bool hasHostEvaluation() const {
+    return llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
+      const auto *role = builder->getRoles().hostEvaluation;
+      return role && role->applies(*this);
+    });
+  }
   const PairTermPlan &getPairPlan() const override { return pairPlan; }
   PairTermPlan &getMutablePairPlan() override { return pairPlan; }
   llvm::ArrayRef<Parameter> getTypeParameters() const override { return parameters; }
@@ -469,7 +533,7 @@ private:
                           StringRef x, StringRef cell, StringRef relations,
                           StringRef prefix) override;
   bool hasCoordinateOutput() const {
-    return llvm::any_of(registerTermBuilders(), [&](const TermBuilder *term) {
+    return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
       return term->hasCoordinateOutput(*this);
     });
   }
@@ -634,7 +698,7 @@ private:
   }
 
   bool hasForceCorrections() const {
-    return llvm::any_of(registerTermBuilders(), [&](const TermBuilder *term) {
+    return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
       return term->hasForceCorrection(*this);
     });
   }
@@ -802,7 +866,7 @@ private:
   std::vector<ObservedTerm> getObservedTerms() const;
   /// The value of the constant `name` of the observed term `term`.
   double getObservedValue(const ObservedTerm &term, StringRef name) const {
-    for (const TermBuilder *builder : registerTermBuilders())
+    for (const TermBuilder *builder : getTermBuilders())
       if (auto value =
               builder->getObservedValue(*this, term.kind, term.index, name))
         return *value;
@@ -912,32 +976,17 @@ private:
                       StringRef f, StringRef fResult, StringRef u = "",
                       StringRef uResult = "", StringRef w = "",
                       StringRef wResult = "") {
-    for (const TermBuilder *term : registerTermBuilders())
+    for (const TermBuilder *term : getTermBuilders())
       term->emitForceCorrection(*this, {scaleName, indent, x, prefix, f, fResult,
                                         u, uResult, w, wResult});
   }
-  /// Emits the learned potentials of [[energy.model]] at the positions `x`
-  /// in the cell `cell` (D270): `fResult` is the forces `f`
-  /// with theirs added and, if `u` is given, `uResult` the energy `u` with
-  /// theirs added; returns the name of the virial `w` with theirs added, or
-  /// `w` if it is empty. The host evaluates each model on the stream of the
-  /// kernels and adds its forces to the buffer of `f` where it is: the call
-  /// takes `f` in `outs` and yields `fResult`, so that nothing that reads
-  /// the forces can move before it. The energy and the virial are numbers
-  /// that the call yields, in a step that asks for them (`u` or `w`).
-  std::string emitModelTerms(StringRef indent, StringRef x, StringRef cell,
-                             StringRef prefix, StringRef f, StringRef fResult,
-                             StringRef u, StringRef uResult, StringRef w,
-                             StringRef tag);
-
-  /// Copies the module of each model in stages into the program, its
-  /// potential renamed `@staged_<name>` (D294); `@energy`
-  /// calls them.
-  llvm::Error emitStagedModels();
-  std::vector<std::string> stagedPotentials, stagedResults;
+  /// Invokes the hosted-evaluation role at its existing correction site.
+  std::string emitHostEvaluation(StringRef indent, StringRef x, StringRef cell,
+      StringRef prefix, StringRef f, StringRef fResult, StringRef u,
+      StringRef uResult, StringRef w, StringRef tag);
 
   /// Whether the topology has virtual sites.
-  bool hasSites() const { return !getSiteSets().empty(); }
+  bool hasSites() const override { return !getSiteSets().empty(); }
 
   /// Whether the barostat scales the cell within the drift of the last
   /// step of a period (D92).
@@ -1018,7 +1067,7 @@ private:
         sets.push_back(&set);
     return sets;
   }
-  bool hasConstraints() const {
+  bool hasConstraints() const override {
     return hasSettles() || !getShakeSets().empty();
   }
   /// Whether the steps that the log reads measure the kinetic energy of
@@ -1312,17 +1361,13 @@ struct Coupled {
   /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
 
+  std::vector<std::unique_ptr<TermBuilder>> ownedTermBuilders;
+  std::vector<const TermBuilder *> termBuilders;
+
   const Control &control;
   const System &system;
   Program &program;
   llvm::raw_string_ostream os;
-
-  /// The cutoffs of the pair lists of the models of [[energy.model]], in
-  /// nm, which the plugin reads from their files, and whether the program
-  /// builds their pair lists (D277): not where the plugin
-  /// searches its own (`MDIR_MLIP_PAIRS=search`).
-  std::vector<double> modelCutoffs;
-  bool modelEdges = false;
 
   /// The names of the masses, of the fields of the parameters, and of the
   /// numbers of the particles, where the code is that is being emitted.

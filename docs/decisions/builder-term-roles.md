@@ -1,0 +1,42 @@
+# D[builder-term-roles]
+
+Recorded at its merge.
+
+**The explicit registry supplies owned term adapters for each build, with specialized behavior exposed through role interfaces that borrow only the capabilities they need.**
+
+This refines D359 and D361 for the remaining kinds of #683. The registry
+lists factory functions explicitly, retaining the translation units when
+static libraries are linked with section garbage collection. There is no
+self-registration or mutable process-wide term state. Each build owns its
+adapter instances and visits them in the registry's explicit order.
+
+An adapter keeps preparation data that belongs to that build privately.
+Model preparation, for example, retains imported potential bodies and
+result names, pair-list mode, and cutoffs across hook calls. That data does
+not become a model-specific mutator on every common parameter context.
+Specialized preparation and host-evaluation roles take read-only inputs,
+the output stream, and borrowed names. Shared collection and emission
+hooks remain shared by their actual implementers. The hook inventory in
+driver Section 2.12 identifies the implementers and the scope of each role;
+one-implementer behavior is folded into a shared role or a narrower
+interface rather than added as another generic virtual hook.
+
+Parameter and contribution-site ranks and an explicit declaration site
+preserve the existing positions. A bounded potential accumulator accepts a named contribution
+or an explicit SSA result, retaining the sum order and the existing names
+without exposing the complete builder or mutable program. Restraint and
+host-evaluation corrections remain composed in their original order.
+
+A mutable singleton would mix preparation data from different builds.
+Putting each kind's plan and operations on the common interface would
+recreate a central kind switch. Repeating preparation at every emission
+site would change validation and I/O timing. Owned adapters and borrowed
+role capabilities retain the existing lifetime and ordering while keeping
+kind-specific data local.
+
+No control key, default, precision support, file format, checkpoint,
+overwrite behavior, numerical method, or tolerance changes. Each kind's
+commit is compared with an independently archived PR base in printed
+module and lowered forms, including the order matrix. The final PR head
+also requires five bitwise checkpoints and two D309 suite shards. The PR
+records the counts before ready.

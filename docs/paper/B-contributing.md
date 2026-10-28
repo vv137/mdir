@@ -175,8 +175,7 @@ topology and potential ranks preserve contributions among bonded terms
 and definitions/output names before custom pairs. Read-only tuple gradient
 plans and the required mutable gradient/tuple collections are borrowed by
 name, with no complete builder/program access. The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples, custom pairs, and triplets. Model, bonded, and nonbonded
-terms are next in #683.
+custom tuples, custom pairs, and triplets. Bonded and nonbonded terms are next in #683.
 
 The custom-pair adapter (`TermPair.cpp`, D359/D361, #683) owns bare and
 topology pair emission, type/particle fields, tunable tables, observable
@@ -200,4 +199,17 @@ validation; potential ranks -2 and 1 retain pair then triplet contributions.
 Coordinate order, particle-place mapping, SSA names, and numerical operation
 order remain unchanged. No triplet-specific virtual hook is introduced.
 Externals, pulls, restraints, Born/surface, custom tuples, custom pairs,
-and triplets have moved; model, bonded, and nonbonded terms remain.
+and triplets have moved; bonded and nonbonded terms remain.
+
+The staged/opaque model adapter (`TermModel.cpp`, D[builder-term-roles],
+#683) owns its preparation data for one build. The explicit registry names
+factory functions, and the build owns the returned adapters. Preparation
+and hosted evaluation use separate narrow role interfaces with read-only
+inputs, a stream, and borrowed names; no common model-plan mutator or
+complete builder/program is exposed. Field, topology-site, and declaration
+orders are explicit, and staged bodies remain in the shared potential so
+inlining and loop fusion retain their existing order. Model contributions
+follow the existing restraint correction at the same evaluation sites.
+The remaining stage-A kinds are bonded and nonbonded. The hook inventory
+and single-implementer audit complete that stage; #568 steps 4 and 5 then
+replace term templates with typed IR and leave text only at user boundaries.

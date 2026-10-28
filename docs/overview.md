@@ -99,6 +99,18 @@ prints it for a control file. The dashed path through `md_dist` is built
 and tested through `mdir-opt`, and no run of `mdir run` or of a Python
 simulation takes it yet.
 
+The driver's explicit term registry (D359, D361) currently owns external,
+pull, restraint, Born/surface, custom tuple/pair, triplet, and model
+adapters. Stage A of #683 moves the remaining bonded and nonbonded kinds.
+Each build owns its adapters, and specialized roles borrow bounded inputs
+and emission services (D[builder-term-roles]); model preparation data stays
+private. Field, contribution, output, and declaration order stay explicit.
+This stage preserves the generated programs. The later #568 stages build
+term IR with `OpBuilder` at the same inlined/fused sites, then retain text
+only for user expressions and `ModelTerm` at their parsing boundaries.
+[Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
+files and roles.
+
 ### 2.2 The dialects
 
 | Dialect | Says | Main objects | State |

@@ -22,7 +22,7 @@ public:
   }
   void emitTopologyPotential(TermEmission &context,
       const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override;
+      const TermPotentialAddition & add) const override;
   void emitTermPotentials(TermEmission &context) const override {
     for (size_t k = 0, e = context.getTopology().tupleTerms.size(); k != e; ++k)
       context.emitTopologyPotential("term_custom" + std::to_string(k),
@@ -76,9 +76,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getTupleTermBuilder() {
-  static const TupleTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createTupleTermBuilder() {
+  return std::make_unique<TupleTermBuilder>();
 }
 
 void TupleTermBuilder::fillTupleParameter(Program::Field &field,
@@ -229,7 +228,7 @@ void TupleTermBuilder::emitCentroidTerm(TermEmission &context, size_t index, con
 
 void TupleTermBuilder::emitTopologyPotential(TermEmission &context,
     const PotentialSelection &selection,
-    llvm::function_ref<void(StringRef)> add) const {
+    const TermPotentialAddition & add) const {
   const System &system = context.getSystem();
   const Control &control = context.getControl();
   llvm::raw_ostream &os = context.getOutput();

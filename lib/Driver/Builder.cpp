@@ -317,52 +317,10 @@ llvm::Error Builder::build() {
   } else if (llvm::Error error = collectParameters()) {
     return error;
   }
-  // A learned potential takes every particle with its element, and ML1 has
-  // no constraints and no virtual sites beside it
-  // (docs/metatomic-ml1.md, Section 6.9).
-  if (!control.stagedModels.empty()) {
-    if (!system.topology)
-      return makeError("a model in stages of [[energy.model]] needs a "
-                       "topology, which gives the elements of the particles");
-    if (hasSites() || !system.topology->virtualSites.empty())
-      return makeError("a model in stages takes no virtual sites yet");
-  }
-  if (!control.models.empty()) {
-    if (!system.topology)
-      return makeError("a term of [[energy.model]] needs a topology, which "
-                       "gives the elements of the particles");
-    if (hasConstraints())
-      return makeError("a term of [[energy.model]] takes no constraints "
-                       "yet: give a flexible model (no SETTLE or SHAKE)");
-    if (hasSites() || !system.topology->virtualSites.empty())
-      return makeError("a term of [[energy.model]] takes no virtual sites "
-                       "yet");
-    if (control.precision == Precision::Single)
-      return makeError("a term of [[energy.model]] takes the mixed or the "
-                       "double precision");
-    // A frame evaluator is chosen when a Python simulation is made, after
-    // the checks of the control: its forces and virial come from
-    // evaluations of their own, which do not take the model.
-    if (control.frames)
-      return makeError("a term of [[energy.model]] is not evaluated by the "
-                       "frame evaluator yet");
-    if (control.tunables || control.tunableGradient)
-      return makeError("a term of [[energy.model]] has no derivative in a "
-                       "tunable parameter: tunables are refused");
-    // The pair list is a value of the program, at the model's cutoff
-    // (D277).
-    llvm::Expected<int> mode = getPairsMode();
-    if (!mode)
-      return mode.takeError();
-    modelEdges = *mode != MDIR_MLIP_PAIRS_SEARCH;
-    if (modelEdges)
-      for (const Control::ModelTerm &term : control.models) {
-        llvm::Expected<double> cutoff = getModelCutoff(term);
-        if (!cutoff)
-          return cutoff.takeError();
-        modelCutoffs.push_back(*cutoff);
-      }
-  }
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const TermPreparation *role = builder->getRoles().preparation)
+      if (llvm::Error error = role->validate(*this))
+        return error;
   // A build of the arrays alone ends with them.
   if (capture)
     return llvm::Error::success();
@@ -423,8 +381,10 @@ llvm::Error Builder::build() {
   }
   os << "\n";
   mark.next("rebuild.build.text");
-  if (llvm::Error error = emitStagedModels())
-    return error;
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const TermPreparation *role = builder->getRoles().preparation)
+      if (llvm::Error error = role->prepare(*this, os))
+        return error;
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
     // Each term on its own, for the log at the start.
@@ -479,7 +439,7 @@ llvm::Error Builder::build() {
   shiftsAtCutoff = true;
   emitObservedPotentials();
   shiftsAtCutoff = false;
-  for (const TermBuilder *term : registerTermBuilders())
+  for (const TermBuilder *term : getTermBuilders())
     term->emitAuxiliaryPotentials(*this);
   emitSitePotentials();
   emitPrograms();

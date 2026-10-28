@@ -1235,8 +1235,8 @@ emits the selected potential contributions and standalone term potentials,
 and supplies energy-output names and observable lookup. The shared field
 list supplies its entry arguments, buffers, and reordering, so it needs no
 entry declaration of its own. `TermBuilders.cpp` references the adapter
-explicitly; stateless adapter instances are constructed on first use, not
-by global registration. The existing hook sites keep the external fields
+explicitly; the registry lists factory functions and each build owns its adapters
+(D[builder-term-roles], #683), with no global registration. The existing hook sites keep the external fields
 after restraints, potential contributions after Born, and output columns
 before restraints. Pull-coordinate potentials and output are owned by `TermPull.cpp`
 (#683), using the narrow adapter interface. A capability query replaces
@@ -1248,8 +1248,8 @@ pull adapter emits at these new hook sites, so no rank conflict arises.
 
 `TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
 correction, and stored energy column. The parameter hook has an explicit
-`parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, pulls rank 0, and custom-pair fields rank 1, with stable
-registry order (externals, pulls, restraints, Born/surface, tuples, pairs, triplets) for equal ranks. Pulls collect no
+`parameterRank`: models rank -3, Born/surface rank -2, restraints rank -1, external terms rank 0, pulls rank 0, and custom-pair fields rank 1, with stable
+registry order (externals, pulls, restraints, Born/surface, tuples, pairs, triplets, models) for equal ranks. Pulls collect no
 parameters; only pulls emit auxiliary potentials/output, and only restraints
 emit force corrections/stored columns. These hooks currently have no shared
 active pull/restraint site needing a second rank. This preserves restraint fields before
@@ -1279,7 +1279,7 @@ contributions and emit no standalone topology definitions. Parameter and potenti
 are separate because their hook sites have different ordering needs. The shared radii and Debye screening remain private to the
 adapter, with unchanged names and emission order; no capability exposes
 Born intermediates. The central builder no longer selects Born/surface
-fields, definitions, contributions, or evaluated output columns. Model, bonded, and nonbonded kinds remain.
+fields, definitions, contributions, or evaluated output columns. Bonded and nonbonded kinds remain.
 
 The custom-tuple migration (#683) moves tuple/centroid collection,
 potential emission, output names, observable lookup, and tuple tunable
@@ -1333,8 +1333,28 @@ contribution hook uses potential ranks -2 for pairs and 1 for triplets,
 preserving `%total_tN` and every coordinate, parameter, and expression
 operation. No triplet-specific virtual hook is added. Externals, pulls,
 restraints, Born/surface, custom tuples, custom pairs, and triplets have
-moved; model, bonded, and nonbonded migrations remain. No control-file
+moved; bonded and nonbonded migrations remain. No control-file
 behavior changes.
+
+The model migration of stage A (#683, #705) owns staged and opaque models
+in `TermModel.cpp`. Explicit factories preserve static-library reachability;
+each build owns its adapters. The model adapter keeps imported bodies,
+result names, cutoffs, and pair-list mode privately. Specialized
+`TermPreparation` and `TermHostEvaluation` roles borrow read-only inputs,
+the output stream, and evaluation names, rather than model-specific
+mutators on the common parameter context. The roles are bound as adapter
+metadata, not new one-kind virtual hooks on `TermBuilder`
+(D[builder-term-roles]).
+
+Model field rank -3 keeps atomic numbers before Born fields. Its topology
+site rank 2 retains staged contributions after CMAP. The hosted-evaluation declaration role retains its original site; the
+previously unused generic entry hook is removed. `TermPotentialAddition` preserves ordinary named sums and the
+explicit staged-result sums without exposing the whole builder/program.
+Hosted evaluation remains after the existing restraint correction, with
+unchanged force, energy, virial, and stream dependencies. Models have moved;
+bonded and nonbonded families remain in stage A. The complete hook table
+and the fold/narrow audit follow the nonbonded move. Typed term IR and
+text parsing only at user boundaries remain #568 steps 4 and 5.
 
 ## 3. Decided
 

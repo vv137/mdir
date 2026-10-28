@@ -572,7 +572,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // the cell from it.
       std::string rowCell = scalesHere ? scaling.cell : cellName;
       std::string outputStep = "%step" + here;
-      for (const TermBuilder *term : registerTermBuilders())
+      for (const TermBuilder *term : getTermBuilders())
         term->emitOutput(*this, {inner, "%xl", rowCell, fieldPrefix,
                                  outputStep, "", here, true});
       if (!control.freeEnergyFile.empty()) {
@@ -720,8 +720,8 @@ void Builder::emitMinimization(StringRef velocities) {
   // The energy and the forces at the start, and the terms.
   std::string raw = hasSites() ? "e" : "";
   std::string held = hasForceCorrections() ? "p" : "";
-  bool models = !control.models.empty();
-  std::string modelled = !models || !held.empty() ? "" : "c";
+  bool hostTerms = hasHostEvaluation();
+  std::string modelled = !hostTerms || !held.empty() ? "" : "c";
   os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
      << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
      << getTimeValue("%time0") << ")\n"
@@ -732,12 +732,12 @@ void Builder::emitMinimization(StringRef velocities) {
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasForceCorrections()) {
     os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitForceCorrections("  ", x0, "%p_", "%f0p", models ? "%f0c" : "%f0", "%u0p",
-                   models ? "%u0c" : "%u0", "%w0z", "%w0r");
+    emitForceCorrections("  ", x0, "%p_", "%f0p", hostTerms ? "%f0c" : "%f0", "%u0p",
+                   hostTerms ? "%u0c" : "%u0", "%w0z", "%w0r");
   }
   // A learned potential (D270).
-  if (models)
-    emitModelTerms("  ", x0, "%cell", "%p_", "%f0c", "%f0", "%u0c", "%u0",
+  if (hostTerms)
+    emitHostEvaluation("  ", x0, "%cell", "%p_", "%f0c", "%f0", "%u0c", "%u0",
                    "", "0");
   // The terms at the start, which a continued segment does not log.
   if (branchesStart()) {
@@ -1009,32 +1009,9 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtFinish(memref<?x3x" << state
        << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
-  // A learned potential (D270): the host evaluates it at the
-  // positions where they are, in the cell of the step, and adds its forces
-  // to those of the program where they are; with `Energy`, it gives its
-  // energy and its virial as well.
-  if (!control.models.empty()) {
-    // With the pair list of the program, its slots, counts, offsets, and
-    // the number of their build (D277).
-    std::string edges =
-        modelEdges ? "memref<?x5xi32> {mdrt.read_only}, memref<?xi32> "
-                     "{mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64, "
-                   : "";
-    std::string arguments =
-        (llvm::Twine("i64, memref<?x3x") + state +
-         "> {mdrt.read_only}, memref<?xi32> {mdrt.read_only}, " + edges +
-         "f64, f64, f64, f64, f64, f64, i64, i64, memref<?x3x" + force + ">")
-            .str();
-    std::string name = modelEdges ? "@mdrtModelEvaluateEdges"
-                                  : "@mdrtModelEvaluate";
-    os << "func.func private " << name << "(" << arguments << ")\n"
-       << "    attributes {llvm.emit_c_interface}\n"
-       << "func.func private " << name << "Energy(" << arguments
-       << ", memref<1xf64>, memref<9xf64>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  }
-  for (const TermBuilder *builder : registerTermBuilders())
-    builder->emitEntry(*this);
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
+      role->emitDeclarations(*this, os);
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
@@ -1386,8 +1363,8 @@ void Builder::emitEntry() {
     std::string held = hasForceCorrections() ? "p" : "";
     // With a learned potential, `%f0c` and `%u0c` before its terms
     // (D270).
-    bool models = !control.models.empty();
-    std::string modelled = !models || !held.empty() ? "" : "c";
+    bool hostTerms = hasHostEvaluation();
+    std::string modelled = !hostTerms || !held.empty() ? "" : "c";
     os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
        << ", %w0" << held << raw
        << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
@@ -1400,12 +1377,12 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
                                "%r_", "%w0" + held + "e", "%w0" + held);
     if (hasForceCorrections()) {
-      emitForceCorrections("  ", "%x0", "%p_", "%f0p", models ? "%f0c" : "%f0",
-                     "%u0p", models ? "%u0c" : "%u0", virial, "%w0");
+      emitForceCorrections("  ", "%x0", "%p_", "%f0p", hostTerms ? "%f0c" : "%f0",
+                     "%u0p", hostTerms ? "%u0c" : "%u0", virial, "%w0");
       virial = "%w0";
     }
-    if (models)
-      virial = emitModelTerms("  ", "%x0", "%cell", "%p_", "%f0c", "%f0",
+    if (hostTerms)
+      virial = emitHostEvaluation("  ", "%x0", "%cell", "%p_", "%f0c", "%f0",
                               "%u0c", "%u0", virial, "0");
     return virial;
   };
@@ -1542,7 +1519,7 @@ void Builder::emitEntry() {
     os << "  func.call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ", " << pressureKinetic << ")\n"
        << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
-    for (const TermBuilder *term : registerTermBuilders())
+    for (const TermBuilder *term : getTermBuilders())
       term->emitOutput(*this, {"  ", "%x0", "%cell", "%p_", "%start",
                                "%time0", "", false});
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
@@ -1651,8 +1628,8 @@ void Builder::emitEntry() {
     std::string held = hasForceCorrections() ? "p" : "";
     // A learned potential adds its terms to `%ubsc`, `%fbsc`, and the virial
     // (D270).
-    bool models = !control.models.empty();
-    std::string modelled = !models || !held.empty() ? "" : "c";
+    bool hostTerms = hasHostEvaluation();
+    std::string modelled = !hostTerms || !held.empty() ? "" : "c";
     os << "  %ubs" << held << modelled << ", %fbs" << held << raw << modelled
        << ", %wbs" << held << raw
        << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
@@ -1665,12 +1642,12 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,
                                "%r_", "%wbs" + held + "e", "%wbs" + held);
     if (hasForceCorrections()) {
-      emitForceCorrections("  ", "%x0", "%p_", "%fbsp", models ? "%fbsc" : "%fbs",
-                     "%ubsp", models ? "%ubsc" : "%ubs", virial, "%wbs");
+      emitForceCorrections("  ", "%x0", "%p_", "%fbsp", hostTerms ? "%fbsc" : "%fbs",
+                     "%ubsp", hostTerms ? "%ubsc" : "%ubs", virial, "%wbs");
       virial = "%wbs";
     }
-    if (models)
-      virial = emitModelTerms("  ", "%x0", "%cell", "%p_", "%fbsc", "%fbs",
+    if (hostTerms)
+      virial = emitHostEvaluation("  ", "%x0", "%cell", "%p_", "%fbsc", "%fbs",
                               "%ubsc", "%ubs", virial, "bs");
     std::string current = velocities;
     if (isLeapfrog()) {

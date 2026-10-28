@@ -51,6 +51,7 @@ add_mlir_library(MDIRDriver
   TermTuple.cpp
   TermPair.cpp
   TermTriplet.cpp
+  TermModel.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

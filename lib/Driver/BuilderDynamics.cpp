@@ -435,8 +435,8 @@ void Builder::emitPrograms() {
     // With a learned potential the forces and the energy of the evaluation
     // are `%f1c` and `%u1c`, and those of the model are added to give `%f1`
     // and `%u1` (D270).
-    bool models = !control.models.empty();
-    std::string modelled = !models || !held.empty() ? "" : "c";
+    bool hostTerms = hasHostEvaluation();
+    std::string modelled = !hostTerms || !held.empty() ? "" : "c";
     if (withEnergy)
       os << "  %u1" << held << modelled << ", %f1" << held << raw << modelled
          << ", %w1" << held << raw << " = " << evaluate
@@ -456,14 +456,14 @@ void Builder::emitPrograms() {
                                "%r_", withVirial ? "%w1" + held + "e" : "",
                                "%w1" + held);
     if (hasForceCorrections()) {
-      emitForceCorrections("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
+      emitForceCorrections("  ", "%x1", "%p_", "%f1p", hostTerms ? "%f1c" : "%f1",
                      withEnergy ? "%u1p" : "",
-                     withEnergy ? (models ? "%u1c" : "%u1") : "",
+                     withEnergy ? (hostTerms ? "%u1c" : "%u1") : "",
                      withVirial ? virial : "", withVirial ? "%w1" : "");
       virial = "%w1";
     }
-    if (models)
-      virial = emitModelTerms("  ", "%x1", "%cell", "%p_", "%f1c", "%f1",
+    if (hostTerms)
+      virial = emitHostEvaluation("  ", "%x1", "%cell", "%p_", "%f1c", "%f1",
                               withEnergy ? "%u1c" : "", "%u1",
                               withVirial ? virial : "", "1");
     emitConstraintStops("  ", failures);
@@ -1592,8 +1592,8 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
            << " : f64\n";
       // A learned potential adds its energy and forces in the new cell
       // (D270).
-      bool models = !control.models.empty();
-      std::string modelled = !models || !held.empty() ? "" : "c";
+      bool hostTerms = hasHostEvaluation();
+      std::string modelled = !hostTerms || !held.empty() ? "" : "c";
       os << indent << u << held << modelled << ", " << f << held << raw
          << modelled << " = md.evaluate @energy(" << newPositions << ", "
          << cell << getFieldValues(fieldPrefix) << getTimeValue(time)
@@ -1606,9 +1606,9 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
                         relations);
       if (hasForceCorrections())
         emitForceCorrections(indent, newPositions, fieldPrefix, f + "p",
-                       models ? f + "c" : f, u + "p", models ? u + "c" : u);
-      if (models)
-        emitModelTerms(indent, newPositions, cell, fieldPrefix, f + "c", f,
+                       hostTerms ? f + "c" : f, u + "p", hostTerms ? u + "c" : u);
+      if (hostTerms)
+        emitHostEvaluation(indent, newPositions, cell, fieldPrefix, f + "c", f,
                        u + "c", u, "", "b" + t);
       cellName = outerCell;
       scaleName = outerScale;
@@ -1774,8 +1774,8 @@ void Builder::emitDescend() {
   std::string held = hasForceCorrections() ? "p" : "";
   // A learned potential adds its energy and forces to `%u1c` and `%f1c`
   // (D270).
-  bool models = !control.models.empty();
-  std::string modelled = !models || !held.empty() ? "" : "c";
+  bool hostTerms = hasHostEvaluation();
+  std::string modelled = !hostTerms || !held.empty() ? "" : "c";
   os << "  %u1" << held << modelled << ", %f1" << held << raw << modelled
      << " = " << evaluate << "\n      request [energy, forces]\n"
      << "      : " << signature << " -> (f64, !vec)\n";
@@ -1783,11 +1783,11 @@ void Builder::emitDescend() {
     emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
   if (hasForceCorrections()) {
     os << "  %w1z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitForceCorrections("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
-                   "%u1p", models ? "%u1c" : "%u1", "%w1z", "%w1r");
+    emitForceCorrections("  ", "%x1", "%p_", "%f1p", hostTerms ? "%f1c" : "%f1",
+                   "%u1p", hostTerms ? "%u1c" : "%u1", "%w1z", "%w1r");
   }
-  if (models)
-    emitModelTerms("  ", "%x1", "%cell", "%p_", "%f1c", "%f1", "%u1c", "%u1",
+  if (hostTerms)
+    emitHostEvaluation("  ", "%x1", "%cell", "%p_", "%f1c", "%f1", "%u1c", "%u1",
                    "", "1");
   std::string energy = "%u1";
   if (constraints) {

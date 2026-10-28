@@ -13,7 +13,7 @@ public:
   void collectParameters(TermParameters &context) const override;
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     if ((selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) &&
         context.getControl().implicitSolvent != Control::ImplicitSolvent::None)
       emitBorn(context, selection.terms, add);
@@ -37,14 +37,13 @@ public:
   }
 private:
   static void emitBorn(TermEmission &, unsigned,
-                       llvm::function_ref<void(StringRef)>);
+                       const TermPotentialAddition &);
   static double getDebyeKappa(const Control &);
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getBornTermBuilder() {
-  static const BornTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createBornTermBuilder() {
+  return std::make_unique<BornTermBuilder>();
 }
 
 void BornTermBuilder::collectParameters(TermParameters &context) const {
@@ -72,7 +71,7 @@ void BornTermBuilder::collectParameters(TermParameters &context) const {
 }
 
 void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
-                       llvm::function_ref<void(StringRef)> add) {
+                       const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   llvm::raw_ostream &os = context.getOutput();

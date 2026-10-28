@@ -259,7 +259,7 @@ public:
   }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     const Control &control = context.getControl();
     const System &system = context.getSystem();
     llvm::raw_ostream &os = context.getOutput();
@@ -643,9 +643,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getPairTermBuilder() {
-  static const PairTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createPairTermBuilder() {
+  return std::make_unique<PairTermBuilder>();
 }
 
 llvm::Error PairTermBuilder::collectPairValues(

@@ -37,9 +37,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getPullTermBuilder() {
-  static const PullTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createPullTermBuilder() {
+  return std::make_unique<PullTermBuilder>();
 }
 
 std::vector<std::pair<size_t, std::string>>

@@ -142,7 +142,7 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
     if (it == terms.end()) {
       ObservedTerm term;
       term.name = observable.term;
-      for (const TermBuilder *builder : registerTermBuilders()) {
+      for (const TermBuilder *builder : getTermBuilders()) {
         auto [kind, index] = builder->findObservedTerm(*this, term.name);
         if (kind)
           term.kind = kind, term.index = index;
@@ -423,11 +423,22 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     total = sum;
   };
 
+  auto addResult = [&](StringRef value, StringRef sum) {
+    if (total.empty()) {
+      total = value.str();
+      return;
+    }
+    os << "  " << sum << " = arith.addf " << total << ", " << value
+       << " : f64\n";
+    total = sum.str();
+  };
+  TermPotentialAddition addition{add, addResult};
+
   // Lennard-Jones and Coulomb, both cut at the cutoff, over the pairs that
   // are not excluded: as the modifiers say, and in `@alchemical` and
   // `@observe<k>` shifted to 0 at the cutoff (D210).
   bool lj = terms & LennardJones, coulomb = terms & Coulomb;
-  bool pairTerms = llvm::any_of(registerTermBuilders(), [&](const TermBuilder *builder) {
+  bool pairTerms = llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
     return builder->needsPairNeighborhood(
         *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly});
   });
@@ -441,7 +452,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   for (const TermBuilder *builder : termBuildersByPotentialRank())
     if (builder->topologyRank() == 0)
       builder->emitTopologyPotential(
-        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, add);
+        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
   if (lj || coulomb) {
     // [free_energy] (D161): a pair with one particle in the selection,
     // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
@@ -1049,7 +1060,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   for (const TermBuilder *builder : termBuildersByPotentialRank())
     if (builder->topologyRank() == 1)
       builder->emitTopologyPotential(
-          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, add);
+          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
   bool lj14 = terms & LennardJones14, coulomb14 = terms & Coulomb14;
   if ((lj14 || coulomb14) && has("pairs14")) {
     // In `@tunable` with the derivative in the charges, the product of
@@ -1154,20 +1165,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "  } : !rel_cmap, !vec -> f64\n";
     add("cmap");
   }
-  // The models in stages, which md-inline brings in and md-differentiate
-  // differentiates with the rest (D294).
-  if (terms == AllTerms)
-    for (size_t k = 0; k != stagedPotentials.size(); ++k) {
-      os << stagedPotentials[k];
-      if (total.empty()) {
-        total = stagedResults[k];
-        continue;
-      }
-      std::string sum = "%total_staged" + std::to_string(k);
-      os << "  " << sum << " = arith.addf " << total << ", "
-         << stagedResults[k] << " : f64\n";
-      total = sum;
-    }
+  for (const TermBuilder *builder : termBuildersByPotentialRank())
+    if (builder->topologyRank() == 2)
+      builder->emitTopologyPotential(
+          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly},
+          addition);
   if (total.empty()) {
     os << "  %zero = arith.constant 0.0 : f64\n";
     total = "%zero";
@@ -1229,152 +1231,17 @@ void Builder::emitSitePotentials() {
   }
 }
 
-llvm::Error Builder::emitStagedModels() {
-  stagedPotentials.clear();
-  stagedResults.clear();
-  for (const Control::ModelTerm &term : control.stagedModels) {
-    auto buffer = llvm::MemoryBuffer::getFile(term.path);
-    if (!buffer)
-      return makeError("cannot read the model in stages '" + term.name +
-                       "' from '" + term.path +
-                       "': " + buffer.getError().message());
-    StringRef text = (*buffer)->getBuffer();
-    // The module's one potential takes the positions, the cell, and the
-    // atomic numbers (scripts/mlip/painn-stages.py export).
-    static const char *const head = "md.potential @";
-    size_t at = text.find(head);
-    if (at == StringRef::npos || text.find(head, at + 1) != StringRef::npos)
-      return makeError("the model in stages '" + term.name +
-                       "' must hold one 'md.potential'");
-    // The potential's body goes into `@energy`, where md-differentiate
-    // differentiates it with the other terms; its values are renamed apart,
-    // and its arguments are the positions, the cell, and the atomic numbers
-    // of the program. The rest of the module (the stages and their bodies)
-    // goes to the top of the program.
-    size_t open = text.find("{\n", at);
-    size_t close = text.find("\n}", open);
-    llvm::SmallVector<StringRef, 3> parameters;
-    StringRef header = text.slice(text.find('(', at) + 1, open);
-    for (StringRef part : llvm::split(header, ','))
-      if (part.trim().starts_with("%"))
-        parameters.push_back(part.trim().take_until([](char c) {
-          return c == ':' || c == ' ';
-        }));
-    if (open == StringRef::npos || close == StringRef::npos ||
-        parameters.size() != 3)
-      return makeError("the potential of the model in stages '" + term.name +
-                       "' must take the positions, the cell, and the atomic "
-                       "numbers");
-    std::string prefix = "%sm" + std::to_string(stagedPotentials.size()) + "_";
-    std::string body;
-    StringRef rest = text.slice(open + 2, close + 1);
-    std::string result;
-    while (!rest.empty()) {
-      size_t percent = rest.find('%');
-      body += rest.take_front(percent).str();
-      if (percent == StringRef::npos)
-        break;
-      rest = rest.drop_front(percent);
-      size_t length = 1;
-      while (length < rest.size() &&
-             (llvm::isAlnum(rest[length]) || rest[length] == '_' ||
-              rest[length] == '.' || rest[length] == '$'))
-        ++length;
-      StringRef value = rest.take_front(length);
-      rest = rest.drop_front(length);
-      if (value == parameters[0])
-        body += "%x";
-      else if (value == parameters[1])
-        body += "%cell";
-      else if (value == parameters[2])
-        body += "%p_model_z";
-      else
-        body += prefix + value.drop_front().str();
-    }
-    size_t ret = body.rfind("md.return ");
-    if (ret == std::string::npos)
-      return makeError("the potential of the model in stages '" + term.name +
-                       "' has no 'md.return'");
-    StringRef returned = StringRef(body).drop_front(ret + 10);
-    result = returned.take_until([](char c) { return c == ' '; }).str();
-    body.erase(body.rfind('\n', ret) + 1);
-    os << "// The model in stages '" << term.name << "' (D294)\n"
-       << text.take_front(at) << text.drop_front(close + 2) << "\n";
-    stagedPotentials.push_back(body);
-    stagedResults.push_back(result);
-  }
-  return llvm::Error::success();
-}
-
-std::string Builder::emitModelTerms(StringRef indent, StringRef x,
-                                    StringRef cell, StringRef prefix,
-                                    StringRef f, StringRef fResult,
-                                    StringRef u, StringRef uResult,
-                                    StringRef w, StringRef tag) {
-  std::string t = ("_m" + tag).str();
-  bool numbers = !u.empty() || !w.empty();
-  // The cell, as the diagonal and the tilts.
-  os << indent << "%mcell" << t << " = md_exec.cell_numbers " << cell
-     << " : vector<6xf64>\n";
-  for (int k = 0; k != 6; ++k)
-    os << indent << "%mcell" << t << "_" << k << " = vector.extract %mcell"
-       << t << "[" << k << "] : f64 from vector<6xf64>\n";
-  int bits = program.state == Element::F64 ? 64 : 32;
-  int forceBits = program.force == Element::F64 ? 64 : 32;
-  os << indent << "%mbits" << t << " = arith.constant " << bits << " : i64\n"
-     << indent << "%mfbits" << t << " = arith.constant " << forceBits
-     << " : i64\n";
-  std::string forces = f.str(), energy = u.str(), virial = w.str();
-  for (size_t index = 0; index != control.models.size(); ++index) {
-    std::string k = t + "_" + std::to_string(index);
-    bool last = index + 1 == control.models.size();
-    std::string next = last ? fResult.str() : "%mf" + k;
-    // The model's pair list (D277): the pairs of images
-    // within its cutoff, from a neighborhood at that cutoff, which the
-    // program refreshes with the skin of the run.
-    if (modelEdges) {
-      std::string cutoff = formatReal(modelCutoffs[index]);
-      os << indent << "%mn" << k << " = md.neighborhood " << x << ", " << cell
-         << " cutoff(" << cutoff << ") : !vec -> !pairs\n"
-         << indent << "%me" << k << " = md.edges %mn" << k << ", " << x
-         << ", " << cell << " cutoff(" << cutoff
-         << ") : !pairs, !vec -> !md.edges<@atoms>\n";
-    }
-    os << indent << "%mi" << k << " = arith.constant " << index << " : i64\n"
-       << indent << next;
-    if (numbers)
-      os << ", %mu" << k << ", %mw" << k;
-    os << " = mdrt.host_call @mdrtModelEvaluate" << (modelEdges ? "Edges" : "")
-       << (numbers ? "Energy" : "") << "(%mi" << k << ", " << x << ", "
-       << prefix << "model_z";
-    if (modelEdges)
-      os << ", %me" << k;
-    for (int c = 0; c != 6; ++c)
-      os << ", %mcell" << t << "_" << c;
-    os << ", %mbits" << t << ", %mfbits" << t << ")\n"
-       << indent << "    outs(" << forces << " : !vec) {in_place}\n"
-       << indent << "    : (i64, !vec, !ids, "
-       << (modelEdges ? "!md.edges<@atoms>, " : "")
-       << "f64, f64, f64, f64, f64, f64, i64, i64)\n"
-       << indent << "    -> (!vec" << (numbers ? ", f64, vector<9xf64>" : "")
-       << ")\n";
-    forces = next;
-    if (!u.empty()) {
-      std::string sum = last ? uResult.str() : "%mus" + k;
-      os << indent << sum << " = arith.addf " << energy << ", %mu" << k
-         << " : f64\n";
-      energy = sum;
-    }
-    if (!w.empty()) {
-      std::string sum = "%mws" + k;
-      os << indent << sum << " = arith.addf " << virial << ", %mw" << k
-         << " : vector<9xf64>\n";
-      virial = sum;
-    }
-  }
+std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
+    StringRef cell, StringRef prefix, StringRef f, StringRef fResult,
+    StringRef u, StringRef uResult, StringRef w, StringRef tag) {
+  TermEvaluation point{indent, x, cell, prefix, f, fResult, u, uResult, w, tag};
+  std::string virial = w.str();
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
+      if (role->applies(*this))
+        virial = role->emit(*this, os, point);
   return virial;
 }
-
 
 void Builder::emitTerms(StringRef x) {
   if (!system.topology)
@@ -1387,7 +1254,7 @@ void Builder::emitTerms(StringRef x) {
   for (const TermBuilder *builder : termBuildersByPotentialRank())
     builder->appendTermNames(*this, registeredNames);
   unsigned storedTermCount = 0;
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     storedTermCount += builder->getStoredTermCount(*this);
   int size =
       14 + registeredNames.size() + storedTermCount;
@@ -1417,7 +1284,7 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %" << name << ", %terms[%i_" << name << "] : "
        << type << "\n";
   }
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : getTermBuilders())
     builder->emitStoredTerms(*this, type, index);
   os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"

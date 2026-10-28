@@ -39,7 +39,7 @@ public:
 
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     if (selection.terms & TermInputs::ExternalTerms)
       for (auto [index, term] :
            llvm::enumerate(context.getTopology().externalTerms))
@@ -86,21 +86,20 @@ public:
 private:
   static void emitExternalTerm(TermEmission &context, size_t index,
                               const ExternalTerm &term,
-                              llvm::function_ref<void(StringRef)> add);
+                              const TermPotentialAddition & add);
 };
 
 } // namespace builder
 } // namespace driver
 } // namespace mdir
 
-const TermBuilder &mdir::driver::builder::getExternalTermBuilder() {
-  static const ExternalTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createExternalTermBuilder() {
+  return std::make_unique<ExternalTermBuilder>();
 }
 
 void ExternalTermBuilder::emitExternalTerm(
     TermEmission &context, size_t index, const ExternalTerm &term,
-    llvm::function_ref<void(StringRef)> add) {
+    const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   llvm::raw_ostream &os = context.getOutput();

@@ -1,25 +1,22 @@
-// The explicit order of the migrated term builders (D359).
-// These references keep their translation units in the static library link.
-
+// Explicit factories retain the term translation units in static links.
 #include "BuilderImpl.h"
 
 using namespace mdir::driver::builder;
 
-llvm::ArrayRef<const TermBuilder *>
+llvm::ArrayRef<TermBuilderFactory>
 mdir::driver::builder::registerTermBuilders() {
-  static const TermBuilder *const builders[] = {&getExternalTermBuilder(),
-                                                &getPullTermBuilder(),
-                                                &getRestraintTermBuilder(),
-                                                &getBornTermBuilder(),
-                                                &getTupleTermBuilder(),
-                                                &getPairTermBuilder(),
-                                                &getTripletTermBuilder()};
-  return builders;
+  static const TermBuilderFactory factories[] = {
+      &createExternalTermBuilder,  &createPullTermBuilder,
+      &createRestraintTermBuilder, &createBornTermBuilder,
+      &createTupleTermBuilder,     &createPairTermBuilder,
+      &createTripletTermBuilder,   &createModelTermBuilder,
+  };
+  return factories;
 }
 
 std::vector<const TermBuilder *>
-mdir::driver::builder::termBuildersByParameterRank() {
-  auto builders = registerTermBuilders();
+mdir::driver::builder::termBuildersByParameterRank(
+    llvm::ArrayRef<const TermBuilder *> builders) {
   std::vector<const TermBuilder *> ordered(builders.begin(), builders.end());
   llvm::stable_sort(ordered, [](const TermBuilder *a, const TermBuilder *b) {
     return a->parameterRank() < b->parameterRank();
@@ -28,8 +25,8 @@ mdir::driver::builder::termBuildersByParameterRank() {
 }
 
 std::vector<const TermBuilder *>
-mdir::driver::builder::termBuildersByPotentialRank() {
-  auto builders = registerTermBuilders();
+mdir::driver::builder::termBuildersByPotentialRank(
+    llvm::ArrayRef<const TermBuilder *> builders) {
   std::vector<const TermBuilder *> ordered(builders.begin(), builders.end());
   llvm::stable_sort(ordered, [](const TermBuilder *a, const TermBuilder *b) {
     return a->potentialRank() < b->potentialRank();

@@ -37,9 +37,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getRestraintTermBuilder() {
-  static const RestraintTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createRestraintTermBuilder() {
+  return std::make_unique<RestraintTermBuilder>();
 }
 
 void RestraintTermBuilder::collectParameters(TermParameters &context) const {
