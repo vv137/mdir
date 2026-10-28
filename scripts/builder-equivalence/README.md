@@ -4,6 +4,12 @@
 The reference for a staged PR is built once from a git archive of its base;
 each implementation commit is compared with that same reference.
 
+Before comparison, every successfully parsed module and successful lowered emission is rejected if
+it contains a `mdir.term_ir` attribute. Two outputs with equally surviving
+internal connections therefore cannot pass the equivalence gate together.
+Native connection tests also cover missing, duplicate, malformed, count/type
+mismatch, and surviving markers at the materialization boundary.
+
 `order.py BASE_MDIR COMMIT_MDIR --printer MDIR_OPT --scratch OWN_DIRECTORY`
 compares combined terms in CPU/GPU, double/mixed, run/segment forms. It
 covers tuple/centroid, pair, Born/surface, restraint, external, and triplet

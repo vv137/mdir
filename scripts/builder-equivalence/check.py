@@ -329,6 +329,12 @@ def printed_result(entry):
     return status, output, error
 
 
+def require_materialized(output):
+    """A verified emission must not retain a builder's internal connection."""
+    if re.search(rb"\bmdir\.term_ir\s*=", output):
+        raise RuntimeError("internal term IR connection survived emission")
+
+
 def outputs(mdir, printer, case, target, stages, forms, scratch, index):
     """The outputs of one build for one case and target:
     {(stage, form): (status, out, err)}."""
@@ -346,14 +352,18 @@ def outputs(mdir, printer, case, target, stages, forms, scratch, index):
         status, out, err = run([mdir, "emit", f"--stage={stage}", *segments, control],
                                directory, hide)
         if stage == "lowered":
+            if status == 0:
+                require_materialized(out)
             result[(stage, "printed")] = printed_result((status, out, err))
             continue
         if "raw" in forms:
             result[(stage, "raw")] = (status, out, err)
         if stage == "module" and "printed" in forms:
             if status == 0:
-                result[(stage, "printed")] = printed_result(
-                    run([printer, "-"], directory, hide, input=out))
+                printed = run([printer, "-"], directory, hide, input=out)
+                if printed[0] == 0:
+                    require_materialized(printed[1])
+                result[(stage, "printed")] = printed_result(printed)
             else:
                 result[(stage, "printed")] = printed_result((status, b"", err))
     shutil.rmtree(place, ignore_errors=True)

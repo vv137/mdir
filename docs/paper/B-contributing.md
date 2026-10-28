@@ -206,3 +206,8 @@ tunable-table seeds, scalar kernels, and the ordered final contribution.
 scalar emitter also builds typed operations from an owned `ExpressionIR`
 snapshot of the parsed AST and grid geometry. Lazy definitions and caller
 binding precedence are preserved without retaining borrowed hook state.
+
+The materialization boundary rejects surviving internal connections before
+any downstream cast reconciliation. Native tests cover malformed connections
+and the unchanged legacy parse-error path; the corpus also rejects internal
+markers in every successfully parsed module or successful lowered emission before comparison.

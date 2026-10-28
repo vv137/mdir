@@ -77,6 +77,15 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "a term IR recipe has no assembly connection");
+  // Recipes may construct nested operations. Check the whole result, including
+  // non-cast operations, so reconciliation cannot silently consume a marker.
+  bool remaining = false;
+  module.walk(
+      [&](mlir::Operation *op) { remaining |= op->hasAttr(recipeAttribute); });
+  if (remaining)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "internal term IR connection survived materialization");
   recipes.clear();
   return llvm::Error::success();
 }

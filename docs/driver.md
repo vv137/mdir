@@ -1360,6 +1360,19 @@ binding precedence are preserved without retaining borrowed hook state. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 
+Materialization rejects missing, repeated, or invalid connections and result
+count/type mismatches. A final walk rejects any operation still carrying
+`mdir.term_ir`, including operations created by a recipe; cast reconciliation
+therefore cannot silently consume a surviving connection. Native negative
+tests cover these checks. The equivalence harness also rejects the attribute
+in every successfully parsed module and successful lowered emission before
+comparing either build.
+The legacy parse-failure path preserves only unchanged, already-invalid
+assembly for its original parser diagnostic (#706). The reading printer may
+return that invalid text for inspection; the canonical printer and lowering
+parse it again and fail. It cannot become a valid printed or lowered program
+through this path.
+
 ## 3. Decided
 
 | # | Question | Decision |

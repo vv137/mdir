@@ -19,6 +19,15 @@ so `md-inline`, loop fusion, and deterministic contribution order retain
 the same input. MLIR's default SSA numbering is used, without builder-name
 `NameLoc` or `printNameLocAsPrefix`.
 
+Materialization validates each connection exactly once and rejects result
+count/type mismatches. A final walk rejects every remaining `mdir.term_ir`
+attribute, including attributes on newly created operations. The equivalence
+harness rejects the same marker in every successfully parsed module and successful lowered emission
+before comparison. Native negative tests cover these boundaries. Already-invalid
+legacy assembly may retain its original parser diagnostic (#706); it remains
+unchanged and is rejected again when a consumer parses it, so this path cannot
+return a valid printed or lowered program.
+
 The shared Lennard-Jones scalar emitter moves first, followed by the other
 term emitters in their change-frequency order. One commit moves one
 emitter. Custom expression and `ModelTerm` input remain text at their

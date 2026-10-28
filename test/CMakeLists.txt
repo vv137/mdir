@@ -40,6 +40,10 @@ add_llvm_executable(mdir-model-test Driver/ModelTest.cpp)
 llvm_update_compile_flags(mdir-model-test)
 target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
 
+add_llvm_executable(mdir-term-ir-test Driver/TermIRTest.cpp)
+llvm_update_compile_flags(mdir-term-ir-test)
+target_link_libraries(mdir-term-ir-test PRIVATE MDIRDriver MLIRParser)
+
 add_llvm_executable(mdir-prolate-test Driver/ProlateTest.cpp)
 llvm_update_compile_flags(mdir-prolate-test)
 target_link_libraries(mdir-prolate-test PRIVATE MDIRDriver MDIRMD)
@@ -70,6 +74,7 @@ llvm_update_compile_flags(mdir-compile-cache-test)
 target_link_libraries(mdir-compile-cache-test PRIVATE MDIRSimulation)
 
 set(MDIR_TEST_DEPENDS
+  mdir-term-ir-test
   mdir-jit-memory-test
   mdir-compile-cache-test
   mdir-compile-test
