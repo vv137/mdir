@@ -573,8 +573,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string rowCell = scalesHere ? scaling.cell : cellName;
       std::string outputStep = "%step" + here;
       for (const TermBuilder *term : getTermBuilders())
-        term->emitOutput(*this, {inner, "%xl", rowCell, fieldPrefix,
-                                 outputStep, "", here, true});
+        if (const auto *role = term->getRoles().coordinateOutput)
+          role->emitOutput(*this, {inner, "%xl", rowCell, fieldPrefix,
+                                   outputStep, "", here, true});
       if (!control.freeEnergyFile.empty()) {
         // dH/dλ and the energies of the other states at the positions
         // after the step (D161).
@@ -1520,8 +1521,9 @@ void Builder::emitEntry() {
        << ", " << pressureKinetic << ")\n"
        << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
     for (const TermBuilder *term : getTermBuilders())
-      term->emitOutput(*this, {"  ", "%x0", "%cell", "%p_", "%start",
-                               "%time0", "", false});
+      if (const auto *role = term->getRoles().coordinateOutput)
+        role->emitOutput(*this, {"  ", "%x0", "%cell", "%p_", "%start",
+                                 "%time0", "", false});
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitObservablesOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitTunableGradientOutput("  ", "%x0", "%cell", "%p_", "%time0");

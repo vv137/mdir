@@ -5,8 +5,12 @@ using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
 namespace mdir::driver::builder {
-class PullTermBuilder final : public TermBuilder {
+class PullTermBuilder final : public TermBuilder, public TermCoordinateOutput {
 public:
+  PullTermBuilder() { roles.coordinateOutput = this; }
+  bool rejectsTunables(const TermInputs &context) const override {
+    return hasCoordinateOutput(context);
+  }
   bool hasCoordinateOutput(const TermInputs &context) const override {
     return !getColumns(context).empty();
   }

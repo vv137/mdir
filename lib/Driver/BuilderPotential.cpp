@@ -1,7 +1,5 @@
-// The potentials of the program: the terms of pairs, of tuples, and of
-// the topology, the Born and external terms, the centroids, the pulls,
-// the observables, the staged models, and the restraints
-// (docs/driver.md, Section 2.12).
+// Shared potential assembly, centroid geometry, observed selections, and
+// site placement. Term-specific contributions are owned by the adapters.
 
 #include "BuilderImpl.h"
 
@@ -143,9 +141,12 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
       ObservedTerm term;
       term.name = observable.term;
       for (const TermBuilder *builder : getTermBuilders()) {
-        auto [kind, index] = builder->findObservedTerm(*this, term.name);
-        if (kind)
-          term.kind = kind, term.index = index;
+        auto reference = builder->findObservedTerm(*this, term.name);
+        if (reference.kind) {
+          term.kind = reference.kind;
+          term.index = reference.index;
+          term.potential = reference.potential;
+        }
       }
       terms.push_back(std::move(term));
       it = std::prev(terms.end());
@@ -168,111 +169,29 @@ void Builder::emitObservedPotentials() {
   for (auto [k, term] : llvm::enumerate(getObservedTerms())) {
     observedTerm = term.name;
     observedConstants = term.constants;
-    emitTopologyPotential("observe" + std::to_string(k), term.kind,
-                          term.kind == TupleTerms ? term.index : -1,
-                          term.kind == PairTerms ? term.index : -1,
-                          term.kind == ExternalTerms ? term.index : -1);
+    emitTopologyPotential("observe" + std::to_string(k), term.potential.terms,
+                          term.potential.tupleTerm, term.potential.pairTerm,
+                          term.potential.externalTerm);
     observedTerm.clear();
     observedConstants.clear();
   }
-}
-
-/// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
-/// table `table` (prolate::getSplittingTable): the polynomial of the cell
-/// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
-/// place in the cell carries the derivative; the index and the lookups do
-/// not, as in a tabulated function of the control file (D138).
-static std::string emitProlateSplitting(llvm::raw_ostream &os,
-                                        StringRef table, StringRef x,
-                                        StringRef p, Precision precision) {
-  auto [prolateCells, prolateTerms] = getProlateTableShape(precision);
-  os << "    " << p << "cells = arith.constant "
-     << formatReal(static_cast<double>(prolateCells)) << " : f64\n"
-     << "    " << p << "top = arith.constant "
-     << formatReal(static_cast<double>(prolateCells - 1)) << " : f64\n"
-     << "    " << p << "nil = arith.constant 0.0 : f64\n"
-     << "    " << p << "one = arith.constant 1.0 : f64\n"
-     << "    " << p << "two = arith.constant 2.0 : f64\n"
-     << "    " << p << "u = arith.mulf " << x << ", " << p << "cells : f64\n"
-     << "    " << p << "floor = math.floor " << p << "u : f64\n"
-     << "    " << p << "low = arith.maximumf " << p << "floor, " << p
-     << "nil : f64\n"
-     << "    " << p << "place = arith.minimumf " << p << "low, " << p
-     << "top : f64\n"
-     << "    " << p << "s = arith.subf " << p << "u, " << p << "place : f64\n"
-     << "    " << p << "s2 = arith.mulf " << p << "two, " << p << "s : f64\n"
-     << "    " << p << "t = arith.subf " << p << "s2, " << p << "one : f64\n"
-     << "    " << p << "row = arith.fptosi " << p << "place : f64 to i32\n";
-  for (int64_t j = 0; j != prolateTerms; ++j)
-    os << "    " << p << "col" << j << " = arith.constant " << j << " : i32\n"
-       << "    " << p << "a" << j << " = md.lookup %t_" << table << "[" << p
-       << "row, " << p << "col" << j << "] : !grid, i32, i32 -> f64\n";
-  std::string value = (p + "a" + llvm::Twine(prolateTerms - 1)).str();
-  for (int64_t j = prolateTerms - 2; j >= 0; --j) {
-    os << "    " << p << "m" << j << " = arith.mulf " << value << ", " << p
-       << "t : f64\n"
-       << "    " << p << "h" << j << " = arith.addf " << p << "m" << j << ", "
-       << p << "a" << j << " : f64\n";
-    value = (p + "h" + llvm::Twine(j)).str();
-  }
-  return value;
 }
 
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
   double cutoff = control.cutoffDistance * units::length;
-  // A program of the dependent terms has no other
-  // (D243).
-  if (dependent) {
-    unsigned kept = 0;
-    if (dependent->lennardJones)
-      kept |= LennardJones | LennardJonesExcluded | LennardJonesReciprocal;
-    if (dependent->coulomb)
-      kept |= Coulomb | Coulomb14 | CoulombExcluded | CoulombReciprocal |
-              CoulombWithin;
-    if (!dependent->pairs.empty())
-      kept |= PairTerms;
-    if (!dependent->tuples.empty())
-      kept |= TupleTerms;
-    terms &= kept | Alchemical;
-  }
-  // The truncation of the pair terms, shifted in `@alchemical` and
-  // `@observe<k>` (D210).
-  Truncation truncation = getPairTruncation();
-  auto has = [&](StringRef set) {
-    return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
-      return s.name == set;
-    });
-  };
-  auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
-                              StringRef result, Truncation modifier,
-                              StringRef distance = "%r") {
-    mdir::driver::builder::emitLennardJones(os, control, sigma, epsilon,
-                                           result, modifier, distance);
-  };
-
+  bool alchemicalOnly = terms & Alchemical;
+  unsigned active = 0;
+  for (const TermBuilder *builder : getTermBuilders())
+    active |= builder->getPotentialMask(
+        *this, dependent ? &*dependent : nullptr, alchemicalOnly);
+  terms &= active;
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << getLambdaParameters()
      << getObservedParameters() << getGradientParameters()
      << ") -> f64 {\n";
   emitLambdaConstants("  ");
-  // [free_energy] (D161): `@alchemical` has only what depends on λ.
-  bool alchemicalOnly = terms & Alchemical;
-  if (alchemicalOnly) {
-    unsigned kept = LennardJones | Coulomb | CoulombExcluded |
-                    CoulombWithin | CoulombReciprocal | TupleTerms |
-                    PairTerms | ExternalTerms;
-    if (!decouples())
-      kept &= ~(LennardJones | Coulomb | CoulombExcluded | CoulombWithin |
-                CoulombReciprocal);
-    terms &= kept;
-  }
-  // Which λ the kernels of the pairs take: as arguments, or as constants
-  // of the state of the run that are not 0.
-  bool scalesCoulomb =
-      decouples() && (lambdaArguments || getLambda("coulomb") != 0.0);
-  bool scalesVdw = decouples() && (lambdaArguments || getLambda("vdw") != 0.0);
   std::string total;
   auto add = [&](StringRef term) {
     std::string value = ("%u_" + term).str();
@@ -300,558 +219,31 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // Lennard-Jones and Coulomb, both cut at the cutoff, over the pairs that
   // are not excluded: as the modifiers say, and in `@alchemical` and
   // `@observe<k>` shifted to 0 at the cutoff (D210).
-  bool lj = terms & LennardJones, coulomb = terms & Coulomb;
   bool pairTerms = llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
     return builder->needsPairNeighborhood(
         *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly});
   });
-  if (lj || coulomb || pairTerms) {
+  if (pairTerms) {
     os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
        << ")";
-    if (has("excluded"))
-      os << " exclude(%r_excluded : !rel_excluded)";
+    for (const TermBuilder *builder : getTermBuilders()) {
+      StringRef set = builder->getPairExclusion();
+      if (!set.empty() &&
+          llvm::any_of(program.tupleSets,
+                       [&](const auto &data) { return data.name == set; }))
+        os << " exclude(%r_" << set << " : !rel_" << set << ")";
+    }
     os << " : !vec -> !pairs\n";
   }
-  for (const TermBuilder *builder : termBuildersByPotentialRank())
-    if (builder->topologyRank() == 0)
-      builder->emitTopologyPotential(
-        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
-  if (lj || coulomb) {
-    // [free_energy] (D161): a pair with one particle in the selection,
-    // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
-    // soft-core distance r_A, r_A^6 = alpha sigma^6 lambda^p + r^6, times
-    // 1 - lambda [Beutler1994], and its Coulomb is times 1 - lambda: the
-    // charge of the particle in the selection scaled. The pairs within the
-    // selection stay.
-    bool flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
-                 (alchemicalOnly && decouples());
-    // In `@tunable`, σ and ε of a pair take the seeds of the derivatives
-    // in their tables (D230, Control::TunableTableSeed).
-    size_t seeds =
-        gradientArguments && lj ? control.tunableTableSeeds.size() : 0;
-    std::string seedFields, seedTypes, seedArguments;
-    for (size_t c = 0; c != seeds; ++c) {
-      seedFields += ", %tg_d" + std::to_string(c);
-      seedTypes += ", !real";
-      seedArguments += ", %tgd" + std::to_string(c) + "_i: f64, %tgd" +
-                       std::to_string(c) + "_j: f64";
-    }
-    os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
-          "%p_q"
-       << (flags ? ", %p_alch" : "") << seedFields << " : !ids, !real"
-       << (flags ? ", !real" : "") << seedTypes << ")\n"
-       << "      exchange(symmetric" << (seeds ? ", asserted" : "") << ") {\n"
-       << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
-          "%q_i: f64, %q_j: f64"
-       << (flags ? ", %al_i: f64, %al_j: f64" : "") << seedArguments
-       << "):\n";
-    if (flags)
-      os << "    %al_ij = arith.mulf %al_i, %al_j : f64\n"
-         << "    %al_sum = arith.addf %al_i, %al_j : f64\n"
-         << "    %al_twice = arith.addf %al_ij, %al_ij : f64\n"
-         << "    %cross = arith.subf %al_sum, %al_twice : f64\n"
-         << "    %al_one = arith.constant 1.0 : f64\n";
-    std::string value;
-    if (lj) {
-      bool seedsSigma = false, seedsEpsilon = false;
-      for (size_t c = 0; c != seeds; ++c)
-        (control.tunableTableSeeds[c].sigma ? seedsSigma : seedsEpsilon) =
-            true;
-      os << "    %sigma" << (seedsSigma ? "_table" : "")
-         << " = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
-            "i32, i32 -> f64\n"
-         << "    %epsilon" << (seedsEpsilon ? "_table" : "")
-         << " = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
-            "!table, i32, i32 -> f64\n";
-      // The value of the table plus d_i w[a, b] + d_j w[b, a] for each
-      // seed: the value itself, d being zero.
-      for (bool sigma : {true, false}) {
-        std::string value = sigma ? "%sigma_table" : "%epsilon_table";
-        size_t left = 0;
-        for (size_t c = 0; c != seeds; ++c)
-          left += control.tunableTableSeeds[c].sigma == sigma;
-        for (size_t c = 0; c != seeds; ++c) {
-          if (control.tunableTableSeeds[c].sigma != sigma)
-            continue;
-          std::string n = std::to_string(c);
-          std::string next = --left ? "%tgs" + n
-                                    : std::string(sigma ? "%sigma" : "%epsilon");
-          os << "    %tgw" << n << "_ij = md.lookup %t_tgw" << n
-             << "[%type_i, %type_j] : !grid, i32, i32 -> f64\n"
-             << "    %tgw" << n << "_ji = md.lookup %t_tgw" << n
-             << "[%type_j, %type_i] : !grid, i32, i32 -> f64\n"
-             << "    %tgs" << n << "_i = arith.mulf %tgd" << n << "_i, %tgw"
-             << n << "_ij : f64\n"
-             << "    %tgs" << n << "_j = arith.mulf %tgd" << n << "_j, %tgw"
-             << n << "_ji : f64\n"
-             << "    %tgs" << n << "_ij = arith.addf %tgs" << n << "_i, %tgs"
-             << n << "_j : f64\n"
-             << "    " << next << " = arith.addf " << value << ", %tgs" << n
-             << "_ij : f64\n";
-          value = next;
-        }
-      }
-      if (scalesVdw) {
-        // The distance r_A of a decoupled pair, r of the others. A pair
-        // without a σ, which has no Lennard-Jones, takes 0.3 nm in r_A,
-        // so that r_A stays above 0 where its particles overlap.
-        double alpha = control.freeEnergy.softCoreAlpha;
-        std::string distance = "%r";
-        if (alpha > 0.0) {
-          os << "    %sc_alpha = arith.constant " << formatReal(alpha)
-             << " : f64\n"
-             << "    %sc_zero = arith.constant 0.0 : f64\n"
-             << "    %sc_floor = arith.constant 3.0e-01 : f64\n"
-             << "    %sc_has = arith.cmpf ogt, %sigma, %sc_zero : f64\n"
-             << "    %sc_sigma = arith.select %sc_has, %sigma, %sc_floor : f64\n"
-             << "    %sc_i3 = arith.constant 3 : i32\n"
-             << "    %sc_s3 = math.fpowi %sc_sigma, %sc_i3 : f64, i32\n"
-             << "    %sc_s6 = arith.mulf %sc_s3, %sc_s3 : f64\n"
-             << "    %sc_r3 = math.fpowi %r, %sc_i3 : f64, i32\n"
-             << "    %sc_r6 = arith.mulf %sc_r3, %sc_r3 : f64\n";
-          std::string power = "%lambda_vdw";
-          if (control.freeEnergy.softCorePower == 2) {
-            os << "    %sc_lp = arith.mulf %lambda_vdw, %lambda_vdw : f64\n";
-            power = "%sc_lp";
-          }
-          os << "    %sc_as = arith.mulf %sc_alpha, %sc_s6 : f64\n"
-             << "    %sc_asl = arith.mulf %sc_as, " << power << " : f64\n"
-             << "    %sc_x = arith.addf %sc_r6, %sc_asl : f64\n"
-             ;
-          if (truncation != Truncation::None &&
-              truncation != Truncation::Shift) {
-            os << "    %sc_sixth = arith.constant "
-               << formatReal(1.0 / 6.0) << " : f64\n"
-               << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
-               << "    %sc_half = arith.constant 5.0e-01 : f64\n"
-               << "    %sc_is = arith.cmpf ogt, %cross, %sc_half : f64\n"
-               << "    %sc_r = arith.select %sc_is, %sc_ra, %r : f64\n";
-            distance = "%sc_r";
-          }
-        }
-        bool plain = truncation == Truncation::None ||
-                     truncation == Truncation::Shift;
-        if (alpha > 0.0 && plain) {
-          // Without a switch, (σ/r_A)⁶ = σ⁶ / x needs no root: one
-          // expression for every pair, x = r⁶ for those not decoupled.
-          os << "    %sc_xs = arith.mulf %sc_asl, %cross : f64\n"
-             << "    %sc_xx = arith.addf %sc_r6, %sc_xs : f64\n"
-             << "    %sc_g3 = math.fpowi %sigma, %sc_i3 : f64, i32\n"
-             << "    %sc_g6 = arith.mulf %sc_g3, %sc_g3 : f64\n"
-             << "    %sc_q6 = arith.divf %sc_g6, %sc_xx : f64\n"
-             << "    %sc_q12 = arith.mulf %sc_q6, %sc_q6 : f64\n";
-          std::string a = "%sc_q12", b = "%sc_q6";
-          if (truncation == Truncation::Shift) {
-            double cut6 = std::pow(cutoff, -6.0);
-            os << "    %sc_rc6 = arith.constant " << formatReal(cut6)
-               << " : f64\n"
-               << "    %sc_rc12 = arith.constant " << formatReal(cut6 * cut6)
-               << " : f64\n"
-               << "    %sc_g12 = arith.mulf %sc_g6, %sc_g6 : f64\n"
-               << "    %sc_c12 = arith.mulf %sc_g12, %sc_rc12 : f64\n"
-               << "    %sc_c6 = arith.mulf %sc_g6, %sc_rc6 : f64\n"
-               << "    %sc_a = arith.subf %sc_q12, %sc_c12 : f64\n"
-               << "    %sc_b = arith.subf %sc_q6, %sc_c6 : f64\n";
-            a = "%sc_a";
-            b = "%sc_b";
-          }
-          os << "    %sc_c4 = arith.constant 4.0 : f64\n"
-             << "    %sc_e4 = arith.mulf %sc_c4, %epsilon : f64\n"
-             << "    %sc_t = arith.subf " << a << ", " << b << " : f64\n"
-             << "    %lj_full = arith.mulf %sc_e4, %sc_t : f64\n";
-        } else {
-          emitLennardJones("%sigma", "%epsilon", "%lj_full", truncation,
-                           distance);
-        }
-        os << "    %lj_cl = arith.mulf %cross, %lambda_vdw : f64\n"
-           << "    %lj_scale = arith.subf %al_one, %lj_cl : f64\n"
-           << "    %lj = arith.mulf %lj_scale, %lj_full : f64\n";
-      } else {
-        emitLennardJones("%sigma", "%epsilon", "%lj", truncation);
-      }
-      value = "%lj";
-      if (program.ljpme) {
-        // The dispersion that the grid sums within the cutoff,
-        // −c_i c_j (1 − g(β r)) / r⁶, taken out again, so that the pair
-        // has its own Lennard-Jones there [Essmann1995, Wennberg2013]
-        // (D162); shifted with it to 0 at the cutoff if it is.
-        double beta = program.ljpmeBeta;
-        os << "    %lp_c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : "
-              "!table, i32, i32 -> f64\n"
-           << "    %lp_beta = arith.constant " << formatReal(beta)
-           << " : f64\n"
-           << "    %lp_x = arith.mulf %lp_beta, %r : f64\n"
-           << "    %lp_x2 = arith.mulf %lp_x, %lp_x : f64\n"
-           << "    %lp_nx2 = arith.negf %lp_x2 : f64\n"
-           << "    %lp_e = math.exp %lp_nx2 : f64\n"
-           << "    %lp_x4 = arith.mulf %lp_x2, %lp_x2 : f64\n"
-           << "    %lp_half = arith.constant 0.5 : f64\n"
-           << "    %lp_h4 = arith.mulf %lp_half, %lp_x4 : f64\n"
-           << "    %lp_one = arith.constant 1.0 : f64\n"
-           << "    %lp_p1 = arith.addf %lp_one, %lp_x2 : f64\n"
-           << "    %lp_p = arith.addf %lp_p1, %lp_h4 : f64\n"
-           << "    %lp_g = arith.mulf %lp_e, %lp_p : f64\n"
-           << "    %lp_kept = arith.subf %lp_one, %lp_g : f64\n"
-           << "    %lp_r2 = arith.mulf %r, %r : f64\n"
-           << "    %lp_r4 = arith.mulf %lp_r2, %lp_r2 : f64\n"
-           << "    %lp_r6 = arith.mulf %lp_r4, %lp_r2 : f64\n"
-           << "    %lp_cr = arith.divf %lp_c6, %lp_r6 : f64\n"
-           << "    %lp_d = arith.mulf %lp_cr, %lp_kept : f64\n";
-        std::string correction = "%lp_d";
-        if (truncation == Truncation::Shift) {
-          double shift = (1.0 - getDispersionScreen(beta * cutoff)) /
-                         std::pow(cutoff, 6.0);
-          os << "    %lp_shift = arith.constant " << formatReal(shift)
-             << " : f64\n"
-             << "    %lp_cs = arith.mulf %lp_c6, %lp_shift : f64\n"
-             << "    %lp_ds = arith.subf %lp_d, %lp_cs : f64\n";
-          correction = "%lp_ds";
-        }
-        os << "    %ljp = arith.addf %lj, " << correction << " : f64\n";
-        value = "%ljp";
-      }
-    }
-    if (coulomb) {
-      os << "    %f = arith.constant " << formatReal(coulombInternal)
-         << " : f64\n";
-      if (scalesCoulomb)
-        os << "    %qq0 = arith.mulf %q_i, %q_j : f64\n"
-           << "    %qq_cl = arith.mulf %cross, %lambda_coulomb : f64\n"
-           << "    %qq_scale = arith.subf %al_one, %qq_cl : f64\n"
-           << "    %qq = arith.mulf %qq0, %qq_scale : f64\n";
-      else
-        os << "    %qq = arith.mulf %q_i, %q_j : f64\n";
-      os << "    %fqq = arith.mulf %f, %qq : f64\n";
-      // A decoupled pair may overlap once its Lennard-Jones is off; its
-      // Coulomb, then 0, takes a distance of at least 1e-4 nm, which no
-      // pair that interacts comes near, so that it is not 0 times ∞.
-      std::string rq = "%r";
-      if (scalesCoulomb) {
-        os << "    %rq_least = arith.constant 1.0e-04 : f64\n"
-           << "    %rq = arith.maximumf %r, %rq_least : f64\n";
-        rq = "%rq";
-      }
-      if (program.pme && program.pmeProlate) {
-        // The direct sum of the prolate kernel, f q q (1 − Φ(r/r_c)) / r
-        // [Liang2026, eq. 3]; Φ(1) = 1, so a shift at the cutoff is 0.
-        os << "    %rc_inverse = arith.constant "
-           << formatReal(1.0 / cutoff) << " : f64\n"
-           << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
-        if (takesProlateSeries(control) && !scalesCoulomb) {
-          // f q q (1 − x) P(t) / r, P = (1 − Φ(x))/(1 − x) a Chebyshev
-          // series in t = 2x − 1: a function of r² alone, which a table of
-          // r² then holds as it holds erfc(βr)/r (D94,
-          // D280).
-          os << "    %pf_two = arith.constant 2.0 : f64\n"
-             << "    %pf_one = arith.constant 1.0 : f64\n"
-             << "    %pf_2x = arith.mulf %pf_two, %xr : f64\n"
-             << "    %pf_t = arith.subf %pf_2x, %pf_one : f64\n"
-             << "    %pf_mean = md.chebyshev %pf_t [";
-          llvm::interleaveComma(program.pmeFarSeries, os, [&](double c) {
-            os << formatReal(c);
-          });
-          os << "] : f64\n"
-             << "    %pf_rest = arith.subf %pf_one, %xr : f64\n"
-             << "    %pf_far = arith.mulf %pf_rest, %pf_mean : f64\n"
-             << "    %screened = arith.divf %pf_far, " << rq << " : f64\n"
-             << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
-        } else {
-          std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_",
-                                                 control.precision);
-          os << "    %screened = arith.divf " << far << ", " << rq
-             << " : f64\n"
-             << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
-        }
-      } else if (program.pme) {
-        // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
-        // shifted to 0 at the cutoff if the control file asks.
-        double beta = program.pmeBeta;
-        os << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-           << "    %br = arith.mulf %beta, " << rq << " : f64\n"
-           << "    %erfc = math.erfc %br : f64\n"
-           << "    %screened = arith.divf %erfc, " << rq << " : f64\n";
-        std::string kernel = "%screened";
-        if (control.pmeShift || shiftsAtCutoff) {
-          os << "    %shift = arith.constant "
-             << formatReal(std::erfc(beta * cutoff) / cutoff) << " : f64\n"
-             << "    %shifted = arith.subf %screened, %shift : f64\n";
-          kernel = "%shifted";
-        }
-        os << "    %coulomb = arith.mulf %fqq, " << kernel << " : f64\n";
-      } else if (program.reactionField) {
-        // f q q (1/r + k r² − c), 0 at the cutoff (D140).
-        auto [k, c] = getReactionField(control);
-        os << "    %one = arith.constant 1.0 : f64\n"
-           << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
-           << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-           << "    %inverse = arith.divf %one, " << rq << " : f64\n"
-           << "    %rr = arith.mulf %r, %r : f64\n"
-           << "    %field = arith.mulf %krf, %rr : f64\n"
-           << "    %near = arith.addf %inverse, %field : f64\n"
-           << "    %rf = arith.subf %near, %crf : f64\n"
-           << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
-      } else if (shiftsAtCutoff) {
-        // f q q (1/r − 1/r_c), the cutoff shifted (D210).
-        os << "    %one = arith.constant 1.0 : f64\n"
-           << "    %inverse = arith.divf %one, " << rq << " : f64\n"
-           << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
-           << " : f64\n"
-           << "    %cut = arith.subf %inverse, %rc_inverse : f64\n"
-           << "    %coulomb = arith.mulf %fqq, %cut : f64\n";
-      } else {
-        os << "    %coulomb = arith.divf %fqq, " << rq << " : f64\n";
-      }
-      if (value.empty()) {
-        value = "%coulomb";
-      } else {
-        os << "    %k = arith.addf " << value << ", %coulomb : f64\n";
-        value = "%k";
-      }
-    }
-    // In `@alchemical` the pairs that λ leaves alone add nothing.
-    if (alchemicalOnly) {
-      os << "    %masked = arith.mulf " << value << ", %cross : f64\n";
-      value = "%masked";
-    }
-    os << "    md.yield " << value << " : f64\n"
-       << "  } : !pairs, !vec -> f64\n";
-    add("nonbonded");
+  for (const TermBuilder *builder :
+       mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders())) {
+    TermBuilder::PotentialSelection selection{terms, tupleTerm, pairTerm,
+                                              externalTerm, alchemicalOnly};
+    if (const auto *role = builder->getRoles().nonbonded)
+      role->emit(*this, getNonbondedData(), selection, addition);
+    else
+      builder->emitTopologyPotential(*this, selection, addition);
   }
-
-  // %shielded, the share of 1/r that the reciprocal sum holds at %r:
-  // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
-  // within the cutoff and 1/r beyond it (D266).
-  auto emitShielded = [&](llvm::raw_ostream &os) {
-    if (!program.pmeProlate) {
-      os << "    %br = arith.mulf %beta, %r : f64\n"
-         << "    %erf = math.erf %br : f64\n"
-         << "    %shielded = arith.divf %erf, %r : f64\n";
-      return;
-    }
-    os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
-       << " : f64\n"
-       << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
-    std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_", control.precision);
-    os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
-       << "    %r_one = arith.constant 1.0 : f64\n"
-       << "    %r_inverse = arith.divf %r_one, %r : f64\n"
-       << "    %r_inside = arith.cmpf olt, %xr, %r_one : f64\n"
-       << "    %shielded = arith.select %r_inside, %near, %r_inverse : f64\n";
-  };
-  if (program.pme && (terms & CoulombExcluded) && has("excluded")) {
-    // The excluded pairs take their share of the reciprocal sum out again:
-    // −f q_i q_j erf(β r) / r, with the charges that the reciprocal sum
-    // takes, those of the selection of [free_energy] times 1 − λ (D161).
-    bool flags = scalesCoulomb || (alchemicalOnly && decouples());
-    os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
-          "distance(0, 1))\n"
-       << "      gather(%p_q" << (flags ? ", %p_alch : !real, !real" : " : !real")
-       << ") {\n"
-       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64"
-       << (flags ? ", %al_i: f64, %al_j: f64" : "") << "):\n"
-       << "    %f = arith.constant " << formatReal(-coulombInternal)
-       << " : f64\n"
-       << "    %beta = arith.constant " << formatReal(program.pmeBeta)
-       << " : f64\n"
-       << "    %qq0 = arith.mulf %q_i, %q_j : f64\n";
-    std::string qq = "%qq0";
-    if (flags) {
-      os << "    %al_one = arith.constant 1.0 : f64\n"
-         << "    %al_li = arith.mulf %al_i, %lambda_coulomb : f64\n"
-         << "    %al_si = arith.subf %al_one, %al_li : f64\n"
-         << "    %al_lj = arith.mulf %al_j, %lambda_coulomb : f64\n"
-         << "    %al_sj = arith.subf %al_one, %al_lj : f64\n"
-         << "    %al_s = arith.mulf %al_si, %al_sj : f64\n"
-         << "    %qq = arith.mulf %qq0, %al_s : f64\n";
-      qq = "%qq";
-    }
-    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n";
-    emitShielded(os);
-    os << "    %e = arith.mulf %fqq, %shielded : f64\n";
-    std::string e = "%e";
-    if (alchemicalOnly) {
-      // Only the pairs within the selection depend on λ.
-      os << "    %al_both = arith.mulf %al_i, %al_j : f64\n"
-         << "    %masked = arith.mulf %e, %al_both : f64\n";
-      e = "%masked";
-    }
-    os << "    md.yield " << e << " : f64\n"
-       << "  } : !rel_excluded, !vec -> f64\n";
-    add("excluded");
-  }
-  if (program.pme && (terms & CoulombWithin) && scalesCoulomb &&
-      has("alchemical_pairs")) {
-    // The pairs within the selection that are not excluded keep their
-    // Coulomb, which the reciprocal sum of the scaled charges takes times
-    // (1 − λ)²: (1 − (1 − λ)²) f q_i q_j erf(β r) / r adds the rest (D161).
-    os << "  %u_within = md.sum_tuples %r_alchemical_pairs, %x, %cell "
-          "coordinates(distance(0, 1))\n"
-       << "      gather(%p_q : !real) {\n"
-       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
-       << "    %f = arith.constant " << formatReal(coulombInternal)
-       << " : f64\n"
-       << "    %beta = arith.constant " << formatReal(program.pmeBeta)
-       << " : f64\n"
-       << "    %one = arith.constant 1.0 : f64\n"
-       << "    %s = arith.subf %one, %lambda_coulomb : f64\n"
-       << "    %s2 = arith.mulf %s, %s : f64\n"
-       << "    %w = arith.subf %one, %s2 : f64\n"
-       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-       << "    %fqq = arith.mulf %f, %qq : f64\n"
-       << "    %fw = arith.mulf %fqq, %w : f64\n";
-    emitShielded(os);
-    os << "    %e = arith.mulf %fw, %shielded : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : !rel_alchemical_pairs, !vec -> f64\n";
-    add("within");
-  }
-  if (program.reactionField && (terms & CoulombExcluded) &&
-      !alchemicalOnly && has("excluded")) {
-    // The field acts on the excluded pairs within the cutoff as well:
-    // f q_i q_j (k r² − c), as GROMACS has it (D140).
-    auto [k, c] = getReactionField(control);
-    os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
-          "distance(0, 1))\n"
-       << "      gather(%p_q : !real) {\n"
-       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
-       << "    %f = arith.constant " << formatReal(coulombInternal)
-       << " : f64\n"
-       << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
-       << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-       << "    %rc = arith.constant " << formatReal(cutoff) << " : f64\n"
-       << "    %zero = arith.constant 0.0 : f64\n"
-       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-       << "    %fqq = arith.mulf %f, %qq : f64\n"
-       << "    %rr = arith.mulf %r, %r : f64\n"
-       << "    %field = arith.mulf %krf, %rr : f64\n"
-       << "    %rf = arith.subf %field, %crf : f64\n"
-       << "    %all = arith.mulf %fqq, %rf : f64\n"
-       << "    %inside = arith.cmpf olt, %r, %rc : f64\n"
-       << "    %e = arith.select %inside, %all, %zero : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : !rel_excluded, !vec -> f64\n";
-    add("excluded");
-  }
-  if (program.ljpme && (terms & LennardJonesExcluded) && has("excluded")) {
-    // The excluded pairs take their share of the grid of the dispersion
-    // out again: c_i c_j P(3, β² r²) / r⁶ with P(3, y) = 1 − exp(−y) (1 +
-    // y + y²/2) = 1 − g(β r) (D162). Below y = 1, P is taken from its
-    // series exp(−y) y³ Σ_k y^k / (k + 3)!, which has no cancellation;
-    // the pairs of a molecule are close, where 1 − g is small.
-    os << "  %u_lj_excluded = md.sum_tuples %r_excluded, %x, %cell "
-          "coordinates(distance(0, 1))\n"
-       << "      gather(%p_type : !ids) {\n"
-       << "  ^bb0(%r: f64, %type_i: i32, %type_j: i32):\n"
-       << "    %c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : !table, i32, "
-          "i32 -> f64\n"
-       << "    %beta = arith.constant " << formatReal(program.ljpmeBeta)
-       << " : f64\n"
-       << "    %bx = arith.mulf %beta, %r : f64\n"
-       << "    %y = arith.mulf %bx, %bx : f64\n"
-       << "    %ny = arith.negf %y : f64\n"
-       << "    %ey = math.exp %ny : f64\n"
-       << "    %one = arith.constant 1.0 : f64\n"
-       << "    %half = arith.constant 0.5 : f64\n";
-    // The series, by Horner's rule, to k = 10: the rest is below 1e-10 of
-    // it.
-    double factorial = 6.0;
-    std::vector<double> coefficients;
-    for (int k = 0; k <= 10; ++k) {
-      coefficients.push_back(1.0 / factorial);
-      factorial *= k + 4;
-    }
-    os << "    %s10 = arith.constant " << formatReal(coefficients[10])
-       << " : f64\n";
-    for (int k = 9; k >= 0; --k)
-      os << "    %a" << k << " = arith.constant "
-         << formatReal(coefficients[k]) << " : f64\n"
-         << "    %sy" << k << " = arith.mulf %s" << k + 1 << ", %y : f64\n"
-         << "    %s" << k << " = arith.addf %sy" << k << ", %a" << k
-         << " : f64\n";
-    os << "    %y2 = arith.mulf %y, %y : f64\n"
-       << "    %y3 = arith.mulf %y2, %y : f64\n"
-       << "    %ey3 = arith.mulf %ey, %y3 : f64\n"
-       << "    %series = arith.mulf %ey3, %s0 : f64\n"
-       << "    %hy2 = arith.mulf %half, %y2 : f64\n"
-       << "    %p1 = arith.addf %one, %y : f64\n"
-       << "    %p = arith.addf %p1, %hy2 : f64\n"
-       << "    %g = arith.mulf %ey, %p : f64\n"
-       << "    %closed = arith.subf %one, %g : f64\n"
-       << "    %small = arith.cmpf olt, %y, %one : f64\n"
-       << "    %kept = arith.select %small, %series, %closed : f64\n"
-       << "    %r2 = arith.mulf %r, %r : f64\n"
-       << "    %r4 = arith.mulf %r2, %r2 : f64\n"
-       << "    %r6 = arith.mulf %r4, %r2 : f64\n"
-       << "    %cr = arith.divf %c6, %r6 : f64\n"
-       << "    %e = arith.mulf %cr, %kept : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : !rel_excluded, !vec -> f64\n";
-    add("lj_excluded");
-  }
-  if (program.ljpme && (terms & LennardJonesReciprocal)) {
-    // The grid of the dispersion (D162), of the coefficients c_i.
-    bool listed = hasField("ljpme_listed");
-    os << "  %u_lj_reciprocal, %f_lj_reciprocal, %w_lj_reciprocal = "
-          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli"
-       << (listed ? " listed(%p_ljpme_listed)" : "") << "\n"
-       << "      grid([" << program.ljpmeGrid[0] << ", "
-       << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2]
-       << "]) order(" << control.ljpmeOrder << ") beta("
-       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion"
-       << (listed && gathersAll("ljpme_listed") ? " gather_all" : "") << "\n"
-       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
-       << " -> f64, !vec, vector<9xf64>\n";
-    add("lj_reciprocal");
-  }
-  if (program.pme && (terms & CoulombReciprocal)) {
-    // The charges of the selection of [free_energy] times 1 − λ (D161).
-    std::string charges = "%p_q";
-    if (scalesCoulomb) {
-      os << "  %q_scaled = md.map_particles gather(%p_q, %p_alch : !real, "
-            "!real) {\n"
-         << "  ^bb0(%q: f64, %al: f64):\n"
-         << "    %one = arith.constant 1.0 : f64\n"
-         << "    %al_l = arith.mulf %al, %lambda_coulomb : f64\n"
-         << "    %al_s = arith.subf %one, %al_l : f64\n"
-         << "    %qs = arith.mulf %q, %al_s : f64\n"
-         << "    md.yield %qs : f64\n"
-         << "  } : !real\n";
-      charges = "%q_scaled";
-    }
-    // The particles of a charge that can be nonzero alone
-    // (D262).
-    bool listed = hasField("pme_listed");
-    os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-       << charges << ", %cell, %t_pme_moduli"
-       << (listed ? " listed(%p_pme_listed)" : "") << "\n"
-       << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
-       << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
-       << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
-       << formatReal(coulombInternal) << ")"
-       << (program.pmeProlate ? " prolate" : "")
-       << (program.pmeP3M ? " p3m" : "")
-       << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
-       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
-       << " -> f64, !vec, vector<9xf64>\n";
-    add("reciprocal");
-  }
-  for (const TermBuilder *builder : getTermBuilders())
-    if (builder->topologyRank() == 3)
-      builder->emitTopologyPotential(
-          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
-  for (const TermBuilder *builder : termBuildersByPotentialRank())
-    if (builder->topologyRank() == 1)
-      builder->emitTopologyPotential(
-          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
-  for (const TermBuilder *builder : getTermBuilders())
-    if (builder->topologyRank() == 4)
-      builder->emitTopologyPotential(
-          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, addition);
-  for (const TermBuilder *builder : termBuildersByPotentialRank())
-    if (builder->topologyRank() == 2)
-      builder->emitTopologyPotential(
-          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly},
-          addition);
   if (total.empty()) {
     os << "  %zero = arith.constant 0.0 : f64\n";
     total = "%zero";
@@ -935,7 +327,8 @@ void Builder::emitTerms(StringRef x) {
   const auto definitions = getTermDefinitions();
   unsigned storedTermCount = 0;
   for (const TermBuilder *builder : getTermBuilders())
-    storedTermCount += builder->getStoredTermCount(*this);
+    if (const auto *role = builder->getRoles().postEvaluation)
+      storedTermCount += role->getStoredTermCount(*this);
   int size =
       definitions.size() + storedTermCount;
   std::string type = "memref<" + std::to_string(size) + "xf64>";
@@ -952,7 +345,8 @@ void Builder::emitTerms(StringRef x) {
        << type << "\n";
   }
   for (const TermBuilder *builder : getTermBuilders())
-    builder->emitStoredTerms(*this, type, index);
+    if (const auto *role = builder->getRoles().postEvaluation)
+      role->emitStoredTerms(*this, type, index);
   os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"
      << "  func.call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";

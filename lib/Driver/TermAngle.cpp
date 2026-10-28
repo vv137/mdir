@@ -6,8 +6,11 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class AngleTermBuilder final : public TermBuilder {
 public:
-  AngleTermBuilder() { tupleRank = -1; }
-  int topologyRank() const override { return 3; }
+  AngleTermBuilder() {
+    potentialMask = TermInputs::Angles;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     if (!topology.angles.empty()) {

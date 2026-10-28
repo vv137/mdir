@@ -204,7 +204,10 @@ llvm::Error Builder::build() {
   if (control.tunables) {
     if (!system.topology)
       return makeError("tunable parameters are for a model with a topology");
-    if (control.hasFreeEnergy || control.ljpme || hasCoordinateOutput())
+    if (control.hasFreeEnergy ||
+        llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
+          return builder->rejectsTunables(*this);
+        }))
       return makeError("tunable parameters do not take [free_energy], "
                        "LJPME, or pulls yet");
     program.tunable = true;
@@ -425,7 +428,8 @@ llvm::Error Builder::build() {
   emitObservedPotentials();
   shiftsAtCutoff = false;
   for (const TermBuilder *term : getTermBuilders())
-    term->emitAuxiliaryPotentials(*this);
+    if (const auto *role = term->getRoles().coordinateOutput)
+      role->emitAuxiliaryPotentials(*this);
   emitSitePotentials();
   emitPrograms();
   emitEntry();
@@ -766,14 +770,7 @@ std::string mdir::driver::describeDifference(const Program &a,
 }
 
 std::vector<TermDefinition> Builder::getTermDefinitions() const {
-  std::vector<TermDefinition> definitions = {
-      {0, 0, "term_lj", LennardJones},
-      {1, 0, "term_coulomb", Coulomb},
-      {8, 0, "term_excluded", CoulombExcluded | CoulombWithin},
-      {9, 0, "term_reciprocal", CoulombReciprocal},
-      {12, 0, "term_lj_excluded", LennardJonesExcluded},
-      {13, 0, "term_lj_reciprocal", LennardJonesReciprocal},
-  };
+  std::vector<TermDefinition> definitions;
   for (const TermBuilder *builder : getTermBuilders())
     builder->appendTermDefinitions(*this, definitions);
   llvm::stable_sort(definitions, [](const auto &a, const auto &b) {

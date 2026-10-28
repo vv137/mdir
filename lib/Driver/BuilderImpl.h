@@ -95,7 +95,6 @@ namespace mdir {
 namespace driver {
 namespace builder {
 
-
 /// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
 /// from CODATA 2018 (docs/conventions.md). An expression names it
 /// `coulomb`.
@@ -306,9 +305,84 @@ public:
   virtual std::string emit(const TermInputs &, llvm::raw_ostream &,
                             const TermEvaluation &) const = 0;
 };
+/// Narrow roles for operations that are not shared by all term adapters.
+class TermPostEvaluation {
+public:
+  virtual ~TermPostEvaluation() = default;
+  virtual bool hasForceCorrection(const TermInputs &) const = 0;
+  virtual void emitForceCorrection(TermEmission &,
+                                   const TermCorrection &) const = 0;
+  virtual unsigned getStoredTermCount(const TermInputs &) const = 0;
+  virtual void emitStoredTerms(TermEmission &, StringRef, int &) const = 0;
+};
+class TermCoordinateOutput {
+public:
+  virtual ~TermCoordinateOutput() = default;
+  virtual bool hasCoordinateOutput(const TermInputs &) const = 0;
+  virtual void emitAuxiliaryPotentials(TermEmission &) const = 0;
+  virtual void emitOutput(TermEmission &, const TermOutput &) const = 0;
+};
+class TermScalarParameters {
+public:
+  virtual ~TermScalarParameters() = default;
+  virtual llvm::Error collectBareConstants(TermParameters &) const = 0;
+  virtual void collectObservedConstants(TermParameters &) const = 0;
+  virtual void appendInitialConstants(
+      const TermInputs &,
+      llvm::function_ref<void(std::string, double)>) const = 0;
+};
+class TermNonbonded;
+struct TermNonbondedData {
+  decltype(Program::coulombConstantEnergy) &coulombConstantEnergy;
+  decltype(Program::coulombConstantVirial) &coulombConstantVirial;
+  decltype(Program::coulombSelfEnergy) &coulombSelfEnergy;
+  decltype(Program::dispersionEnergy) &dispersionEnergy;
+  decltype(Program::dispersionFixedEnergy) &dispersionFixedEnergy;
+  decltype(Program::dispersionVirial) &dispersionVirial;
+  decltype(Program::fields) &fields;
+  decltype(Program::gradientChargeFixed) &gradientChargeFixed;
+  decltype(Program::gradientChargeVolume) &gradientChargeVolume;
+  decltype(Program::gradientFields) &gradientFields;
+  decltype(Program::gradientOutcomes) &gradientOutcomes;
+  decltype(Program::gradientShiftEnergy) &gradientShiftEnergy;
+  decltype(Program::gradientShiftFixedEnergy) &gradientShiftFixedEnergy;
+  decltype(Program::lambdaFixedDerivatives) &lambdaFixedDerivatives;
+  decltype(Program::lambdaVolumeDerivatives) &lambdaVolumeDerivatives;
+  decltype(Program::ljpme) &ljpme;
+  decltype(Program::ljpmeBeta) &ljpmeBeta;
+  decltype(Program::ljpmeGrid) &ljpmeGrid;
+  decltype(Program::ljpmeSelfEnergy) &ljpmeSelfEnergy;
+  decltype(Program::observableFixedConstants) &observableFixedConstants;
+  decltype(Program::observableVolumeConstants) &observableVolumeConstants;
+  decltype(Program::pme) &pme;
+  decltype(Program::pmeAliasing) &pmeAliasing;
+  decltype(Program::pmeBackgroundFactor) &pmeBackgroundFactor;
+  decltype(Program::pmeBandwidth) &pmeBandwidth;
+  decltype(Program::pmeBeta) &pmeBeta;
+  decltype(Program::pmeFarSeries) &pmeFarSeries;
+  decltype(Program::pmeGrid) &pmeGrid;
+  decltype(Program::pmeOrder) &pmeOrder;
+  decltype(Program::pmeP3M) &pmeP3M;
+  decltype(Program::pmeProlate) &pmeProlate;
+  decltype(Program::pmeSelfFactor) &pmeSelfFactor;
+  decltype(Program::pmeWindowBandwidth) &pmeWindowBandwidth;
+  decltype(Program::reactionField) &reactionField;
+  decltype(Program::stateFixedEnergies) &stateFixedEnergies;
+  decltype(Program::stateVolumeEnergies) &stateVolumeEnergies;
+  decltype(Program::tables) &tables;
+  decltype(Program::tunableGradient) &tunableGradient;
+  bool &gradientCharges;
+  const DependentTerms *dependent;
+  bool lambdaArguments, shiftsAtCutoff;
+};
+double getTopologyShiftFactor(const TermInputs &);
 struct TermRoles {
   const TermPreparation *preparation = nullptr;
   const TermHostEvaluation *hostEvaluation = nullptr;
+  const TermPostEvaluation *postEvaluation = nullptr;
+  const TermCoordinateOutput *coordinateOutput = nullptr;
+  const TermScalarParameters *scalarParameters = nullptr;
+  const TermNonbonded *nonbonded = nullptr;
 };
 
 /// Adds either a conventional named contribution or an explicit SSA result.
@@ -338,68 +412,82 @@ struct TermDefinition {
 class TermBuilder {
 public:
   struct PotentialSelection {
-    unsigned terms;
-    int tupleTerm, pairTerm, externalTerm;
-    bool alchemicalOnly;
+    unsigned terms = 0;
+    int tupleTerm = -1, pairTerm = -1, externalTerm = -1;
+    bool alchemicalOnly = false;
+  };
+  struct ObservedSelection {
+    unsigned kind = 0;
+    int index = -1;
+    PotentialSelection potential;
   };
   virtual ~TermBuilder() = default;
   const TermRoles &getRoles() const { return roles; }
   int getTupleRank() const { return tupleRank; }
+  StringRef getPairExclusion() const { return pairExclusion; }
+  virtual unsigned getPotentialMask(const TermInputs &,
+                                    const DependentTerms *dependent,
+                                    bool alchemicalOnly) const {
+    return dependent ? 0 : (alchemicalOnly ? alchemicalMask : potentialMask);
+  }
   virtual int parameterRank() const { return 0; }
   virtual int potentialRank() const { return 0; }
   virtual int topologyRank() const { return 0; }
   virtual void collectTupleSets(TermParameters &) const {}
-  virtual void refillTupleSet(const TermInputs &, Program::TupleSet &) const {}
+  virtual void refillArrays(TermParameters &) const {}
   virtual llvm::Expected<std::optional<Program::GradientOutcome>>
-  getTunableOutcome(const TermInputs &, unsigned) const {
+  collectTunableOutcome(TermParameters &, unsigned) const {
     return std::optional<Program::GradientOutcome>();
-  }
-  virtual llvm::Expected<std::optional<Program::GradientOutcome>>
-  collectTunableOutcome(TermParameters &context, unsigned index) const {
-    return getTunableOutcome(context, index);
   }
   virtual llvm::Error collectBareParameters(TermParameters &) const {
     return llvm::Error::success();
   }
-  virtual llvm::Error collectBareConstants(TermParameters &) const {
-    return llvm::Error::success();
-  }
   virtual void collectTopologyTables(TermParameters &) const {}
-  virtual bool refillTable(const TermInputs &, Program::Table &) const { return false; }
   virtual llvm::Error collectDispersionConstants(TermParameters &) const {
     return llvm::Error::success();
   }
-  virtual void collectObservedConstants(TermParameters &) const {}
   virtual void collectGradientShiftConstants(TermParameters &) const {}
+  virtual bool rejectsTunables(const TermInputs &) const { return false; }
   virtual bool needsPairNeighborhood(const TermInputs &, const PotentialSelection &) const {
     return false;
   }
   virtual void emitBareContributions(TermEmission &, std::string &) const {}
   virtual void collectParameters(TermParameters &) const {}
-  virtual bool hasForceCorrection(const TermInputs &) const { return false; }
-  virtual void emitForceCorrection(TermEmission &, const TermCorrection &) const {}
-  virtual unsigned getStoredTermCount(const TermInputs &) const { return 0; }
-  virtual void emitStoredTerms(TermEmission &, StringRef, int &) const {}
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
       const TermPotentialAddition &) const {}
   virtual void appendTermDefinitions(const TermInputs &,
                                      std::vector<TermDefinition> &) const {}
-  virtual bool hasCoordinateOutput(const TermInputs &) const { return false; }
-  virtual void emitAuxiliaryPotentials(TermEmission &) const {}
-  virtual void emitOutput(TermEmission &, const TermOutput &) const {}
-  virtual std::pair<unsigned, int> findObservedTerm(const TermInputs &,
-                                                  StringRef) const {
-    return {0, -1};
+  virtual ObservedSelection findObservedTerm(const TermInputs &,
+                                             StringRef) const {
+    return {};
   }
   virtual std::optional<double> getObservedValue(const TermInputs &, unsigned,
                                                 int, StringRef) const {
     return std::nullopt;
   }
 protected:
+  unsigned potentialMask = 0, alchemicalMask = 0;
   int tupleRank = 0;
+  StringRef pairExclusion;
   TermRoles roles;
 
+};
+
+/// A narrow context for primary/excluded/reciprocal preparation and emission.
+class TermNonbonded {
+public:
+  virtual ~TermNonbonded() = default;
+  virtual llvm::Error collect(TermParameters &, TermNonbondedData,
+                              llvm::ArrayRef<const TermBuilder *>) const = 0;
+  virtual void collectGradientFields(TermParameters &,
+                                     TermNonbondedData) const = 0;
+  virtual llvm::Error
+  collectGradients(TermParameters &, TermNonbondedData,
+                   llvm::ArrayRef<const TermBuilder *>) const = 0;
+  virtual void emit(TermEmission &, TermNonbondedData,
+                    const TermBuilder::PotentialSelection &,
+                    const TermPotentialAddition &) const = 0;
 };
 
 using TermBuilderFactory = std::unique_ptr<TermBuilder> (*)();
@@ -412,6 +500,7 @@ std::unique_ptr<TermBuilder> createTupleTermBuilder();
 std::unique_ptr<TermBuilder> createPairTermBuilder();
 std::unique_ptr<TermBuilder> createTripletTermBuilder();
 std::unique_ptr<TermBuilder> createModelTermBuilder();
+std::unique_ptr<TermBuilder> createNonbondedTermBuilder();
 std::unique_ptr<TermBuilder> createBondTermBuilder();
 std::unique_ptr<TermBuilder> createCMapTermBuilder();
 std::unique_ptr<TermBuilder> createPairs14TermBuilder();
@@ -428,6 +517,8 @@ std::vector<const TermBuilder *> termBuildersByParameterRank(
     llvm::ArrayRef<const TermBuilder *>);
 std::vector<const TermBuilder *> termBuildersByPotentialRank(
     llvm::ArrayRef<const TermBuilder *>);
+std::vector<const TermBuilder *>
+    termBuildersByTopologyRank(llvm::ArrayRef<const TermBuilder *>);
 
 class Builder : private TermEmission {
 public:
@@ -531,20 +622,54 @@ private:
   /// or one row for each particle, type, or tuple.
   void collectTopologyArrays();
   std::vector<TermDefinition> getTermDefinitions() const;
-  /// The stage after it: the constants of the energy that the host adds,
-  /// from the arrays and the model.
-  llvm::Error collectTopologyConstants();
+  TermNonbondedData getNonbondedData() {
+    return {program.coulombConstantEnergy,
+            program.coulombConstantVirial,
+            program.coulombSelfEnergy,
+            program.dispersionEnergy,
+            program.dispersionFixedEnergy,
+            program.dispersionVirial,
+            program.fields,
+            program.gradientChargeFixed,
+            program.gradientChargeVolume,
+            program.gradientFields,
+            program.gradientOutcomes,
+            program.gradientShiftEnergy,
+            program.gradientShiftFixedEnergy,
+            program.lambdaFixedDerivatives,
+            program.lambdaVolumeDerivatives,
+            program.ljpme,
+            program.ljpmeBeta,
+            program.ljpmeGrid,
+            program.ljpmeSelfEnergy,
+            program.observableFixedConstants,
+            program.observableVolumeConstants,
+            program.pme,
+            program.pmeAliasing,
+            program.pmeBackgroundFactor,
+            program.pmeBandwidth,
+            program.pmeBeta,
+            program.pmeFarSeries,
+            program.pmeGrid,
+            program.pmeOrder,
+            program.pmeP3M,
+            program.pmeProlate,
+            program.pmeSelfFactor,
+            program.pmeWindowBandwidth,
+            program.reactionField,
+            program.stateFixedEnergies,
+            program.stateVolumeEnergies,
+            program.tables,
+            program.tunableGradient,
+            gradientCharges,
+            dependent ? &*dependent : nullptr,
+            lambdaArguments,
+            shiftsAtCutoff};
+  }
   /// In its place, for a build that was given the arrays of another: takes
   /// them, fills those that hold the values of the tunables from the model,
   /// and checks that none is left without its numbers.
   llvm::Error adoptArrays();
-  /// The arrays that the values of the tunables enter, each from the model,
-  /// for both stages: the field of the charges, the tables of the
-  /// Lennard-Jones, of the weights of their seeds, and of the tunable
-  /// constants, a parameter of a term over tuples, and the products of the
-  /// charges of the 1-4 pairs.
-  void fillCharges(Program::Field &field) const;
-  void fillTypeTable(Program::Table &table) const;
   /// With Control::dependentTerms, the terms that the program keeps: every
   /// potential has only these, and the host adds to the energy only what
   /// belongs to them (D243).
@@ -571,11 +696,6 @@ private:
   emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
                           StringRef x, StringRef cell, StringRef relations,
                           StringRef prefix) override;
-  bool hasCoordinateOutput() const {
-    return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
-      return term->hasCoordinateOutput(*this);
-    });
-  }
   /// Whether the force on each virtual site is spread by the derivative of
   /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
   /// out in `emitSpreadSites` (`written`), D298.
@@ -593,47 +713,7 @@ private:
                                 StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const override;
-  /// β, the grid, the influence function, and the constant terms of
-  /// particle mesh Ewald (docs/pme.md).
-  llvm::Error collectPME();
-  /// The parameters and tables of the prolate kernel (D266).
-  llvm::Error collectProlate();
-  /// The field `name` of the places of the particles whose `values` are not
-  /// zero, then −1 − the place of each of the others
-  /// (D262), which the reciprocal
-  /// sum of PME spreads and gathers alone; none where every value is
-  /// nonzero, or where a tunable of one of `kinds` may change the values.
-  void collectListed(llvm::StringRef name, llvm::ArrayRef<double> values,
-                     llvm::ArrayRef<Control::TunableKind> kinds);
-  /// Whether the program has the field `name`.
-  bool hasField(llvm::StringRef name) const {
-    return llvm::any_of(program.fields, [&](const Program::Field &field) {
-      return field.name == name;
-    });
-  }
-  /// Whether more than half the particles are in the list `name` of
-  /// collectListed: a device then gathers every particle (`gather_all`),
-  /// as the gathering over the list costs more than the others where they
-  /// are few and share the points of the grid of their neighbors
-  /// (D262).
-  bool gathersAll(llvm::StringRef name) const {
-    for (const Program::Field &field : program.fields)
-      if (field.name == name) {
-        size_t listed = llvm::count_if(field.values.get(),
-                                       [](double v) { return v >= 0.0; });
-        return 2 * listed > field.values.size();
-      }
-    return false;
-  }
-  /// The grid of particle mesh Ewald: given, or from the largest spacing in
-  /// Å; and the table `name` of the factors of its influence function along
-  /// each edge.
-  llvm::Error collectMesh(StringRef name, const int64_t (&given)[3],
-                          double spacing, int64_t order,
-                          PMEInfluence kind, int64_t (&grid)[3]);
-  /// β, the grid, the coefficients, and the self term of particle mesh
-  /// Ewald for the dispersion (D162).
-  llvm::Error collectLJPME();
+
   void emitPrograms();
   /// Collects the values of Program::startValues, which the entry takes
   /// as arguments (D227).
@@ -738,7 +818,8 @@ private:
 
   bool hasForceCorrections() const {
     return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
-      return term->hasForceCorrection(*this);
+      const auto *role = term->getRoles().postEvaluation;
+      return role && role->hasForceCorrection(*this);
     });
   }
   /// Whether the reference positions of the restraints follow the cell,
@@ -898,6 +979,7 @@ private:
   struct ObservedTerm {
     unsigned kind = 0;
     int index = -1;
+    TermBuilder::PotentialSelection potential;
     std::string name;
     std::vector<std::string> constants;
     std::vector<std::pair<int, size_t>> columns;
@@ -927,64 +1009,17 @@ private:
   void emitFreeEnergyOutput(StringRef indent, StringRef x, StringRef cell,
                             StringRef prefix, StringRef step,
                             StringRef time);
-  /// The constant energies of [free_energy] at each state and their
-  /// derivatives (D161).
-  void collectFreeEnergyConstants();
-  /// The correction for the dispersion of a topology at the volume of the
-  /// file, in kJ/mol; with `decoupled`, without the pairs that the
-  /// selection of [free_energy] decouples.
-  double getTopologyDispersion(bool decoupled) const;
-  /// What a shift of the topology's Lennard-Jones to 0 at the cutoff takes
-  /// from the pairs within it, estimated at a uniform density, in kJ/mol at
-  /// the volume of the file (D210).
-  double getTopologyShift(bool decoupled) const;
-  /// Collects the tails of the observed pair terms and their derivatives
-  /// in the observed constants, for the columns of `observe`.
-  void collectObservedTails();
   /// The tail of the pair term `index` at the volume of the file, in
   /// kJ/mol, with the values `changes` in place of those of the run (a
   /// component `lambda_<name>` of λ, or a constant of the term), and its
   /// share of the trace of the virial; an error if the integral fails.
-  using PairTail = PairTermTail;
-  llvm::Expected<PairTail>
-  getPairTail(unsigned index, const llvm::StringMap<double> &changes) const {
-    return getCustomPairTail(*this, index, changes);
-  }
-  /// 1 − V / (N (4π/3) r_c³), which takes the particle itself out of the
-  /// neighbors within r_c in the estimate of the shift.
-  double getShiftFactor() const;
+
   /// Its part that does not depend on the volume once it multiplies a
   /// quantity proportional to 1 / V: −V / (N (4π/3) r_c³) (#224).
-  double getShiftFixedFactor() const override { return getShiftFactor() - 1.0; }
-  /// The sum over the pair terms, at the values `changes`, of the tail and
-  /// the estimate of the shift: what the correction adds to the quantities
-  /// of the shifted potential (D210).
-  /// With `fixed`, the part of the estimates that does not depend on the
-  /// volume instead (#224).
-  double getPairTails(const llvm::StringMap<double> &changes,
-                      bool fixed = false) const {
-    return getCustomPairTails(*this, changes, fixed);
+  double getShiftFixedFactor() const override {
+    return getTopologyShiftFactor(*this) - 1.0;
   }
-  /// The derivative of the tail of the pair term `index` in the value
-  /// `name`, with that of the estimate of the shift if `shift`: exactly 0
-  /// if its expression does not read it.
-  /// With `fixed`, that of the part of the estimate that does not depend
-  /// on the volume instead (#224).
-  double getPairTailDerivative(unsigned index, StringRef name, double value,
-                               bool shift = true, bool fixed = false) const {
-    return getCustomPairTailDerivative(*this, index, name, value, shift, fixed);
-  }
-  /// The values of the components of λ at the state `k`.
-  llvm::StringMap<double> getLambdaValues(size_t k) const {
-    llvm::StringMap<double> values;
-    for (const auto &[name, list] : control.freeEnergy.lambdas)
-      values["lambda_" + name] = control.freeEnergy.get(name, k);
-    return values;
-  }
-  /// The self term of particle mesh Ewald and the background of a net
-  /// charge at the volume of the file, in kJ/mol, with the charges of the
-  /// selection of [free_energy] times 1 − `lambda`.
-  std::pair<double, double> getPMEConstants(double lambda) const;
+
   /// Emits the number of the step about to be taken, from the counter on
   /// the host that each step advances, and returns the operands that a
   /// program of a step takes for it.
@@ -1016,8 +1051,9 @@ private:
                       StringRef uResult = "", StringRef w = "",
                       StringRef wResult = "") {
     for (const TermBuilder *term : getTermBuilders())
-      term->emitForceCorrection(*this, {scaleName, indent, x, prefix, f, fResult,
-                                        u, uResult, w, wResult});
+      if (const auto *role = term->getRoles().postEvaluation)
+        role->emitForceCorrection(*this, {scaleName, indent, x, prefix, f,
+                                          fResult, u, uResult, w, wResult});
   }
   /// Invokes the hosted-evaluation role at its existing correction site.
   std::string emitHostEvaluation(StringRef indent, StringRef x, StringRef cell,
@@ -1443,7 +1479,6 @@ struct Coupled {
   /// take (checkFrameLoop), or empty: the error of the build.
   std::string frameLoopError;
 };
-
 
 } // namespace builder
 } // namespace driver

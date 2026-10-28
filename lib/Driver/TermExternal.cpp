@@ -12,6 +12,10 @@ namespace builder {
 
 class ExternalTermBuilder final : public TermBuilder {
 public:
+  ExternalTermBuilder() {
+    potentialMask = TermInputs::ExternalTerms;
+    alchemicalMask = TermInputs::ExternalTerms;
+  }
   void collectParameters(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     size_t count = topology.getNumParticles();
@@ -61,13 +65,14 @@ public:
                              static_cast<int>(k)});
   }
 
-  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
-                                           StringRef name) const override {
+  ObservedSelection findObservedTerm(const TermInputs &context,
+                                     StringRef name) const override {
     for (auto [index, term] :
          llvm::enumerate(context.getTopology().externalTerms))
       if (term.name == name)
-        return {TermInputs::ExternalTerms, static_cast<int>(index)};
-    return {0, -1};
+        return {TermInputs::ExternalTerms, static_cast<int>(index),
+                {TermInputs::ExternalTerms, -1, -1, static_cast<int>(index), false}};
+    return {};
   }
 
   std::optional<double> getObservedValue(const TermInputs &context, unsigned kind,

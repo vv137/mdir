@@ -6,8 +6,11 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class DihedralTermBuilder final : public TermBuilder {
 public:
-  DihedralTermBuilder() { tupleRank = -1; }
-  int topologyRank() const override { return 3; }
+  DihedralTermBuilder() {
+    potentialMask = TermInputs::Dihedrals;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     if (!topology.dihedrals.empty()) {

@@ -27,6 +27,13 @@ including empty contributions, before the variable-length custom groups.
 Tuple collection ranks retain the interleaving with common gradient and
 constraint data without a new kind-specific virtual operation.
 
+Nonbonded preparation borrows an explicit reference projection of mesh and
+correction data, not the complete program. Restraint post-evaluation, pull
+coordinate output, and custom-pair scalar operations use narrow roles. Array
+refilling, selection masks, ordered definitions, and long-range corrections
+are shared operations with their active implementers listed in driver
+Section 2.12. Every kind of #683 now has an explicit registry entry.
+
 Parameter and contribution-site ranks and an explicit declaration site
 preserve the existing positions. A bounded potential accumulator accepts a named contribution
 or an explicit SSA result, retaining the sum order and the existing names

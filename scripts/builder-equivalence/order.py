@@ -112,6 +112,34 @@ a = 0.01
             text = text.replace('"POWER_FORCE_SWITCH"', quoted(modifier))
             write(f"bonded-combined-{modifier}-{precision}", text + "\n" + extra)
 
+    for precision in ("DOUBLE", "MIXED"):
+        base = bonded.replace('precision = "DOUBLE"', f'precision = "{precision}"')
+        base = base.replace('"POWER_FORCE_SWITCH"', '"FORCE_SWITCH"')
+        base += "\n" + combined
+        write(f"nonbonded-P3M-{precision}", base.replace('[pme]\n', '[pme]\ninfluence = "P3M"\n'))
+        prolate = re.sub(r"\[pme\]\n.*?(?=\[dynamics\])",
+                         '[pme]\nkernel = "PROLATE"\n\n', base, flags=re.DOTALL)
+        write(f"nonbonded-PROLATE-{precision}", prolate)
+        direct = re.sub(r"\[pme\]\n.*?(?=\[dynamics\])", "", base, flags=re.DOTALL)
+        for electrostatics in ("CUTOFF", "REACTION_FIELD"):
+            text = direct.replace('electrostatics    = "PME"',
+                                  f'electrostatics = "{electrostatics}"')
+            if electrostatics == "REACTION_FIELD":
+                text = text.replace('[energy]\n', '[energy]\nreaction_field_dielectric = 78.5\n')
+            write(f"nonbonded-{electrostatics}-{precision}", text)
+        ljpme = base.replace('"FORCE_SWITCH"', '"POTENTIAL_SHIFT"')
+        ljpme = ljpme.replace('[energy]\n', '[energy]\nlennard_jones = "PME"\n')
+        write(f"nonbonded-LJPME-{precision}", ljpme)
+        alchemical = base.replace('"FORCE_SWITCH"', '"POTENTIAL_SHIFT"')
+        alchemical = alchemical.replace('energy_interval = 0',
+            'energy_interval = 1\nfree_energy = "order.dhdl"')
+        alchemical = alchemical.replace('expression = "k*(r-r0)^2"',
+            'expression = "lambda_vdw*k*(r-r0)^2"').replace('expression = "a/r^6"',
+            'expression = "lambda_coulomb*a/r^6"')
+        alchemical += '\n[free_energy]\ncouple = "@1-7"\nstate = 1\n' \
+                      '[free_energy.lambdas]\ncoulomb = [0.0, 0.5, 1.0]\nvdw = [0.0, 0.5, 1.0]\n'
+        write(f"nonbonded-alchemical-{precision}", alchemical)
+
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):

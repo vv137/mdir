@@ -22,7 +22,7 @@ public:
     roles.hostEvaluation = this;
   }
   int parameterRank() const override { return -3; }
-  int topologyRank() const override { return 2; }
+  int topologyRank() const override { return 5; }
   llvm::Error validate(const TermInputs &context) const override;
   llvm::Error prepare(const TermInputs &context,
                       llvm::raw_ostream &os) const override;

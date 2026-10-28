@@ -6,8 +6,11 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class UreyBradleyTermBuilder final : public TermBuilder {
 public:
-  UreyBradleyTermBuilder() { tupleRank = -1; }
-  int topologyRank() const override { return 3; }
+  UreyBradleyTermBuilder() {
+    potentialMask = TermInputs::UreyBradleys;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     if (!topology.ureyBradleys.empty()) {

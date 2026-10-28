@@ -17,7 +17,18 @@ static void fillPairProducts(const TermInputs &context, Program::Field &field) {
 namespace mdir::driver::builder {
 class Pairs14TermBuilder final : public TermBuilder {
 public:
-  Pairs14TermBuilder() { tupleRank = 1; }
+  Pairs14TermBuilder() {
+    potentialMask = TermInputs::LennardJones14 | TermInputs::Coulomb14;
+    tupleRank = 1;
+  }
+  unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
+                            bool alchemicalOnly) const override {
+    if (alchemicalOnly)
+      return 0;
+    return dependent
+               ? (dependent->coulomb ? unsigned(TermInputs::Coulomb14) : 0u)
+               : potentialMask;
+  }
   int topologyRank() const override { return 4; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
@@ -45,12 +56,14 @@ public:
       fillPairProducts(context, set.fields[qq]);
     }
   }
-  void refillTupleSet(const TermInputs &context,
-                      Program::TupleSet &set) const override {
-    if (set.name == "pairs14")
-      for (Program::Field &field : set.fields)
-        if (field.values.empty() && field.name == "qq")
-          fillPairProducts(context, field);
+  void refillArrays(TermParameters &context) const override {
+    for (Program::TupleSet &set : context.getTupleSets()) {
+
+      if (set.name == "pairs14")
+        for (Program::Field &field : set.fields)
+          if (field.values.empty() && field.name == "qq")
+            fillPairProducts(context, field);
+    }
   }
   void appendTermDefinitions(
       const TermInputs &,

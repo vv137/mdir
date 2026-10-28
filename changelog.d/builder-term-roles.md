@@ -1,3 +1,3 @@
 ### Changed
 
-- Move model and bonded-term assembly into owned registry adapters with bounded role interfaces and shared ordered energy-column definitions, preserving generated programs (D[builder-term-roles], #683).
+- Move the remaining model, bonded, and nonbonded assembly into owned registry adapters with bounded role interfaces and shared ordered energy-column definitions, folding shared hooks and narrowing specialized roles while preserving generated programs (D[builder-term-roles], #683).

@@ -7,8 +7,11 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class BondTermBuilder final : public TermBuilder {
 public:
-  BondTermBuilder() { tupleRank = -1; }
-  int topologyRank() const override { return 3; }
+  BondTermBuilder() {
+    potentialMask = TermInputs::Bonds;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     if (!topology.bonds.empty()) {

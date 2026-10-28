@@ -6,7 +6,10 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class CMapTermBuilder final : public TermBuilder {
 public:
-  CMapTermBuilder() { tupleRank = 2; }
+  CMapTermBuilder() {
+    potentialMask = TermInputs::CMaps;
+    tupleRank = 2;
+  }
   int topologyRank() const override { return 4; }
   void collectTupleSets(TermParameters &context) const override {
     const Topology &topology = context.getTopology();

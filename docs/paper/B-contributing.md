@@ -138,85 +138,38 @@ the order of the merges. A reviewer runs the full suite on a GPU and
 reports the result on the pull request before the maintainer approves the
 merge.
 
-D361 narrows the D359 registry hooks: read-only inputs,
-parameter collections, and emission have separate borrowed interfaces.
-Adapters cannot reach the complete builder or its scheduling state and need
-no friendship. The external adapter is migrated; the remaining term kinds
-follow #683, one or two per PR under the unchanged-program gates.
+D359's explicit term registry and the bounded interfaces of D361 now cover
+all kinds of #683: externals, pulls, restraints, generalized Born together
+with surface, custom tuple/centroid/compound terms, custom pairs, triplets,
+staged/opaque models, every bonded family, and nonbonded terms. The bonded
+families are bonds, angles, dihedrals, Urey–Bradley, harmonic impropers,
+special 1–4 pairs, and CMAP. Nonbonded owns primary, excluded, reciprocal,
+and within-selection LJ/Coulomb contributions and mesh/correction preparation.
 
-The pull-coordinate adapter (#683, D359) owns its auxiliary potentials,
-column selection, time-dependent output, and energy/force rows. It uses
-named shared centroid and argument-format emitters. The generated semantic
-potentials and their evaluation sites stay where they were, preserving
-inlining, fusion, and contribution order.
-The restraint adapter (`TermRestraint.cpp`, D359 and D361, #683) collects
-its fields before external fields through an explicit parameter-hook rank.
-Its borrowed correction-site arguments retain reference scaling and the
-force, energy, and virial contribution positions. The stored restraint
-energy column stays last, through its own count/emission hooks; no new
-potential evaluation or IR call boundary is added.
+Each build owns the adapter instances returned by the explicit factory list
+(D[builder-term-roles]). The list retains static-link reachability. Adapters
+borrow physical inputs, named parameter collections, streams, and shared
+emission services; none receives the complete builder/program or scheduling
+state. Born radii stay private to the combined Born/surface adapter. Imported
+model bodies, result names, and cutoff metadata stay private to the model
+adapter. The nonbonded role receives an explicit projection of mesh and
+correction data, excluding entry and scheduling state.
 
-Generalized Born and its nonpolar surface contribution share `TermBorn.cpp`
-(D359, D361, #683), because the surface energy consumes the computed Born
-radii. Its parameter rank -2 preserves radius fields before restraint
-fields (rank -1) and external fields (rank 0). Its potential rank -1
-preserves Born then surface before external contributions, standalone
-potentials, and evaluated energy-column names (rank 0). The radii and Debye
-screening remain adapter details; the interface exposes no GB buffers.
-The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples, custom pairs, and triplets;
-the remaining kinds continue through #683 under unchanged-program gates.
+The hook inventory and implementers are listed in driver Section 2.12.
+Generic behavioral hooks have multiple active implementers. Separate table
+and tuple refill hooks are folded into one shared array hook; independent
+potential declarations and energy columns use one ordered definition record.
+Restraint corrections, coordinate reporting, and custom-pair scalar operations
+use narrow roles. Dispersion and gradient-shift hooks serve both custom pairs
+and built-in nonbonded terms. The shared centroid emitter remains available
+to pulls, and ordinary/special 1–4 LJ pairs share a scalar emitter.
 
-The custom-tuple adapter (`TermTuple.cpp`, D359/D361, #683) owns ordinary,
-compound, and centroid contributions, tuple parameter fields and gradient
-coloring, observable constants, and the refill of kept tuple arrays. The
-shared centroid geometry is still available to the pull adapter. Explicit
-topology and potential ranks preserve contributions among bonded terms
-and definitions/output names before custom pairs. Read-only tuple gradient
-plans and the required mutable gradient/tuple collections are borrowed by
-name, with no complete builder/program access. The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples, custom pairs, and triplets. Bonded and nonbonded terms are next in #683.
-
-The custom-pair adapter (`TermPair.cpp`, D359/D361, #683) owns bare and
-topology pair emission, type/particle fields, tunable tables, observable
-constants, pair-gradient slots, and the bounded scalar tail services used
-by shared host energy aggregation. Expressions, lookup indices, and tail
-memoization live in a per-builder `PairTermPlan`; adapters borrow named
-partial collections and quantities rather than the builder or complete
-mutable program. The potential rank -2 places pairs between tuples (-3)
-and Born/surface (-1), restoring a single definition/output-name loop.
-The particle-field rank 1 keeps pair groups/parameters after externals.
-The quadrature, derivatives, field order, SSA names, and contribution order
-are unchanged. External, pull, restraint, Born/surface, tuple, and pair
-kinds are registered; triplet, model, bonded, and nonbonded kinds remain.
-
-The custom-triplet adapter (`TermTriplet.cpp`, D359/D361, #683) owns
-particle-place type parameters and triplet expression emission. Its named
-partial collection retains shared pair/triplet descriptors without
-exposing the builder or complete program. The same bare-collection hook
-collects pair descriptors before triplet descriptors, before dispersion
-validation; potential ranks -2 and 1 retain pair then triplet contributions.
-Coordinate order, particle-place mapping, SSA names, and numerical operation
-order remain unchanged. No triplet-specific virtual hook is introduced.
-Externals, pulls, restraints, Born/surface, custom tuples, custom pairs,
-and triplets have moved; bonded and nonbonded terms remain.
-
-The staged/opaque model adapter (`TermModel.cpp`, D[builder-term-roles],
-#683) owns its preparation data for one build. The explicit registry names
-factory functions, and the build owns the returned adapters. Preparation
-and hosted evaluation use separate narrow role interfaces with read-only
-inputs, a stream, and borrowed names; no common model-plan mutator or
-complete builder/program is exposed. Field, topology-site, and declaration
-orders are explicit, and staged bodies remain in the shared potential so
-inlining and loop fusion retain their existing order. Model contributions
-follow the existing restraint correction at the same evaluation sites.
-All bonded families now own their tuple data, potential contributions, and
-energy-column definitions in registered adapters: bonds, angles, dihedrals,
-Urey–Bradley, harmonic impropers, special 1–4 pairs, and CMAP. Shared ordered
-definition records supply both declarations and energy output. Explicit
-collection and contribution ranks retain their interleaving with custom
-tuples, gradient fields, constraints, and staged models. The 1–4 adapter
-owns charge-product refilling; its scalar Lennard-Jones emitter is shared
-with ordinary pairs. Nonbonded kinds remain in stage A. The hook inventory
-and single-implementer audit complete that stage; #568 steps 4 and 5 then
-replace term templates with typed IR and leave text only at user boundaries.
+Explicit ranks retain field, table, tuple, contribution, declaration, and
+output order. Every term remains at the same shared/inlined potential site,
+so kernel fusion and SSA names stay unchanged. The migration changes no
+control key, numerical method, or format. Each kind commit compares its
+printed module/lowered corpus and combined-kind order matrix with one fixed
+archived PR base; the final head also compares five checkpoints bitwise and
+runs two full-suite shards. The remaining #568 stages replace term templates
+with typed `OpBuilder` IR and retain parsed text only for user expressions
+and `ModelTerm` at their boundaries.

@@ -30,3 +30,8 @@ fixture, combined with custom tuple, centroid, pair, external, and restraint
 terms in both precisions. It exercises all bonded families, their independent
 energy columns, special 1–4 switching, and the CMAP table in both targets and
 both program forms, alongside the existing Born/model cases.
+
+The nonbonded extension combines the same kinds with direct cutoff, reaction
+field, P3M, prolate PME, LJPME, and alchemical selection. Both precision modes,
+targets, and program forms are compared in printed module/lowered output,
+including the order of the loops that lower to fused kernels.

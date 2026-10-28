@@ -8,6 +8,10 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class BornTermBuilder final : public TermBuilder {
 public:
+  BornTermBuilder() {
+    potentialMask = TermInputs::GeneralizedBorn | TermInputs::Surface;
+    alchemicalMask = 0;
+  }
   int parameterRank() const override { return -2; }
   int potentialRank() const override { return -1; }
   void collectParameters(TermParameters &context) const override;
