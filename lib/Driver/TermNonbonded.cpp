@@ -181,6 +181,38 @@ static mlir::Value buildShieldedCoulomb(mlir::OpBuilder &builder,
   return arith::SelectOp::create(builder, loc, inside, near, rInverse);
 }
 
+// Construction data is owned by the deferred recipe, including grid sizes.
+struct ReciprocalIRConfig {
+  llvm::SmallVector<int64_t, 3> grid;
+  int64_t order = 0;
+  double beta = 0.0, coulomb = 0.0;
+  bool dispersion = false, prolate = false, p3m = false, gatherAll = false;
+};
+
+static TermIRValues buildReciprocal(mlir::OpBuilder &builder,
+                                    mlir::Value positions, mlir::Value charges,
+                                    mlir::Value cell, mlir::Value moduli,
+                                    mlir::Value listed,
+                                    const ReciprocalIRConfig &config) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  llvm::SmallVector<Type> results = {
+      builder.getF64Type(), positions.getType(),
+      VectorType::get({9}, builder.getF64Type())};
+  auto reciprocal = mdir::md::ReciprocalOp::create(
+      builder, loc, results, positions, charges, cell, moduli, listed,
+      builder.getDenseI64ArrayAttr(config.grid),
+      builder.getI64IntegerAttr(config.order),
+      builder.getF64FloatAttr(config.beta),
+      builder.getF64FloatAttr(config.coulomb),
+      config.dispersion ? builder.getUnitAttr() : UnitAttr{},
+      config.prolate ? builder.getUnitAttr() : UnitAttr{},
+      config.p3m ? builder.getUnitAttr() : UnitAttr{},
+      config.gatherAll ? builder.getUnitAttr() : UnitAttr{});
+  return {reciprocal.getEnergy(), reciprocal.getForces(),
+          reciprocal.getVirial()};
+}
+
 llvm::Error NonbondedWork::collectTopologyConstants() {
   const Topology &topology = *system.topology;
   // The reaction field (D140): its self term, −c f Σ q² / 2, which with
@@ -1918,48 +1950,93 @@ public:
     if (program.ljpme && (terms & TermInputs::LennardJonesReciprocal)) {
       // The grid of the dispersion (D162), of the coefficients c_i.
       bool listed = hasField("ljpme_listed");
-      os << "  %u_lj_reciprocal, %f_lj_reciprocal, %w_lj_reciprocal = "
-            "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli"
-         << (listed ? " listed(%p_ljpme_listed)" : "") << "\n"
-         << "      grid([" << program.ljpmeGrid[0] << ", "
-         << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2] << "]) order("
-         << control.ljpmeOrder << ") beta(" << formatReal(program.ljpmeBeta)
-         << ") coulomb(1.0) dispersion"
-         << (listed && gathersAll("ljpme_listed") ? " gather_all" : "") << "\n"
-         << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
-         << " -> f64, !vec, vector<9xf64>\n";
+      ReciprocalIRConfig config;
+      config.grid = {program.ljpmeGrid[0], program.ljpmeGrid[1],
+                     program.ljpmeGrid[2]};
+      config.order = control.ljpmeOrder;
+      config.beta = program.ljpmeBeta;
+      config.coulomb = 1.0;
+      config.dispersion = true;
+      config.gatherAll = listed && gathersAll("ljpme_listed");
+      llvm::SmallVector<StringRef> operands = {"%x", "%p_ljpme_c", "%cell",
+                                               "%t_ljpme_moduli"};
+      llvm::SmallVector<StringRef> types = {"!vec", "!real", "!md.cell",
+                                            "!grid"};
+      if (listed) {
+        operands.push_back("%p_ljpme_listed");
+        types.push_back("!ids");
+      }
+      context.emitIRFragment(
+          "  ", {"%u_lj_reciprocal", "%f_lj_reciprocal", "%w_lj_reciprocal"},
+          {"f64", "!vec", "vector<9xf64>"}, operands, types,
+          [listed, config](mlir::OpBuilder &builder,
+                           mlir::ValueRange values) -> TermIRValues {
+            return buildReciprocal(builder, values[0], values[1], values[2],
+                                   values[3],
+                                   listed ? values[4] : mlir::Value{}, config);
+          });
       add("lj_reciprocal");
     }
     if (program.pme && (terms & TermInputs::CoulombReciprocal)) {
-      // The charges of the selection of [free_energy] times 1 − λ (D161).
-      std::string charges = "%p_q";
-      if (scalesCoulomb) {
-        os << "  %q_scaled = md.map_particles gather(%p_q, %p_alch : !real, "
-              "!real) {\n"
-           << "  ^bb0(%q: f64, %al: f64):\n"
-           << "    %one = arith.constant 1.0 : f64\n"
-           << "    %al_l = arith.mulf %al, %lambda_coulomb : f64\n"
-           << "    %al_s = arith.subf %one, %al_l : f64\n"
-           << "    %qs = arith.mulf %q, %al_s : f64\n"
-           << "    md.yield %qs : f64\n"
-           << "  } : !real\n";
-        charges = "%q_scaled";
-      }
-      // The particles of a charge that can be nonzero alone
-      // (D262).
+      // The listed particles are the ones whose charge can be nonzero (D262).
       bool listed = hasField("pme_listed");
-      os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-         << charges << ", %cell, %t_pme_moduli"
-         << (listed ? " listed(%p_pme_listed)" : "") << "\n"
-         << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
-         << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
-         << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
-         << formatReal(coulombInternal) << ")"
-         << (program.pmeProlate ? " prolate" : "")
-         << (program.pmeP3M ? " p3m" : "")
-         << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
-         << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
-         << " -> f64, !vec, vector<9xf64>\n";
+      ReciprocalIRConfig config;
+      config.grid = {program.pmeGrid[0], program.pmeGrid[1],
+                     program.pmeGrid[2]};
+      config.order = program.pmeOrder;
+      config.beta = program.pmeBeta;
+      config.coulomb = coulombInternal;
+      config.prolate = program.pmeProlate;
+      config.p3m = program.pmeP3M;
+      config.gatherAll = listed && gathersAll("pme_listed");
+      llvm::SmallVector<StringRef> operands = {"%x", "%p_q", "%cell",
+                                               "%t_pme_moduli"};
+      llvm::SmallVector<StringRef> types = {"!vec", "!real", "!md.cell",
+                                            "!grid"};
+      if (scalesCoulomb) {
+        operands.append({"%p_alch", "%lambda_coulomb"});
+        types.append({"!real", "f64"});
+      }
+      if (listed) {
+        operands.push_back("%p_pme_listed");
+        types.push_back("!ids");
+      }
+      context.emitIRFragment(
+          "  ", {"%u_reciprocal", "%f_reciprocal", "%w_reciprocal"},
+          {"f64", "!vec", "vector<9xf64>"}, operands, types,
+          [listed, scalesCoulomb,
+           config](mlir::OpBuilder &builder,
+                   mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            Value charges = values[1];
+            if (scalesCoulomb) {
+              // Charge scaling for the reciprocal sum (D161).
+              auto map = mdir::md::MapParticlesOp::create(
+                  builder, loc, charges.getType(),
+                  ValueRange{charges, values[4]});
+              {
+                OpBuilder::InsertionGuard guard(builder);
+                llvm::SmallVector<Type> blockTypes(2, builder.getF64Type());
+                llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+                Block *block = builder.createBlock(&map.getKernel(), {},
+                                                   blockTypes, locations);
+                auto args = block->getArguments();
+                Value one = arith::ConstantOp::create(
+                    builder, loc, builder.getF64FloatAttr(1.0));
+                Value al =
+                    arith::MulFOp::create(builder, loc, args[1], values[5]);
+                Value scale = arith::SubFOp::create(builder, loc, one, al);
+                Value scaled =
+                    arith::MulFOp::create(builder, loc, args[0], scale);
+                mdir::md::YieldOp::create(builder, loc, ValueRange{scaled});
+              }
+              charges = map.getResult();
+            }
+            Value indices = listed ? values[scalesCoulomb ? 6 : 4] : Value{};
+            return buildReciprocal(builder, values[0], charges, values[2],
+                                   values[3], indices, config);
+          });
       add("reciprocal");
     }
   }

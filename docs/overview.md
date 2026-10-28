@@ -131,7 +131,9 @@ excluded and within-selection Coulomb terms, including reaction-field
 exclusions, also build their complete tuple loops, typed block arguments,
 charge scaling, cutoff selection, and yields with `OpBuilder`. The LJPME
 excluded-pair loop is typed as well, including its cancellation-free
-small-distance Horner series and closed-form selection.
+small-distance Horner series and closed-form selection. Reciprocal dispersion
+and Coulomb emission share a typed constructor with owned grid/configuration
+data; charge scaling is a typed particle map before the same reciprocal op.
 
 ### 2.2 The dialects
 
