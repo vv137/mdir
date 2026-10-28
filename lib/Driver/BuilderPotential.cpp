@@ -10,32 +10,6 @@ using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
-/// The attribute of an md.sum_relation that truncates its energy at the
-/// cutoff as `truncation` says, with the switching distance of `control`;
-/// the power force switch is for the Lennard-Jones of a topology only, and
-/// the reader rejects it elsewhere.
-static std::string getTruncation(const Control &control,
-                                 Truncation truncation) {
-  double from = control.switchDistance * units::length;
-  switch (truncation) {
-  case Truncation::None:
-  case Truncation::PowerForceSwitch:
-  case Truncation::SquaredDistanceSwitch:
-    return "";
-  case Truncation::Shift:
-    return " truncation(shift)";
-  case Truncation::Switch:
-    return " truncation(switch, from = " + formatReal(from) + ")";
-  case Truncation::ForceSwitch:
-    return " truncation(force_switch, from = " + formatReal(from) + ")";
-  }
-  llvm_unreachable("unknown truncation");
-}
-
-static std::string getTruncation(const Control &control) {
-  return getTruncation(control, control.truncation);
-}
-
 llvm::StringMap<std::string> Builder::emitCentroidCoordinates(
     const TupleTerm &term, StringRef indent, StringRef x, StringRef cell,
     StringRef relations, StringRef prefix) {
@@ -168,9 +142,6 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
     if (it == terms.end()) {
       ObservedTerm term;
       term.name = observable.term;
-      for (auto [k, pair] : llvm::enumerate(control.pairs))
-        if (pair.name == term.name)
-          term.kind = PairTerms, term.index = static_cast<int>(k);
       for (const TermBuilder *builder : registerTermBuilders()) {
         auto [kind, index] = builder->findObservedTerm(*this, term.name);
         if (kind)
@@ -456,140 +427,16 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // are not excluded: as the modifiers say, and in `@alchemical` and
   // `@observe<k>` shifted to 0 at the cutoff (D210).
   bool lj = terms & LennardJones, coulomb = terms & Coulomb;
-  bool pairTerms = (terms & PairTerms) && !control.pairs.empty();
+  bool pairTerms = llvm::any_of(registerTermBuilders(), [&](const TermBuilder *builder) {
+    return builder->needsPairNeighborhood(
+        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly});
+  });
   if (lj || coulomb || pairTerms) {
     os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
        << ")";
     if (has("excluded"))
       os << " exclude(%r_excluded : !rel_excluded)";
     os << " : !vec -> !pairs\n";
-  }
-  // The pair terms given by expressions (D137), over the pairs of the
-  // topology that are not excluded, truncated at the cutoff as the
-  // Lennard-Jones is, in the units of the control file: r, sigma in Å, q
-  // in e, epsilon and the energy in kcal/mol. The reader has tested that
-  // the expression is symmetric in the two particles, which the kernel
-  // then asserts; sigma and
-  // epsilon those of the pair, with the pairs of types set apart, and
-  // sigma1, epsilon1 those of the type of each particle with itself.
-  for (auto [k, term] : llvm::enumerate(control.pairs)) {
-    if (!pairTerms || (pairTerm >= 0 && static_cast<int>(k) != pairTerm))
-      continue;
-    if (dependent && !dependent->hasPair(static_cast<unsigned>(k)))
-      continue;
-    if (alchemicalOnly && !usesLambda(term.expression))
-      continue;
-    bool grouped = k < system.pairGroups.size() && !system.pairGroups[k].empty();
-    std::string g = std::to_string(k), set = "pair_" + term.name;
-    Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
-    const std::vector<std::string> &used = expression.getNames();
-    auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
-    // The parameters of each particle that the term takes (D165).
-    std::vector<std::string> stems;
-    for (const auto &[name, values] : system.particleParameters)
-      if (uses(name + "1") || uses(name + "2"))
-        stems.push_back(name);
-    os << "  %u_" << set << " = md.sum_relation %n, %x, %cell gather(%p_type, "
-       << "%p_q" << (grouped ? ", %p_pg" + g + "a, %p_pg" + g + "b" : "");
-    for (const std::string &stem : stems)
-      os << ", %p_pp_" << stem;
-    os << " : !ids, !real" << (grouped ? ", !real, !real" : "");
-    for (size_t n = 0; n != stems.size(); ++n)
-      os << ", !real";
-    os << ")\n"
-       << "      exchange(symmetric, asserted)"
-       << getTruncation(control, truncation)
-       << " {\n"
-       << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
-       << "%q_i: f64, %q_j: f64"
-       << (grouped ? ", %ga_i: f64, %ga_j: f64, %gb_i: f64, %gb_j: f64" : "");
-    for (const std::string &stem : stems)
-      os << ", %pp_" << stem << "_i: f64, %pp_" << stem << "_j: f64";
-    os << "):\n"
-       << "    %pt_angstrom = arith.constant " << formatReal(1.0 / units::length)
-       << " : f64\n"
-       << "    %pt_kcal = arith.constant " << formatReal(1.0 / units::energy)
-       << " : f64\n"
-       << "    %pt_r = arith.mulf %r, %pt_angstrom : f64\n";
-    llvm::StringMap<std::string> values;
-    values["r"] = "%pt_r";
-    if (control.usesTime)
-      values["t"] = "%time";
-    bindLambdas(values);
-    values["q1"] = "%q_i";
-    values["q2"] = "%q_j";
-    for (const std::string &stem : stems) {
-      values[stem + "1"] = "%pp_" + stem + "_i";
-      values[stem + "2"] = "%pp_" + stem + "_j";
-    }
-    auto lookup = [&](StringRef variable, StringRef table, StringRef a,
-                      StringRef b, StringRef factor) {
-      if (!uses(variable))
-        return;
-      std::string raw = ("%pt_" + variable + "_raw").str();
-      std::string value = ("%pt_" + variable).str();
-      os << "    " << raw << " = md.lookup %t_" << table << "[" << a << ", "
-         << b << "] : !table, i32, i32 -> f64\n"
-         << "    " << value << " = arith.mulf " << raw << ", " << factor
-         << " : f64\n";
-      values[variable] = value;
-    };
-    lookup("sigma", "lj_sigma", "%type_i", "%type_j", "%pt_angstrom");
-    lookup("epsilon", "lj_epsilon", "%type_i", "%type_j", "%pt_kcal");
-    lookup("sigma1", "lj_sigma", "%type_i", "%type_i", "%pt_angstrom");
-    lookup("sigma2", "lj_sigma", "%type_j", "%type_j", "%pt_angstrom");
-    lookup("epsilon1", "lj_epsilon", "%type_i", "%type_i", "%pt_kcal");
-    lookup("epsilon2", "lj_epsilon", "%type_j", "%type_j", "%pt_kcal");
-    if (uses("coulomb")) {
-      os << "    %pt_coulomb = arith.constant " << formatReal(coulombConstant)
-         << " : f64\n";
-      values["coulomb"] = "%pt_coulomb";
-    }
-    for (auto [c, constant] : llvm::enumerate(term.constants)) {
-      std::string value = "%pt_c" + std::to_string(c);
-      // A tunable constant is a value of the program's table, which an
-      // update changes without compiling (D213).
-      auto tunable = llvm::find(control.tunableConstants,
-                                std::pair<unsigned, std::string>(
-                                    static_cast<unsigned>(k), constant.first));
-      if (tunable != control.tunableConstants.end() && gradientArguments) {
-        values[constant.first] =
-            "%tg_c" +
-            std::to_string(tunable - control.tunableConstants.begin());
-        continue;
-      }
-      if (tunable != control.tunableConstants.end()) {
-        os << "    " << value << "_row = arith.constant 0 : i32\n"
-           << "    " << value << "_column = arith.constant "
-           << (tunable - control.tunableConstants.begin()) << " : i32\n"
-           << "    " << value << " = md.lookup %t_tunable_constants[" << value
-           << "_row, " << value << "_column] : !grid, i32, i32 -> f64\n";
-      } else {
-        os << "    " << value << " = arith.constant "
-           << formatReal(constant.second) << " : f64\n";
-      }
-      values[constant.first] = value;
-    }
-    bindObserved(term.name, values);
-    std::string energy = expression.emit(os, values, "%pte", "    ", term.name);
-    os << "    %pt_kj = arith.constant " << formatReal(units::energy)
-       << " : f64\n"
-       << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
-    std::string value = "%pt_e";
-    if (grouped) {
-      // A pair of a particle of each group, counted once even if both are
-      // in both.
-      os << "    %pt_ab = arith.mulf %ga_i, %gb_j : f64\n"
-         << "    %pt_ba = arith.mulf %ga_j, %gb_i : f64\n"
-         << "    %pt_either = arith.addf %pt_ab, %pt_ba : f64\n"
-         << "    %pt_one = arith.constant 1.0 : f64\n"
-         << "    %pt_mask = arith.minimumf %pt_either, %pt_one : f64\n"
-         << "    %pt_masked = arith.mulf %pt_e, %pt_mask : f64\n";
-      value = "%pt_masked";
-    }
-    os << "    md.yield " << value << " : f64\n"
-       << "  } : !pairs, !vec -> f64\n";
-    add(set);
   }
   for (const TermBuilder *builder : termBuildersByPotentialRank())
     if (builder->topologyRank() == 0)
@@ -1334,7 +1181,6 @@ llvm::Error Builder::emitPotential() {
   if (control.truncation == Truncation::PowerForceSwitch)
     return makeError("the power force switch is for the Lennard-Jones of a "
                      "topology");
-  std::string truncation = getTruncation(control);
 
   os << "md.potential @energy(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
@@ -1342,100 +1188,8 @@ llvm::Error Builder::emitPotential() {
      << ") : !vec -> !pairs\n";
 
   std::string total;
-  for (auto [index, term] : llvm::enumerate(control.pairs)) {
-    const Expression &expression = expressions[index];
-
-    // The fields that the kernel reads, and the values of the two
-    // particles of a pair.
-    const llvm::StringMap<unsigned> &tables = termTables[index];
-    std::string gathered, types, arguments;
-    if (!tables.empty()) {
-      gathered = "%p_type";
-      types = "!ids";
-      arguments = ", %type_i: i32, %type_j: i32";
-    }
-    for (const Parameter &parameter : parameters) {
-      if (!tables.empty() || parameter.isUniform ||
-          !llvm::is_contained(expression.getNames(), parameter.name))
-        continue;
-      gathered += (gathered.empty() ? "" : ", ") + ("%p_" + parameter.name);
-      types += std::string(types.empty() ? "" : ", ") + "!real";
-      arguments += ", %" + parameter.name + "_i: f64, %" + parameter.name +
-                   "_j: f64";
-    }
-
-    std::string result = "%u" + std::to_string(index);
-    os << "  " << result << " = md.sum_relation %n, %x, %cell";
-    if (!gathered.empty())
-      os << " gather(" << gathered << " : " << types << ")";
-    os << "\n      exchange(symmetric)" << truncation << " {\n";
-    os << "  ^bb0(%r: f64, %d: vector<3xf64>" << arguments << "):\n";
-
-    // The expression is evaluated in the units of the control file.
-    llvm::StringMap<std::string> values;
-    os << "    %to_length = arith.constant "
-       << formatReal(1.0 / units::length) << " : f64\n";
-    os << "    %r_in = arith.mulf %r, %to_length : f64\n";
-    values["r"] = "%r_in";
-
-    for (auto &[name, value] : term.constants) {
-      os << "    %c_" << name << " = arith.constant " << formatReal(value)
-         << " : f64\n";
-      values[name] = "%c_" + name;
-    }
-    if (llvm::is_contained(expression.getNames(), "coulomb")) {
-      os << "    %coulomb = arith.constant " << formatReal(coulombConstant)
-         << " : f64\n";
-      values["coulomb"] = "%coulomb";
-    }
-    for (auto &[name, table] : tables) {
-      os << "    %" << name.str() << " = md.lookup %t_"
-         << program.tables[table].name
-         << "[%type_i, %type_j] : !table, i32, i32 -> f64\n";
-      values[name] = "%" + name.str();
-    }
-    for (const Parameter &parameter : parameters) {
-      if (!tables.empty() ||
-          !llvm::is_contained(expression.getNames(), parameter.name))
-        continue;
-      const std::string &name = parameter.name;
-      if (parameter.isUniform) {
-        os << "    %" << name << " = arith.constant "
-           << formatReal(parameter.value) << " : f64\n";
-      } else if (term.mixing.lookup(name) == Mixing::Arithmetic) {
-        os << "    %half_" << name << " = arith.constant 5.0e-01 : f64\n";
-        os << "    %sum_" << name << " = arith.addf %" << name << "_i, %"
-           << name << "_j : f64\n";
-        os << "    %" << name << " = arith.mulf %half_" << name << ", %sum_"
-           << name << " : f64\n";
-      } else if (term.mixing.lookup(name) == Mixing::Product) {
-        os << "    %" << name << " = arith.mulf %" << name << "_i, %" << name
-           << "_j : f64\n";
-      } else {
-        os << "    %product_" << name << " = arith.mulf %" << name
-           << "_i, %" << name << "_j : f64\n";
-        os << "    %" << name << " = math.sqrt %product_" << name
-           << " : f64\n";
-      }
-      values[name] = "%" + name;
-    }
-
-    std::string value = expression.emit(os, values, "%e", "    ", term.name);
-    os << "    %to_energy = arith.constant " << formatReal(units::energy)
-       << " : f64\n";
-    os << "    %u = arith.mulf " << value << ", %to_energy : f64\n";
-    os << "    md.yield %u : f64\n";
-    os << "  } : !pairs, !vec -> f64\n";
-
-    if (total.empty()) {
-      total = result;
-    } else {
-      std::string sum = "%total" + std::to_string(index);
-      os << "  " << sum << " = arith.addf " << total << ", " << result
-         << " : f64\n";
-      total = sum;
-    }
-  }
+  for (const TermBuilder *builder : termBuildersByPotentialRank())
+    builder->emitBareContributions(*this, total);
   for (auto [index, term] : llvm::enumerate(control.triplets)) {
     std::string result = emitTripletTerm(index, term);
     std::string sum = "%total_t" + std::to_string(index);
@@ -1756,16 +1510,9 @@ void Builder::emitTerms(StringRef x) {
   // evaluation before the terms.
   // The terms given by expressions follow those of the topology, those
   // over tuples (D136) and then those over pairs (D137).
-  int pairs = static_cast<int>(control.pairs.size());
   std::vector<std::string> registeredNames;
   for (const TermBuilder *builder : termBuildersByPotentialRank())
-    if (builder->potentialRank() < -2)
-      builder->appendTermNames(*this, registeredNames);
-  for (int k = 0; k != pairs; ++k)
-    registeredNames.push_back("term_pair" + std::to_string(k));
-  for (const TermBuilder *builder : termBuildersByPotentialRank())
-    if (builder->potentialRank() >= -2)
-      builder->appendTermNames(*this, registeredNames);
+    builder->appendTermNames(*this, registeredNames);
   unsigned storedTermCount = 0;
   for (const TermBuilder *builder : registerTermBuilders())
     storedTermCount += builder->getStoredTermCount(*this);

@@ -11,7 +11,8 @@ mdir::driver::builder::registerTermBuilders() {
                                                 &getPullTermBuilder(),
                                                 &getRestraintTermBuilder(),
                                                 &getBornTermBuilder(),
-                                                &getTupleTermBuilder()};
+                                                &getTupleTermBuilder(),
+                                                &getPairTermBuilder()};
   return builders;
 }
 
