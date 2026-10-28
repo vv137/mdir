@@ -164,27 +164,29 @@ void Builder::emitPrograms() {
     bool projectsState =
         leapfrog && constraints && (control.isLangevin() || scales);
     bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
+    std::string effects =
+        constraints ? "{read = [\"dyn.stop\"], write = [\"dyn.stop\"]}" : "{}";
+    if (hasHostEvaluation())
+      effects = constraints
+                    ? "{read = [\"dyn.stop\", \"<Default>\"], write = "
+                      "[\"dyn.stop\", \"<Default>\"]}"
+                    : "{read = [\"<Default>\"], write = [\"<Default>\"]}";
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64"
-       << (scales ? ", %mu: vector<3xf64>" : "")
-       << getScaleParameter() << getFieldParameters() << getNoiseParameter()
-       << ")\n"
+       << (scales ? ", %mu: vector<3xf64>" : "") << getScaleParameter()
+       << getFieldParameters() << getNoiseParameter() << ")\n"
        << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
        << (withVirial ? ", vector<9xf64>" : "")
        << (molecular ? ", vector<3xf64>" : "")
-       << (returnsCurrent ? ", !vec" : "")
-       << (scales ? ", vector<3xf64>" : "")
+       << (returnsCurrent ? ", !vec" : "") << (scales ? ", vector<3xf64>" : "")
        << (measured ? ", vector<3xf64>" : "")
-       << (solvent ? ", vector<3xf64>" : "")
-       << ")\n"
+       << (solvent ? ", vector<3xf64>" : "") << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
        // The effects of the body, which dyn.step takes (D355):
-       // the deferred stops of the constraints, or none.
-       << (constraints ? "effects = {read = [\"dyn.stop\"], "
-                         "write = [\"dyn.stop\"]},\n                "
-                       : "effects = {},\n                ")
+       // the deferred stops and the hosted evaluation's ordinary memory.
+       << "effects = " << effects << ",\n                "
        << (brownian ? "provides = [\"thermostatting\"]} {\n"
                     : "provides = [\"symplectic\", \"time_reversible\"]} {\n")
        << "  %c = arith.constant 5.0e-01 : f64\n"
@@ -1688,12 +1690,15 @@ void Builder::emitDescend() {
   os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
         "%cell: !md.cell,\n    %h: f64"
      << getFieldParameters() << ")\n    -> (!vec, !vec, f64)"
-     << " attributes {effects = {}} {\n"
+     << " attributes {effects = "
+     << (hasHostEvaluation()
+             ? "{read = [\"<Default>\"], write = [\"<Default>\"]}"
+             : "{}")
+     << "} {\n"
      << "  %zero = arith.constant 0.0 : f64\n"
      << "  %tiny = arith.constant 1.0e-300 : f64\n"
      << "  %count = arith.constant "
-     << formatReal(static_cast<double>(system.getNumParticles()))
-     << " : f64\n";
+     << formatReal(static_cast<double>(system.getNumParticles())) << " : f64\n";
   emitConstrainedDescent("  ", "%x", "%f", "%g");
   os << "  %square = md.sum_particles gather(%g : !vec) {\n"
      << "  ^bb0(%f_i: vector<3xf64>):\n"

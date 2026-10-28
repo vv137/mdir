@@ -254,8 +254,10 @@ effects. A call of the host has the effects that its function declares in
 `dyn.effects`, in the same form: the driver declares `mdrtDeferStops` and
 `mdrtStopConstraintFailure` as writes of `dyn.stop` and `mdrtStopPending`
 as its read and write, and states `{read = ["dyn.stop"], write =
-["dyn.stop"]}` for a program of a step with constraints and `{}` for the
-others. A step of a program without a summary reads and writes every
+["dyn.stop"]}` for a program of a step with constraints. A hosted model
+evaluation additionally reads and writes `<Default>` (ordinary memory), in
+both a dynamics step and minimization; a constrained step retains `dyn.stop`
+alongside those effects. Other steps state `{}`. A step of a program without a summary reads and writes every
 resource. The named resources are `dyn.bath`, `dyn.chain`, `dyn.stop`,
 `dyn.record`, and `dyn.statistics`; `<Default>` names ordinary memory. `md-inline` removes the `dyn.effects` with the programs, which
 alone read them, so that the lowered program is that of before.

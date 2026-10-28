@@ -1,0 +1,1 @@
+- Hosted model steps and minimization declare the ordinary-memory reads and writes of their evaluation, preserving constraint-stop effects (#707).
