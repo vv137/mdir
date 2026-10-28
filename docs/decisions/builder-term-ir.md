@@ -23,10 +23,11 @@ Materialization validates each connection exactly once and rejects result
 count/type mismatches. A final walk rejects every remaining `mdir.term_ir`
 attribute, including attributes on newly created operations. The equivalence
 harness rejects the same marker in every successfully parsed module and successful lowered emission
-before comparison. Native negative tests cover these boundaries. Already-invalid
-legacy assembly may retain its original parser diagnostic (#706); it remains
-unchanged and is rejected again when a consumer parses it, so this path cannot
-return a valid printed or lowered program.
+before comparison. Native negative tests cover these boundaries. Malformed
+builder assembly now fails at this construction boundary with the internal
+error `the builder produced invalid assembly`; it cannot pass through to a
+reading printer or downstream consumer. The #706/#707 fixes leave no builder
+parse failure in the audited corpus and combined-kind matrix.
 
 The shared Lennard-Jones scalar emitter moves first, followed by the other
 term emitters in their change-frequency order. One commit moves one

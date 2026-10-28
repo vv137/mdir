@@ -261,5 +261,7 @@ their recipes. `TermPull.cpp` no longer writes operation text.
 
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
-and the unchanged legacy parse-error path; the corpus also rejects internal
-markers in every successfully parsed module or successful lowered emission before comparison.
+and invalid builder assembly, which fails at its construction boundary with
+`the builder produced invalid assembly`. Empty and operand-bearing zero-result
+connections are covered. The corpus also rejects internal markers in every
+successfully parsed module or successful lowered emission before comparison.

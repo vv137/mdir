@@ -158,8 +158,8 @@ int main() {
     });
   }
   {
-    // The legacy error path retains only assembly that cannot be parsed.
-    // This is the missing SSA value class of failure tracked by #706.
+    // Invalid builder assembly fails at its producer, before a consumer sees
+    // it.
     TermIRPlan plan;
     registerRecipe(plan);
     mdir::driver::Program program;
@@ -167,7 +167,8 @@ int main() {
                      "{mdir.term_ir = 0 : i64} "
                      "%y = arith.addf %missing, %x : f64 }";
     auto original = program.module;
-    require(!finishTermIRProgram(program, plan), "legacy error path changed");
+    reject(finishTermIRProgram(program, plan),
+           "the builder produced invalid assembly");
     require(program.module == original, "invalid assembly was changed");
     require(!parseSourceString<ModuleOp>(program.module, &context),
             "invalid assembly became a valid consumer input");

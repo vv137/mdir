@@ -171,13 +171,9 @@ llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
   // Materialize their checked bodies before the ordinary verification boundary.
   mlir::ParserConfig config(&context, /*verifyAfterParse=*/false);
   auto module = mlir::parseSourceString<mlir::ModuleOp>(program.module, config);
-  if (!module) {
-    // Preserve the original parser diagnostic for already-invalid assembly
-    // (including #706). The reading printer may return this invalid text for
-    // inspection, but canonical printing and lowering parse it again and fail.
-    // No valid module reaches cast reconciliation on this path.
-    return llvm::Error::success();
-  }
+  if (!module)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "the builder produced invalid assembly");
   if (llvm::Error error = plan.materialize(*module))
     return error;
   carryLoopValues(*module);

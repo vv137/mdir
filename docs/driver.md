@@ -1419,11 +1419,12 @@ therefore cannot silently consume a surviving connection. Native negative
 tests cover these checks. The equivalence harness also rejects the attribute
 in every successfully parsed module and successful lowered emission before
 comparing either build.
-The legacy parse-failure path preserves only unchanged, already-invalid
-assembly for its original parser diagnostic (#706). The reading printer may
-return that invalid text for inspection; the canonical printer and lowering
-parse it again and fail. It cannot become a valid printed or lowered program
-through this path.
+Malformed builder assembly is rejected at the construction boundary with the
+internal diagnostic `the builder produced invalid assembly`, before it can
+reach a reading printer or downstream consumer. Native tests require that
+failure and verify both empty and operand-bearing zero-result connections.
+The #706/#707 fixes leave no builder parse failure in the audited corpus and
+combined-kind matrix.
 
 ## 3. Decided
 
