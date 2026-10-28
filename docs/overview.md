@@ -159,6 +159,12 @@ per-tuple parameters, gradient-field selectors and seeds, function tables,
 time/lambda/observed bindings, and energy conversion keep their operation order.
 Owned loop configuration replaces borrowed term and gradient references.
 
+Shared centroid geometry also builds typed IR for the tuple and pull adapters.
+The minimum-image weighted component sums, distance, angle, and dihedral
+retain their explicit arithmetic and loop order. Deferred construction owns
+only group count and arity, with typed relation/position/cell/weight operands;
+it does not retain center membership arrays or hook-local references.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal

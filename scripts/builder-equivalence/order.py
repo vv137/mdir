@@ -224,6 +224,26 @@ a0 = 1.0
 '''
         write(f"tuple-alchemical-{precision}", alchemical)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"tuple-geometry-{precision}.toml")
+        text = source.read_text() + '''
+[[energy.bond]]
+name = "rank_centroid_distance"
+expression = "k*(r-r0)^2"
+groups = ["@1-2", "@2-4"]
+weighting = "NONE"
+k = 0.1
+r0 = 1.0
+[[energy.dihedral]]
+name = "rank_centroid_dihedral"
+expression = "k*(1+cos(n*theta-phase))"
+groups = ["@1", "@2", "@3", "@4"]
+k = 0.1
+n = 2.0
+phase = 0.4
+'''
+        write(f"centroid-geometry-{precision}", text)
+
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):

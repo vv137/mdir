@@ -71,3 +71,7 @@ ordered addition of several pair contributions in both precisions and targets.
 
 Tuple cases combine regular angles/dihedrals and compound distance/angle/dihedral
 coordinates with the other kinds, particle fields, time, and alchemical bindings.
+
+Centroid geometry cases combine all three arities with overlapping weighted
+groups, regular/compound tuples, the other term kinds, and pull output in both
+precisions and targets.
