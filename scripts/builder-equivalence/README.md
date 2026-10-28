@@ -64,3 +64,7 @@ constant with no bound inputs, in both precisions and targets.
 Grouped topology-pair cases combine every LJ parameter lookup with overlapping
 groups, particle fields, a tabulated function, and time dependence in both
 precisions and targets. Their modules and lowered programs must verify.
+
+Bare-pair cases additionally cover arithmetic/geometric/product mixing without
+overrides and an ungathered uniform-parameter function term, including the
+ordered addition of several pair contributions in both precisions and targets.

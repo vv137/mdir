@@ -2,6 +2,7 @@
 #include "BuilderImpl.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
 #include <array>
 
@@ -28,32 +29,6 @@ static int findType(const Control &control, StringRef name) {
   return -1;
 }
 
-/// The attribute of an md.sum_relation that truncates its energy at the
-/// cutoff as `truncation` says, with the switching distance of `control`;
-/// the power force switch is for the Lennard-Jones of a topology only, and
-/// the reader rejects it elsewhere.
-static std::string getTruncation(const Control &control,
-                                 Truncation truncation) {
-  double from = control.switchDistance * units::length;
-  switch (truncation) {
-  case Truncation::None:
-  case Truncation::PowerForceSwitch:
-  case Truncation::SquaredDistanceSwitch:
-    return "";
-  case Truncation::Shift:
-    return " truncation(shift)";
-  case Truncation::Switch:
-    return " truncation(switch, from = " + formatReal(from) + ")";
-  case Truncation::ForceSwitch:
-    return " truncation(force_switch, from = " + formatReal(from) + ")";
-  }
-  llvm_unreachable("unknown truncation");
-}
-
-static std::string getTruncation(const Control &control) {
-  return getTruncation(control, control.truncation);
-}
-
 struct TopologyPairConstantIR {
   std::string name;
   double value;
@@ -75,6 +50,21 @@ struct TopologyPairIRConfig {
          constantsTable = 0;
   std::vector<TopologyPairConstantIR> constants;
   std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
+};
+
+struct BarePairIRConfig {
+  explicit BarePairIRConfig(ExpressionIR expression)
+      : expression(std::move(expression)) {}
+  ExpressionIR expression;
+  std::string termName;
+  bool coulomb = false, tableParameters = false, switched = false;
+  double switchFrom = 0.0;
+  mdir::md::Truncation modifier = mdir::md::Truncation::None;
+  size_t gatheredCount = 0;
+  std::optional<size_t> previousTotal;
+  std::vector<std::pair<std::string, double>> constants;
+  std::vector<std::pair<Parameter, Mixing>> parameters;
+  std::vector<std::pair<std::string, size_t>> tables, functions;
 };
 
 namespace mdir::driver::builder {
@@ -549,102 +539,167 @@ public:
     const auto &expressions = context.getPairPlan().expressions;
     const auto &termTables = context.getPairPlan().tables;
     const auto &parameters = context.getTypeParameters();
-    llvm::raw_ostream &os = context.getOutput();
-    std::string truncation = getTruncation(control);
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
       const Expression &expression = expressions[index];
-
-      // The fields that the kernel reads, and the values of the two
-      // particles of a pair.
-      const llvm::StringMap<unsigned> &tables = termTables[index];
-      std::string gathered, types, arguments;
-      if (!tables.empty()) {
-        gathered = "%p_type";
-        types = "!ids";
-        arguments = ", %type_i: i32, %type_j: i32";
-      }
-      for (const Parameter &parameter : parameters) {
-        if (!tables.empty() || parameter.isUniform ||
-            !llvm::is_contained(expression.getNames(), parameter.name))
-          continue;
-        gathered += (gathered.empty() ? "" : ", ") + ("%p_" + parameter.name);
-        types += std::string(types.empty() ? "" : ", ") + "!real";
-        arguments +=
-            ", %" + parameter.name + "_i: f64, %" + parameter.name + "_j: f64";
-      }
-
-      std::string result = "%u" + std::to_string(index);
-      os << "  " << result << " = md.sum_relation %n, %x, %cell";
-      if (!gathered.empty())
-        os << " gather(" << gathered << " : " << types << ")";
-      os << "\n      exchange(symmetric)" << truncation << " {\n";
-      os << "  ^bb0(%r: f64, %d: vector<3xf64>" << arguments << "):\n";
-
-      // The expression is evaluated in the units of the control file.
-      llvm::StringMap<std::string> values;
-      os << "    %to_length = arith.constant "
-         << formatReal(1.0 / units::length) << " : f64\n";
-      os << "    %r_in = arith.mulf %r, %to_length : f64\n";
-      values["r"] = "%r_in";
-
-      for (auto &[name, value] : term.constants) {
-        os << "    %c_" << name << " = arith.constant " << formatReal(value)
-           << " : f64\n";
-        values[name] = "%c_" + name;
-      }
-      if (llvm::is_contained(expression.getNames(), "coulomb")) {
-        os << "    %coulomb = arith.constant " << formatReal(coulombConstant)
-           << " : f64\n";
-        values["coulomb"] = "%coulomb";
-      }
-      for (auto &[name, table] : tables) {
-        os << "    %" << name.str() << " = md.lookup %t_"
-           << context.getParameterTables()[table].name
-           << "[%type_i, %type_j] : !table, i32, i32 -> f64\n";
-        values[name] = "%" + name.str();
-      }
-      for (const Parameter &parameter : parameters) {
-        if (!tables.empty() ||
-            !llvm::is_contained(expression.getNames(), parameter.name))
-          continue;
-        const std::string &name = parameter.name;
-        if (parameter.isUniform) {
-          os << "    %" << name << " = arith.constant "
-             << formatReal(parameter.value) << " : f64\n";
-        } else if (term.mixing.lookup(name) == Mixing::Arithmetic) {
-          os << "    %half_" << name << " = arith.constant 5.0e-01 : f64\n";
-          os << "    %sum_" << name << " = arith.addf %" << name << "_i, %"
-             << name << "_j : f64\n";
-          os << "    %" << name << " = arith.mulf %half_" << name << ", %sum_"
-             << name << " : f64\n";
-        } else if (term.mixing.lookup(name) == Mixing::Product) {
-          os << "    %" << name << " = arith.mulf %" << name << "_i, %" << name
-             << "_j : f64\n";
-        } else {
-          os << "    %product_" << name << " = arith.mulf %" << name << "_i, %"
-             << name << "_j : f64\n";
-          os << "    %" << name << " = math.sqrt %product_" << name
-             << " : f64\n";
+      BarePairIRConfig config(expression.prepareIR());
+      config.termName = term.name;
+      config.tableParameters = !termTables[index].empty();
+      config.coulomb = llvm::is_contained(expression.getNames(), "coulomb");
+      for (const auto &entry : term.constants)
+        config.constants.push_back(entry);
+      std::vector<std::string> names = {"%n", "%x", "%cell"};
+      llvm::SmallVector<StringRef> types = {"!pairs", "!vec", "!md.cell"};
+      auto operand = [&](std::string name, StringRef type) {
+        size_t slot = names.size();
+        names.push_back(std::move(name));
+        types.push_back(type);
+        return slot;
+      };
+      llvm::SmallVector<StringRef> supplied = {"r"};
+      for (const auto &entry : config.constants)
+        supplied.push_back(entry.first);
+      if (config.coulomb)
+        supplied.push_back("coulomb");
+      if (config.tableParameters)
+        operand("%p_type", "!ids");
+      else {
+        for (const Parameter &parameter : parameters) {
+          if (!llvm::is_contained(expression.getNames(), parameter.name))
+            continue;
+          config.parameters.emplace_back(parameter,
+                                         term.mixing.lookup(parameter.name));
+          if (!parameter.isUniform)
+            operand("%p_" + parameter.name, "!real");
         }
-        values[name] = "%" + name;
       }
-
-      std::string value = emitExpressionIR(context, expression, values, "%e",
-                                           "    ", term.name);
-      os << "    %to_energy = arith.constant " << formatReal(units::energy)
-         << " : f64\n";
-      os << "    %u = arith.mulf " << value << ", %to_energy : f64\n";
-      os << "    md.yield %u : f64\n";
-      os << "  } : !pairs, !vec -> f64\n";
-
-      if (total.empty()) {
-        total = result;
-      } else {
-        std::string sum = "%total" + std::to_string(index);
-        os << "  " << sum << " = arith.addf " << total << ", " << result
-           << " : f64\n";
-        total = sum;
+      config.gatheredCount = names.size() - 3;
+      for (const auto &[name, tableIndex] : termTables[index]) {
+        const auto &table = context.getParameterTables()[tableIndex];
+        config.tables.emplace_back(name.str(),
+                                   operand("%t_" + table.name, "!table"));
       }
+      for (const auto &entry : config.tables)
+        supplied.push_back(entry.first);
+      for (const auto &entry : config.parameters)
+        supplied.push_back(entry.first.name);
+      auto inputs = config.expression.getInputs(supplied);
+      for (const auto &name : inputs.tables)
+        config.functions.emplace_back(name, operand("%t_" + name, "!grid"));
+      if (!total.empty())
+        config.previousTotal = operand(total, "f64");
+      config.switchFrom = control.switchDistance * units::length;
+      switch (control.truncation) {
+      case Truncation::None:
+      case Truncation::PowerForceSwitch:
+      case Truncation::SquaredDistanceSwitch:
+        break;
+      case Truncation::Shift:
+        config.modifier = mdir::md::Truncation::Shift;
+        break;
+      case Truncation::Switch:
+        config.modifier = mdir::md::Truncation::Switch;
+        config.switched = true;
+        break;
+      case Truncation::ForceSwitch:
+        config.modifier = mdir::md::Truncation::ForceSwitch;
+        config.switched = true;
+        break;
+      }
+      std::string result = "%u" + std::to_string(index);
+      std::string sum = "%total" + std::to_string(index);
+      llvm::SmallVector<StringRef> operands;
+      for (const auto &name : names)
+        operands.push_back(name);
+      llvm::SmallVector<StringRef> results = {result}, resultTypes = {"f64"};
+      if (config.previousTotal) {
+        results.push_back(sum);
+        resultTypes.push_back("f64");
+      }
+      context.emitIRFragment(
+          "  ", results, resultTypes, operands, types,
+          [config](mlir::OpBuilder &builder,
+                   mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            auto *ctx = builder.getContext();
+            auto sum = mdir::md::SumRelationOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, config.gatheredCount),
+                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
+                mdir::md::ExchangeBasisAttr::get(
+                    ctx, mdir::md::ExchangeBasis::Proof),
+                mdir::md::TruncationAttr::get(ctx, config.modifier),
+                config.switched ? builder.getF64FloatAttr(config.switchFrom)
+                                : FloatAttr{});
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> blockTypes = {
+                  builder.getF64Type(),
+                  VectorType::get({3}, builder.getF64Type())};
+              if (config.tableParameters)
+                blockTypes.append(2, builder.getI32Type());
+              else
+                for (const auto &entry : config.parameters)
+                  if (!entry.first.isUniform)
+                    blockTypes.append(2, builder.getF64Type());
+              llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+              Block *block = builder.createBlock(&sum.getKernel(), {},
+                                                 blockTypes, locations);
+              auto args = block->getArguments();
+              auto constant = [&](double value) -> Value {
+                return arith::ConstantOp::create(
+                    builder, loc, builder.getF64FloatAttr(value));
+              };
+              auto mul = [&](Value a, Value b) -> Value {
+                return arith::MulFOp::create(builder, loc, a, b);
+              };
+              Value toLength = constant(1.0 / units::length);
+              Value r = mul(args[0], toLength);
+              llvm::StringMap<Value> bindings, tables;
+              bindings["r"] = r;
+              for (const auto &[name, value] : config.constants)
+                bindings[name] = constant(value);
+              if (config.coulomb)
+                bindings["coulomb"] = constant(coulombConstant);
+              for (const auto &[name, slot] : config.tables)
+                bindings[name] = mdir::md::LookupOp::create(
+                    builder, loc, builder.getF64Type(), values[slot],
+                    ValueRange{args[2], args[3]});
+              size_t argument = 2;
+              for (const auto &[parameter, mixing] : config.parameters) {
+                Value value;
+                if (parameter.isUniform)
+                  value = constant(parameter.value);
+                else {
+                  Value a = args[argument++], b = args[argument++];
+                  if (mixing == Mixing::Arithmetic) {
+                    Value half = constant(0.5);
+                    Value sum = arith::AddFOp::create(builder, loc, a, b);
+                    value = mul(half, sum);
+                  } else {
+                    value = mul(a, b);
+                    if (mixing != Mixing::Product)
+                      value = math::SqrtOp::create(builder, loc, value);
+                  }
+                }
+                bindings[parameter.name] = value;
+              }
+              for (const auto &[name, slot] : config.functions)
+                tables[name] = values[slot];
+              Value expression = config.expression.build(
+                  builder, bindings, tables, config.termName);
+              Value toEnergy = constant(units::energy);
+              Value energy = mul(expression, toEnergy);
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            TermIRValues result = {sum.getResult()};
+            if (config.previousTotal)
+              result.push_back(arith::AddFOp::create(
+                  builder, loc, values[*config.previousTotal],
+                  sum.getResult()));
+            return result;
+          });
+      total = config.previousTotal ? sum : result;
     }
   }
 

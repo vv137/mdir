@@ -213,6 +213,12 @@ lookups, tunable constants, time/lambda/observed bindings, truncation, energy
 conversion, and the yield retain their original order. Each loop owns its
 configuration and expression snapshot; no hook-local state escapes.
 
+Bare custom-pair loops also construct their regions and yields with typed
+operations. Table overrides, uniform and nonuniform arithmetic/geometric/product
+mixing, constants, function tables, cutoff modifiers, and ordered total-energy
+addition retain the original operation order. Both topology and bare pair
+kernels use owned expression snapshots and bounded configuration.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal

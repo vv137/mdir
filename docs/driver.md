@@ -1362,7 +1362,13 @@ The complete topology custom-pair relation loop also uses typed operations:
 overlapping group masks, particle-field arguments, all six LJ parameter
 lookups, tunable constants, time/lambda/observed bindings, truncation, energy
 conversion, and the yield retain their original order. Each loop owns its
-configuration and expression snapshot; no hook-local state escapes. The
+configuration and expression snapshot; no hook-local state escapes.
+
+Bare custom-pair loops also construct their regions and yields with typed
+operations. Table overrides, uniform and nonuniform arithmetic/geometric/product
+mixing, constants, function tables, cutoff modifiers, and ordered total-energy
+addition retain the original operation order. Both topology and bare pair
+kernels use owned expression snapshots and bounded configuration. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

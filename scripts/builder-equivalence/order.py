@@ -187,6 +187,26 @@ a = 0.01
         write(f"bare-overrides-{precision}", bare +
               f'\n[execution]\nprecision = "{precision}"\n')
 
+    # Without overrides the bare kernel mixes nonuniform parameters itself;
+    # the uniform case also exercises a second, ungathered function term.
+    unmapped = re.sub(r'(?ms)^\[\[energy.pair_override\]\]\n.*?(?=^\[)', '', bare)
+    assert unmapped != bare
+    uniform = (root / "examples/argon/argon.toml").read_text().replace(
+        '"argon.pdb"', quoted(root / "examples/argon/argon.pdb"))
+    uniform += ('\n[[energy.pair]]\nname = "uniform_function"\n'
+                'expression = "a+epsilon*rank_wave(r)"\na = 0.01\n'
+                'dispersion_correction = "NONE"\n'
+                '[[energy.function]]\nname = "rank_wave"\nmin = 0.0\n'
+                'max = 10.0\nvalues = [0.0, 1.0, 0.0]\n')
+    uniform = re.sub(r'(?m)^target\s*=.*\n', '', uniform)
+    for precision in ("DOUBLE", "MIXED"):
+        write(f"bare-mixing-{precision}", unmapped +
+              f'\n[execution]\nprecision = "{precision}"\n')
+        text, count = re.subn(r'(?m)^precision\s*=.*\n',
+            f'precision = "{precision}"\n', uniform)
+        assert count == 1
+        write(f"bare-uniform-function-{precision}", text)
+
     pdb = inputs / "mw64.pdb"
     changed = place / "mw64u.pdb"
     lines = []
