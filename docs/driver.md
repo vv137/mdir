@@ -1249,7 +1249,7 @@ pull adapter emits at these new hook sites, so no rank conflict arises.
 `TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
 correction, and stored energy column. The parameter hook has an explicit
 `parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, pulls rank 0, and custom-pair fields rank 1, with stable
-registry order (externals, pulls, restraints, Born/surface, tuples, pairs) for equal ranks. Pulls collect no
+registry order (externals, pulls, restraints, Born/surface, tuples, pairs, triplets) for equal ranks. Pulls collect no
 parameters; only pulls emit auxiliary potentials/output, and only restraints
 emit force corrections/stored columns. These hooks currently have no shared
 active pull/restraint site needing a second rank. This preserves restraint fields before
@@ -1274,11 +1274,12 @@ explicit potential rank preserves Born/surface before external terms for
 topology contributions, standalone potentials, and energy-column names.
 The potential hooks use `potentialRank`: tuple definitions/names rank -3,
 custom pairs rank -2, Born/surface rank -1, and the remaining adapters
-rank 0, stable by registry order on ties. Parameter and potential ranks
+rank 0, stable by registry order on ties. Triplets use rank 1 for bare
+contributions and emit no standalone topology definitions. Parameter and potential ranks
 are separate because their hook sites have different ordering needs. The shared radii and Debye screening remain private to the
 adapter, with unchanged names and emission order; no capability exposes
 Born intermediates. The central builder no longer selects Born/surface
-fields, definitions, contributions, or evaluated output columns. Triplet, model, bonded, and nonbonded kinds remain.
+fields, definitions, contributions, or evaluated output columns. Model, bonded, and nonbonded kinds remain.
 
 The custom-tuple migration (#683) moves tuple/centroid collection,
 potential emission, output names, observable lookup, and tuple tunable
@@ -1321,6 +1322,19 @@ declaration order. Named scalar dispersion/shift updates expose only their
 quantities, not the complete mutable program. Definitions and output names
 now use one ranked loop without the temporary -2 split. The obsolete
 centroid-term comment has been removed from the shared geometry method.
+
+The triplet migration (#683) moves bare-system type-parameter collection,
+particle-place parameter lookup, and expression emission into
+`TermTriplet.cpp`. Only the named shared type-parameter collection is
+borrowed; parameter lookup and emission stay private to the adapter.
+The existing bare collection hook collects pair descriptors before triplet
+descriptors, followed by bare dispersion validation. The existing bare
+contribution hook uses potential ranks -2 for pairs and 1 for triplets,
+preserving `%total_tN` and every coordinate, parameter, and expression
+operation. No triplet-specific virtual hook is added. Externals, pulls,
+restraints, Born/surface, custom tuples, custom pairs, and triplets have
+moved; model, bonded, and nonbonded migrations remain. No control-file
+behavior changes.
 
 ## 3. Decided
 

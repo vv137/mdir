@@ -50,6 +50,7 @@ add_mlir_library(MDIRDriver
   TermRestraint.cpp
   TermTuple.cpp
   TermPair.cpp
+  TermTriplet.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

@@ -337,6 +337,7 @@ const TermBuilder &getRestraintTermBuilder();
 const TermBuilder &getBornTermBuilder();
 const TermBuilder &getTupleTermBuilder();
 const TermBuilder &getPairTermBuilder();
+const TermBuilder &getTripletTermBuilder();
 llvm::Expected<PairTermTail> getCustomPairTail(const TermInputs &, unsigned,
                                              const llvm::StringMap<double> &);
 double getCustomPairTails(const TermInputs &, const llvm::StringMap<double> &, bool);
@@ -447,15 +448,6 @@ private:
   std::optional<DependentTerms> dependent;
   llvm::Error collectParameters();
   llvm::Error emitPotential();
-  /// Emits the term over triplets `term` into the potential, and returns
-  /// its energy (D160).
-  std::string emitTripletTerm(size_t index, const TripletTerm &term);
-  /// The parameter of the types that `name` of the expression of `term`
-  /// takes for one particle of a triplet, `sigma` for `sigma2`, or an empty
-  /// string.
-  std::string getTripletParameter(const TripletTerm &term,
-                                  StringRef name) const;
-
   /// For a run from a topology: the fields, the tables, and the tuple sets
   /// of the program, and the potential of the topology.
   llvm::Error collectTopology();
