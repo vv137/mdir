@@ -1339,7 +1339,9 @@ at that same pair-kernel site. Soft-core Lennard-Jones distance,
 root-free or switched potential, and alchemical scaling also use typed
 fragments, preserving the original intermediate operations and branch order. Shielded
 Coulomb kernels for excluded and within-selection pairs use typed Gaussian
-or prolate operations, sharing the same typed prolate polynomial builder.
+or prolate operations, sharing the same typed prolate polynomial builder. The
+excluded Coulomb term also builds its complete tuple loop, typed block
+arguments, charge scaling, and yield with `OpBuilder`.
 
 ## 3. Decided
 

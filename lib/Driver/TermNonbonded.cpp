@@ -155,6 +155,30 @@ static mlir::Value buildProlateSplitting(mlir::OpBuilder &builder,
   return value;
 }
 
+static mlir::Value buildShieldedCoulomb(mlir::OpBuilder &builder,
+                                        mlir::Value source, mlir::Value r,
+                                        bool prolate, double cutoff,
+                                        int64_t cells, int64_t terms) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  if (!prolate) {
+    Value br = arith::MulFOp::create(builder, loc, source, r);
+    Value erf = math::ErfOp::create(builder, loc, br);
+    return arith::DivFOp::create(builder, loc, erf, r);
+  }
+  Value inverse = arith::ConstantOp::create(
+      builder, loc, builder.getF64FloatAttr(1.0 / cutoff));
+  Value xr = arith::MulFOp::create(builder, loc, r, inverse);
+  Value polynomial = buildProlateSplitting(builder, source, xr, cells, terms);
+  Value near = arith::MulFOp::create(builder, loc, polynomial, inverse);
+  Value one =
+      arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0));
+  Value rInverse = arith::DivFOp::create(builder, loc, one, r);
+  Value inside =
+      arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLT, xr, one);
+  return arith::SelectOp::create(builder, loc, inside, near, rInverse);
+}
+
 llvm::Error NonbondedWork::collectTopologyConstants() {
   const Topology &topology = *system.topology;
   // The reaction field (D140): its self term, −c f Σ q² / 2, which with
@@ -1610,28 +1634,8 @@ public:
           [prolate = program.pmeProlate, cutoff, cells,
            terms](mlir::OpBuilder &builder,
                   mlir::ValueRange values) -> TermIRValues {
-            using namespace mlir;
-            auto loc = builder.getUnknownLoc();
-            Value r = values[1];
-            if (!prolate) {
-              Value br = arith::MulFOp::create(builder, loc, values[0], r);
-              Value erf = math::ErfOp::create(builder, loc, br);
-              return {arith::DivFOp::create(builder, loc, erf, r)};
-            }
-            Value inverse = arith::ConstantOp::create(
-                builder, loc, builder.getF64FloatAttr(1.0 / cutoff));
-            Value xr = arith::MulFOp::create(builder, loc, r, inverse);
-            Value polynomial =
-                buildProlateSplitting(builder, values[0], xr, cells, terms);
-            Value near =
-                arith::MulFOp::create(builder, loc, polynomial, inverse);
-            Value one = arith::ConstantOp::create(builder, loc,
-                                                  builder.getF64FloatAttr(1.0));
-            Value rInverse = arith::DivFOp::create(builder, loc, one, r);
-            Value inside = arith::CmpFOp::create(
-                builder, loc, arith::CmpFPredicate::OLT, xr, one);
-            return {
-                arith::SelectOp::create(builder, loc, inside, near, rInverse)};
+            return {buildShieldedCoulomb(builder, values[0], values[1], prolate,
+                                         cutoff, cells, terms)};
           });
     };
     if (program.pme && (terms & TermInputs::CoulombExcluded) &&
@@ -1640,40 +1644,78 @@ public:
       // −f q_i q_j erf(β r) / r, with the charges that the reciprocal sum
       // takes, those of the selection of [free_energy] times 1 − λ (D161).
       bool flags = scalesCoulomb || (alchemicalOnly && decouples());
-      os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
-            "distance(0, 1))\n"
-         << "      gather(%p_q"
-         << (flags ? ", %p_alch : !real, !real" : " : !real") << ") {\n"
-         << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64"
-         << (flags ? ", %al_i: f64, %al_j: f64" : "") << "):\n"
-         << "    %f = arith.constant " << formatReal(-coulombInternal)
-         << " : f64\n"
-         << "    %beta = arith.constant " << formatReal(program.pmeBeta)
-         << " : f64\n"
-         << "    %qq0 = arith.mulf %q_i, %q_j : f64\n";
-      std::string qq = "%qq0";
+      llvm::SmallVector<StringRef> operands = {"%r_excluded", "%x", "%cell",
+                                               "%p_q"};
+      llvm::SmallVector<StringRef> types = {"!rel_excluded", "!vec", "!md.cell",
+                                            "!real"};
       if (flags) {
-        os << "    %al_one = arith.constant 1.0 : f64\n"
-           << "    %al_li = arith.mulf %al_i, %lambda_coulomb : f64\n"
-           << "    %al_si = arith.subf %al_one, %al_li : f64\n"
-           << "    %al_lj = arith.mulf %al_j, %lambda_coulomb : f64\n"
-           << "    %al_sj = arith.subf %al_one, %al_lj : f64\n"
-           << "    %al_s = arith.mulf %al_si, %al_sj : f64\n"
-           << "    %qq = arith.mulf %qq0, %al_s : f64\n";
-        qq = "%qq";
+        operands.append({"%p_alch", "%lambda_coulomb"});
+        types.append({"!real", "f64"});
       }
-      os << "    %fqq = arith.mulf %f, " << qq << " : f64\n";
-      emitShielded();
-      os << "    %e = arith.mulf %fqq, %shielded : f64\n";
-      std::string e = "%e";
-      if (alchemicalOnly) {
-        // Only the pairs within the selection depend on λ.
-        os << "    %al_both = arith.mulf %al_i, %al_j : f64\n"
-           << "    %masked = arith.mulf %e, %al_both : f64\n";
-        e = "%masked";
+      if (program.pmeProlate) {
+        operands.push_back("%t_pme_near");
+        types.push_back("!grid");
       }
-      os << "    md.yield " << e << " : f64\n"
-         << "  } : !rel_excluded, !vec -> f64\n";
+      auto [cells, polynomialTerms] = getProlateTableShape(control.precision);
+      context.emitIRFragment(
+          "  ", {"%u_excluded"}, {"f64"}, operands, types,
+          [flags, alchemicalOnly, prolate = program.pmeProlate,
+           beta = program.pmeBeta, cutoff, cells,
+           polynomialTerms](mlir::OpBuilder &builder,
+                            mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            DenseI32ArrayAttr coordinateKinds;
+            DenseI64ArrayAttr coordinateMembers;
+            mdir::md::Coordinate distance{mdir::md::CoordinateKind::Distance,
+                                          {0, 1}};
+            mdir::md::getCoordinateAttrs(builder, {distance}, coordinateKinds,
+                                         coordinateMembers);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, flags ? 2 : 1), ValueRange{},
+                coordinateKinds, coordinateMembers);
+            llvm::SmallVector<Type> blockTypes(flags ? 5 : 3,
+                                               builder.getF64Type());
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            auto sub = [&](Value a, Value b) -> Value {
+              return arith::SubFOp::create(builder, loc, a, b);
+            };
+            Value f = constant(-coulombInternal);
+            Value betaValue = constant(beta);
+            Value qq = mul(args[1], args[2]);
+            if (flags) {
+              Value one = constant(1.0);
+              Value li = mul(args[3], values[5]);
+              Value si = sub(one, li);
+              Value lj = mul(args[4], values[5]);
+              Value sj = sub(one, lj);
+              Value scale = mul(si, sj);
+              qq = mul(qq, scale);
+            }
+            Value fqq = mul(f, qq);
+            Value source = prolate ? values.back() : betaValue;
+            Value shielded =
+                buildShieldedCoulomb(builder, source, args[0], prolate, cutoff,
+                                     cells, polynomialTerms);
+            Value energy = mul(fqq, shielded);
+            if (alchemicalOnly) {
+              Value both = mul(args[3], args[4]);
+              energy = mul(energy, both);
+            }
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return {sum.getResult()};
+          });
       add("excluded");
     }
     if (program.pme && (terms & TermInputs::CoulombWithin) && scalesCoulomb &&
