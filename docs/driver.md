@@ -664,7 +664,7 @@ run, an entry each, in three groups:
 
 | Group | Entries |
 |---|---|
-| physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
+| physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347, and a value that names a choice in its documented spelling, #702); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
 | coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
 | execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
 
@@ -672,6 +672,30 @@ A value longer than 160 characters is recorded as its SHA-256. The
 entries are the keys as written, not the values the driver resolves: a
 key added with its default value counts as a change. `mdir checkpoint
 --print=fingerprint file.h5` lists them.
+
+A value that names a choice, which the reader reads without regard to
+case (Section 1), is recorded in the spelling that the reader documents
+for it, whatever its case in the file (#702): upper case
+(`"VELOCITY_VERLET"`, `"AUTO"`, `"CPU"`), but for the rules of `mixing` of
+`[[energy.pair]]`, which are in lower case (`"lorentz-berthelot"`). So
+`integrator = "velocity_verlet"` continues the run of
+`integrator = "VELOCITY_VERLET"`, and `pairlist_distance = "auto"` that of
+`"AUTO"` without a note. Which values are choices the reader says: it
+records the place in the file of each value that it reads as a choice
+(`Control::choiceSpellings`), and the fingerprint, which reads the same
+file again, takes the spelling of the values at those places, nested ones
+(`scaling` of `[[energy.external]]`, a rule of `mixing`) included. Any
+other string, such as a name, a path, an expression, or a selection, is
+recorded as written, and a change of its case is a change. The fingerprint
+of a file that writes its choices in their documented spelling is the text
+of before #702, so its checkpoints continue as before; the format of the
+checkpoint (format 1, D173) does not change, since it holds the text of the
+entries and no version of their form. Before #702 a choice in another
+case, such as `"mixed"` of `precision`, was recorded as written. Such a
+checkpoint is still taken by the file that wrote it: an entry matches when
+the checkpoint holds either its documented spelling or its text as the file
+writes it. The checkpoints that the run then writes hold the documented
+spelling, which any case of the choice continues.
 
 | A run that takes a checkpoint | Physics or coupling differ | Execution differs |
 |---|---|---|

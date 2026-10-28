@@ -1,0 +1,3 @@
+### Fixed
+
+- **The checkpoint fingerprint records a choice in its documented spelling, whatever its case in the control file**, as the reader reads it: `mdir run --continue` with `integrator = "velocity_verlet"` refused the run of `"VELOCITY_VERLET"` as a change of the coupling, and `pairlist_distance = "auto"` noted a change of the execution after `"AUTO"`. Names, paths, expressions, and selections keep their case. A file whose choices are written in their documented spelling (upper case, the rules of `mixing` in lower case) has the fingerprint of before, and its checkpoints continue as before; a checkpoint written before with a choice in another case is still continued by the file that wrote it (#702).
