@@ -113,4 +113,11 @@ Half-step measurements construct their predictive kick/drift and constrained
 velocity correction directly. Particle and rigid-water energy kernels retain
 the quarter-mass weighting, scalar summation order, and unused tuple coordinate.
 Their predictive state remains separate from the state the step returns.
+Output construction uses typed physical state in `OutputIR.cpp`. Owned lambda
+tables preserve derivative/state order and the single-state shortcut. Observed
+constants preserve runtime tunable operands and user output slots. Gradient
+requests retain the one-iteration host-controlled loop, scalar/field request
+indices, energy shift, field host calls, and scalar stores. Solvent output
+extracts its two energies before the host call. Native captures borrow neither
+the builder nor the mutable program; metadata updates remain at construction.
 D363's term recipes still join remaining assembly at this commit.
