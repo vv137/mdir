@@ -112,8 +112,8 @@ order stay explicit.
 Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
-Stage C (#718, D[builder-native-program]) records the design for the remaining
-native program construction at that boundary.
+Stage C (#718, D[builder-native-program]) parses and clones staged models in
+the build's context; the remaining native program construction is in progress.
 
 ### 2.2 The dialects
 

@@ -62,6 +62,7 @@ add_mlir_library(MDIRDriver
   TermLennardJones.cpp
   TermNonbonded.cpp
   TermModel.cpp
+  StagedModelIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

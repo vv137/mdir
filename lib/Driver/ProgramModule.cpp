@@ -160,9 +160,7 @@ llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
                                                        TermIRPlan &plan) {
   // The producer boundary applies even when there are no typed recipes.
   // A construction parse failure must never return raw generated text.
-  mlir::MLIRContext context(getProgramDialects(),
-                            mlir::MLIRContext::Threading::DISABLED);
-  context.loadAllAvailableDialects();
+  mlir::MLIRContext &context = plan.getContext();
   mlir::ScopedDiagnosticHandler quiet(
       &context, [](mlir::Diagnostic &) { return mlir::success(); });
   // The transitional connections are not executable scalar operations.

@@ -45,6 +45,11 @@ commit compares the full printed module/lowered corpus and combined order
 matrix against one archived PR base. The final head compares five checkpoint
 states bitwise and passes both clean D309 shards.
 
-The design is recorded. Implementation starts with native staged-model input
-parsing and cloning; the remaining program construction follows. D363's term
-recipes still join the existing generated assembly at this commit.
+Staged-model input parsing and cloning are implemented in `StagedModelIR.cpp`.
+The build context outlives the adapters and their captured input modules;
+recipe construction errors propagate to the producer. Input buffers remain
+owned for parsed resource lifetimes. Native tests cover the frozen exported
+model, user string literals and nondefault SSA names, signature rejection,
+foreign program operands, and context ownership. The remaining program
+construction follows. D363's term recipes still join generated assembly at
+this commit.

@@ -11,7 +11,7 @@
 # wrapper. emit uses no device.
 # The test of the corpus is written from argon.test.in, whose markers and
 # RUN line are disguised, since split-file and lit would take them here.
-# RUN: mdir-term-ir-test
+# RUN: mdir-term-ir-test %S/../Driver/Inputs/model-stages/painn-scalar-export.mlir
 # RUN: rm -rf %t && split-file %s %t && mkdir -p %t/root/test/Driver
 # RUN: sed -e 's/^#=== /#--- /' -e 's/R-U-N/RUN/' %t/argon.test.in > %t/root/test/Driver/argon.test
 # RUN: cp %S/../../examples/argon/argon.pdb %t/root/test/Driver
