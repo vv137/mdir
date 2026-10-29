@@ -183,3 +183,7 @@ remaining generated-text boundary and keeps parsing at user input boundaries.
 A new dialect in a generated program belongs in `insertProgramDialects`, with
 its library in `lib/Dialect/Program/CMakeLists.txt`. Keep construction and
 lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-files-of-the-builder).
+
+The stage-C ownership design (#718, D[builder-native-program]) is recorded
+there: parsed model IR shares the build's context, and native cloning
+preserves its declarations and value dependencies.

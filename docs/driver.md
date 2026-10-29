@@ -1352,6 +1352,12 @@ same program. Step 5 removes the remaining generated-text assembly and
 leaves parsed text only for user expressions and `ModelTerm` at their input
 boundaries.
 
+Stage C (#718, D[builder-native-program]) has its
+[native construction design](decisions/builder-native-program.md) recorded.
+Implementation starts with staged-model parsing and cloning in the build's
+owned context, followed by the remaining program construction responsibilities.
+The current term recipe and assembly boundary described above remains in use.
+
 ## 3. Decided
 
 | # | Question | Decision |
