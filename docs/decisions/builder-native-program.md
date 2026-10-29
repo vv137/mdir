@@ -59,4 +59,10 @@ positions around the model declarations. Their memref element types follow
 the state/force precision, and C interface and stop-effect attributes retain
 their original conditions. Construction captures a scalar configuration
 snapshot rather than borrowing the builder or program.
-D363's term recipes still join that assembly at this commit.
+Virtual-site placement and its work potential share the typed geometry in
+`SiteIR.cpp`; site and constraint position changes use native particle maps.
+`SiteSpreadIR.cpp` constructs both force-transfer paths and their virials
+from typed site inputs, including owner translation and the placement
+derivative. The old site-specific text kernels and body assembly are removed.
+The existing minimum-image coordinates and arithmetic order are preserved.
+D363's term recipes still join remaining assembly at this commit.

@@ -2,6 +2,7 @@
 // site placement. Term-specific contributions are owned by the adapters.
 
 #include "BuilderImpl.h"
+#include "SiteIR.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -335,30 +336,71 @@ void Builder::emitSitePotentials() {
   // the transpose of the derivative of the placement, Jᵀ f, which is the
   // gradient in the positions of Σ_t f_t · x_s(t) at a fixed f: the forces
   // of this potential, −∇(Σ_t f_t · p(t)), are −Jᵀ f less its part along
-  // the owner's translation, which emitDerivedSpread adds. md-differentiate
+  // the owner's translation, which buildSiteSpread adds. md-differentiate
   // takes them from the declared transpose of md.sum_tuples and the
   // reverse derivative of the kernel (D295).
   for (const Program::TupleSet *each : getSiteSets()) {
     const Program::TupleSet &set = *each;
     bool amber = set.name == "sites_amber";
-    os << "md.potential @spread_" << set.name
-       << "(%x: !vec, %cell: !md.cell, %rel: !rel_" << set.name
-       << ", %a: !of_" << set.name << ", %b: !of_" << set.name
-       << ", %fs: !vec) -> f64 {\n"
-       << "  %u = md.sum_tuples %rel, %x, %cell\n"
-       << "      coordinates(displacement(2, 1), displacement(3, 1))\n"
-       << "      gather(%fs : !vec) tuple(%a, %b : !of_" << set.name
-       << ", !of_" << set.name << ") {\n"
-       << "  ^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
-          "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
-          "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
-          "%vs_a: f64, %vs_b: f64):\n";
-    SiteKernel k(os, "    ");
-    std::string placed = emitPlacement(k, amber);
-    std::string work = k.dot("%vs_f0", placed);
-    os << "    md.yield " << work << " : f64\n"
-       << "  } : !rel_" << set.name << ", !vec -> f64\n"
-       << "  md.return %u : f64\n}\n\n";
+    std::string symbol = "spread_" + set.name;
+    std::string setName = set.name;
+    unsigned arity = set.arity;
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    emitIRFragment(
+        "", {}, {}, {}, {},
+        [symbol, setName, arity, orientation, amber](mlir::OpBuilder &builder,
+                                                     mlir::ValueRange) -> TermIRValues {
+          using namespace mlir;
+          auto ctx = builder.getContext();
+          auto loc = builder.getUnknownLoc();
+          auto f64 = builder.getF64Type();
+          auto vec = VectorType::get({3}, f64);
+          auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
+          auto field = mdir::md::FieldType::get(ctx, atoms, 3, f64);
+          auto tuples = FlatSymbolRefAttr::get(ctx, setName);
+          auto parameter = mdir::md::FieldType::get(ctx, tuples, 1, f64);
+          auto relation = mdir::md::RelationType::get(ctx, atoms, arity,
+                                                      orientation, tuples);
+          SmallVector<Type> inputs = {field, mdir::md::CellType::get(ctx),
+                                      relation, parameter, parameter, field};
+          auto potential = mdir::md::PotentialOp::create(
+              builder, loc, symbol, builder.getFunctionType(inputs, {f64}),
+              StringAttr{}, ArrayAttr{}, ArrayAttr{});
+          OpBuilder::InsertionGuard potentialGuard(builder);
+          SmallVector<Location> locations(inputs.size(), loc);
+          Block *body = builder.createBlock(&potential.getBody(), {}, inputs,
+                                             locations);
+          auto args = body->getArguments();
+          DenseI32ArrayAttr kinds;
+          DenseI64ArrayAttr members;
+          mdir::md::getCoordinateAttrs(
+              builder, {{mdir::md::CoordinateKind::Displacement, {2, 1}},
+                        {mdir::md::CoordinateKind::Displacement, {3, 1}}},
+              kinds, members);
+          auto sum = mdir::md::SumTuplesOp::create(
+              builder, loc, f64, args[2], args[0], args[1], ValueRange{args[5]},
+              ValueRange{args[3], args[4]}, kinds, members);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            SmallVector<Type> types(6, vec);
+            types.append(2, f64);
+            SmallVector<Location> locations(types.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, types,
+                                                locations);
+            auto values = block->getArguments();
+            Value placed = buildSitePlacement(builder, amber, values[0], values[1],
+                                               values[6], values[7]);
+            Value product = arith::MulFOp::create(builder, loc, values[2], placed);
+            Value work = vector::ReductionOp::create(
+                builder, loc, vector::CombiningKind::ADD, product);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{work});
+          }
+          mdir::md::ReturnOp::create(builder, loc, ValueRange{sum.getResult()});
+          return {};
+        });
   }
 }
 

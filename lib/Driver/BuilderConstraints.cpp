@@ -2,6 +2,11 @@
 // of the constraints (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "SiteIR.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -11,39 +16,51 @@ namespace influence = mdir::influence;
 void Builder::emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                              StringRef relations) {
   std::string current = x.str();
-  std::string inner = (indent + "  ").str();
   std::vector<const Program::TupleSet *> sets = getSiteSets();
   for (const Program::TupleSet *each : sets) {
     const Program::TupleSet &set = *each;
     bool amber = set.name == "sites_amber";
     bool last = each == sets.back();
-    // The change of the position of each site: to where it is built, from
-    // the owner, less where it is.
-    std::string delta = (result + "_" + set.name).str();
-    os << indent << delta << " = md.gather_tuples " << relations << set.name
-       << ", " << current << ", %cell\n"
-       << indent << "    coordinates(displacement(2, 1), displacement(3, 1), "
-                    "displacement(0, 1))\n"
-       << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
-       << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
-       << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
-                    "%vs_s: vector<3xf64>, %vs_a: f64, %vs_b: f64):\n";
-    SiteKernel k(os, inner);
-    std::string placed = emitPlacement(k, amber);
-    std::string change = k.vector("subf", placed, "%vs_s");
-    std::string zero = k.zero();
-    os << inner << "md.yield " << change << ", " << zero << ", " << zero
-       << ", " << zero
-       << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
-       << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+    std::string relation = (relations + set.name).str();
+    std::string a = "%f_" + set.name + "_a", b = "%f_" + set.name + "_b";
+    std::string relationType = "!rel_" + set.name, fieldType = "!of_" + set.name;
     std::string next =
         last ? result.str() : (result + "_" + set.name + "_x").str();
-    os << indent << next << " = md.map_particles gather(" << current << ", "
-       << delta << " : !vec, !vec) {\n"
-       << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-       << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-       << inner << "md.yield %vs_sum : vector<3xf64>\n"
-       << indent << "} : !vec\n";
+    emitIRFragment(
+        indent, {next}, {"!vec"}, {relation, current, "%cell", a, b},
+        {relationType, "!vec", "!md.cell", fieldType, fieldType},
+        [amber](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          using namespace mlir;
+          auto loc = builder.getUnknownLoc();
+          auto vec = VectorType::get({3}, builder.getF64Type());
+          DenseI32ArrayAttr kinds;
+          DenseI64ArrayAttr members;
+          mdir::md::getCoordinateAttrs(
+              builder, {{mdir::md::CoordinateKind::Displacement, {2, 1}},
+                        {mdir::md::CoordinateKind::Displacement, {3, 1}},
+                        {mdir::md::CoordinateKind::Displacement, {0, 1}}},
+              kinds, members);
+          auto delta = mdir::md::GatherTuplesOp::create(
+              builder, loc, values[1].getType(), Type{}, values[0], values[1],
+              values[2], ValueRange{}, values.slice(3, 2), kinds, members);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            SmallVector<Type> types = {vec, vec, vec, builder.getF64Type(),
+                                       builder.getF64Type()};
+            SmallVector<Location> locations(types.size(), loc);
+            Block *block = builder.createBlock(&delta.getKernel(), {}, types,
+                                                locations);
+            auto args = block->getArguments();
+            Value placed = buildSitePlacement(builder, amber, args[0], args[1],
+                                               args[3], args[4]);
+            Value change = arith::SubFOp::create(builder, loc, placed, args[2]);
+            Value zero = arith::ConstantOp::create(
+                builder, loc, DenseElementsAttr::get(vec, 0.0));
+            mdir::md::YieldOp::create(builder, loc,
+                                      ValueRange{change, zero, zero, zero});
+          }
+          return {buildAddChange(builder, values[1], delta.getResult())};
+        });
     current = next;
   }
 }
@@ -53,103 +70,46 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
                                      StringRef relations, StringRef virial,
                                      StringRef virialResult) {
   std::string current = f.str(), currentVirial = virial.str();
-  std::string inner = (indent + "  ").str();
   std::vector<const Program::TupleSet *> sets = getSiteSets();
   for (const Program::TupleSet *each : sets) {
     const Program::TupleSet &set = *each;
-    bool amber = set.name == "sites_amber";
+    bool amber = set.name == "sites_amber", derived = spreadsSitesDerived();
     bool last = each == sets.back();
-    if (spreadsSitesDerived()) {
-      std::string next =
-          last ? result.str() : (result + "_" + set.name + "_f").str();
-      std::string changed =
-          last ? virialResult.str()
-               : (virialResult + "_" + set.name + "_w").str();
-      currentVirial = emitDerivedSpread(indent, set, x, current, next,
-                                        relations, currentVirial, changed);
-      current = next;
-      continue;
-    }
-    std::string delta = (result + "_" + set.name).str();
-    os << indent << delta << " = md.gather_tuples " << relations << set.name
-       << ", " << x << ", %cell\n"
-       << indent << "    coordinates(displacement(2, 1), displacement(3, 1))\n"
-       << indent << "    gather(" << current << " : !vec)\n"
-       << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
-       << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
-       << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
-                    "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
-                    "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
-                    "%vs_a: f64, %vs_b: f64):\n";
-    SiteKernel k(os, inner);
-    std::array<std::string, 3> spread;
-    if (amber) {
-      AmberFrame frame(k, "%vs_j", "%vs_k");
-      spread = frame.spread(k, "%vs_f0", "%vs_a");
-    } else {
-      std::string first = k.scale("%vs_a", "%vs_f0"),
-                  second = k.scale("%vs_b", "%vs_f0");
-      spread = {k.vector("subf", k.vector("subf", "%vs_f0", first), second),
-                first, second};
-    }
-    std::string removed = k.negate("%vs_f0");
-    os << inner << "md.yield " << removed << ", " << spread[0] << ", "
-       << spread[1] << ", " << spread[2]
-       << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
-       << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
-
-    // The virial changes where the site is not a linear combination of the
-    // atoms: W = Σ d ⊗ F with the forces on the atoms instead of that on
-    // the site, Σ_k (x_k − x_s) ⊗ F_k.
-    if (amber && !currentVirial.empty()) {
-      std::string change = (virialResult + "_" + set.name).str();
-      os << indent << change << " = md.sum_tuples " << relations << set.name
-         << ", " << x << ", %cell\n"
-         << indent << "    coordinates(displacement(2, 1), displacement(3, "
-                      "1), displacement(1, 0), displacement(2, 0), "
-                      "displacement(3, 0))\n"
-         << indent << "    gather(" << current << " : !vec)\n"
-         << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
-         << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
-         << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
-                      "%vs_e1: vector<3xf64>, %vs_e2: vector<3xf64>, "
-                      "%vs_e3: vector<3xf64>, "
-                      "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
-                      "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
-                      "%vs_a: f64, %vs_b: f64):\n";
-      SiteKernel w(os, inner);
-      AmberFrame frame(w, "%vs_j", "%vs_k");
-      std::array<std::string, 3> forces = frame.spread(w, "%vs_f0", "%vs_a");
-      std::array<std::string, 3> arms = {"%vs_e1", "%vs_e2", "%vs_e3"};
-      std::string elements;
-      for (int a = 0; a != 3; ++a) {
-        std::string row;
-        for (int m = 0; m != 3; ++m) {
-          std::string term = w.scale(w.component(arms[m], a), forces[m]);
-          row = row.empty() ? term : w.vector("addf", row, term);
-        }
-        for (int b = 0; b != 3; ++b)
-          elements += (elements.empty() ? "" : ", ") + w.component(row, b);
-      }
-      os << inner << "%vs_w = vector.from_elements " << elements
-         << " : vector<9xf64>\n"
-         << inner << "md.yield %vs_w : vector<9xf64>\n"
-         << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
-      std::string next = virialResult.str();
-      os << indent << next << " = arith.addf " << currentVirial << ", "
-         << change << " : vector<9xf64>\n";
-      currentVirial = next;
-    }
-
+    bool changesVirial = !currentVirial.empty() && (amber || derived);
     std::string next =
         last ? result.str() : (result + "_" + set.name + "_f").str();
-    os << indent << next << " = md.map_particles gather(" << current << ", "
-       << delta << " : !vec, !vec) {\n"
-       << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-       << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-       << inner << "md.yield %vs_sum : vector<3xf64>\n"
-       << indent << "} : !vec\n";
+    std::string changed = last ? virialResult.str()
+                              : (virialResult + "_" + set.name + "_w").str();
+    std::string relation = (relations + set.name).str();
+    std::string a = "%f_" + set.name + "_a", b = "%f_" + set.name + "_b";
+    std::string relationType = "!rel_" + set.name, fieldType = "!of_" + set.name;
+    llvm::SmallVector<StringRef> operands = {relation, x, "%cell", a, b, current};
+    llvm::SmallVector<StringRef> types = {relationType, "!vec", "!md.cell", fieldType,
+                                    fieldType, "!vec"};
+    llvm::SmallVector<StringRef> outputs = {next}, outputTypes = {"!vec"};
+    if (changesVirial) {
+      operands.push_back(currentVirial);
+      types.push_back("vector<9xf64>");
+      outputs.push_back(changed);
+      outputTypes.push_back("vector<9xf64>");
+    }
+    emitIRFragment(
+        indent, outputs, outputTypes, operands, types,
+        [amber, derived, changesVirial, symbol = "spread_" + set.name](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          SiteSpreadInputs input{values[0], values[1], values[2], values[3],
+                                  values[4], values[5], {}};
+          if (changesVirial)
+            input.virial = values[6];
+          auto result = buildSiteSpread(builder, input, amber, derived, symbol);
+          TermIRValues outputs = {result.forces};
+          if (changesVirial)
+            outputs.push_back(result.virial);
+          return outputs;
+        });
     current = next;
+    if (changesVirial)
+      currentVirial = changed;
   }
   return currentVirial;
 }
@@ -159,96 +119,6 @@ bool Builder::spreadsSitesDerived() const {
   return value && StringRef(value) == "derived";
 }
 
-std::string Builder::emitDerivedSpread(StringRef indent,
-                                       const Program::TupleSet &set,
-                                       StringRef x, StringRef current,
-                                       StringRef next, StringRef relations,
-                                       StringRef virial,
-                                       StringRef virialResult) {
-  std::string inner = (indent + "  ").str();
-  std::string base = (next + "_" + set.name + "_d").str();
-  std::string types = "(!vec, !md.cell, !rel_" + set.name + ", !of_" +
-                      set.name + ", !of_" + set.name + ", !vec)";
-  std::string arguments = (x + ", %cell, " + relations + set.name + ", %f_" +
-                           set.name + "_a, %f_" + set.name + "_b, " + current)
-                              .str();
-  // The forces of the placement, −Jᵀ f without the owner's translation,
-  // and with the virial, their virial Σ_m (x_m − x_o) ⊗ F_m.
-  std::string forces = base + "f";
-  std::string work = base + "w";
-  if (!virial.empty())
-    os << indent << forces << ", " << work << " = md.evaluate @spread_"
-       << set.name << "(" << arguments << ")\n"
-       << indent << "    request [forces, virial]\n"
-       << indent << "    : " << types << " -> (!vec, vector<9xf64>)\n";
-  else
-    os << indent << forces << " = md.evaluate @spread_" << set.name << "("
-       << arguments << ") request [forces]\n"
-       << indent << "    : " << types << " -> !vec\n";
-  // The translation x_s = x_o + p: the force on the site moves to the
-  // owner whole, the transpose of the copy of x_o to x_s.
-  std::string moved = base + "t";
-  os << indent << moved << " = md.gather_tuples " << relations << set.name
-     << ", " << x << ", %cell\n"
-     << indent << "    coordinates(displacement(2, 1))\n"
-     << indent << "    gather(" << current << " : !vec) {\n"
-     << indent << "^bb0(%vs_j: vector<3xf64>, %vs_f0: vector<3xf64>, "
-                  "%vs_f1: vector<3xf64>, %vs_f2: vector<3xf64>, "
-                  "%vs_f3: vector<3xf64>):\n";
-  SiteKernel t(os, inner);
-  std::string removed = t.negate("%vs_f0"), zero = t.zero();
-  os << inner << "md.yield " << removed << ", %vs_f0, " << zero << ", "
-     << zero
-     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
-     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
-  // f + (translation) + Jᵀ f.
-  os << indent << next << " = md.map_particles gather(" << current << ", "
-     << moved << ", " << forces << " : !vec, !vec, !vec) {\n"
-     << indent
-     << "^bb0(%vs_x: vector<3xf64>, %vs_t: vector<3xf64>, "
-        "%vs_p: vector<3xf64>):\n"
-     << inner << "%vs_s = arith.addf %vs_x, %vs_t : vector<3xf64>\n"
-     << inner << "%vs_sum = arith.subf %vs_s, %vs_p : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
-  if (virial.empty())
-    return "";
-  // The virial with the forces on the atoms instead of that on the site:
-  // Σ_k (x_k − x_s) ⊗ F_k = Σ_k (x_k − x_o) ⊗ F_k − p ⊗ f, with F_k the
-  // moved forces, whose part from the placement is −Jᵀ f: the virial of
-  // the placement's forces, negated, less Σ_t p ⊗ f. For a site linear in
-  // the atoms the two cancel, to the rounding.
-  std::string arm = base + "a";
-  os << indent << arm << " = md.sum_tuples " << relations << set.name << ", "
-     << x << ", %cell\n"
-     << indent << "    coordinates(displacement(2, 1), displacement(3, 1))\n"
-     << indent << "    gather(" << current << " : !vec)\n"
-     << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
-     << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
-     << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
-                  "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
-                  "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
-                  "%vs_a: f64, %vs_b: f64):\n";
-  SiteKernel w(os, inner);
-  bool amber = set.name == "sites_amber";
-  std::string placed = emitPlacement(w, amber);
-  std::string elements;
-  for (int a = 0; a != 3; ++a)
-    for (int b = 0; b != 3; ++b)
-      elements += (elements.empty() ? "" : ", ") +
-                  w.real("mulf", w.component(placed, a),
-                         w.component("%vs_f0", b));
-  os << inner << "%vs_w = vector.from_elements " << elements
-     << " : vector<9xf64>\n"
-     << inner << "md.yield %vs_w : vector<9xf64>\n"
-     << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
-  std::string total = base + "s";
-  os << indent << total << " = arith.addf " << work << ", " << arm
-     << " : vector<9xf64>\n"
-     << indent << virialResult << " = arith.subf " << virial << ", " << total
-     << " : vector<9xf64>\n";
-  return virialResult.str();
-}
 
 void Builder::emitSettlePositions(StringRef indent, StringRef old,
                                   StringRef x, StringRef change,
@@ -508,13 +378,11 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
 
 void Builder::emitAddChange(StringRef indent, StringRef x, StringRef change,
                             StringRef result) {
-  std::string inner = (indent + "  ").str();
-  os << indent << result << " = md.map_particles gather(" << x << ", "
-     << change << " : !vec, !vec) {\n"
-     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  emitIRFragment(
+      indent, {result}, {"!vec"}, {x, change}, {"!vec", "!vec"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildAddChange(builder, values[0], values[1])};
+      });
 }
 
 void Builder::emitBondConstraints(StringRef indent, StringRef setName,

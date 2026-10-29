@@ -63,6 +63,8 @@ add_mlir_library(MDIRDriver
   TermNonbonded.cpp
   TermModel.cpp
   StagedModelIR.cpp
+  SiteIR.cpp
+  SiteSpreadIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

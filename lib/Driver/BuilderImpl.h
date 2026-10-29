@@ -716,12 +716,6 @@ private:
   /// against the place of the site from its owner, whose forces are the
   /// transpose of the derivative of the placement.
   void emitSitePotentials();
-  /// Emits what `emitSpreadSites` does for one set of sites, by the
-  /// derivative of `@spread_<set>`, and returns the virial as it does.
-  std::string emitDerivedSpread(StringRef indent, const Program::TupleSet &set,
-                                StringRef x, StringRef current,
-                                StringRef next, StringRef relations,
-                                StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const override;
 
@@ -1684,58 +1678,6 @@ private:
   unsigned next = 0;
 };
 
-/// The frame of the extra point of Amber: the unit vectors from the owner
-/// to the two hydrogens, `u` and `v`, their lengths, and the unit vector
-/// along their sum, with the length of the sum.
-struct AmberFrame {
-  std::string u, v, lengthU, lengthV, sum, lengthSum;
-
-  AmberFrame(SiteKernel &k, StringRef toJ, StringRef toK) {
-    lengthU = k.norm(toJ);
-    lengthV = k.norm(toK);
-    u = k.vector("divf", toJ, k.splat(lengthU));
-    v = k.vector("divf", toK, k.splat(lengthV));
-    sum = k.vector("addf", u, v);
-    lengthSum = k.norm(sum);
-  }
-
-  /// The forces on the owner and on the two hydrogens from the force
-  /// `force` on the extra point at the distance `d`: the transpose of the
-  /// derivative of the position. Perpendicular to the bisector, then to
-  /// each bond: the extra point moves with the directions of the bonds,
-  /// not with their lengths.
-  std::array<std::string, 3> spread(SiteKernel &k, StringRef force,
-                                    StringRef d) {
-    std::string bisector = k.vector("divf", sum, k.splat(lengthSum));
-    std::string across =
-        k.vector("subf", force, k.scale(k.dot(force, bisector), bisector));
-    auto toHydrogen = [&](StringRef unit, StringRef length) {
-      std::string factor =
-          k.real("divf", d, k.real("mulf", length, lengthSum));
-      std::string perpendicular =
-          k.vector("subf", across, k.scale(k.dot(across, unit), unit));
-      return k.scale(factor, perpendicular);
-    };
-    std::string first = toHydrogen(u, lengthU),
-                second = toHydrogen(v, lengthV);
-    std::string owner =
-        k.vector("subf", k.vector("subf", force, first), second);
-    return {owner, first, second};
-  }
-};
-/// The place of a site from its owner, p(d_j, d_k), in a kernel whose
-/// arguments `%vs_j` and `%vs_k` are the displacements of the other two
-/// atoms from the owner and `%vs_a` and `%vs_b` the parameters of the site:
-/// a d_j + b d_k, or for Amber's extra point a along the bisector of the
-/// two bonds.
-inline std::string emitPlacement(SiteKernel &k, bool amber) {
-  if (amber) {
-    AmberFrame frame(k, "%vs_j", "%vs_k");
-    return k.scale(k.real("divf", "%vs_a", frame.lengthSum), frame.sum);
-  }
-  return k.vector("addf", k.scale("%vs_a", "%vs_j"),
-                  k.scale("%vs_b", "%vs_k"));
-}
 } // namespace builder
 } // namespace driver
 } // namespace mdir
