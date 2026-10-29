@@ -1,4 +1,5 @@
 # Full batched-model execution is GPU-only (D293). Execute the same frozen
 # forward/VJP bodies directly on the CPU, with one and 64 rows. Integer bit
 # output preserves the complete f32 results through the runner.
+# RUN: rm -rf %t
 # RUN: %python %S/../Driver/Inputs/model-stages/unit_rows_cpu.py %S/../.. %t mdir-opt mlir-opt mlir-runner %mlir_c_runner_utils %openmp

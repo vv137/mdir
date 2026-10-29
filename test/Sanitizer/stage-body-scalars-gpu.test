@@ -1,5 +1,6 @@
 # The scalar stage kernel uses one thread for device buffer accesses.
 # REQUIRES: cuda, compute-sanitizer, hdf5
+# RUN: rm -rf %t-memcheck %t-racecheck %t-synccheck
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %mdir_python %S/../Driver/Inputs/model-stages/unit_rows.py evaluate %S/../.. %t-memcheck --mdir mdir 2>&1 | FileCheck %s
 # RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 %mdir_python %S/../Driver/Inputs/model-stages/unit_rows.py evaluate %S/../.. %t-racecheck --mdir mdir 2>&1 | FileCheck %s --check-prefix=RACE
 # RUN: %compute_sanitizer --tool synccheck --error-exitcode 1 %mdir_python %S/../Driver/Inputs/model-stages/unit_rows.py evaluate %S/../.. %t-synccheck --mdir mdir 2>&1 | FileCheck %s
