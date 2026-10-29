@@ -1,5 +1,6 @@
 // Molecular pressure and rigid-center motion in their original shared regions.
 #include "CouplingIR.h"
+#include "KineticIR.h"
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -142,36 +143,8 @@ GroupKineticResult mdir::driver::builder::buildGroupKinetic(
   auto loc = builder.getUnknownLoc();
   auto vec = VectorType::get({3}, builder.getF64Type());
   Kernel k(builder);
-  auto particles = mdir::md::SumParticlesOp::create(
-      builder, loc, vec, ValueRange{in.velocities, in.masses});
-  {
-    OpBuilder::InsertionGuard guard(builder);
-    auto args = kernel(builder, particles.getKernel(), 1, 1)->getArguments();
-    Value half = k.constant(0.5);
-    Value mass = k.mul(half, args[1]);
-    Value broadcast = k.broadcast(mass);
-    Value square = k.mul(args[0], args[0]);
-    Value energy = k.mul(broadcast, square);
-    mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-  }
-  Value kinetic = particles.getResult();
-  auto forceSum = mdir::md::SumParticlesOp::create(
-      builder, loc, vec, ValueRange{in.forces, in.masses});
-  {
-    OpBuilder::InsertionGuard guard(builder);
-    auto args = kernel(builder, forceSum.getKernel(), 1, 1)->getArguments();
-    Value square = k.mul(args[0], args[0]);
-    Value zero = k.constant(0.0), one = k.constant(1.0);
-    Value massless = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OEQ,
-                                           args[1], zero);
-    Value safe = arith::SelectOp::create(builder, loc, massless, one, args[1]);
-    Value inverse = k.div(one, safe);
-    Value weight = arith::SelectOp::create(builder, loc, massless, zero, inverse);
-    Value broadcast = k.broadcast(weight);
-    Value term = k.mul(square, broadcast);
-    mdir::md::YieldOp::create(builder, loc, ValueRange{term});
-  }
-  Value force = forceSum.getResult();
+  Value kinetic = buildKineticVector(builder, in.velocities, in.masses);
+  Value force = buildForceSquare(builder, in.forces, in.masses);
   for (const auto &group : in.groups) {
     for (int part = 0; part != 2; ++part) {
       DenseI32ArrayAttr kinds;

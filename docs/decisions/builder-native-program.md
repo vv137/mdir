@@ -102,4 +102,15 @@ retains its guarded mass/friction division, and the host step counter uses
 native load/add/store operations. Seed and noise constants are owned
 captures; no generated random-operation text or SSA-name construction
 remains in these kernels.
+Kinetic observables share typed reductions in `KineticIR.cpp`. Scalar energy
+retains its within-particle vector reduction, while axis energies retain their
+separate vector accumulation. Momentum broadcasts mass before multiplying;
+the force-square reduction retains the zero-mass safe division. Center-of-mass
+correction borrows the existing half-vector constant rather than creating one.
+Measured half-step excess subtracts the full-step axis energy; unmeasured,
+unconstrained excess retains the force-square expression of [Jung2018].
+Half-step measurements construct their predictive kick/drift and constrained
+velocity correction directly. Particle and rigid-water energy kernels retain
+the quarter-mass weighting, scalar summation order, and unused tuple coordinate.
+Their predictive state remains separate from the state the step returns.
 D363's term recipes still join remaining assembly at this commit.

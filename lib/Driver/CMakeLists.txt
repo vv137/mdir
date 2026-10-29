@@ -68,6 +68,7 @@ add_mlir_library(MDIRDriver
   ConstraintIR.cpp
   CouplingIR.cpp
   NoiseIR.cpp
+  KineticIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

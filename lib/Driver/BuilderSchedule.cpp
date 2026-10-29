@@ -277,7 +277,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
           emitKineticExcess(inner, ("o" + tag).str(), measured, f, full);
       if (excess.empty())
         return "";
-      emitKineticEnergy(os, o + "k", full, massName, inner);
+      emitKineticEnergy(o + "k", full, massName, inner);
       emitSum3(os, o + "g", excess, inner);
       os << inner << o << "c = arith.constant " << formatReal(2.0 / 3.0)
          << " : f64\n"
@@ -537,7 +537,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
       }
       std::string full = isLeapfrog() ? now : "%vl";
-      emitKineticEnergy(os, "%k", full, massName, inner);
+      emitKineticEnergy("%k", full, massName, inner);
       // K_half - K, measured from the velocities of the half steps with
       // constraints and from the forces without (D203).
       std::string excess = emitKineticExcess(
@@ -1530,7 +1530,7 @@ void Builder::emitEntry() {
       os << "  func.call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
             " : (f64, f64, f64) -> ()\n";
     }
-    emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
+    emitKineticEnergy("%k0", velocities, "%m", "  ");
     // K_half - K from the forces without constraints; with them there is
     // no step before the start to measure, and the row takes K
     // (D203).
@@ -1962,7 +1962,7 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   if (reportsSolvent())
     emitWriteSolvent("    ", "%kwspl");
   std::string plainFull = isLeapfrog() ? "%vpn" : "%vpl";
-  emitKineticEnergy(os, "%kpl", plainFull, massName, "    ");
+  emitKineticEnergy("%kpl", plainFull, massName, "    ");
   std::string plainExcess = emitKineticExcess(
       "    ", "pl", measuresHalfSteps() ? "%khspl" : "", "%fpl", plainFull);
   if (plainExcess.empty())

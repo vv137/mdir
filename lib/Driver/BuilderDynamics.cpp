@@ -5,6 +5,8 @@
 #include "BuilderImpl.h"
 #include "CouplingIR.h"
 #include "NoiseIR.h"
+#include "KineticIR.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
@@ -16,19 +18,22 @@ namespace influence = mdir::influence;
 
 /// The kinetic energy of the velocities `velocities` along each axis,
 /// Σ m v ⊙ v / 2, a vector of three.
-static void emitKineticVector(llvm::raw_ostream &os, StringRef result,
-                              StringRef velocities, StringRef masses,
-                              StringRef indent) {
-  os << indent << result << " = md.sum_particles gather(" << velocities
-     << ", " << masses << " : !vec, !real) {\n"
-     << indent << "^bb0(%kv_v: vector<3xf64>, %kv_m: f64):\n"
-     << indent << "  %kv_c = arith.constant 5.0e-01 : f64\n"
-     << indent << "  %kv_hm = arith.mulf %kv_c, %kv_m : f64\n"
-     << indent << "  %kv_hmb = vector.broadcast %kv_hm : f64 to vector<3xf64>\n"
-     << indent << "  %kv_sq = arith.mulf %kv_v, %kv_v : vector<3xf64>\n"
-     << indent << "  %kv_ke = arith.mulf %kv_hmb, %kv_sq : vector<3xf64>\n"
-     << indent << "  md.yield %kv_ke : vector<3xf64>\n"
-     << indent << "} : vector<3xf64>\n";
+void Builder::emitKineticVector(StringRef result, StringRef velocities,
+                                  StringRef masses, StringRef indent) {
+  emitIRFragment(
+      indent, {result}, {"vector<3xf64>"}, {velocities, masses}, {"!vec", "!real"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildKineticVector(builder, values[0], values[1])};
+      });
+}
+
+void Builder::emitKineticEnergy(StringRef result, StringRef velocities,
+                                  StringRef masses, StringRef indent) {
+  emitIRFragment(
+      indent, {result}, {"f64"}, {velocities, masses}, {"!vec", "!real"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildKineticEnergy(builder, values[0], values[1])};
+      });
 }
 
 void Builder::emitPrograms() {
@@ -302,7 +307,7 @@ void Builder::emitPrograms() {
            << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
         reference = emitGroupScaling("  ", "%xgc", "%mu", "%mu_m1", "%cell",
                                      "%m", "%r_", "_t");
-        emitKineticVector(os, "%khalf", thermal, "%m", "  ");
+        emitKineticVector("%khalf", thermal, "%m", "  ");
         os << "  %v1t = md.map_particles gather(" << thermal << " : !vec) {\n"
            << "  ^bb0(%v_i: vector<3xf64>):\n"
            << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
@@ -331,7 +336,7 @@ void Builder::emitPrograms() {
                                             "%cell", "%m", "%r_", "_t");
       // The kinetic energy of each axis of the velocities that the
       // scaling takes.
-      emitKineticVector(os, "%khalf", middle, "%m", "  ");
+      emitKineticVector("%khalf", middle, "%m", "  ");
       os << "  %v1t = md.map_particles gather(" << middle << " : !vec) {\n"
          << "  ^bb0(%v_i: vector<3xf64>):\n"
          << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
@@ -561,11 +566,19 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   StringRef length = geodesic ? "%half" : "%dt";
-  if (leapfrog)
-    os << "  %v3k = dyn.kick " << velocities << ", %f1, %m, %dt : !vec\n";
-  else
-    os << "  %v3k = dyn.kick %v2, %f1, %m, %half : !vec\n";
-  os << "  %x3d = dyn.drift %x1, %v3k, " << length << " : !vec\n";
+  emitIRFragment(
+      "  ", {"%v3k", "%x3d"}, {"!vec", "!vec"},
+      {leapfrog ? velocities : StringRef("%v2"), "%f1", "%m",
+       leapfrog ? StringRef("%dt") : StringRef("%half"), "%x1", length},
+      {"!vec", "!vec", "!real", "f64", "!vec", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value kick = mdir::dyn::KickOp::create(
+            builder, loc, values[0].getType(), values[0], values[1], values[2], values[3]);
+        mlir::Value drift = mdir::dyn::DriftOp::create(
+            builder, loc, values[4].getType(), values[4], kick, values[5]);
+        return {kick, drift};
+      });
   std::string current = "%x3d";
   unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
   auto next = [&]() {
@@ -583,83 +596,30 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
     emitShakePositions("  ", "%x1", current, *set, result);
     current = result;
   }
-  os << "  %h3one = arith.constant 1.0 : f64\n"
-     << "  %h3rate = arith.divf %h3one, " << length << " : f64\n"
-     << "  %v3c = md.map_particles gather(%v3k, " << current
-     << ", %x3d : !vec, !vec, !vec) {\n"
-     << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
-        "%vs_u: vector<3xf64>):\n"
-     << "    %vs_d = arith.subf %vs_c, %vs_u : vector<3xf64>\n"
-     << "    %vs_r = vector.broadcast %h3rate : f64 to vector<3xf64>\n"
-     << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
-     << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
-     << "    md.yield %vs_sum : vector<3xf64>\n"
-     << "  } : !vec\n"
-     << "  %khs = md.sum_particles gather(" << velocities
-     << ", %v3c, %m : !vec, !vec, !real) {\n"
-     << "  ^bb0(%kh_a: vector<3xf64>, %kh_b: vector<3xf64>, %kh_m: f64):\n"
-     << "    %kh_c = arith.constant 2.5e-01 : f64\n"
-     << "    %kh_qm = arith.mulf %kh_c, %kh_m : f64\n"
-     << "    %kh_qmb = vector.broadcast %kh_qm : f64 to vector<3xf64>\n"
-     << "    %kh_aa = arith.mulf %kh_a, %kh_a : vector<3xf64>\n"
-     << "    %kh_bb = arith.mulf %kh_b, %kh_b : vector<3xf64>\n"
-     << "    %kh_s = arith.addf %kh_aa, %kh_bb : vector<3xf64>\n"
-     << "    %kh_ke = arith.mulf %kh_qmb, %kh_s : vector<3xf64>\n"
-     << "    md.yield %kh_ke : vector<3xf64>\n"
-     << "  } : vector<3xf64>\n";
+  emitIRFragment(
+      "  ", {"%v3c", "%khs"}, {"!vec", "vector<3xf64>"},
+      {"%v3k", current, "%x3d", length, velocities, "%m"},
+      {"!vec", "!vec", "!vec", "f64", "!vec", "!real"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mlir::Value corrected = buildCorrectedHalfVelocity(
+            builder, values[0], values[1], values[2], values[3]);
+        mlir::Value kinetic = buildHalfStepKinetic(
+            builder, values[4], corrected, values[5]);
+        return {corrected, kinetic};
+      });
   if (!solvent)
     return;
   // The kinetic energies of the rigid waters, K and K_half, as the first
-  // two elements of a vector.
-  os << "  %kws = md.sum_tuples %r_settles, %x1, %cell\n"
-     << "    coordinates(displacement(1, 0))\n"
-     << "    gather(%v2, " << velocities << ", %v3c, %m"
-     << " : !vec, !vec, !vec, !real) {\n"
-     << "  ^bb0(%ws_r: vector<3xf64>, %ws_f0: vector<3xf64>, "
-        "%ws_f1: vector<3xf64>, %ws_f2: vector<3xf64>, "
-        "%ws_a0: vector<3xf64>, %ws_a1: vector<3xf64>, "
-        "%ws_a2: vector<3xf64>, %ws_b0: vector<3xf64>, "
-        "%ws_b1: vector<3xf64>, %ws_b2: vector<3xf64>, %ws_m0: f64, "
-        "%ws_m1: f64, %ws_m2: f64):\n";
-  std::string full, half;
-  for (int j = 0; j != 3; ++j) {
-    std::string n = std::to_string(j);
-    os << "    %ws_ff" << n << " = arith.mulf %ws_f" << n << ", %ws_f" << n
-       << " : vector<3xf64>\n"
-       << "    %ws_fs" << n << " = vector.reduction <add>, %ws_ff" << n
-       << " : vector<3xf64> into f64\n"
-       << "    %ws_fm" << n << " = arith.mulf %ws_m" << n << ", %ws_fs" << n
-       << " : f64\n"
-       << "    %ws_aa" << n << " = arith.mulf %ws_a" << n << ", %ws_a" << n
-       << " : vector<3xf64>\n"
-       << "    %ws_bb" << n << " = arith.mulf %ws_b" << n << ", %ws_b" << n
-       << " : vector<3xf64>\n"
-       << "    %ws_hh" << n << " = arith.addf %ws_aa" << n << ", %ws_bb" << n
-       << " : vector<3xf64>\n"
-       << "    %ws_hs" << n << " = vector.reduction <add>, %ws_hh" << n
-       << " : vector<3xf64> into f64\n"
-       << "    %ws_hm" << n << " = arith.mulf %ws_m" << n << ", %ws_hs" << n
-       << " : f64\n";
-    if (j == 0) {
-      full = "%ws_fm0";
-      half = "%ws_hm0";
-    } else {
-      os << "    %ws_ft" << n << " = arith.addf " << full << ", %ws_fm" << n
-         << " : f64\n"
-         << "    %ws_ht" << n << " = arith.addf " << half << ", %ws_hm" << n
-         << " : f64\n";
-      full = "%ws_ft" + n;
-      half = "%ws_ht" + n;
-    }
-  }
-  os << "    %ws_c2 = arith.constant 5.0e-01 : f64\n"
-     << "    %ws_c4 = arith.constant 2.5e-01 : f64\n"
-     << "    %ws_k = arith.mulf %ws_c2, " << full << " : f64\n"
-     << "    %ws_kh = arith.mulf %ws_c4, " << half << " : f64\n"
-     << "    %ws_z = arith.constant 0.0 : f64\n"
-     << "    %ws_v = vector.from_elements %ws_k, %ws_kh, %ws_z : vector<3xf64>\n"
-     << "    md.yield %ws_v : vector<3xf64>\n"
-     << "  } : !rel_settles, !vec -> vector<3xf64>\n";
+  // two elements of a vector. Its otherwise unused coordinate is retained.
+  emitIRFragment(
+      "  ", {"%kws"}, {"vector<3xf64>"},
+      {"%r_settles", "%x1", "%cell", "%v2", velocities, "%v3c", "%m"},
+      {"!rel_settles", "!vec", "!md.cell", "!vec", "!vec", "!vec", "!real"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        SolventKineticInputs input{values[0], values[1], values[2], values[3],
+                                     values[4], values[5], values[6]};
+        return {buildSolventKinetic(builder, input)};
+      });
 }
 
 void Builder::emitLangevin(StringRef indent, StringRef velocities,
@@ -991,24 +951,22 @@ std::string Builder::emitKineticWithoutCenter(StringRef indent,
                                               StringRef tag) {
   std::string t = tag.str();
   std::string kinetic = "%tk" + t;
-  emitKineticVector(os, kinetic, velocities, masses, indent);
+  emitKineticVector(kinetic, velocities, masses, indent);
   if (control.comPeriod > 0) {
-    os << indent << "%tpc" << t << " = md.sum_particles gather("
-       << velocities << ", " << masses << " : !vec, !real) {\n"
-       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
-       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
-       << indent << "  md.yield %p : vector<3xf64>\n"
-       << indent << "} : vector<3xf64>\n"
-       << indent << "%tvcm" << t << " = arith.divf %tpc" << t
-       << ", %total_mass : vector<3xf64>\n"
-       << indent << "%tpvs" << t << " = arith.mulf %tpc" << t << ", %tvcm"
-       << t << " : vector<3xf64>\n"
-       << indent << "%tkcm" << t << " = arith.mulf %c_half3, %tpvs" << t
-       << " : vector<3xf64>\n"
-       << indent << "%tkt" << t << " = arith.subf " << kinetic << ", %tkcm"
-       << t << " : vector<3xf64>\n";
-    kinetic = "%tkt" + t;
+    std::string result = "%tkt" + t;
+    emitIRFragment(
+        indent, {result}, {"vector<3xf64>"},
+        {kinetic, velocities, masses, "%total_mass", "%c_half3"},
+        {"vector<3xf64>", "!vec", "!real", "vector<3xf64>", "vector<3xf64>"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value moment = buildMomentum(builder, values[1], values[2]);
+          mlir::Value center = mlir::arith::DivFOp::create(builder, loc, moment, values[3]);
+          mlir::Value product = mlir::arith::MulFOp::create(builder, loc, moment, center);
+          mlir::Value com = mlir::arith::MulFOp::create(builder, loc, values[4], product);
+          return {mlir::arith::SubFOp::create(builder, loc, values[0], com)};
+        });
+    kinetic = result;
   }
   return kinetic;
 }
@@ -1069,9 +1027,15 @@ std::string Builder::emitKineticExcess(StringRef indent, StringRef tag,
   std::string t = tag.str();
   std::string result = "%kex" + t;
   if (!measured.empty()) {
-    emitKineticVector(os, "%kexf" + t, full, massName, indent);
-    os << indent << result << " = arith.subf " << measured << ", %kexf" << t
-       << " : vector<3xf64>\n";
+    emitKineticVector("%kexf" + t, full, massName, indent);
+    std::string fullKinetic = "%kexf" + t;
+    emitIRFragment(
+        indent, {result}, {"vector<3xf64>"}, {measured, fullKinetic},
+        {"vector<3xf64>", "vector<3xf64>"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::SubFOp::create(builder, builder.getUnknownLoc(),
+                                               values[0], values[1])};
+        });
     return result;
   }
   // Under Langevin dynamics with constraints neither is measured; Brownian
@@ -1080,28 +1044,12 @@ std::string Builder::emitKineticExcess(StringRef indent, StringRef tag,
     return "";
   // Without constraints, K(v - dt F / 2m) and K(v + dt F / 2m) average to
   // K(v) + (dt^2 / 8) sum F^2 / m [Jung2018].
-  os << indent << "%kexg" << t << " = md.sum_particles gather(" << forces
-     << ", " << massName << " : !vec, !real) {\n"
-     << indent << "^bb0(%kx_f: vector<3xf64>, %kx_m: f64):\n"
-     << indent << "  %kx_sq = arith.mulf %kx_f, %kx_f : vector<3xf64>\n"
-     << indent << "  %kx_zero = arith.constant 0.0 : f64\n"
-     << indent << "  %kx_one = arith.constant 1.0 : f64\n"
-     << indent << "  %kx_massless = arith.cmpf oeq, %kx_m, %kx_zero : f64\n"
-     << indent << "  %kx_safe = arith.select %kx_massless, %kx_one, %kx_m : f64\n"
-     << indent << "  %kx_inv = arith.divf %kx_one, %kx_safe : f64\n"
-     << indent << "  %kx_w = arith.select %kx_massless, %kx_zero, %kx_inv : f64\n"
-     << indent << "  %kx_wb = vector.broadcast %kx_w : f64 to vector<3xf64>\n"
-     << indent << "  %kx_g = arith.mulf %kx_sq, %kx_wb : vector<3xf64>\n"
-     << indent << "  md.yield %kx_g : vector<3xf64>\n"
-     << indent << "} : vector<3xf64>\n"
-     << indent << "%kexd" << t << " = arith.mulf %dt, %dt : f64\n"
-     << indent << "%kexc" << t << " = arith.constant 1.25e-01 : f64\n"
-     << indent << "%kexs" << t << " = arith.mulf %kexd" << t << ", %kexc"
-     << t << " : f64\n"
-     << indent << "%kexb" << t << " = vector.broadcast %kexs" << t
-     << " : f64 to vector<3xf64>\n"
-     << indent << result << " = arith.mulf %kexg" << t << ", %kexb" << t
-     << " : vector<3xf64>\n";
+  emitIRFragment(
+      indent, {result}, {"vector<3xf64>"}, {forces, massName, "%dt"},
+      {"!vec", "!real", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildKineticExcess(builder, values[0], values[1], values[2])};
+      });
   return result;
 }
 
@@ -1145,7 +1093,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     // The kinetic energy of each axis, which the pressure of each axis
     // takes, and of the center of mass; their sums for the thermostat.
     os << indent << "// The kinetic energy of each axis.\n";
-    emitKineticVector(os, "%kv" + t, velocities, massName, indent);
+    emitKineticVector("%kv" + t, velocities, massName, indent);
     emitSum3(os, "%kc" + t, "%kv" + t, indent);
     std::string vector = "%kv" + t;
     if (removesMotion) {
@@ -1162,7 +1110,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   if (rescalesVelocities()) {
     std::string kinetic = "%kc" + t;
     if (!control.barostat)
-      emitKineticEnergy(os, kinetic, velocities, massName, indent);
+      emitKineticEnergy(kinetic, velocities, massName, indent);
     if (removesMotion) {
       os << indent << "%kt" << t << " = arith.subf %kc" << t << ", %kcm" << t
          << " : f64\n";

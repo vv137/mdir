@@ -1306,6 +1306,10 @@ struct Coupled {
                        StringRef energy, StringRef tag, StringRef step,
                        StringRef trace, StringRef groups, StringRef optimal,
                        const TrotterScaling *trotter = nullptr);
+  void emitKineticVector(StringRef result, StringRef velocities,
+                           StringRef masses, StringRef indent);
+  void emitKineticEnergy(StringRef result, StringRef velocities,
+                           StringRef masses, StringRef indent);
   /// Emits and returns the name of K_half - K of each axis at the end of a
   /// step, a vector<3xf64>: from `measured`, the K_half that the step
   /// returned (measuresHalfSteps), less the kinetic energy of `full`, the
@@ -1530,23 +1534,6 @@ inline void emitSum3(llvm::raw_ostream &os, StringRef result,
                      StringRef vector, StringRef indent) {
   os << indent << result << " = vector.reduction <add>, " << vector
      << " : vector<3xf64> into f64\n";
-}
-
-/// The kernel of the kinetic energy of one particle.
-inline void emitKineticEnergy(llvm::raw_ostream &os, StringRef result,
-                              StringRef velocities, StringRef masses,
-                              StringRef indent) {
-  os << indent << result << " = md.sum_particles gather(" << velocities
-     << ", " << masses << " : !vec, !real) {\n"
-     << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
-     << indent << "  %half = arith.constant 5.0e-01 : f64\n"
-     << indent << "  %sq = arith.mulf %v_i, %v_i : vector<3xf64>\n"
-     << indent
-     << "  %v2 = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
-     << indent << "  %mv2 = arith.mulf %m_i, %v2 : f64\n"
-     << indent << "  %ke = arith.mulf %half, %mv2 : f64\n"
-     << indent << "  md.yield %ke : f64\n"
-     << indent << "} : f64\n";
 }
 
 /// Whether `line` names the value `name` (and not a longer name that
