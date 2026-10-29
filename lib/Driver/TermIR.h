@@ -1,4 +1,4 @@
-// Owned typed term fragments at the existing assembly sites (#568).
+// Owned native program and typed term fragments (#568).
 #ifndef MDIR_LIB_DRIVER_TERMIR_H
 #define MDIR_LIB_DRIVER_TERMIR_H
 
@@ -42,6 +42,7 @@ public:
   TermIRPlan();
   ~TermIRPlan();
   mlir::MLIRContext &getContext();
+  mlir::ModuleOp getModule();
   bool empty() const { return recipes.empty(); }
   void emit(llvm::raw_ostream &, llvm::StringRef indent,
             llvm::ArrayRef<llvm::StringRef> results,
@@ -52,8 +53,9 @@ public:
 
 private:
   // The build declares its plan before its adapters, and recipes are destroyed
-  // before this context. Parsed input IR therefore shares the full build life.
-  std::unique_ptr<mlir::MLIRContext> context;
+  // before the owned module and context. Input IR shares the full build life.
+  struct OwnedProgram;
+  std::unique_ptr<OwnedProgram> program;
   std::vector<TermIRRecipe> recipes;
 };
 

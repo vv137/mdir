@@ -318,5 +318,27 @@ int main(int argc, char **argv) {
     require(bool(parseSourceString<ModuleOp>(program.module, &context)),
             "materialized staged tensor program did not verify");
   }
+  {
+    TermIRPlan plan;
+    auto native = plan.getModule();
+    require(native.getContext() == &plan.getContext(),
+            "native program lost its owned context");
+    OpBuilder builder(&plan.getContext());
+    builder.setInsertionPointToEnd(native.getBody());
+    auto atoms = mdir::md::ParticleSetOp::create(
+        builder, builder.getUnknownLoc(), "atoms");
+    Operation *original = atoms.getOperation();
+    mdir::driver::Program program;
+    program.module = "func.func @entry() { return }";
+    require(!finishTermIRProgram(program, plan),
+            "native program declarations did not join remaining assembly");
+    require(plan.getModule() == native && &native.getBody()->front() == original,
+            "native declarations were serialized and reparsed");
+    require(native.getBody()->getOperations().size() == 2 &&
+                succeeded(verify(native)),
+            "native program lost declaration order or validity");
+    require(bool(parseSourceString<ModuleOp>(program.module, &plan.getContext())),
+            "completed native program did not print valid IR");
+  }
   llvm::outs() << "term IR connection checks passed\n";
 }

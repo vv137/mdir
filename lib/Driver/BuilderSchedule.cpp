@@ -3,6 +3,8 @@
 // minimization (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -954,6 +956,119 @@ void Builder::emitMinimization(StringRef velocities) {
   os << "  return\n}\n";
 }
 
+namespace {
+struct RuntimeDeclarationConfig {
+  bool state64, force64, tunableGradient, frames, segments;
+  int64_t partCounts;
+  bool minimize, stopsMinimization, solvent, constraintStops;
+  bool rescales, noseHoover, bath, barostat, barostatState, checkpoints;
+  bool writesForces;
+};
+
+void emitRuntimeDeclarations(mlir::OpBuilder &builder,
+                             const RuntimeDeclarationConfig &config,
+                             bool afterModels) {
+  using namespace mlir;
+  Type f64 = builder.getF64Type(), i64 = builder.getI64Type();
+  Type state = config.state64 ? builder.getF64Type() : builder.getF32Type();
+  Type force = config.force64 ? builder.getF64Type() : builder.getF32Type();
+  auto buffer = [](int64_t count, Type element) {
+    return MemRefType::get({count}, element);
+  };
+  auto vectors = [](Type element) {
+    return MemRefType::get({ShapedType::kDynamic, 3}, element);
+  };
+  Type ids = buffer(ShapedType::kDynamic, builder.getI32Type());
+  Type numbers = buffer(ShapedType::kDynamic, f64);
+  Type positions = vectors(state), forces = vectors(force);
+  auto signature = [&](unsigned integers, unsigned reals) {
+    SmallVector<Type> types(integers, i64);
+    types.append(reals, f64);
+    return types;
+  };
+  auto declare = [&](StringRef name, TypeRange inputs,
+                     TypeRange results = {}, bool cInterface = false) {
+    auto function = func::FuncOp::create(
+        builder, builder.getUnknownLoc(), name,
+        builder.getFunctionType(inputs, results));
+    function.setPrivate();
+    if (cInterface)
+      function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    return function;
+  };
+  if (!afterModels) {
+    declare("mdrtWriteEnergies", signature(1, 5), {}, true);
+    declare("mdrtWritePull", {i64, numbers, numbers}, {}, true);
+    declare("mdrtWriteFreeEnergy", {i64, numbers}, {}, true);
+    declare("mdrtWriteObservables", {i64, numbers}, {}, true);
+    declare("mdrtWriteTerms", {numbers}, {}, true);
+    if (config.tunableGradient) {
+      declare("mdrtWriteTunableGradient", {numbers}, {}, true);
+      declare("mdrtWriteTunableGradientField", {i64, numbers, ids}, {}, true);
+    }
+    declare("mdrtWriteVirial", signature(0, 3), {}, true);
+    declare("mdrtWriteFrame", {i64, positions, ids}, {}, true);
+    declare("mdrtCheckSpread", {i64, positions, ids}, {}, true);
+    if (config.frames) {
+      declare("mdrtFrameBoundary", {buffer(6, f64), buffer(2, f64)},
+              {positions}, true);
+      declare("mdrtWriteFrameForces", {forces, ids}, {}, true);
+      declare("mdrtWriteFrameVirial", signature(0, 9), {}, true);
+    } else if (config.segments) {
+      declare("mdrtPartBoundary",
+              {positions, positions, forces, ids, f64,
+               buffer(config.partCounts, i64)}, {}, true);
+    } else {
+      declare("mdrtFinish", {positions, positions, ids}, {}, true);
+    }
+    return;
+  }
+  if (config.minimize)
+    declare("mdrtWriteMinimization", {i64, f64, f64, forces, ids}, {}, true);
+  if (config.stopsMinimization)
+    declare("mdrtCheckMinimization", {buffer(2, i64)}, {}, true);
+  if (config.solvent)
+    declare("mdrtWriteSolvent", signature(0, 2));
+  if (config.constraintStops) {
+    auto stop = [&](StringRef name, TypeRange inputs, bool reads) {
+      auto function = declare(name, inputs);
+      auto resources = builder.getStrArrayAttr({"dyn.stop"});
+      SmallVector<NamedAttribute> effects;
+      if (reads)
+        effects.push_back(builder.getNamedAttr("read", resources));
+      effects.push_back(builder.getNamedAttr("write", resources));
+      function->setAttr("dyn.effects", builder.getDictionaryAttr(effects));
+    };
+    stop("mdrtStopConstraintFailure", {i64, i64}, false);
+    stop("mdrtDeferStops", {}, false);
+    stop("mdrtStopPending", {}, true);
+  }
+  if (config.rescales && config.noseHoover)
+    declare("mdrtNoseHooverFactor", signature(1, 1), {f64});
+  else if (config.rescales)
+    declare("mdrtBussiFactor", signature(2, 4), {f64});
+  if (config.bath)
+    declare("mdrtAddBath", {f64}, {}, true);
+  if (config.barostat) {
+    declare("mdrtBarostatStrain", signature(2, 6), {f64});
+    declare("mdrtBarostatStrainArea", signature(2, 8), {f64});
+    declare("mdrtBarostatStrainHeight", signature(2, 6), {f64});
+    declare("mdrtBarostatStrainAxis", signature(3, 6), {f64});
+    declare("mdrtSetBox", signature(0, 3), {}, true);
+    declare("mdrtSetTilt", signature(0, 3), {}, true);
+  }
+  if (config.barostatState)
+    declare("mdrtSetBarostatState", signature(0, 9), {}, true);
+  if (config.checkpoints) {
+    SmallVector<Type> inputs = {i64, positions, positions};
+    if (config.writesForces)
+      inputs.push_back(forces);
+    inputs.push_back(ids);
+    declare("mdrtWriteCheckpoint", inputs, {}, true);
+  }
+}
+} // namespace
+
 void Builder::emitEntry() {
   collectStartValues();
   StringRef state = getName(program.state);
@@ -961,55 +1076,20 @@ void Builder::emitEntry() {
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
-  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64, f64)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWritePull(i64, memref<?xf64>, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteFreeEnergy(i64, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteObservables(i64, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << (program.tunableGradient
-             ? "func.func private @mdrtWriteTunableGradient(memref<?xf64>)\n"
-               "    attributes {llvm.emit_c_interface}\n"
-               "func.func private @mdrtWriteTunableGradientField(i64, "
-               "memref<?xf64>, memref<?xi32>)\n"
-               "    attributes {llvm.emit_c_interface}\n"
-             : "")
-     << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
-     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtCheckSpread(i64, memref<?x3x" << state
-     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-     ;
-  // A program of segments hands its state to the host where it is at the
-  // end of each part, and takes the counts of the next part there
-  // (D215); a run ends with its state in the buffers of the
-  // host.
-  if (control.frames)
-    // The boundary of a frame also says what the host asks of the frame
-    // (D252): its forces, its virial. The two calls below
-    // hand them over, each in a branch that a frame without the request
-    // does not take.
-    os << "func.func private @mdrtFrameBoundary(memref<6xf64>, memref<2xf64>)"
-          " -> memref<?x3x"
-       << state << ">\n    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtWriteFrameForces(memref<?x3x" << force
-       << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtWriteFrameVirial(f64, f64, f64, f64, f64, "
-          "f64, f64, f64, f64)\n    attributes {llvm.emit_c_interface}\n";
-  else if (control.segments)
-    os << "func.func private @mdrtPartBoundary(memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">, memref<?x3x" << force
-       << ">, memref<?xi32>, f64, memref<" << getPartCountsSize()
-       << "xi64>)\n    attributes {llvm.emit_c_interface}\n";
-  else
-    os << "func.func private @mdrtFinish(memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
+  RuntimeDeclarationConfig declarations{
+      program.state == Element::F64, program.force == Element::F64,
+      program.tunableGradient, bool(control.frames), control.segments,
+      static_cast<int64_t>(getPartCountsSize()), bool(control.minimize),
+      stopsMinimization(), reportsSolvent(),
+      hasConstraints() && !control.minimize, rescalesVelocities(),
+      control.isNoseHoover(), control.getCouplingPeriod() > 0,
+      bool(control.barostat), scalesEveryStep(), control.checkpointPeriod > 0,
+      program.writesForces};
+  emitIRFragment("", {}, {}, {}, {},
+                 [declarations](mlir::OpBuilder &builder, mlir::ValueRange) {
+                   emitRuntimeDeclarations(builder, declarations, false);
+                   return TermIRValues{};
+                 });
   auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
                        llvm::ArrayRef<StringRef> resultTypes,
                        llvm::ArrayRef<StringRef> operands,
@@ -1021,57 +1101,11 @@ void Builder::emitEntry() {
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
       role->emitDeclarations(*this, emitIR);
-  if (control.minimize)
-    os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
-       << force << ">, memref<?xi32>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (stopsMinimization())
-    os << "func.func private @mdrtCheckMinimization(memref<2xi64>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (reportsSolvent())
-    os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
-  if (hasConstraints() && !control.minimize)
-    // With their effects, which a program that calls them states
-    // (D355): each records or delivers a stop of the run.
-    os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n"
-       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
-       << "func.func private @mdrtDeferStops()\n"
-       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
-       << "func.func private @mdrtStopPending()\n"
-       << "    attributes {dyn.effects = {read = [\"dyn.stop\"], "
-          "write = [\"dyn.stop\"]}}\n";
-  if (rescalesVelocities() && control.isNoseHoover())
-    os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
-  else if (rescalesVelocities())
-    os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
-          "-> f64\n";
-  if (control.getCouplingPeriod() > 0)
-    os << "func.func private @mdrtAddBath(f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (control.barostat)
-    os << "func.func private @mdrtBarostatStrain(i64, i64, f64, f64, f64, f64, "
-          "f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainArea(i64, i64, f64, f64, f64, "
-          "f64, f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainHeight(i64, i64, f64, f64, "
-          "f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainAxis(i64, i64, i64, f64, f64, "
-          "f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtSetBox(f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtSetTilt(f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (scalesEveryStep())
-    os << "func.func private @mdrtSetBarostatState(f64, f64, f64, f64, f64, "
-          "f64, f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (control.checkpointPeriod > 0) {
-    os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">";
-    if (program.writesForces)
-      os << ", memref<?x3x" << force << ">";
-    os << ", memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n";
-  }
+  emitIRFragment("", {}, {}, {}, {},
+                 [declarations](mlir::OpBuilder &builder, mlir::ValueRange) {
+                   emitRuntimeDeclarations(builder, declarations, true);
+                   return TermIRValues{};
+                 });
   os << "\n";
 
   os << "func.func @" << program.entry << "(\n"

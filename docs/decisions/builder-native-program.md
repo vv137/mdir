@@ -51,5 +51,12 @@ recipe construction errors propagate to the producer. Input buffers remain
 owned for parsed resource lifetimes. Native tests cover the frozen exported
 model, user string literals and nondefault SSA names, signature rejection,
 foreign program operands, and context ownership. The remaining program
-construction follows. D363's term recipes still join generated assembly at
-this commit.
+construction follows. Particle sets, tuple sets, and the constraint disjoint
+union are already native operations in the owned destination module. Their
+operation identity and order survive the join with remaining assembly.
+Runtime declarations are native `func.func` operations at their original
+positions around the model declarations. Their memref element types follow
+the state/force precision, and C interface and stop-effect attributes retain
+their original conditions. Construction captures a scalar configuration
+snapshot rather than borrowing the builder or program.
+D363's term recipes still join that assembly at this commit.
