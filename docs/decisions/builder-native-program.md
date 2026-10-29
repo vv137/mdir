@@ -96,4 +96,10 @@ guard, center-of-mass correction, and half-step force term. The otherwise
 unused coordinate of the internal group reduction is preserved. Only fields
 used by the selected group path cross its capability, and the shared legacy
 arithmetic text helper is removed.
+Philox rounds, word order, Box-Muller transforms, damping/spread constants,
+and the massless-particle guard are native in `NoiseIR.cpp`. Brownian drift
+retains its guarded mass/friction division, and the host step counter uses
+native load/add/store operations. Seed and noise constants are owned
+captures; no generated random-operation text or SSA-name construction
+remains in these kernels.
 D363's term recipes still join remaining assembly at this commit.

@@ -1375,7 +1375,9 @@ virials, and initial pressure traces from typed records. Iterative position
 changes are carried directly by native loop block arguments.
 `CouplingIR.cpp` constructs molecular pressure, rigid-center scaling, and
 group kinetic reductions with typed group relations and fields. The shared
-text arithmetic helper is removed.
+text arithmetic helper is removed. `NoiseIR.cpp` constructs Philox,
+Box-Muller noise, and Brownian drift from typed operands and owned seed/noise
+constants; the step counter advances with native memory operations.
 Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
