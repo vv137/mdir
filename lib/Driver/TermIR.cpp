@@ -1,13 +1,29 @@
 // Typed fragments become operations in their original shared regions (#568).
 #include "TermIR.h"
+#include "mdir/Dialect/ProgramDialects.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
 #include "llvm/ADT/STLExtras.h"
 
 using namespace mdir::driver::builder;
 
 namespace {
 constexpr llvm::StringLiteral recipeAttribute = "mdir.term_ir";
+}
+
+TermIRPlan::TermIRPlan() = default;
+TermIRPlan::~TermIRPlan() = default;
+
+mlir::MLIRContext &TermIRPlan::getContext() {
+  if (!context) {
+    mlir::DialectRegistry registry;
+    mdir::insertProgramDialects(registry);
+    context = std::make_unique<mlir::MLIRContext>(
+        registry, mlir::MLIRContext::Threading::DISABLED);
+    context->loadAllAvailableDialects();
+  }
+  return *context;
 }
 
 void TermIRPlan::emit(llvm::raw_ostream &os, llvm::StringRef indent,
@@ -65,7 +81,10 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
     seen[index.getInt()] = true;
     mlir::OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPoint(connection);
-    auto values = recipes[index.getInt()](builder, connection.getOperands());
+    auto result = recipes[index.getInt()](builder, connection.getOperands());
+    if (!result)
+      return result.takeError();
+    const auto &values = *result;
     if (values.size() != connection.getNumResults())
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),

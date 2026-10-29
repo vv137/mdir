@@ -384,9 +384,17 @@ llvm::Error Builder::build() {
   }
   os << "\n";
   mark.next("rebuild.build.text");
+  auto prepareIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
+                          llvm::ArrayRef<StringRef> resultTypes,
+                          llvm::ArrayRef<StringRef> operands,
+                          llvm::ArrayRef<StringRef> operandTypes,
+                          TermIRRecipe recipe) {
+    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
+                   std::move(recipe));
+  };
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermPreparation *role = builder->getRoles().preparation)
-      if (llvm::Error error = role->prepare(*this, os))
+      if (llvm::Error error = role->prepare(*this, termIR.getContext(), prepareIR))
         return error;
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);

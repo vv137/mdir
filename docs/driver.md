@@ -1295,7 +1295,7 @@ No generic behavioral hook has only one implementer.
 
 | Narrow role and its complete hooks | Implementer |
 |---|---|
-| `TermPreparation`: `validate`, `prepare` | Models; read-only inputs and a stream |
+| `TermPreparation`: `validate`, `prepare` | Models; read-only inputs, the build context, and a typed recipe writer |
 | `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names and a synchronous `TermIRWriter` |
 | `TermPostEvaluation`: `hasForceCorrection`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; borrowed correction names and the stored-column destination |
 | `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
@@ -1354,8 +1354,12 @@ boundaries.
 
 Stage C (#718, D[builder-native-program]) has its
 [native construction design](decisions/builder-native-program.md) recorded.
-Implementation starts with staged-model parsing and cloning in the build's
-owned context, followed by the remaining program construction responsibilities.
+Staged models are parsed once by `StagedModelIR.cpp` in the context owned by
+`TermIRPlan`. Their declarations and potential bodies are cloned with
+`IRMapping`; preparation and emission capture owned input IR, without model
+text slicing or SSA-token rewriting. Potential argument and return types are
+checked at the input boundary, and program-supplied symbols are verified after
+integration. The remaining program construction responsibilities follow.
 The current term recipe and assembly boundary described above remains in use.
 
 ## 3. Decided

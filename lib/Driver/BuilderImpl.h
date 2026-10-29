@@ -299,7 +299,8 @@ class TermPreparation {
 public:
   virtual ~TermPreparation() = default;
   virtual llvm::Error validate(const TermInputs &) const = 0;
-  virtual llvm::Error prepare(const TermInputs &, llvm::raw_ostream &) const = 0;
+  virtual llvm::Error prepare(const TermInputs &, mlir::MLIRContext &,
+                              TermIRWriter) const = 0;
 };
 class TermHostEvaluation {
 public:

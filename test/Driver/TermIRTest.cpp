@@ -1,5 +1,7 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
+#include "../../lib/Driver/StagedModelIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -7,6 +9,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "mlir/Parser/Parser.h"
 #include <cstdlib>
 
@@ -36,7 +39,94 @@ static void registerRecipe(TermIRPlan &plan, TermIRRecipe recipe = scalar) {
   plan.emit(llvm::nulls(), "", {"%result"}, {"f64"}, {}, {}, std::move(recipe));
 }
 
-int main() {
+static void checkModelInput(llvm::StringRef source, bool hasLiteral = false) {
+  TermIRPlan plan;
+  MLIRContext &context = plan.getContext();
+  auto model = StagedModelIR::parse(context, source, "user-model", "model");
+  require(bool(model), model ? "" : llvm::toString(model.takeError()));
+  auto destination = parseSourceString<ModuleOp>(
+      "module { md.particle_set @atoms "
+      "md.potential @energy(%x: !md.field<@atoms, 3 x f64>, "
+      "%cell: !md.cell, %z: !md.field<@atoms, i32>) -> f64 { "
+      "%u = arith.constant 0.0 : f64 md.return %u : f64 } }", &context);
+  require(bool(destination), "model destination did not parse");
+  OpBuilder builder(&context);
+  builder.setInsertionPointToStart(destination->getBody());
+  require(!(*model)->cloneDeclarations(builder), "model declarations did not clone");
+  auto potential = destination->lookupSymbol<mdir::md::PotentialOp>("energy");
+  Block &body = potential.getBody().front();
+  builder.setInsertionPoint(&body.back());
+  auto result = (*model)->cloneBody(builder, body.getArguments());
+  require(bool(result), result ? "" : llvm::toString(result.takeError()));
+  body.back().setOperand(0, *result);
+  require(succeeded(verify(*destination)), "cloned model did not verify");
+  if (hasLiteral) {
+    auto attribute = result->getDefiningOp()->getAttrOfType<StringAttr>("user.note");
+    require(attribute && attribute.getValue() == "%value md.potential @literal",
+            "cloning changed user string contents");
+  }
+  // Operands from another program in the same context must not escape.
+  auto foreign = destination->clone();
+  auto foreignPotential = foreign.lookupSymbol<mdir::md::PotentialOp>("energy");
+  auto bad = (*model)->cloneBody(builder,
+                                  foreignPotential.getBody().front().getArguments());
+  require(!bad, "model accepted another program's operands");
+  reject(bad.takeError(),
+         "staged model operands must belong to the destination program");
+  foreign.erase();
+  auto wrongArity = (*model)->cloneBody(builder, {});
+  require(!wrongArity, "model accepted the wrong arity");
+  reject(wrongArity.takeError(),
+         "staged model argument count differs from its input boundary");
+  SmallVector<Value> wrongTypes(body.getArguments());
+  wrongTypes[0] = wrongTypes[2];
+  auto wrongType = (*model)->cloneBody(builder, wrongTypes);
+  require(!wrongType, "model accepted the wrong operand type");
+  reject(wrongType.takeError(),
+         "staged model argument type differs from its input boundary");
+  TermIRPlan other;
+  OpBuilder foreignBuilder(&other.getContext());
+  reject((*model)->cloneDeclarations(foreignBuilder),
+         "staged model and destination must share their build context");
+}
+
+int main(int argc, char **argv) {
+  require(argc == 2, "expected the frozen staged-model fixture");
+  auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
+  require(bool(fixture), "cannot read the frozen staged-model fixture");
+  checkModelInput((*fixture)->getBuffer());
+  checkModelInput(
+      "md.potential @unusual(%positions: !md.field<@atoms, 3 x f64>, "
+      "%box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 { "
+      "%value = arith.constant {user.note = \"%value md.potential @literal\"} "
+      "1.0 : f64 md.return %value : f64 }", true);
+  {
+    TermIRPlan plan;
+    auto bad = StagedModelIR::parse(plan.getContext(), "module {}", "input", "bad");
+    require(!bad, "empty model was accepted");
+    reject(bad.takeError(), "the model in stages 'bad' must hold one 'md.potential'");
+  }
+
+  {
+    TermIRPlan plan;
+    auto wrongSignature = StagedModelIR::parse(
+        plan.getContext(),
+        "md.potential @bad(%x: f64, %cell: !md.cell, "
+        "%z: !md.field<@atoms, i32>) -> f64 { md.return %x : f64 }",
+        "input", "bad");
+    require(!wrongSignature, "model accepted a nonfield position argument");
+    reject(wrongSignature.takeError(),
+           "the potential of the model in stages 'bad' must take the positions, "
+           "the cell, and the atomic numbers");
+    auto wrongReturn = StagedModelIR::parse(
+        plan.getContext(),
+        "md.potential @bad(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, "
+        "%z: !md.field<@atoms, i32>) -> i32 { "
+        "%u = arith.constant 0 : i32 md.return %u : i32 }", "input", "bad");
+    require(!wrongReturn, "model accepted a nonenergy result");
+    reject(wrongReturn.takeError(),
+           "the potential of the model in stages 'bad' must return one f64 energy");
+  }
   DialectRegistry registry;
   mdir::insertProgramDialects(registry);
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);
@@ -64,6 +154,14 @@ int main() {
     require(!plan.materialize(*module), "zero-result connection was rejected");
     require(module->getBody()->empty(), "zero-result connection survived");
     require(succeeded(verify(*module)), "zero-result module did not verify");
+  }
+  {
+    TermIRPlan plan;
+    registerRecipe(plan, [](OpBuilder &, ValueRange) -> llvm::Expected<TermIRValues> {
+      return llvm::createStringError(llvm::inconvertibleErrorCode(), "input clone failed");
+    });
+    auto module = parse(connection);
+    reject(plan.materialize(*module), "input clone failed");
   }
   {
     TermIRPlan plan;

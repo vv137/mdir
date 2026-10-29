@@ -1,6 +1,7 @@
 // Staged and hosted model terms, with private preparation per build
 // (D359, D361, D362, #683).
 #include "BuilderImpl.h"
+#include "StagedModelIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -27,7 +28,7 @@ class ModelTermBuilder final : public TermPreparation,
   struct State {
     bool edges = false;
     std::vector<double> cutoffs;
-    std::vector<std::string> potentials, results;
+    std::vector<std::shared_ptr<StagedModelIR>> potentials;
   };
   std::unique_ptr<State> state;
 
@@ -40,7 +41,8 @@ public:
   int topologyRank() const override { return 5; }
   llvm::Error validate(const TermInputs &context) const override;
   llvm::Error prepare(const TermInputs &context,
-                      llvm::raw_ostream &os) const override;
+                      mlir::MLIRContext &irContext,
+                      TermIRWriter emitIR) const override;
   bool applies(const TermInputs &context) const override {
     return !context.getControl().models.empty();
   }
@@ -71,8 +73,19 @@ public:
     if (selection.terms != TermInputs::AllTerms)
       return;
     for (size_t k = 0; k != state->potentials.size(); ++k) {
-      context.getOutput() << state->potentials[k];
-      addition.append(state->results[k], "%total_staged" + std::to_string(k));
+      std::string result = "%u_staged" + std::to_string(k);
+      context.emitIRFragment(
+          "  ", {result}, {"f64"}, {"%x", "%cell", "%p_model_z"},
+          {"!vec", "!md.cell", "!ids"},
+          [model = state->potentials[k]](mlir::OpBuilder &builder,
+                                         mlir::ValueRange inputs)
+              -> llvm::Expected<TermIRValues> {
+            auto energy = model->cloneBody(builder, inputs);
+            if (!energy)
+              return energy.takeError();
+            return TermIRValues{*energy};
+          });
+      addition.append(result, "%total_staged" + std::to_string(k));
     }
   }
 
@@ -138,79 +151,27 @@ llvm::Error ModelTermBuilder::validate(const TermInputs &context) const {
 }
 
 llvm::Error ModelTermBuilder::prepare(const TermInputs &context,
-                                      llvm::raw_ostream &os) const {
-  const Control &control = context.getControl();
+                                      mlir::MLIRContext &irContext,
+                                      TermIRWriter emitIR) const {
   state->potentials.clear();
-  state->results.clear();
-  for (const Control::ModelTerm &term : control.stagedModels) {
+  for (const Control::ModelTerm &term : context.getControl().stagedModels) {
     auto buffer = llvm::MemoryBuffer::getFile(term.path);
     if (!buffer)
       return makeError("cannot read the model in stages '" + term.name +
                        "' from '" + term.path +
                        "': " + buffer.getError().message());
-    StringRef text = (*buffer)->getBuffer();
-    // The module's one potential takes the positions, the cell, and the
-    // atomic numbers (scripts/mlip/painn-stages.py export).
-    static const char *const head = "md.potential @";
-    size_t at = text.find(head);
-    if (at == StringRef::npos || text.find(head, at + 1) != StringRef::npos)
-      return makeError("the model in stages '" + term.name +
-                       "' must hold one 'md.potential'");
-    // The potential's body goes into `@energy`, where md-differentiate
-    // differentiates it with the other terms; its values are renamed apart,
-    // and its arguments are the positions, the cell, and the atomic numbers
-    // of the program. The rest of the module (the stages and their bodies)
-    // goes to the top of the program.
-    size_t open = text.find("{\n", at);
-    size_t close = text.find("\n}", open);
-    llvm::SmallVector<StringRef, 3> parameters;
-    StringRef header = text.slice(text.find('(', at) + 1, open);
-    for (StringRef part : llvm::split(header, ','))
-      if (part.trim().starts_with("%"))
-        parameters.push_back(part.trim().take_until(
-            [](char c) { return c == ':' || c == ' '; }));
-    if (open == StringRef::npos || close == StringRef::npos ||
-        parameters.size() != 3)
-      return makeError("the potential of the model in stages '" + term.name +
-                       "' must take the positions, the cell, and the atomic "
-                       "numbers");
-    std::string prefix = "%sm" + std::to_string(state->potentials.size()) + "_";
-    std::string body;
-    StringRef rest = text.slice(open + 2, close + 1);
-    std::string result;
-    while (!rest.empty()) {
-      size_t percent = rest.find('%');
-      body += rest.take_front(percent).str();
-      if (percent == StringRef::npos)
-        break;
-      rest = rest.drop_front(percent);
-      size_t length = 1;
-      while (length < rest.size() &&
-             (llvm::isAlnum(rest[length]) || rest[length] == '_' ||
-              rest[length] == '.' || rest[length] == '$'))
-        ++length;
-      StringRef value = rest.take_front(length);
-      rest = rest.drop_front(length);
-      if (value == parameters[0])
-        body += "%x";
-      else if (value == parameters[1])
-        body += "%cell";
-      else if (value == parameters[2])
-        body += "%p_model_z";
-      else
-        body += prefix + value.drop_front().str();
-    }
-    size_t ret = body.rfind("md.return ");
-    if (ret == std::string::npos)
-      return makeError("the potential of the model in stages '" + term.name +
-                       "' has no 'md.return'");
-    StringRef returned = StringRef(body).drop_front(ret + 10);
-    result = returned.take_until([](char c) { return c == ' '; }).str();
-    body.erase(body.rfind('\n', ret) + 1);
-    os << "// The model in stages '" << term.name << "' (D294)\n"
-       << text.take_front(at) << text.drop_front(close + 2) << "\n";
-    state->potentials.push_back(body);
-    state->results.push_back(result);
+    auto model = StagedModelIR::parse(irContext, (*buffer)->getBuffer(),
+                                      term.path, term.name);
+    if (!model)
+      return model.takeError();
+    emitIR("", {}, {}, {}, {},
+           [input = *model](mlir::OpBuilder &builder, mlir::ValueRange)
+               -> llvm::Expected<TermIRValues> {
+             if (auto error = input->cloneDeclarations(builder))
+               return std::move(error);
+             return TermIRValues{};
+           });
+    state->potentials.push_back(std::move(*model));
   }
   return llvm::Error::success();
 }
