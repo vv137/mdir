@@ -85,4 +85,10 @@ virial uses the same bond acceleration matrix, centripetal term, and small
 solve for both water and hydrogen groups. SETTLE velocity projection keeps
 its original three-bond determinant expressions and reads stored changes
 for its virial, preserving the energy/plain-step equivalence.
+SETTLE position projection retains its triangle rotation, while M-SHAKE
+carries small displacements through native `scf.for` block arguments. Its
+single-bond analytic branch keeps the residual and direction checks and
+Newton fallback. Bond lengths use typed parameter slots rather than SSA
+labels. Constraint kernels no longer write operation text; the legacy
+arithmetic helper remains only for the unmigrated dynamic coupling kernels.
 D363's term recipes still join remaining assembly at this commit.

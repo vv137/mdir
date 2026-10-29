@@ -128,153 +128,35 @@ bool Builder::spreadsSitesDerived() const {
 void Builder::emitSettlePositions(StringRef indent, StringRef old,
                                   StringRef x, StringRef change,
                                   StringRef result, StringRef failed) {
-  // Below double precision, the three bonds of the water by M-SHAKE: the
-  // positions that SETTLE turns are of the size of the water, and their
-  // rounding in f32 over the change of a step is an error of the
-  // velocities, which heated JAC by 7 K in 2 ns; M-SHAKE carries the
-  // change itself, a small number [Jung2026] (D112).
+  // Carry small M-SHAKE changes below double precision [Jung2026] (D112).
+  // Double precision keeps the SETTLE triangle rotation [Miyamoto1992].
   if (control.precision != Precision::Double) {
     emitBondConstraints(indent, "settles", 3,
-                        {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"},
-                         {1, 2, "%vs_dhh"}},
-                        {"%f_settles_doh", "%f_settles_dhh"}, old, x, change,
-                        failed);
+                        {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}},
+                        {"%f_settles_doh", "%f_settles_dhh"}, old, x, change, failed);
     emitAddChange(indent, x, change, result);
     return;
   }
-  std::string inner = (indent + "  ").str();
-  // In the frame of the old plane of the water, with the origin at the new
-  // center of mass, the new triangle is the rigid one turned by three
-  // angles (Miyamoto and Kollman 1992, Appendix A). The positions are
-  // taken relative to the new oxygen, in the minimum image; the old ones
-  // are moved by the same periods of the cell.
-  os << indent << change << (failed.empty() ? "" : ", " + failed.str())
-     << " = md.gather_tuples %r_settles, " << x << ", %cell\n"
-     << indent << "    coordinates(displacement(1, 0), displacement(2, 0))\n"
-     << indent << "    gather(" << old << ", " << x
-     << ", %m : !vec, !vec, !real)\n"
-     << indent << "    tuple(%f_settles_doh, %f_settles_dhh : !of_settles, "
-                  "!of_settles) {\n"
-     << indent << "^bb0(%vs_b1: vector<3xf64>, %vs_c1: vector<3xf64>, "
-                  "%vs_o0: vector<3xf64>, %vs_o1: vector<3xf64>, "
-                  "%vs_o2: vector<3xf64>, %vs_n0: vector<3xf64>, "
-                  "%vs_n1: vector<3xf64>, %vs_n2: vector<3xf64>, "
-                  "%vs_m0: f64, %vs_m1: f64, %vs_m2: f64, %vs_doh: f64, "
-                  "%vs_dhh: f64):\n";
-  SiteKernel k(os, inner);
-  // The old bonds, in the periods of the new ones.
-  auto oldBond = [&](StringRef bond, StringRef o, StringRef n) {
-    std::string raw = k.vector("subf", n, "%vs_n0");
-    std::string shift = k.vector("subf", bond, raw);
-    return k.vector("addf", k.vector("subf", o, "%vs_o0"), shift);
-  };
-  std::string b0 = oldBond("%vs_b1", "%vs_o1", "%vs_n1");
-  std::string c0 = oldBond("%vs_c1", "%vs_o2", "%vs_n2");
-  // The rigid triangle: the oxygen at ra from the center of mass along the
-  // bisector, the hydrogens at rb behind it and rc to each side.
-  std::string two = k.constant(2.0), half = k.constant(0.5),
-              one = k.constant(1.0);
-  std::string total =
-      k.real("addf", "%vs_m0", k.real("mulf", two, "%vs_m1"));
-  std::string rc = k.real("mulf", half, "%vs_dhh");
-  std::string height = k.root(k.real(
-      "subf", k.real("mulf", "%vs_doh", "%vs_doh"), k.real("mulf", rc, rc)));
-  std::string ra = k.real(
-      "divf", k.real("mulf", k.real("mulf", two, "%vs_m1"), height), total);
-  std::string rb = k.real("subf", height, ra);
-  // The new positions about their center of mass.
-  std::string center = k.scale(k.real("divf", "%vs_m1", total),
-                               k.vector("addf", "%vs_b1", "%vs_c1"));
-  std::string a1 = k.negate(center);
-  std::string b1 = k.vector("subf", "%vs_b1", center);
-  std::string c1 = k.vector("subf", "%vs_c1", center);
-  std::string z = k.unit(k.cross(b0, c0));
-  std::string xAxis = k.unit(k.cross(a1, z));
-  std::string y = k.cross(z, xAxis);
-  std::string xb0 = k.dot(b0, xAxis), yb0 = k.dot(b0, y);
-  std::string xc0 = k.dot(c0, xAxis), yc0 = k.dot(c0, y);
-  std::string za1 = k.dot(a1, z);
-  std::string xb1 = k.dot(b1, xAxis), yb1 = k.dot(b1, y), zb1 = k.dot(b1, z);
-  std::string xc1 = k.dot(c1, xAxis), yc1 = k.dot(c1, y), zc1 = k.dot(c1, z);
-  auto complement = [&](StringRef sine) {
-    return k.root(k.real("subf", one, k.real("mulf", sine, sine)));
-  };
-  std::string sinPhi = k.real("divf", za1, ra);
-  std::string cosPhi = complement(sinPhi);
-  std::string sinPsi =
-      k.real("divf", k.real("subf", zb1, zc1),
-             k.real("mulf", k.real("mulf", two, rc), cosPhi));
-  std::string cosPsi = complement(sinPsi);
-  std::string ya2 = k.real("mulf", ra, cosPhi);
-  std::string xb2 = k.real("mulf", k.real("subf", k.constant(0.0), rc),
-                           cosPsi);
-  std::string t1 = k.real("mulf", k.real("subf", k.constant(0.0), rb),
-                          cosPhi);
-  std::string t2 = k.real("mulf", k.real("mulf", rc, sinPsi), sinPhi);
-  std::string yb2 = k.real("subf", t1, t2), yc2 = k.real("addf", t1, t2);
-  auto sum3 = [&](StringRef a, StringRef b, StringRef c) {
-    return k.real("addf", k.real("addf", a, b), c);
-  };
-  std::string alpha = sum3(k.real("mulf", xb2, k.real("subf", xb0, xc0)),
-                           k.real("mulf", yb0, yb2),
-                           k.real("mulf", yc0, yc2));
-  std::string beta = sum3(k.real("mulf", xb2, k.real("subf", yc0, yb0)),
-                          k.real("mulf", xb0, yb2),
-                          k.real("mulf", xc0, yc2));
-  std::string gamma = k.real(
-      "addf",
-      k.real("subf", k.real("mulf", xb0, yb1), k.real("mulf", xb1, yb0)),
-      k.real("subf", k.real("mulf", xc0, yc1), k.real("mulf", xc1, yc0)));
-  std::string both = k.real("addf", k.real("mulf", alpha, alpha),
-                            k.real("mulf", beta, beta));
-  std::string sinTheta = k.real(
-      "divf",
-      k.real("subf", k.real("mulf", alpha, gamma),
-             k.real("mulf", beta,
-                    k.root(k.real("subf", both,
-                                  k.real("mulf", gamma, gamma))))),
-      both);
-  std::string cosTheta = complement(sinTheta);
-  std::string zero = k.constant(0.0);
-  std::string xa3 = k.real("subf", zero, k.real("mulf", ya2, sinTheta));
-  std::string ya3 = k.real("mulf", ya2, cosTheta);
-  std::string xb3 = k.real("subf", k.real("mulf", xb2, cosTheta),
-                           k.real("mulf", yb2, sinTheta));
-  std::string yb3 = k.real("addf", k.real("mulf", xb2, sinTheta),
-                           k.real("mulf", yb2, cosTheta));
-  std::string xc3 = k.real("subf", k.real("subf", zero,
-                                          k.real("mulf", xb2, cosTheta)),
-                           k.real("mulf", yc2, sinTheta));
-  std::string yc3 = k.real("addf", k.real("subf", zero,
-                                          k.real("mulf", xb2, sinTheta)),
-                           k.real("mulf", yc2, cosTheta));
-  // Back to the cell, relative to the new oxygen.
-  auto back = [&](StringRef px, StringRef py, StringRef pz) {
-    return k.vector("addf", k.combine(px, xAxis, py, y, pz, z), center);
-  };
-  std::string a3 = back(xa3, ya3, za1);
-  std::string b3 = back(xb3, yb3, zb1);
-  std::string c3 = back(xc3, yc3, zc1);
-  std::string db = k.vector("subf", b3, "%vs_b1");
-  std::string dc = k.vector("subf", c3, "%vs_c1");
-  // The bonds of the new triangle, which the test of the constraints takes
-  // (D278).
-  std::string test;
-  if (!failed.empty())
-    test = ", " + emitLengthTest(k, {{k.vector("subf", b3, a3), "%vs_doh"},
-                                     {k.vector("subf", c3, a3), "%vs_doh"},
-                                     {k.vector("subf", c3, b3), "%vs_dhh"}});
-  os << inner << "md.yield " << a3 << ", " << db << ", " << dc << test
-     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>"
-     << (failed.empty() ? "" : ", i1") << "\n"
-     << indent << "} : !rel_settles, !vec -> !vec"
-     << (failed.empty() ? "" : ", i1") << "\n";
-  os << indent << result << " = md.map_particles gather(" << x << ", "
-     << change << " : !vec, !vec) {\n"
-     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  bool withFailure = !failed.empty();
+  llvm::SmallVector<StringRef> outputs = {change}, types = {"!vec"};
+  if (withFailure) {
+    outputs.push_back(failed);
+    types.push_back("i1");
+  }
+  emitIRFragment(
+      indent, outputs, types,
+      {"%r_settles", x, "%cell", old, "%m", "%f_settles_doh", "%f_settles_dhh"},
+      {"!rel_settles", "!vec", "!md.cell", "!vec", "!real", "!of_settles", "!of_settles"},
+      [withFailure](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        ConstraintPositionInputs input{values[0], values[1], values[2], values[3],
+                                         values[4], values.drop_front(5)};
+        auto result = buildSettlePositions(builder, input, withFailure, 1.0e-8);
+        TermIRValues outputs = {result.change};
+        if (withFailure)
+          outputs.push_back(result.failed);
+        return outputs;
+      });
+  emitAddChange(indent, x, change, result);
 }
 
 std::string Builder::emitConstraintVirial(StringRef indent,
@@ -302,35 +184,6 @@ std::string Builder::emitConstraintVirial(StringRef indent,
   return virialResult.str();
 }
 
-/// Emits the solution of `A x = b` for a system of at most 3 × 3, by
-/// Gaussian elimination without pivoting: the matrices of the constraints
-/// of a group are dominated by their diagonals.
-/// The iterations of Newton of the positions of SHAKE: from the error of
-/// a step of 4 fs with repartitioned masses, about 1e-2 of a bond, four
-/// reach the rounding of f64; two more are a margin.
-static const int shakeIterations = 6;
-
-static std::vector<std::string>
-emitSmallSolve(SiteKernel &k, std::vector<std::vector<std::string>> A,
-               std::vector<std::string> b) {
-  unsigned count = b.size();
-  for (unsigned c = 0; c != count; ++c)
-    for (unsigned r = c + 1; r != count; ++r) {
-      std::string factor = k.real("divf", A[r][c], A[c][c]);
-      for (unsigned d = c; d != count; ++d)
-        A[r][d] = k.real("subf", A[r][d], k.real("mulf", factor, A[c][d]));
-      b[r] = k.real("subf", b[r], k.real("mulf", factor, b[c]));
-    }
-  std::vector<std::string> x(count);
-  for (unsigned c = count; c-- != 0;) {
-    std::string sum = b[c];
-    for (unsigned d = c + 1; d != count; ++d)
-      sum = k.real("subf", sum, k.real("mulf", A[c][d], x[d]));
-    x[c] = k.real("divf", sum, A[c][c]);
-  }
-  return x;
-}
-
 void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
                                  StringRef result, StringRef failed) {
@@ -340,7 +193,7 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
   std::vector<ConstrainedBond> bonds;
   std::vector<std::string> tuple;
   for (unsigned k = 1; k <= count; ++k) {
-    bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
+    bonds.push_back({0, k, k - 1});
     tuple.push_back("%f_" + set.name + "_d" + std::to_string(k));
   }
   emitBondConstraints(indent, set.name, set.arity, bonds, tuple, old, x,
@@ -363,224 +216,36 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
                                   llvm::ArrayRef<std::string> tuple, StringRef old,
                                   StringRef x, StringRef change,
                                   StringRef failed) {
-  unsigned count = bonds.size();
-  std::string inner = (indent + "  ").str();
-  std::string coordinates, tupleTypes, arguments;
-  for (auto [k, bond] : llvm::enumerate(bonds)) {
-    coordinates += (k == 0 ? "" : ", ") +
-                   ("displacement(" + std::to_string(bond.second) + ", " +
-                    std::to_string(bond.first) + ")");
-    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+  std::string relation = ("%r_" + setName).str();
+  std::string relationType = ("!rel_" + setName).str();
+  std::string fieldType = ("!of_" + setName).str();
+  llvm::SmallVector<StringRef> inputs = {relation, x, "%cell", old, "%m"};
+  llvm::SmallVector<StringRef> types = {relationType, "!vec", "!md.cell", "!vec", "!real"};
+  for (const auto &field : tuple) {
+    inputs.push_back(field);
+    types.push_back(fieldType);
   }
-  for (StringRef field : {"o", "n"})
-    for (unsigned j = 0; j != arity; ++j)
-      arguments += ("%vs_" + field + std::to_string(j) + ": vector<3xf64>, ")
-                       .str();
-  for (unsigned j = 0; j != arity; ++j)
-    arguments += "%vs_m" + std::to_string(j) + ": f64, ";
-  std::string tupleList;
-  for (auto [k, name] : llvm::enumerate(tuple)) {
-    tupleList += (k == 0 ? "" : ", ") + name;
-    tupleTypes += (k == 0 ? "" : ", ") + ("!of_" + setName).str();
+  ConstraintPositionConfig config{
+      !failed.empty(), control.analyticBonds,
+      control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+      control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
+  llvm::SmallVector<StringRef> outputs = {change}, resultTypes = {"!vec"};
+  if (config.withFailure) {
+    outputs.push_back(failed);
+    resultTypes.push_back("i1");
   }
-  // The arguments of the tuple fields: the lengths the bonds name.
-  std::vector<std::string> fieldArguments;
-  for (const ConstrainedBond &bond : bonds)
-    if (!llvm::is_contained(fieldArguments, bond.length))
-      fieldArguments.push_back(bond.length);
-  for (auto [k, name] : llvm::enumerate(fieldArguments))
-    arguments += name + ": f64" +
-                 (k + 1 == fieldArguments.size() ? "" : ", ");
-  os << indent << change << (failed.empty() ? "" : ", " + failed.str())
-     << " = md.gather_tuples %r_" << setName << ", " << x << ", %cell\n"
-     << indent << "    coordinates(" << coordinates << ")\n"
-     << indent << "    gather(" << old << ", " << x
-     << ", %m : !vec, !vec, !real)\n"
-     << indent << "    tuple(" << tupleList << " : " << tupleTypes << ") {\n"
-     << indent << "^bb0(" << arguments << "):\n";
-  SiteKernel k(os, inner);
-  // The old bonds, in the periods of the new ones.
-  std::vector<std::string> olds, inverse;
-  std::string one = k.constant(1.0), two = k.constant(2.0);
-  for (unsigned j = 0; j != arity; ++j)
-    inverse.push_back(k.real("divf", one, "%vs_m" + std::to_string(j)));
-  for (auto [i, bond] : llvm::enumerate(bonds)) {
-    std::string a = std::to_string(bond.first), b = std::to_string(bond.second);
-    std::string raw = k.vector("subf", "%vs_n" + b, "%vs_n" + a);
-    std::string shift = k.vector("subf", "%vs_r" + std::to_string(i), raw);
-    olds.push_back(k.vector(
-        "addf", k.vector("subf", "%vs_o" + b, "%vs_o" + a), shift));
-  }
-  std::string zero = k.zero();
-  // For one bond the fixed-old-direction projection is a quadratic.
-  // With r the predicted bond, s the old bond, and r' = r + t s,
-  // t = (d²-r²)/(r·s + sqrt((r·s)² + s²(d²-r²))). Rationalizing the
-  // near root avoids subtracting nearly equal numbers. Keep the same
-  // mass-weighted impulses, periodic image, and small-change storage as
-  // M-SHAKE. A checked fast path falls back to the existing Newton solve.
-  bool analytic = control.analyticBonds && count == 1;
-  if (analytic) {
-    const auto &bond = bonds.front();
-    std::string r = "%vs_r0", s = olds.front();
-    std::string d2 = k.real("mulf", bond.length, bond.length);
-    std::string error = k.real("subf", d2, k.dot(r, r));
-    std::string rs = k.dot(r, s);
-    std::string discriminant = k.real(
-        "addf", k.real("mulf", rs, rs), k.real("mulf", k.dot(s, s), error));
-    std::string t = k.real("divf", error,
-                           k.real("addf", rs, k.root(discriminant)));
-    std::string lambda = k.real(
-        "divf", t, k.real("addf", inverse[bond.first], inverse[bond.second]));
-    std::string push = k.scale(lambda, s);
-    std::string da = k.negate(k.scale(inverse[bond.first], push));
-    std::string db = k.scale(inverse[bond.second], push);
-    std::string corrected = k.vector("subf", k.vector("addf", r, db), da);
-    std::string residual = k.real("subf", k.dot(corrected, corrected), d2);
-    std::string tolerance = k.real(
-        "mulf", d2, k.constant(control.precision == Precision::Double
-                                   ? 1.0e-12 : 1.0e-6));
-    std::string scalarZero = k.constant(0.0);
-    os << inner << "%vs_residual = math.absf " << residual << " : f64\n"
-       << inner << "%vs_accurate = arith.cmpf ole, %vs_residual, "
-       << tolerance << " : f64\n"
-       << inner << "%vs_forward = arith.cmpf ogt, " << rs << ", "
-       << scalarZero << " : f64\n"
-       << inner << "%vs_analytic = arith.andi %vs_accurate, %vs_forward : i1\n"
-       << inner << "%vs_checked0, %vs_checked1 = scf.if %vs_analytic -> "
-                   "(vector<3xf64>, vector<3xf64>) {\n"
-       << inner << "  scf.yield " << da << ", " << db
-       << " : vector<3xf64>, vector<3xf64>\n"
-       << inner << "} else {\n";
-    inner += "  ";
-  }
-  // The members move along the old bonds s_l: for each bond l = (a, b),
-  // b by λ_l s_l / m_b and a by −λ_l s_l / m_a. Each iteration of Newton
-  // solves the constraints linearized at the current bonds r_k exactly,
-  //   Σ_l 2 (r_k · s_l) w_kl λ_l = d_k² − r_k²,
-  // with w_kl what bond l moves bond k by per unit of λ_l s_l: the inverse
-  // mass of each member that the two share, with its sign; the error
-  // squares with each iteration whatever the masses (M-SHAKE
-  // [Krautler2001]). The atoms carry what they moved, small numbers, so
-  // that the change keeps its digits in f32: its rounding becomes an
-  // error of the velocities a step divides by [Jung2026].
-  os << inner << "%vs_c0 = arith.constant 0 : index\n"
-     << inner << "%vs_c1 = arith.constant 1 : index\n"
-     << inner << "%vs_iterations = arith.constant " << shakeIterations
-     << " : index\n";
-  std::string results, inits, types;
-  for (unsigned j = 0; j != arity; ++j) {
-    std::string n = std::to_string(j);
-    results += (j == 0 ? "" : ", ") + ("%vs_a" + n);
-    inits += (j == 0 ? "" : ", ") + ("%vs_s" + n + " = " + zero);
-    types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
-  }
-  os << inner << results << " = scf.for %vs_sweep = %vs_c0 to "
-                            "%vs_iterations step %vs_c1\n"
-     << inner << "    iter_args(" << inits << ") -> (" << types << ") {\n";
-  SiteKernel l(os, inner + "  ", "%vsl");
-  std::vector<std::string> moved;
-  for (unsigned j = 0; j != arity; ++j)
-    moved.push_back("%vs_s" + std::to_string(j));
-  std::vector<std::string> current, error;
-  for (auto [i, bond] : llvm::enumerate(bonds)) {
-    current.push_back(l.vector(
-        "subf",
-        l.vector("addf", "%vs_r" + std::to_string(i), moved[bond.second]),
-        moved[bond.first]));
-    error.push_back(l.real("subf", l.real("mulf", bond.length, bond.length),
-                           l.dot(current.back(), current.back())));
-  }
-  // w_kl: what bond l moves bond k by, per unit of λ_l s_l: the inverse
-  // masses of the members the two share, with their signs.
-  auto weightOf = [&](const ConstrainedBond &k,
-                      const ConstrainedBond &bond) -> std::string {
-    std::string sum;
-    auto add = [&](bool negative, unsigned j) {
-      if (sum.empty())
-        sum = negative ? l.real("subf", l.constant(0.0), inverse[j])
-                       : inverse[j];
-      else
-        sum = l.real(negative ? "subf" : "addf", sum, inverse[j]);
-    };
-    if (k.second == bond.second)
-      add(false, k.second);
-    if (k.second == bond.first)
-      add(true, k.second);
-    if (k.first == bond.second)
-      add(true, k.first);
-    if (k.first == bond.first)
-      add(false, k.first);
-    return sum.empty() ? l.constant(0.0) : sum;
-  };
-  std::vector<std::vector<std::string>> A(count,
-                                          std::vector<std::string>(count));
-  for (unsigned i = 0; i != count; ++i)
-    for (unsigned j = 0; j != count; ++j)
-      A[i][j] = l.real("mulf", l.real("mulf", two, l.dot(current[i],
-                                                          olds[j])),
-                       weightOf(bonds[i], bonds[j]));
-  std::vector<std::string> lambda = emitSmallSolve(l, A, error);
-  for (auto [j, bond] : llvm::enumerate(bonds)) {
-    std::string push = l.scale(lambda[j], olds[j]);
-    moved[bond.second] = l.vector("addf", moved[bond.second],
-                                  l.scale(inverse[bond.second], push));
-    moved[bond.first] = l.vector("subf", moved[bond.first],
-                                 l.scale(inverse[bond.first], push));
-  }
-  std::string yielded;
-  for (unsigned j = 0; j != arity; ++j)
-    yielded += (j == 0 ? "" : ", ") + moved[j];
-  os << inner << "  scf.yield " << yielded << " : " << types << "\n"
-     << inner << "}\n";
-  if (analytic) {
-    os << inner << "scf.yield " << results << " : " << types << "\n";
-    inner.resize(inner.size() - 2);
-    os << inner << "}\n";
-    results = "%vs_checked0, %vs_checked1";
-  }
-  // The bonds that the changes give, which the test of the constraints
-  // takes (D278).
-  std::string test;
-  if (!failed.empty()) {
-    SiteKernel t(os, inner, "%vst");
-    std::vector<std::string> changes;
-    StringRef rest = results;
-    while (!rest.empty()) {
-      auto [name, tail] = rest.split(", ");
-      changes.push_back(name.str());
-      rest = tail;
-    }
-    std::vector<std::pair<std::string, std::string>> lengths;
-    for (auto [i, bond] : llvm::enumerate(bonds))
-      lengths.push_back(
-          {t.vector("subf",
-                    t.vector("addf", "%vs_r" + std::to_string(i),
-                             changes[bond.second]),
-                    changes[bond.first]),
-           bond.length});
-    test = ", " + emitLengthTest(t, lengths);
-  }
-  os << inner << "md.yield " << results << test << " : " << types
-     << (failed.empty() ? "" : ", i1") << "\n"
-     << indent << "} : !rel_" << setName << ", !vec -> !vec"
-     << (failed.empty() ? "" : ", i1") << "\n";
-}
-
-std::string Builder::emitLengthTest(
-    SiteKernel &k, llvm::ArrayRef<std::pair<std::string, std::string>> bonds) {
-  // The test of emitConstraintFailures: |r²/d² − 1| above the tolerance,
-  // or not a number (an unordered comparison).
-  double tolerance = control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
-  std::string one = k.constant(1.0), limit = k.constant(tolerance);
-  std::string any;
-  for (const auto &[r, length] : bonds) {
-    std::string d2 = k.real("mulf", length, length);
-    std::string off = k.real("subf", k.real("divf", k.dot(r, r), d2), one);
-    std::string magnitude = k.unary("math.absf", off);
-    std::string bad = k.compare("ugt", magnitude, limit);
-    any = any.empty() ? bad : k.boolean("ori", any, bad);
-  }
-  return any;
+  emitIRFragment(
+      indent, outputs, resultTypes, inputs, types,
+      [arity, config, bonds = std::vector<ConstraintBond>(bonds.begin(), bonds.end())](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        ConstraintPositionInputs input{values[0], values[1], values[2], values[3],
+                                         values[4], values.drop_front(5)};
+        auto result = buildBondConstraints(builder, input, arity, bonds, config);
+        TermIRValues outputs = {result.change};
+        if (config.withFailure)
+          outputs.push_back(result.failed);
+        return outputs;
+      });
 }
 
 std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,

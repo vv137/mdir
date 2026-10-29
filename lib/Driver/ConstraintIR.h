@@ -1,4 +1,4 @@
-// Typed inputs for constraint reductions at their existing kernel sites.
+// Typed inputs for constraint kernels at their existing insertion sites.
 #ifndef MDIR_LIB_DRIVER_CONSTRAINTIR_H
 #define MDIR_LIB_DRIVER_CONSTRAINTIR_H
 
@@ -40,5 +40,25 @@ struct ConstraintForceInputs {
 mlir::Value buildConstraintForceVirial(
     mlir::OpBuilder &, const ConstraintForceInputs &, unsigned arity,
     llvm::ArrayRef<std::pair<unsigned, unsigned>> bonds);
+struct ConstraintBond {
+  unsigned first, second, length;
+};
+struct ConstraintPositionInputs {
+  mlir::Value relation, positions, cell, oldPositions, masses;
+  mlir::ValueRange parameters;
+};
+struct ConstraintPositionConfig {
+  bool withFailure, analytic;
+  double tolerance, analyticTolerance;
+};
+struct ConstraintPositionResult {
+  mlir::Value change, failed;
+};
+ConstraintPositionResult buildSettlePositions(
+    mlir::OpBuilder &, const ConstraintPositionInputs &, bool withFailure,
+    double tolerance);
+ConstraintPositionResult buildBondConstraints(
+    mlir::OpBuilder &, const ConstraintPositionInputs &, unsigned arity,
+    llvm::ArrayRef<ConstraintBond>, const ConstraintPositionConfig &);
 } // namespace mdir::driver::builder
 #endif
