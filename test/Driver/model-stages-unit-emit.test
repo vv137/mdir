@@ -1,0 +1,4 @@
+# GPU-target lowering needs the toolkit, but emission uses no device.
+# REQUIRES: cuda-toolkit, hdf5
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/model-stages/unit_rows.py emit %S/../.. %t --mdir mdir --printer mdir-opt
