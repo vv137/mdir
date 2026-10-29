@@ -73,4 +73,16 @@ Boolean kernels directly. Native conditional stop calls preserve the
 existing stream ordering and declared effects. Bond-length inputs are
 indexed typed arguments rather than rewritten SSA tokens. The initial
 descent map retains its zero-mass guard and existing projection order.
+Constraint drift virials and initial pressure traces are constructed in
+`ConstraintIR.cpp`. Typed records name their positions, displacement, masses,
+time step, projected descent, forces, and velocities without borrowing
+builder state. Coordinate/gather order and scalar/vector reductions retain
+their original arithmetic and accumulation order. RATTLE velocity projection
+uses the same small Gaussian elimination and reads its stored changes for
+the half-step virial. Existing unused tuple parameters remain in the kernel
+interface, preserving the complete generated program. The constraint-force
+virial uses the same bond acceleration matrix, centripetal term, and small
+solve for both water and hydrogen groups. SETTLE velocity projection keeps
+its original three-bond determinant expressions and reads stored changes
+for its virial, preserving the energy/plain-step equivalence.
 D363's term recipes still join remaining assembly at this commit.

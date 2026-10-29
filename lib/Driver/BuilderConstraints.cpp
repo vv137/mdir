@@ -2,6 +2,7 @@
 // of the constraints (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "ConstraintIR.h"
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -287,50 +288,17 @@ std::string Builder::emitConstraintVirial(StringRef indent,
   // those positions, with the weight ½: with that of the second half, the
   // virial of the constraints is the mean of the two, as the kinetic
   // energy of the pressure is (D45).
-  unsigned count = set.arity - 1;
-  std::string inner = (indent + "  ").str();
-  std::string coordinates, arguments;
-  for (unsigned k = 1; k <= count; ++k) {
-    coordinates += (k == 1 ? "" : ", ") +
-                   ("displacement(" + std::to_string(k) + ", 0)");
-    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-  }
-  for (unsigned k = 0; k <= count; ++k)
-    arguments += "%vs_c" + std::to_string(k) + ": vector<3xf64>, ";
-  for (unsigned k = 0; k <= count; ++k)
-    arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                 (k == count ? "" : ", ");
-  std::string sum = (virialResult + "_first").str();
-  os << indent << sum << " = md.sum_tuples %r_" << set.name << ", " << old
-     << ", %cell\n"
-     << indent << "    coordinates(" << coordinates << ")\n"
-     << indent << "    gather(" << change << ", %m : !vec, !real) {\n"
-     << indent << "^bb0(" << arguments << "):\n";
-  SiteKernel w(os, inner);
-  std::string rate = w.real("divf", w.constant(1.0),
-                            w.real("mulf", "%dt", "%dt"));
-  std::vector<std::string> forces;
-  for (unsigned j = 1; j <= count; ++j)
-    forces.push_back(w.scale(
-        w.real("mulf", "%vs_m" + std::to_string(j), rate),
-        "%vs_c" + std::to_string(j)));
-  std::string elements;
-  for (int a = 0; a != 3; ++a) {
-    std::string row;
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string term = w.scale(w.component("%vs_r" + std::to_string(j), a),
-                                 forces[j - 1]);
-      row = row.empty() ? term : w.vector("addf", row, term);
-    }
-    for (int b = 0; b != 3; ++b)
-      elements += (elements.empty() ? "" : ", ") + w.component(row, b);
-  }
-  os << inner << "%vs_w = vector.from_elements " << elements
-     << " : vector<9xf64>\n"
-     << inner << "md.yield %vs_w : vector<9xf64>\n"
-     << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
-  os << indent << virialResult << " = arith.addf " << virial << ", " << sum
-     << " : vector<9xf64>\n";
+  std::string relation = "%r_" + set.name, relationType = "!rel_" + set.name;
+  emitIRFragment(
+      indent, {virialResult}, {"vector<9xf64>"},
+      {relation, old, "%cell", change, "%m", "%dt", virial},
+      {relationType, "!vec", "!md.cell", "!vec", "!real", "f64", "vector<9xf64>"},
+      [arity = set.arity](mlir::OpBuilder &builder,
+                           mlir::ValueRange values) -> TermIRValues {
+        ConstraintVirialInputs input{values[0], values[1], values[2], values[3],
+                                      values[4], values[5], values[6]};
+        return {buildConstraintVirial(builder, input, arity)};
+      });
   return virialResult.str();
 }
 
@@ -620,255 +588,79 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
                                          const Program::TupleSet &set,
                                          StringRef result, StringRef virial,
                                          StringRef virialResult) {
-  unsigned count = set.arity - 1;
-  std::string inner = (indent + "  ").str();
-  std::string coordinates, tuple, tupleTypes, arguments;
-  for (unsigned k = 1; k <= count; ++k) {
-    coordinates += (k == 1 ? "" : ", ") + ("displacement(" +
-                                           std::to_string(k) + ", 0)");
-    tuple += (k == 1 ? "" : ", ") + ("%f_" + set.name + "_d" +
-                                     std::to_string(k));
-    tupleTypes += (k == 1 ? "" : ", ") + ("!of_" + set.name);
-    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+  // RATTLE removes each internal bond velocity by the original small
+  // mass-weighted solve; the second half-step virial reads its stored changes.
+  std::string relation = "%r_" + set.name, relationType = "!rel_" + set.name;
+  std::string fieldType = "!of_" + set.name;
+  std::vector<std::string> parameters;
+  for (unsigned j = 1; j < set.arity; ++j)
+    parameters.push_back("%f_" + set.name + "_d" + std::to_string(j));
+  llvm::SmallVector<StringRef> inputs = {relation, x, "%cell", v, "%m"};
+  llvm::SmallVector<StringRef> types = {relationType, "!vec", "!md.cell", "!vec", "!real"};
+  for (const auto &parameter : parameters) {
+    inputs.push_back(parameter);
+    types.push_back(fieldType);
   }
-  for (unsigned k = 0; k <= count; ++k)
-    arguments += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
-  for (unsigned k = 0; k <= count; ++k)
-    arguments += "%vs_m" + std::to_string(k) + ": f64, ";
-  for (unsigned k = 1; k <= count; ++k)
-    arguments += "%vs_d" + std::to_string(k) + ": f64" +
-                 (k == count ? "" : ", ");
-  auto header = [&](StringRef name, StringRef op, StringRef field) {
-    os << indent << name << " = md." << op << " %r_" << set.name << ", " << x
-       << ", %cell\n"
-       << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    gather(" << field << ", %m : !vec, !real)\n"
-       << indent << "    tuple(" << tuple << " : " << tupleTypes << ") {\n"
-       << indent << "^bb0(" << arguments << "):\n";
-  };
-  // The impulses τ along the bonds that leave no velocity along them:
-  // A τ = −b, A_ij = δ_ij / m_j + e_i · e_j / m_0, b_i = e_i · (v_i − v_0),
-  // by Gaussian elimination. Returns the changes of the velocities.
-  auto solve = [&](SiteKernel &k) {
-    std::vector<std::string> units, rhs;
-    std::string one = k.constant(1.0), zero = k.constant(0.0);
-    std::string inverseCenter = k.real("divf", one, "%vs_m0");
-    std::vector<std::string> inverse;
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      units.push_back(k.unit("%vs_r" + n));
-      inverse.push_back(k.real("divf", one, "%vs_m" + n));
-      rhs.push_back(k.real(
-          "subf", zero,
-          k.dot(units.back(), k.vector("subf", "%vs_v" + n, "%vs_v0"))));
-    }
-    std::vector<std::vector<std::string>> A(count,
-                                            std::vector<std::string>(count));
-    for (unsigned i = 0; i != count; ++i)
-      for (unsigned j = 0; j != count; ++j) {
-        std::string coupling =
-            k.real("mulf", k.dot(units[i], units[j]), inverseCenter);
-        A[i][j] = i == j ? k.real("addf", coupling, inverse[i]) : coupling;
-      }
-    std::vector<std::string> impulse = emitSmallSolve(k, A, rhs);
-    std::vector<std::string> changes(count + 1);
-    std::string center = k.zero();
-    for (unsigned j = 0; j != count; ++j) {
-      std::string push = k.scale(impulse[j], units[j]);
-      changes[j + 1] = k.scale(inverse[j], push);
-      center = k.vector("subf", center, k.scale(inverseCenter, push));
-    }
-    changes[0] = center;
-    return changes;
-  };
-
-  std::string change = (result + "_change").str();
-  header(change, "gather_tuples", v);
-  SiteKernel k(os, inner);
-  std::vector<std::string> changes = solve(k);
-  std::string yielded, types;
-  for (unsigned j = 0; j <= count; ++j) {
-    yielded += (j == 0 ? "" : ", ") + changes[j];
-    types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
+  bool withVirial = !virial.empty();
+  llvm::SmallVector<StringRef> outputs = {result}, resultTypes = {"!vec"};
+  if (withVirial) {
+    inputs.append({"%dt", virial});
+    types.append({"f64", "vector<9xf64>"});
+    outputs.push_back(virialResult);
+    resultTypes.push_back("vector<9xf64>");
   }
-  os << inner << "md.yield " << yielded << " : " << types << "\n"
-     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
-
-  std::string virialName = virial.str();
-  if (!virial.empty()) {
-    // The forces of the constraints over the second half of the step,
-    // G = 2 m Δv / dt, and their virial Σ (x_j − x_0) ⊗ G_j, with the
-    // weight ½: the virial of the constraints is the mean of those of the
-    // two halves (emitConstraintVirial). The changes are read, not solved
-    // again, as for SETTLE (#97); the clusters are disjoint.
-    std::string sum = (virialResult + "_sum").str();
-    header(sum, "sum_tuples", change);
-    SiteKernel w(os, inner);
-    std::vector<std::string> dv(count + 1);
-    for (unsigned j = 0; j <= count; ++j)
-      dv[j] = "%vs_v" + std::to_string(j);
-    std::string two = w.constant(1.0);
-    std::string elements;
-    std::vector<std::string> forces;
-    for (unsigned j = 1; j <= count; ++j)
-      forces.push_back(w.scale(
-          w.real("divf", w.real("mulf", two, "%vs_m" + std::to_string(j)),
-                 "%dt"),
-          dv[j]));
-    for (int a = 0; a != 3; ++a) {
-      std::string row;
-      for (unsigned j = 1; j <= count; ++j) {
-        std::string term = w.scale(
-            w.component("%vs_r" + std::to_string(j), a), forces[j - 1]);
-        row = row.empty() ? term : w.vector("addf", row, term);
-      }
-      for (int b = 0; b != 3; ++b)
-        elements += (elements.empty() ? "" : ", ") + w.component(row, b);
-    }
-    os << inner << "%vs_w = vector.from_elements " << elements
-       << " : vector<9xf64>\n"
-       << inner << "md.yield %vs_w : vector<9xf64>\n"
-       << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
-    os << indent << virialResult << " = arith.addf " << virial << ", " << sum
-       << " : vector<9xf64>\n";
-    virialName = virialResult.str();
-  }
-  os << indent << result << " = md.map_particles gather(" << v << ", "
-     << change << " : !vec, !vec) {\n"
-     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
-  return virialName;
+  emitIRFragment(
+      indent, outputs, resultTypes, inputs, types,
+      [arity = set.arity, withVirial](mlir::OpBuilder &builder,
+                                      mlir::ValueRange values) -> TermIRValues {
+        unsigned fields = arity - 1;
+        ConstraintVelocityInputs input{values[0], values[1], values[2], values[3],
+                                         values[4], values.slice(5, fields), {}, {}};
+        if (withVirial) {
+          input.timeStep = values[5 + fields];
+          input.virial = values[6 + fields];
+        }
+        auto result = buildShakeVelocities(builder, input, arity);
+        TermIRValues outputs = {result.velocities};
+        if (withVirial)
+          outputs.push_back(result.virial);
+        return outputs;
+      });
+  return withVirial ? virialResult.str() : "";
 }
 
 std::string Builder::emitConstraintForceVirial(StringRef indent,
                                                StringRef x, StringRef v,
                                                StringRef f,
                                                StringRef virial) {
-  std::string inner = (indent + "  ").str();
   std::string current = virial.str();
   unsigned count = 0;
-  // A group of `members` particles and its bonds (p, q), with the
-  // displacements of the members from the first.
-  auto emitGroup = [&](StringRef setName, unsigned members,
-                       llvm::ArrayRef<std::pair<unsigned, unsigned>> bonds,
-                       StringRef tupleFields, StringRef tupleTypes,
-                       unsigned numTupleFields) {
-    std::string coordinates, arguments;
-    for (unsigned j = 1; j != members; ++j) {
-      coordinates += (j == 1 ? "" : ", ") +
-                     ("displacement(" + std::to_string(j) + ", 0)");
-      arguments += "%cf_r" + std::to_string(j) + ": vector<3xf64>, ";
-    }
-    for (StringRef field : {"v", "f"})
-      for (unsigned j = 0; j != members; ++j)
-        arguments += ("%cf_" + field + std::to_string(j) + ": vector<3xf64>, ").str();
-    for (unsigned j = 0; j != members; ++j)
-      arguments += "%cf_m" + std::to_string(j) + ": f64, ";
-    for (unsigned j = 0; j != numTupleFields; ++j)
-      arguments += "%cf_t" + std::to_string(j) + ": f64, ";
-    arguments.resize(arguments.size() - 2);
-    std::string sum = "%cfw" + std::to_string(count++);
-    os << indent << sum << " = md.sum_tuples %r_" << setName << ", " << x
-       << ", %cell\n"
-       << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    gather(" << v << ", " << f << ", %m : !vec, !vec, "
-       << "!real)\n";
-    if (numTupleFields)
-      os << indent << "    tuple(" << tupleFields << " : " << tupleTypes
-         << ")";
-    os << " {\n" << indent << "^bb0(" << arguments << "):\n";
-    SiteKernel k(os, inner, "%cfk");
-    std::string zero = k.constant(0.0), one = k.constant(1.0);
-    // The position of member j relative to the first, and its velocity,
-    // acceleration without the constraints, and inverse mass.
-    auto position = [&](unsigned j) { return "%cf_r" + std::to_string(j); };
-    std::vector<std::string> u, inverse;
-    for (unsigned j = 0; j != members; ++j) {
-      std::string n = std::to_string(j);
-      inverse.push_back(k.real("divf", one, "%cf_m" + n));
-      u.push_back(k.scale(inverse.back(), "%cf_f" + n));
-    }
-    std::vector<std::string> units, rhs;
-    for (auto [p, q] : bonds) {
-      std::string d = p == 0 ? position(q)
-                             : k.vector("subf", position(q), position(p));
-      std::string length = k.norm(d);
-      units.push_back(k.unit(d));
-      std::string relative = k.vector("subf", "%cf_v" + std::to_string(q),
-                                      "%cf_v" + std::to_string(p));
-      std::string centripetal =
-          k.real("divf", k.dot(relative, relative), length);
-      std::string along =
-          k.dot(units.back(), k.vector("subf", u[q], u[p]));
-      rhs.push_back(k.real("subf", zero, k.real("addf", along, centripetal)));
-    }
-    // A_bc: what a unit force along bond c, +e_c on q_c and -e_c on p_c,
-    // does to the acceleration along bond b.
-    size_t n = bonds.size();
-    std::vector<std::vector<std::string>> A(n, std::vector<std::string>(n));
-    for (size_t b = 0; b != n; ++b)
-      for (size_t c = 0; c != n; ++c) {
-        auto [pb, qb] = bonds[b];
-        auto [pc, qc] = bonds[c];
-        auto on = [&](unsigned x) {
-          return (x == qc ? 1 : 0) - (x == pc ? 1 : 0);
-        };
-        std::string coefficient = zero;
-        if (on(qb) != 0)
-          coefficient = k.real(on(qb) > 0 ? "addf" : "subf", coefficient,
-                               inverse[qb]);
-        if (on(pb) != 0)
-          coefficient = k.real(on(pb) > 0 ? "subf" : "addf", coefficient,
-                               inverse[pb]);
-        A[b][c] = k.real("mulf", k.dot(units[b], units[c]), coefficient);
-      }
-    std::vector<std::string> tension = emitSmallSolve(k, A, rhs);
-    // The force on each member but the first, and the virial.
-    std::string elements;
-    std::vector<std::string> forces(members, "");
-    for (unsigned j = 1; j != members; ++j) {
-      std::string force = k.zero();
-      for (size_t c = 0; c != n; ++c) {
-        auto [pc, qc] = bonds[c];
-        if (j != pc && j != qc)
-          continue;
-        std::string push = k.scale(tension[c], units[c]);
-        force = k.vector(j == qc ? "addf" : "subf", force, push);
-      }
-      forces[j] = force;
-    }
-    for (int a = 0; a != 3; ++a) {
-      std::string row;
-      for (unsigned j = 1; j != members; ++j) {
-        std::string term = k.scale(k.component(position(j), a), forces[j]);
-        row = row.empty() ? term : k.vector("addf", row, term);
-      }
-      for (int b = 0; b != 3; ++b)
-        elements += (elements.empty() ? "" : ", ") + k.component(row, b);
-    }
-    os << inner << "%cf_w = vector.from_elements " << elements
-       << " : vector<9xf64>\n"
-       << inner << "md.yield %cf_w : vector<9xf64>\n"
-       << indent << "} : !rel_" << setName << ", !vec -> vector<9xf64>\n";
-    std::string next = sum + "_total";
-    os << indent << next << " = arith.addf " << current << ", " << sum
-       << " : vector<9xf64>\n";
+  // A group and its bonds, with member displacements measured from the first.
+  auto emitGroup = [&](StringRef setName, unsigned arity,
+                       llvm::ArrayRef<std::pair<unsigned, unsigned>> bonds) {
+    std::string relation = ("%r_" + setName).str();
+    std::string relationType = ("!rel_" + setName).str();
+    std::string next = "%cfw" + std::to_string(count++) + "_total";
+    emitIRFragment(
+        indent, {next}, {"vector<9xf64>"},
+        {relation, x, "%cell", v, f, "%m", current},
+        {relationType, "!vec", "!md.cell", "!vec", "!vec", "!real", "vector<9xf64>"},
+        [arity, bonds = std::vector<std::pair<unsigned, unsigned>>(bonds.begin(), bonds.end())](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          ConstraintForceInputs input{values[0], values[1], values[2], values[3],
+                                       values[4], values[5], values[6]};
+          return {buildConstraintForceVirial(builder, input, arity, bonds)};
+        });
     current = next;
   };
-  for (const Program::TupleSet &set : program.tupleSets) {
-    if (set.name == "settles") {
-      static const std::pair<unsigned, unsigned> bonds[] = {
-          {0, 1}, {0, 2}, {1, 2}};
-      emitGroup(set.name, 3, bonds, "", "", 0);
-    }
-  }
+  for (const Program::TupleSet &set : program.tupleSets)
+    if (set.name == "settles")
+      emitGroup(set.name, 3, {{0, 1}, {0, 2}, {1, 2}});
   for (const Program::TupleSet *set : getShakeSets()) {
     std::vector<std::pair<unsigned, unsigned>> bonds;
     for (unsigned j = 1; j != set->arity; ++j)
       bonds.push_back({0, j});
-    emitGroup(set->name, set->arity, bonds, "", "", 0);
+    emitGroup(set->name, set->arity, bonds);
   }
   return current;
 }
@@ -877,120 +669,36 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
                                           StringRef v, StringRef result,
                                           StringRef virial,
                                           StringRef virialResult) {
-  std::string inner = (indent + "  ").str();
-  // The impulses along the three bonds that leave no velocity along them:
-  // A τ = −b, with b the velocities along the bonds and A what a unit
-  // impulse along one bond does to the velocity along another.
-  auto emitKernel = [&](SiteKernel &k) {
-    std::string e0 = k.unit("%vs_d10"), e1 = k.unit("%vs_d20"),
-                e2 = k.unit("%vs_d21");
-    std::string one = k.constant(1.0);
-    std::string io = k.real("divf", one, "%vs_m0");
-    std::string ih = k.real("divf", one, "%vs_m1");
-    std::string zero = k.constant(0.0);
-    auto minus = [&](StringRef a) { return k.real("subf", zero, a); };
-    std::string r0 =
-        minus(k.dot(e0, k.vector("subf", "%vs_v1", "%vs_v0")));
-    std::string r1 =
-        minus(k.dot(e1, k.vector("subf", "%vs_v2", "%vs_v0")));
-    std::string r2 =
-        minus(k.dot(e2, k.vector("subf", "%vs_v2", "%vs_v1")));
-    std::string a00 = k.real("addf", io, ih), a11 = a00;
-    std::string a22 = k.real("addf", ih, ih);
-    std::string a01 = k.real("mulf", k.dot(e0, e1), io);
-    std::string a02 = minus(k.real("mulf", k.dot(e0, e2), ih));
-    std::string a12 = k.real("mulf", k.dot(e1, e2), ih);
-    auto det3 = [&](StringRef m00, StringRef m01, StringRef m02,
-                    StringRef m10, StringRef m11, StringRef m12,
-                    StringRef m20, StringRef m21, StringRef m22) {
-      auto minor = [&](StringRef p, StringRef q, StringRef r, StringRef s) {
-        return k.real("subf", k.real("mulf", p, q), k.real("mulf", r, s));
-      };
-      return k.real(
-          "addf",
-          k.real("subf", k.real("mulf", m00, minor(m11, m22, m12, m21)),
-                 k.real("mulf", m01, minor(m10, m22, m12, m20))),
-          k.real("mulf", m02, minor(m10, m21, m11, m20)));
-    };
-    std::string det = det3(a00, a01, a02, a01, a11, a12, a02, a12, a22);
-    std::string t0 = k.real(
-        "divf", det3(r0, a01, a02, r1, a11, a12, r2, a12, a22), det);
-    std::string t1 = k.real(
-        "divf", det3(a00, r0, a02, a01, r1, a12, a02, r2, a22), det);
-    std::string t2 = k.real(
-        "divf", det3(a00, a01, r0, a01, a11, r1, a02, a12, r2), det);
-    // Impulse c along e_c from p to q: +τ e / m_q on q, −τ e / m_p on p.
-    std::string i0 = k.scale(t0, e0), i1 = k.scale(t1, e1),
-                i2 = k.scale(t2, e2);
-    std::string dv0 = k.negate(k.scale(io, k.vector("addf", i0, i1)));
-    std::string dv1 = k.scale(ih, k.vector("subf", i0, i2));
-    std::string dv2 = k.scale(ih, k.vector("addf", i1, i2));
-    return std::array<std::string, 3>{dv0, dv1, dv2};
-  };
-  auto header = [&](StringRef op, StringRef field) {
-    os << indent << " = md." << op << " %r_settles, " << x << ", %cell\n"
-       << indent << "    coordinates(displacement(1, 0), displacement(2, 0), "
-                    "displacement(2, 1))\n"
-       << indent << "    gather(" << field << ", %m : !vec, !real)\n"
-       << indent << "    tuple(%f_settles_doh, %f_settles_dhh : !of_settles, "
-                    "!of_settles) {\n"
-       << indent << "^bb0(%vs_d10: vector<3xf64>, %vs_d20: vector<3xf64>, "
-                    "%vs_d21: vector<3xf64>, %vs_v0: vector<3xf64>, "
-                    "%vs_v1: vector<3xf64>, %vs_v2: vector<3xf64>, "
-                    "%vs_m0: f64, %vs_m1: f64, %vs_m2: f64, %vs_doh: f64, "
-                    "%vs_dhh: f64):\n";
-  };
-  std::string change = (result + "_settle").str();
-  os << indent << change;
-  header("gather_tuples", v);
-  SiteKernel k(os, inner);
-  std::array<std::string, 3> dv = emitKernel(k);
-  os << inner << "md.yield " << dv[0] << ", " << dv[1] << ", " << dv[2]
-     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
-     << indent << "} : !rel_settles, !vec -> !vec\n";
-
-  std::string virialName = virial.str();
-  if (!virial.empty()) {
-    // The forces of the constraints over the second half of the step,
-    // G = 2 m Δv / dt, and their virial Σ (x_i − x_O) ⊗ G_i, with the
-    // weight ½ (emitConstraintVirial). The changes Δv are those that the
-    // step applies, read rather than solved again: a solve of its own
-    // could round otherwise once fused with the step's (#97), and the
-    // dynamics of a step would depend on whether it writes energies. The
-    // groups are disjoint, so a particle's change is its group's.
-    std::string sum = (virialResult + "_settle").str();
-    os << indent << sum;
-    header("sum_tuples", change);
-    SiteKernel w(os, inner);
-    std::string factor = w.real("divf", "%vs_m1", "%dt");
-    std::array<std::string, 2> arms = {"%vs_d10", "%vs_d20"};
-    std::array<std::string, 2> forces = {w.scale(factor, "%vs_v1"),
-                                         w.scale(factor, "%vs_v2")};
-    std::string elements;
-    for (int a = 0; a != 3; ++a) {
-      std::string row;
-      for (int m = 0; m != 2; ++m) {
-        std::string term = w.scale(w.component(arms[m], a), forces[m]);
-        row = row.empty() ? term : w.vector("addf", row, term);
-      }
-      for (int b = 0; b != 3; ++b)
-        elements += (elements.empty() ? "" : ", ") + w.component(row, b);
-    }
-    os << inner << "%vs_w = vector.from_elements " << elements
-       << " : vector<9xf64>\n"
-       << inner << "md.yield %vs_w : vector<9xf64>\n"
-       << indent << "} : !rel_settles, !vec -> vector<9xf64>\n";
-    os << indent << virialResult << " = arith.addf " << virial << ", "
-       << sum << " : vector<9xf64>\n";
-    virialName = virialResult.str();
+  // Keep the water-specific determinant solve and read its stored velocity
+  // changes for the virial, rather than solving them again (#97).
+  llvm::SmallVector<StringRef> inputs = {
+      "%r_settles", x, "%cell", v, "%m", "%f_settles_doh", "%f_settles_dhh"};
+  llvm::SmallVector<StringRef> types = {
+      "!rel_settles", "!vec", "!md.cell", "!vec", "!real", "!of_settles", "!of_settles"};
+  bool withVirial = !virial.empty();
+  llvm::SmallVector<StringRef> outputs = {result}, resultTypes = {"!vec"};
+  if (withVirial) {
+    inputs.append({"%dt", virial});
+    types.append({"f64", "vector<9xf64>"});
+    outputs.push_back(virialResult);
+    resultTypes.push_back("vector<9xf64>");
   }
-  os << indent << result << " = md.map_particles gather(" << v << ", "
-     << change << " : !vec, !vec) {\n"
-     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
-  return virialName;
+  emitIRFragment(
+      indent, outputs, resultTypes, inputs, types,
+      [withVirial](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        ConstraintVelocityInputs input{values[0], values[1], values[2], values[3],
+                                         values[4], values.slice(5, 2), {}, {}};
+        if (withVirial) {
+          input.timeStep = values[7];
+          input.virial = values[8];
+        }
+        auto result = buildSettleVelocities(builder, input);
+        TermIRValues outputs = {result.velocities};
+        if (withVirial)
+          outputs.push_back(result.virial);
+        return outputs;
+      });
+  return withVirial ? virialResult.str() : "";
 }
 
 void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
@@ -1065,68 +773,18 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
       groups.insert(groups.begin(), &set);
   std::string current = trace.str();
   for (const Program::TupleSet *set : groups) {
-    unsigned count = set->arity - 1;
-    std::string coordinates, arguments;
-    for (unsigned k = 1; k <= count; ++k) {
-      coordinates += (k == 1 ? "" : ", ") +
-                     ("displacement(" + std::to_string(k) + ", 0)");
-      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-    }
-    for (StringRef field : {"g", "f", "v"})
-      for (unsigned k = 0; k <= count; ++k)
-        arguments += ("%vs_" + field + std::to_string(k) + ": vector<3xf64>, ")
-                         .str();
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                   (k == count ? "" : ", ");
-    std::string sum = name + "_" + set->name;
-    os << "  " << sum << " = md.sum_tuples %r_" << set->name << ", " << x
-       << ", %cell\n"
-       << "    coordinates(" << coordinates << ")\n"
-       << "    gather(" << descent << ", " << f << ", " << v
-       << ", %m : !vec, !vec, !vec, !real) {\n"
-       << "  ^bb0(" << arguments << "):\n";
-    SiteKernel k(os, "    ");
-    // Σ (x_k − x_0) · G⁰_k over the particles but the first, whose arm is
-    // 0.
-    std::string arms;
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      std::string force = k.vector(
-          "subf", k.scale("%vs_m" + n, "%vs_g" + n), "%vs_f" + n);
-      std::string term = axes ? k.vector("mulf", "%vs_r" + n, force)
-                              : k.dot("%vs_r" + n, force);
-      arms = arms.empty() ? term
-                          : axes ? k.vector("addf", arms, term)
-                                 : k.real("addf", arms, term);
-    }
-    // 2 K_int = Σ m |v − V|².
-    std::string total = "%vs_m0", moment = k.scale("%vs_m0", "%vs_v0");
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      total = k.real("addf", total, "%vs_m" + n);
-      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
-    }
-    std::string center =
-        k.scale(k.real("divf", k.constant(1.0), total), moment);
-    std::string twice;
-    for (unsigned j = 0; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      std::string relative = k.vector("subf", "%vs_v" + n, center);
-      std::string term =
-          axes ? k.scale("%vs_m" + n, k.vector("mulf", relative, relative))
-               : k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
-      twice = twice.empty() ? term
-                            : axes ? k.vector("addf", twice, term)
-                                   : k.real("addf", twice, term);
-    }
-    std::string virial = axes ? k.vector("subf", arms, twice)
-                              : k.real("subf", arms, twice);
-    os << "    md.yield " << virial << " : " << type << "\n"
-       << "  } : !rel_" << set->name << ", !vec -> " << type << "\n";
+    std::string relation = "%r_" + set->name, relationType = "!rel_" + set->name;
     std::string next = name + "_" + set->name + "_sum";
-    os << "  " << next << " = arith.addf " << current << ", " << sum
-       << " : " << type << "\n";
+    emitIRFragment(
+        "  ", {next}, {type},
+        {relation, x, "%cell", descent, f, v, "%m", current},
+        {relationType, "!vec", "!md.cell", "!vec", "!vec", "!vec", "!real", type},
+        [arity = set->arity, axes](mlir::OpBuilder &builder,
+                                    mlir::ValueRange values) -> TermIRValues {
+          ConstraintTraceInputs input{values[0], values[1], values[2], values[3],
+                                       values[4], values[5], values[6], values[7]};
+          return {buildConstraintTrace(builder, input, arity, axes)};
+        });
     current = next;
   }
   return current;

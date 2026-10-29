@@ -1370,7 +1370,10 @@ rewritten by SSA token.
 `SiteIR.cpp` and `SiteSpreadIR.cpp` construct site geometry and force/virial
 transfer with typed input and result records. `BuilderConstraints.cpp` builds
 diagnostics, stop branches, and the mass-safe descent map natively; its
-projection kernels are still being migrated. Shared potential wrappers,
+position kernels are still being migrated. `ConstraintIR.cpp` constructs
+RATTLE and SETTLE velocities, constraint force and drift/velocity virials,
+and initial pressure traces from typed records.
+Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
