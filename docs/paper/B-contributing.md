@@ -187,5 +187,6 @@ lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-file
 Stage C (#718, D[builder-native-program]) implements staged-model input
 parsing in the build's owned context and native cloning of declarations and
 value dependencies. Set and runtime declarations are native operations in the owned
-destination module. Remaining program construction is in progress; its
+destination module, and site geometry uses typed construction. Remaining
+program construction is in progress; its
 ownership contract is recorded there.

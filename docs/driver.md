@@ -1360,7 +1360,11 @@ sets, and the constraint disjoint union are constructed directly in that
 module; remaining assembly joins it without reparsing those declarations.
 Runtime function declarations in `BuilderSchedule.cpp` use native function
 types, preserving their precision, declaration order, C interface markers,
-and stop-effect attributes.
+and stop-effect attributes. `SiteIR.cpp` shares typed placement geometry
+between virtual-site position updates and their differentiated work
+potentials; native particle maps apply site and constraint displacements.
+`SiteSpreadIR.cpp` builds both the analytic force/virial transfer and the
+derivative-based path with typed input and result records.
 Model declarations and potential bodies are cloned with
 `IRMapping`; preparation and emission capture owned input IR, without model
 text slicing or SSA-token rewriting. Potential argument and return types are
