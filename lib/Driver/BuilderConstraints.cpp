@@ -6,6 +6,10 @@
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
@@ -997,20 +1001,35 @@ void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
   std::string current = (result + "_all").str();
   if (steps == 0)
     current = result.str();
-  os << indent << current << " = md.map_particles gather(" << f
-     << ", %m : !vec, !real) {\n"
-     << indent << "^bb0(%f_i: vector<3xf64>, %m_i: f64):\n"
-     << indent << "  %zero_s = arith.constant 0.0 : f64\n"
-     << indent << "  %unit_s = arith.constant 1.0 : f64\n"
-     << indent << "  %zero_v = arith.constant dense<0.0> : vector<3xf64>\n"
-     << indent << "  %massive = arith.cmpf ogt, %m_i, %zero_s : f64\n"
-     << indent << "  %m_safe = arith.select %massive, %m_i, %unit_s : f64\n"
-     << indent << "  %mb = vector.broadcast %m_safe : f64 to vector<3xf64>\n"
-     << indent << "  %ratio = arith.divf %f_i, %mb : vector<3xf64>\n"
-     << indent << "  %g_i = arith.select %massive, %ratio, %zero_v "
-        ": vector<3xf64>\n"
-     << indent << "  md.yield %g_i : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  emitIRFragment(
+      indent, {current}, {"!vec"}, {f, "%m"}, {"!vec", "!real"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto f64 = builder.getF64Type();
+        auto vec = VectorType::get({3}, f64);
+        auto map = mdir::md::MapParticlesOp::create(
+            builder, loc, values[0].getType(), values);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          auto args = builder.createBlock(&map.getKernel(), {}, {vec, f64},
+                                            {loc, loc})->getArguments();
+          Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+          Value unit = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0));
+          Value zeroVector = arith::ConstantOp::create(
+              builder, loc, DenseElementsAttr::get(vec, 0.0));
+          Value massive = arith::CmpFOp::create(builder, loc,
+                                                arith::CmpFPredicate::OGT,
+                                                args[1], zero);
+          Value safe = arith::SelectOp::create(builder, loc, massive, args[1], unit);
+          Value mass = vector::BroadcastOp::create(builder, loc, vec, safe);
+          Value ratio = arith::DivFOp::create(builder, loc, args[0], mass);
+          Value result = arith::SelectOp::create(builder, loc, massive, ratio,
+                                                 zeroVector);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+        }
+        return {map.getResult()};
+      });
   // As RATTLE takes the velocities off the constraints.
   auto next = [&]() {
     ++step;
@@ -1115,43 +1134,60 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
 
 void Builder::emitConstraintFailures(StringRef indent, StringRef x,
                                      StringRef result) {
-  std::vector<std::pair<int, std::string>> counts =
-      emitConstraintTests(indent, x, result, /*flag=*/false);
-  std::string current;
-  for (auto [index, count] : llvm::enumerate(counts)) {
-    if (index == 0) {
-      current = count.second;
-    } else {
-      std::string next = (result + "_" + std::to_string(index)).str();
-      os << indent << next << " = arith.addf " << current << ", "
-         << count.second << " : f64\n";
-      current = next;
-    }
+  auto counts = emitConstraintTests(indent, x, result, /*flag=*/false);
+  llvm::SmallVector<StringRef> inputs, types;
+  for (const auto &count : counts) {
+    inputs.push_back(count.second);
+    types.push_back("f64");
   }
-  std::string none = (result + "_none").str();
-  os << indent << none << " = arith.constant 0.0 : f64\n";
-  if (current.empty())
-    current = none;
-  os << indent << result << " = arith.addf " << current << ", " << none
-     << " : f64\n";
+  emitIRFragment(
+      indent, {result}, {"f64"}, inputs, types,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        Value current;
+        for (Value value : values)
+          current = current ? arith::AddFOp::create(builder, loc, current, value)
+                            : value;
+        Value none = arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(0.0));
+        if (!current)
+          current = none;
+        return {arith::AddFOp::create(builder, loc, current, none)};
+      });
 }
 
 void Builder::emitConstraintStops(
     StringRef indent,
     const std::vector<std::pair<int, std::string>> &failures) {
-  // The flags are read here, after the evaluation of the step: the host
-  // has waited by then for the flag of the neighbor structure, which the
-  // stream sets after the tests, and the read adds no wait (D118).
-  for (const auto &[set, failed] : failures)
-    os << indent << "scf.if " << failed << " {\n"
-       << indent << "  " << failed << "_set = arith.constant " << set
-       << " : i64\n"
-       << indent << "  func.call @mdrtStopConstraintFailure(%noise_step, "
-       << failed << "_set) : (i64, i64) -> ()\n"
-       << indent << "}\n";
-  // A stop that a build of the step recorded, if no set failed.
-  if (!failures.empty())
-    os << indent << "func.call @mdrtStopPending() : () -> ()\n";
+  if (failures.empty())
+    return;
+  // The preceding step evaluation has already waited for the stream's flag;
+  // reading it here adds no wait (D118). Stops keep their existing effects.
+  llvm::SmallVector<StringRef> inputs = {"%noise_step"}, types = {"i64"};
+  std::vector<int> sets;
+  for (const auto &[set, failed] : failures) {
+    sets.push_back(set);
+    inputs.push_back(failed);
+    types.push_back("i1");
+  }
+  emitIRFragment(
+      indent, {}, {}, inputs, types,
+      [sets](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        for (auto [index, set] : llvm::enumerate(sets)) {
+          auto branch = scf::IfOp::create(builder, loc, values[index + 1], false);
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(branch.thenBlock());
+          Value number = arith::ConstantIntOp::create(builder, loc, set, 64);
+          func::CallOp::create(builder, loc, "mdrtStopConstraintFailure",
+                               TypeRange{}, ValueRange{values[0], number});
+        }
+        func::CallOp::create(builder, loc, "mdrtStopPending", TypeRange{},
+                             ValueRange{});
+        return {};
+      });
 }
 
 std::vector<std::pair<int, std::string>>
@@ -1164,87 +1200,96 @@ Builder::emitConstraintTests(StringRef indent, StringRef x, StringRef prefix,
   // back to its shape by 10⁻¹ or more: 10⁻⁴ lies between them. In double
   // precision SETTLE and SHAKE meet them to the rounding of f64.
   double tolerance = control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
+  struct TestBond {
+    unsigned first, second, length;
+  };
   struct Group {
     std::string set;
-    unsigned arity;
-    std::vector<ConstrainedBond> bonds;
+    std::vector<TestBond> bonds;
     std::vector<std::string> fields;
     int number;
   };
   std::vector<Group> groups;
   if (hasSettles())
-    groups.push_back({"settles",
-                      3,
-                      {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"}, {1, 2, "%vs_dhh"}},
-                      {"%f_settles_doh", "%f_settles_dhh"},
-                      0});
+    groups.push_back({"settles", {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}},
+                      {"%f_settles_doh", "%f_settles_dhh"}, 0});
   for (const Program::TupleSet *set : getShakeSets()) {
-    // The set of the groups of k hydrogens is `shake<k>`.
-    Group group{set->name, set->arity, {}, {},
-                static_cast<int>(set->arity) - 1};
+    Group group{set->name, {}, {}, static_cast<int>(set->arity) - 1};
     for (unsigned k = 1; k < set->arity; ++k) {
-      group.bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
+      group.bonds.push_back({0, k, k - 1});
       group.fields.push_back("%f_" + set->name + "_d" + std::to_string(k));
     }
     groups.push_back(std::move(group));
   }
-  std::string type = flag ? "i1" : "f64";
   std::vector<std::pair<int, std::string>> results;
   for (const Group &group : groups) {
-    std::string coordinates, arguments, fieldTypes, fieldList;
-    for (auto [k, bond] : llvm::enumerate(group.bonds)) {
-      coordinates += (k == 0 ? "" : ", ") +
-                     ("displacement(" + std::to_string(bond.second) + ", " +
-                      std::to_string(bond.first) + ")");
-      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-    }
-    for (auto [k, field] : llvm::enumerate(group.fields)) {
-      fieldList += (k == 0 ? "" : ", ") + field;
-      fieldTypes += (k == 0 ? "" : ", ") + ("!of_" + group.set);
-    }
-    std::vector<std::string> lengths;
-    for (const ConstrainedBond &bond : group.bonds)
-      if (!llvm::is_contained(lengths, bond.length))
-        lengths.push_back(bond.length);
-    for (auto [k, name] : llvm::enumerate(lengths))
-      arguments += name + ": f64" + (k + 1 == lengths.size() ? "" : ", ");
+    std::string relation = "%r_" + group.set;
+    std::string relationType = "!rel_" + group.set;
+    std::string fieldType = "!of_" + group.set;
     std::string sum = (prefix + "_" + group.set).str();
-    std::string inner = (indent + "  ").str();
-    os << indent << sum << " = md.sum_tuples %r_" << group.set << ", " << x
-       << ", %cell\n"
-       << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    tuple(" << fieldList << " : " << fieldTypes
-       << ") {\n"
-       << indent << "^bb0(" << arguments << "):\n";
-    SiteKernel k(os, inner);
-    std::string one = k.constant(1.0), zero = k.constant(0.0),
-                limit = k.constant(tolerance);
-    std::string count;
-    for (auto [i, bond] : llvm::enumerate(group.bonds)) {
-      std::string r = "%vs_r" + std::to_string(i);
-      std::string d2 = k.real("mulf", bond.length, bond.length);
-      std::string off = k.real("subf", k.real("divf", k.dot(r, r), d2), one);
-      std::string n = std::to_string(i);
-      os << inner << "%vs_abs" << n << " = math.absf " << off << " : f64\n"
-         << inner << "%vs_bad" << n << " = arith.cmpf ugt, %vs_abs" << n
-         << ", " << limit << " : f64\n";
-      std::string failed = "%vs_bad" + n;
-      if (flag) {
-        if (!count.empty()) {
-          os << inner << "%vs_any" << n << " = arith.ori " << count << ", "
-             << failed << " : i1\n";
-          failed = "%vs_any" + n;
-        }
-        count = failed;
-        continue;
-      }
-      os << inner << "%vs_one" << n << " = arith.select %vs_bad" << n << ", "
-         << one << ", " << zero << " : f64\n";
-      failed = "%vs_one" + n;
-      count = count.empty() ? failed : k.real("addf", count, failed);
+    llvm::SmallVector<StringRef> inputs = {relation, x, "%cell"};
+    llvm::SmallVector<StringRef> inputTypes = {relationType, "!vec", "!md.cell"};
+    for (const auto &field : group.fields) {
+      inputs.push_back(field);
+      inputTypes.push_back(fieldType);
     }
-    os << inner << "md.yield " << count << " : " << type << "\n"
-       << indent << "} : !rel_" << group.set << ", !vec -> " << type << "\n";
+    emitIRFragment(
+        indent, {sum}, {flag ? "i1" : "f64"}, inputs, inputTypes,
+        [bonds = group.bonds, flag, tolerance](mlir::OpBuilder &builder,
+                                               mlir::ValueRange values) -> TermIRValues {
+          using namespace mlir;
+          auto loc = builder.getUnknownLoc();
+          auto f64 = builder.getF64Type();
+          auto vec = VectorType::get({3}, f64);
+          llvm::SmallVector<mdir::md::Coordinate> coordinates;
+          for (const auto &bond : bonds)
+            coordinates.push_back({mdir::md::CoordinateKind::Displacement,
+                                    {bond.second, bond.first}});
+          DenseI32ArrayAttr kinds;
+          DenseI64ArrayAttr members;
+          mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+          Type resultType = flag ? Type(builder.getI1Type()) : Type(f64);
+          auto sum = mdir::md::SumTuplesOp::create(
+              builder, loc, resultType, values[0], values[1], values[2],
+              ValueRange{}, values.drop_front(3), kinds, members);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types(bonds.size(), vec);
+            types.append(values.size() - 3, f64);
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            auto args = builder.createBlock(&sum.getKernel(), {}, types,
+                                              locations)->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                                builder.getF64FloatAttr(value));
+            };
+            Value one = constant(1.0), zero = constant(0.0), limit = constant(tolerance);
+            Value count;
+            for (auto [index, bond] : llvm::enumerate(bonds)) {
+              Value length = args[bonds.size() + bond.length];
+              Value d2 = arith::MulFOp::create(builder, loc, length, length);
+              Value r = args[index];
+              Value square = arith::MulFOp::create(builder, loc, r, r);
+              Value norm = vector::ReductionOp::create(
+                  builder, loc, vector::CombiningKind::ADD, square);
+              Value ratio = arith::DivFOp::create(builder, loc, norm, d2);
+              Value off = arith::SubFOp::create(builder, loc, ratio, one);
+              Value magnitude = math::AbsFOp::create(builder, loc, off);
+              Value bad = arith::CmpFOp::create(builder, loc,
+                                                arith::CmpFPredicate::UGT,
+                                                magnitude, limit);
+              if (flag) {
+                count = count ? arith::OrIOp::create(builder, loc, count, bad) : bad;
+              } else {
+                Value failed = arith::SelectOp::create(builder, loc, bad, one, zero);
+                count = count ? arith::AddFOp::create(builder, loc, count, failed)
+                              : failed;
+              }
+            }
+            mdir::md::YieldOp::create(builder, loc, ValueRange{count});
+          }
+          return {sum.getResult()};
+        });
     results.push_back({group.number, sum});
   }
   return results;

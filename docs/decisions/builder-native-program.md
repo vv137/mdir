@@ -65,4 +65,9 @@ Virtual-site placement and its work potential share the typed geometry in
 from typed site inputs, including owner translation and the placement
 derivative. The old site-specific text kernels and body assembly are removed.
 The existing minimum-image coordinates and arithmetic order are preserved.
+Constraint length checks and failure reductions construct their scalar and
+Boolean kernels directly. Native conditional stop calls preserve the
+existing stream ordering and declared effects. Bond-length inputs are
+indexed typed arguments rather than rewritten SSA tokens. The initial
+descent map retains its zero-mass guard and existing projection order.
 D363's term recipes still join remaining assembly at this commit.

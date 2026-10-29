@@ -184,9 +184,7 @@ A new dialect in a generated program belongs in `insertProgramDialects`, with
 its library in `lib/Dialect/Program/CMakeLists.txt`. Keep construction and
 lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-files-of-the-builder).
 
-Stage C (#718, D[builder-native-program]) implements staged-model input
-parsing in the build's owned context and native cloning of declarations and
-value dependencies. Set and runtime declarations are native operations in the owned
-destination module, and site geometry uses typed construction. Remaining
-program construction is in progress; its
-ownership contract is recorded there.
+Stage C (#718, D[builder-native-program]) owns the native module and parses
+staged-model input in its build context, cloning declarations and value
+dependencies. Remaining native program construction is in progress under
+the ownership contract recorded there.
