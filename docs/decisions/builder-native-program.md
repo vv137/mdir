@@ -89,6 +89,11 @@ SETTLE position projection retains its triangle rotation, while M-SHAKE
 carries small displacements through native `scf.for` block arguments. Its
 single-bond analytic branch keeps the residual and direction checks and
 Newton fallback. Bond lengths use typed parameter slots rather than SSA
-labels. Constraint kernels no longer write operation text; the legacy
-arithmetic helper remains only for the unmigrated dynamic coupling kernels.
+labels. Constraint kernels no longer write operation text. Molecular
+pressure, group kinetic reductions, and rigid-center scaling use typed
+records in `CouplingIR.cpp`, retaining the particle/group order, massless
+guard, center-of-mass correction, and half-step force term. The otherwise
+unused coordinate of the internal group reduction is preserved. Only fields
+used by the selected group path cross its capability, and the shared legacy
+arithmetic text helper is removed.
 D363's term recipes still join remaining assembly at this commit.

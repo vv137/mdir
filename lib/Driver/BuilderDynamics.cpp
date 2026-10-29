@@ -3,6 +3,7 @@
 // (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "CouplingIR.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -800,54 +801,33 @@ std::string Builder::emitMolecularDiagonal(StringRef indent,
                                         StringRef positions, StringRef forces,
                                         StringRef cell, StringRef masses,
                                         StringRef relations, StringRef tag) {
-  std::string t = tag.str();
-  std::string inner = (indent + "  ").str();
-  std::string molecular = diagonal.str();
-  for (const Program::TupleSet *set : getRigidGroups()) {
-    unsigned count = set->arity - 1;
-    std::string coordinates, arguments;
-    for (unsigned k = 1; k <= count; ++k) {
-      coordinates += (k == 1 ? "" : ", ") +
-                     ("displacement(" + std::to_string(k) + ", 0)");
-      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-    }
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_f" + std::to_string(k) + ": vector<3xf64>, ";
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                   (k == count ? "" : ", ");
-    // With the places r_k about the first particle and c the center of
-    // mass about it, Σ (r_k − c) ⊙ F_k = Σ r_k ⊙ F_k − c ⊙ Σ F_k.
-    std::string internal = "%bgi" + t + "_" + set->name;
-    os << indent << internal << " = md.sum_tuples " << relations
-       << set->name << ", " << positions << ", " << cell << "\n"
-       << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    gather(" << forces << ", " << masses
-       << " : !vec, !real) {\n"
-       << indent << "^bb0(" << arguments << "):\n";
-    SiteKernel k(os, inner);
-    std::string total = "%vs_m0", moment = k.zero(), sum = "%vs_f0",
-                places = k.zero();
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      total = k.real("addf", total, "%vs_m" + n);
-      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
-      sum = k.vector("addf", sum, "%vs_f" + n);
-      places = k.vector("addf", places,
-                        k.vector("mulf", "%vs_r" + n, "%vs_f" + n));
-    }
-    std::string center =
-        k.scale(k.real("divf", k.constant(1.0), total), moment);
-    std::string about =
-        k.vector("subf", places, k.vector("mulf", center, sum));
-    os << inner << "md.yield " << about << " : vector<3xf64>\n"
-       << indent << "} : !rel_" << set->name << ", !vec -> vector<3xf64>\n";
-    std::string next = "%bgm" + t + "_" + set->name;
-    os << indent << next << " = arith.subf " << molecular << ", " << internal
-       << " : vector<3xf64>\n";
-    molecular = next;
+  std::string result = ("%bgm" + tag).str();
+  std::vector<std::string> relationNames, relationTypes;
+  std::vector<unsigned> arities;
+  for (const auto *group : getRigidGroups()) {
+    relationNames.push_back((relations + group->name).str());
+    relationTypes.push_back("!rel_" + group->name);
+    arities.push_back(group->arity);
   }
-  return molecular;
+  if (arities.empty())
+    return diagonal.str();
+  llvm::SmallVector<StringRef> inputs = {diagonal, positions, forces, cell, masses};
+  llvm::SmallVector<StringRef> types = {"vector<3xf64>", "!vec", "!vec", "!md.cell", "!real"};
+  for (size_t i = 0; i != arities.size(); ++i) {
+    inputs.push_back(relationNames[i]);
+    types.push_back(relationTypes[i]);
+  }
+  emitIRFragment(
+      indent, {result}, {"vector<3xf64>"}, inputs, types,
+      [arities](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        std::vector<RigidGroupIR> groups;
+        for (auto [index, arity] : llvm::enumerate(arities))
+          groups.push_back({values[5 + index], arity});
+        MolecularDiagonalInputs input{values[0], values[1], values[2], values[3],
+                                        values[4], groups};
+        return {buildMolecularDiagonal(builder, input)};
+      });
+  return result;
 }
 
 Builder::GroupKinetic Builder::emitGroupKinetic(StringRef indent,
@@ -855,145 +835,47 @@ Builder::GroupKinetic Builder::emitGroupKinetic(StringRef indent,
                                                 StringRef velocities,
                                                 StringRef forces,
                                                 StringRef tag) {
-  // The groups are those that the barostat scales by their centers: each
-  // rigid group, and each other particle alone (D264).
-  // A center moves by its force alone, the forces of the constraints
-  // summing to zero within a group, so its momenta half a step before and
-  // after the step are P_g ∓ (Δt/2) F_g, and the mean of their kinetic
-  // energies is K_g + (Δt²/8) |F_g|² / M_g exactly [Jung2020, eq. 42].
-  // Over the particles first, less the motion within each group.
   std::string t = tag.str();
-  std::string inner = (indent + "  ").str();
   std::string relations = ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
-  GroupKinetic result;
-  std::string kinetic = "%gka" + t, force = "%gfa" + t;
-  emitKineticVector(os, kinetic, velocities, massName, indent);
-  os << indent << force << " = md.sum_particles gather(" << forces << ", "
-     << massName << " : !vec, !real) {\n"
-     << indent << "^bb0(%kx_f: vector<3xf64>, %kx_m: f64):\n"
-     << indent << "  %kx_sq = arith.mulf %kx_f, %kx_f : vector<3xf64>\n"
-     << indent << "  %kx_zero = arith.constant 0.0 : f64\n"
-     << indent << "  %kx_one = arith.constant 1.0 : f64\n"
-     << indent << "  %kx_massless = arith.cmpf oeq, %kx_m, %kx_zero : f64\n"
-     << indent
-     << "  %kx_safe = arith.select %kx_massless, %kx_one, %kx_m : f64\n"
-     << indent << "  %kx_inv = arith.divf %kx_one, %kx_safe : f64\n"
-     << indent
-     << "  %kx_w = arith.select %kx_massless, %kx_zero, %kx_inv : f64\n"
-     << indent << "  %kx_wb = vector.broadcast %kx_w : f64 to vector<3xf64>\n"
-     << indent << "  %kx_g = arith.mulf %kx_sq, %kx_wb : vector<3xf64>\n"
-     << indent << "  md.yield %kx_g : vector<3xf64>\n"
-     << indent << "} : vector<3xf64>\n";
-  for (const Program::TupleSet *set : getRigidGroups()) {
-    unsigned count = set->arity - 1;
-    std::string members;
-    for (unsigned k = 0; k <= count; ++k)
-      members += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
-    std::string masses;
-    for (unsigned k = 0; k <= count; ++k)
-      masses += "%vs_m" + std::to_string(k) + ": f64" +
-                (k == count ? "" : ", ");
-    // Twice the kinetic energy of the motion about the center, and
-    // Σ F_k² / m_k − F_g² / M_g, of each axis.
-    for (int part = 0; part != 2; ++part) {
-      std::string within =
-          (part == 0 ? "%gki" : "%gfi") + t + "_" + set->name;
-      os << indent << within << " = md.sum_tuples " << relations
-         << set->name << ", " << positions << ", " << cellName << "\n"
-         << indent << "    coordinates(displacement(1, 0))\n"
-         << indent << "    gather(" << (part == 0 ? velocities : forces)
-         << ", " << massName << " : !vec, !real) {\n"
-         << indent << "^bb0(%vs_r: vector<3xf64>, " << members << masses
-         << "):\n";
-      SiteKernel k(os, inner);
-      std::string total = "%vs_m0";
-      for (unsigned j = 1; j <= count; ++j)
-        total = k.real("addf", total, "%vs_m" + std::to_string(j));
-      std::string sum;
-      if (part == 0) {
-        std::string moment = k.scale("%vs_m0", "%vs_v0");
-        for (unsigned j = 1; j <= count; ++j) {
-          std::string n = std::to_string(j);
-          moment =
-              k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
-        }
-        std::string center =
-            k.scale(k.real("divf", k.constant(1.0), total), moment);
-        for (unsigned j = 0; j <= count; ++j) {
-          std::string n = std::to_string(j);
-          std::string relative = k.vector("subf", "%vs_v" + n, center);
-          std::string term = k.scale(
-              "%vs_m" + n, k.vector("mulf", relative, relative));
-          sum = sum.empty() ? term : k.vector("addf", sum, term);
-        }
-      } else {
-        std::string resultant = "%vs_v0";
-        for (unsigned j = 1; j <= count; ++j)
-          resultant = k.vector("addf", resultant, "%vs_v" + std::to_string(j));
-        for (unsigned j = 0; j <= count; ++j) {
-          std::string n = std::to_string(j);
-          std::string term =
-              k.scale(k.real("divf", k.constant(1.0), "%vs_m" + n),
-                      k.vector("mulf", "%vs_v" + n, "%vs_v" + n));
-          sum = sum.empty() ? term : k.vector("addf", sum, term);
-        }
-        std::string whole =
-            k.scale(k.real("divf", k.constant(1.0), total),
-                    k.vector("mulf", resultant, resultant));
-        sum = k.vector("subf", sum, whole);
-      }
-      os << inner << "md.yield " << sum << " : vector<3xf64>\n"
-         << indent << "} : !rel_" << set->name << ", !vec -> vector<3xf64>\n";
-      if (part == 0) {
-        std::string half = within + "_h";
-        os << indent << within << "_c = arith.constant dense<5.0e-01>"
-           << " : vector<3xf64>\n"
-           << indent << half << " = arith.mulf " << within << ", " << within
-           << "_c : vector<3xf64>\n"
-           << indent << within << "_k = arith.subf " << kinetic << ", "
-           << half << " : vector<3xf64>\n";
-        kinetic = within + "_k";
-      } else {
-        os << indent << within << "_k = arith.subf " << force << ", "
-           << within << " : vector<3xf64>\n";
-        force = within + "_k";
-      }
-    }
+  std::vector<std::string> relationNames, relationTypes;
+  std::vector<unsigned> arities;
+  for (const auto *group : getRigidGroups()) {
+    relationNames.push_back(relations + group->name);
+    relationTypes.push_back("!rel_" + group->name);
+    arities.push_back(group->arity);
   }
-  // Without the motion of the center of mass, if the run removes it.
-  if (control.comPeriod > 0) {
-    os << indent << "%gpc" << t << " = md.sum_particles gather(" << velocities
-       << ", " << massName << " : !vec, !real) {\n"
-       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
-       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
-       << indent << "  md.yield %p : vector<3xf64>\n"
-       << indent << "} : vector<3xf64>\n"
-       << indent << "%gvcm" << t << " = arith.divf %gpc" << t
-       << ", %total_mass : vector<3xf64>\n"
-       << indent << "%gpvs" << t << " = arith.mulf %gpc" << t << ", %gvcm"
-       << t << " : vector<3xf64>\n"
-       << indent << "%gkch" << t
-       << " = arith.constant dense<5.0e-01> : vector<3xf64>\n"
-       << indent << "%gkcm" << t << " = arith.mulf %gkch" << t << ", %gpvs" << t
-       << " : vector<3xf64>\n"
-       << indent << "%gkt" << t << " = arith.subf " << kinetic << ", %gkcm"
-       << t << " : vector<3xf64>\n";
-    kinetic = "%gkt" + t;
+  llvm::SmallVector<StringRef> inputs = {velocities, forces, massName, "%dt"};
+  llvm::SmallVector<StringRef> types = {"!vec", "!vec", "!real", "f64"};
+  bool grouped = !arities.empty();
+  if (grouped) {
+    inputs.append({positions, cellName});
+    types.append({"!vec", "!md.cell"});
   }
-  os << indent << "%gdt" << t << " = arith.mulf %dt, %dt : f64\n"
-     << indent << "%gdc" << t << " = arith.constant 1.25e-01 : f64\n"
-     << indent << "%gds" << t << " = arith.mulf %gdt" << t << ", %gdc" << t
-     << " : f64\n"
-     << indent << "%gdb" << t << " = vector.broadcast %gds" << t
-     << " : f64 to vector<3xf64>\n"
-     << indent << "%gft" << t << " = arith.mulf " << force << ", %gdb" << t
-     << " : vector<3xf64>\n"
-     << indent << "%gkh" << t << " = arith.addf " << kinetic << ", %gft" << t
-     << " : vector<3xf64>\n";
-  result.kinetic = kinetic;
-  result.forceTerm = "%gft" + t;
-  result.half = "%gkh" + t;
+  bool com = control.comPeriod > 0;
+  if (com) {
+    inputs.push_back("%total_mass");
+    types.push_back("vector<3xf64>");
+  }
+  for (size_t i = 0; i != arities.size(); ++i) {
+    inputs.push_back(relationNames[i]);
+    types.push_back(relationTypes[i]);
+  }
+  GroupKinetic result{"%gka" + t, "%gft" + t, "%gkh" + t};
+  emitIRFragment(
+      indent, {result.kinetic, result.forceTerm, result.half},
+      {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"}, inputs, types,
+      [arities, com, grouped](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        size_t base = grouped ? 6 : 4;
+        mlir::Value totalMass = com ? values[base++] : mlir::Value{};
+        std::vector<RigidGroupIR> groups;
+        for (auto [index, arity] : llvm::enumerate(arities))
+          groups.push_back({values[base + index], arity});
+        GroupKineticInputs input{grouped ? values[4] : mlir::Value{}, values[0],
+                                   values[1], grouped ? values[5] : mlir::Value{},
+                                   values[2], values[3], totalMass, groups};
+        auto result = buildGroupKinetic(builder, input);
+        return {result.kinetic, result.forceTerm, result.half};
+      });
   return result;
 }
 
@@ -1001,67 +883,38 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
                                       StringRef mu, StringRef oneMinusMu,
                                       StringRef cell, StringRef masses,
                                       StringRef relations, StringRef tag) {
-  std::string t = tag.str();
-  std::string inner = (indent + "  ").str();
-  std::string newPositions = "%xc" + t;
-  os << indent << newPositions << " = md.map_particles gather(" << positions
-     << " : !vec) {\n"
-     << indent << "^bb0(%x_i: vector<3xf64>):\n"
-     << indent << "  %x_scaled = arith.mulf " << mu
-     << ", %x_i : vector<3xf64>\n"
-     << indent << "  md.yield %x_scaled : vector<3xf64>\n"
-     << indent << "} : !vec\n";
-  // A group that the constraints keep rigid moves with its center of
-  // mass, keeping its shape: each of its particles moves back by
-  // (μ − 1) times its place about the center. Were the bonds stretched,
-  // the constraints of the next step would take them back with a change
-  // of the velocities, and heat the system.
-  for (const Program::TupleSet *set : getRigidGroups()) {
-    unsigned count = set->arity - 1;
-    std::string coordinates, arguments;
-    for (unsigned k = 1; k <= count; ++k) {
-      coordinates += (k == 1 ? "" : ", ") +
-                     ("displacement(" + std::to_string(k) + ", 0)");
-      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-    }
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                   (k == count ? "" : ", ");
-    std::string change = "%xg" + t + "_" + set->name;
-    os << indent << change << " = md.gather_tuples " << relations
-       << set->name << ", " << positions << ", " << cell << "\n"
-       << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    gather(" << masses << " : !real) {\n"
-       << indent << "^bb0(" << arguments << "):\n";
-    SiteKernel k(os, inner);
-    std::string total = "%vs_m0", moment = k.zero();
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      total = k.real("addf", total, "%vs_m" + n);
-      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
-    }
-    std::string one = k.constant(1.0);
-    std::string center = k.scale(k.real("divf", one, total), moment);
-    std::string yielded, types;
-    for (unsigned j = 0; j <= count; ++j) {
-      std::string place =
-          j == 0 ? k.negate(center)
-                 : k.vector("subf", "%vs_r" + std::to_string(j), center);
-      yielded += (j == 0 ? "" : ", ") + k.vector("mulf", oneMinusMu, place);
-      types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
-    }
-    os << inner << "md.yield " << yielded << " : " << types << "\n"
-       << indent << "} : !rel_" << set->name << ", !vec -> !vec\n";
-    std::string moved = change + "_x";
-    os << indent << moved << " = md.map_particles gather(" << newPositions
-       << ", " << change << " : !vec, !vec) {\n"
-       << indent << "^bb0(%x_i: vector<3xf64>, %d_i: vector<3xf64>):\n"
-       << indent << "  %x_moved = arith.addf %x_i, %d_i : vector<3xf64>\n"
-       << indent << "  md.yield %x_moved : vector<3xf64>\n"
-       << indent << "} : !vec\n";
-    newPositions = moved;
+  std::string result = ("%xc" + tag).str();
+  std::vector<std::string> relationNames, relationTypes;
+  std::vector<unsigned> arities;
+  for (const auto *group : getRigidGroups()) {
+    relationNames.push_back((relations + group->name).str());
+    relationTypes.push_back("!rel_" + group->name);
+    arities.push_back(group->arity);
   }
-  return newPositions;
+  bool grouped = !arities.empty();
+  llvm::SmallVector<StringRef> inputs = {positions, mu};
+  llvm::SmallVector<StringRef> types = {"!vec", "vector<3xf64>"};
+  if (grouped) {
+    inputs.append({oneMinusMu, cell, masses});
+    types.append({"vector<3xf64>", "!md.cell", "!real"});
+  }
+  for (size_t i = 0; i != arities.size(); ++i) {
+    inputs.push_back(relationNames[i]);
+    types.push_back(relationTypes[i]);
+  }
+  emitIRFragment(
+      indent, {result}, {"!vec"}, inputs, types,
+      [arities, grouped](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        std::vector<RigidGroupIR> groups;
+        for (auto [index, arity] : llvm::enumerate(arities))
+          groups.push_back({values[5 + index], arity});
+        GroupScalingInputs input{values[0], values[1],
+                                   grouped ? values[2] : mlir::Value{},
+                                   grouped ? values[3] : mlir::Value{},
+                                   grouped ? values[4] : mlir::Value{}, groups};
+        return {buildGroupScaling(builder, input)};
+      });
+  return result;
 }
 
 void Builder::emitStrain(StringRef indent, StringRef kinetic,

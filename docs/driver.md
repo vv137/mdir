@@ -1372,8 +1372,10 @@ transfer with typed input and result records. `BuilderConstraints.cpp` builds
 diagnostics, stop branches, and the mass-safe descent map natively.
 `ConstraintIR.cpp` constructs position/velocity projections, constraint
 virials, and initial pressure traces from typed records. Iterative position
-changes are carried directly by native loop block arguments. The shared
-text arithmetic helper remains only for dynamic coupling kernels.
+changes are carried directly by native loop block arguments.
+`CouplingIR.cpp` constructs molecular pressure, rigid-center scaling, and
+group kinetic reductions with typed group relations and fields. The shared
+text arithmetic helper is removed.
 Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities

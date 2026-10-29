@@ -66,6 +66,7 @@ add_mlir_library(MDIRDriver
   SiteIR.cpp
   SiteSpreadIR.cpp
   ConstraintIR.cpp
+  CouplingIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp
