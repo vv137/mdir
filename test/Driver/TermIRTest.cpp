@@ -127,6 +127,19 @@ int main(int argc, char **argv) {
     reject(wrongReturn.takeError(),
            "the potential of the model in stages 'bad' must return one f64 energy");
   }
+  for (llvm::StringRef source : {
+           "\"md.potential\"() {sym_name = \"bad\"} : () -> ()",
+           "\"md.potential\"() ({^bb0(%x: f64, %cell: !md.cell, "
+           "%z: !md.field<@atoms, i32>): md.return %x : f64}) "
+           "{sym_name = \"bad\", function_type = "
+           "(!md.field<@atoms, 3 x f64>, !md.cell, !md.field<@atoms, i32>) "
+           "-> f64} : () -> ()",
+           "\"builtin.module\"() : () -> ()"}) {
+    TermIRPlan plan;
+    auto malformed = StagedModelIR::parse(plan.getContext(), source, "input", "bad");
+    require(!malformed, "malformed generic model input was accepted");
+    llvm::consumeError(malformed.takeError());
+  }
   DialectRegistry registry;
   mdir::insertProgramDialects(registry);
   MLIRContext context(registry, MLIRContext::Threading::DISABLED);

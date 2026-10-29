@@ -6,6 +6,7 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -71,12 +72,28 @@ llvm::Expected<std::shared_ptr<StagedModelIR>> StagedModelIR::parse(
   if (!data->module)
     return invalid("cannot parse the model in stages '" + termName +
                    "' from '" + sourceName + "': " + diagnostics);
+  Operation *module = data->module->getOperation();
+  if (module->getNumRegions() != 1 ||
+      !llvm::hasSingleElement(module->getRegion(0)))
+    return invalid("the model in stages '" + termName +
+                   "' must hold one 'md.potential'");
   auto potentials = data->module->getOps<mdir::md::PotentialOp>();
   if (!llvm::hasSingleElement(potentials))
     return invalid("the model in stages '" + termName +
                    "' must hold one 'md.potential'");
   data->potential = *potentials.begin();
-  auto type = data->potential.getFunctionType();
+  // Generic operation syntax has not yet passed ordinary verification.
+  // Inspect nullable properties and region shape before using typed accessors.
+  auto signature = data->potential->getAttrOfType<TypeAttr>("function_type");
+  auto type = signature ? dyn_cast<FunctionType>(signature.getValue())
+                        : FunctionType{};
+  if (!type || data->potential->getNumRegions() != 1)
+    return invalid("the potential of the model in stages '" + termName +
+                   "' must take the positions, the cell, and the atomic "
+                   "numbers");
+  if (!data->potential->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName()))
+    return invalid("the potential of the model in stages '" + termName +
+                   "' must have a symbol name");
   auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
   SmallVector<Type> inputs = {
       mdir::md::FieldType::get(&context, atoms, 3, Float64Type::get(&context)),
@@ -89,6 +106,11 @@ llvm::Expected<std::shared_ptr<StagedModelIR>> StagedModelIR::parse(
                    "' must take the positions, the cell, and the atomic "
                    "numbers");
   Block &body = data->potential.getBody().front();
+  if (body.getNumArguments() != inputs.size() ||
+      !llvm::equal(body.getArgumentTypes(), inputs))
+    return invalid("the potential of the model in stages '" + termName +
+                   "' must take the positions, the cell, and the atomic "
+                   "numbers");
   if (body.empty() || !isa<mdir::md::ReturnOp>(body.back()))
     return invalid("the potential of the model in stages '" + termName +
                    "' has no 'md.return'");
