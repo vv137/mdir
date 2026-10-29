@@ -12,18 +12,31 @@ namespace {
 constexpr llvm::StringLiteral recipeAttribute = "mdir.term_ir";
 }
 
+struct TermIRPlan::OwnedProgram {
+  std::unique_ptr<mlir::MLIRContext> context;
+  mlir::OwningOpRef<mlir::ModuleOp> module;
+};
+
 TermIRPlan::TermIRPlan() = default;
 TermIRPlan::~TermIRPlan() = default;
 
 mlir::MLIRContext &TermIRPlan::getContext() {
-  if (!context) {
+  if (!program) {
+    program = std::make_unique<OwnedProgram>();
     mlir::DialectRegistry registry;
     mdir::insertProgramDialects(registry);
-    context = std::make_unique<mlir::MLIRContext>(
+    program->context = std::make_unique<mlir::MLIRContext>(
         registry, mlir::MLIRContext::Threading::DISABLED);
-    context->loadAllAvailableDialects();
+    program->context->loadAllAvailableDialects();
   }
-  return *context;
+  return *program->context;
+}
+
+mlir::ModuleOp TermIRPlan::getModule() {
+  mlir::MLIRContext &context = getContext();
+  if (!program->module)
+    program->module = mlir::ModuleOp::create(mlir::UnknownLoc::get(&context));
+  return *program->module;
 }
 
 void TermIRPlan::emit(llvm::raw_ostream &os, llvm::StringRef indent,

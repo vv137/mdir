@@ -1355,7 +1355,13 @@ boundaries.
 Stage C (#718, D[builder-native-program]) has its
 [native construction design](decisions/builder-native-program.md) recorded.
 Staged models are parsed once by `StagedModelIR.cpp` in the context owned by
-`TermIRPlan`. Their declarations and potential bodies are cloned with
+`TermIRPlan`, which also owns the destination module. Particle sets, tuple
+sets, and the constraint disjoint union are constructed directly in that
+module; remaining assembly joins it without reparsing those declarations.
+Runtime function declarations in `BuilderSchedule.cpp` use native function
+types, preserving their precision, declaration order, C interface markers,
+and stop-effect attributes.
+Model declarations and potential bodies are cloned with
 `IRMapping`; preparation and emission capture owned input IR, without model
 text slicing or SSA-token rewriting. Potential argument and return types are
 checked at the input boundary, and program-supplied symbols are verified after

@@ -2,6 +2,9 @@
 // points of mdir/Driver/Builder.h (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -356,11 +359,19 @@ llvm::Error Builder::build() {
        << ", " << set.getOrientation() << ", @" << set.name << ">\n"
        << "!of_" << set.name << " = !md.field<@" << set.name << ", f64>\n";
   }
-  os << "\nmd.particle_set @atoms\n";
-  for (const Program::TupleSet &set : program.tupleSets)
-    os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
-       << ") orientation(" << set.getOrientation() << ")"
-       << (set.arity > 1 && set.isDisjoint() ? " disjoint" : "") << "\n";
+  mlir::OpBuilder declarationBuilder(&termIR.getContext());
+  declarationBuilder.setInsertionPointToEnd(termIR.getModule().getBody());
+  auto declarationLoc = declarationBuilder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(declarationBuilder, declarationLoc, "atoms");
+  for (const Program::TupleSet &set : program.tupleSets) {
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    mdir::md::TupleSetOp::create(
+        declarationBuilder, declarationLoc, set.name, "atoms", set.arity,
+        orientation, set.arity > 1 && set.isDisjoint());
+  }
   // The groups of the constraints share no atom with one another either
   // (D83): the bonds of a rigid water are gone before SHAKE groups the
   // bonds of hydrogen, and a hydrogen is in one group only (findShakes).
@@ -376,11 +387,12 @@ llvm::Error Builder::build() {
   for (const Program::TupleSet *set : groups)
     members.insert(members.end(), set->members.begin(), set->members.end());
   if (groups.size() >= 2 && Program::TupleSet::hasNoRepeat({&members})) {
-    os << "md.disjoint_union @constraints on(@atoms) of [";
-    llvm::interleaveComma(groups, os, [&](const Program::TupleSet *set) {
-      os << "@" << set->name;
-    });
-    os << "]\n";
+    llvm::SmallVector<mlir::Attribute> sets;
+    for (const Program::TupleSet *set : groups)
+      sets.push_back(mlir::FlatSymbolRefAttr::get(&termIR.getContext(), set->name));
+    mdir::md::DisjointUnionOp::create(
+        declarationBuilder, declarationLoc, "constraints", "atoms",
+        declarationBuilder.getArrayAttr(sets));
   }
   os << "\n";
   mark.next("rebuild.build.text");
