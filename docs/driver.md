@@ -1378,6 +1378,8 @@ group kinetic reductions with typed group relations and fields. The shared
 text arithmetic helper is removed. `NoiseIR.cpp` constructs Philox,
 Box-Muller noise, and Brownian drift from typed operands and owned seed/noise
 constants; the step counter advances with native memory operations.
+`KineticIR.cpp` supplies typed scalar/vector energy, momentum, and guarded
+force reductions for observables and center-of-mass corrections.
 Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
