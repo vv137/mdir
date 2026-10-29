@@ -7,6 +7,7 @@
 
 #include "mdir/Driver/Builder.h"
 #include "TermIR.h"
+#include "ConstraintIR.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
@@ -141,7 +142,6 @@ struct PairTermTail {
   double energy = 0.0, virial = 0.0, shift = 0.0, shiftFixed = 0.0;
 };
 
-class SiteKernel;
 class Builder;
 
 /// The borrowed read-only inputs of a term adapter (D361).
@@ -1184,18 +1184,14 @@ private:
   /// `set` brought back to their lengths along the bonds of `old`, by the
   /// iterations of SHAKE [Ryckaert1977].
   /// With `failed`, the kernel also yields whether a length it gives is
-  /// off its target, `failed`, an i1 (`emitLengthTest`,
-  /// D278); so do those of emitBondConstraints and
+  /// off its target, `failed`, an i1 (D278); so do those of emitBondConstraints and
   /// emitSettlePositions.
   void emitShakePositions(StringRef indent, StringRef old, StringRef x,
                           const Program::TupleSet &set, StringRef result,
                           StringRef failed = "");
   /// A bond of a group of constraints: its members, by their places in the
   /// tuple, and the argument of the kernel that holds its length.
-  struct ConstrainedBond {
-    unsigned first, second;
-    std::string length;
-  };
+  using ConstrainedBond = ConstraintBond;
   /// Emits `change`, what bringing the bonds `bonds` of the groups of the
   /// tuple set `setName` (of `arity` members, with the fields `tuple`) back
   /// to their lengths along the bonds of `old` adds to the positions `x`,
@@ -1205,13 +1201,6 @@ private:
                            llvm::ArrayRef<std::string> tuple, StringRef old,
                            StringRef x, StringRef change,
                            StringRef failed = "");
-  /// Emits, in a kernel of the constraints, whether one of the bonds
-  /// `bonds`, given by their vectors and lengths, is off its target by the
-  /// tolerance of `emitConstraintFailures`, or is not a number; returns the
-  /// name of the i1 (D278).
-  std::string emitLengthTest(
-      SiteKernel &k,
-      llvm::ArrayRef<std::pair<std::string, std::string>> bonds);
   /// Whether the step tests the constraints in their own kernels (the
   /// default) or in loops of their own (`MDIR_CONSTRAINT_TEST=separate`,
   /// for comparison, D278).
@@ -1557,8 +1546,8 @@ inline void emitSum3(llvm::raw_ostream &os, StringRef result,
 namespace mdir {
 namespace driver {
 namespace builder {
-/// Emits the arithmetic of a kernel of virtual sites on vectors of three
-/// numbers, with names of its own.
+/// Transitional arithmetic text for dynamic coupling kernels. Site and
+/// constraint kernels use typed construction.
 class SiteKernel {
 public:
   SiteKernel(llvm::raw_ostream &os, StringRef indent,
