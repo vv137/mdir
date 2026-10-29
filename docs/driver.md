@@ -1361,7 +1361,8 @@ order, precision, C interface markers, and stop effects. Remaining assembly
 joins the same module without reparsing its existing native operations.
 
 `StagedModelIR.cpp` parses model input once in the build context, checks the
-potential signature and return, and clones declarations and bodies with
+potential signature, block arguments, and return before typed access, and
+clones declarations and bodies with
 `IRMapping`. Captures own the parsed input and its buffers. Program-supplied
 symbols are checked after integration; model text is neither sliced nor
 rewritten by SSA token.

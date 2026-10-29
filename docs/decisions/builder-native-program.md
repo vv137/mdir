@@ -21,7 +21,10 @@ Custom expressions retain their owned `ExpressionIR` snapshots. Staged
 checked at that boundary. Declarations and the potential body are cloned with
 `IRMapping`, preserving declaration and operation order. Symbols supplied by
 the complete program, such as `@atoms`, are checked at the ordinary combined
-verification boundary. Duplicate user declarations are not silently renamed.
+verification boundary. Duplicate user declarations are not silently renamed. Generic operation
+syntax is checked for the container and potential region shape, nullable
+function-type properties, and matching block arguments before typed
+accessors or cloning are used.
 There is no substring search or SSA-token rewriting of model input.
 
 Program declarations, shared potential wrappers, constraints, dynamics,
