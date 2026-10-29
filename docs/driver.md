@@ -1352,25 +1352,27 @@ same program. Step 5 removes the remaining generated-text assembly and
 leaves parsed text only for user expressions and `ModelTerm` at their input
 boundaries.
 
-Stage C (#718, D[builder-native-program]) has its
-[native construction design](decisions/builder-native-program.md) recorded.
-Staged models are parsed once by `StagedModelIR.cpp` in the context owned by
-`TermIRPlan`, which also owns the destination module. Particle sets, tuple
-sets, and the constraint disjoint union are constructed directly in that
-module; remaining assembly joins it without reparsing those declarations.
-Runtime function declarations in `BuilderSchedule.cpp` use native function
-types, preserving their precision, declaration order, C interface markers,
-and stop-effect attributes. `SiteIR.cpp` shares typed placement geometry
-between virtual-site position updates and their differentiated work
-potentials; native particle maps apply site and constraint displacements.
-`SiteSpreadIR.cpp` builds both the analytic force/virial transfer and the
-derivative-based path with typed input and result records.
-Model declarations and potential bodies are cloned with
-`IRMapping`; preparation and emission capture owned input IR, without model
-text slicing or SSA-token rewriting. Potential argument and return types are
-checked at the input boundary, and program-supplied symbols are verified after
-integration. The remaining program construction responsibilities follow.
-The current term recipe and assembly boundary described above remains in use.
+Stage C (#718, D[builder-native-program]) constructs the native program under
+one build owner; its [decision](decisions/builder-native-program.md) records
+the migration contract. `TermIRPlan` owns the context and destination module.
+Set declarations are constructed directly in that module. Runtime signatures
+in `BuilderSchedule.cpp` use native function types and preserve declaration
+order, precision, C interface markers, and stop effects. Remaining assembly
+joins the same module without reparsing its existing native operations.
+
+`StagedModelIR.cpp` parses model input once in the build context, checks the
+potential signature and return, and clones declarations and bodies with
+`IRMapping`. Captures own the parsed input and its buffers. Program-supplied
+symbols are checked after integration; model text is neither sliced nor
+rewritten by SSA token.
+
+`SiteIR.cpp` and `SiteSpreadIR.cpp` construct site geometry and force/virial
+transfer with typed input and result records. `BuilderConstraints.cpp` builds
+diagnostics, stop branches, and the mass-safe descent map natively; its
+projection kernels are still being migrated. Shared potential wrappers,
+dynamics, output, and schedule construction also remain in progress. The
+recipe/assembly join and carry fixups remain until those responsibilities
+construct native operations directly.
 
 ## 3. Decided
 
