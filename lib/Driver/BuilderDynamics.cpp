@@ -4,6 +4,10 @@
 
 #include "BuilderImpl.h"
 #include "CouplingIR.h"
+#include "NoiseIR.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -676,23 +680,12 @@ void Builder::emitBrownianVelocity(StringRef indent, StringRef forces,
   // drift; the step does not read the velocities of the step before.
   double gamma = control.friction;
   double kT = units::boltzmann * control.temperature;
-  std::string in = (indent + "  ").str();
   std::string drift = (result + "_drift").str();
-  os << indent << drift << " = md.map_particles gather(" << forces
-     << ", %m : !vec, !real) {\n"
-     << indent << "^bb0(%bf: vector<3xf64>, %bm: f64):\n"
-     << in << "%bzero = arith.constant 0.0 : f64\n"
-     << in << "%bmassive = arith.cmpf ogt, %bm, %bzero : f64\n"
-     << in << "%bone = arith.constant 1.0 : f64\n"
-     << in << "%bsafe = arith.select %bmassive, %bm, %bone : f64\n"
-     << in << "%bgamma = arith.constant " << formatReal(gamma) << " : f64\n"
-     << in << "%bmg = arith.mulf %bsafe, %bgamma : f64\n"
-     << in << "%bmgb = vector.broadcast %bmg : f64 to vector<3xf64>\n"
-     << in << "%bv = arith.divf %bf, %bmgb : vector<3xf64>\n"
-     << in << "%bstill = arith.constant dense<0.0> : vector<3xf64>\n"
-     << in << "%bout = arith.select %bmassive, %bv, %bstill : vector<3xf64>\n"
-     << in << "md.yield %bout : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  emitIRFragment(
+      indent, {drift}, {"!vec"}, {forces, "%m"}, {"!vec", "!real"},
+      [gamma](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildBrownianDrift(builder, values[0], values[1], gamma)};
+      });
   emitNoise(indent, drift, result, 1.0,
             std::sqrt(2.0 * kT / (gamma * control.timestep)));
 }
@@ -705,95 +698,33 @@ void Builder::emitNoise(StringRef indent, StringRef velocities,
   // word. The four words give four uniform numbers, (w + 1/2) 2^-32, and
   // the method of Box and Muller two pairs of normal numbers, of which the
   // first three are taken. A particle of mass 0 keeps its velocity.
-  auto i32 = [](uint32_t value) {
-    return std::to_string(static_cast<int32_t>(value));
-  };
-  std::string in = (indent + "  ").str();
-  os << indent << result << " = md.map_particles gather(" << velocities
-     << ", %m, %noise_ids : !vec, !real, !ids) {\n"
-     << indent << "^bb0(%lv: vector<3xf64>, %lm: f64, %lid: i32):\n"
-     << in << "%l32 = arith.constant 32 : i64\n"
-     << in << "%lshift = arith.shrui %noise_step, %l32 : i64\n"
-     << in << "%lc0_0 = arith.trunci %noise_step : i64 to i32\n"
-     << in << "%lc1_0 = arith.trunci %lshift : i64 to i32\n"
-     << in << "%lc3_0 = arith.constant " << i32(2u << 24) << " : i32\n"
-     << in << "%lma = arith.constant " << i32(0xD2511F53u) << " : i32\n"
-     << in << "%lmb = arith.constant " << i32(0xCD9E8D57u) << " : i32\n";
-  uint32_t k0 = static_cast<uint32_t>(control.seed);
-  uint32_t k1 = static_cast<uint32_t>(control.seed >> 32);
-  std::string c0 = "%lc0_0", c1 = "%lc1_0", c2 = "%lid", c3 = "%lc3_0";
-  for (int round = 0; round != 10; ++round) {
-    if (round != 0) {
-      k0 += 0x9E3779B9u;
-      k1 += 0xBB67AE85u;
-    }
-    std::string r = std::to_string(round);
-    os << in << "%llo0_" << r << ", %lhi0_" << r
-       << " = arith.mului_extended %lma, " << c0 << " : i32\n"
-       << in << "%llo1_" << r << ", %lhi1_" << r
-       << " = arith.mului_extended %lmb, " << c2 << " : i32\n"
-       << in << "%lk0_" << r << " = arith.constant " << i32(k0)
-       << " : i32\n"
-       << in << "%lk1_" << r << " = arith.constant " << i32(k1)
-       << " : i32\n"
-       << in << "%la_" << r << " = arith.xori %lhi1_" << r << ", " << c1
-       << " : i32\n"
-       << in << "%lb_" << r << " = arith.xori %la_" << r << ", %lk0_" << r
-       << " : i32\n"
-       << in << "%lc_" << r << " = arith.xori %lhi0_" << r << ", " << c3
-       << " : i32\n"
-       << in << "%ld_" << r << " = arith.xori %lc_" << r << ", %lk1_" << r
-       << " : i32\n";
-    c0 = "%lb_" + r;
-    c1 = "%llo1_" + r;
-    c2 = "%ld_" + r;
-    c3 = "%llo0_" + r;
-  }
-  os << in << "%lhalf = arith.constant 5.0e-01 : f64\n"
-     << in << "%lscale = arith.constant 0x3DF0000000000000 : f64\n"
-     << in << "%lminus2 = arith.constant -2.0 : f64\n"
-     << in << "%ltwopi = arith.constant 6.283185307179586 : f64\n";
-  std::string words[] = {c0, c1, c2, c3};
-  for (int w = 0; w != 4; ++w) {
-    std::string n = std::to_string(w);
-    os << in << "%lf" << n << " = arith.uitofp " << words[w]
-       << " : i32 to f64\n"
-       << in << "%lg" << n << " = arith.addf %lf" << n << ", %lhalf : f64\n"
-       << in << "%lu" << n << " = arith.mulf %lg" << n << ", %lscale : f64\n";
-  }
-  for (int pair = 0; pair != 2; ++pair) {
-    std::string a = std::to_string(2 * pair), b = std::to_string(2 * pair + 1),
-                p = std::to_string(pair);
-    os << in << "%llog" << p << " = math.log %lu" << a << " : f64\n"
-       << in << "%lsq" << p << " = arith.mulf %lminus2, %llog" << p
-       << " : f64\n"
-       << in << "%lr" << p << " = math.sqrt %lsq" << p << " : f64\n"
-       << in << "%lt" << p << " = arith.mulf %ltwopi, %lu" << b << " : f64\n"
-       << in << "%lcos" << p << " = math.cos %lt" << p << " : f64\n"
-       << in << "%lncos" << p << " = arith.mulf %lr" << p << ", %lcos" << p
-       << " : f64\n";
-    if (pair == 0)
-      os << in << "%lsin0 = math.sin %lt0 : f64\n"
-         << in << "%lnsin0 = arith.mulf %lr0, %lsin0 : f64\n";
-  }
-  os << in << "%lnoise = vector.from_elements %lncos0, %lnsin0, %lncos1"
-     << " : vector<3xf64>\n"
-     << in << "%lzero = arith.constant 0.0 : f64\n"
-     << in << "%lmassive = arith.cmpf ogt, %lm, %lzero : f64\n"
-     << in << "%lone = arith.constant 1.0 : f64\n"
-     << in << "%lsafe = arith.select %lmassive, %lm, %lone : f64\n"
-     << in << "%lspread = arith.constant " << formatReal(spread) << " : f64\n"
-     << in << "%lroot = math.sqrt %lsafe : f64\n"
-     << in << "%lsigma = arith.divf %lspread, %lroot : f64\n"
-     << in << "%lsigmab = vector.broadcast %lsigma : f64 to vector<3xf64>\n"
-     << in << "%lkick = arith.mulf %lsigmab, %lnoise : vector<3xf64>\n"
-     << in << "%lc = arith.constant dense<" << formatReal(c)
-     << "> : vector<3xf64>\n"
-     << in << "%ldamped = arith.mulf %lc, %lv : vector<3xf64>\n"
-     << in << "%lnew = arith.addf %ldamped, %lkick : vector<3xf64>\n"
-     << in << "%lout = arith.select %lmassive, %lnew, %lv : vector<3xf64>\n"
-     << in << "md.yield %lout : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  NoiseIRConfig config{control.seed, c, spread};
+  emitIRFragment(
+      indent, {result}, {"!vec"},
+      {velocities, "%m", "%noise_ids", "%noise_step"},
+      {"!vec", "!real", "!ids", "i64"},
+      [config](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        NoiseIRInputs input{values[0], values[1], values[2], values[3]};
+        return {buildNoise(builder, input, config)};
+      });
+}
+
+std::string Builder::emitNoiseValue(StringRef indent) {
+  if (!needsStepNumber())
+    return "";
+  std::string name = "%noise" + std::to_string(numNoiseSteps++);
+  emitIRFragment(
+      indent, {name}, {"i64"}, {"%noise_memory", "%c0", "%noise_one"},
+      {"memref<1xi64>", "index", "i64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        Value last = memref::LoadOp::create(builder, loc, values[0], ValueRange{values[1]});
+        Value next = arith::AddIOp::create(builder, loc, last, values[2]);
+        memref::StoreOp::create(builder, loc, next, values[0], ValueRange{values[1]});
+        return {next};
+      });
+  return ", " + name + ", " + idName;
 }
 
 std::string Builder::emitMolecularDiagonal(StringRef indent,

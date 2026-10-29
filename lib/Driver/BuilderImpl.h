@@ -1028,18 +1028,7 @@ private:
   /// Emits the number of the step about to be taken, from the counter on
   /// the host that each step advances, and returns the operands that a
   /// program of a step takes for it.
-  std::string emitNoiseValue(StringRef indent) {
-    if (!needsStepNumber())
-      return "";
-    std::string name = "%noise" + std::to_string(numNoiseSteps++);
-    os << indent << name << "_last = memref.load %noise_memory[%c0]"
-       << " : memref<1xi64>\n"
-       << indent << name << " = arith.addi " << name << "_last, %noise_one"
-       << " : i64\n"
-       << indent << "memref.store " << name << ", %noise_memory[%c0]"
-       << " : memref<1xi64>\n";
-    return ", " + name + ", " + idName;
-  }
+  std::string emitNoiseValue(StringRef indent);
   unsigned numNoiseSteps = 0;
   /// Whether the thermostat rescales the velocities at the end of a period,
   /// rather than acting in every step.
