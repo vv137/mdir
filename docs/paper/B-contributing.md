@@ -172,7 +172,7 @@ printed module/lowered corpus and combined-kind order matrix with one fixed
 archived PR base; the final head also compares five checkpoints bitwise and
 runs two full-suite shards.
 
-Step 4 (#708, D[builder-term-ir]) converts all term emitters and shared
+Step 4 (#708, D363) converts all term emitters and shared
 expression scalars. A term fragment borrows typed operands and an `OpBuilder` insertion
 point, with construction state owned by its build. Its operations enter the
 same shared potential and loop bodies before printing/lowering, preserving

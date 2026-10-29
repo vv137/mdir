@@ -1318,7 +1318,7 @@ archived PR base. The completed PR head additionally requires five bitwise
 checkpoints and two D309 suite shards. Typed construction follows the same
 ordering and validation contract.
 
-Stage B (#708, D[builder-term-ir]) constructs built-in term bodies and
+Stage B (#708, D363) constructs built-in term bodies and
 custom-expression scalar kernels as typed fragments. `lib/Driver/TermIR.h`
 declares the recipes and `lib/Driver/TermIR.cpp` manages their submission.
 A fragment borrows typed operands and an `OpBuilder` insertion point, returns
@@ -1333,7 +1333,7 @@ no new call boundary or SSA-name hint. Materialization rejects missing,
 repeated, or invalid connections, result count/type mismatches, and surviving
 `mdir.term_ir` attributes before cast reconciliation. Native negative tests
 and the corpus's marker guard cover these checks. The decision records the
-[emitter construction invariants](decisions/builder-term-ir.md#emitter-construction-invariants).
+[emitter construction invariants](decisions/D363.md#emitter-construction-invariants).
 
 Construction parsing and canonical printing use `insertProgramDialects` in
 `lib/Dialect/Program/ProgramDialects.cpp`, shared with lowering. This includes

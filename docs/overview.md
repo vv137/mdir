@@ -109,7 +109,7 @@ private. Mesh/correction values use a narrow reference projection. Shared
 array/definition/correction hooks and specialized reporting/evaluation roles
 replace central kind dispatch. Field, contribution, output, and declaration
 order stay explicit.
-Stage B (#708, D[builder-term-ir]) constructs term bodies with typed IR at
+Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
 
