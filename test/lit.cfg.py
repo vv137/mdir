@@ -147,6 +147,8 @@ if config.mdir_python:
 # Tests that run on a GPU need the runtime for NVIDIA GPUs and a device.
 # The kernels find the device math library through CUDA_ROOT.
 if config.mdir_cuda:
+    # Emission/lowering needs the toolkit, not a visible device.
+    config.available_features.add("cuda-toolkit")
     import subprocess
 
     try:

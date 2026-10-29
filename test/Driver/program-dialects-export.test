@@ -1,0 +1,6 @@
+# Frozen output of the actual staged-model exporter, with tensor/linalg
+# embedding/readout functions and VJP. No JAX, downloaded model, or GPU needed.
+# REQUIRES: cuda-toolkit, hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/program_dialects.py %S/../.. %t mdir mdir-opt exporter-tensor-linalg | FileCheck %s
+# CHECK: exporter-tensor-linalg: 2 segmented modules and lowered programs verified

@@ -230,6 +230,16 @@ a = 0.01
         minimized = minimized.replace('pull = "pull.dat"\n', '').replace(
             'checkpoint_interval = 1\n', '')
         host_case("min", minimized)
+    # Valid staged input must use the same accepted dialect set as lowering.
+    tensor_model = place / "model-tensor-helper.mlir"
+    tensor_model.write_text('func.func private @exported_tensor_helper() -> tensor<1xf64> {\n  %value = arith.constant 0.0 : f64\n  %tensor = tensor.from_elements %value : tensor<1xf64>\n  return %tensor : tensor<1xf64>\n}\n' + models[0].read_text())
+    exporter_model = inputs / "model-stages/painn-scalar-export.mlir"
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"model-stage-{precision}.toml")
+        body = source.read_text()
+        write(f"model-tensor-helper-{precision}", body.replace(quoted(models[0]), quoted(tensor_model)))
+        write(f"model-exporter-tensor-linalg-{precision}", body.replace(quoted(models[0]), quoted(exporter_model)))
+
     return ordinary, hosted
 
 
@@ -271,7 +281,7 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 44),
+    for mode, files, expected_errors in (("exact", ordinary, 52),
                                          ("padded", hosted, 12),
                                          ("search", hosted, 12)):
         scratch = place / ("compare-" + mode)

@@ -1,0 +1,6 @@
+# Valid staged tensor input must reach the segmented carry rewrite (#714).
+# Emission/lowering uses a toolkit but no device, even for a GPU target.
+# REQUIRES: cuda-toolkit, hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/program_dialects.py %S/../.. %t mdir mdir-opt tensor-helper | FileCheck %s
+# CHECK: tensor-helper: 2 segmented modules and lowered programs verified

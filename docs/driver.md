@@ -1037,6 +1037,13 @@ parsed (`printParsedModule`, `lib/Driver/ProgramModule.cpp`, called by
 `scripts/builder-equivalence/check.py` shows this for two builds of the
 driver, over a fixed corpus. It is the gate of every later stage of #568.
 
+Construction and canonical printing use the same accepted program dialect set
+as lowering: `insertProgramDialects` in `lib/Dialect/Program/ProgramDialects.cpp`.
+This includes tensor/linalg staged-model functions and lowering-only dialects.
+Valid staged input therefore reaches canonical printing and the loop-carried
+value rewrite, including segmented programs. D352's fallback for text that
+fails to parse remains unchanged.
+
 ```sh
 scripts/builder-equivalence/check.py compare OLD NEW   # two mdir programs or build trees
 scripts/builder-equivalence/check.py record MDIR --output hashes.tsv
