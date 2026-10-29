@@ -1039,12 +1039,8 @@ the builder's text itself. #568 moves the builder to IR built with
 `scripts/builder-equivalence/check.py` shows this for two builds of the
 driver, over a fixed corpus. It is the gate of every later stage of #568.
 
-Construction and canonical printing use the same accepted program dialect set
-as lowering: `insertProgramDialects` in `lib/Dialect/Program/ProgramDialects.cpp`.
-This includes tensor/linalg staged-model functions and lowering-only dialects.
-Valid staged input therefore reaches canonical printing and the loop-carried
-value rewrite, including segmented programs. D352's fallback for text that
-fails to parse remains unchanged.
+Construction and canonical printing share the full program dialect set with
+lowering; Section 2.12 describes the producer boundary and D352 amendment.
 
 ```sh
 scripts/builder-equivalence/check.py compare OLD NEW   # two mdir programs or build trees
@@ -1323,15 +1319,15 @@ checkpoints and two D309 suite shards. The next stages of #568 replace term
 text templates with `OpBuilder` IR, then retain text only for user expressions
 and `ModelTerm` at their parsing boundaries.
 
-Stage B (#708, D[builder-term-ir]) begins the conversion of built-in term
-bodies to typed `OpBuilder` fragments. `TermIR.h` and `TermIR.cpp` own the
+Stage B (#708, D[builder-term-ir]) converts all built-in term bodies and
+custom-expression scalar kernels to typed `OpBuilder` fragments. `TermIR.h` and `TermIR.cpp` own the
 bounded recipes; `ProgramModule.cpp` materializes their operations in the
 original regions when the program is finished. The first emitter is the
 shared Lennard-Jones scalar kernel. Fragments borrow typed operands and an insertion
 point, with owned per-build construction captures. Their operations reach
 the same shared potential/loop regions before printing and lowering, with
-no new call boundary or SSA-name hint. The other term emitters follow in
-separate commits. Step 5 subsequently removes generated-text assembly;
+no new call boundary or SSA-name hint. The emitter conversions are complete.
+Step 5 subsequently removes the remaining generated-text assembly;
 custom expressions and `ModelTerm` are parsed only at their input boundaries.
 The prolate near/far splitting emitter also constructs its clamped table
 lookup and Horner polynomial with typed operations at the original site. Direct
@@ -1467,8 +1463,18 @@ and final sum. The shared typed Lennard-Jones kernel keeps the original
 switch choices and scalar order; its final transitional scalar writer is removed.
 `TermPairs14.cpp` no longer writes operation text.
 
-For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
-does not provide SSA-name hints.
+Construction parsing and canonical printing use `insertProgramDialects` in
+`lib/Dialect/Program/ProgramDialects.cpp`, shared with the lowering registry.
+Its full set includes lowering-only dialects and the tensor/linalg functions
+of staged models.
+The driver keeps no second list; the shared library avoids a driver/compiler
+dependency cycle. A construction parse failure is the internal error
+`the builder produced invalid assembly`, including a build with no recipes.
+This amends D352's silent raw-text fallback, which hid #706 and #714; valid
+staged input must parse through the same producer boundary.
+
+For custom expressions, the existing `control-file term: <name>` diagnostic
+location is preserved; it does not provide SSA-name hints.
 
 Materialization rejects missing, repeated, or invalid connections and result
 count/type mismatches. A final walk rejects any operation still carrying

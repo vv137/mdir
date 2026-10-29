@@ -158,10 +158,8 @@ void driver::printParsedModule(Program &program) {
 
 llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
                                                        TermIRPlan &plan) {
-  if (plan.empty()) {
-    mdir::driver::printParsedModule(program);
-    return llvm::Error::success();
-  }
+  // The producer boundary applies even when there are no typed recipes.
+  // A construction parse failure must never return raw generated text.
   mlir::MLIRContext context(getProgramDialects(),
                             mlir::MLIRContext::Threading::DISABLED);
   context.loadAllAvailableDialects();

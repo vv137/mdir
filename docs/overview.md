@@ -76,7 +76,7 @@ flowchart TD
         CF["Control file, TOML<br/>with Amber, GROMACS, CHARMM, or PDB inputs"]
         PY["Python package mdir<br/>load_amber, System, InitialState, mdir.compile"]
     end
-    CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder"]
+    CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder<br/>full program dialect set"]
     PY --> MODEL
     MODEL --> SEM["md and dyn<br/>potential, relations, tuple sets,<br/>step programs, the schedule of the run"]
     SEM --> MDP["Passes on md<br/>md-check-exchange, md-differentiate,<br/>md-expand-truncation, md-inline,<br/>dyn-expand-couplings, md-bypass-updates"]
@@ -110,9 +110,9 @@ array/definition/correction hooks and specialized reporting/evaluation roles
 replace central kind dispatch. Field, contribution, output, and declaration
 order stay explicit.
 This stage preserves the generated programs. Stage B (#568 step 4, #708,
-D[builder-term-ir]) starts with the shared Lennard-Jones scalar emitter:
+D[builder-term-ir]) converts all term emitters and shared expression scalars:
 typed `OpBuilder` fragments reach the same shared/inlined/fused sites.
-The other term emitters follow. Step 5 retains parsed text only for user
+Step 5 retains parsed text only for user
 expressions and `ModelTerm` at their input boundaries.
 [Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
 files and roles.

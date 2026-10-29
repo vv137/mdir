@@ -1,5 +1,6 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
+#include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -36,8 +37,10 @@ static void registerRecipe(TermIRPlan &plan, TermIRRecipe recipe = scalar) {
 }
 
 int main() {
-  MLIRContext context;
-  context.loadDialect<arith::ArithDialect>();
+  DialectRegistry registry;
+  mdir::insertProgramDialects(registry);
+  MLIRContext context(registry, MLIRContext::Threading::DISABLED);
+  context.loadAllAvailableDialects();
   ScopedDiagnosticHandler quiet(&context,
                                 [](Diagnostic &) { return success(); });
   auto parse = [&](const llvm::Twine &source) {
@@ -172,6 +175,50 @@ int main() {
     require(program.module == original, "invalid assembly was changed");
     require(!parseSourceString<ModuleOp>(program.module, &context),
             "invalid assembly became a valid consumer input");
+  }
+  {
+    TermIRPlan empty;
+    mdir::driver::Program program;
+    program.module = "module { %bad = arith.addf %missing, %missing : f64 }";
+    auto original = program.module;
+    reject(finishTermIRProgram(program, empty),
+           "the builder produced invalid assembly");
+    require(program.module == original,
+            "invalid assembly without recipes was changed");
+  }
+  {
+    // Exported staged functions must not trigger the legacy raw-text fallback.
+    constexpr llvm::StringLiteral helper =
+        "func.func private @tensor_helper() -> tensor<1xf64> { "
+        "%c = arith.constant 0.0 : f64 "
+        "%t = tensor.from_elements %c : tensor<1xf64> "
+        "return %t : tensor<1xf64> }";
+    mdir::driver::Program canonical;
+    canonical.module = ("module { " + helper + " }").str();
+    auto original = canonical.module;
+    mdir::driver::printParsedModule(canonical);
+    require(canonical.module != original,
+            "valid tensor input skipped canonical printing");
+    require(bool(parseSourceString<ModuleOp>(canonical.module, &context)),
+            "canonical tensor program did not verify");
+    TermIRPlan empty;
+    mdir::driver::Program plain;
+    plain.module = ("module { " + helper + " }").str();
+    require(!finishTermIRProgram(plain, empty),
+            "valid tensor input without recipes failed construction");
+    require(bool(parseSourceString<ModuleOp>(plain.module, &context)),
+            "tensor program without recipes did not verify");
+    TermIRPlan plan;
+    registerRecipe(plan);
+    mdir::driver::Program program;
+    program.module = ("module { " + helper +
+                      " %x = builtin.unrealized_conversion_cast to f64 "
+                      "{mdir.term_ir = 0 : i64} }")
+                         .str();
+    require(!finishTermIRProgram(program, plan),
+            "valid staged tensor input failed construction");
+    require(bool(parseSourceString<ModuleOp>(program.module, &context)),
+            "materialized staged tensor program did not verify");
   }
   llvm::outs() << "term IR connection checks passed\n";
 }

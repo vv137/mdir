@@ -32,6 +32,13 @@ error `the builder produced invalid assembly`; it cannot pass through to a
 reading printer or downstream consumer. The #706/#707 fixes leave no builder
 parse failure in the audited corpus and combined-kind matrix.
 
+This decision amends D352's construction rule. A construction parse failure,
+even without typed recipes, now reports the internal error above rather than
+silently emitting raw generated text. The fallback hid #706 and #714; the
+construction parser now shares the full accepted program dialect set with
+lowering, including tensor/linalg stage functions. Valid generated programs
+remain unchanged.
+
 The shared Lennard-Jones scalar emitter moves first, followed by the other
 term emitters in their change-frequency order. One commit moves one
 emitter. Custom expression and `ModelTerm` input remain text at their

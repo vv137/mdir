@@ -644,7 +644,7 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 60),
+    for mode, files, expected_errors in (("exact", ordinary, 68),
                                          ("padded", hosted, 20),
                                          ("search", hosted, 20)):
         scratch = place / ("compare-" + mode)
