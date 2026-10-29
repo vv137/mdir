@@ -1380,6 +1380,8 @@ Box-Muller noise, and Brownian drift from typed operands and owned seed/noise
 constants; the step counter advances with native memory operations.
 `KineticIR.cpp` supplies typed scalar/vector energy, momentum, and guarded
 force reductions for observables and center-of-mass corrections.
+`OutputIR.cpp` builds free-energy, observable, tunable-gradient, and solvent
+output from typed physical state and owned request/table configuration.
 Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
