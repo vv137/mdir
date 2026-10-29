@@ -170,6 +170,16 @@ so kernel fusion and SSA names stay unchanged. The migration changes no
 control key, numerical method, or format. Each kind commit compares its
 printed module/lowered corpus and combined-kind order matrix with one fixed
 archived PR base; the final head also compares five checkpoints bitwise and
-runs two full-suite shards. The remaining #568 stages replace term templates
-with typed `OpBuilder` IR and retain parsed text only for user expressions
-and `ModelTerm` at their boundaries.
+runs two full-suite shards.
+
+Step 4 (#708, D[builder-term-ir]) converts all term emitters and shared
+expression scalars. A term fragment borrows typed operands and an `OpBuilder` insertion
+point, with construction state owned by its build. Its operations enter the
+same shared potential and loop bodies before printing/lowering, preserving
+inlining and fusion without an opaque/public call boundary or SSA-name hints.
+The emitter conversions are complete. The following stage removes the
+remaining generated-text boundary and keeps parsing at user input boundaries.
+
+A new dialect in a generated program belongs in `insertProgramDialects`, with
+its library in `lib/Dialect/Program/CMakeLists.txt`. Keep construction and
+lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-files-of-the-builder).

@@ -139,12 +139,151 @@ a = 0.01
         alchemical += '\n[free_energy]\ncouple = "@1-7"\nstate = 1\n' \
                       '[free_energy.lambdas]\ncoulomb = [0.0, 0.5, 1.0]\nvdw = [0.0, 0.5, 1.0]\n'
         write(f"nonbonded-alchemical-{precision}", alchemical)
+        # Every scalar primitive, lazy named definitions, and a zero-input
+        # constant expression exercise the shared typed expression emitter.
+        primitives = ["sqrt(s)", "exp(s)", "log(s)", "sin(s)", "cos(s)",
+            "tan(s)", "asin(s)", "acos(s)", "atan(s)", "sinh(s)", "cosh(s)",
+            "tanh(s)", "abs(s)", "floor(s)", "ceil(s)", "erf(s)", "erfc(s)",
+            "min(s,1-s)", "max(s,1-s)", "atan2(s,1-s)",
+            "select(s,square(s),cube(s))", "step(s)", "delta(s-s)",
+            "recip(1+s)", "sec(s)", "csc(s)", "cot(s)", "(1+s)^(-2)", "(1+s)^2.5"]
+        scalar = direct.replace('electrostatics    = "PME"', 'electrostatics = "CUTOFF"')
+        assert scalar.count('expression = "a/r^6"') == 1
+        expression = "a*(" + "+".join(primitives) + ");s=r/(1+r)"
+        write(f"expression-primitives-{precision}", scalar.replace(
+            'expression = "a/r^6"', 'expression = "' + expression + '"'))
+        constant = scalar.replace('expression = "a/r^6"', 'expression = "1.2345"')
+        constant = re.sub(r'(?m)^a\s*=.*\n', '', constant)
+        write(f"expression-constant-{precision}", constant)
+        # A grouped topology pair uses every lookup, particle fields, a table,
+        # and the current time at the same insertion site as the other kinds.
+        pair_expression = ('a*(sigma/r+epsilon+(sigma1+sigma2)/r+epsilon1+epsilon2+'
+            'coulomb*q1*q2/r+w1*w2+rank_wave(r)+t)')
+        pair = scalar.replace('expression = "a/r^6"',
+            'groups = ["@1-2", "@2-3"]\nexpression = "' + pair_expression + '"')
+        pair += '\n[[energy.parameter]]\nname = "w"\nvalue = 1.0\n' \
+                '[[energy.parameter]]\nname = "w"\nselection = "@1"\nvalue = 0.5\n' \
+                '[[energy.function]]\nname = "rank_wave"\nmin = 0.0\nmax = 50.0\nvalues = [0.0, 1.0, 0.0]\n'
+        write(f"topology-pair-inputs-{precision}", pair)
+        # The supported root-free soft-core paths with the second lambda
+        # power retain their original intermediate operation order.
+        for modifier in ("NONE", "POTENTIAL_SHIFT"):
+            powered, count = re.subn(
+                r'(?m)^(lennard_jones_modifier\s*=\s*)"POTENTIAL_SHIFT"',
+                lambda match: match[1] + '"' + modifier + '"', alchemical)
+            assert count == 1
+            powered = powered.replace('[free_energy]\n',
+                '[free_energy]\nsoft_core_power = 2\n')
+            if modifier == "NONE":
+                cutoff = re.search(r'(?m)^cutoff\s*=\s*([^\n#]+)', powered)[1].strip()
+                powered, count = re.subn(r'(?m)^(switch_distance\s*=\s*)[^\n#]+',
+                    lambda match: match[1] + cutoff, powered)
+                assert count == 1
+            write(f"nonbonded-alchemical-power2-{modifier}-{precision}", powered)
+
+    # Regular angle/dihedral kernels and compound coordinate mixtures join the
+    # existing combined kinds, including the time and alchemical bindings.
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"topology-pair-inputs-{precision}.toml")
+        geometry = source.read_text() + '''
+[[energy.angle]]
+name = "rank_angle"
+expression = "k*(theta-theta0)^2"
+particles = [[1, 2, 3]]
+k = 0.1
+theta0 = 1.0
+[[energy.dihedral]]
+name = "rank_torsion"
+expression = "k*(1+cos(n*theta-phase))"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+n = 2.0
+phase = 0.4
+[[energy.compound]]
+name = "rank_compound"
+expression = "k*(distance(p1,p3)-r0)^2+ka*(angle(p1,p2,p3)-a0)^2+kd*(1+cos(2*dihedral(p1,p2,p3,p4)-phi0))+t*w2"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+r0 = 1.0
+ka = 0.1
+a0 = 1.0
+kd = 0.1
+phi0 = 0.4
+'''
+        write(f"tuple-geometry-{precision}", geometry)
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        alchemical = source.read_text() + '''
+[[energy.compound]]
+name = "rank_compound_lambda"
+expression = "lambda_vdw*k*(distance(p1,p3)-r0)^2+lambda_coulomb*ka*(angle(p1,p2,p3)-a0)^2"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+r0 = 1.0
+ka = 0.1
+a0 = 1.0
+'''
+        write(f"tuple-alchemical-{precision}", alchemical)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"tuple-geometry-{precision}.toml")
+        text = source.read_text() + '''
+[[energy.bond]]
+name = "rank_centroid_distance"
+expression = "k*(r-r0)^2"
+groups = ["@1-2", "@2-4"]
+weighting = "NONE"
+k = 0.1
+r0 = 1.0
+[[energy.dihedral]]
+name = "rank_centroid_dihedral"
+expression = "k*(1+cos(n*theta-phase))"
+groups = ["@1", "@2", "@3", "@4"]
+k = 0.1
+n = 2.0
+phase = 0.4
+'''
+        write(f"centroid-geometry-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        text = source.read_text().replace('[output]\n', '[output]\npull = "centroid-lambda.dat"\n')
+        text += '''
+[[energy.bond]]
+name = "rank_centroid_lambda"
+expression = "lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(1+r*r)+t"
+groups = ["@1-2", "@2-4"]
+weighting = "NONE"
+k = 0.1
+r0 = 1.0
+a = 0.01
+'''
+        write(f"centroid-expression-{precision}", text)
 
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):
         write(f"bare-overrides-{precision}", bare +
               f'\n[execution]\nprecision = "{precision}"\n')
+
+    # Without overrides the bare kernel mixes nonuniform parameters itself;
+    # the uniform case also exercises a second, ungathered function term.
+    unmapped = re.sub(r'(?ms)^\[\[energy.pair_override\]\]\n.*?(?=^\[)', '', bare)
+    assert unmapped != bare
+    uniform = (root / "examples/argon/argon.toml").read_text().replace(
+        '"argon.pdb"', quoted(root / "examples/argon/argon.pdb"))
+    uniform += ('\n[[energy.pair]]\nname = "uniform_function"\n'
+                'expression = "a+epsilon*rank_wave(r)"\na = 0.01\n'
+                'dispersion_correction = "NONE"\n'
+                '[[energy.function]]\nname = "rank_wave"\nmin = 0.0\n'
+                'max = 10.0\nvalues = [0.0, 1.0, 0.0]\n')
+    uniform = re.sub(r'(?m)^target\s*=.*\n', '', uniform)
+    for precision in ("DOUBLE", "MIXED"):
+        write(f"bare-mixing-{precision}", unmapped +
+              f'\n[execution]\nprecision = "{precision}"\n')
+        text, count = re.subn(r'(?m)^precision\s*=.*\n',
+            f'precision = "{precision}"\n', uniform)
+        assert count == 1
+        write(f"bare-uniform-function-{precision}", text)
 
     pdb = inputs / "mw64.pdb"
     changed = place / "mw64u.pdb"
@@ -171,6 +310,98 @@ a = 0.01
         for precision in ("DOUBLE", "MIXED"):
             write(f"triplet-{name}-{precision}", text.replace(
                 'precision = "DOUBLE"', f'precision = "{precision}"'))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"triplet-shared-{precision}.toml")
+        before, marker, tail = source.read_text().partition('[[energy.triplet]]')
+        assert marker
+        formula = ('(lambda1+sqrt(lambda2*lambda3))*epsilon*'
+                   '(r12+r13+r23+theta+cos(theta)+rank_triplet_wave(r23)+t)*'
+                   'exp(gamma*sigma/(r12-a*sigma))*exp(gamma*sigma/(r13-a*sigma))')
+        changed, count = re.subn(r'(?m)^expression\s*=.*$',
+            lambda match: 'expression = "' + formula + '"', tail, count=1)
+        assert count == 1
+        text = before + marker + changed + ('\n[[energy.function]]\nname = "rank_triplet_wave"\n'
+            'min = 0.0\nmax = 20.0\nvalues = [0.0, 0.1, 0.0]\n')
+        write(f"triplet-primitives-{precision}", text)
+        changed, count = re.subn(r'(?m)^expression\s*=.*$', 'expression = "0.0"', tail, count=1)
+        assert count == 1
+        write(f"triplet-zero-{precision}", before + marker + changed)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        text = source.read_text()
+        old = 'expression = "k*(x-t)^2"'
+        assert text.count(old) == 1
+        text = text.replace(old, 'expression = "lambda_vdw*(k*(x-t)^2+a*y+b*z+q*rank_external_wave(z))+lambda_coulomb*c"\na = [0.2]\nb = [0.3]\nc = 0.4')
+        text += ('\n[[energy.function]]\nname = "rank_external_wave"\n'
+                 'min = -100.0\nmax = 100.0\nvalues = [0.0, 0.1, 0.0]\n')
+        write(f"external-cell-{precision}", text)
+        assert 'scaling = "CELL"' in text
+        write(f"external-fixed-{precision}", text.replace('scaling = "CELL"', 'scaling = "NONE"'))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"centroid-expression-{precision}.toml")
+        text = source.read_text().replace(
+            'lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(1+r*r)+t',
+            'lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(dx+dy+dz)^2+t')
+        text += '''
+[[energy.angle]]
+name = "rank_pull_angle"
+expression = "lambda_vdw*k*(theta-theta0)^2+t"
+groups = ["@1", "@2", "@3"]
+k = 0.1
+theta0 = 1.0
+[[energy.dihedral]]
+name = "rank_pull_dihedral"
+expression = "lambda_coulomb*k*(1+cos(n*theta-phase))+t"
+groups = ["@1", "@2", "@3", "@4"]
+k = 0.1
+n = 2.0
+phase = 0.4
+'''
+        write(f"pull-potential-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"pull-potential-{precision}.toml")
+        text = source.read_text().replace('ensemble = "NVE"', 'ensemble = "NPT"\npressure = 1.0')
+        text = text.replace('steps = 1\n', 'steps = 10\n').replace('energy_interval = 1\n', 'energy_interval = 10\n')
+        text = text.replace('checkpoint_interval = 1\n', 'checkpoint_interval = 10\n')
+        text += ('\n[thermostat]\nmethod = "V-RESCALE"\ntime_constant = 0.1\ninterval = 10\n'
+                 '\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 1.0\ninterval = 10\n')
+        text = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", text)
+        write(f"pull-output-npt-{precision}", text)
+        text = re.sub(r'(?m)^(expression\s*=.*)$',
+                      lambda match: re.sub(r'\bt\b', '0.0', match[1]), source.read_text())
+        text = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", text)
+        write(f"pull-output-static-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        for method in ("HCT", "OBC1", "OBC2"):
+            source = next(path for path in ordinary if path.name == f"combined-{method}-{precision}.toml")
+            text = source.read_text().replace('[energy]\n',
+                '[energy]\nsalt_concentration = 0.15\nborn_radius_cutoff = 8.0\n')
+            text = re.sub(r'(?m)^temperature\s*=.*$', 'temperature = 300.0', text)
+            write(f"born-screened-cutoff-{method}-{precision}", text)
+        source = next(path for path in ordinary if path.name == f"combined-OBC2-{precision}.toml")
+        text = source.read_text()
+        assert text.count('surface_area_energy = 0.0054') == 1
+        write(f"born-no-surface-{precision}", text.replace('surface_area_energy = 0.0054', 'surface_area_energy = 0.0'))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"pull-output-npt-{precision}.toml")
+        for scaling in ("ALL", "CENTER"):
+            text = source.read_text()
+            old = '[[restraints]]\nselection = "@1"\nforce_constant = 1.0\n'
+            assert text.count(old) == 1
+            text = text.replace(old, '[[restraints]]\nselection = "@1-3"\nforce_constant = 1.0\nreference_scaling = "' + scaling + '"\n')
+            write(f"restraint-npt-{scaling}-{precision}", text)
+        source = next(path for path in ordinary if path.name == f"combined-HCT-{precision}.toml")
+        text = re.sub(r'\[dynamics\]\n.*?(?=\[ensemble\])',
+                      '[minimize]\nmethod = "STEEPEST_DESCENT"\nsteps = 1\n', source.read_text(), flags=re.S)
+        text = re.sub(r'(?m)^(pull|checkpoint_interval)\s*=.*\n', '', text)
+        text = text.replace('selection = "@1"\nforce_constant', 'selection = "@1-3"\nforce_constant')
+        write(f"restraint-min-{precision}", text)
 
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
@@ -209,8 +440,7 @@ a = 0.01
         opaque = text + ('\n[[energy.model]]\nname = "hosted"\nbackend = "METATOMIC"\n'
                          f'path = {quoted(placeholder)}\n')
         def host_case(kind, body):
-            # #706 is a pre-existing stored-energy SSA error. Keep it in
-            # the matrix, alongside valid host paths without restraints.
+            # Both hosted forms must verify after the separate #706/#707 fixes.
             write(f"model-host-restraints-{kind}-{precision}", body)
             body = body.replace('[[restraints]]\nselection = "@1"\n'
                                 'force_constant = 1.0\n', '')
@@ -239,6 +469,139 @@ a = 0.01
         body = source.read_text()
         write(f"model-tensor-helper-{precision}", body.replace(quoted(models[0]), quoted(tensor_model)))
         write(f"model-exporter-tensor-linalg-{precision}", body.replace(quoted(models[0]), quoted(exporter_model)))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"model-host-restraints-nve-{precision}.toml")
+        body = source.read_text()
+        force_only = body.replace('steps = 1\n', 'steps = 10\n').replace('energy_interval = 1\n', 'energy_interval = 10\n').replace('checkpoint_interval = 1\n', 'checkpoint_interval = 10\n')
+        hosted.append(write(f"model-host-force-only-{precision}", force_only))
+        source = next(path for path in ordinary if path.name == f"model-host-restraints-npt-{precision}.toml")
+        centered = source.read_text().replace('selection = "@1"\nforce_constant = 1.0\n', 'selection = "@1-3"\nforce_constant = 1.0\nreference_scaling = "CENTER"\n')
+        hosted.append(write(f"model-host-center-npt-{precision}", centered))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('BONDS\n') + len('BONDS\n')
+        end = parameters.index('\nANGLES\n', begin)
+        bonds = re.sub(r'(?m)^(\w+\s+\w+\s+)[0-9.]+', r'\g<1>0.0', parameters[begin:end])
+        assert bonds != parameters[begin:end]
+        zero = fixtures / "zero-bonds.prm"
+        zero.write_text(parameters[:begin] + bonds + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-bonds-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('ANGLES\n') + len('ANGLES\n')
+        end = parameters.index('\nDIHEDRALS\n', begin)
+        lines = parameters[begin:end].splitlines(keepends=True)
+        changed = 0
+        for index, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('!'):
+                continue
+            words = line.split()
+            if len(words) >= 5:
+                words[3] = '0.0'
+                lines[index] = '  '.join(words) + '\n'
+                changed += 1
+        assert changed
+        zero = fixtures / "zero-angle.prm"
+        zero.write_text(parameters[:begin] + ''.join(lines) + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-angle-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('ANGLES\n') + len('ANGLES\n')
+        end = parameters.index('\nDIHEDRALS\n', begin)
+        lines = parameters[begin:end].splitlines(keepends=True)
+        changed = 0
+        for index, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('!'):
+                continue
+            words = line.split()
+            if len(words) >= 7:
+                words[5] = '0.0'
+                lines[index] = '  '.join(words) + '\n'
+                changed += 1
+        assert changed
+        zero = fixtures / "zero-urey-bradley.prm"
+        zero.write_text(parameters[:begin] + ''.join(lines) + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-urey-bradley-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('DIHEDRALS\n') + len('DIHEDRALS\n')
+        end = parameters.index('\nIMPROPER\n', begin)
+        lines = parameters[begin:end].splitlines(keepends=True)
+        changed = 0
+        for index, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('!'):
+                continue
+            words = line.split()
+            if len(words) >= 7:
+                words[4] = '0.0'
+                lines[index] = '  '.join(words) + '\n'
+                changed += 1
+        assert changed
+        zero = fixtures / "zero-dihedral.prm"
+        zero.write_text(parameters[:begin] + ''.join(lines) + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-dihedral-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('IMPROPER\n') + len('IMPROPER\n')
+        end = parameters.index('\nCMAP\n', begin)
+        lines = parameters[begin:end].splitlines(keepends=True)
+        changed = 0
+        for index, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('!'):
+                continue
+            words = line.split()
+            if len(words) >= 7:
+                words[4] = '0.0'
+                lines[index] = '  '.join(words) + '\n'
+                changed += 1
+        assert changed
+        zero = fixtures / "zero-improper.prm"
+        zero.write_text(parameters[:begin] + ''.join(lines) + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-improper-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('\nCMAP\n') + len('\nCMAP\n')
+        end = parameters.index('\nNONBONDED ', begin)
+        header = next(line.split() for line in parameters[begin:end].splitlines()
+                      if line.strip() and not line.lstrip().startswith('!'))
+        assert len(header) == 9
+        for resolution in (2, 8):
+            header[-1] = str(resolution)
+            grid = [' '.join(str(((i * 7 + j * 3) % 17 - 8) / 10.0)
+                             for j in range(resolution)) for i in range(resolution)]
+            path = fixtures / f"cmap-{resolution}.prm"
+            path.write_text(parameters[:begin] + '  '.join(header) + '\n' +
+                            '\n'.join(grid) + '\n' + parameters[end:])
+            text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(path))
+            write(f"bonded-cmap-resolution-{resolution}-{precision}", text)
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-POWER_FORCE_SWITCH-{precision}.toml")
+        text = source.read_text().replace('"POWER_FORCE_SWITCH"', '"SQUARED_DISTANCE_SWITCH"')
+        write(f"bonded-pairs14-squared-switch-{precision}", text)
 
     return ordinary, hosted
 
@@ -281,9 +644,9 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 52),
-                                         ("padded", hosted, 12),
-                                         ("search", hosted, 12)):
+    for mode, files, expected_errors in (("exact", ordinary, 68),
+                                         ("padded", hosted, 20),
+                                         ("search", hosted, 20)):
         scratch = place / ("compare-" + mode)
         scratch.mkdir(exist_ok=True)
         cmd = [sys.executable, str(Path(__file__).with_name("check.py")), "compare",

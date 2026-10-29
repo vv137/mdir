@@ -1010,9 +1010,17 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtFinish(memref<?x3x" << state
        << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
+  auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
+                       llvm::ArrayRef<StringRef> resultTypes,
+                       llvm::ArrayRef<StringRef> operands,
+                       llvm::ArrayRef<StringRef> operandTypes,
+                       TermIRRecipe recipe) {
+    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
+                   std::move(recipe));
+  };
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
-      role->emitDeclarations(*this, os);
+      role->emitDeclarations(*this, emitIR);
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"

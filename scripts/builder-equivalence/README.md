@@ -4,6 +4,12 @@
 The reference for a staged PR is built once from a git archive of its base;
 each implementation commit is compared with that same reference.
 
+Before comparison, every successfully parsed module and successful lowered emission is rejected if
+it contains a `mdir.term_ir` attribute. Two outputs with equally surviving
+internal connections therefore cannot pass the equivalence gate together.
+Native connection tests also cover missing, duplicate, malformed, count/type
+mismatch, and surviving markers at the materialization boundary.
+
 `order.py BASE_MDIR COMMIT_MDIR --printer MDIR_OPT --scratch OWN_DIRECTORY`
 compares combined terms in CPU/GPU, double/mixed, run/segment forms. It
 covers tuple/centroid, pair, Born/surface, restraint, external, and triplet
@@ -40,3 +46,88 @@ export from `scripts/mlip/painn-stages.py` (one feature, no message layers,
 targets, and run forms without needing JAX or a device. Ordinary comparisons
 remain strict; the #714 repair separately enumerates the segmented GPU
 transitions against the old main that skipped the carry rewrite.
+
+For failed printed-form comparisons, generated-buffer diagnostic coordinates
+are ignored. A source excerpt is omitted only when the same diagnostic also
+supplies its complete generic operation dump. Diagnostic reasons, severity,
+operation dumps, parser excerpts (including missing SSA names), user-file
+locations, exit status, and output remain compared. Successful program output
+and raw-form failures remain byte-exact. Recorded hash files use version 2
+for this diagnostic presentation policy.
+
+The nonbonded matrix includes the supported power-two soft-core paths with
+a plain cutoff and potential shift, in both precision modes and targets.
+
+Expression cases cover all scalar primitives, lazy definitions, and a
+constant with no bound inputs, in both precisions and targets.
+
+Grouped topology-pair cases combine every LJ parameter lookup with overlapping
+groups, particle fields, a tabulated function, and time dependence in both
+precisions and targets. Their modules and lowered programs must verify.
+
+Bare-pair cases additionally cover arithmetic/geometric/product mixing without
+overrides and an ungathered uniform-parameter function term, including the
+ordered addition of several pair contributions in both precisions and targets.
+
+Tuple cases combine regular angles/dihedrals and compound distance/angle/dihedral
+coordinates with the other kinds, particle fields, time, and alchemical bindings.
+
+Centroid geometry cases combine all three arities with overlapping weighted
+groups, regular/compound tuples, the other term kinds, and pull output in both
+precisions and targets.
+
+Centroid expression cases combine lambda, time, polynomial parameter dependence,
+weighted groups, and pull output in both precisions and targets, retaining the
+reader's existing restriction on tabulated functions in centroid terms.
+
+Triplet cases cover all distance/angle/cosine coordinates, particle-place fields,
+uniform parameters, time, tabulated functions, and a constant-zero expression
+with its required fallback coordinate. Both precisions verify on the CPU; GPU
+targets retain the existing support error.
+
+External-term cases combine charges, particle parameter lists, coordinates, time,
+lambda, and a function table in cell and fixed frames, in both precisions and
+targets. Existing combined controls retain the ungathered and uncharged paths.
+
+Pull-potential fixtures combine radial and Cartesian distance terms with angle
+and dihedral terms, lambda and time, retaining their complete common argument
+signature and coordinate derivative order in both precisions and targets.
+
+Pull-output fixtures add NPT time dependence and time-independent output to the
+radial/Cartesian, angle, and dihedral cases, in both precisions and targets.
+
+Born/surface cases add salt screening with a radius cutoff for HCT, OBC1, and
+OBC2 in both precisions and targets, plus a zero-surface-tension case. The
+existing combined cases exercise the unscreened, unrestricted-radius paths
+and separate Born/surface energy columns.
+
+Restraint cases add multi-particle ALL/CENTER reference scaling under NPT and
+restrained minimization in both precisions and targets. Existing hosted and
+NVE controls retain force-only frame and initial stored-energy coverage.
+
+Hosted-model cases add force-only scheduling and multi-particle CENTER restraint
+scaling under NPT in both precisions, with exact/padded/search pair-list modes.
+Each contains the single opaque model supported by ML1; staged models remain
+separate. CPU cases retain the GPU-only support error.
+
+Built-in bond cases add zero bond force constants beside all other CHARMM
+families and custom terms during a two-step trajectory, in both precisions
+and targets. Coordinate and tuple-field order remain compared at both stages.
+
+Zero angle force constants retain the independent Urey-Bradley contributions
+in both precisions and targets, including run and segmented forms.
+
+Zero Urey-Bradley force constants retain the independent angle contributions
+in both precisions and targets, including run and segmented forms.
+
+Zero periodic-dihedral force constants retain the original multiple Fourier terms
+in both precisions and targets, including run and segmented forms.
+
+Zero harmonic-improper force constants retain the existing wrapped-coordinate kernel
+in both precisions and targets, including run and segmented forms.
+
+CMAP cases vary the grid resolution while retaining all other bonded and custom terms
+in both precisions and targets, including run and segmented forms.
+
+Special 1-4 cases exercise the squared-distance switch beside the other bonded families
+in both precisions and targets, including run and segmented forms.

@@ -1,9 +1,21 @@
 // Positional-restraint fields and contributions (D359, D361, #683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <array>
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct RestraintIRConfig {
+  bool barostat = false, energy = false, virial = false;
+  size_t fields = 0, scaleSlot = 0, energySlot = 0, virialSlot = 0;
+};
 
 namespace mdir::driver::builder {
 class RestraintTermBuilder final : public TermBuilder,
@@ -37,10 +49,18 @@ public:
       return;
     if (storedEnergy.empty())
       llvm::report_fatal_error("the builder has no recorded restraint energy");
-    context.getOutput() << "  %i_restraints = arith.constant " << index++
-                        << " : index\n"
-                        << "  memref.store " << storedEnergy
-                        << ", %terms[%i_restraints] : " << type << "\n";
+    int column = index++;
+    context.emitIRFragment(
+        "  ", {}, {}, {storedEnergy, "%terms"}, {"f64", type},
+        [column](mlir::OpBuilder &builder,
+                 mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value place =
+              mlir::arith::ConstantIndexOp::create(builder, loc, column);
+          mlir::memref::StoreOp::create(builder, loc, values[0], values[1],
+                                        mlir::ValueRange{place});
+          return {};
+        });
   }
 private:
   mutable std::string storedEnergy;
@@ -115,98 +135,161 @@ void RestraintTermBuilder::emitCorrection(TermEmission &context,
                              StringRef fResult, StringRef u,
                              StringRef uResult, StringRef w,
                              StringRef wResult) {
-  llvm::raw_ostream &os = context.getOutput();
-  std::string fields = (prefix + "rest_k, " + prefix + "rest_x, " + prefix +
-                        "rest_y, " + prefix + "rest_z")
-                           .str();
-  std::string types = "!real, !real, !real, !real";
-  std::string arguments = "%k_i: f64, %rx_i: f64, %ry_i: f64, %rz_i: f64";
-  if (context.getControl().barostat) {
-    fields += (", " + prefix + "rest_cx, " + prefix + "rest_cy, " + prefix +
-               "rest_cz")
-                  .str();
-    types += ", !real, !real, !real";
-    arguments += ", %rcx_i: f64, %rcy_i: f64, %rcz_i: f64";
-  }
-  // d = x − x_ref, and k d. Under a barostat the fields hold the offsets o
-  // of the references from their centers c, and the center follows the cell
-  // while the offset stays, x_ref = s ⊙ c + o (D124).
-  auto emitOffset = [&](StringRef inner) {
-    std::string reference = "%ref_i";
-    os << inner << reference << " = vector.from_elements %rx_i, %ry_i, %rz_i "
-                   ": vector<3xf64>\n";
-    if (context.getControl().barostat) {
-      os << inner << "%rc_i = vector.from_elements %rcx_i, %rcy_i, %rcz_i "
-                     ": vector<3xf64>\n"
-         << inner << "%rcs_i = arith.mulf " << scaleName
-         << ", %rc_i : vector<3xf64>\n"
-         << inner << "%refs_i = arith.addf %rcs_i, %ref_i : vector<3xf64>\n";
-      reference = "%refs_i";
-    }
-    os << inner << "%d_i = arith.subf %x_i, " << reference
-       << " : vector<3xf64>\n"
-       << inner << "%kb_i = vector.broadcast %k_i : f64 to vector<3xf64>\n"
-       << inner << "%kd_i = arith.mulf %kb_i, %d_i : vector<3xf64>\n";
+  RestraintIRConfig config;
+  config.barostat = bool(context.getControl().barostat);
+  config.energy = !u.empty();
+  config.virial = !w.empty();
+  std::vector<std::string> names = {x.str(), f.str()}, types = {"!vec", "!vec"};
+  auto operand = [&](std::string name, std::string type) {
+    size_t slot = names.size();
+    names.push_back(std::move(name));
+    types.push_back(std::move(type));
+    return slot;
   };
-  std::string inner = (indent + "  ").str();
-  os << indent << fResult << " = md.map_particles gather(" << x << ", " << f
-     << ", " << fields << " : !vec, !vec, " << types << ") {\n"
-     << indent << "^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>, "
-     << arguments << "):\n";
-  emitOffset(inner);
-  os << inner << "%two_i = arith.constant dense<2.0> : vector<3xf64>\n"
-     << inner << "%pull_i = arith.mulf %two_i, %kd_i : vector<3xf64>\n"
-     << inner << "%fr_i = arith.subf %f_i, %pull_i : vector<3xf64>\n"
-     << inner << "md.yield %fr_i : vector<3xf64>\n"
-     << indent << "} : !vec\n";
-  if (u.empty() && w.empty())
-    return;
-  // Σ k d ⊙ d, whose sum is the energy and whose elements times −2 are the
-  // diagonal of the virial. Under a barostat the virial is Σ F ⊙ (x − s ⊙ c)
-  // = −2 Σ k d ⊙ (d + o), the derivative of the energy when the positions
-  // and the centers of the references scale and their offsets do not.
-  std::string sum = ((u.empty() ? wResult : uResult) + "_parts").str();
-  os << indent << sum << " = md.sum_particles gather(" << x << ", " << fields
-     << " : !vec, " << types << ") {\n"
-     << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
-  emitOffset(inner);
-  os << inner << "%kdd_i = arith.mulf %kd_i, %d_i : vector<3xf64>\n"
-     << inner << "md.yield %kdd_i : vector<3xf64>\n"
-     << indent << "} : vector<3xf64>\n";
-  std::string virialSum = sum;
-  if (!w.empty() && context.getControl().barostat) {
-    virialSum = (wResult + "_vparts").str();
-    os << indent << virialSum << " = md.sum_particles gather(" << x << ", "
-       << fields << " : !vec, " << types << ") {\n"
-       << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
-    emitOffset(inner);
-    os << inner << "%dpo_i = arith.addf %d_i, %ref_i : vector<3xf64>\n"
-       << inner << "%kdo_i = arith.mulf %kd_i, %dpo_i : vector<3xf64>\n"
-       << inner << "md.yield %kdo_i : vector<3xf64>\n"
-       << indent << "} : vector<3xf64>\n";
+  for (StringRef name : {"rest_k", "rest_x", "rest_y", "rest_z"})
+    operand((prefix + name).str(), "!real");
+  config.fields = 4;
+  if (config.barostat) {
+    for (StringRef name : {"rest_cx", "rest_cy", "rest_cz"})
+      operand((prefix + name).str(), "!real");
+    config.fields = 7;
+    config.scaleSlot = operand(scaleName.str(), "vector<3xf64>");
   }
-  if (!u.empty())
-    os << indent << uResult << "_r = vector.reduction <add>, " << sum
-       << " : vector<3xf64> into f64\n"
-       << indent << uResult << " = arith.addf " << u << ", " << uResult
-       << "_r : f64\n";
-  if (w.empty())
-    return;
-  std::string zero = (wResult + "_zero").str();
-  os << indent << zero << " = arith.constant 0.0 : f64\n"
-     << indent << wResult << "_m2 = arith.constant -2.0 : f64\n";
-  std::string diagonal[3];
-  for (int c = 0; c != 3; ++c) {
-    diagonal[c] = (wResult + "_d" + std::to_string(c)).str();
-    os << indent << diagonal[c] << "_s = vector.extract " << virialSum
-       << "[" << c << "] : f64 from vector<3xf64>\n"
-       << indent << diagonal[c] << " = arith.mulf " << diagonal[c] << "_s, "
-       << wResult << "_m2 : f64\n";
+  if (config.energy)
+    config.energySlot = operand(u.str(), "f64");
+  if (config.virial)
+    config.virialSlot = operand(w.str(), "vector<9xf64>");
+  std::vector<std::string> results = {fResult.str()}, resultTypes = {"!vec"};
+  if (config.energy) {
+    results.push_back((uResult + "_r").str());
+    results.push_back(uResult.str());
+    resultTypes.push_back("f64");
+    resultTypes.push_back("f64");
   }
-  os << indent << wResult << "_r = vector.from_elements " << diagonal[0]
-     << ", " << zero << ", " << zero << ", " << zero << ", " << diagonal[1]
-     << ", " << zero << ", " << zero << ", " << zero << ", " << diagonal[2]
-     << " : vector<9xf64>\n"
-     << indent << wResult << " = arith.addf " << w << ", " << wResult
-     << "_r : vector<9xf64>\n";
+  if (config.virial) {
+    results.push_back(wResult.str());
+    resultTypes.push_back("vector<9xf64>");
+  }
+  llvm::SmallVector<StringRef> in, inTypes, out, outTypes;
+  for (const auto &s : names)
+    in.push_back(s);
+  for (const auto &s : types)
+    inTypes.push_back(s);
+  for (const auto &s : results)
+    out.push_back(s);
+  for (const auto &s : resultTypes)
+    outTypes.push_back(s);
+  context.emitIRFragment(
+      indent, out, outTypes, in, inTypes,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto f64 = builder.getF64Type();
+        auto vec = VectorType::get({3}, f64);
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        auto mul = [&](Value a, Value b) -> Value {
+          return arith::MulFOp::create(builder, loc, a, b);
+        };
+        auto add = [&](Value a, Value b) -> Value {
+          return arith::AddFOp::create(builder, loc, a, b);
+        };
+        auto sub = [&](Value a, Value b) -> Value {
+          return arith::SubFOp::create(builder, loc, a, b);
+        };
+        // x_ref = s * c + o: only reference centers follow the cell (D124).
+        // Return the unscaled offset, d = x-x_ref, and k*d in their old order.
+        auto offset = [&](Block *block, unsigned base) -> std::array<Value, 3> {
+          Value reference = vector::FromElementsOp::create(
+              builder, loc, vec,
+              ValueRange{block->getArgument(base + 1),
+                         block->getArgument(base + 2),
+                         block->getArgument(base + 3)});
+          Value scaledReference = reference;
+          if (config.barostat) {
+            Value center = vector::FromElementsOp::create(
+                builder, loc, vec,
+                ValueRange{block->getArgument(base + 4),
+                           block->getArgument(base + 5),
+                           block->getArgument(base + 6)});
+            Value scaled = mul(values[config.scaleSlot], center);
+            scaledReference = add(scaled, reference);
+          }
+          Value d = sub(block->getArgument(0), scaledReference);
+          Value kb = vector::BroadcastOp::create(builder, loc, vec,
+                                                 block->getArgument(base));
+          Value kd = mul(kb, d);
+          return {reference, d, kd};
+        };
+        auto force = mdir::md::MapParticlesOp::create(
+            builder, loc, values[1].getType(),
+            values.take_front(2 + config.fields));
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          llvm::SmallVector<Type> types(2 + config.fields, f64);
+          types[0] = types[1] = vec;
+          llvm::SmallVector<Location> locations(types.size(), loc);
+          Block *block =
+              builder.createBlock(&force.getKernel(), {}, types, locations);
+          auto terms = offset(block, 2);
+          Value two = arith::ConstantOp::create(
+              builder, loc, DenseElementsAttr::get(vec, 2.0));
+          Value pull = mul(two, terms[2]),
+                result = sub(block->getArgument(1), pull);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+        }
+        TermIRValues result = {force.getResult()};
+        if (!config.energy && !config.virial)
+          return result;
+        llvm::SmallVector<Value> fields = {values[0]};
+        llvm::append_range(fields, values.slice(2, config.fields));
+        auto sumParts = [&](bool virial) -> Value {
+          auto sum =
+              mdir::md::SumParticlesOp::create(builder, loc, vec, fields);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types(1 + config.fields, f64);
+            types[0] = vec;
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&sum.getKernel(), {}, types, locations);
+            auto terms = offset(block, 1);
+            Value displacement = terms[1];
+            if (virial)
+              displacement = add(displacement, terms[0]);
+            Value product = mul(terms[2], displacement);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{product});
+          }
+          return sum.getResult();
+        };
+        Value sum = sumParts(false), virialSum = sum;
+        if (config.virial && config.barostat)
+          virialSum = sumParts(true);
+        if (config.energy) {
+          Value energy = vector::ReductionOp::create(
+              builder, loc, vector::CombiningKind::ADD, sum);
+          Value total = add(values[config.energySlot], energy);
+          result.push_back(energy);
+          result.push_back(total);
+        }
+        if (config.virial) {
+          Value zero = constant(0.0), minusTwo = constant(-2.0);
+          std::array<Value, 3> diagonal;
+          for (int c = 0; c != 3; ++c) {
+            Value element =
+                vector::ExtractOp::create(builder, loc, virialSum, c);
+            diagonal[c] = mul(element, minusTwo);
+          }
+          auto matrix = VectorType::get({9}, f64);
+          Value correction = vector::FromElementsOp::create(
+              builder, loc, matrix,
+              ValueRange{diagonal[0], zero, zero, zero, diagonal[1], zero, zero,
+                         zero, diagonal[2]});
+          result.push_back(add(values[config.virialSlot], correction));
+        }
+        return result;
+      });
 }

@@ -1027,22 +1027,20 @@ for the dispersion are conventions of MDIR ([nonbonded.md](nonbonded.md), Sectio
 
 ### 2.11 The equivalence check of the builder
 
-The builder writes the module as MLIR text (`Builder.cpp`). Since step 2
-of #568 the program keeps it as MLIR's printer prints it once the text is
-parsed (`printParsedModule`, `lib/Driver/ProgramModule.cpp`, called by
-`buildProgram`), with the locations of its ops, and `mdir emit
---stage=module` and Python's `Program.ir` print it for reading
-(`printModuleForReading`); before, they printed the builder's text itself. #568 moves the builder to IR built with
+The builder joins its remaining MLIR assembly with typed term fragments
+(Section 2.12). Since step 2 of #568, the program keeps the module as MLIR's
+printer prints it, including operation locations. `buildProgram` finishes
+the build-owned construction through `ProgramModule.cpp`: it parses the
+remaining assembly and materializes the typed fragments in their original
+regions before printing. `mdir emit --stage=module` and Python's `Program.ir`
+print it for reading (`printModuleForReading`); before step 2, they printed
+the builder's text itself. #568 moves the builder to IR built with
 `OpBuilder`, in stages, and no stage may change the generated program.
 `scripts/builder-equivalence/check.py` shows this for two builds of the
 driver, over a fixed corpus. It is the gate of every later stage of #568.
 
-Construction and canonical printing use the same accepted program dialect set
-as lowering: `insertProgramDialects` in `lib/Dialect/Program/ProgramDialects.cpp`.
-This includes tensor/linalg staged-model functions and lowering-only dialects.
-Valid staged input therefore reaches canonical printing and the loop-carried
-value rewrite, including segmented programs. D352's fallback for text that
-fails to parse remains unchanged.
+Construction and canonical printing share the full program dialect set with
+lowering; Section 2.12 describes the producer boundary and D352 amendment.
 
 ```sh
 scripts/builder-equivalence/check.py compare OLD NEW   # two mdir programs or build trees
@@ -1174,6 +1172,15 @@ comment, which only the raw form sees, and a different cutoff, which both
 forms see. Recorded hashes are verified with the build and with the
 second wrapper.
 
+
+For failed printed-form comparisons, generated-buffer diagnostic coordinates
+are ignored. A source excerpt is omitted only when the same diagnostic also
+supplies its complete generic operation dump. Diagnostic reasons, severity,
+operation dumps, parser excerpts (including missing SSA names), user-file
+locations, exit status, and output remain compared. Successful program output
+and raw-form failures remain byte-exact. Recorded hash files use version 2
+for this diagnostic presentation policy.
+
 ### 2.12 The files of the builder
 
 `lib/Driver/Builder.cpp` held the whole builder, 12,500 lines, and most
@@ -1289,7 +1296,7 @@ No generic behavioral hook has only one implementer.
 | Narrow role and its complete hooks | Implementer |
 |---|---|
 | `TermPreparation`: `validate`, `prepare` | Models; read-only inputs and a stream |
-| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names |
+| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names and a synchronous `TermIRWriter` |
 | `TermPostEvaluation`: `hasForceCorrection`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; borrowed correction names and the stored-column destination |
 | `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
 | `TermScalarParameters`: `collectBareConstants`, `collectObservedConstants`, `appendInitialConstants` | Custom pairs; named scalar collections and a bounded start-value appender |
@@ -1308,9 +1315,42 @@ No control key, support restriction, precision, numerical method, diagnostic,
 or output format changes. Each kind commit compares printed module/lowered
 corpora and the combined-kind CPU/GPU mixed/double order matrix with the fixed
 archived PR base. The completed PR head additionally requires five bitwise
-checkpoints and two D309 suite shards. The next stages of #568 replace term
-text templates with `OpBuilder` IR, then retain text only for user expressions
-and `ModelTerm` at their parsing boundaries.
+checkpoints and two D309 suite shards. Typed construction follows the same
+ordering and validation contract.
+
+Stage B (#708, D[builder-term-ir]) constructs built-in term bodies and
+custom-expression scalar kernels as typed fragments. `lib/Driver/TermIR.h`
+declares the recipes and `lib/Driver/TermIR.cpp` manages their submission.
+A fragment borrows typed operands and an `OpBuilder` insertion point, returns
+typed results, and owns its per-build construction captures. Borrowed
+hook-local references never escape. Custom-expression diagnostic locations
+remain independent of SSA naming.
+
+`finishTermIRProgram` in `lib/Driver/ProgramModule.cpp` materializes the
+fragments in their original shared potential and loop regions before printing
+and lowering. Contribution order, inlining, and fusion are preserved, with
+no new call boundary or SSA-name hint. Materialization rejects missing,
+repeated, or invalid connections, result count/type mismatches, and surviving
+`mdir.term_ir` attributes before cast reconciliation. Native negative tests
+and the corpus's marker guard cover these checks. The decision records the
+[emitter construction invariants](decisions/builder-term-ir.md#emitter-construction-invariants).
+
+Construction parsing and canonical printing use `insertProgramDialects` in
+`lib/Dialect/Program/ProgramDialects.cpp`, shared with lowering. This includes
+tensor/linalg stage functions and lowering-only dialects without a second
+driver list or a driver/compiler dependency cycle. A construction parse
+failure is the internal error `the builder produced invalid assembly`, even
+without recipes; raw generated text never passes to a reading printer or
+downstream consumer. This amends D352's silent fallback, which hid #706 and
+#714.
+
+A new term emitter builds a typed fragment at its existing insertion site
+and preserves its explicit contribution order. A new dialect belongs in
+`insertProgramDialects`, with its library in
+`lib/Dialect/Program/CMakeLists.txt`, so construction and lowering accept the
+same program. Step 5 removes the remaining generated-text assembly and
+leaves parsed text only for user expressions and `ModelTerm` at their input
+boundaries.
 
 ## 3. Decided
 

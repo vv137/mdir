@@ -11,9 +11,11 @@
 # wrapper. emit uses no device.
 # The test of the corpus is written from argon.test.in, whose markers and
 # RUN line are disguised, since split-file and lit would take them here.
+# RUN: mdir-term-ir-test
 # RUN: rm -rf %t && split-file %s %t && mkdir -p %t/root/test/Driver
 # RUN: sed -e 's/^#=== /#--- /' -e 's/R-U-N/RUN/' %t/argon.test.in > %t/root/test/Driver/argon.test
 # RUN: cp %S/../../examples/argon/argon.pdb %t/root/test/Driver
+# RUN: %python %t/diagnostics.py %S/../../scripts/builder-equivalence/check.py
 # RUN: chmod +x %t/comment %t/cutoff
 # RUN: %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
 # RUN:   --root %t/root --only tests --printer mdir-opt | FileCheck %s --check-prefix=SAME
@@ -117,3 +119,53 @@ done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=T
 sys.stderr.buffer.write(done.stderr)
 sys.stdout.buffer.write(done.stdout.replace(b"cutoff(0.85000000000000008)", b"cutoff(9.0e-01)"))
 sys.exit(done.returncode)
+
+#--- diagnostics.py
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("equivalence", sys.argv[1])
+checker = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = checker
+spec.loader.exec_module(checker)
+
+# Source-manager and explicit-location renderings of the same verifier
+# failure compare equally, including the complete generic operation note.
+source = (b'<stdin>:10:1: error: rejected program\nraw source\n^\n'
+          b'<stdin>:10:1: note: see current operation:\n'
+          b'"dyn.program"() : () -> ()\n')
+explicit = (b'-:400:9: error: rejected program\n'
+            b'-:400:9: note: see current operation:\n'
+            b'"dyn.program"() : () -> ()\n')
+normalize = checker.printed_result
+assert normalize((1, b"", source)) == normalize((1, b"", explicit))
+located = explicit.replace(b'-:400:9', b'loc("-":400:9)')
+assert normalize((1, b"", source)) == normalize((1, b"", located))
+for changed in (explicit.replace(b'rejected', b'accepted'),
+                explicit.replace(b'dyn.program', b'dyn.changed')):
+    assert normalize((1, b"", source)) != normalize((1, b"", changed))
+assert normalize((1, b"", source)) != normalize((2, b"", explicit))
+assert normalize((0, b"", source)) == (0, b"", source)
+assert normalize((1, b"a", source)) != normalize((1, b"b", explicit))
+
+# A parser failure has no generic operation note: its source excerpt is
+# essential, since the message alone does not identify the missing SSA name.
+parser = (b'<stdin>:10:17: error: use of undeclared SSA value name\n'
+          b'memref.store %missing\n                ^\n')
+shifted = parser.replace(b'<stdin>:10:17', b'-:400:17')
+assert normalize((1, b"", parser)) == normalize((1, b"", shifted))
+assert normalize((1, b"", parser)) != normalize(
+    (1, b"", shifted.replace(b'%missing', b'%other_missing')))
+user = b'input.toml:10:5: error: invalid key\n'
+assert normalize((1, b"", user)) != normalize(
+    (1, b"", user.replace(b':10:', b':11:')))
+
+# Check before comparison: two equally unmaterialized builds must not pass.
+checker.require_materialized(b'module { %x = arith.constant 1.0 : f64 }')
+for output in (b'module attributes {mdir.term_ir = 0 : i64} {}',
+               b'builtin.unrealized_conversion_cast to f64 {mdir.term_ir=1:i64}'):
+    try:
+        checker.require_materialized(output)
+    except RuntimeError as error:
+        assert str(error) == 'internal term IR connection survived emission'
+    else:
+        raise AssertionError('surviving term IR marker was accepted')

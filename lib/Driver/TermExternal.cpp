@@ -2,9 +2,28 @@
 // (D359). Entry buffers follow the shared field list.
 
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
+#include <array>
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct ExternalIRConfig {
+  explicit ExternalIRConfig(ExpressionIR expression)
+      : expression(std::move(expression)) {}
+  ExpressionIR expression;
+  std::string termName;
+  bool frame = false, charges = false;
+  std::array<double, 3> inputBox{};
+  size_t gatheredCount = 0;
+  std::vector<std::string> parameters;
+  std::vector<std::pair<std::string, double>> constants;
+  std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
+};
 
 namespace mdir {
 namespace driver {
@@ -104,93 +123,131 @@ void ExternalTermBuilder::emitExternalTerm(
     const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
-  llvm::raw_ostream &os = context.getOutput();
-  // Σ_i k(x_i) over the particles of the term [Eastman2017] (D148),
-  // the flag `ext<k>` 1 for
-  // them and 0 for the others, which the kernel selects on: the positions
-  // in Å, the energy in kcal/mol. The positions are never wrapped (D74), so
-  // that the term is continuous along a trajectory.
-  Expression expression = llvm::cantFail(
-      Expression::parse(term.expression, control.functions));
-  std::vector<std::string> names = expression.getNames();
-  bool charges = llvm::is_contained(names, "q");
+  Expression expression =
+      llvm::cantFail(Expression::parse(term.expression, control.functions));
+  ExternalIRConfig config(expression.prepareIR());
+  config.termName = term.name;
+  config.charges = llvm::is_contained(expression.getNames(), "q");
+  config.frame = term.scaling == ExternalTerm::Scaling::Cell;
+  for (int k = 0; k != 3; ++k)
+    config.inputBox[k] =
+        system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
   std::string flag = context.indexedName("ext", index);
-  std::string prefix = context.indexedName("%xe", index) + "_";
-  // In the frame of the cell (D154), the positions scaled by the edges of
-  // the cell of the input over those of the cell.
-  bool frame = term.scaling == ExternalTerm::Scaling::Cell;
-  if (frame) {
-    os << "  " << prefix << "edges = md_exec.cell_edges %cell : vector<3xf64>\n"
-       << "  " << prefix << "input = arith.constant dense<[";
-    for (int k = 0; k != 3; ++k)
-      os << (k ? ", " : "")
-         << formatReal(system.inputBox[k] > 0.0 ? system.inputBox[k]
-                                                 : system.box[k]);
-    os << "]> : vector<3xf64>\n"
-       << "  " << prefix << "frame = arith.divf " << prefix << "input, "
-       << prefix << "edges : vector<3xf64>\n";
+  std::vector<std::string> names = {"%x", "%p_" + flag};
+  llvm::SmallVector<StringRef> types = {"!vec", "!real"};
+  auto operand = [&](std::string name, StringRef type) {
+    size_t slot = names.size();
+    names.push_back(std::move(name));
+    types.push_back(type);
+    return slot;
+  };
+  if (config.charges)
+    operand("%p_q", "!real");
+  llvm::StringMap<std::string> variables;
+  for (char component : StringRef("xyz"))
+    variables[std::string(1, component)] = "";
+  if (config.charges)
+    variables["q"] = "";
+  for (const auto &parameter : term.parameters) {
+    config.parameters.push_back(parameter.first);
+    operand("%p_" + flag + "_" + parameter.first, "!real");
+    variables[parameter.first] = "";
   }
-  os << "  %u_external_" << term.name << " = md.sum_particles gather(%x, %p_"
-     << flag;
-  if (charges)
-    os << ", %p_q";
-  for (const auto &parameter : term.parameters)
-    os << ", %p_" << flag << "_" << parameter.first;
-  os << " : !vec, !real";
-  if (charges)
-    os << ", !real";
-  for (size_t k = 0; k != term.parameters.size(); ++k)
-    os << ", !real";
-  os << ") {\n  ^bb0(" << prefix << "pos: vector<3xf64>, " << prefix
-     << "on: f64";
-  if (charges)
-    os << ", " << prefix << "q: f64";
-  for (size_t k = 0; k != term.parameters.size(); ++k)
-    os << ", " << prefix << "p" << k << ": f64";
-  os << "):\n";
-  llvm::StringMap<std::string> values;
-  os << "    " << prefix << "a = arith.constant "
-     << formatReal(1.0 / units::length) << " : f64\n";
-  std::string position = prefix + "pos";
-  if (frame) {
-    os << "    " << prefix << "posf = arith.mulf " << prefix << "pos, "
-       << prefix << "frame : vector<3xf64>\n";
-    position = prefix + "posf";
+  config.gatheredCount = names.size();
+  for (const auto &constant : term.constants) {
+    config.constants.push_back(constant);
+    variables[constant.first] = "";
   }
-  for (int c = 0; c != 3; ++c) {
-    std::string component = prefix + "xyz"[c];
-    os << "    " << component << "n = vector.extract " << position << "["
-       << c << "] : f64 from vector<3xf64>\n"
-       << "    " << component << " = arith.mulf " << component << "n, "
-       << prefix << "a : f64\n";
-    values[std::string(1, "xyz"[c])] = component;
-  }
-  if (charges)
-    values["q"] = prefix + "q";
-  for (auto [k, parameter] : llvm::enumerate(term.parameters))
-    values[parameter.first] = prefix + "p" + std::to_string(k);
-  for (auto [k, constant] : llvm::enumerate(term.constants)) {
-    std::string name = prefix + "c" + std::to_string(k);
-    os << "    " << name << " = arith.constant "
-       << formatReal(constant.second) << " : f64\n";
-    values[constant.first] = name;
-  }
+  // The cell operand follows gathered fields; it is absent for a fixed frame.
+  if (config.frame)
+    operand("%cell", "!md.cell");
   if (control.usesTime)
-    values["t"] = "%time";
-  context.bindLambdas(values);
-  context.bindObserved(term.name, values);
-  std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
-  os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
-     << " : f64\n"
-     << "    " << prefix << "u = arith.mulf " << energy << ", " << prefix
-     << "kj : f64\n"
-     << "    " << prefix << "zero = arith.constant 0.0 : f64\n"
-     << "    " << prefix << "in = arith.cmpf one, " << prefix << "on, "
-     << prefix << "zero : f64\n"
-     << "    " << prefix << "k = arith.select " << prefix << "in, " << prefix
-     << "u, " << prefix << "zero : f64\n"
-     << "    md.yield " << prefix << "k : f64\n"
-     << "  } : f64\n";
+    variables["t"] = "%time";
+  context.bindLambdas(variables);
+  context.bindObserved(term.name, variables);
+  llvm::SmallVector<StringRef> supplied;
+  for (const auto &entry : variables)
+    supplied.push_back(entry.getKey());
+  auto inputs = config.expression.getInputs(supplied);
+  for (const auto &name : inputs.names) {
+    auto found = variables.find(name);
+    assert(found != variables.end() && "missing external expression binding");
+    if (!found->second.empty())
+      config.externalBindings.emplace_back(name, operand(found->second, "f64"));
+  }
+  for (const auto &name : inputs.tables)
+    config.functionTables.emplace_back(name, operand("%t_" + name, "!grid"));
+  llvm::SmallVector<StringRef> operands;
+  for (const auto &name : names)
+    operands.push_back(name);
+  std::string result = "%u_external_" + term.name;
+  context.emitIRFragment(
+      "  ", {result}, {"f64"}, operands, types,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto f64 = builder.getF64Type();
+        auto vec = VectorType::get({3}, f64);
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        Value frame;
+        if (config.frame) {
+          Value edges = mdir::md_exec::CellEdgesOp::create(
+              builder, loc, vec, values[config.gatheredCount]);
+          Value input = arith::ConstantOp::create(
+              builder, loc,
+              DenseFPElementsAttr::get(
+                  vec, llvm::ArrayRef<double>(config.inputBox)));
+          frame = arith::DivFOp::create(builder, loc, input, edges);
+        }
+        auto sum = mdir::md::SumParticlesOp::create(
+            builder, loc, f64, values.take_front(config.gatheredCount));
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          llvm::SmallVector<Type> blockTypes(config.gatheredCount, f64);
+          blockTypes[0] = vec;
+          llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+          Block *block =
+              builder.createBlock(&sum.getKernel(), {}, blockTypes, locations);
+          auto args = block->getArguments();
+          Value toLength = constant(1.0 / units::length);
+          Value position = args[0];
+          if (config.frame)
+            position = arith::MulFOp::create(builder, loc, position, frame);
+          llvm::StringMap<Value> bindings, tables;
+          for (int c = 0; c != 3; ++c) {
+            Value component =
+                vector::ExtractOp::create(builder, loc, position, c);
+            bindings[std::string(1, "xyz"[c])] =
+                arith::MulFOp::create(builder, loc, component, toLength);
+          }
+          size_t slot = 2;
+          if (config.charges)
+            bindings["q"] = args[slot++];
+          for (const auto &name : config.parameters)
+            bindings[name] = args[slot++];
+          for (const auto &[name, value] : config.constants)
+            bindings[name] = constant(value);
+          for (const auto &[name, slot] : config.externalBindings)
+            bindings[name] = values[slot];
+          for (const auto &[name, slot] : config.functionTables)
+            tables[name] = values[slot];
+          Value expression = config.expression.build(builder, bindings, tables,
+                                                     config.termName);
+          Value toEnergy = constant(units::energy);
+          Value energy =
+              arith::MulFOp::create(builder, loc, expression, toEnergy);
+          Value zero = constant(0.0);
+          Value active = arith::CmpFOp::create(
+              builder, loc, arith::CmpFPredicate::ONE, args[1], zero);
+          Value selected =
+              arith::SelectOp::create(builder, loc, active, energy, zero);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{selected});
+        }
+        return {sum.getResult()};
+      });
   add("external_" + term.name);
 }
-

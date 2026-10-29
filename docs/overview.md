@@ -76,7 +76,7 @@ flowchart TD
         CF["Control file, TOML<br/>with Amber, GROMACS, CHARMM, or PDB inputs"]
         PY["Python package mdir<br/>load_amber, System, InitialState, mdir.compile"]
     end
-    CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder"]
+    CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder<br/>full program dialect set"]
     PY --> MODEL
     MODEL --> SEM["md and dyn<br/>potential, relations, tuple sets,<br/>step programs, the schedule of the run"]
     SEM --> MDP["Passes on md<br/>md-check-exchange, md-differentiate,<br/>md-expand-truncation, md-inline,<br/>dyn-expand-couplings, md-bypass-updates"]
@@ -109,11 +109,9 @@ private. Mesh/correction values use a narrow reference projection. Shared
 array/definition/correction hooks and specialized reporting/evaluation roles
 replace central kind dispatch. Field, contribution, output, and declaration
 order stay explicit.
-This stage preserves the generated programs. The later #568 stages build
-term IR with `OpBuilder` at the same inlined/fused sites, then retain text
-only for user expressions and `ModelTerm` at their parsing boundaries.
-[Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
-files and roles.
+Stage B (#708, D[builder-term-ir]) constructs term bodies with typed IR at
+the same shared/inlined/fused sites; see
+[driver Section 2.12](driver.md#212-the-files-of-the-builder).
 
 ### 2.2 The dialects
 

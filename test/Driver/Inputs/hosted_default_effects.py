@@ -15,6 +15,10 @@ order = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = order
 spec.loader.exec_module(order)
 _, controls = order.controls(root, place)
+# Keep this fixed 72-module proof independent of later order-matrix additions.
+controls = [path for path in controls if re.fullmatch(
+    r"model-host-(?:nve|npt|min)-(?:DOUBLE|MIXED)\.toml", path.name)]
+assert len(controls) == 6, controls
 library = order.metadata_plugin(root, place, os.environ.get("CC", "cc"))
 checked = 0
 for mode in ("exact", "padded", "search"):

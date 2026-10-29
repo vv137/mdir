@@ -1,5 +1,10 @@
 // Built-in bonded family: tuple data, potential, and logged columns (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
@@ -35,7 +40,6 @@ public:
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
                              const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     unsigned terms = selection.terms;
     auto has = [&](StringRef name) {
       return llvm::any_of(context.getTupleSets(),
@@ -43,28 +47,54 @@ public:
     };
     if ((terms & TermInputs::HarmonicImpropers) && has("impropers")) {
       // ½ k (ξ − ξ0)², with ξ − ξ0 brought into [−π, π).
-      os << "  %u_impropers = md.sum_tuples %r_impropers, %x, %cell "
-            "coordinates(dihedral(0, 1, 2, 3))\n"
-         << "      tuple(%f_impropers_k, %f_impropers_xi0 : !of_impropers, "
-            "!of_impropers) {\n"
-         << "  ^bb0(%xi: f64, %k: f64, %xi0: f64):\n"
-         << "    %half = arith.constant 0.5 : f64\n"
-         << "    %pi = arith.constant " << formatReal(M_PI) << " : f64\n"
-         << "    %turn = arith.constant " << formatReal(2.0 * M_PI)
-         << " : f64\n"
-         << "    %per_turn = arith.constant " << formatReal(0.5 / M_PI)
-         << " : f64\n"
-         << "    %d = arith.subf %xi, %xi0 : f64\n"
-         << "    %dp = arith.addf %d, %pi : f64\n"
-         << "    %turns = arith.mulf %dp, %per_turn : f64\n"
-         << "    %whole = math.floor %turns : f64\n"
-         << "    %back = arith.mulf %whole, %turn : f64\n"
-         << "    %w = arith.subf %d, %back : f64\n"
-         << "    %w2 = arith.mulf %w, %w : f64\n"
-         << "    %hk = arith.mulf %half, %k : f64\n"
-         << "    %e = arith.mulf %hk, %w2 : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_impropers, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_impropers"}, {"f64"},
+          {"%r_impropers", "%x", "%cell", "%f_impropers_k", "%f_impropers_xi0"},
+          {"!rel_impropers", "!vec", "!md.cell", "!of_impropers",
+           "!of_impropers"},
+          [](mlir::OpBuilder &builder,
+             mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+                {mdir::md::CoordinateKind::Dihedral, {0, 1, 2, 3}}};
+            DenseI32ArrayAttr kinds;
+            DenseI64ArrayAttr members;
+            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], ValueRange{}, values.drop_front(3), kinds, members);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> types(3, builder.getF64Type());
+              llvm::SmallVector<Location> locations(3, loc);
+              Block *block =
+                  builder.createBlock(&sum.getKernel(), {}, types, locations);
+              auto args = block->getArguments();
+              Value half = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(0.5));
+              Value pi = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(M_PI));
+              Value turn = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(2.0 * M_PI));
+              Value perTurn = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(0.5 / M_PI));
+              Value delta =
+                  arith::SubFOp::create(builder, loc, args[0], args[2]);
+              Value shifted = arith::AddFOp::create(builder, loc, delta, pi);
+              Value turns =
+                  arith::MulFOp::create(builder, loc, shifted, perTurn);
+              Value whole = math::FloorOp::create(builder, loc, turns);
+              Value back = arith::MulFOp::create(builder, loc, whole, turn);
+              Value wrapped = arith::SubFOp::create(builder, loc, delta, back);
+              Value square =
+                  arith::MulFOp::create(builder, loc, wrapped, wrapped);
+              Value hk = arith::MulFOp::create(builder, loc, half, args[1]);
+              Value energy = arith::MulFOp::create(builder, loc, hk, square);
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            return {sum.getResult()};
+          });
       add("impropers");
     }
   }

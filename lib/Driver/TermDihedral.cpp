@@ -1,5 +1,10 @@
 // Built-in bonded family: tuple data, potential, and logged columns (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
@@ -35,26 +40,49 @@ public:
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
                              const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     unsigned terms = selection.terms;
     auto has = [&](StringRef name) {
       return llvm::any_of(context.getTupleSets(),
                           [&](const auto &set) { return set.name == name; });
     };
     if ((terms & TermInputs::Dihedrals) && has("dihedrals")) {
-      os << "  %u_dihedrals = md.sum_tuples %r_dihedrals, %x, %cell "
-            "coordinates(dihedral(0, 1, 2, 3))\n"
-         << "      tuple(%f_dihedrals_k, %f_dihedrals_n, %f_dihedrals_phase : "
-            "!of_dihedrals, !of_dihedrals, !of_dihedrals) {\n"
-         << "  ^bb0(%phi: f64, %k: f64, %period: f64, %phase: f64):\n"
-         << "    %one = arith.constant 1.0 : f64\n"
-         << "    %nphi = arith.mulf %period, %phi : f64\n"
-         << "    %a = arith.subf %nphi, %phase : f64\n"
-         << "    %cos = math.cos %a : f64\n"
-         << "    %s = arith.addf %one, %cos : f64\n"
-         << "    %e = arith.mulf %k, %s : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_dihedrals, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_dihedrals"}, {"f64"},
+          {"%r_dihedrals", "%x", "%cell", "%f_dihedrals_k", "%f_dihedrals_n",
+           "%f_dihedrals_phase"},
+          {"!rel_dihedrals", "!vec", "!md.cell", "!of_dihedrals",
+           "!of_dihedrals", "!of_dihedrals"},
+          [](mlir::OpBuilder &builder,
+             mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+                {mdir::md::CoordinateKind::Dihedral, {0, 1, 2, 3}}};
+            DenseI32ArrayAttr kinds;
+            DenseI64ArrayAttr members;
+            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], ValueRange{}, values.drop_front(3), kinds, members);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> types(4, builder.getF64Type());
+              llvm::SmallVector<Location> locations(4, loc);
+              Block *block =
+                  builder.createBlock(&sum.getKernel(), {}, types, locations);
+              auto args = block->getArguments();
+              Value one = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(1.0));
+              Value nphi =
+                  arith::MulFOp::create(builder, loc, args[2], args[0]);
+              Value angle = arith::SubFOp::create(builder, loc, nphi, args[3]);
+              Value cosine = math::CosOp::create(builder, loc, angle);
+              Value sum = arith::AddFOp::create(builder, loc, one, cosine);
+              Value energy = arith::MulFOp::create(builder, loc, args[1], sum);
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            return {sum.getResult()};
+          });
       add("dihedrals");
     }
   }

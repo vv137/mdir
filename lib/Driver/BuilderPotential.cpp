@@ -2,6 +2,12 @@
 // site placement. Term-specific contributions are owned by the adapters.
 
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -11,112 +17,163 @@ namespace influence = mdir::influence;
 llvm::StringMap<std::string> Builder::emitCentroidCoordinates(
     const TupleTerm &term, StringRef indent, StringRef x, StringRef cell,
     StringRef relations, StringRef prefix) {
-  unsigned counter = 0;
-  auto next = [&]() { return (prefix + llvm::Twine(counter++)).str(); };
-  auto op = [&](StringRef name, std::initializer_list<std::string> operands) {
-    std::string result = next();
-    os << indent << result << " = " << name << " "
-       << llvm::join(operands, ", ") << " : f64\n";
-    return result;
-  };
-  auto constant = [&](double value) {
-    std::string result = next();
-    os << indent << result << " = arith.constant " << formatReal(value)
-       << " : f64\n";
-    return result;
-  };
-  // One component of the displacements of the pairs of the set of the
-  // term, weighted by the field `w<slot>`, summed. The sums over the one
-  // set become one loop (md-exec-fuse-loops).
+  const size_t groups = term.centers.size();
+  const unsigned arity = term.arity;
   std::string set = "cg_" + term.name;
-  auto sum = [&](size_t slot, int component) {
-    std::string result = next();
-    std::string field = "%f_" + set + "_w" + std::to_string(slot);
-    os << indent << result << " = md.sum_tuples " << relations << set << ", "
-       << x << ", " << cell << " coordinates(displacement(0, 1))\n"
-       << indent << "    tuple(" << field << " : !of_" << set << ") {\n"
-       << indent << "^bb0(%gd: vector<3xf64>, %gw: f64):\n"
-       << indent << "  %gdc = vector.extract %gd[" << component
-       << "] : f64 from vector<3xf64>\n"
-       << indent << "  %ge = arith.mulf %gw, %gdc : f64\n"
-       << indent << "  md.yield %ge : f64\n"
-       << indent << "} : !rel_" << set << ", !vec -> f64\n";
-    return result;
-  };
-
-  // The center of each group from the reference of the first, in Å: the
-  // displacement of its reference from that one, and the weighted
-  // displacements of its members from its reference. Both are minimum
-  // images; their sum is the center while each group lies within half the
-  // least width of the cell around its reference (System.cpp).
-  using Vector = std::array<std::string, 3>;
-  std::string angstrom = constant(1.0 / units::length);
-  std::vector<Vector> centers;
-  size_t groups = term.centers.size();
-  for (size_t g = 0; g != groups; ++g) {
-    Vector position;
-    for (int c = 0; c != 3; ++c) {
-      std::string value = sum(g, c);
-      if (g > 0)
-        value = op("arith.addf", {sum(groups + g - 1, c), value});
-      position[c] = op("arith.mulf", {value, angstrom});
-    }
-    centers.push_back(position);
+  std::string relationType = "!rel_" + set, fieldType = "!of_" + set;
+  std::vector<std::string> names = {(relations + set).str(), x.str(),
+                                    cell.str()};
+  llvm::SmallVector<StringRef> types = {relationType, "!vec", "!md.cell"};
+  for (size_t slot = 0; slot + 1 < 2 * groups; ++slot) {
+    names.push_back("%f_" + set + "_w" + std::to_string(slot));
+    types.push_back(fieldType);
   }
-  auto subtract = [&](const Vector &u, const Vector &v) {
-    Vector w;
-    for (int c = 0; c != 3; ++c)
-      w[c] = op("arith.subf", {u[c], v[c]});
-    return w;
-  };
-  auto dot = [&](const Vector &u, const Vector &v) {
-    std::string total = op("arith.mulf", {u[0], v[0]});
-    for (int c = 1; c != 3; ++c)
-      total = op("arith.addf", {total, op("arith.mulf", {u[c], v[c]})});
-    return total;
-  };
-  auto cross = [&](const Vector &u, const Vector &v) {
-    Vector w;
-    for (int c = 0; c != 3; ++c) {
-      int i = (c + 1) % 3, j = (c + 2) % 3;
-      w[c] = op("arith.subf", {op("arith.mulf", {u[i], v[j]}),
-                               op("arith.mulf", {u[j], v[i]})});
-    }
-    return w;
-  };
-  auto scale = [&](const std::string &factor, const Vector &u) {
-    Vector w;
-    for (int c = 0; c != 3; ++c)
-      w[c] = op("arith.mulf", {factor, u[c]});
-    return w;
-  };
-  auto norm = [&](const Vector &u) { return op("math.sqrt", {dot(u, u)}); };
-
-  // The coordinate, as the terms over particles take it: the distance and
-  // the vector from the first center to the second; the angle at the
-  // second center, as atan2(|u × v|, u · v); the dihedral with trans at π.
-  llvm::StringMap<std::string> values;
-  if (term.arity == 2) {
-    Vector d = subtract(centers[1], centers[0]);
-    values["dx"] = d[0];
-    values["dy"] = d[1];
-    values["dz"] = d[2];
-    values["r"] = norm(d);
-  } else if (term.arity == 3) {
-    Vector u = subtract(centers[0], centers[1]);
-    Vector v = subtract(centers[2], centers[1]);
-    values["theta"] = op("math.atan2", {norm(cross(u, v)), dot(u, v)});
-  } else {
-    Vector b0 = subtract(centers[0], centers[1]);
-    Vector b1 = subtract(centers[2], centers[1]);
-    Vector b2 = subtract(centers[3], centers[2]);
-    Vector axis = scale(op("arith.divf", {constant(1.0), norm(b1)}), b1);
-    Vector v = subtract(b0, scale(dot(b0, axis), axis));
-    Vector w = subtract(b2, scale(dot(b2, axis), axis));
-    values["theta"] =
-        op("math.atan2", {dot(cross(axis, v), w), dot(v, w)});
+  llvm::SmallVector<StringRef> operands;
+  for (const auto &name : names)
+    operands.push_back(name);
+  std::vector<std::string> results;
+  llvm::StringMap<std::string> mapping;
+  llvm::SmallVector<StringRef> keys;
+  if (arity == 2)
+    keys = {"r", "dx", "dy", "dz"};
+  else
+    keys = {"theta"};
+  for (StringRef key : keys) {
+    results.push_back((prefix + key).str());
+    mapping[key] = results.back();
   }
-  return values;
+  llvm::SmallVector<StringRef> resultNames, resultTypes;
+  for (const auto &result : results) {
+    resultNames.push_back(result);
+    resultTypes.push_back("f64");
+  }
+  emitIRFragment(
+      indent, resultNames, resultTypes, operands, types,
+      [groups, arity](mlir::OpBuilder &builder,
+                      mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        auto add = [&](Value a, Value b) -> Value {
+          return arith::AddFOp::create(builder, loc, a, b);
+        };
+        auto sub = [&](Value a, Value b) -> Value {
+          return arith::SubFOp::create(builder, loc, a, b);
+        };
+        auto mul = [&](Value a, Value b) -> Value {
+          return arith::MulFOp::create(builder, loc, a, b);
+        };
+        auto sum = [&](size_t slot, int component) -> Value {
+          DenseI32ArrayAttr kinds;
+          DenseI64ArrayAttr members;
+          mdir::md::Coordinate coordinate{
+              mdir::md::CoordinateKind::Displacement, {0, 1}};
+          mdir::md::getCoordinateAttrs(builder, {coordinate}, kinds, members);
+          auto sum = mdir::md::SumTuplesOp::create(
+              builder, loc, builder.getF64Type(), values[0], values[1],
+              values[2], ValueRange{}, ValueRange{values[3 + slot]}, kinds,
+              members);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types = {
+                VectorType::get({3}, builder.getF64Type()),
+                builder.getF64Type()};
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&sum.getKernel(), {}, types, locations);
+            Value displacement = vector::ExtractOp::create(
+                builder, loc, block->getArgument(0), component);
+            Value energy = mul(block->getArgument(1), displacement);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+          }
+          return sum.getResult();
+        };
+        // Minimum-image member and reference links retain their original
+        // loop order, allowing the same sums to fuse after inlining.
+        using Vector = std::array<Value, 3>;
+        Value angstrom = constant(1.0 / units::length);
+        std::vector<Vector> centers;
+        for (size_t g = 0; g != groups; ++g) {
+          Vector position;
+          for (int c = 0; c != 3; ++c) {
+            Value value = sum(g, c);
+            if (g > 0) {
+              Value link = sum(groups + g - 1, c);
+              value = add(link, value);
+            }
+            position[c] = mul(value, angstrom);
+          }
+          centers.push_back(position);
+        }
+        auto subtract = [&](const Vector &u, const Vector &v) {
+          Vector w;
+          for (int c = 0; c != 3; ++c)
+            w[c] = sub(u[c], v[c]);
+          return w;
+        };
+        auto dot = [&](const Vector &u, const Vector &v) {
+          Value total = mul(u[0], v[0]);
+          for (int c = 1; c != 3; ++c) {
+            Value product = mul(u[c], v[c]);
+            total = add(total, product);
+          }
+          return total;
+        };
+        auto cross = [&](const Vector &u, const Vector &v) {
+          Vector w;
+          for (int c = 0; c != 3; ++c) {
+            int i = (c + 1) % 3, j = (c + 2) % 3;
+            Value a = mul(u[i], v[j]);
+            Value b = mul(u[j], v[i]);
+            w[c] = sub(a, b);
+          }
+          return w;
+        };
+        auto scale = [&](Value factor, const Vector &u) {
+          Vector w;
+          for (int c = 0; c != 3; ++c)
+            w[c] = mul(factor, u[c]);
+          return w;
+        };
+        auto norm = [&](const Vector &u) -> Value {
+          Value square = dot(u, u);
+          return math::SqrtOp::create(builder, loc, square);
+        };
+        if (arity == 2) {
+          Vector d = subtract(centers[1], centers[0]);
+          Value r = norm(d);
+          return {r, d[0], d[1], d[2]};
+        }
+        if (arity == 3) {
+          Vector u = subtract(centers[0], centers[1]);
+          Vector v = subtract(centers[2], centers[1]);
+          Vector product = cross(u, v);
+          Value a = norm(product);
+          Value b = dot(u, v);
+          return {math::Atan2Op::create(builder, loc, a, b)};
+        }
+        Vector b0 = subtract(centers[0], centers[1]);
+        Vector b1 = subtract(centers[2], centers[1]);
+        Vector b2 = subtract(centers[3], centers[2]);
+        Value one = constant(1.0);
+        Value length = norm(b1);
+        Value inverse = arith::DivFOp::create(builder, loc, one, length);
+        Vector axis = scale(inverse, b1);
+        Value vProjection = dot(b0, axis);
+        Vector vAxis = scale(vProjection, axis);
+        Vector v = subtract(b0, vAxis);
+        Value wProjection = dot(b2, axis);
+        Vector wAxis = scale(wProjection, axis);
+        Vector w = subtract(b2, wAxis);
+        Vector product = cross(axis, v);
+        Value a = dot(product, w);
+        Value b = dot(v, w);
+        return {math::Atan2Op::create(builder, loc, a, b)};
+      });
+  return mapping;
 }
 
 
@@ -309,11 +366,19 @@ std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
     StringRef cell, StringRef prefix, StringRef f, StringRef fResult,
     StringRef u, StringRef uResult, StringRef w, StringRef tag) {
   TermEvaluation point{indent, x, cell, prefix, f, fResult, u, uResult, w, tag};
+  auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
+                       llvm::ArrayRef<StringRef> resultTypes,
+                       llvm::ArrayRef<StringRef> operands,
+                       llvm::ArrayRef<StringRef> operandTypes,
+                       TermIRRecipe recipe) {
+    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
+                   std::move(recipe));
+  };
   std::string virial = w.str();
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
       if (role->applies(*this))
-        virial = role->emit(*this, os, point);
+        virial = role->emit(*this, emitIR, point);
   return virial;
 }
 
