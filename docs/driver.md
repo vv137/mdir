@@ -1315,180 +1315,42 @@ No control key, support restriction, precision, numerical method, diagnostic,
 or output format changes. Each kind commit compares printed module/lowered
 corpora and the combined-kind CPU/GPU mixed/double order matrix with the fixed
 archived PR base. The completed PR head additionally requires five bitwise
-checkpoints and two D309 suite shards. The next stages of #568 replace term
-text templates with `OpBuilder` IR, then retain text only for user expressions
-and `ModelTerm` at their parsing boundaries.
+checkpoints and two D309 suite shards. Typed construction follows the same
+ordering and validation contract.
 
-Stage B (#708, D[builder-term-ir]) converts all built-in term bodies and
-custom-expression scalar kernels to typed `OpBuilder` fragments. `TermIR.h` and `TermIR.cpp` own the
-bounded recipes; `ProgramModule.cpp` materializes their operations in the
-original regions when the program is finished. The first emitter is the
-shared Lennard-Jones scalar kernel. Fragments borrow typed operands and an insertion
-point, with owned per-build construction captures. Their operations reach
-the same shared potential/loop regions before printing and lowering, with
-no new call boundary or SSA-name hint. The emitter conversions are complete.
-Step 5 subsequently removes the remaining generated-text assembly;
-custom expressions and `ModelTerm` are parsed only at their input boundaries.
-The prolate near/far splitting emitter also constructs its clamped table
-lookup and Horner polynomial with typed operations at the original site. Direct
-Coulomb kernels now use typed operations too: cutoff and reaction field,
-Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
-clamped distance retain their original operation order. The direct LJPME
-dispersion subtraction and its optional cutoff shift are typed fragments
-at that same pair-kernel site. Soft-core Lennard-Jones distance,
-root-free or switched potential, and alchemical scaling also use typed
-fragments, preserving the original intermediate operations and branch order. Shielded
-Coulomb kernels for excluded and within-selection pairs use typed Gaussian
-or prolate operations, sharing the same typed prolate polynomial builder. The
-excluded and within-selection Coulomb terms, including reaction-field
-exclusions, also build their complete tuple loops, typed block arguments,
-charge scaling, cutoff selection, and yields with `OpBuilder`. The LJPME
-excluded-pair loop is typed as well, including its cancellation-free
-small-distance Horner series and closed-form selection. Reciprocal dispersion
-and Coulomb emission share a typed constructor with owned grid/configuration
-data; charge scaling is a typed particle map before the same reciprocal op. The complete
-primary nonbonded relation loop is also typed, including alchemical flags,
-tunable-table seeds, scalar kernels, and the ordered final contribution.
-`TermNonbonded.cpp` no longer writes operation text. The shared custom-expression
-scalar emitter also builds typed operations from an owned `ExpressionIR`
-snapshot of the parsed AST and grid geometry. Lazy definitions and caller
-binding precedence are preserved without retaining borrowed hook state.
+Stage B (#708, D[builder-term-ir]) constructs built-in term bodies and
+custom-expression scalar kernels as typed fragments. `lib/Driver/TermIR.h`
+declares the recipes and `lib/Driver/TermIR.cpp` manages their submission.
+A fragment borrows typed operands and an `OpBuilder` insertion point, returns
+typed results, and owns its per-build construction captures. Borrowed
+hook-local references never escape. Custom-expression diagnostic locations
+remain independent of SSA naming.
 
-The complete topology custom-pair relation loop also uses typed operations:
-overlapping group masks, particle-field arguments, all six LJ parameter
-lookups, tunable constants, time/lambda/observed bindings, truncation, energy
-conversion, and the yield retain their original order. Each loop owns its
-configuration and expression snapshot; no hook-local state escapes.
-
-Bare custom-pair loops also construct their regions and yields with typed
-operations. Table overrides, uniform and nonuniform arithmetic/geometric/product
-mixing, constants, function tables, cutoff modifiers, and ordered total-energy
-addition retain the original operation order. Both topology and bare pair
-kernels use owned expression snapshots and bounded configuration.
-
-Regular and compound custom-tuple loops also use typed coordinates, regions,
-arguments, and yields. Distance conversion, angle/dihedral coordinates,
-per-tuple parameters, gradient-field selectors and seeds, function tables,
-time/lambda/observed bindings, and energy conversion keep their operation order.
-Owned loop configuration replaces borrowed term and gradient references.
-
-Shared centroid geometry also builds typed IR for the tuple and pull adapters.
-The minimum-image weighted component sums, distance, angle, and dihedral
-retain their explicit arithmetic and loop order. Deferred construction owns
-only group count and arity, with typed relation/position/cell/weight operands;
-it does not retain center membership arrays or hook-local references.
-
-Centroid scalar terms also construct their parameter constants, expression,
-and energy conversion with typed operations. Owned scalar metadata preserves
-constant order and geometry/time/lambda/observed binding precedence.
-`TermTuple.cpp` no longer writes operation text.
-
-Custom triplet terms also construct their neighborhood relation, coordinate and
-particle-place arguments, scalar body, yield, and ordered energy additions with
-typed operations. Owned configuration preserves coordinate order, unit
-conversions, uniform and gathered parameters, time and table bindings, and the
-unused-distance fallback. Triplet execution remains CPU-only; `TermTriplet.cpp`
-no longer writes operation text.
-
-External terms also construct cell-frame scaling, particle gathers, scalar
-coordinates and bindings, expression results, membership selection, and yields
-with typed operations. Owned configuration preserves field and constant order,
-charge and parameter arguments, and time/lambda/observed binding precedence.
-`TermExternal.cpp` no longer writes operation text.
-
-Auxiliary pull potentials now construct their complete function and scalar
-body with typed operations. They borrow the common argument types from the
-shared energy potential at materialization, then append coordinate arguments
-in their existing order. Owned expression metadata and parameter/lambda values
-preserve constant emission and binding precedence; no hook-local state escapes.
-Pull output also constructs its time conversion, coordinate/term buffers,
-derivative requests, ordered force arithmetic, column stores, casts, and runtime
-call with typed operations. Captures own only counts, indices, and names used by
-their recipes. `TermPull.cpp` no longer writes operation text.
-
-Born and surface terms construct their neighborhoods, descreening integral,
-HCT/OBC radii, screened pair/self energies, and nonpolar surface energy with
-typed operations. Their owned configuration contains scalar method data only;
-Born radii remain private to the adapter. The Born energy is added to the outer
-sum before surface construction, preserving accumulation order as well as
-loop order. `TermBorn.cpp` no longer writes operation text.
-
-Positional restraints construct force maps, energy/virial sums, reference
-scaling, reductions, diagonal tensors, and their stored energy column with
-typed operations. The per-build energy name and missing-state diagnostic from
-#706 remain; force-only requests preserve the recorded energy. Loop and scalar
-arithmetic order remain unchanged, including the separate barostat virial sum.
-`TermRestraint.cpp` no longer writes operation text.
-
-Opaque hosted models construct their private force/energy ABI declarations,
-cell projections, typed neighborhood/edge lists, host calls, and ordered
-energy/virial accumulations with typed operations. The host role keeps read-only
-`TermInputs` and borrows a synchronous `TermIRWriter`; callers submit owned
-recipes without exposing mutable parameter access. Staged user `ModelTerm`
-text remains at its existing boundary for step 5.
-
-Built-in harmonic bonds construct the complete typed tuple reduction,
-including its distance coordinate, tuple-field order, scalar kernel, and
-yield. The half constant, displacement, squared displacement, half-force
-constant, and final multiplication retain their original order.
-`TermBond.cpp` no longer writes operation text.
-
-Built-in harmonic angles construct the complete typed tuple reduction with its
-angle coordinate and original tuple-field/scalar operation order.
-`TermAngle.cpp` no longer writes operation text.
-
-Urey-Bradley terms construct the complete typed distance reduction over their
-existing endpoint tuple. Tuple fields and half/displacement/square/multiply
-order remain unchanged.
-`TermUreyBradley.cpp` no longer writes operation text.
-
-Periodic dihedrals construct the complete typed tuple reduction and its
-period-times-angle, phase subtraction, cosine, offset, and force multiplication
-in their original order. Multiple Fourier terms retain their tuple order.
-`TermDihedral.cpp` no longer writes operation text.
-
-Harmonic impropers construct their complete typed dihedral reduction. The
-three wrapping constants, floor-based reduction into the original interval,
-and harmonic scalar arithmetic retain their order.
-`TermImproper.cpp` no longer writes operation text.
-
-CMAP constructs its complete typed two-dihedral reduction, wrapped cell
-indices, 16 table lookups, and bicubic Horner evaluation. The build owns the
-resolution; lookup and row/column accumulation order remain unchanged.
-`TermCMap.cpp` no longer writes operation text.
-
-Special 1-4 pairs construct their complete typed distance reduction, optional
-charge-gradient gather/products, selected Lennard-Jones and Coulomb terms,
-and final sum. The shared typed Lennard-Jones kernel keeps the original
-switch choices and scalar order; its final transitional scalar writer is removed.
-`TermPairs14.cpp` no longer writes operation text.
+`finishTermIRProgram` in `lib/Driver/ProgramModule.cpp` materializes the
+fragments in their original shared potential and loop regions before printing
+and lowering. Contribution order, inlining, and fusion are preserved, with
+no new call boundary or SSA-name hint. Materialization rejects missing,
+repeated, or invalid connections, result count/type mismatches, and surviving
+`mdir.term_ir` attributes before cast reconciliation. Native negative tests
+and the corpus's marker guard cover these checks. The decision records the
+[emitter construction invariants](decisions/builder-term-ir.md#emitter-construction-invariants).
 
 Construction parsing and canonical printing use `insertProgramDialects` in
-`lib/Dialect/Program/ProgramDialects.cpp`, shared with the lowering registry.
-Its full set includes lowering-only dialects and the tensor/linalg functions
-of staged models.
-The driver keeps no second list; the shared library avoids a driver/compiler
-dependency cycle. A construction parse failure is the internal error
-`the builder produced invalid assembly`, including a build with no recipes.
-This amends D352's silent raw-text fallback, which hid #706 and #714; valid
-staged input must parse through the same producer boundary.
+`lib/Dialect/Program/ProgramDialects.cpp`, shared with lowering. This includes
+tensor/linalg stage functions and lowering-only dialects without a second
+driver list or a driver/compiler dependency cycle. A construction parse
+failure is the internal error `the builder produced invalid assembly`, even
+without recipes; raw generated text never passes to a reading printer or
+downstream consumer. This amends D352's silent fallback, which hid #706 and
+#714.
 
-For custom expressions, the existing `control-file term: <name>` diagnostic
-location is preserved; it does not provide SSA-name hints.
-
-Materialization rejects missing, repeated, or invalid connections and result
-count/type mismatches. A final walk rejects any operation still carrying
-`mdir.term_ir`, including operations created by a recipe; cast reconciliation
-therefore cannot silently consume a surviving connection. Native negative
-tests cover these checks. The equivalence harness also rejects the attribute
-in every successfully parsed module and successful lowered emission before
-comparing either build.
-Malformed builder assembly is rejected at the construction boundary with the
-internal diagnostic `the builder produced invalid assembly`, before it can
-reach a reading printer or downstream consumer. Native tests require that
-failure and verify both empty and operand-bearing zero-result connections.
-The #706/#707 fixes leave no builder parse failure in the audited corpus and
-combined-kind matrix.
+A new term emitter builds a typed fragment at its existing insertion site
+and preserves its explicit contribution order. A new dialect belongs in
+`insertProgramDialects`, with its library in
+`lib/Dialect/Program/CMakeLists.txt`, so construction and lowering accept the
+same program. Step 5 removes the remaining generated-text assembly and
+leaves parsed text only for user expressions and `ModelTerm` at their input
+boundaries.
 
 ## 3. Decided
 
