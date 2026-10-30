@@ -1005,29 +1005,26 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   std::string newForces = forces.str();
   bool removesMotion = control.comPeriod > 0;
   std::string t = tag.str();
+  std::string momentum = "%pc" + t, center = "%vcm" + t, centerEnergy = "%kcm" + t;
+  llvm::SmallVector<StringRef> centerInputs, centerTypes;
+  llvm::SmallVector<StringRef> centerOutputs{centerEnergy}, centerOutputTypes{"f64"};
   if (removesMotion) {
-    // The velocity of the center of mass.
-    os << indent << "%pc" << t << " = md.sum_particles gather(" << velocities
-       << ", " << massName << " : !vec, !real) {\n"
-       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
-       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
-       << indent << "  md.yield %p : vector<3xf64>\n"
-       << indent << "} : vector<3xf64>\n"
-       << indent << "%vcm" << t << " = arith.divf %pc" << t
-       << ", %total_mass : vector<3xf64>\n";
+    centerInputs = {velocities, massName, "%total_mass", "%couple_half"};
+    centerTypes = {"!vec", "!real", "vector<3xf64>", "f64"};
+    centerOutputs = {momentum, center, centerEnergy};
+    centerOutputTypes = {"vector<3xf64>", "vector<3xf64>", "f64"};
   }
-  // The kinetic energy of the center of mass, P·V / 2, which the removal
-  // takes away.
-  if (removesMotion)
-    os << indent << "%pvs" << t << " = arith.mulf %pc" << t << ", %vcm" << t
-       << " : vector<3xf64>\n"
-       << indent << "%pv" << t << " = vector.reduction <add>, %pvs" << t
-       << " : vector<3xf64> into f64\n"
-       << indent << "%kcm" << t << " = arith.mulf %couple_half, %pv" << t
-       << " : f64\n";
-  else
-    os << indent << "%kcm" << t << " = arith.constant 0.0 : f64\n";
+  emitIRFragment(
+      indent, centerOutputs, centerOutputTypes, centerInputs, centerTypes,
+      [removesMotion](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        CenterMotionInputs input;
+        if (removesMotion)
+          input = {values[0], values[1], values[2], values[3]};
+        auto result = buildCenterMotion(builder, input);
+        if (removesMotion)
+          return {result.momentum, result.velocity, result.energy};
+        return {result.energy};
+      });
   // The energy that the coupling takes: that of the center of mass, and
   // what the thermostat takes from the rest.
   std::string bath = "%kcm" + t;
@@ -1040,55 +1037,54 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     emitSum3("%kc" + t, "%kv" + t, indent);
     std::string vector = "%kv" + t;
     if (removesMotion) {
-      os << indent << "%pvv" << t << " = arith.mulf %pc" << t << ", %vcm" << t
-         << " : vector<3xf64>\n"
-         << indent << "%kcmv" << t << " = arith.mulf %c_half3, %pvv" << t
-         << " : vector<3xf64>\n"
-         << indent << "%ktv" << t << " = arith.subf %kv" << t << ", %kcmv"
-         << t << " : vector<3xf64>\n";
+      std::string result = "%ktv" + t, axes = "%kv" + t;
+      emitIRFragment(
+          indent, {result}, {"vector<3xf64>"}, {axes, momentum, center, "%c_half3"},
+          {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>", "vector<3xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildAxesWithoutCenter(builder, values[0], values[1], values[2], values[3])};
+          });
       vector = "%ktv" + t;
     }
     kineticAxes = vector;
   }
   if (rescalesVelocities()) {
-    std::string kinetic = "%kc" + t;
+    std::string totalEnergy = "%kc" + t;
     if (!control.barostat)
-      emitKineticEnergy(kinetic, velocities, massName, indent);
+      emitKineticEnergy(totalEnergy, velocities, massName, indent);
+    bool noseHoover = control.isNoseHoover(), hasOptimal = !optimal.empty();
+    llvm::SmallVector<StringRef> inputs{totalEnergy, step}, types{"f64", "i64"};
     if (removesMotion) {
-      os << indent << "%kt" << t << " = arith.subf %kc" << t << ", %kcm" << t
-         << " : f64\n";
-      kinetic = "%kt" + t;
+      inputs.push_back(centerEnergy);
+      types.push_back("f64");
     }
-    // The factor takes the kinetic energy of the optimal temperature
-    // [Jung2019] without that of the center of mass (D263);
-    // it scales every velocity, and the bath takes the change of the
-    // kinetic energy of the velocities scaled, exactly.
-    std::string controlled = kinetic;
-    if (!optimal.empty()) {
-      controlled = optimal.str();
-      if (removesMotion) {
-        os << indent << "%kot" << t << " = arith.subf " << optimal << ", %kcm"
-           << t << " : f64\n";
-        controlled = "%kot" + t;
-      }
+    if (hasOptimal) {
+      inputs.push_back(optimal);
+      types.push_back("f64");
     }
-    if (control.isNoseHoover()) {
-      // A Nose-Hoover chain (D163a) moves on the host over the period.
-      os << indent << "%alpha" << t << " = func.call @mdrtNoseHooverFactor("
-         << step << ", " << controlled << ") : (i64, f64) -> f64\n";
-    } else {
-      os << indent << "%alpha" << t << " = func.call @mdrtBussiFactor(%seed, "
-         << step << ", " << controlled
-         << ", %target_kinetic, %freedom, %decay)\n"
-         << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n";
+    if (!noseHoover) {
+      inputs.append({"%seed", "%target_kinetic", "%freedom", "%decay"});
+      types.append({"i64", "f64", "f64", "f64"});
     }
-    os << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
-       << ", %alpha" << t << " : f64\n"
-       << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
-       << kinetic << " : f64\n"
-       << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn" << t
-       << " : f64\n";
-    bath = "%heat" + t;
+    std::string factor = "%alpha" + t, squared = "%alpha2" + t, heat = "%heat" + t;
+    // The controller takes optimal temperature without COM [Jung2019];
+    // its heat uses the actual kinetic energy of the velocities scaled.
+    emitIRFragment(
+        indent, {factor, squared, heat}, {"f64", "f64", "f64"}, inputs, types,
+        [removesMotion, hasOptimal, noseHoover](mlir::OpBuilder &builder,
+                                                mlir::ValueRange values) -> TermIRValues {
+          size_t index = 2;
+          mlir::Value centerEnergy = removesMotion ? values[index++] : mlir::Value{};
+          mlir::Value optimal = hasOptimal ? values[index++] : mlir::Value{};
+          ThermostatIRInputs input{values[0], centerEnergy, optimal, values[1],
+              noseHoover ? mlir::Value{} : values[index],
+              noseHoover ? mlir::Value{} : values[index + 1],
+              noseHoover ? mlir::Value{} : values[index + 2],
+              noseHoover ? mlir::Value{} : values[index + 3]};
+          auto result = buildThermostat(builder, input, noseHoover);
+          return {result.factor, result.factorSquared, result.heat};
+        });
+    bath = heat;
   }
   // Stochastic cell rescaling (Bernetti and Bussi 2020): the pressure of
   // the step, with the virials of the correction for the dispersion and of
@@ -1318,30 +1314,31 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       bath = "%btake" + t;
     }
   }
-  os << indent << "func.call @mdrtAddBath(" << bath << ") : (f64) -> ()\n";
-  os << indent << "%vc" << t << " = md.map_particles gather(" << velocities
-     << " : !vec) {\n"
-     << indent << "^bb0(%v_i: vector<3xf64>):\n";
-  std::string value = "%v_i";
+  bool thermal = rescalesVelocities(), barostatScale = control.barostat && !trotter;
+  std::string factor = "%alpha" + t, inverse = "%muinv" + t, result = "%vc" + t;
+  llvm::SmallVector<StringRef> inputs{velocities, bath}, types{"!vec", "f64"};
   if (removesMotion) {
-    os << indent << "  %d = arith.subf %v_i, %vcm" << t
-       << " : vector<3xf64>\n";
-    value = "%d";
+    inputs.push_back(center);
+    types.push_back("vector<3xf64>");
   }
-  if (rescalesVelocities()) {
-    os << indent << "  %ab = vector.broadcast %alpha" << t
-       << " : f64 to vector<3xf64>\n"
-       << indent << "  %s = arith.mulf %ab, " << value
-       << " : vector<3xf64>\n";
-    value = "%s";
+  if (thermal) {
+    inputs.push_back(factor);
+    types.push_back("f64");
   }
-  if (control.barostat && !trotter) {
-    os << indent << "  %v_scaled = arith.mulf %muinv" << t << ", " << value
-       << " : vector<3xf64>\n";
-    value = "%v_scaled";
+  if (barostatScale) {
+    inputs.push_back(inverse);
+    types.push_back("vector<3xf64>");
   }
-  os << indent << "  md.yield " << value << " : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+  emitIRFragment(
+      indent, {result}, {"!vec"}, inputs, types,
+      [removesMotion, thermal, barostatScale](mlir::OpBuilder &builder,
+                                              mlir::ValueRange values) -> TermIRValues {
+        size_t index = 2;
+        mlir::Value center = removesMotion ? values[index++] : mlir::Value{};
+        mlir::Value factor = thermal ? values[index++] : mlir::Value{};
+        mlir::Value inverse = barostatScale ? values[index++] : mlir::Value{};
+        return {buildCoupledVelocities(builder, values[0], center, factor, inverse, values[1])};
+      });
   return {newPositions, "%vc" + t, newForces};
 }
 

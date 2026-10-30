@@ -156,4 +156,10 @@ stored-correction recipes. Definitions are evaluated and stored in their
 existing order before the stored correction energies; the final dynamic
 memref cast and host write remain last. The physical output state and owned
 potential-symbol list cross the native capability, without builder captures.
+Center-of-mass coupling exports momentum, center velocity, and removed energy
+explicitly. Thermostat construction preserves optimal-temperature control
+without center motion, host factor calls, squared factors, and heat from the
+actual kinetic energy. Only parameters used by the selected thermostat cross
+its typed input. The final velocity map retains center subtraction, thermostat
+scaling, and non-Trotter barostat scaling in order, after the bath host call.
 D363's term recipes still join remaining assembly at this commit.
