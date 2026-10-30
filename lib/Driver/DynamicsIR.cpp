@@ -1,5 +1,6 @@
 // Mass-metric descent with the existing scaled 16-norm and rejected trials.
 #include "DynamicsIR.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -89,4 +90,47 @@ Value mdir::driver::builder::buildTrialEnergy(OpBuilder &builder, Value energy, 
   Value never = arith::ConstantOp::create(builder, loc,
       builder.getF64FloatAttr(std::numeric_limits<double>::infinity()));
   return arith::SelectOp::create(builder, loc, intact, energy, never);
+}
+
+Value mdir::driver::builder::buildKick(
+    OpBuilder &builder, Value velocities, Value forces, Value masses, Value interval) {
+  return mdir::dyn::KickOp::create(builder, builder.getUnknownLoc(), velocities.getType(),
+                                    velocities, forces, masses, interval);
+}
+Value mdir::driver::builder::buildDrift(
+    OpBuilder &builder, Value positions, Value velocities, Value interval) {
+  return mdir::dyn::DriftOp::create(builder, builder.getUnknownLoc(), positions.getType(),
+                                     positions, velocities, interval);
+}
+DriftScaleIR mdir::driver::builder::buildDriftScale(OpBuilder &builder, Value scale) {
+  auto loc = builder.getUnknownLoc();
+  auto vec = VectorType::get({3}, builder.getF64Type());
+  Value unit = arith::ConstantOp::create(builder, loc, DenseElementsAttr::get(vec, 1.0));
+  Value oneMinus = arith::SubFOp::create(builder, loc, unit, scale);
+  Value inverse = arith::DivFOp::create(builder, loc, unit, scale);
+  return {oneMinus, inverse};
+}
+Value mdir::driver::builder::buildVelocityScaling(OpBuilder &builder, Value velocities, Value scale) {
+  auto loc = builder.getUnknownLoc();
+  auto vec = VectorType::get({3}, builder.getF64Type());
+  auto map = mdir::md::MapParticlesOp::create(builder, loc, velocities.getType(), ValueRange{velocities});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = builder.createBlock(&map.getKernel(), {}, {vec}, {loc})->getArguments();
+    Value result = arith::MulFOp::create(builder, loc, scale, args[0]);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+  }
+  return map.getResult();
+}
+Value mdir::driver::builder::buildFieldDifference(OpBuilder &builder, Value first, Value second) {
+  auto loc = builder.getUnknownLoc();
+  auto vec = VectorType::get({3}, builder.getF64Type());
+  auto map = mdir::md::MapParticlesOp::create(builder, loc, first.getType(), ValueRange{first, second});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = builder.createBlock(&map.getKernel(), {}, {vec, vec}, {loc, loc})->getArguments();
+    Value result = arith::SubFOp::create(builder, loc, args[0], args[1]);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+  }
+  return map.getResult();
 }

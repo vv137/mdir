@@ -736,6 +736,15 @@ private:
   unsigned getNumPotentialArguments() const override;
 
   void emitPrograms();
+  void emitKick(StringRef indent, StringRef result, StringRef velocity,
+                   StringRef force, StringRef mass, StringRef interval);
+  void emitDrift(StringRef indent, StringRef result, StringRef positions,
+                    StringRef velocities, StringRef interval);
+  void emitDriftScale(StringRef indent);
+  void emitVelocityScaling(StringRef indent, StringRef result,
+                               StringRef velocities, StringRef scale);
+  void emitDynamicsReturn(StringRef indent, llvm::ArrayRef<StringRef> values,
+                              llvm::ArrayRef<StringRef> types);
   void emitEnergyEvaluation(StringRef indent, StringRef x, StringRef cell,
                               StringRef prefix, StringRef time, StringRef energy,
                               StringRef forces, StringRef virial);

@@ -4,6 +4,7 @@
 
 #include "BuilderImpl.h"
 #include "PotentialIR.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "BarostatIR.h"
 #include "DynamicsIR.h"
 #include "CouplingIR.h"
@@ -197,16 +198,27 @@ void Builder::emitPrograms() {
        // the deferred stops and the hosted evaluation's ordinary memory.
        << "effects = " << effects << ",\n                "
        << (brownian ? "provides = [\"thermostatting\"]} {\n"
-                    : "provides = [\"symplectic\", \"time_reversible\"]} {\n")
-       << "  %c = arith.constant 5.0e-01 : f64\n"
-       << "  %half = arith.mulf %c, %dt : f64\n";
+                    : "provides = [\"symplectic\", \"time_reversible\"]} {\n");
+    emitIRFragment(
+        "  ", {"%half"}, {"f64"}, {"%dt"}, {"f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+          return {mlir::arith::MulFOp::create(builder, loc, half, values[0])};
+        });
     // With constraints, a build of the neighbor structure in the step that
     // finds positions that are not numbers records its stop, and the step
     // runs to its end: a failed set of constraints then stops the run with
     // its own message, and the recorded stop follows the tests otherwise
     // (D278, the maintainer's ruling on PR #381).
     if (constraints)
-      os << "  func.call @mdrtDeferStops() : () -> ()\n";
+      emitIRFragment(
+          "  ", {}, {}, {}, {},
+          [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtDeferStops",
+                                         mlir::TypeRange{}, mlir::ValueRange{});
+            return {};
+          });
     // The time at the end of the step, at which its forces are evaluated
     // (D145).
     if (control.usesTime)
@@ -220,18 +232,18 @@ void Builder::emitPrograms() {
       // velocities stored are those of the displacement, Δx / Δt.
       emitBrownianVelocity("  ", "%f", "%v1");
     } else if (!leapfrog) {
-      os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
+      emitKick("  ", "%v1", "%v", "%f", "%m", "%half");
     } else if (projectsState) {
       // The velocities of the time of the positions, as velocity Verlet
       // has them, with none along the constraints, and its first half
       // kick: the friction or the scaling of the middle of the drift
       // would act on what a kick of a whole step leaves along the
       // constraints.
-      os << "  %v0u = dyn.kick %v, %f, %m, %half : !vec\n";
+      emitKick("  ", "%v0u", "%v", "%f", "%m", "%half");
       std::string current = project("%x", "%v0u", "%v0", "").first;
-      os << "  %v1 = dyn.kick " << current << ", %f, %m, %half : !vec\n";
+      emitKick("  ", "%v1", current, "%f", "%m", "%half");
     } else {
-      os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n";
+      emitKick("  ", "%v1", "%v", "%f", "%m", "%dt");
       if (sideVirial) {
         // The first half kick of velocity Verlet, from the velocities of
         // the time of the positions with none along the constraints: its
@@ -239,9 +251,9 @@ void Builder::emitPrograms() {
         // virial of the first half of the step (D76). The constraints
         // bring both drifts to the same place, and the state is that of
         // the plain step: nothing of this feeds it.
-        os << "  %v0u = dyn.kick %v, %f, %m, %half : !vec\n";
+        emitKick("  ", "%v0u", "%v", "%f", "%m", "%half");
         std::string current = project("%x", "%v0u", "%v0", "").first;
-        os << "  %v1p = dyn.kick " << current << ", %f, %m, %half : !vec\n";
+        emitKick("  ", "%v1p", current, "%f", "%m", "%half");
       }
     }
     std::string drifting = "%v1";
@@ -261,7 +273,7 @@ void Builder::emitPrograms() {
     bool geodesic = constraints && control.isLangevin();
     if (geodesic) {
       std::string kicked = project("%x", "%v1", "%vgk", "").first;
-      os << "  %xga = dyn.drift %x, " << kicked << ", %half : !vec\n";
+      emitDrift("  ", "%xga", "%x", kicked, "%half");
       std::string current = "%xga";
       unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
       auto next = [&]() {
@@ -279,18 +291,12 @@ void Builder::emitPrograms() {
         emitShakePositions("  ", "%x", current, *set, result);
         current = result;
       }
-      os << "  %gone = arith.constant 1.0 : f64\n"
-         << "  %grate = arith.divf %gone, %half : f64\n"
-         << "  %vga = md.map_particles gather(" << kicked << ", " << current
-         << ", %xga : !vec, !vec, !vec) {\n"
-         << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
-            "%vs_u: vector<3xf64>):\n"
-         << "    %vs_d = arith.subf %vs_c, %vs_u : vector<3xf64>\n"
-         << "    %vs_r = vector.broadcast %grate : f64 to vector<3xf64>\n"
-         << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
-         << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
-         << "    md.yield %vs_sum : vector<3xf64>\n"
-         << "  } : !vec\n";
+      emitIRFragment(
+          "  ", {"%vga"}, {"!vec"}, {kicked, current, "%xga", "%half"},
+          {"!vec", "!vec", "!vec", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildCorrectedHalfVelocity(builder, values[0], values[1], values[2], values[3])};
+          });
       // The projection of the A at the new positions and that after O are
       // one: the projection is linear at fixed positions, so that of
       // c v + σ R is c times that of v plus that of σ R, and the projection
@@ -304,29 +310,20 @@ void Builder::emitPrograms() {
         // center, which keeps its shape, and the velocities by 1/μ; the
         // constraints of the second A take back what an anisotropic
         // scaling leaves along them.
-        os << "  %mu_unit = arith.constant dense<1.0> : vector<3xf64>\n"
-           << "  %mu_m1 = arith.subf %mu_unit, %mu : vector<3xf64>\n"
-           << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
+        emitDriftScale("  ");
         reference = emitGroupScaling("  ", "%xgc", "%mu", "%mu_m1", "%cell",
                                      "%m", "%r_", "_t");
         emitKineticVector("%khalf", thermal, "%m", "  ");
-        os << "  %v1t = md.map_particles gather(" << thermal << " : !vec) {\n"
-           << "  ^bb0(%v_i: vector<3xf64>):\n"
-           << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
-           << "    md.yield %v_s : vector<3xf64>\n"
-           << "  } : !vec\n";
+        emitVelocityScaling("  ", "%v1t", thermal, "%muinv");
         drifting = "%v1t";
       }
-      os << "  " << drifted << " = dyn.drift " << reference << ", "
-         << drifting << ", %half : !vec\n";
+      emitDrift("  ", drifted, reference, drifting, "%half");
       length = "%half";
     } else if (scales) {
       // The scale of each axis, μ, the same for the three with isotropic
       // coupling (D119).
-      os << "  %xh = dyn.drift %x, %v1, %half : !vec\n"
-         << "  %mu_unit = arith.constant dense<1.0> : vector<3xf64>\n"
-         << "  %mu_m1 = arith.subf %mu_unit, %mu : vector<3xf64>\n"
-         << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
+      emitDrift("  ", "%xh", "%x", "%v1", "%half");
+      emitDriftScale("  ");
       // Langevin dynamics acts before the scaling, which takes the kinetic
       // energy of the velocities that it scales.
       std::string middle = "%v1";
@@ -339,25 +336,20 @@ void Builder::emitPrograms() {
       // The kinetic energy of each axis of the velocities that the
       // scaling takes.
       emitKineticVector("%khalf", middle, "%m", "  ");
-      os << "  %v1t = md.map_particles gather(" << middle << " : !vec) {\n"
-         << "  ^bb0(%v_i: vector<3xf64>):\n"
-         << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
-         << "    md.yield %v_s : vector<3xf64>\n"
-         << "  } : !vec\n"
-         << "  " << drifted << " = dyn.drift " << scaled
-         << ", %v1t, %half : !vec\n";
+      emitVelocityScaling("  ", "%v1t", middle, "%muinv");
+      emitDrift("  ", drifted, scaled, "%v1t", "%half");
       drifting = "%v1t";
     } else if (control.isLangevin()) {
       // The middle scheme: half a drift, the friction and the noise, and
       // the other half ([Zhang2019]; BAOAB of [Leimkuhler2013]).
-      os << "  %xh = dyn.drift %x, %v1, %half : !vec\n";
+      emitDrift("  ", "%xh", "%x", "%v1", "%half");
       emitLangevin("  ", "%v1", "%v1o");
-      os << "  " << drifted << " = dyn.drift %xh, %v1o, %half : !vec\n";
+      emitDrift("  ", drifted, "%xh", "%v1o", "%half");
       drifting = "%v1o";
     } else {
-      os << "  " << drifted << " = dyn.drift %x, %v1, %dt : !vec\n";
+      emitDrift("  ", drifted, "%x", "%v1", "%dt");
       if (sideVirial)
-        os << "  %x1dp = dyn.drift %x, %v1p, %dt : !vec\n";
+        emitDrift("  ", "%x1dp", "%x", "%v1p", "%dt");
     }
     // The constraints back to their lengths, and the velocities that take
     // the atoms there over the step (the first half of RATTLE).
@@ -399,38 +391,27 @@ void Builder::emitPrograms() {
         changes.push_back({set, result + "_change"});
         current = result;
       }
-      os << "  %one = arith.constant 1.0 : f64\n"
-         << "  %rate = arith.divf %one, " << length << " : f64\n"
-         << "  %v1c = md.map_particles gather(" << drifting << ", " << current
-         << ", %x1d : !vec, !vec, !vec) {\n"
-         << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
-            "%vs_u: vector<3xf64>):\n"
-         << "    %vs_d = arith.subf %vs_c, %vs_u : vector<3xf64>\n"
-         << "    %vs_r = vector.broadcast %rate : f64 to vector<3xf64>\n"
-         << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
-         << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
-         << "    md.yield %vs_sum : vector<3xf64>\n"
-         << "  } : !vec\n";
+      emitIRFragment(
+          "  ", {"%v1c"}, {"!vec"}, {drifting, current, "%x1d", length},
+          {"!vec", "!vec", "!vec", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildCorrectedHalfVelocity(builder, values[0], values[1], values[2], values[3])};
+          });
       velocities = "%v1c";
       if (sideVirial) {
         // What the constraints add to the drift of velocity Verlet: their
         // change of this drift, and what this drift is ahead of that one,
         // which lies along the constraints. Each set reads its own
         // particles.
-        os << "  %dxp = md.map_particles gather(%x1d, %x1dp : !vec, !vec) {\n"
-           << "  ^bb0(%vs_a: vector<3xf64>, %vs_b: vector<3xf64>):\n"
-           << "    %vs_d = arith.subf %vs_a, %vs_b : vector<3xf64>\n"
-           << "    md.yield %vs_d : vector<3xf64>\n"
-           << "  } : !vec\n";
+        emitIRFragment(
+            "  ", {"%dxp"}, {"!vec"}, {"%x1d", "%x1dp"}, {"!vec", "!vec"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              return {buildFieldDifference(builder, values[0], values[1])};
+            });
         unsigned index = 0;
         for (auto &[set, change] : changes) {
           std::string whole = "%dxp" + std::to_string(index++);
-          os << "  " << whole << " = md.map_particles gather(" << change
-             << ", %dxp : !vec, !vec) {\n"
-             << "  ^bb0(%vs_a: vector<3xf64>, %vs_b: vector<3xf64>):\n"
-             << "    %vs_s = arith.addf %vs_a, %vs_b : vector<3xf64>\n"
-             << "    md.yield %vs_s : vector<3xf64>\n"
-             << "  } : !vec\n";
+          emitAddChange("  ", change, "%dxp", whole);
           change = whole;
         }
       }
@@ -479,24 +460,24 @@ void Builder::emitPrograms() {
                                      "%m", "%r_", "1");
     }
     if (leapfrog && !withVirial && !scales && !measured) {
-      os << "  dyn.return %x1, " << velocities
-         << ", %f1 : !vec, !vec, !vec\n}\n\n";
+      emitDynamicsReturn("  ", {"%x1", velocities, "%f1"}, {"!vec", "!vec", "!vec"});
+      os << "}\n\n";
       continue;
     }
     if (brownian) {
       // No kick: the velocities are those of the displacement, with the
       // constraints. The virial is that of the forces alone.
-      os << "  dyn.return %x1, " << velocities << ", %f1"
-         << (withEnergy ? ", %u1" : "") << (withVirial ? ", " + virial : "")
-         << " : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-         << (withVirial ? ", vector<9xf64>" : "") << "\n}\n\n";
+      llvm::SmallVector<StringRef> values{"%x1", velocities, "%f1"}, types{"!vec", "!vec", "!vec"};
+      if (withEnergy) { values.push_back("%u1"); types.push_back("f64"); }
+      if (withVirial) { values.push_back(virial); types.push_back("vector<9xf64>"); }
+      emitDynamicsReturn("  ", values, types);
+      os << "}\n\n";
       continue;
     }
     // The second half kick, to the velocities of the time of the new
     // positions: those of the next step with velocity Verlet, and those of
     // the energies with leapfrog.
-    os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
-       << ", %f1, %m, %half : !vec\n";
+    emitKick("  ", constraints ? "%v2u" : "%v2", velocities, "%f1", "%m", "%half");
     // The virial of the constraints: the mean of those of the two halves of
     // the step, or, under Langevin dynamics, whose friction and noise act
     // within the drift, that of their forces at its end (D135).
@@ -523,22 +504,19 @@ void Builder::emitPrograms() {
     if (measured)
       emitHalfStepKinetic(velocities, leapfrog && !geodesic, solvent,
                           geodesic);
-    if (withVirial || scales || measured)
-      os << "  dyn.return %x1, " << stored << ", %f1"
-         << (withEnergy ? ", %u1" : "")
-         << (withVirial ? ", " + virial : "")
-         << (molecular ? ", " + groups : "")
-         << (returnsCurrent ? ", %v2" : "") << (scales ? ", %khalf" : "")
-         << (measured ? ", %khs" : "") << (solvent ? ", %kws" : "") << "\n"
-         << "      : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-         << (withVirial ? ", vector<9xf64>" : "")
-         << (molecular ? ", vector<3xf64>" : "")
-         << (returnsCurrent ? ", !vec" : "")
-         << (scales ? ", vector<3xf64>" : "")
-         << (measured ? ", vector<3xf64>" : "")
-         << (solvent ? ", vector<3xf64>" : "") << "\n";
-    else
-      os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
+    if (withVirial || scales || measured) {
+      llvm::SmallVector<StringRef> values{"%x1", stored, "%f1"}, types{"!vec", "!vec", "!vec"};
+      if (withEnergy) { values.push_back("%u1"); types.push_back("f64"); }
+      if (withVirial) { values.push_back(virial); types.push_back("vector<9xf64>"); }
+      if (molecular) { values.push_back(groups); types.push_back("vector<3xf64>"); }
+      if (returnsCurrent) { values.push_back("%v2"); types.push_back("!vec"); }
+      if (scales) { values.push_back("%khalf"); types.push_back("vector<3xf64>"); }
+      if (measured) { values.push_back("%khs"); types.push_back("vector<3xf64>"); }
+      if (solvent) { values.push_back("%kws"); types.push_back("vector<3xf64>"); }
+      emitDynamicsReturn("  ", values, types);
+    } else {
+      emitDynamicsReturn("  ", {"%x1", "%v2", "%f1"}, {"!vec", "!vec", "!vec"});
+    }
     os << "}\n\n";
   }
 }
@@ -1345,11 +1323,17 @@ void Builder::emitDescend() {
      << (hasHostEvaluation()
              ? "{read = [\"<Default>\"], write = [\"<Default>\"]}"
              : "{}")
-     << "} {\n"
-     << "  %zero = arith.constant 0.0 : f64\n"
-     << "  %tiny = arith.constant 1.0e-300 : f64\n"
-     << "  %count = arith.constant "
-     << formatReal(static_cast<double>(system.getNumParticles())) << " : f64\n";
+     << "} {\n";
+  emitIRFragment(
+      "  ", {"%zero", "%tiny", "%count"}, {"f64", "f64", "f64"}, {}, {},
+      [count = static_cast<double>(system.getNumParticles())](
+          mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value zero = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+        mlir::Value tiny = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0e-300));
+        mlir::Value particles = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(count));
+        return {zero, tiny, particles};
+      });
   emitConstrainedDescent("  ", "%x", "%f", "%g");
   std::string trial = sites || constraints ? "%x1d" : "%x1";
   emitIRFragment(
@@ -1411,7 +1395,13 @@ void Builder::emitDescend() {
   if (sites)
     emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
   if (hasForceCorrections()) {
-    os << "  %w1z = arith.constant dense<0.0> : vector<9xf64>\n";
+    emitIRFragment(
+        "  ", {"%w1z"}, {"vector<9xf64>"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          auto vec = mlir::VectorType::get({9}, builder.getF64Type());
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+                                                  mlir::DenseElementsAttr::get(vec, 0.0))};
+        });
     emitForceCorrections("  ", "%x1", "%p_", "%f1p", hostTerms ? "%f1c" : "%f1",
                    "%u1p", hostTerms ? "%u1c" : "%u1", "%w1z", "%w1r");
   }
@@ -1427,7 +1417,8 @@ void Builder::emitDescend() {
         });
     energy = "%u1c";
   }
-  os << "  dyn.return %x1, %f1, " << energy << " : !vec, !vec, f64\n}\n\n";
+  emitDynamicsReturn("  ", {"%x1", "%f1", energy}, {"!vec", "!vec", "f64"});
+  os << "}\n\n";
 }
 
 void Builder::emitCellOf(StringRef indent, StringRef name, StringRef prefix) {
@@ -1504,5 +1495,45 @@ void Builder::emitEnergyEvaluation(
         if (request.forces) outputs.push_back(result.forces);
         if (request.virial) outputs.push_back(result.virial);
         return outputs;
+      });
+}
+
+void Builder::emitKick(StringRef indent, StringRef result, StringRef velocity,
+                         StringRef force, StringRef mass, StringRef interval) {
+  emitIRFragment(indent, {result}, {"!vec"}, {velocity, force, mass, interval},
+      {"!vec", "!vec", "!real", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildKick(builder, values[0], values[1], values[2], values[3])};
+      });
+}
+void Builder::emitDrift(StringRef indent, StringRef result, StringRef positions,
+                          StringRef velocities, StringRef interval) {
+  emitIRFragment(indent, {result}, {"!vec"}, {positions, velocities, interval},
+      {"!vec", "!vec", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildDrift(builder, values[0], values[1], values[2])};
+      });
+}
+void Builder::emitDriftScale(StringRef indent) {
+  emitIRFragment(indent, {"%mu_m1", "%muinv"}, {"vector<3xf64>", "vector<3xf64>"},
+      {"%mu"}, {"vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto result = buildDriftScale(builder, values[0]);
+        return {result.oneMinus, result.inverse};
+      });
+}
+void Builder::emitVelocityScaling(StringRef indent, StringRef result,
+                                     StringRef velocities, StringRef scale) {
+  emitIRFragment(indent, {result}, {"!vec"}, {velocities, scale}, {"!vec", "vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildVelocityScaling(builder, values[0], values[1])};
+      });
+}
+void Builder::emitDynamicsReturn(StringRef indent, llvm::ArrayRef<StringRef> values,
+                                    llvm::ArrayRef<StringRef> types) {
+  emitIRFragment(indent, {}, {}, values, types,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::dyn::ReturnOp::create(builder, builder.getUnknownLoc(), values);
+        return {};
       });
 }
