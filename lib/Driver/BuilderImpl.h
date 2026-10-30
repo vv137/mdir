@@ -144,6 +144,22 @@ struct PairTermTail {
 
 class Builder;
 
+// Temporary private connections to the remaining assembly. Native recipes
+// capture only typed physical state, counts, and owned scalar configuration.
+struct PotentialConnections {
+  std::vector<std::string> values, types;
+  size_t fields;
+  bool timed;
+  PotentialConnections(const Program &, StringRef positions, StringRef cell,
+                         StringRef prefix, StringRef time, bool timed);
+  void add(StringRef value, StringRef type) {
+    values.push_back(value.str());
+    types.push_back(type.str());
+  }
+  llvm::SmallVector<StringRef> names() const { return {values.begin(), values.end()}; }
+  llvm::SmallVector<StringRef> signatures() const { return {types.begin(), types.end()}; }
+};
+
 /// The borrowed read-only inputs of a term adapter (D361).
 /// No accessor returns the builder or its scheduling state.
 class TermInputs {
@@ -720,6 +736,9 @@ private:
   unsigned getNumPotentialArguments() const override;
 
   void emitPrograms();
+  void emitEnergyEvaluation(StringRef indent, StringRef x, StringRef cell,
+                              StringRef prefix, StringRef time, StringRef energy,
+                              StringRef forces, StringRef virial);
   /// Collects the values of Program::startValues, which the entry takes
   /// as arguments (D227).
   void collectStartValues();

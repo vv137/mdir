@@ -70,6 +70,7 @@ add_mlir_library(MDIRDriver
   NoiseIR.cpp
   KineticIR.cpp
   OutputIR.cpp
+  PotentialIR.cpp
   BarostatIR.cpp
   DynamicsIR.cpp
   ReorderIR.cpp

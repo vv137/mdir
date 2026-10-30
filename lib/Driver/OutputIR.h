@@ -3,6 +3,7 @@
 #define MDIR_LIB_DRIVER_OUTPUTIR_H
 
 #include "mlir/IR/ValueRange.h"
+#include "PotentialIR.h"
 #include "llvm/ADT/ArrayRef.h"
 #include <cstddef>
 #include <optional>
@@ -14,17 +15,12 @@ namespace mlir {
 class OpBuilder;
 }
 namespace mdir::driver::builder {
-struct OutputStateIR {
-  mlir::Value positions, cell;
-  mlir::ValueRange fields;
-  mlir::Value time;
-};
 struct FreeEnergyOutputConfig {
   std::vector<std::vector<double>> lambdas;
   size_t state;
   unsigned baseArgument;
 };
-void buildFreeEnergyOutput(mlir::OpBuilder &, const OutputStateIR &,
+void buildFreeEnergyOutput(mlir::OpBuilder &, const PotentialStateIR &,
                             mlir::Value step, mlir::Value zeroIndex,
                             mlir::Value oneIndex,
                             const FreeEnergyOutputConfig &);
@@ -39,7 +35,7 @@ struct ObservableOutputTermIR {
   // the output slot, in the user's observe order.
   std::vector<std::pair<int64_t, unsigned>> columns;
 };
-void buildObservablesOutput(mlir::OpBuilder &, const OutputStateIR &,
+void buildObservablesOutput(mlir::OpBuilder &, const PotentialStateIR &,
                              mlir::Value step, size_t count,
                              unsigned baseArgument,
                              llvm::ArrayRef<ObservableOutputTermIR>,
@@ -47,14 +43,14 @@ void buildObservablesOutput(mlir::OpBuilder &, const OutputStateIR &,
 struct TunableGradientOutputConfig {
   std::vector<unsigned> scalarArguments, fieldArguments;
 };
-void buildTunableGradientOutput(mlir::OpBuilder &, const OutputStateIR &,
+void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
                                  mlir::Value asked, mlir::Value zeroIndex,
                                  mlir::Value oneIndex, mlir::Value ids,
                                  mlir::ValueRange constants,
                                  mlir::ValueRange seeds,
                                  const TunableGradientOutputConfig &);
 void buildWriteSolvent(mlir::OpBuilder &, mlir::Value sums);
-mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const OutputStateIR &,
+mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const PotentialStateIR &,
                                     llvm::ArrayRef<std::string> potentials,
                                     size_t count);
 void buildWriteTerms(mlir::OpBuilder &, mlir::Value memory);

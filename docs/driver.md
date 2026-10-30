@@ -1392,8 +1392,9 @@ scaled-norm minimization motion and explicit accepted/rejected trial state.
 derived lists, and topology renumbering from typed state and semantic slots.
 `BuilderPotential.cpp` constructs shared neighborhood selection, scalar
 accumulation, lambda constants, and potential returns with native operations.
-Potential signatures, remaining dynamics, entry energy rows, and schedule
-construction remain in progress. The
+`PotentialIR.cpp` supplies shared physical state, explicit energy/force/virial
+evaluations, and step-time conversion. Potential signatures, remaining
+dynamics, entry energy rows, and schedule construction remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
 
