@@ -72,6 +72,7 @@ add_mlir_library(MDIRDriver
   OutputIR.cpp
   BarostatIR.cpp
   DynamicsIR.cpp
+  ReorderIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp
