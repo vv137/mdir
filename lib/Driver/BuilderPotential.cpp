@@ -446,41 +446,6 @@ std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
   return virial;
 }
 
-void Builder::emitTerms(StringRef x) {
-  if (!system.topology)
-    return;
-  // The restraints, if any, last: their energy at the start is that of the
-  // evaluation before the terms.
-  // The terms given by expressions follow those of the topology, those
-  // over tuples (D136) and then those over pairs (D137).
-  const auto definitions = getTermDefinitions();
-  unsigned storedTermCount = 0;
-  for (const TermBuilder *builder : getTermBuilders())
-    if (const auto *role = builder->getRoles().postEvaluation)
-      storedTermCount += role->getStoredTermCount(*this);
-  int size =
-      definitions.size() + storedTermCount;
-  std::string type = "memref<" + std::to_string(size) + "xf64>";
-  os << "  %terms = memref.alloca() : " << type << "\n";
-  int index = 0;
-  for (const TermDefinition &definition : definitions) {
-    StringRef name = definition.name;
-    os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
-       << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> f64\n"
-       << "  %i_" << name << " = arith.constant " << index++ << " : index\n"
-       << "  memref.store %" << name << ", %terms[%i_" << name << "] : "
-       << type << "\n";
-  }
-  for (const TermBuilder *builder : getTermBuilders())
-    if (const auto *role = builder->getRoles().postEvaluation)
-      role->emitStoredTerms(*this, type, index);
-  os << "  %terms_cast = memref.cast %terms : " << type << " to "
-        "memref<?xf64>\n"
-     << "  func.call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
-}
-
 void Builder::emitPairNeighborhood(StringRef indent, StringRef result,
                                      StringRef positions, StringRef cell,
                                      StringRef excluded) {

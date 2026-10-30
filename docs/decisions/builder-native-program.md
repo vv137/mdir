@@ -151,4 +151,9 @@ retains registry order, and the scalar configuration snapshot owns the cutoff
 and lambda values. Empty topology energies retain their zero constant. The
 remaining potential signatures and surrounding program structure still join
 assembly until their typed scopes are constructed directly.
+The initial term-energy buffer is an explicit native output shared with the
+stored-correction recipes. Definitions are evaluated and stored in their
+existing order before the stored correction energies; the final dynamic
+memref cast and host write remain last. The physical output state and owned
+potential-symbol list cross the native capability, without builder captures.
 D363's term recipes still join remaining assembly at this commit.

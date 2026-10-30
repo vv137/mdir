@@ -1,4 +1,4 @@
-// Free-energy, observable, tunable-gradient, and solvent outputs.
+// Term-energy, free-energy, observable, tunable-gradient, and solvent outputs.
 #include "BuilderImpl.h"
 #include "OutputIR.h"
 
@@ -175,6 +175,40 @@ void Builder::emitWriteSolvent(StringRef indent, StringRef sums) {
       indent, {}, {}, {sums}, {"vector<3xf64>"},
       [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
         buildWriteSolvent(builder, values[0]);
+        return {};
+      });
+}
+
+void Builder::emitTerms(StringRef x) {
+  if (!system.topology)
+    return;
+  // Expressions retain topology/tuple/pair order. Stored corrections follow
+  // the evaluated terms, as in the initial energy row.
+  const auto definitions = getTermDefinitions();
+  unsigned storedTermCount = 0;
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const auto *role = builder->getRoles().postEvaluation)
+      storedTermCount += role->getStoredTermCount(*this);
+  size_t count = definitions.size() + storedTermCount;
+  std::string type = "memref<" + std::to_string(count) + "xf64>";
+  std::vector<std::string> potentials;
+  for (const auto &definition : definitions)
+    potentials.push_back(definition.name);
+  OutputConnections input(program, x, "%cell", "%p_", "%time0", control.usesTime);
+  emitIRFragment(
+      "  ", {"%terms"}, {type}, input.names(), input.signatures(),
+      [potentials = std::move(potentials), count, fields = input.fields,
+       timed = input.timed](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildTermEnergyBuffer(builder, state(values, fields, timed), potentials, count)};
+      });
+  int index = definitions.size();
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const auto *role = builder->getRoles().postEvaluation)
+      role->emitStoredTerms(*this, type, index);
+  emitIRFragment(
+      "  ", {}, {}, {"%terms"}, {type},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildWriteTerms(builder, values[0]);
         return {};
       });
 }
