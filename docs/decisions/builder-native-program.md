@@ -138,4 +138,11 @@ positions and acceptance predicate explicitly; the energy consumer borrows
 that predicate and preserves the positive-infinity rejected value. Scalar
 roots, mass-metric direction, projection order, and vector broadcasts remain
 at their original points in the graph.
+Particle reordering uses typed state in `ReorderIR.cpp`, preserving the
+constraint-anchor renumber/gather, spatial ordering, field/ID permutations,
+and final topology renumbering. Derived listed-particle fields are regenerated
+from the preceding semantic source field slot rather than permuted. Native
+inputs omit unused listed-field values and absent force state; results name
+all state and parameter fields required by the schedule. The unused anchor
+coordinate and zero contribution remain in the original gather kernel.
 D363's term recipes still join remaining assembly at this commit.

@@ -2,6 +2,7 @@
 // points of mdir/Driver/Builder.h (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "ReorderIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -50,70 +51,101 @@ void Builder::emitReorder(StringRef indent, StringRef from,
                           StringRef stateTo, StringRef otherTo,
                           bool withForces, StringRef velocities,
                           StringRef forcesTo) {
-  StringRef order = "!mdrt.permutation<@atoms>";
-  // A particle goes where the anchor of its constraint group is (D110):
-  // the positions that the order takes are those of the anchors, from the
-  // pairs of the anchors in the order the particles are in now.
-  std::string ordered = ("%x" + from).str();
-  if (llvm::any_of(program.tupleSets, [](const Program::TupleSet &set) {
-        return set.name == "anchors";
-      })) {
-    ordered = ("%xanchor" + stateTo).str();
-    os << indent << "%ranchor" << stateTo << " = md_exec.renumber %ro_anchors, %id"
-       << from << " : !rel_anchors, !ids\n"
-       << indent << ordered << " = md.gather_tuples %ranchor" << stateTo << ", %x"
-       << from << ", " << cellName << " coordinates(displacement(1, 0)) gather(%x" << from
-       << " : !vec) {\n"
-       << indent << "^bb0(%xanchor_d: vector<3xf64>, %xanchor_0: vector<3xf64>, "
-       << "%xanchor_1: vector<3xf64>):\n"
-       << indent << "  %xanchor_none = arith.constant dense<0.0> : vector<3xf64>\n"
-       << indent << "  md.yield %xanchor_1, %xanchor_none : vector<3xf64>, vector<3xf64>\n"
-       << indent << "} : !rel_anchors, !vec -> !vec\n";
-  }
-  os << indent << "%order" << stateTo << " = md_exec.spatial_order "
-     << ordered << ", " << cellName << ", %id" << from << " width("
-     << formatReal(program.orderWidth) << ")\n"
-     << indent << "    : !vec, !ids -> " << order << "\n";
-  auto permute = [&](const llvm::Twine &result, const llvm::Twine &field,
-                     StringRef type) {
-    os << indent << result << " = md_exec.permute " << field << ", %order"
-       << stateTo << "\n"
-       << indent << "    : " << type << ", " << order << " -> " << type
-       << "\n";
-  };
-  permute("%x" + stateTo, "%x" + from, "!vec");
-  permute(velocities, "%v" + from, "!vec");
+  std::vector<std::string> inputs = {("%x" + from).str(), ("%v" + from).str(),
+      ("%m" + from).str(), ("%id" + from).str(), cellName};
+  std::vector<std::string> types = {"!vec", "!vec", "!real", "!ids", "!md.cell"};
   if (withForces) {
-    if (forcesTo.empty())
-      permute("%f" + stateTo, "%f" + from, "!vec");
-    else
-      permute(forcesTo, "%f" + from, "!vec");
+    inputs.push_back(("%f" + from).str());
+    types.push_back("!vec");
   }
-  permute("%m" + otherTo, "%m" + from, "!real");
-  for (const Program::Field &field : program.fields) {
-    // A list of the places of particles is made again from the permuted
-    // field that it lists (D262), which comes
-    // before it.
-    StringRef name = field.name;
-    if (name == "pme_listed" || name == "ljpme_listed") {
-      StringRef source = name == "pme_listed" ? "q" : "ljpme_c";
-      os << indent << "%p" << otherTo << "_" << name << " = md_exec.nonzero %p"
-         << otherTo << "_" << source << " : !real -> !ids\n";
-      continue;
+  std::vector<std::string> outputs = {("%x" + stateTo).str(), velocities.str()};
+  std::vector<std::string> outTypes = {"!vec", "!vec"};
+  if (withForces) {
+    outputs.push_back(forcesTo.empty() ? ("%f" + stateTo).str() : forcesTo.str());
+    outTypes.push_back("!vec");
+  }
+  outputs.push_back(("%m" + otherTo).str());
+  outTypes.push_back("!real");
+  std::vector<unsigned> inputSlots;
+  std::vector<std::optional<unsigned>> regenerated;
+  for (auto [index, field] : llvm::enumerate(program.fields)) {
+    outputs.push_back(("%p" + otherTo + "_" + field.name).str());
+    outTypes.push_back(getFieldType(field).str());
+    if (field.name == "pme_listed" || field.name == "ljpme_listed") {
+      StringRef source = field.name == "pme_listed" ? "q" : "ljpme_c";
+      auto found = llvm::find_if(program.fields, [&](const auto &candidate) {
+        return candidate.name == source;
+      });
+      unsigned slot = std::distance(program.fields.begin(), found);
+      assert(slot < index && "derived list must follow its source field");
+      regenerated.push_back(slot);
+      inputSlots.push_back(0);
+    } else {
+      regenerated.push_back(std::nullopt);
+      inputSlots.push_back(inputs.size());
+      inputs.push_back(("%p" + from + "_" + field.name).str());
+      types.push_back(getFieldType(field).str());
     }
-    permute("%p" + otherTo + "_" + field.name,
-            "%p" + from + "_" + field.name, getFieldType(field));
   }
-  permute("%id" + otherTo, "%id" + from, "!ids");
-  emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
+  outputs.push_back(("%id" + otherTo).str());
+  outTypes.push_back("!ids");
+  size_t relationBase = inputs.size();
+  ReorderIRConfig config{program.orderWidth, {}};
+  for (auto [index, set] : llvm::enumerate(program.tupleSets)) {
+    inputs.push_back("%ro_" + set.name);
+    types.push_back("!rel_" + set.name);
+    outputs.push_back(("%r" + otherTo + "_" + set.name).str());
+    outTypes.push_back("!rel_" + set.name);
+    if (set.name == "anchors")
+      config.anchorRelation = index;
+  }
+  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
+      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
+      resultTypes(outTypes.begin(), outTypes.end());
+  emitIRFragment(
+      indent, out, resultTypes, in, inTypes,
+      [config, withForces, inputSlots = std::move(inputSlots),
+       regenerated = std::move(regenerated), relationBase](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        std::vector<ReorderFieldIR> fields;
+        for (size_t k = 0; k != inputSlots.size(); ++k)
+          fields.push_back({regenerated[k] ? mlir::Value{} : values[inputSlots[k]], regenerated[k]});
+        ReorderIRInputs input{values[0], values[1], withForces ? values[5] : mlir::Value{},
+            values[2], values[3], values[4], fields, values.drop_front(relationBase)};
+        auto result = buildReorder(builder, input, config);
+        TermIRValues outputs{result.positions, result.velocities};
+        if (withForces)
+          outputs.push_back(result.forces);
+        outputs.push_back(result.masses);
+        llvm::append_range(outputs, result.fields);
+        outputs.push_back(result.ids);
+        llvm::append_range(outputs, result.relations);
+        return outputs;
+      });
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
                            const llvm::Twine &prefix) {
-  // From the members in the order of the files.
-  for (const Program::TupleSet &set : program.tupleSets)
-    os << indent << prefix << set.name << " = md_exec.renumber %ro_"
-       << set.name << ", " << ids << " : !rel_" << set.name << ", !ids\n";
+  if (program.tupleSets.empty())
+    return;
+  std::vector<std::string> inputs{ids.str()}, types{"!ids"}, outputs, outTypes;
+  for (const auto &set : program.tupleSets) {
+    inputs.push_back("%ro_" + set.name);
+    types.push_back("!rel_" + set.name);
+    outputs.push_back((prefix + set.name).str());
+    outTypes.push_back("!rel_" + set.name);
+  }
+  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
+      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
+      resultTypes(outTypes.begin(), outTypes.end());
+  emitIRFragment(
+      indent, out, resultTypes, in, inTypes,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        TermIRValues results;
+        for (mlir::Value relation : values.drop_front())
+          results.push_back(buildRenumber(builder, relation, values[0]));
+        return results;
+      });
 }
 
 std::string Builder::getFieldTypes() const {
