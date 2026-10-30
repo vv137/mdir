@@ -1,5 +1,6 @@
 // Molecular pressure and rigid-center motion in their original shared regions.
 #include "CouplingIR.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "KineticIR.h"
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -224,4 +225,75 @@ GroupKineticResult mdir::driver::builder::buildGroupKinetic(
   Value forceTerm = k.mul(force, broadcast);
   Value half = k.add(kinetic, forceTerm);
   return {kinetic, forceTerm, half};
+}
+
+CenterMotionResult mdir::driver::builder::buildCenterMotion(
+    OpBuilder &builder, const CenterMotionInputs &in) {
+  Kernel k(builder);
+  if (!in.totalMass)
+    return {{}, {}, k.constant(0.0)};
+  auto loc = builder.getUnknownLoc();
+  Value momentum = buildMomentum(builder, in.velocities, in.masses);
+  Value center = k.div(momentum, in.totalMass);
+  Value product = k.mul(momentum, center);
+  Value sum = vector::ReductionOp::create(builder, loc, vector::CombiningKind::ADD, product);
+  Value energy = k.mul(in.half, sum);
+  return {momentum, center, energy};
+}
+
+Value mdir::driver::builder::buildAxesWithoutCenter(
+    OpBuilder &builder, Value kinetic, Value momentum, Value center, Value half) {
+  Kernel k(builder);
+  Value product = k.mul(momentum, center);
+  Value energy = k.mul(half, product);
+  return k.sub(kinetic, energy);
+}
+
+ThermostatIRResult mdir::driver::builder::buildThermostat(
+    OpBuilder &builder, const ThermostatIRInputs &in, bool noseHoover) {
+  auto loc = builder.getUnknownLoc();
+  Kernel k(builder);
+  Value kinetic = in.totalEnergy;
+  if (in.centerEnergy)
+    kinetic = k.sub(kinetic, in.centerEnergy);
+  Value controlled = in.optimal ? in.optimal : kinetic;
+  if (in.optimal && in.centerEnergy)
+    controlled = k.sub(controlled, in.centerEnergy);
+  Value factor;
+  if (noseHoover) {
+    factor = func::CallOp::create(builder, loc, "mdrtNoseHooverFactor",
+        TypeRange{builder.getF64Type()}, ValueRange{in.step, controlled}).getResult(0);
+  } else {
+    factor = func::CallOp::create(builder, loc, "mdrtBussiFactor",
+        TypeRange{builder.getF64Type()},
+        ValueRange{in.seed, in.step, controlled, in.target, in.freedom, in.decay}).getResult(0);
+  }
+  Value squared = k.mul(factor, factor);
+  Value after = k.mul(squared, kinetic);
+  Value heat = k.sub(in.totalEnergy, after);
+  return {factor, squared, heat};
+}
+
+Value mdir::driver::builder::buildCoupledVelocities(
+    OpBuilder &builder, Value velocities, Value center, Value factor,
+    Value inverse, Value bath) {
+  auto loc = builder.getUnknownLoc();
+  func::CallOp::create(builder, loc, "mdrtAddBath", TypeRange{}, ValueRange{bath});
+  auto map = mdir::md::MapParticlesOp::create(builder, loc, velocities.getType(), ValueRange{velocities});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = kernel(builder, map.getKernel(), 1, 0)->getArguments();
+    Kernel k(builder);
+    Value value = args[0];
+    if (center)
+      value = k.sub(value, center);
+    if (factor) {
+      Value broadcast = k.broadcast(factor);
+      value = k.mul(broadcast, value);
+    }
+    if (inverse)
+      value = k.mul(inverse, value);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{value});
+  }
+  return map.getResult();
 }
