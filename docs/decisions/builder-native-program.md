@@ -162,4 +162,10 @@ without center motion, host factor calls, squared factors, and heat from the
 actual kinetic energy. Only parameters used by the selected thermostat cross
 its typed input. The final velocity map retains center subtraction, thermostat
 scaling, and non-Trotter barostat scaling in order, after the bath host call.
+Barostat work preserves scaled kinetic energy, stored group state, first-order
+or mean virial work, and kinetic scale changes as typed scalar/vector results.
+Trotter work retains its subtraction order; exact work retains the constant
+energy change from inverse volumes and the energy difference of the newly
+evaluated positions. Projection/evaluation phases remain in their original
+places between these computations, with no algebraic reassociation.
 D363's term recipes still join remaining assembly at this commit.

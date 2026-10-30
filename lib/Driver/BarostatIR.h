@@ -33,5 +33,28 @@ struct VirialDiagonalIR {
 VirialDiagonalIR buildVirialDiagonal(mlir::OpBuilder &, mlir::Value virial);
 mlir::Value buildVirialTrace(mlir::OpBuilder &, mlir::Value virial);
 mlir::Value buildSum3(mlir::OpBuilder &, mlir::Value vector);
+mlir::Value buildScaleKinetic(mlir::OpBuilder &, mlir::Value squaredFactor, mlir::Value kinetic);
+mlir::Value buildScaledGroupKinetic(mlir::OpBuilder &, mlir::Value squaredFactor,
+                                     mlir::Value kinetic, mlir::Value forceTerm);
+mlir::Value buildVirialWork(mlir::OpBuilder &, mlir::Value virial, mlir::Value logScale);
+struct MeanVirialWorkInputs {
+  mlir::Value constantVirial, newVolume, third, groupsAfter, workBefore, half, logScale;
+};
+mlir::Value buildMeanVirialWork(mlir::OpBuilder &, const MeanVirialWorkInputs &);
+mlir::Value buildKineticScaleChange(mlir::OpBuilder &, mlir::Value inverse,
+                                     mlir::Value unit, mlir::Value kinetic);
+mlir::Value buildTrotterBath(mlir::OpBuilder &, mlir::Value inverse, mlir::Value unit,
+                              mlir::Value kinetic, mlir::Value work, mlir::Value bath);
+mlir::Value buildOneMinusScale(mlir::OpBuilder &, mlir::Value unit, mlir::Value scale);
+mlir::Value buildFirstOrderVirialWork(mlir::OpBuilder &, mlir::Value groups,
+                                       mlir::Value constantTrace, mlir::Value third,
+                                       mlir::Value oneMinusScale);
+mlir::Value buildBathAfterWork(mlir::OpBuilder &, mlir::Value work,
+                                mlir::Value kineticChange, mlir::Value bath);
+struct ExactBathInputs {
+  mlir::ValueRange edges;
+  mlir::Value unit, oldVolume, constantEnergy, newEnergy, oldEnergy, kineticChange, bath;
+};
+mlir::Value buildExactBath(mlir::OpBuilder &, const ExactBathInputs &);
 } // namespace mdir::driver::builder
 #endif
