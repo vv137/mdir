@@ -1387,8 +1387,10 @@ and checkpointed barostat stores with typed state. `DynamicsIR.cpp` supplies
 scaled-norm minimization motion and explicit accepted/rejected trial state.
 `ReorderIR.cpp` constructs anchor-based spatial order, field permutations,
 derived lists, and topology renumbering from typed state and semantic slots.
-Shared potential wrappers,
-dynamics, output, and schedule construction also remain in progress. The
+`BuilderPotential.cpp` constructs shared neighborhood selection, scalar
+accumulation, lambda constants, and potential returns with native operations.
+Potential signatures, remaining dynamics, energy-row output, and schedule
+construction remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
 
