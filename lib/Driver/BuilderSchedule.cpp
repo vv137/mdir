@@ -62,18 +62,6 @@ void Builder::emitStartBranch(std::string chunk,
   os << "\n";
 }
 
-/// The trace of the virial `virial`, which enters the pressure.
-static void emitTrace(llvm::raw_ostream &os, StringRef result,
-                      StringRef virial, StringRef indent) {
-  for (StringRef part : {"0", "4", "8"})
-    os << indent << result << "_" << part << " = vector.extract " << virial
-       << "[" << part << "] : f64 from vector<9xf64>\n";
-  os << indent << result << "_04 = arith.addf " << result << "_0, " << result
-     << "_4 : f64\n"
-     << indent << result << " = arith.addf " << result << "_04, " << result
-     << "_8 : f64\n";
-}
-
 void Builder::emitLevel(unsigned level, StringRef indent) {
   // The state that the loops carry: positions, velocities, and forces.
   std::string state = "!vec, !vec, !vec";
@@ -145,7 +133,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     emitCellOf(inner, cellName, "%edge" + here);
     if (scalesReference()) {
       scaleName = "%rest_scale" + here;
-      emitReferenceScale(os, inner, scaleName, "%edge" + here + "_0",
+      emitReferenceScale(inner, scaleName, "%edge" + here + "_0",
                          "%edge" + here + "_1", "%edge" + here + "_2");
     }
   }
@@ -184,7 +172,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       emitCellOf(inner, cellName, "%edger" + here);
       if (scalesReference()) {
         scaleName = "%rest_scaler" + here;
-        emitReferenceScale(os, inner, scaleName, "%edger" + here + "_0",
+        emitReferenceScale(inner, scaleName, "%edger" + here + "_0",
                            "%edger" + here + "_1", "%edger" + here + "_2");
       }
     }
@@ -278,7 +266,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (excess.empty())
         return "";
       emitKineticEnergy(o + "k", full, massName, inner);
-      emitSum3(os, o + "g", excess, inner);
+      emitSum3(o + "g", excess, inner);
       os << inner << o << "c = arith.constant " << formatReal(2.0 / 3.0)
          << " : f64\n"
          << inner << o << "e = arith.mulf " << o << "c, " << o << "g : f64\n"
@@ -344,7 +332,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << ") -> (!vec, !vec, !vec, vector<9xf64>, vector<3xf64>"
            << (leapfrog ? ", !vec" : "") << ")\n";
         trace = "%dg" + a;
-        emitDiagonal(os, trace, "%w" + a, inner);
+        emitDiagonal(trace, "%w" + a, inner);
         groups = "%gw" + a;
         x = "%x" + a;
         v = "%v" + a;
@@ -400,7 +388,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         TrotterScaling scaling = emitTrotterSteps(k, /*withEnergy=*/false);
         if (countsAfterScaling()) {
           trace = "%dg" + k;
-          emitDiagonal(os, trace, "%w" + k, inner);
+          emitDiagonal(trace, "%w" + k, inner);
         }
         std::string optimal = emitOptimal(
             k, isLeapfrog() ? "%vc" + k : "%v" + k,
@@ -435,7 +423,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << (isLeapfrog() ? ", !vec" : "")
            << (measured ? ", vector<3xf64>" : "") << ")\n";
         trace = "%dgk" + here;
-        emitDiagonal(os, trace, "%wk" + here, inner);
+        emitDiagonal(trace, "%wk" + here, inner);
         emitStep();
         std::string optimal = emitOptimal(
             "k" + here, isLeapfrog() ? current : "%vk" + here,
@@ -545,23 +533,23 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (excess.empty())
         os << inner << "%g = arith.constant 0.0 : f64\n";
       else
-        emitSum3(os, "%g", excess, inner);
+        emitSum3("%g", excess, inner);
       if (reportsSolvent())
         emitWriteSolvent(inner, "%kwsl");
       // The pressure of the log is that of the barostat, of the groups
       // (D264): the trace of their virial and the
       // kinetic energy of their centers at the half steps.
       if (control.isBrownian()) {
-        emitTrace(os, "%tr", virialName, inner);
+        emitTrace("%tr", virialName, inner);
         os << inner << "%kph = arith.addf %k, %g : f64\n";
       } else {
-        emitSum3(os, "%tr", "%gwl", inner);
+        emitSum3("%tr", "%gwl", inner);
         GroupKinetic centers =
             emitGroupKinetic(inner, "%xl", full, "%fl", "l" + here);
-        emitSum3(os, "%kph", centers.half, inner);
+        emitSum3("%kph", centers.half, inner);
       }
       if (couplesBelow && control.barostat)
-        emitDiagonal(os, "%dg", virialName, inner);
+        emitDiagonal("%dg", virialName, inner);
       if (!scalesHere)
         emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
@@ -1259,12 +1247,12 @@ void Builder::emitEntry() {
       os << "  %frame_ask_" << k << " = memref.load %frame_asks[%frame_at" << k
          << "] : memref<2xf64>\n";
     if (scalesReference())
-      emitReferenceScale(os, "  ", "%rest_scale", "%frame_cell_0",
+      emitReferenceScale("  ", "%rest_scale", "%frame_cell_0",
                          "%frame_cell_1", "%frame_cell_2");
     emitCellOf("  ", "%cell", "%frame_cell");
   } else {
     if (scalesReference())
-      emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
+      emitReferenceScale("  ", "%rest_scale", "%lx", "%ly", "%lz");
     if (isTriclinic()) {
       os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
             "%tilt_cy\n";
@@ -1526,9 +1514,15 @@ void Builder::emitEntry() {
     // The diagonal of the virial, which semi-isotropic coupling takes axis
     // by axis, for comparison with other programs (D119).
     if (system.topology) {
-      emitDiagonal(os, "%dgw0", virial, "  ");
-      os << "  func.call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
-            " : (f64, f64, f64) -> ()\n";
+      auto diagonal = emitDiagonal("%dgw0", virial, "  ");
+      emitIRFragment(
+          "  ", {}, {}, {diagonal.xx, diagonal.yy, diagonal.zz},
+          {"f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mlir::func::CallOp::create(builder, builder.getUnknownLoc(),
+                                        "mdrtWriteVirial", mlir::TypeRange{}, values);
+            return {};
+          });
     }
     emitKineticEnergy("%k0", velocities, "%m", "  ");
     // K_half - K from the forces without constraints; with them there is
@@ -1539,11 +1533,11 @@ void Builder::emitEntry() {
     if (startExcess.empty())
       os << "  %g0 = arith.constant 0.0 : f64\n";
     else
-      emitSum3(os, "%g0", startExcess, "  ");
+      emitSum3("%g0", startExcess, "  ");
     std::string trace = "%tr0", pressureKinetic = "%kph0";
     if (control.frames || control.isBrownian()) {
       // The frame evaluator reports the atomic virial of the forces.
-      emitTrace(os, "%tr0", virial, "  ");
+      emitTrace("%tr0", virial, "  ");
       if (hasConstraints())
         trace = emitStartConstraintTrace("%x0", "%f0", velocities, trace);
       os << "  %kph0 = arith.addf %k0, %g0 : f64\n";
@@ -1551,13 +1545,13 @@ void Builder::emitEntry() {
       // The pressure of the groups, whose kinetic energy at the half steps
       // the forces give with constraints as well
       // (D264).
-      emitDiagonal(os, "%dgp0", virial, "  ");
+      emitDiagonal("%dgp0", virial, "  ");
       std::string groups = emitMolecularDiagonal(
           "  ", "%dgp0", "%x0", "%f0", "%cell", "%m", "%r_", "p0");
-      emitSum3(os, "%tr0", groups, "  ");
+      emitSum3("%tr0", groups, "  ");
       GroupKinetic centers =
           emitGroupKinetic("  ", "%x0", velocities, "%f0", "s0");
-      emitSum3(os, "%kph0", centers.half, "  ");
+      emitSum3("%kph0", centers.half, "  ");
     }
     os << "  func.call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ", " << pressureKinetic << ")\n"
@@ -1572,7 +1566,7 @@ void Builder::emitEntry() {
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
-      emitDiagonal(os, "%dg0", virial, "  ");
+      emitDiagonal("%dg0", virial, "  ");
       std::string diagonal = "%dg0";
       if (hasConstraints())
         diagonal = emitStartConstraintTrace("%x0", "%f0", velocities,
@@ -1701,7 +1695,7 @@ void Builder::emitEntry() {
          << ", %fbs, %m, %ahead_dt : !vec\n";
       current = "%vs_now";
     }
-    emitDiagonal(os, "%dgs", virial, "  ");
+    emitDiagonal("%dgs", virial, "  ");
     std::string diagonal = "%dgs";
     if (hasConstraints())
       diagonal = emitStartConstraintTrace("%x0", "%fbs", current, diagonal,
@@ -1731,7 +1725,7 @@ void Builder::emitEntry() {
       emitCellOf("  ", cellName, "%edge_tail");
       if (scalesReference()) {
         scaleName = "%rest_scale_tail";
-        emitReferenceScale(os, "  ", scaleName, "%edge_tail_0",
+        emitReferenceScale("  ", scaleName, "%edge_tail_0",
                            "%edge_tail_1", "%edge_tail_2");
       }
     }
@@ -1891,7 +1885,7 @@ void Builder::emitPartLoop(std::string chunk,
      << "      %nf_b = arith.addf %nf_bxv, %nf_bf : vector<3xf64>\n"
      << "      md.yield %nf_b : vector<3xf64>\n"
      << "    } : vector<3xf64>\n";
-  emitSum3(os, "%nf", "%nf_s", "    ");
+  emitSum3("%nf", "%nf_s", "    ");
   os << "    mdrt.host_call @mdrtPartBoundary(" << x << ", " << v << ", " << f
      << ", " << idName << ", %nf, %part_counts) {in_place}\n"
      << "        : (!vec, !vec, !vec, !ids, f64, " << counts << ")\n";
@@ -1968,16 +1962,16 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   if (plainExcess.empty())
     os << "    %gpl = arith.constant 0.0 : f64\n";
   else
-    emitSum3(os, "%gpl", plainExcess, "    ");
+    emitSum3("%gpl", plainExcess, "    ");
   // The pressure of the groups (D264).
   if (brownian) {
-    emitTrace(os, "%trpl", "%wpl", "    ");
+    emitTrace("%trpl", "%wpl", "    ");
     os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";
   } else {
-    emitSum3(os, "%trpl", "%gwpl", "    ");
+    emitSum3("%trpl", "%gwpl", "    ");
     GroupKinetic centers =
         emitGroupKinetic("    ", "%xpl", plainFull, "%fpl", "pl");
-    emitSum3(os, "%kphpl", centers.half, "    ");
+    emitSum3("%kphpl", centers.half, "    ");
   }
   os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
         "%trpl, %kphpl) : (i64, f64, f64, f64, f64, f64) -> ()\n";

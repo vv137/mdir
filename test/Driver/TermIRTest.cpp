@@ -1,10 +1,13 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/StagedModelIR.h"
+#include "../../lib/Driver/BarostatIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
@@ -90,7 +93,56 @@ static void checkModelInput(llvm::StringRef source, bool hasLiteral = false) {
          "staged model and destination must share their build context");
 }
 
+// A consumer may use only exported fragment values. In particular, virial
+// reporting borrows the original three extracts, never re-reads the vector.
+static void checkDiagonalExports() {
+  for (bool exportScalars : {false, true}) {
+    TermIRPlan plan;
+    mdir::driver::Program program;
+    llvm::raw_string_ostream stream(program.module);
+    stream << "module { func.func private @report(f64, f64, f64) "
+              "func.func @entry(%w: vector<9xf64>) -> vector<3xf64> { ";
+    llvm::SmallVector<llvm::StringRef> names{"%diagonal"};
+    llvm::SmallVector<llvm::StringRef> types{"vector<3xf64>"};
+    if (exportScalars) {
+      names.append({"%xx", "%yy", "%zz"});
+      types.append({"f64", "f64", "f64"});
+    }
+    std::array<Value, 3> scalars;
+    plan.emit(stream, "", names, types, {"%w"}, {"vector<9xf64>"},
+              [exportScalars, &scalars](OpBuilder &builder, ValueRange values) {
+                auto result = buildVirialDiagonal(builder, values[0]);
+                scalars = {result.xx, result.yy, result.zz};
+                if (exportScalars)
+                  return TermIRValues{result.vector, result.xx, result.yy, result.zz};
+                return TermIRValues{result.vector};
+              });
+    stream << "func.call @report(%xx, %yy, %zz) : (f64, f64, f64) -> () "
+              "return %diagonal : vector<3xf64> } }";
+    stream.flush();
+    if (!exportScalars) {
+      reject(finishTermIRProgram(program, plan),
+             "the builder produced invalid assembly");
+      continue;
+    }
+    require(!finishTermIRProgram(program, plan),
+            "explicit diagonal exports failed construction");
+    require(succeeded(verify(plan.getModule())), "diagonal consumer did not verify");
+    unsigned extracts = 0, calls = 0;
+    plan.getModule().walk([&](vector::ExtractOp) { ++extracts; });
+    plan.getModule().walk([&](func::CallOp call) {
+      ++calls;
+      for (unsigned i = 0; i != 3; ++i)
+        require(call.getOperand(i) == scalars[i],
+                "virial consumer did not receive the exported scalar");
+    });
+    require(extracts == 3 && calls == 1,
+            "diagonal exports duplicated extracts or lost the consumer");
+  }
+}
+
 int main(int argc, char **argv) {
+  checkDiagonalExports();
   require(argc == 2, "expected the frozen staged-model fixture");
   auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
   require(bool(fixture), "cannot read the frozen staged-model fixture");

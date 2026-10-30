@@ -3,6 +3,7 @@
 // (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "BarostatIR.h"
 #include "CouplingIR.h"
 #include "NoiseIR.h"
 #include "KineticIR.h"
@@ -481,7 +482,7 @@ void Builder::emitPrograms() {
     emitConstraintStops("  ", failures);
     std::string groups;
     if (molecular) {
-      emitDiagonal(os, "%gd1", virial, "  ");
+      emitDiagonal("%gd1", virial, "  ");
       groups = emitMolecularDiagonal("  ", "%gd1", "%x1", "%f1", "%cell",
                                      "%m", "%r_", "1");
     }
@@ -811,123 +812,69 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
 void Builder::emitStrain(StringRef indent, StringRef kinetic,
                          StringRef diagonal, StringRef tag, StringRef step) {
   std::string t = tag.str();
-  for (int k = 0; k != getCellSize(); ++k)
-    os << indent << "%be" << t << "_" << k << " = memref.load %box_memory"
-       << "[%c_edge" << k << "] : " << getBoxMemoryType() << "\n";
-  os << indent << "%bxy" << t << " = arith.mulf %be" << t << "_0, %be" << t
-     << "_1 : f64\n"
-     << indent << "%bv" << t << " = arith.mulf %bxy" << t << ", %be" << t
-     << "_2 : f64\n";
-  // The pressure of each axis, in bar: (2 K_a + W_aa + C / (3 V)) / V, with
-  // C / V the trace of the virials of the constant terms.
-  os << indent << "%bk2" << t << " = arith.addf " << kinetic << ", "
-     << kinetic << " : vector<3xf64>\n"
-     << indent << "%bw0" << t << " = arith.addf %bk2" << t << ", "
-     << diagonal << " : vector<3xf64>\n"
-     << indent << "%bwc" << t << " = arith.divf %baro_constant, %bv" << t
-     << " : f64\n"
-     << indent << "%bwc3" << t << " = arith.mulf %bwc" << t
-     << ", %c_third : f64\n"
-     << indent << "%bwcb" << t << " = vector.broadcast %bwc3" << t
-     << " : f64 to vector<3xf64>\n"
-     << indent << "%bw" << t << " = arith.addf %bw0" << t << ", %bwcb" << t
-     << " : vector<3xf64>\n"
-     << indent << "%bpc" << t << " = arith.divf %c_bar, %bv" << t
-     << " : f64\n"
-     << indent << "%bpcb" << t << " = vector.broadcast %bpc" << t
-     << " : f64 to vector<3xf64>\n"
-     << indent << "%bp3" << t << " = arith.mulf %bw" << t << ", %bpcb" << t
-     << " : vector<3xf64>\n";
-  if (control.anisotropic) {
-    // Anisotropic (D163c): each axis by the strain of its own pressure and
-    // noise, eq. (9b) of [Bernetti2020] on each.
-    std::string strains[3];
-    for (int k = 0; k != 3; ++k) {
-      std::string a = std::to_string(k);
-      strains[k] = "%strain" + a + "_" + t;
-      os << indent << "%bpa" << a << "_" << t << " = vector.extract %bp3"
-         << t << "[" << k << "] : f64 from vector<3xf64>\n"
-         << indent << "%baxis" << a << "_" << t << " = arith.constant " << k
-         << " : i64\n"
-         << indent << strains[k]
-         << " = func.call @mdrtBarostatStrainAxis(%seed, " << step
-         << ", %baxis" << a << "_" << t << ", %bpa" << a << "_" << t
-         << ", %baro_target, %bv" << t << ", %baro_kt, %baro_beta_" << a
-         << ", %baro_rate)\n"
-         << indent
-         << "    : (i64, i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n";
+  StrainCoupling coupling = control.anisotropic ? StrainCoupling::Anisotropic
+      : control.semiIsotropic ? StrainCoupling::SemiIsotropic
+                              : StrainCoupling::Isotropic;
+  unsigned cellSize = getCellSize();
+  std::vector<std::string> inputs = {
+      kinetic.str(), diagonal.str(), "%box_memory", "%baro_constant", "%c_third",
+      "%c_bar", "%c_unit3", "%seed", step.str(), "%baro_target", "%baro_kt", "%baro_rate"};
+  std::vector<std::string> types = {
+      "vector<3xf64>", "vector<3xf64>", getBoxMemoryType(), "f64", "f64", "f64",
+      "vector<3xf64>", "i64", "i64", "f64", "f64", "f64"};
+  for (unsigned k = 0; k != cellSize; ++k) {
+    inputs.push_back("%c_edge" + std::to_string(k));
+    types.push_back("index");
+  }
+  if (coupling == StrainCoupling::Anisotropic) {
+    for (unsigned k = 0; k != 3; ++k) {
+      inputs.push_back("%baro_beta_" + std::to_string(k));
+      types.push_back("f64");
     }
-    os << indent << "%bs3" << t << " = vector.from_elements " << strains[0]
-       << ", " << strains[1] << ", " << strains[2] << " : vector<3xf64>\n";
-  } else if (!control.semiIsotropic) {
-    // Isotropic: the mean pressure gives ε, the change of ln V, by a step
-    // of λ = √V (eq. S7 of [Bernetti2020]); each axis scales by ε / 3.
-    emitSum3(os, "%bps" + t, "%bp3" + t, indent);
-    os << indent << "%bp" << t << " = arith.mulf %bps" << t
-       << ", %c_third : f64\n"
-       << indent << "%strain" << t
-       << " = func.call @mdrtBarostatStrain(%seed, " << step << ", %bp" << t
-       << ", %baro_target, %bv" << t
-       << ", %baro_kt, %baro_beta, %baro_rate)\n"
-       << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
-       << indent << "%bsa" << t << " = arith.mulf %strain" << t
-       << ", %c_third : f64\n"
-       << indent << "%bs3" << t << " = vector.broadcast %bsa" << t
-       << " : f64 to vector<3xf64>\n";
   } else {
-    // Semi-isotropic: the mean pressure of x and y gives the change of
-    // ln A, that of z the change of ln L, by eqs. (9a) and (9b) of
-    // [Bernetti2020] with their own noises (D119); x and y scale by half
-    // the first, z by the second.
-    os << indent << "%bpx" << t << " = vector.extract %bp3" << t
-       << "[0] : f64 from vector<3xf64>\n"
-       << indent << "%bpy" << t << " = vector.extract %bp3" << t
-       << "[1] : f64 from vector<3xf64>\n"
-       << indent << "%bpz" << t << " = vector.extract %bp3" << t
-       << "[2] : f64 from vector<3xf64>\n"
-       << indent << "%bpxys" << t << " = arith.addf %bpx" << t << ", %bpy"
-       << t << " : f64\n"
-       << indent << "%bpxy" << t << " = arith.mulf %bpxys" << t
-       << ", %couple_half : f64\n"
-       << indent << "%strainxy" << t
-       << " = func.call @mdrtBarostatStrainArea(%seed, " << step << ", %bpxy"
-       << t << ", %baro_target, %bv" << t << ", %be" << t
-       << "_2, %baro_kt, %baro_beta, %baro_rate, %baro_tension)\n"
-       << indent
-       << "    : (i64, i64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64\n"
-       << indent << "%strainz" << t
-       << " = func.call @mdrtBarostatStrainHeight(%seed, " << step
-       << ", %bpz" << t << ", %baro_target, %bv" << t
-       << ", %baro_kt, %baro_beta_z, %baro_rate)\n"
-       << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
-       << indent << "%bsxy" << t << " = arith.mulf %strainxy" << t
-       << ", %couple_half : f64\n"
-       << indent << "%bs3" << t << " = vector.from_elements %bsxy" << t
-       << ", %bsxy" << t << ", %strainz" << t << " : vector<3xf64>\n";
+    inputs.push_back("%baro_beta");
+    types.push_back("f64");
+    if (coupling == StrainCoupling::SemiIsotropic) {
+      inputs.insert(inputs.end(), {"%baro_beta_z", "%couple_half", "%baro_tension"});
+      types.insert(types.end(), {"f64", "f64", "f64"});
+    }
   }
-  os << indent << "%mu" << t << " = math.exp %bs3" << t
-     << " : vector<3xf64>\n"
-     << indent << "%muinv" << t << " = arith.divf %c_unit3, %mu" << t
-     << " : vector<3xf64>\n";
-  // The new cell, which the next iteration takes from memory: H diag(μ),
-  // the tilts b_x and c_x of the column of x scaled by μ_x and c_y by μ_y
-  // (I3 of docs/triclinic.md).
-  static const int column[] = {0, 1, 2, 0, 0, 1};
-  for (int k = 0; k != getCellSize(); ++k) {
-    if (k < 3)
-      os << indent << "%bmu" << t << "_" << k << " = vector.extract %mu" << t
-         << "[" << k << "] : f64 from vector<3xf64>\n";
-    os << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
-       << "_" << k << ", %bmu" << t << "_" << column[k] << " : f64\n"
-       << indent << "memref.store %bn" << t << "_" << k
-       << ", %box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
-       << "\n";
+  std::vector<std::string> outputs = {"%bv" + t, "%bwc" + t, "%bwcb" + t,
+                                      "%bs3" + t, "%mu" + t, "%muinv" + t};
+  std::vector<std::string> outputTypes = {"f64", "f64", "vector<3xf64>",
+                                          "vector<3xf64>", "vector<3xf64>", "vector<3xf64>"};
+  for (unsigned k = 0; k != cellSize; ++k) {
+    outputs.push_back("%bn" + t + "_" + std::to_string(k));
+    outputTypes.push_back("f64");
   }
-  os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
-     << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
-  if (isTriclinic())
-    os << indent << "func.call @mdrtSetTilt(%bn" << t << "_3, %bn" << t
-       << "_4, %bn" << t << "_5) : (f64, f64, f64) -> ()\n";
+  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
+      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
+      outTypes(outputTypes.begin(), outputTypes.end());
+  // The same pressure/noise law on each supported cell coupling, retaining
+  // the stored H diag(mu) column order [Bernetti2020], D119 and D163c.
+  emitIRFragment(
+      indent, out, outTypes, in, inTypes,
+      [coupling, cellSize](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        size_t beta = 12 + cellSize;
+        std::array<mlir::Value, 3> betas{values[beta], {}, {}};
+        mlir::Value half, tension;
+        if (coupling == StrainCoupling::Anisotropic) {
+          betas[1] = values[beta + 1];
+          betas[2] = values[beta + 2];
+        } else if (coupling == StrainCoupling::SemiIsotropic) {
+          betas[2] = values[beta + 1];
+          half = values[beta + 2];
+          tension = values[beta + 3];
+        }
+        StrainIRInputs input{values[0], values[1], values[2], values.slice(12, cellSize),
+            values[3], values[4], values[5], values[6], values[7], values[8],
+            values[9], values[10], values[11], betas, half, tension};
+        auto result = buildBarostatStrain(builder, input, coupling);
+        TermIRValues outputs{result.volume, result.constantTrace, result.constantDiagonal,
+                               result.logScale, result.scale, result.inverse};
+        llvm::append_range(outputs, result.edges);
+        return outputs;
+      });
 }
 
 Builder::TrotterScaling Builder::emitTrotterStrain(
@@ -973,26 +920,14 @@ std::string Builder::emitKineticWithoutCenter(StringRef indent,
 
 void Builder::emitStoreTrotterState(StringRef indent, StringRef diagonal,
                                     StringRef groups, StringRef kinetic) {
-  std::string t = std::to_string(trotterStores++);
-  StringRef vectors[] = {diagonal, groups, kinetic};
-  std::string values[9];
-  for (int v = 0; v != 3; ++v)
-    for (int k = 0; k != 3; ++k) {
-      int slot = 3 * v + k;
-      values[slot] = "%tms" + t + "_" + std::to_string(slot);
-      os << indent << values[slot] << " = vector.extract " << vectors[v]
-         << "[" << k << "] : f64 from vector<3xf64>\n"
-         << indent << "%tmi" << t << "_" << slot << " = arith.constant "
-         << slot << " : index\n"
-         << indent << "memref.store " << values[slot]
-         << ", %trotter_memory[%tmi" << t << "_" << slot
-         << "] : memref<9xf64>\n";
-    }
-  // The checkpoints keep it, so a run that continues takes the same.
-  os << indent << "func.call @mdrtSetBarostatState(";
-  for (int slot = 0; slot != 9; ++slot)
-    os << (slot ? ", " : "") << values[slot];
-  os << ") : (f64, f64, f64, f64, f64, f64, f64, f64, f64) -> ()\n";
+  // Checkpoints keep the host copy of the same nine values.
+  emitIRFragment(
+      indent, {}, {}, {"%trotter_memory", diagonal, groups, kinetic},
+      {"memref<9xf64>", "vector<3xf64>", "vector<3xf64>", "vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildStoreBarostatState(builder, values[0], values[1], values[2], values[3]);
+        return {};
+      });
 }
 
 Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
@@ -1004,18 +939,25 @@ Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
   scaling.muinv = "%muinv" + t;
   scaling.logMu = "%bs3" + t;
   scaling.workBefore = "%tw" + t;
-  os << indent << scaling.workBefore << " = arith.addf " << groups
-     << ", %bwcb" << t << " : vector<3xf64>\n";
   scaling.newVolume = "%tvn" + t;
-  os << indent << "%tvn0" << t << " = arith.mulf %bn" << t << "_0, %bn" << t
-     << "_1 : f64\n"
-     << indent << scaling.newVolume << " = arith.mulf %tvn0" << t << ", %bn"
-     << t << "_2 : f64\n";
+  std::string edge0 = "%bn" + t + "_0", edge1 = "%bn" + t + "_1",
+              edge2 = "%bn" + t + "_2", constantDiagonal = "%bwcb" + t;
+  emitIRFragment(
+      indent, {scaling.workBefore, scaling.newVolume}, {"vector<3xf64>", "f64"},
+      {groups, constantDiagonal, edge0, edge1, edge2},
+      {"vector<3xf64>", "vector<3xf64>", "f64", "f64", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value work = mlir::arith::AddFOp::create(builder, loc, values[0], values[1]);
+        mlir::Value xy = mlir::arith::MulFOp::create(builder, loc, values[2], values[3]);
+        mlir::Value volume = mlir::arith::MulFOp::create(builder, loc, xy, values[4]);
+        return {work, volume};
+      });
   scaling.cell = "%tcell" + t;
   emitCellOf(indent, scaling.cell, "%bn" + t);
   if (scalesReference()) {
     scaling.scale = "%tscale" + t;
-    emitReferenceScale(os, indent, scaling.scale, "%bn" + t + "_0",
+    emitReferenceScale(indent, scaling.scale, "%bn" + t + "_0",
                        "%bn" + t + "_1", "%bn" + t + "_2");
   }
   return scaling;
@@ -1094,7 +1036,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     // takes, and of the center of mass; their sums for the thermostat.
     os << indent << "// The kinetic energy of each axis.\n";
     emitKineticVector("%kv" + t, velocities, massName, indent);
-    emitSum3(os, "%kc" + t, "%kv" + t, indent);
+    emitSum3("%kc" + t, "%kv" + t, indent);
     std::string vector = "%kv" + t;
     if (removesMotion) {
       os << indent << "%pvv" << t << " = arith.mulf %pc" << t << ", %vcm" << t
@@ -1201,7 +1143,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
         os << indent << "%bwl" << t << " = arith.mulf "
            << trotter->workBefore << ", " << trotter->logMu
            << " : vector<3xf64>\n";
-        emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+        emitSum3("%bwork" + t, "%bwl" + t, indent);
       }
       std::string groupsAfter =
           countsAfterScaling() ? trotter->groupsAfter : "";
@@ -1238,7 +1180,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
            << ", %c_half3 : vector<3xf64>\n"
            << indent << "%bwl" << t << " = arith.mulf %bwm" << t << ", "
            << trotter->logMu << " : vector<3xf64>\n";
-        emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+        emitSum3("%bwork" + t, "%bwl" + t, indent);
       }
       os << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
          << ", " << trotter->muinv << " : vector<3xf64>\n"
@@ -1246,7 +1188,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << ", %c_unit3 : vector<3xf64>\n"
          << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
          << trotter->kineticHalf << " : vector<3xf64>\n";
-      emitSum3(os, "%bdk" + t, "%bdkv" + t, indent);
+      emitSum3("%bdk" + t, "%bdkv" + t, indent);
       os
          << indent << "%bdku" << t << " = arith.subf %bdk" << t << ", %bwork"
          << t << " : f64\n"
@@ -1260,7 +1202,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     if (!exact && !trotter) {
       // To first order, isotropic only (Control): the trace of the virial
       // of the groups, a third to each axis.
-      emitSum3(os, "%dtr" + t, groups, indent);
+      emitSum3("%dtr" + t, groups, indent);
       os << indent << "%bwt" << t << " = arith.addf %dtr" << t
          << ", %bwc" << t << " : f64\n"
          << indent << "%bwt3" << t << " = arith.mulf %bwt" << t
@@ -1269,7 +1211,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << " : f64 to vector<3xf64>\n"
          << indent << "%bwl" << t << " = arith.mulf %bm1" << t << ", %bwtb"
          << t << " : vector<3xf64>\n";
-      emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+      emitSum3("%bwork" + t, "%bwl" + t, indent);
     }
     if (!trotter) {
       os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t
@@ -1278,7 +1220,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << ", %c_unit3 : vector<3xf64>\n"
          << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
          << after << " : vector<3xf64>\n";
-      emitSum3(os, "%bdk" + t, "%bdkv" + t, indent);
+      emitSum3("%bdk" + t, "%bdkv" + t, indent);
     }
     if (!exact && !trotter) {
       os << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
@@ -1302,7 +1244,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       cellName = cell;
       if (scalesReference()) {
         scaleName = "%bscale" + t;
-        emitReferenceScale(os, indent, scaleName, "%bn" + t + "_0",
+        emitReferenceScale(indent, scaleName, "%bn" + t + "_0",
                            "%bn" + t + "_1", "%bn" + t + "_2");
       }
       if (hasSites()) {
@@ -1533,4 +1475,57 @@ void Builder::emitDescend() {
     energy = "%u1c";
   }
   os << "  dyn.return %x1, %f1, " << energy << " : !vec, !vec, f64\n}\n\n";
+}
+
+void Builder::emitCellOf(StringRef indent, StringRef name, StringRef prefix) {
+  std::vector<std::string> edges;
+  for (int k = 0; k != getCellSize(); ++k)
+    edges.push_back((prefix + "_" + std::to_string(k)).str());
+  llvm::SmallVector<StringRef> inputs(edges.begin(), edges.end());
+  llvm::SmallVector<StringRef> types(edges.size(), "f64");
+  emitIRFragment(
+      indent, {name}, {"!md.cell"}, inputs, types,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildCell(builder, values)};
+      });
+}
+
+void Builder::emitReferenceScale(StringRef indent, StringRef result,
+                                  StringRef e0, StringRef e1, StringRef e2) {
+  emitIRFragment(
+      indent, {result}, {"vector<3xf64>"}, {e0, e1, e2, "%rest_edges"},
+      {"f64", "f64", "f64", "vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildReferenceScale(builder, values.take_front(3), values[3])};
+      });
+}
+
+Builder::DiagonalOutputs Builder::emitDiagonal(
+    StringRef result, StringRef virial, StringRef indent) {
+  DiagonalOutputs outputs{result.str(), (result + "_0").str(),
+                            (result + "_4").str(), (result + "_8").str()};
+  emitIRFragment(
+      indent, {outputs.vector, outputs.xx, outputs.yy, outputs.zz},
+      {"vector<3xf64>", "f64", "f64", "f64"}, {virial}, {"vector<9xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto diagonal = buildVirialDiagonal(builder, values[0]);
+        return {diagonal.vector, diagonal.xx, diagonal.yy, diagonal.zz};
+      });
+  return outputs;
+}
+
+void Builder::emitTrace(StringRef result, StringRef virial, StringRef indent) {
+  emitIRFragment(
+      indent, {result}, {"f64"}, {virial}, {"vector<9xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildVirialTrace(builder, values[0])};
+      });
+}
+
+void Builder::emitSum3(StringRef result, StringRef vector, StringRef indent) {
+  emitIRFragment(
+      indent, {result}, {"f64"}, {vector}, {"vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildSum3(builder, values[0])};
+      });
 }
