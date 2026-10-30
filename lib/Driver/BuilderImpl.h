@@ -813,13 +813,15 @@ private:
   }
   /// Emits `name` = the cell of the numbers `prefix`_0 to _2, or to _5 for
   /// a triclinic cell.
-  void emitCellOf(StringRef indent, StringRef name, StringRef prefix) {
-    os << indent << name
-       << (isTriclinic() ? " = md.triclinic_cell " : " = md.orthorhombic_cell ");
-    for (int k = 0, e = getCellSize(); k != e; ++k)
-      os << (k ? ", " : "") << prefix << "_" << k;
-    os << "\n";
-  }
+  void emitCellOf(StringRef indent, StringRef name, StringRef prefix);
+  void emitReferenceScale(StringRef indent, StringRef result,
+                           StringRef e0, StringRef e1, StringRef e2);
+  struct DiagonalOutputs {
+    std::string vector, xx, yy, zz;
+  };
+  DiagonalOutputs emitDiagonal(StringRef result, StringRef virial, StringRef indent);
+  void emitTrace(StringRef result, StringRef virial, StringRef indent);
+  void emitSum3(StringRef result, StringRef vector, StringRef indent);
 
   bool hasForceCorrections() const {
     return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -1351,11 +1353,6 @@ struct Coupled {
   /// `groups`, and the kinetic energy `kinetic` in `%trotter_memory`.
   void emitStoreTrotterState(StringRef indent, StringRef trace,
                              StringRef groups, StringRef kinetic);
-  /// The stores of emitStoreTrotterState so far, which number their values.
-  /// It counts per build, so that the text of a program depends only on
-  /// its inputs, not on what the process built before (#152).
-  unsigned trotterStores = 0;
-
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
   std::string getFieldParameters() const override;
@@ -1504,36 +1501,6 @@ constexpr double coulombInternal = 138.935457644;
 inline double getDispersionScreen(double x) {
   double x2 = x * x;
   return std::exp(-x2) * (1.0 + x2 + 0.5 * x2 * x2);
-}
-
-/// The diagonal of the virial `virial`, a vector of three, whose elements
-/// enter the pressure of each axis.
-inline void emitDiagonal(llvm::raw_ostream &os, StringRef result,
-                         StringRef virial, StringRef indent) {
-  for (StringRef part : {"0", "4", "8"})
-    os << indent << result << "_" << part << " = vector.extract " << virial
-       << "[" << part << "] : f64 from vector<9xf64>\n";
-  os << indent << result << " = vector.from_elements " << result << "_0, "
-     << result << "_4, " << result << "_8 : vector<3xf64>\n";
-}
-
-/// `result`, the scale of each axis of the reference positions of the
-/// restraints: the edges of the cell over those of the file
-/// (`%rest_edges`).
-inline void emitReferenceScale(llvm::raw_ostream &os, StringRef indent,
-                               StringRef result, const std::string &e0,
-                               const std::string &e1, const std::string &e2) {
-  os << indent << result << "_e = vector.from_elements " << e0 << ", " << e1
-     << ", " << e2 << " : vector<3xf64>\n"
-     << indent << result << " = arith.divf " << result
-     << "_e, %rest_edges : vector<3xf64>\n";
-}
-
-/// The sum of the elements of the vector of three `vector`.
-inline void emitSum3(llvm::raw_ostream &os, StringRef result,
-                     StringRef vector, StringRef indent) {
-  os << indent << result << " = vector.reduction <add>, " << vector
-     << " : vector<3xf64> into f64\n";
 }
 
 /// Whether `line` names the value `name` (and not a longer name that

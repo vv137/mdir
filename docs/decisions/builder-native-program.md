@@ -120,4 +120,16 @@ requests retain the one-iteration host-controlled loop, scalar/field request
 indices, energy shift, field host calls, and scalar stores. Solvent output
 extracts its two energies before the host call. Native captures borrow neither
 the builder nor the mutable program; metadata updates remain at construction.
+Stochastic cell strain in `BarostatIR.cpp` retains isotropic, semi-isotropic,
+and anisotropic host-call order, pressure units, constant virial correction,
+and stored cell-column scaling. Cell and reference geometry use native values;
+barostat state stores retain extraction/index/store order and the nine-value
+host checkpoint copy. Virial diagonals/traces and three-axis reductions retain
+their original extraction and arithmetic order. Trotter work and new-volume
+state are typed results. Unused coupling parameters do not cross the typed input.
+The diagonal interface names and exports both its vector and original scalar
+components. Virial reporting consumes those scalar outputs directly, without
+extracting them again. `checkDiagonalExports` in `test/Driver/TermIRTest.cpp`
+rejects a consumer of unexported components at construction and verifies that
+the valid host call uses the original three extracts exactly once.
 D363's term recipes still join remaining assembly at this commit.
