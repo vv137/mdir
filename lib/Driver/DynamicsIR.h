@@ -12,5 +12,14 @@ ConstrainedTrialIR buildConstrainedTrial(mlir::OpBuilder &, mlir::Value candidat
                                           mlir::Value previous,
                                           mlir::Value broken, mlir::Value zero);
 mlir::Value buildTrialEnergy(mlir::OpBuilder &, mlir::Value energy, mlir::Value intact);
+mlir::Value buildKick(mlir::OpBuilder &, mlir::Value velocities, mlir::Value forces,
+                         mlir::Value masses, mlir::Value interval);
+mlir::Value buildDrift(mlir::OpBuilder &, mlir::Value positions,
+                          mlir::Value velocities, mlir::Value interval);
+struct DriftScaleIR { mlir::Value oneMinus, inverse; };
+DriftScaleIR buildDriftScale(mlir::OpBuilder &, mlir::Value scale);
+mlir::Value buildVelocityScaling(mlir::OpBuilder &, mlir::Value velocities,
+                                   mlir::Value scale);
+mlir::Value buildFieldDifference(mlir::OpBuilder &, mlir::Value first, mlir::Value second);
 } // namespace mdir::driver::builder
 #endif

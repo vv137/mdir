@@ -176,3 +176,8 @@ same memory read where needed. Private connection packing remains transitional
 and captures no builder/program in native recipes; it is removed with the
 remaining native function and schedule scopes.
 D363's term recipes still join remaining assembly at this commit.
+
+Step kicks, drifts, scale inverses, velocity corrections, minimization constants,
+and dynamic returns are constructed with native operations. Their original
+operand order and control-flow positions are preserved. Program signatures
+and schedule scopes remain transitional.

@@ -1398,6 +1398,11 @@ dynamics, entry energy rows, and schedule construction remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
 
+Step kicks, drifts, scale inverses, velocity corrections, minimization constants,
+and dynamic returns are constructed with native operations. Their original
+operand order and control-flow positions are preserved. Program signatures
+and schedule scopes remain transitional.
+
 ## 3. Decided
 
 | # | Question | Decision |
