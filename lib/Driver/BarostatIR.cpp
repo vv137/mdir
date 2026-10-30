@@ -17,6 +17,8 @@ public:
         vec(VectorType::get({3}, builder.getF64Type())) {}
   Value add(Value a, Value b) { return arith::AddFOp::create(builder, loc, a, b); }
   Value mul(Value a, Value b) { return arith::MulFOp::create(builder, loc, a, b); }
+  Value sub(Value a, Value b) { return arith::SubFOp::create(builder, loc, a, b); }
+  Value sum(Value a) { return vector::ReductionOp::create(builder, loc, vector::CombiningKind::ADD, a); }
   Value div(Value a, Value b) { return arith::DivFOp::create(builder, loc, a, b); }
   Value broadcast(Value a) { return vector::BroadcastOp::create(builder, loc, vec, a); }
   Value extract(Value a, int64_t slot) { return vector::ExtractOp::create(builder, loc, a, slot); }
@@ -139,4 +141,80 @@ Value mdir::driver::builder::buildVirialTrace(OpBuilder &builder, Value virial) 
 Value mdir::driver::builder::buildSum3(OpBuilder &builder, Value vector) {
   return vector::ReductionOp::create(builder, builder.getUnknownLoc(),
                                        vector::CombiningKind::ADD, vector);
+}
+
+// Work ordering of stochastic cell rescaling [Bernetti2020], D92/D116.
+Value mdir::driver::builder::buildScaleKinetic(OpBuilder &builder, Value factor, Value kinetic) {
+  Kernel k(builder);
+  Value broadcast = k.broadcast(factor);
+  return k.mul(broadcast, kinetic);
+}
+Value mdir::driver::builder::buildScaledGroupKinetic(
+    OpBuilder &builder, Value factor, Value kinetic, Value forceTerm) {
+  Value scaled = buildScaleKinetic(builder, factor, kinetic);
+  return Kernel(builder).add(scaled, forceTerm);
+}
+Value mdir::driver::builder::buildVirialWork(OpBuilder &builder, Value virial, Value logScale) {
+  Kernel k(builder);
+  Value product = k.mul(virial, logScale);
+  return k.sum(product);
+}
+Value mdir::driver::builder::buildMeanVirialWork(
+    OpBuilder &builder, const MeanVirialWorkInputs &in) {
+  Kernel k(builder);
+  Value constant = k.div(in.constantVirial, in.newVolume);
+  Value third = k.mul(constant, in.third);
+  Value broadcast = k.broadcast(third);
+  Value after = k.add(in.groupsAfter, broadcast);
+  Value sum = k.add(in.workBefore, after);
+  Value mean = k.mul(sum, in.half);
+  Value product = k.mul(mean, in.logScale);
+  return k.sum(product);
+}
+Value mdir::driver::builder::buildKineticScaleChange(
+    OpBuilder &builder, Value inverse, Value unit, Value kinetic) {
+  Kernel k(builder);
+  Value squared = k.mul(inverse, inverse);
+  Value difference = k.sub(squared, unit);
+  Value product = k.mul(difference, kinetic);
+  return k.sum(product);
+}
+Value mdir::driver::builder::buildTrotterBath(
+    OpBuilder &builder, Value inverse, Value unit, Value kinetic, Value work, Value bath) {
+  Value change = buildKineticScaleChange(builder, inverse, unit, kinetic);
+  Kernel k(builder);
+  Value difference = k.sub(change, work);
+  return k.sub(bath, difference);
+}
+Value mdir::driver::builder::buildOneMinusScale(OpBuilder &builder, Value unit, Value scale) {
+  return Kernel(builder).sub(unit, scale);
+}
+Value mdir::driver::builder::buildFirstOrderVirialWork(
+    OpBuilder &builder, Value groups, Value constantTrace, Value third, Value oneMinus) {
+  Kernel k(builder);
+  Value trace = k.sum(groups);
+  Value whole = k.add(trace, constantTrace);
+  Value axis = k.mul(whole, third);
+  Value broadcast = k.broadcast(axis);
+  Value product = k.mul(oneMinus, broadcast);
+  return k.sum(product);
+}
+Value mdir::driver::builder::buildBathAfterWork(
+    OpBuilder &builder, Value work, Value change, Value bath) {
+  Kernel k(builder);
+  Value gain = k.add(work, change);
+  return k.sub(bath, gain);
+}
+Value mdir::driver::builder::buildExactBath(OpBuilder &builder, const ExactBathInputs &in) {
+  Kernel k(builder);
+  Value xy = k.mul(in.edges[0], in.edges[1]);
+  Value volume = k.mul(xy, in.edges[2]);
+  Value nextInverse = k.div(in.unit, volume);
+  Value oldInverse = k.div(in.unit, in.oldVolume);
+  Value inverseChange = k.sub(nextInverse, oldInverse);
+  Value constantChange = k.mul(in.constantEnergy, inverseChange);
+  Value rawChange = k.sub(in.newEnergy, in.oldEnergy);
+  Value energyChange = k.add(rawChange, constantChange);
+  Value gain = k.add(energyChange, in.kineticChange);
+  return k.sub(in.bath, gain);
 }

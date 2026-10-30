@@ -1114,10 +1114,12 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     // The kinetic energy of each axis after the thermostat.
     std::string after = kinetic;
     if (rescalesVelocities()) {
-      os << indent << "%alpha2b" << t << " = vector.broadcast %alpha2" << t
-         << " : f64 to vector<3xf64>\n"
-         << indent << "%knv" << t << " = arith.mulf %alpha2b" << t << ", "
-         << kinetic << " : vector<3xf64>\n";
+      std::string factor = "%alpha2" + t, scaled = "%knv" + t;
+      emitIRFragment(
+          indent, {scaled}, {"vector<3xf64>"}, {factor, kinetic}, {"f64", "vector<3xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildScaleKinetic(builder, values[0], values[1])};
+          });
       after = "%knv" + t;
     }
     std::string relations =
@@ -1137,10 +1139,13 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // strain (D116).
       // To first order, from the virial before the scaling only.
       if (!countsAfterScaling()) {
-        os << indent << "%bwl" << t << " = arith.mulf "
-           << trotter->workBefore << ", " << trotter->logMu
-           << " : vector<3xf64>\n";
-        emitSum3("%bwork" + t, "%bwl" + t, indent);
+        std::string work = "%bwork" + t;
+        emitIRFragment(
+            indent, {work}, {"f64"}, {trotter->workBefore, trotter->logMu},
+            {"vector<3xf64>", "vector<3xf64>"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              return {buildVirialWork(builder, values[0], values[1])};
+            });
       }
       std::string groupsAfter =
           countsAfterScaling() ? trotter->groupsAfter : "";
@@ -1151,79 +1156,78 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       if (scalesEveryStep()) {
         std::string stored = centers.half;
         if (rescalesVelocities()) {
-          os << indent << "%gst2" << t << " = vector.broadcast %alpha2" << t
-             << " : f64 to vector<3xf64>\n"
-             << indent << "%gsts" << t << " = arith.mulf %gst2" << t << ", "
-             << centers.kinetic << " : vector<3xf64>\n"
-             << indent << "%gsth" << t << " = arith.addf %gsts" << t << ", "
-             << centers.forceTerm << " : vector<3xf64>\n";
+          std::string factor = "%alpha2" + t, result = "%gsth" + t;
+          emitIRFragment(
+              indent, {result}, {"vector<3xf64>"},
+              {factor, centers.kinetic, centers.forceTerm},
+              {"f64", "vector<3xf64>", "vector<3xf64>"},
+              [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+                return {buildScaledGroupKinetic(builder, values[0], values[1], values[2])};
+              });
           stored = "%gsth" + t;
         }
         emitStoreTrotterState(indent, diagonal, groupsAfter, stored);
       }
       if (countsAfterScaling()) {
-        os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
-           << trotter->newVolume << " : f64\n"
-           << indent << "%bwca3" << t << " = arith.mulf %bwca" << t
-           << ", %c_third : f64\n"
-           << indent << "%bwcab" << t << " = vector.broadcast %bwca3" << t
-           << " : f64 to vector<3xf64>\n"
-           << indent << "%bwb" << t << " = arith.addf " << groupsAfter
-           << ", %bwcab"
-           << t << " : vector<3xf64>\n"
-           << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
-           << ", %bwb" << t << " : vector<3xf64>\n"
-           << indent << "%bwm" << t << " = arith.mulf %bws" << t
-           << ", %c_half3 : vector<3xf64>\n"
-           << indent << "%bwl" << t << " = arith.mulf %bwm" << t << ", "
-           << trotter->logMu << " : vector<3xf64>\n";
-        emitSum3("%bwork" + t, "%bwl" + t, indent);
+        std::string work = "%bwork" + t;
+        emitIRFragment(
+            indent, {work}, {"f64"},
+            {"%baro_constant", trotter->newVolume, "%c_third", groupsAfter,
+             trotter->workBefore, "%c_half3", trotter->logMu},
+            {"f64", "f64", "f64", "vector<3xf64>", "vector<3xf64>",
+             "vector<3xf64>", "vector<3xf64>"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              MeanVirialWorkInputs input{values[0], values[1], values[2], values[3],
+                                           values[4], values[5], values[6]};
+              return {buildMeanVirialWork(builder, input)};
+            });
       }
-      os << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
-         << ", " << trotter->muinv << " : vector<3xf64>\n"
-         << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
-         << ", %c_unit3 : vector<3xf64>\n"
-         << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
-         << trotter->kineticHalf << " : vector<3xf64>\n";
-      emitSum3("%bdk" + t, "%bdkv" + t, indent);
-      os
-         << indent << "%bdku" << t << " = arith.subf %bdk" << t << ", %bwork"
-         << t << " : f64\n"
-         << indent << "%btake" << t << " = arith.subf " << bath << ", %bdku"
-         << t << " : f64\n";
+      std::string work = "%bwork" + t, result = "%btake" + t;
+      emitIRFragment(
+          indent, {result}, {"f64"},
+          {trotter->muinv, "%c_unit3", trotter->kineticHalf, work, bath},
+          {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildTrotterBath(builder, values[0], values[1], values[2], values[3], values[4])};
+          });
       bath = "%btake" + t;
     }
-    if (!trotter)
-      os << indent << "%bm1" << t << " = arith.subf %c_unit3, %mu" << t
-         << " : vector<3xf64>\n";
+    if (!trotter) {
+      std::string result = "%bm1" + t, scale = "%mu" + t;
+      emitIRFragment(
+          indent, {result}, {"vector<3xf64>"}, {"%c_unit3", scale},
+          {"vector<3xf64>", "vector<3xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildOneMinusScale(builder, values[0], values[1])};
+          });
+    }
     if (!exact && !trotter) {
       // To first order, isotropic only (Control): the trace of the virial
       // of the groups, a third to each axis.
-      emitSum3("%dtr" + t, groups, indent);
-      os << indent << "%bwt" << t << " = arith.addf %dtr" << t
-         << ", %bwc" << t << " : f64\n"
-         << indent << "%bwt3" << t << " = arith.mulf %bwt" << t
-         << ", %c_third : f64\n"
-         << indent << "%bwtb" << t << " = vector.broadcast %bwt3" << t
-         << " : f64 to vector<3xf64>\n"
-         << indent << "%bwl" << t << " = arith.mulf %bm1" << t << ", %bwtb"
-         << t << " : vector<3xf64>\n";
-      emitSum3("%bwork" + t, "%bwl" + t, indent);
+      std::string work = "%bwork" + t, constant = "%bwc" + t, oneMinus = "%bm1" + t;
+      emitIRFragment(
+          indent, {work}, {"f64"}, {groups, constant, "%c_third", oneMinus},
+          {"vector<3xf64>", "f64", "f64", "vector<3xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildFirstOrderVirialWork(builder, values[0], values[1], values[2], values[3])};
+          });
     }
     if (!trotter) {
-      os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t
-         << ", %muinv" << t << " : vector<3xf64>\n"
-         << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
-         << ", %c_unit3 : vector<3xf64>\n"
-         << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
-         << after << " : vector<3xf64>\n";
-      emitSum3("%bdk" + t, "%bdkv" + t, indent);
+      std::string inverse = "%muinv" + t, change = "%bdk" + t;
+      emitIRFragment(
+          indent, {change}, {"f64"}, {inverse, "%c_unit3", after},
+          {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildKineticScaleChange(builder, values[0], values[1], values[2])};
+          });
     }
     if (!exact && !trotter) {
-      os << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
-         << t << " : f64\n"
-         << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
-         << t << " : f64\n";
+      std::string work = "%bwork" + t, change = "%bdk" + t, result = "%btake" + t;
+      emitIRFragment(
+          indent, {result}, {"f64"}, {work, change, bath}, {"f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildBathAfterWork(builder, values[0], values[1], values[2])};
+          });
       bath = "%btake" + t;
     }
     if (!trotter)
@@ -1291,26 +1295,17 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // 1 / V and not in `md.evaluate`: their change, C (1/V' - 1/V), is
       // part of the work too, or the conserved energy would carry
       // E_c(V) - E_c(V_0).
-      os << indent << "%bnxy" << t << " = arith.mulf %bn" << t << "_0, %bn"
-         << t << "_1 : f64\n"
-         << indent << "%bnv" << t << " = arith.mulf %bnxy" << t << ", %bn" << t
-         << "_2 : f64\n"
-         << indent << "%bnvi" << t << " = arith.divf %c_unit, %bnv" << t
-         << " : f64\n"
-         << indent << "%bovi" << t << " = arith.divf %c_unit, %bv" << t
-         << " : f64\n"
-         << indent << "%bdvi" << t << " = arith.subf %bnvi" << t << ", %bovi"
-         << t << " : f64\n"
-         << indent << "%bdc" << t << " = arith.mulf %baro_energy_constant, %bdvi"
-         << t << " : f64\n"
-         << indent << "%bdue" << t << " = arith.subf " << u << ", " << energy
-         << " : f64\n"
-         << indent << "%bdu" << t << " = arith.addf %bdue" << t << ", %bdc" << t
-         << " : f64\n"
-         << indent << "%bgain" << t << " = arith.addf %bdu" << t << ", %bdk"
-         << t << " : f64\n"
-         << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
-         << t << " : f64\n";
+      std::string e0 = "%bn" + t + "_0", e1 = "%bn" + t + "_1", e2 = "%bn" + t + "_2",
+                  volume = "%bv" + t, change = "%bdk" + t, result = "%btake" + t;
+      emitIRFragment(
+          indent, {result}, {"f64"},
+          {e0, e1, e2, "%c_unit", volume, "%baro_energy_constant", u, energy, change, bath},
+          {"f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            ExactBathInputs input{values.take_front(3), values[3], values[4], values[5],
+                                     values[6], values[7], values[8], values[9]};
+            return {buildExactBath(builder, input)};
+          });
       bath = "%btake" + t;
     }
   }

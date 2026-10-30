@@ -1385,7 +1385,8 @@ force reductions for observables and center-of-mass corrections.
 `OutputIR.cpp` builds term-energy, free-energy, observable, tunable-gradient,
 and solvent output from typed physical state and owned request/table configuration.
 `BarostatIR.cpp` constructs stochastic cell strain, cell/reference geometry,
-and checkpointed barostat stores with typed state. `DynamicsIR.cpp` supplies
+checkpointed barostat stores, and ordered first-order/Trotter/exact work
+calculations with typed state. `DynamicsIR.cpp` supplies
 scaled-norm minimization motion and explicit accepted/rejected trial state.
 `ReorderIR.cpp` constructs anchor-based spatial order, field permutations,
 derived lists, and topology renumbering from typed state and semantic slots.
