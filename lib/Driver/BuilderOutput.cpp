@@ -5,46 +5,28 @@
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
+PotentialConnections::PotentialConnections(
+    const Program &program, StringRef positions, StringRef cell,
+    StringRef prefix, StringRef time, bool timed) : timed(timed) {
+  add(positions, "!vec");
+  add(cell, "!md.cell");
+  for (const auto &field : program.fields)
+    add((prefix + field.name).str(), field.isInteger ? "!ids" : "!real");
+  for (const auto &table : program.tables)
+    add("%t_" + table.name, table.getType());
+  std::string relations = ("%r" + prefix.drop_front(2)).str();
+  for (const auto &set : program.tupleSets) {
+    add(relations + set.name, "!rel_" + set.name);
+    for (const auto &field : set.fields)
+      add("%f_" + set.name + "_" + field.name, "!of_" + set.name);
+  }
+  fields = values.size() - 2;
+  if (timed)
+    add(time, "f64");
+}
+
 namespace {
-// Connections to the remaining assembly are confined to the builder wrapper.
-// Native output construction receives physical state and owned scalar config.
-struct OutputConnections {
-  std::vector<std::string> values, types;
-  size_t fields;
-  bool timed;
-
-  OutputConnections(const Program &program, StringRef positions, StringRef cell,
-                    StringRef prefix, StringRef time, bool timed)
-      : timed(timed) {
-    add(positions, "!vec");
-    add(cell, "!md.cell");
-    for (const auto &field : program.fields)
-      add((prefix + field.name).str(), field.isInteger ? "!ids" : "!real");
-    for (const auto &table : program.tables)
-      add("%t_" + table.name, table.getType());
-    std::string relations = ("%r" + prefix.drop_front(2)).str();
-    for (const auto &set : program.tupleSets) {
-      add(relations + set.name, "!rel_" + set.name);
-      for (const auto &field : set.fields)
-        add("%f_" + set.name + "_" + field.name, "!of_" + set.name);
-    }
-    fields = values.size() - 2;
-    if (timed)
-      add(time, "f64");
-  }
-  void add(StringRef value, StringRef type) {
-    values.push_back(value.str());
-    types.push_back(type.str());
-  }
-  llvm::SmallVector<StringRef> names() const {
-    return {values.begin(), values.end()};
-  }
-  llvm::SmallVector<StringRef> signatures() const {
-    return {types.begin(), types.end()};
-  }
-};
-
-OutputStateIR state(mlir::ValueRange values, size_t fields, bool timed) {
+PotentialStateIR state(mlir::ValueRange values, size_t fields, bool timed) {
   return {values[0], values[1], values.slice(2, fields),
           timed ? values[2 + fields] : mlir::Value{}};
 }
@@ -61,7 +43,7 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
                                   getNumPotentialArguments()};
   for (const auto &component : control.freeEnergy.lambdas)
     config.lambdas.push_back(component.second);
-  OutputConnections input(program, x, cell, prefix, time, control.usesTime);
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
   size_t tail = input.values.size();
   input.add(step, "i64");
   bool loop = control.freeEnergy.getNumStates() > 1;
@@ -86,7 +68,7 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
   std::vector<ObservedTerm> terms = getObservedTerms();
   if (terms.empty())
     return;
-  OutputConnections input(program, x, cell, prefix, time, control.usesTime);
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
   size_t tail = input.values.size();
   input.add(step, "i64");
   std::vector<ObservableOutputTermIR> config;
@@ -125,7 +107,7 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
     return;
   // A one-iteration loop only when the host asks. Runtime gradients never
   // introduce work into an ordinary run.
-  OutputConnections input(program, x, cell, prefix, time, control.usesTime);
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
   size_t tail = input.values.size();
   input.add("%tunable_gradient", "f64");
   input.add("%c0", "index");
@@ -194,7 +176,7 @@ void Builder::emitTerms(StringRef x) {
   std::vector<std::string> potentials;
   for (const auto &definition : definitions)
     potentials.push_back(definition.name);
-  OutputConnections input(program, x, "%cell", "%p_", "%time0", control.usesTime);
+  PotentialConnections input(program, x, "%cell", "%p_", "%time0", control.usesTime);
   emitIRFragment(
       "  ", {"%terms"}, {type}, input.names(), input.signatures(),
       [potentials = std::move(potentials), count, fields = input.fields,

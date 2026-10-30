@@ -14,14 +14,6 @@ using namespace mlir;
 using namespace mdir::driver::builder;
 
 namespace {
-SmallVector<Value> arguments(const OutputStateIR &state) {
-  SmallVector<Value> values{state.positions, state.cell};
-  llvm::append_range(values, state.fields);
-  if (state.time)
-    values.push_back(state.time);
-  return values;
-}
-
 class OutputBuilder {
 public:
   explicit OutputBuilder(OpBuilder &builder)
@@ -66,7 +58,7 @@ private:
 } // namespace
 
 void mdir::driver::builder::buildFreeEnergyOutput(
-    OpBuilder &builder, const OutputStateIR &state, Value step,
+    OpBuilder &builder, const PotentialStateIR &state, Value step,
     Value zeroIndex, Value oneIndex, const FreeEnergyOutputConfig &config) {
   auto loc = builder.getUnknownLoc();
   OutputBuilder out(builder);
@@ -75,7 +67,7 @@ void mdir::driver::builder::buildFreeEnergyOutput(
   if (states == 1)
     states = 0;
   Value memory = out.allocate({static_cast<int64_t>(components + states)});
-  SmallVector<Value> values = arguments(state);
+  SmallVector<Value> values = potentialArguments(state);
   for (const auto &component : config.lambdas)
     values.push_back(out.real(component[config.state]));
   SmallVector<int32_t> kinds(components, int32_t(mdir::md::Request::Derivative));
@@ -104,7 +96,7 @@ void mdir::driver::builder::buildFreeEnergyOutput(
   {
     OpBuilder::InsertionGuard guard(builder);
     builder.setInsertionPointToStart(loop.getBody());
-    SmallVector<Value> loaded = arguments(state);
+    SmallVector<Value> loaded = potentialArguments(state);
     for (size_t c = 0; c != components; ++c) {
       Value column = out.index(c);
       Value value = memref::LoadOp::create(
@@ -120,13 +112,13 @@ void mdir::driver::builder::buildFreeEnergyOutput(
 }
 
 void mdir::driver::builder::buildObservablesOutput(
-    OpBuilder &builder, const OutputStateIR &state, Value step, size_t count,
+    OpBuilder &builder, const PotentialStateIR &state, Value step, size_t count,
     unsigned baseArgument, ArrayRef<ObservableOutputTermIR> terms,
     ValueRange tunables) {
   OutputBuilder out(builder);
   Value memory = out.allocate({static_cast<int64_t>(count)});
   for (const auto &term : terms) {
-    SmallVector<Value> values = arguments(state);
+    SmallVector<Value> values = potentialArguments(state);
     for (const auto &constant : term.constants)
       values.push_back(constant.tunable ? tunables[*constant.tunable]
                                        : out.real(constant.value));
@@ -147,7 +139,7 @@ void mdir::driver::builder::buildObservablesOutput(
 }
 
 void mdir::driver::builder::buildTunableGradientOutput(
-    OpBuilder &builder, const OutputStateIR &state, Value asked,
+    OpBuilder &builder, const PotentialStateIR &state, Value asked,
     Value zeroIndex, Value oneIndex, Value ids, ValueRange constants,
     ValueRange seeds, const TunableGradientOutputConfig &config) {
   auto loc = builder.getUnknownLoc();
@@ -161,7 +153,7 @@ void mdir::driver::builder::buildTunableGradientOutput(
   builder.setInsertionPointToStart(loop.getBody());
   size_t count = config.scalarArguments.size();
   Value memory = out.allocate({static_cast<int64_t>(count + 1)});
-  SmallVector<Value> values = arguments(state);
+  SmallVector<Value> values = potentialArguments(state);
   llvm::append_range(values, constants);
   llvm::append_range(values, seeds);
   SmallVector<Type> types(count + 1, builder.getF64Type());
@@ -180,7 +172,7 @@ void mdir::driver::builder::buildTunableGradientOutput(
       builder, loc, types, FlatSymbolRefAttr::get(builder.getContext(), "tunable"),
       values, builder.getDenseI32ArrayAttr(kinds),
       builder.getDenseI64ArrayAttr(derivatives));
-  auto energy = out.evaluate("energy", arguments(state),
+  auto energy = out.evaluate("energy", potentialArguments(state),
                               {int32_t(mdir::md::Request::Energy)}, {-1});
   Value shift = arith::SubFOp::create(builder, loc, result.getResult(0),
                                        energy.getResult(0));
@@ -210,12 +202,12 @@ void mdir::driver::builder::buildWriteSolvent(OpBuilder &builder, Value sums) {
 }
 
 Value mdir::driver::builder::buildTermEnergyBuffer(
-    OpBuilder &builder, const OutputStateIR &state, ArrayRef<std::string> potentials,
+    OpBuilder &builder, const PotentialStateIR &state, ArrayRef<std::string> potentials,
     size_t count) {
   OutputBuilder out(builder);
   Value memory = out.allocate({static_cast<int64_t>(count)});
   for (auto [index, potential] : llvm::enumerate(potentials)) {
-    auto result = out.evaluate(potential, arguments(state),
+    auto result = out.evaluate(potential, potentialArguments(state),
                                 {int32_t(mdir::md::Request::Energy)}, {-1});
     Value slot = out.index(index);
     out.store(result.getResult(0), memory, ValueRange{slot});

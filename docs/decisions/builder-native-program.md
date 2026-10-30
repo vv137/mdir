@@ -168,4 +168,11 @@ Trotter work retains its subtraction order; exact work retains the constant
 energy change from inverse volumes and the energy difference of the newly
 evaluated positions. Projection/evaluation phases remain in their original
 places between these computations, with no algebraic reassociation.
+Potential evaluation shares `PotentialStateIR` between dynamics and output.
+Requests explicitly return energy, forces, and virial in their original order;
+plain steps, minimization, and exact cell work use that typed boundary. Step
+time retains signed integer conversion and multiplication order, with the
+same memory read where needed. Private connection packing remains transitional
+and captures no builder/program in native recipes; it is removed with the
+remaining native function and schedule scopes.
 D363's term recipes still join remaining assembly at this commit.

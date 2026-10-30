@@ -3,6 +3,7 @@
 // (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "PotentialIR.h"
 #include "BarostatIR.h"
 #include "DynamicsIR.h"
 #include "CouplingIR.h"
@@ -43,10 +44,6 @@ void Builder::emitPrograms() {
     emitDescend();
     return;
   }
-  std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
-                         getTimeValue("%time") + ")";
-  std::string signature =
-      "(!vec, !md.cell" + getFieldTypes() + getTimeType() + ")";
   // Virtual sites are placed after the positions move, and the forces on
   // them are moved to their atoms before the velocities do. Rigid waters
   // are constrained before the sites are placed.
@@ -213,8 +210,11 @@ void Builder::emitPrograms() {
     // The time at the end of the step, at which its forces are evaluated
     // (D145).
     if (control.usesTime)
-      os << "  %time_steps = arith.sitofp %noise_step : i64 to f64\n"
-         << "  %time = arith.mulf %time_steps, %dt : f64\n";
+      emitIRFragment(
+          "  ", {"%time"}, {"f64"}, {"%noise_step", "%dt"}, {"i64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildSimulationTime(builder, values[0], values[1])};
+          });
     if (brownian) {
       // The velocity of the step, which the drift takes over Δt; the
       // velocities stored are those of the displacement, Δx / Δt.
@@ -451,19 +451,10 @@ void Builder::emitPrograms() {
     // and `%u1` (D270).
     bool hostTerms = hasHostEvaluation();
     std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    if (withEnergy)
-      os << "  %u1" << held << modelled << ", %f1" << held << raw << modelled
-         << ", %w1" << held << raw << " = " << evaluate
-         << "\n      request [energy, forces, virial]\n"
-         << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
-    else if (withVirial)
-      os << "  %f1" << held << raw << modelled << ", %w1" << held << raw
-         << " = " << evaluate << "\n      request [forces, virial]\n"
-         << "      : " << signature << " -> (!vec, vector<9xf64>)\n";
-    else
-      os << "  %f1" << held << raw << modelled << " = " << evaluate
-         << " request [forces]\n"
-         << "      : " << signature << " -> !vec\n";
+    std::string energyName = withEnergy ? "%u1" + held + modelled : "";
+    std::string forceName = "%f1" + held + raw + modelled;
+    std::string virialName = withEnergy || withVirial ? "%w1" + held + raw : "";
+    emitEnergyEvaluation("  ", "%x1", "%cell", "%p_", "%time", energyName, forceName, virialName);
     std::string virial = "%w1" + held;
     if (sites)
       virial = emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held,
@@ -1261,23 +1252,20 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // The time of the step that the scaling follows (D145).
       std::string time = "%btime" + t;
       if (control.usesTime)
-        os << indent << time << "_steps_i = memref.load %noise_memory[%c0]"
-           << " : memref<1xi64>\n"
-           << indent << time << "_steps = arith.sitofp " << time
-           << "_steps_i : i64 to f64\n"
-           << indent << time << " = arith.mulf " << time << "_steps, %dt"
-           << " : f64\n";
+        emitIRFragment(
+            indent, {time}, {"f64"}, {"%noise_memory", "%c0", "%dt"},
+            {"memref<1xi64>", "index", "f64"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              mlir::Value step = mlir::memref::LoadOp::create(
+                  builder, builder.getUnknownLoc(), values[0], mlir::ValueRange{values[1]});
+              return {buildSimulationTime(builder, step, values[2])};
+            });
       // A learned potential adds its energy and forces in the new cell
       // (D270).
       bool hostTerms = hasHostEvaluation();
       std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-      os << indent << u << held << modelled << ", " << f << held << raw
-         << modelled << " = md.evaluate @energy(" << newPositions << ", "
-         << cell << getFieldValues(fieldPrefix) << getTimeValue(time)
-         << ")\n"
-         << indent << "    request [energy, forces]\n"
-         << indent << "    : (!vec, !md.cell" << getFieldTypes()
-         << getTimeType() << ") -> (f64, !vec)\n";
+      emitEnergyEvaluation(indent, newPositions, cell, fieldPrefix, time,
+                             u + held + modelled, f + held + raw + modelled, "");
       if (hasSites())
         emitSpreadSites(indent, newPositions, f + held + "e", f + held,
                         relations);
@@ -1350,10 +1338,6 @@ void Builder::emitDescend() {
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
-  std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
-                         getTimeValue("%zero") + ")";
-  std::string signature =
-      "(!vec, !md.cell" + getFieldTypes() + getTimeType() + ")";
   os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
         "%cell: !md.cell,\n    %h: f64"
      << getFieldParameters() << ")\n    -> (!vec, !vec, f64)"
@@ -1422,9 +1406,8 @@ void Builder::emitDescend() {
   // (D270).
   bool hostTerms = hasHostEvaluation();
   std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-  os << "  %u1" << held << modelled << ", %f1" << held << raw << modelled
-     << " = " << evaluate << "\n      request [energy, forces]\n"
-     << "      : " << signature << " -> (f64, !vec)\n";
+  emitEnergyEvaluation("  ", "%x1", "%cell", "%p_", "%zero",
+                         "%u1" + held + modelled, "%f1" + held + raw + modelled, "");
   if (sites)
     emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
   if (hasForceCorrections()) {
@@ -1497,5 +1480,29 @@ void Builder::emitSum3(StringRef result, StringRef vector, StringRef indent) {
       indent, {result}, {"f64"}, {vector}, {"vector<3xf64>"},
       [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
         return {buildSum3(builder, values[0])};
+      });
+}
+
+void Builder::emitEnergyEvaluation(
+    StringRef indent, StringRef x, StringRef cell, StringRef prefix, StringRef time,
+    StringRef energy, StringRef forces, StringRef virial) {
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
+  EnergyRequests request{!energy.empty(), !forces.empty(), !virial.empty()};
+  llvm::SmallVector<StringRef> outputs, types;
+  if (request.energy) { outputs.push_back(energy); types.push_back("f64"); }
+  if (request.forces) { outputs.push_back(forces); types.push_back("!vec"); }
+  if (request.virial) { outputs.push_back(virial); types.push_back("vector<9xf64>"); }
+  emitIRFragment(
+      indent, outputs, types, input.names(), input.signatures(),
+      [request, fields = input.fields, timed = input.timed](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        PotentialStateIR state{values[0], values[1], values.slice(2, fields),
+                                 timed ? values[2 + fields] : mlir::Value{}};
+        auto result = buildEnergyEvaluation(builder, state, request);
+        TermIRValues outputs;
+        if (request.energy) outputs.push_back(result.energy);
+        if (request.forces) outputs.push_back(result.forces);
+        if (request.virial) outputs.push_back(result.virial);
+        return outputs;
       });
 }
