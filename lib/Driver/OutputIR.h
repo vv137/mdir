@@ -54,5 +54,9 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const OutputStateIR &,
                                  mlir::ValueRange seeds,
                                  const TunableGradientOutputConfig &);
 void buildWriteSolvent(mlir::OpBuilder &, mlir::Value sums);
+mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const OutputStateIR &,
+                                    llvm::ArrayRef<std::string> potentials,
+                                    size_t count);
+void buildWriteTerms(mlir::OpBuilder &, mlir::Value memory);
 } // namespace mdir::driver::builder
 #endif

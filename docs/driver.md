@@ -1380,8 +1380,8 @@ Box-Muller noise, and Brownian drift from typed operands and owned seed/noise
 constants; the step counter advances with native memory operations.
 `KineticIR.cpp` supplies typed scalar/vector energy, momentum, and guarded
 force reductions for observables and center-of-mass corrections.
-`OutputIR.cpp` builds free-energy, observable, tunable-gradient, and solvent
-output from typed physical state and owned request/table configuration.
+`OutputIR.cpp` builds term-energy, free-energy, observable, tunable-gradient,
+and solvent output from typed physical state and owned request/table configuration.
 `BarostatIR.cpp` constructs stochastic cell strain, cell/reference geometry,
 and checkpointed barostat stores with typed state. `DynamicsIR.cpp` supplies
 scaled-norm minimization motion and explicit accepted/rejected trial state.
@@ -1389,7 +1389,7 @@ scaled-norm minimization motion and explicit accepted/rejected trial state.
 derived lists, and topology renumbering from typed state and semantic slots.
 `BuilderPotential.cpp` constructs shared neighborhood selection, scalar
 accumulation, lambda constants, and potential returns with native operations.
-Potential signatures, remaining dynamics, energy-row output, and schedule
+Potential signatures, remaining dynamics, entry energy rows, and schedule
 construction remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.

@@ -208,3 +208,21 @@ void mdir::driver::builder::buildWriteSolvent(OpBuilder &builder, Value sums) {
   func::CallOp::create(builder, loc, "mdrtWriteSolvent", TypeRange{},
                        ValueRange{full, half});
 }
+
+Value mdir::driver::builder::buildTermEnergyBuffer(
+    OpBuilder &builder, const OutputStateIR &state, ArrayRef<std::string> potentials,
+    size_t count) {
+  OutputBuilder out(builder);
+  Value memory = out.allocate({static_cast<int64_t>(count)});
+  for (auto [index, potential] : llvm::enumerate(potentials)) {
+    auto result = out.evaluate(potential, arguments(state),
+                                {int32_t(mdir::md::Request::Energy)}, {-1});
+    Value slot = out.index(index);
+    out.store(result.getResult(0), memory, ValueRange{slot});
+  }
+  return memory;
+}
+
+void mdir::driver::builder::buildWriteTerms(OpBuilder &builder, Value memory) {
+  OutputBuilder(builder).write("mdrtWriteTerms", memory, {});
+}
