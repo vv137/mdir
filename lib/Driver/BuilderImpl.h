@@ -887,13 +887,10 @@ private:
         text += ", %lambda_" + name + ": f64";
     return text;
   }
-  void emitLambdaConstants(StringRef indent) override {
-    if (lambdaArguments)
-      return;
-    for (const auto &[name, values] : control.freeEnergy.lambdas)
-      os << indent << "%lambda_" << name << " = arith.constant "
-         << formatReal(getLambda(name)) << " : f64\n";
-  }
+  void emitLambdaConstants(StringRef indent) override;
+  void emitPairNeighborhood(StringRef indent, StringRef result,
+                              StringRef positions, StringRef cell,
+                              StringRef excluded);
   /// Binds the parameters `lambda_<name>` of the expressions.
   void bindLambdas(llvm::StringMap<std::string> &values) const override {
     for (const auto &[name, v] : control.freeEnergy.lambdas)

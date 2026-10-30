@@ -238,7 +238,6 @@ void Builder::emitObservedPotentials() {
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
-  double cutoff = control.cutoffDistance * units::length;
   bool alchemicalOnly = terms & Alchemical;
   unsigned active = 0;
   for (const TermBuilder *builder : getTermBuilders())
@@ -258,8 +257,12 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       return;
     }
     std::string sum = ("%total_" + term).str();
-    os << "  " << sum << " = arith.addf " << total << ", " << value
-       << " : f64\n";
+    emitIRFragment(
+        "  ", {sum}, {"f64"}, {total, value}, {"f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
+                                               values[0], values[1])};
+        });
     total = sum;
   };
 
@@ -268,8 +271,12 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       total = value.str();
       return;
     }
-    os << "  " << sum << " = arith.addf " << total << ", " << value
-       << " : f64\n";
+    emitIRFragment(
+        "  ", {sum}, {"f64"}, {total, value}, {"f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
+                                               values[0], values[1])};
+        });
     total = sum.str();
   };
   TermPotentialAddition addition{add, addResult};
@@ -282,16 +289,16 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly});
   });
   if (pairTerms) {
-    os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
-       << ")";
+    std::string excluded;
     for (const TermBuilder *builder : getTermBuilders()) {
       StringRef set = builder->getPairExclusion();
-      if (!set.empty() &&
-          llvm::any_of(program.tupleSets,
-                       [&](const auto &data) { return data.name == set; }))
-        os << " exclude(%r_" << set << " : !rel_" << set << ")";
+      if (!set.empty() && llvm::any_of(program.tupleSets,
+              [&](const auto &data) { return data.name == set; })) {
+        assert(excluded.empty() && "a neighborhood has one exclusion relation");
+        excluded = set.str();
+      }
     }
-    os << " : !vec -> !pairs\n";
+    emitPairNeighborhood("  ", "%n", "%x", "%cell", excluded);
   }
   for (const TermBuilder *builder :
        mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders())) {
@@ -303,14 +310,24 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       builder->emitTopologyPotential(*this, selection, addition);
   }
   if (total.empty()) {
-    os << "  %zero = arith.constant 0.0 : f64\n";
+    emitIRFragment(
+        "  ", {"%zero"}, {"f64"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+                                                   builder.getF64FloatAttr(0.0))};
+        });
     total = "%zero";
   }
-  os << "  md.return " << total << " : f64\n}\n\n";
+  emitIRFragment(
+      "  ", {}, {}, {total}, {"f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::md::ReturnOp::create(builder, builder.getUnknownLoc(), values);
+        return {};
+      });
+  os << "}\n\n";
 }
 
 llvm::Error Builder::emitPotential() {
-  double cutoff = control.cutoffDistance * units::length;
 
   if (control.truncation == Truncation::PowerForceSwitch)
     return makeError("the power force switch is for the Lennard-Jones of a "
@@ -318,13 +335,18 @@ llvm::Error Builder::emitPotential() {
 
   os << "md.potential @energy(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
-  os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
-     << ") : !vec -> !pairs\n";
+  emitPairNeighborhood("  ", "%n", "%x", "%cell", "");
 
   std::string total;
   for (const TermBuilder *builder : termBuildersByPotentialRank())
     builder->emitBareContributions(*this, total);
-  os << "  md.return " << total << " : f64\n}\n\n";
+  emitIRFragment(
+      "  ", {}, {}, {total}, {"f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::md::ReturnOp::create(builder, builder.getUnknownLoc(), values);
+        return {};
+      });
+  os << "}\n\n";
   return llvm::Error::success();
 }
 
@@ -457,4 +479,48 @@ void Builder::emitTerms(StringRef x) {
   os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"
      << "  func.call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
+}
+
+void Builder::emitPairNeighborhood(StringRef indent, StringRef result,
+                                     StringRef positions, StringRef cell,
+                                     StringRef excluded) {
+  llvm::SmallVector<StringRef> inputs{positions, cell}, types{"!vec", "!md.cell"};
+  std::string relation = ("%r_" + excluded).str(), type = ("!rel_" + excluded).str();
+  if (!excluded.empty()) {
+    inputs.push_back(relation);
+    types.push_back(type);
+  }
+  double cutoff = control.cutoffDistance * units::length;
+  emitIRFragment(
+      indent, {result}, {"!pairs"}, inputs, types,
+      [cutoff](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto atoms = mlir::cast<mdir::md::FieldType>(values[0].getType()).getParticleSet();
+        auto pairs = mdir::md::RelationType::get(builder.getContext(), atoms, 2,
+            mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
+        return {mdir::md::NeighborhoodOp::create(builder, builder.getUnknownLoc(),
+            pairs, values[0], values[1], values.size() == 3 ? values[2] : mlir::Value{},
+            builder.getF64FloatAttr(cutoff))};
+      });
+}
+
+void Builder::emitLambdaConstants(StringRef indent) {
+  if (lambdaArguments || control.freeEnergy.lambdas.empty())
+    return;
+  std::vector<std::string> names;
+  std::vector<double> constants;
+  for (const auto &[name, values] : control.freeEnergy.lambdas) {
+    names.push_back("%lambda_" + name);
+    constants.push_back(getLambda(name));
+  }
+  llvm::SmallVector<StringRef> outputs(names.begin(), names.end()), types(names.size(), "f64");
+  emitIRFragment(
+      indent, outputs, types, {}, {},
+      [constants = std::move(constants)](mlir::OpBuilder &builder,
+                                        mlir::ValueRange) -> TermIRValues {
+        TermIRValues values;
+        for (double constant : constants)
+          values.push_back(mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+                                                          builder.getF64FloatAttr(constant)));
+        return values;
+      });
 }

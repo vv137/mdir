@@ -145,4 +145,10 @@ from the preceding semantic source field slot rather than permuted. Native
 inputs omit unused listed-field values and absent force state; results name
 all state and parameter fields required by the schedule. The unused anchor
 coordinate and zero contribution remain in the original gather kernel.
+Shared potential bodies construct neighborhoods, ordered scalar accumulation,
+lambda constants, and returns with native operations. Exclusion selection
+retains registry order, and the scalar configuration snapshot owns the cutoff
+and lambda values. Empty topology energies retain their zero constant. The
+remaining potential signatures and surrounding program structure still join
+assembly until their typed scopes are constructed directly.
 D363's term recipes still join remaining assembly at this commit.
