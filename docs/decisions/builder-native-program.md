@@ -132,4 +132,10 @@ components. Virial reporting consumes those scalar outputs directly, without
 extracting them again. `checkDiagonalExports` in `test/Driver/TermIRTest.cpp`
 rejects a consumer of unexported components at construction and verifies that
 the valid host call uses the original three extracts exactly once.
+Minimization's scaled 16-norm, guarded mean square, and normalized motion use
+typed kernels in `DynamicsIR.cpp`. A constrained trial returns its chosen
+positions and acceptance predicate explicitly; the energy consumer borrows
+that predicate and preserves the positive-infinity rejected value. Scalar
+roots, mass-metric direction, projection order, and vector broadcasts remain
+at their original points in the graph.
 D363's term recipes still join remaining assembly at this commit.

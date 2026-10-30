@@ -71,6 +71,7 @@ add_mlir_library(MDIRDriver
   KineticIR.cpp
   OutputIR.cpp
   BarostatIR.cpp
+  DynamicsIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

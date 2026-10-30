@@ -1383,7 +1383,8 @@ force reductions for observables and center-of-mass corrections.
 `OutputIR.cpp` builds free-energy, observable, tunable-gradient, and solvent
 output from typed physical state and owned request/table configuration.
 `BarostatIR.cpp` constructs stochastic cell strain, cell/reference geometry,
-and checkpointed barostat stores with typed state.
+and checkpointed barostat stores with typed state. `DynamicsIR.cpp` supplies
+scaled-norm minimization motion and explicit accepted/rejected trial state.
 Shared potential wrappers,
 dynamics, output, and schedule construction also remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities

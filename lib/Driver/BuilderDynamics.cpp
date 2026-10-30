@@ -4,6 +4,7 @@
 
 #include "BuilderImpl.h"
 #include "BarostatIR.h"
+#include "DynamicsIR.h"
 #include "CouplingIR.h"
 #include "NoiseIR.h"
 #include "KineticIR.h"
@@ -1374,39 +1375,14 @@ void Builder::emitDescend() {
      << "  %count = arith.constant "
      << formatReal(static_cast<double>(system.getNumParticles())) << " : f64\n";
   emitConstrainedDescent("  ", "%x", "%f", "%g");
-  os << "  %square = md.sum_particles gather(%g : !vec) {\n"
-     << "  ^bb0(%f_i: vector<3xf64>):\n"
-     << "    %sq = arith.mulf %f_i, %f_i : vector<3xf64>\n"
-     << "    %s = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
-     << "    md.yield %s : f64\n"
-     << "  } : f64\n"
-     << "  %mean = arith.divf %square, %count : f64\n"
-     << "  %mean_safe = arith.maximumf %mean, %tiny : f64\n"
-     << "  %rms = math.sqrt %mean_safe : f64\n"
-     << "  %power = md.sum_particles gather(%g : !vec) {\n"
-     << "  ^bb0(%f_i: vector<3xf64>):\n"
-     << "    %sq = arith.mulf %f_i, %f_i : vector<3xf64>\n"
-     << "    %s = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
-     << "    %r2 = arith.divf %s, %mean_safe : f64\n"
-     << "    %r4 = arith.mulf %r2, %r2 : f64\n"
-     << "    %r8 = arith.mulf %r4, %r4 : f64\n"
-     << "    %r16 = arith.mulf %r8, %r8 : f64\n"
-     << "    md.yield %r16 : f64\n"
-     << "  } : f64\n"
-     << "  %root2 = math.sqrt %power : f64\n"
-     << "  %root4 = math.sqrt %root2 : f64\n"
-     << "  %root8 = math.sqrt %root4 : f64\n"
-     << "  %root16 = math.sqrt %root8 : f64\n"
-     << "  %norm = arith.mulf %rms, %root16 : f64\n"
-     << "  %scale = arith.divf %h, %norm : f64\n"
-     << "  %x1" << (sites || constraints ? "d" : "")
-     << " = md.map_particles gather(%x, %g : !vec, !vec) {\n"
-     << "  ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):\n"
-     << "    %sb = vector.broadcast %scale : f64 to vector<3xf64>\n"
-     << "    %d = arith.mulf %sb, %f_i : vector<3xf64>\n"
-     << "    %moved = arith.addf %x_i, %d : vector<3xf64>\n"
-     << "    md.yield %moved : vector<3xf64>\n"
-     << "  } : !vec\n";
+  std::string trial = sites || constraints ? "%x1d" : "%x1";
+  emitIRFragment(
+      "  ", {trial}, {"!vec"}, {"%x", "%g", "%h", "%count", "%tiny"},
+      {"!vec", "!vec", "f64", "f64", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildDescentPositions(builder, values[0], values[1], values[2],
+                                        values[3], values[4])};
+      });
   // The rigid groups back to their shapes, and the sites where their
   // atoms put them.
   if (constraints) {
@@ -1436,16 +1412,15 @@ void Builder::emitDescend() {
     // takes the group back, which does not shrink with the step
     // (D259, #343).
     emitConstraintFailures("  ", "%x1k", "%broken");
-    os << "  %intact = arith.cmpf oeq, %broken, %zero : f64\n"
-       << "  " << (sites ? "%x1s" : "%x1")
-       << " = md.map_particles gather(%x1k, %x : !vec, !vec) {\n"
-       << "  ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
-       << "    %zero_i = arith.constant 0.0 : f64\n"
-       << "    %intact_i = arith.cmpf oeq, %broken, %zero_i : f64\n"
-       << "    %chosen = arith.select %intact_i, %new_i, %old_i "
-          ": vector<3xf64>\n"
-       << "    md.yield %chosen : vector<3xf64>\n"
-       << "  } : !vec\n";
+    std::string chosen = sites ? "%x1s" : "%x1";
+    emitIRFragment(
+        "  ", {chosen, "%intact"}, {"!vec", "i1"},
+        {"%x1k", "%x", "%broken", "%zero"}, {"!vec", "!vec", "f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto result = buildConstrainedTrial(builder, values[0], values[1],
+                                                values[2], values[3]);
+          return {result.positions, result.intact};
+        });
   }
   if (sites)
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
@@ -1470,8 +1445,11 @@ void Builder::emitDescend() {
                    "", "1");
   std::string energy = "%u1";
   if (constraints) {
-    os << "  %never = arith.constant 0x7FF0000000000000 : f64\n"
-       << "  %u1c = arith.select %intact, %u1, %never : f64\n";
+    emitIRFragment(
+        "  ", {"%u1c"}, {"f64"}, {"%u1", "%intact"}, {"f64", "i1"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {buildTrialEnergy(builder, values[0], values[1])};
+        });
     energy = "%u1c";
   }
   os << "  dyn.return %x1, %f1, " << energy << " : !vec, !vec, f64\n}\n\n";
