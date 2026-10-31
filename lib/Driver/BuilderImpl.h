@@ -763,7 +763,7 @@ private:
   /// Collects the values of Program::startValues, which the entry takes
   /// as arguments (D227).
   void collectStartValues();
-  void emitEntry();
+  llvm::Error emitEntry();
   /// Emits `@descend`, one step of steepest descent that moves no particle
   /// farther than `%h`, and the loops of a minimization in the entry.
   void emitDescend();

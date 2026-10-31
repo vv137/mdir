@@ -130,9 +130,9 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
   return llvm::Error::success();
 }
 
-llvm::Error mdir::driver::builder::checkFrameEvaluation(mlir::Operation *scope) {
+llvm::Error mdir::driver::builder::checkFrameEvaluation(mlir::Operation &scope) {
   bool evaluates = false;
-  scope->walk([&](mdir::md::EvaluateOp) { evaluates = true; });
+  scope.walk([&](mdir::md::EvaluateOp) { evaluates = true; });
   if (!evaluates)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
