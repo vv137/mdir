@@ -1281,7 +1281,7 @@ No generic behavioral hook has only one implementer.
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
 | `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
-| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1467,6 +1467,10 @@ argument and scalar-capture lifetime after transient metadata is cleared.
 Built-in bonded term potentials use native scalar-potential signatures
 and typed tuple-relation/parameter bindings, sharing their kernels with the
 remaining topology path. Rank and accumulation order are unchanged.
+External potentials also use native bodies with actual particle fields, tables,
+frame/time values and semantic expression bindings. Lambda and observed arguments
+retain their declaration and binding order; their native expression kernel is
+shared with the remaining topology path.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 

@@ -268,9 +268,12 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     auto potential = buildScalarPotential(ir, name, inputs,
         [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> mlir::Value {
-      if (!lambdaArguments)
-        for (const auto &[name, values] : control.freeEnergy.lambdas)
-          mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(getLambda(name)));
+      unsigned nextExtra = 2 + parameters.size() + unsigned(control.usesTime);
+      llvm::SmallVector<mlir::Value> lambdaValues, observedValues;
+      for (const auto &[name, values] : control.freeEnergy.lambdas)
+        lambdaValues.push_back(lambdaArguments ? args[nextExtra++]
+            : mlir::Value(mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(getLambda(name)))));
+      for (size_t i = 0; i != observedConstants.size(); ++i) observedValues.push_back(args[nextExtra++]);
       auto field = [&](StringRef name) -> mlir::Value {
         auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
         assert(found != program.fields.end() && "potential field must exist");
@@ -300,8 +303,17 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         assert(found != set->fields.end() && "potential tuple field must exist");
         return args[2 + slot + 1 + std::distance(set->fields.begin(), found)];
       };
+      auto bindLambdas = [&](llvm::StringMap<mlir::Value> &variables) {
+        unsigned index = 0;
+        for (const auto &[name, values] : control.freeEnergy.lambdas)
+          variables["lambda_" + name] = lambdaValues[index++];
+      };
+      auto bindObserved = [&](StringRef term, llvm::StringMap<mlir::Value> &variables) {
+        if (term != observedTerm) return;
+        for (auto [index, name] : llvm::enumerate(observedConstants)) variables[name] = observedValues[index];
+      };
       TermNativeTopology state{{args[0], args[1], {},
-          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField};
+          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField, bindLambdas, bindObserved};
       mlir::Value total;
       auto add = [&](mlir::Value energy) {
         total = total ? mlir::arith::AddFOp::create(ir, loc, total, energy).getResult() : energy;

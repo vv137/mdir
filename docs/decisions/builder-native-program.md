@@ -243,5 +243,9 @@ body before its temporary placement join. Construction tests verify operation,
 argument and scalar-capture lifetime after transient metadata is cleared.
 Built-in bond, angle, Urey-Bradley, improper, dihedral and CMAP potentials use native signatures and semantic tuple
 bindings, with shared kernels and unchanged accumulation order.
+External potentials also use native bodies with actual particle fields, tables,
+frame/time values and semantic expression bindings. Lambda and observed arguments
+retain their declaration and binding order; their native expression kernel is
+shared with the remaining topology path.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

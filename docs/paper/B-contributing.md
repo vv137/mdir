@@ -215,3 +215,7 @@ Topology potential and entry/schedule scopes remain in progress.
 Built-in bonded term potentials construct native signatures and bodies
 from actual tuple relations and parameter fields. Shared kernels and explicit
 emission ranks preserve the original arithmetic and accumulation order.
+
+External potentials bind semantic expression variables directly to actual
+fields, tables, time, lambda and observed arguments. Their native signature
+and body retain frame scaling, argument order and the shared expression kernel.
