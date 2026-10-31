@@ -427,13 +427,13 @@ llvm::Error Builder::build() {
       if (llvm::Error error = role->prepare(*this, termIR.getContext(), prepareIR))
         return error;
   if (system.topology) {
-    emitTopologyPotential("energy", AllTerms);
+    if (llvm::Error error = emitTopologyPotential("energy", AllTerms)) return error;
     // One definition list fixes both the declaration and output-column order.
     if (!isRestart())
       for (const TermDefinition &definition : getTermDefinitions())
-        emitTopologyPotential(definition.name, definition.terms,
+        if (llvm::Error error = emitTopologyPotential(definition.name, definition.terms,
                               definition.tupleTerm, definition.pairTerm,
-                              definition.externalTerm);
+                              definition.externalTerm)) return error;
   }
   else if (llvm::Error error = emitPotential())
     return error;
@@ -442,7 +442,7 @@ llvm::Error Builder::build() {
   if (system.topology && !control.freeEnergyFile.empty()) {
     lambdaArguments = true;
     shiftsAtCutoff = true;
-    emitTopologyPotential("alchemical", AllTerms | Alchemical);
+    if (llvm::Error error = emitTopologyPotential("alchemical", AllTerms | Alchemical)) return error;
     shiftsAtCutoff = false;
     lambdaArguments = false;
   }
@@ -456,14 +456,14 @@ llvm::Error Builder::build() {
     // pair term at the cutoff, shifted to 0 there (D210).
     gradientArguments = true;
     shiftsAtCutoff = true;
-    emitTopologyPotential("tunable", AllTerms);
+    if (llvm::Error error = emitTopologyPotential("tunable", AllTerms)) return error;
     shiftsAtCutoff = false;
     gradientArguments = false;
   }
   // The energies and derivatives of `observe`, of the potential that the
   // forces sample (D210).
   shiftsAtCutoff = true;
-  emitObservedPotentials();
+  if (llvm::Error error = emitObservedPotentials()) return error;
   shiftsAtCutoff = false;
   for (const TermBuilder *term : getTermBuilders())
     if (const auto *role = term->getRoles().coordinateOutput)

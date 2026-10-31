@@ -102,7 +102,7 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
   return terms;
 }
 
-void Builder::emitObservedPotentials() {
+llvm::Error Builder::emitObservedPotentials() {
   // Each term alone, with its observed constants as arguments, whose
   // derivatives the differentiation of parameters gives as it gives
   // dH/dλ (D161): exactly 0 where the energy provably does not depend on
@@ -110,15 +110,16 @@ void Builder::emitObservedPotentials() {
   for (auto [k, term] : llvm::enumerate(getObservedTerms())) {
     observedTerm = term.name;
     observedConstants = term.constants;
-    emitTopologyPotential("observe" + std::to_string(k), term.potential.terms,
+    if (llvm::Error error = emitTopologyPotential("observe" + std::to_string(k), term.potential.terms,
                           term.potential.tupleTerm, term.potential.pairTerm,
-                          term.potential.externalTerm);
+                          term.potential.externalTerm)) return error;
     observedTerm.clear();
     observedConstants.clear();
   }
+  return llvm::Error::success();
 }
 
-void Builder::emitTopologyPotential(StringRef name, unsigned terms,
+llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
   bool alchemicalOnly = terms & Alchemical;
@@ -147,8 +148,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       inputs.append(control.tunableConstants.size(), ir.getF64Type());
       inputs.append(getNumGradientSeeds(), real);
     }
-    auto potential = buildScalarPotential(ir, name, inputs,
-        [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> mlir::Value {
+    auto builtPotential = buildScalarPotential(ir, name, inputs,
+        [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> llvm::Expected<mlir::Value> {
       unsigned nextExtra = 2 + parameters.size() + unsigned(control.usesTime);
       llvm::SmallVector<mlir::Value> lambdaValues, observedValues;
       for (const auto &[name, values] : control.freeEnergy.lambdas)
@@ -228,16 +229,19 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         total = total ? mlir::arith::AddFOp::create(ir, loc, total, energy).getResult() : energy;
       };
       for (const TermBuilder *term : mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders()))
-        term->buildTopologyPotential(*this, ir, state, selection, add);
+        if (llvm::Error error = term->buildTopologyPotential(*this, ir, state, selection, add))
+          return std::move(error);
       if (!total) total = mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(0.0));
       return total;
     });
+    if (!builtPotential) return builtPotential.takeError();
+    auto potential = *builtPotential;
     emitIRFragment("", {}, {}, {}, {},
         [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
           potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
           return {};
         });
-    return;
+    return llvm::Error::success();
   }
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << getLambdaParameters()
@@ -320,6 +324,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         return {};
       });
   os << "}\n\n";
+  return llvm::Error::success();
 }
 
 llvm::Error Builder::emitPotential() {
@@ -338,7 +343,7 @@ llvm::Error Builder::emitPotential() {
   llvm::SmallVector<mlir::Type> inputs{vec, mdir::md::CellType::get(&context)};
   llvm::append_range(inputs, parameters);
   if (control.usesTime) inputs.push_back(ir.getF64Type());
-  auto potential = buildScalarPotential(ir, "energy", inputs,
+  auto builtPotential = buildScalarPotential(ir, "energy", inputs,
       [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> mlir::Value {
     auto pairs = mdir::md::RelationType::get(&context, atoms, 2,
         mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
@@ -361,6 +366,8 @@ llvm::Error Builder::emitPotential() {
       total = term->buildBareContributions(*this, ir, state, total);
     return total;
   });
+  if (!builtPotential) return builtPotential.takeError();
+  auto potential = *builtPotential;
   emitIRFragment("", {}, {}, {}, {},
       [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
         potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());

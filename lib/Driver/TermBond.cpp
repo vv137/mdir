@@ -65,15 +65,17 @@ public:
       std::vector<TermDefinition> &definitions) const override {
     definitions.push_back({2, 0, "term_bonds", TermInputs::Bonds});
   }
-  void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::Bonds)) return;
+    if (!(selection.terms & TermInputs::Bonds)) return llvm::Error::success();
     auto relation = state.relation("bonds");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildBondsContribution(builder,
         mlir::ValueRange{relation, state.physical.positions, state.physical.cell,
                         state.tupleField("bonds", "k"), state.tupleField("bonds", "r0")}));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

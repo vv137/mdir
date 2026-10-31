@@ -201,7 +201,7 @@ constraint groups preserve position correction, velocity projection, failure
 reporting, molecular pressure, constraint virial and future half-step kinetic
 measurements, including geodesic Langevin and within-drift Trotter scaling.
 Borrowed physical values and owned scalar configuration retain the prior kernel
-and accumulation order. Potential and entry/schedule scopes remain in progress.
+and accumulation order. Nonbonded potential and entry/schedule scopes remain in progress.
 
 Half-step eligibility is shared by the owner, construction tests and native
 function builder. A checked return boundary reports the physical combination
@@ -235,3 +235,8 @@ Custom pair potentials use the same native topology boundary and shared
 expression kernel, retaining grouped masks, lookup and constant binding order,
 tunable arguments and the selected truncation. The owner constructs their
 shared neighborhood before ranked contributions.
+
+Staged-model contributions clone their checked input body directly into the
+native topology potential using actual positions, cell and atomic-number values.
+Native potential construction propagates errors and discards incomplete bodies;
+construction coverage verifies that failure boundary explicitly.

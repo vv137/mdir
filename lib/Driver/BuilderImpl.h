@@ -274,7 +274,7 @@ public:
       llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
       llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) = 0;
   virtual Truncation getPairTruncation() const = 0;
-  virtual void emitTopologyPotential(StringRef name, unsigned terms,
+  virtual llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm = -1, int pairTerm = -1,
                                     int externalTerm = -1) = 0;
   virtual std::string getFieldParameters() const = 0;
@@ -505,9 +505,9 @@ public:
       const TermNativePotential &, mlir::Value total) const { return total; }
   virtual void collectParameters(TermParameters &) const {}
   unsigned getNativePotentialMask() const { return nativePotentialMask; }
-  virtual void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &,
+  virtual llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &,
       const TermNativeTopology &, const PotentialSelection &,
-      llvm::function_ref<void(mlir::Value)>) const {}
+      llvm::function_ref<void(mlir::Value)>) const { return llvm::Error::success(); }
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
       const TermPotentialAddition &) const {}
@@ -746,7 +746,7 @@ private:
   /// the terms given by expressions over tuples, pairs, or positions, only
   /// the one of index `tupleTerm`, `pairTerm`, or `externalTerm` if it is
   /// not -1.
-  void emitTopologyPotential(StringRef name, unsigned terms,
+  llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
                              int externalTerm = -1) override;
   /// Emits the coordinates of the term `term` over centers, at the
@@ -1035,7 +1035,7 @@ private:
     llvm_unreachable("Control checks the observed constants");
   }
   /// Emits `@observe<k>` for each term of `[output] observe`.
-  void emitObservedPotentials();
+  llvm::Error emitObservedPotentials();
   /// Emits the energies and the derivatives of `[output] observe` at the
   /// positions `x` in the cell `cell` and their call to the writer
   /// (D189).

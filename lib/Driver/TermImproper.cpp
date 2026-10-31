@@ -81,13 +81,15 @@ public:
     definitions.push_back(
         {11, 0, "term_impropers", TermInputs::HarmonicImpropers});
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::HarmonicImpropers)) return;
+    if (!(selection.terms & TermInputs::HarmonicImpropers)) return llvm::Error::success();
     auto relation = state.relation("impropers");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildHarmonicImpropersContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("impropers", "k"), state.tupleField("impropers", "xi0")}));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

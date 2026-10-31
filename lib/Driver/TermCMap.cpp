@@ -118,13 +118,15 @@ public:
       std::vector<TermDefinition> &definitions) const override {
     definitions.push_back({7, 0, "term_cmap", TermInputs::CMaps});
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::CMaps)) return;
+    if (!(selection.terms & TermInputs::CMaps)) return llvm::Error::success();
     auto relation = state.relation("cmap");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildCMapsContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("cmap", "map"), state.physical.table("cmap")}, context.getTopology().cmapResolution));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

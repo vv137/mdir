@@ -69,13 +69,15 @@ public:
       std::vector<TermDefinition> &definitions) const override {
     definitions.push_back({4, 0, "term_dihedrals", TermInputs::Dihedrals});
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::Dihedrals)) return;
+    if (!(selection.terms & TermInputs::Dihedrals)) return llvm::Error::success();
     auto relation = state.relation("dihedrals");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildDihedralsContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("dihedrals", "k"), state.tupleField("dihedrals", "n"), state.tupleField("dihedrals", "phase")}));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

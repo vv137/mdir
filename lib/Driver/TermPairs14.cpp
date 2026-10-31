@@ -124,14 +124,14 @@ public:
     definitions.push_back({5, 0, "term_lj14", TermInputs::LennardJones14});
     definitions.push_back({6, 0, "term_coulomb14", TermInputs::Coulomb14});
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
     bool lj14 = selection.terms & TermInputs::LennardJones14;
     bool coulomb14 = selection.terms & TermInputs::Coulomb14;
-    if (!lj14 && !coulomb14) return;
+    if (!lj14 && !coulomb14) return llvm::Error::success();
     auto relation = state.relation("pairs14");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     bool products = context.hasGradientArguments() && context.hasGradientCharges() && coulomb14;
     const auto &control = context.getControl();
     Truncation modifier =
@@ -146,6 +146,8 @@ public:
     add(buildPairs14Contribution(builder, values, lj14, coulomb14, products,
         control.cutoffDistance * units::length,
         control.switchDistance * units::length, modifier));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

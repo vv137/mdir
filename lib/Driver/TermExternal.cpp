@@ -127,14 +127,16 @@ public:
     }
   }
 
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::ExternalTerms)) return;
+    if (!(selection.terms & TermInputs::ExternalTerms)) return llvm::Error::success();
     for (auto [index, term] : llvm::enumerate(context.getTopology().externalTerms))
       if ((selection.externalTerm < 0 || int(index) == selection.externalTerm) &&
           !(selection.alchemicalOnly && !context.usesLambda(term.expression)))
         add(buildExternalTerm(context, builder, state, index, term));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
