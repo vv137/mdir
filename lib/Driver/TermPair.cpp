@@ -67,6 +67,110 @@ struct BarePairIRConfig {
   std::vector<std::pair<std::string, size_t>> tables, functions;
 };
 
+static mlir::Value buildTopologyPairContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const TopologyPairIRConfig &config) {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            auto *ctx = builder.getContext();
+            auto sum = mdir::md::SumRelationOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, config.gatheredCount),
+                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
+                mdir::md::ExchangeBasisAttr::get(
+                    ctx, mdir::md::ExchangeBasis::Asserted),
+                mdir::md::TruncationAttr::get(ctx, config.modifier),
+                config.switched ? builder.getF64FloatAttr(config.switchFrom)
+                                : FloatAttr{});
+            llvm::SmallVector<Type> blockTypes = {
+                builder.getF64Type(),
+                VectorType::get({3}, builder.getF64Type()),
+                builder.getI32Type(),
+                builder.getI32Type(),
+                builder.getF64Type(),
+                builder.getF64Type()};
+            if (config.grouped)
+              blockTypes.append(4, builder.getF64Type());
+            blockTypes.append(2 * config.stems.size(), builder.getF64Type());
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            OpBuilder::InsertionGuard insertionGuard(builder);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            auto integer = [&](int64_t value) -> Value {
+              return arith::ConstantOp::create(
+                  builder, loc, builder.getI32IntegerAttr(value));
+            };
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            auto lookup = [&](Value table, Value a, Value b) -> Value {
+              return mdir::md::LookupOp::create(
+                  builder, loc, builder.getF64Type(), table, ValueRange{a, b});
+            };
+            Value angstrom = constant(1.0 / units::length);
+            Value kcal = constant(1.0 / units::energy);
+            Value r = mul(args[0], angstrom);
+            llvm::StringMap<Value> bindings, tables;
+            bindings["r"] = r;
+            bindings["q1"] = args[4];
+            bindings["q2"] = args[5];
+            size_t firstStem = 6 + (config.grouped ? 4 : 0);
+            for (size_t c = 0; c != config.stems.size(); ++c) {
+              bindings[config.stems[c] + "1"] = args[firstStem + 2 * c];
+              bindings[config.stems[c] + "2"] = args[firstStem + 2 * c + 1];
+            }
+            const std::array<StringRef, 6> lookupNames = {
+                "sigma", "epsilon", "sigma1", "sigma2", "epsilon1", "epsilon2"};
+            for (size_t c = 0; c != lookupNames.size(); ++c) {
+              if (!config.lookups[c])
+                continue;
+              bool sigma = c == 0 || c == 2 || c == 3;
+              Value a = c == 3 || c == 5 ? args[3] : args[2];
+              Value b = c < 2 ? args[3] : a;
+              Value raw = lookup(
+                  values[sigma ? config.sigmaTable : config.epsilonTable], a,
+                  b);
+              bindings[lookupNames[c]] = mul(raw, sigma ? angstrom : kcal);
+            }
+            if (config.coulomb)
+              bindings["coulomb"] = constant(coulombConstant);
+            for (const auto &entry : config.constants) {
+              if (entry.argument)
+                continue;
+              Value value;
+              if (entry.slot >= 0) {
+                Value row = integer(0);
+                Value column = integer(entry.slot);
+                value = lookup(values[config.constantsTable], row, column);
+              } else {
+                value = constant(entry.value);
+              }
+              bindings[entry.name] = value;
+            }
+            for (const auto &[name, index] : config.externalBindings)
+              bindings[name] = values[index];
+            for (const auto &[name, index] : config.functionTables)
+              tables[name] = values[index];
+            Value expression = config.expression.build(builder, bindings,
+                                                       tables, config.termName);
+            Value kj = constant(units::energy);
+            Value energy = mul(expression, kj);
+            if (config.grouped) {
+              Value ab = mul(args[6], args[9]);
+              Value ba = mul(args[7], args[8]);
+              Value either = arith::AddFOp::create(builder, loc, ab, ba);
+              Value one = constant(1.0);
+              Value mask = arith::MinimumFOp::create(builder, loc, either, one);
+              energy = mul(energy, mask);
+            }
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return sum.getResult();
+
+}
+
 static TermIRValues buildBarePairContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const BarePairIRConfig &config) {
             using namespace mlir;
             auto loc = builder.getUnknownLoc();
@@ -155,6 +259,7 @@ public:
   PairTermBuilder() {
     roles.scalarParameters = this;
     potentialMask = alchemicalMask = TermInputs::PairTerms;
+    nativePotentialMask = potentialMask;
   }
   unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
                             bool) const override {
@@ -367,6 +472,142 @@ public:
     return (selection.terms & TermInputs::PairTerms) &&
            !context.getControl().pairs.empty();
   }
+  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    const Control &control = context.getControl();
+    const System &system = context.getSystem();
+    bool pairTerms =
+        (selection.terms & TermInputs::PairTerms) && !control.pairs.empty();
+    int pairTerm = selection.pairTerm;
+    bool alchemicalOnly = selection.alchemicalOnly;
+    Truncation truncation = state.pairTruncation;
+    // The pair terms given by expressions (D137), over the pairs of the
+    // topology that are not excluded, truncated at the cutoff as the
+    // Lennard-Jones is, in the units of the control file: r, sigma in Å, q
+    // in e, epsilon and the energy in kcal/mol. The reader has tested that
+    // the expression is symmetric in the two particles, which the kernel
+    // then asserts; sigma and
+    // epsilon those of the pair, with the pairs of types set apart, and
+    // sigma1, epsilon1 those of the type of each particle with itself.
+    for (auto [k, term] : llvm::enumerate(control.pairs)) {
+      if (!pairTerms || (pairTerm >= 0 && static_cast<int>(k) != pairTerm))
+        continue;
+      if (!context.includesPair(static_cast<unsigned>(k)))
+        continue;
+      if (alchemicalOnly && !context.usesLambda(term.expression))
+        continue;
+      bool grouped =
+          k < system.pairGroups.size() && !system.pairGroups[k].empty();
+      std::string g = std::to_string(k), set = "pair_" + term.name;
+      Expression expression =
+          llvm::cantFail(Expression::parse(term.expression, control.functions));
+      const std::vector<std::string> &used = expression.getNames();
+      auto uses = [&](StringRef name) {
+        return llvm::is_contained(used, name);
+      };
+      // The parameters of each particle that the term takes (D165).
+      std::vector<std::string> stems;
+      for (const auto &[name, values] : system.particleParameters)
+        if (uses(name + "1") || uses(name + "2"))
+          stems.push_back(name);
+      TopologyPairIRConfig config(expression.prepareIR());
+      config.termName = term.name;
+      config.grouped = grouped;
+      config.stems = stems;
+      config.coulomb = uses("coulomb");
+      const std::array<StringRef, 6> lookupNames = {
+          "sigma", "epsilon", "sigma1", "sigma2", "epsilon1", "epsilon2"};
+      for (size_t c = 0; c != lookupNames.size(); ++c)
+        config.lookups[c] = uses(lookupNames[c]);
+      switch (truncation) {
+      case Truncation::None:
+      case Truncation::PowerForceSwitch:
+      case Truncation::SquaredDistanceSwitch:
+        break;
+      case Truncation::Shift:
+        config.modifier = mdir::md::Truncation::Shift;
+        break;
+      case Truncation::Switch:
+        config.modifier = mdir::md::Truncation::Switch;
+        config.switched = true;
+        break;
+      case Truncation::ForceSwitch:
+        config.modifier = mdir::md::Truncation::ForceSwitch;
+        config.switched = true;
+        break;
+      }
+      config.switchFrom = control.switchDistance * units::length;
+      TermIRValues values{state.physical.neighborhood, state.physical.positions,
+          state.physical.cell, state.physical.field("type"), state.physical.field("q")};
+      auto operand = [&](mlir::Value value) {
+        size_t index = values.size(); values.push_back(value); return index;
+      };
+      if (grouped) {
+        operand(state.physical.field("pg" + g + "a"));
+        operand(state.physical.field("pg" + g + "b"));
+      }
+      for (const auto &stem : stems)
+        operand(state.physical.field("pp_" + stem));
+      config.gatheredCount = values.size() - 3;
+      if (config.lookups[0] || config.lookups[2] || config.lookups[3])
+        config.sigmaTable = operand(state.physical.table("lj_sigma"));
+      if (config.lookups[1] || config.lookups[4] || config.lookups[5])
+        config.epsilonTable = operand(state.physical.table("lj_epsilon"));
+      // Empty entries are values produced inside the kernel. Nonempty ones
+      // name external values. Apply exactly the former binding precedence.
+      llvm::StringMap<mlir::Value> variables;
+      variables["r"] = {};
+      if (control.usesTime)
+        variables["t"] = state.physical.time;
+      state.bindLambdas(variables);
+      variables["q1"] = {};
+      variables["q2"] = {};
+      for (const auto &stem : stems) {
+        variables[stem + "1"] = {};
+        variables[stem + "2"] = {};
+      }
+      for (size_t c = 0; c != lookupNames.size(); ++c)
+        if (config.lookups[c])
+          variables[lookupNames[c]] = {};
+      if (config.coulomb)
+        variables["coulomb"] = {};
+      bool tableConstants = false;
+      for (const auto &constant : term.constants) {
+        TopologyPairConstantIR entry{constant.first, constant.second};
+        auto tunable =
+            llvm::find(control.tunableConstants,
+                       std::pair<unsigned, std::string>(
+                           static_cast<unsigned>(k), constant.first));
+        if (tunable != control.tunableConstants.end()) {
+          entry.slot = tunable - control.tunableConstants.begin();
+          entry.argument = context.hasGradientArguments();
+        }
+        variables[constant.first] =
+            entry.argument ? state.gradientConstant(entry.slot) : mlir::Value{};
+        tableConstants |= entry.slot >= 0 && !entry.argument;
+        config.constants.push_back(std::move(entry));
+      }
+      if (tableConstants)
+        config.constantsTable = operand(state.physical.table("tunable_constants"));
+      state.bindObserved(term.name, variables);
+      llvm::SmallVector<StringRef> supplied;
+      for (const auto &entry : variables)
+        supplied.push_back(entry.getKey());
+      auto inputs = config.expression.getInputs(supplied);
+      for (const auto &name : inputs.names) {
+        auto found = variables.find(name);
+        assert(found != variables.end() && "missing topology pair binding");
+        mlir::Value value = found->second;
+        if (value)
+          config.externalBindings.emplace_back(name, operand(value));
+      }
+      for (const auto &name : inputs.tables)
+        config.functionTables.emplace_back(name,
+                                           operand(state.physical.table(name)));
+      add(buildTopologyPairContribution(builder, values, config));
+    }
+  }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
       const TermPotentialAddition & add) const override {
@@ -512,105 +753,7 @@ public:
           "  ", {result}, {"f64"}, operands, types,
           [config](mlir::OpBuilder &builder,
                    mlir::ValueRange values) -> TermIRValues {
-            using namespace mlir;
-            auto loc = builder.getUnknownLoc();
-            auto *ctx = builder.getContext();
-            auto sum = mdir::md::SumRelationOp::create(
-                builder, loc, builder.getF64Type(), values[0], values[1],
-                values[2], values.slice(3, config.gatheredCount),
-                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
-                mdir::md::ExchangeBasisAttr::get(
-                    ctx, mdir::md::ExchangeBasis::Asserted),
-                mdir::md::TruncationAttr::get(ctx, config.modifier),
-                config.switched ? builder.getF64FloatAttr(config.switchFrom)
-                                : FloatAttr{});
-            llvm::SmallVector<Type> blockTypes = {
-                builder.getF64Type(),
-                VectorType::get({3}, builder.getF64Type()),
-                builder.getI32Type(),
-                builder.getI32Type(),
-                builder.getF64Type(),
-                builder.getF64Type()};
-            if (config.grouped)
-              blockTypes.append(4, builder.getF64Type());
-            blockTypes.append(2 * config.stems.size(), builder.getF64Type());
-            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
-            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
-                                               locations);
-            auto args = block->getArguments();
-            auto constant = [&](double value) -> Value {
-              return arith::ConstantOp::create(builder, loc,
-                                               builder.getF64FloatAttr(value));
-            };
-            auto integer = [&](int64_t value) -> Value {
-              return arith::ConstantOp::create(
-                  builder, loc, builder.getI32IntegerAttr(value));
-            };
-            auto mul = [&](Value a, Value b) -> Value {
-              return arith::MulFOp::create(builder, loc, a, b);
-            };
-            auto lookup = [&](Value table, Value a, Value b) -> Value {
-              return mdir::md::LookupOp::create(
-                  builder, loc, builder.getF64Type(), table, ValueRange{a, b});
-            };
-            Value angstrom = constant(1.0 / units::length);
-            Value kcal = constant(1.0 / units::energy);
-            Value r = mul(args[0], angstrom);
-            llvm::StringMap<Value> bindings, tables;
-            bindings["r"] = r;
-            bindings["q1"] = args[4];
-            bindings["q2"] = args[5];
-            size_t firstStem = 6 + (config.grouped ? 4 : 0);
-            for (size_t c = 0; c != config.stems.size(); ++c) {
-              bindings[config.stems[c] + "1"] = args[firstStem + 2 * c];
-              bindings[config.stems[c] + "2"] = args[firstStem + 2 * c + 1];
-            }
-            const std::array<StringRef, 6> lookupNames = {
-                "sigma", "epsilon", "sigma1", "sigma2", "epsilon1", "epsilon2"};
-            for (size_t c = 0; c != lookupNames.size(); ++c) {
-              if (!config.lookups[c])
-                continue;
-              bool sigma = c == 0 || c == 2 || c == 3;
-              Value a = c == 3 || c == 5 ? args[3] : args[2];
-              Value b = c < 2 ? args[3] : a;
-              Value raw = lookup(
-                  values[sigma ? config.sigmaTable : config.epsilonTable], a,
-                  b);
-              bindings[lookupNames[c]] = mul(raw, sigma ? angstrom : kcal);
-            }
-            if (config.coulomb)
-              bindings["coulomb"] = constant(coulombConstant);
-            for (const auto &entry : config.constants) {
-              if (entry.argument)
-                continue;
-              Value value;
-              if (entry.slot >= 0) {
-                Value row = integer(0);
-                Value column = integer(entry.slot);
-                value = lookup(values[config.constantsTable], row, column);
-              } else {
-                value = constant(entry.value);
-              }
-              bindings[entry.name] = value;
-            }
-            for (const auto &[name, index] : config.externalBindings)
-              bindings[name] = values[index];
-            for (const auto &[name, index] : config.functionTables)
-              tables[name] = values[index];
-            Value expression = config.expression.build(builder, bindings,
-                                                       tables, config.termName);
-            Value kj = constant(units::energy);
-            Value energy = mul(expression, kj);
-            if (config.grouped) {
-              Value ab = mul(args[6], args[9]);
-              Value ba = mul(args[7], args[8]);
-              Value either = arith::AddFOp::create(builder, loc, ab, ba);
-              Value one = constant(1.0);
-              Value mask = arith::MinimumFOp::create(builder, loc, either, one);
-              energy = mul(energy, mask);
-            }
-            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-            return {sum.getResult()};
+            return {buildTopologyPairContribution(builder, values, config)};
           });
       add(set);
     }
