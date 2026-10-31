@@ -197,13 +197,36 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         assert(gradientArguments && index < getNumGradientSeeds());
         return args[nextExtra + control.tunableConstants.size() + index];
       };
-      TermNativeTopology state{{args[0], args[1], {},
-          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField, bindLambdas, bindObserved, gradientSeed};
+      TermBuilder::PotentialSelection selection{terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly};
+      auto gradientConstant = [&](unsigned index) -> mlir::Value {
+        assert(gradientArguments && index < control.tunableConstants.size());
+        return args[nextExtra + index];
+      };
+      mlir::Value neighborhood;
+      if (llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
+            return term->needsPairNeighborhood(*this, selection);
+          })) {
+        mlir::Value excluded;
+        for (const TermBuilder *term : getTermBuilders()) {
+          StringRef set = term->getPairExclusion();
+          if (set.empty()) continue;
+          if (auto value = relation(set)) {
+            assert(!excluded && "a neighborhood has one exclusion relation");
+            excluded = value;
+          }
+        }
+        auto pairs = mdir::md::RelationType::get(&context, atoms, 2,
+            mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
+        neighborhood = mdir::md::NeighborhoodOp::create(ir, loc, pairs,
+            args[0], args[1], excluded,
+            ir.getF64FloatAttr(control.cutoffDistance * units::length));
+      }
+      TermNativeTopology state{{args[0], args[1], neighborhood,
+          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField, bindLambdas, bindObserved, gradientSeed, gradientConstant, getPairTruncation()};
       mlir::Value total;
       auto add = [&](mlir::Value energy) {
         total = total ? mlir::arith::AddFOp::create(ir, loc, total, energy).getResult() : energy;
       };
-      TermBuilder::PotentialSelection selection{terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly};
       for (const TermBuilder *term : mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders()))
         term->buildTopologyPotential(*this, ir, state, selection, add);
       if (!total) total = mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(0.0));

@@ -230,3 +230,8 @@ charge-gradient products and the original LJ/Coulomb accumulation order.
 Custom tuple and centroid potentials also construct native bodies. Shared
 centroid geometry and expression kernels retain coordinate, parameter and
 observed-binding precedence; gradient seeds are actual boundary arguments.
+
+Custom pair potentials use the same native topology boundary and shared
+expression kernel, retaining grouped masks, lookup and constant binding order,
+tunable arguments and the selected truncation. The owner constructs their
+shared neighborhood before ranked contributions.

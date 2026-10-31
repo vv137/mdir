@@ -322,7 +322,8 @@ struct TermNativeTopology {
   llvm::function_ref<mlir::Value(StringRef, StringRef)> tupleField;
   llvm::function_ref<void(llvm::StringMap<mlir::Value> &)> bindLambdas;
   llvm::function_ref<void(StringRef, llvm::StringMap<mlir::Value> &)> bindObserved;
-  llvm::function_ref<mlir::Value(unsigned)> gradientSeed;
+  llvm::function_ref<mlir::Value(unsigned)> gradientSeed, gradientConstant;
+  Truncation pairTruncation;
 };
 
 /// Borrowed physical values and semantic particle-field bindings at one evaluation.
