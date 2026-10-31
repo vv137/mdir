@@ -36,36 +36,8 @@ void Builder::emitPlaceSites(StringRef indent, StringRef x, StringRef result,
         indent, {next}, {"!vec"}, {relation, current, "%cell", a, b},
         {relationType, "!vec", "!md.cell", fieldType, fieldType},
         [amber](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          using namespace mlir;
-          auto loc = builder.getUnknownLoc();
-          auto vec = VectorType::get({3}, builder.getF64Type());
-          DenseI32ArrayAttr kinds;
-          DenseI64ArrayAttr members;
-          mdir::md::getCoordinateAttrs(
-              builder, {{mdir::md::CoordinateKind::Displacement, {2, 1}},
-                        {mdir::md::CoordinateKind::Displacement, {3, 1}},
-                        {mdir::md::CoordinateKind::Displacement, {0, 1}}},
-              kinds, members);
-          auto delta = mdir::md::GatherTuplesOp::create(
-              builder, loc, values[1].getType(), Type{}, values[0], values[1],
-              values[2], ValueRange{}, values.slice(3, 2), kinds, members);
-          {
-            OpBuilder::InsertionGuard guard(builder);
-            SmallVector<Type> types = {vec, vec, vec, builder.getF64Type(),
-                                       builder.getF64Type()};
-            SmallVector<Location> locations(types.size(), loc);
-            Block *block = builder.createBlock(&delta.getKernel(), {}, types,
-                                                locations);
-            auto args = block->getArguments();
-            Value placed = buildSitePlacement(builder, amber, args[0], args[1],
-                                               args[3], args[4]);
-            Value change = arith::SubFOp::create(builder, loc, placed, args[2]);
-            Value zero = arith::ConstantOp::create(
-                builder, loc, DenseElementsAttr::get(vec, 0.0));
-            mdir::md::YieldOp::create(builder, loc,
-                                      ValueRange{change, zero, zero, zero});
-          }
-          return {buildAddChange(builder, values[1], delta.getResult())};
+          return {buildPlacedSites(builder,
+              {values[0], values[1], values[2], values[3], values[4]}, amber)};
         });
     current = next;
   }

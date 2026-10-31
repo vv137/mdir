@@ -1317,7 +1317,7 @@ void Builder::emitDescend() {
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
-  if (!sites && !hasForceCorrections() && !hasHostEvaluation()) {
+  if (!hasForceCorrections() && !hasHostEvaluation()) {
     auto &context = termIR.getContext();
     mlir::OpBuilder builder(&context);
     builder.setInsertionPointToEnd(termIR.getModule().getBody());
@@ -1352,8 +1352,12 @@ void Builder::emitDescend() {
       }
       groups.push_back(std::move(group));
     }
+    std::vector<DescentSiteIR> siteSets;
+    for (const Program::TupleSet *set : getSiteSets())
+      siteSets.push_back({relationSlot(*set), fieldSlot(*set, "a"), fieldSlot(*set, "b"),
+                         set->name == "sites_amber", spreadsSitesDerived(), "spread_" + set->name});
     auto nativeProgram = buildNativeDescent(
-        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime, groups);
+        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime, groups, siteSets);
     // The module owns this complete native body. Only its top-level placement
     // crosses the temporary join; no argument or operation in it is reparsed.
     emitIRFragment("", {}, {}, {}, {},

@@ -168,7 +168,7 @@ Value mdir::driver::builder::buildDescentDirection(OpBuilder &builder, Value for
 
 mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
     OpBuilder &builder, TypeRange parameters, double particles, bool timed,
-    llvm::ArrayRef<DescentConstraintGroupIR> groups) {
+    llvm::ArrayRef<DescentConstraintGroupIR> groups, llvm::ArrayRef<DescentSiteIR> sites) {
   auto loc = builder.getUnknownLoc();
   auto ctx = builder.getContext();
   auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
@@ -230,12 +230,20 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
       positions = trial.positions;
       intact = trial.intact;
     }
+    for (const auto &site : sites)
+      positions = buildPlacedSites(builder,
+          {parameter(site.relation), positions, args[3], parameter(site.a), parameter(site.b)}, site.amber);
     auto evaluation = buildEnergyEvaluation(
         builder, {positions, args[3], ValueRange(args).drop_front(5), timed ? zero : Value{}},
         {true, true, false});
+    Value forces = evaluation.forces;
+    for (const auto &site : sites)
+      forces = buildSiteSpread(builder,
+          {parameter(site.relation), positions, args[3], parameter(site.a), parameter(site.b), forces, {}},
+          site.amber, site.derived, site.potential).forces;
     Value energy = groups.empty() ? evaluation.energy
                                   : buildTrialEnergy(builder, evaluation.energy, intact);
-    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, evaluation.forces, energy});
+    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, forces, energy});
   }
   return program;
 }

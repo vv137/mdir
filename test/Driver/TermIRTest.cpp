@@ -200,6 +200,11 @@ static void checkNativeDescentBody() {
   program.tupleSets.emplace_back().name = "bonds";
   program.tupleSets.back().arity = 2;
   program.tupleSets.back().fields.emplace_back().name = "length";
+  program.tupleSets.emplace_back().name = "sites_linear";
+  program.tupleSets.back().arity = 4;
+  program.tupleSets.back().reversible = false;
+  program.tupleSets.back().fields.emplace_back().name = "a";
+  program.tupleSets.back().fields.emplace_back().name = "b";
   auto &context = plan.getContext();
   OpBuilder builder(&context);
   auto module = plan.getModule();
@@ -208,6 +213,8 @@ static void checkNativeDescentBody() {
   mdir::md::ParticleSetOp::create(builder, loc, "atoms");
   mdir::md::TupleSetOp::create(builder, loc, "bonds", "atoms", 2,
                                mdir::md::Orientation::Unordered, true);
+  mdir::md::TupleSetOp::create(builder, loc, "sites_linear", "atoms", 4,
+                               mdir::md::Orientation::Ordered, false);
   auto parameters = buildParameterTypes(context, program);
   auto vec = mdir::md::FieldType::get(&context,
       FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
@@ -225,7 +232,8 @@ static void checkNativeDescentBody() {
   }
   DescentConstraintGroupIR group{
       4, 2, {5}, {{0, 1, 0}}, {false, false, 1.0e-8, 1.0e-12}, false, false};
-  auto native = buildNativeDescent(builder, parameters, 4.0, false, {group});
+  DescentSiteIR site{6, 7, 8, false, false, "spread_sites_linear"};
+  auto native = buildNativeDescent(builder, parameters, 4.0, false, {group}, {site});
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
   llvm::raw_string_ostream stream(program.module);

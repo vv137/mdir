@@ -14,6 +14,8 @@ mlir::Value buildSitePlacement(mlir::OpBuilder &, bool amber, mlir::Value toJ,
                                mlir::Value toK, mlir::Value a, mlir::Value b);
 mlir::Value buildAddChange(mlir::OpBuilder &, mlir::Value positions,
                             mlir::Value change);
+struct SitePlacementInputs { mlir::Value relation, positions, cell, a, b; };
+mlir::Value buildPlacedSites(mlir::OpBuilder &, const SitePlacementInputs &, bool amber);
 struct SiteSpreadInputs {
   mlir::Value relation, positions, cell, a, b, forces, virial;
 };
