@@ -1094,7 +1094,7 @@ llvm::Error Builder::emitEntry() {
       !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
       !control.barostat &&
-      !hasHostEvaluation() && !program.tunableGradient &&
+      !hasHostEvaluation() &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
         const auto *role = term->getRoles().coordinateOutput;
         return role && role->hasCoordinateOutput(*this);
@@ -1185,6 +1185,42 @@ llvm::Error Builder::emitEntry() {
       for (auto column : term.columns)
         output.columns.push_back({column.first, column.second});
       config.observables.push_back(std::move(output));
+    }
+    if (program.tunableGradient) {
+      auto &gradient = config.gradient.emplace();
+      auto startSlot = [&](StringRef name) -> unsigned {
+        auto found = llvm::find_if(program.startValues,
+            [&](const auto &value) { return value.name == name; });
+        assert(found != program.startValues.end() && "gradient input must be an entry value");
+        return std::distance(program.startValues.begin(), found);
+      };
+      gradient.request = startSlot("tunable_gradient");
+      size_t constants = control.tunableConstants.size(), seeds = getNumGradientSeeds();
+      for (size_t index = 0; index != constants; ++index)
+        gradient.constants.push_back(startSlot("tg_c" + std::to_string(index)));
+      gradient.seeds = seeds;
+      if (seeds) {
+        auto found = llvm::find_if(program.fields,
+            [](const auto &field) { return field.name == "tg_zero"; });
+        assert(found != program.fields.end() && "gradient seed field must exist");
+        gradient.seedField = std::distance(program.fields.begin(), found);
+      }
+      unsigned base = getNumPotentialArguments(), chargeArgument = 2;
+      for (const auto &field : program.fields) {
+        if (field.name == "q") break;
+        ++chargeArgument;
+      }
+      program.gradientArguments.clear();
+      for (auto [index, slot] : llvm::enumerate(program.gradientSlots)) {
+        unsigned argument = base + gradientColumns[index];
+        gradient.output.scalarArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, slot.tunable});
+      }
+      for (auto [index, field] : llvm::enumerate(program.gradientFields)) {
+        unsigned argument = index < seeds ? base + constants + index : chargeArgument;
+        gradient.output.fieldArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, field.tunable});
+      }
     }
     if (!control.segments) {
       for (const auto &level : levels) config.counts.push_back(level.count);

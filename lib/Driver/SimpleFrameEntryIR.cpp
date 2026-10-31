@@ -229,6 +229,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           buildObservablesOutput(body, state, arguments.start, config.observableCount,
               config.observableBaseArgument, config.observables, tunables);
         }
+        if (config.gradient) {
+          const auto &gradient = *config.gradient;
+          SmallVector<Value> constants, seeds;
+          for (unsigned slot : gradient.constants)
+            constants.push_back(arguments.startValues[slot]);
+          if (gradient.seeds)
+            seeds.assign(gradient.seeds, physical.fields[*gradient.seedField]);
+          buildTunableGradientOutput(body, state, arguments.startValues[gradient.request],
+              zero, one, gradient.output.fieldArguments.empty() ? Value{} : physical.identities,
+              constants, seeds, gradient.output);
+        }
         return SmallVector<Value>{};
       });
       if (!iteration) return iteration.takeError();

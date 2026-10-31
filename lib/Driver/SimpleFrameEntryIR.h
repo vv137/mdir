@@ -18,6 +18,12 @@ struct FrameCompletionIR {
   EnergyResults physical;
   llvm::SmallVector<mlir::Value> storedTerms;
 };
+struct FrameGradientOutputIR {
+  TunableGradientOutputConfig output;
+  unsigned request = 0, seeds = 0;
+  std::vector<unsigned> constants;
+  std::optional<unsigned> seedField;
+};
 struct SimpleFrameEntryIRConfig {
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
@@ -29,6 +35,7 @@ struct SimpleFrameEntryIRConfig {
   unsigned observableBaseArgument = 0;
   // Ordinals in Program.startValues, resolved from semantic control metadata.
   std::vector<unsigned> observableTunables;
+  std::optional<FrameGradientOutputIR> gradient;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
   std::vector<FrameConstraintIR> constraints;
