@@ -16,111 +16,7 @@ struct BornIRConfig {
   double kappa = 0.0, tau = 0.0, inverseSolute = 0.0, inverseSolvent = 0.0;
 };
 
-namespace mdir::driver::builder {
-class BornTermBuilder final : public TermBuilder {
-public:
-  BornTermBuilder() {
-    potentialMask = TermInputs::GeneralizedBorn | TermInputs::Surface;
-    alchemicalMask = 0;
-  }
-  int parameterRank() const override { return -2; }
-  int potentialRank() const override { return -1; }
-  void collectParameters(TermParameters &context) const override;
-  void emitTopologyPotential(
-      TermEmission &context, const PotentialSelection &selection,
-      const TermPotentialAddition & add) const override {
-    if ((selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) &&
-        context.getControl().implicitSolvent != Control::ImplicitSolvent::None)
-      emitBorn(context, selection.terms, add);
-  }
-
-  void appendTermDefinitions(
-      const TermInputs &context,
-      std::vector<TermDefinition> &definitions) const override {
-    const auto &terms = context.getSystem().bornTermNames;
-    if (terms.empty())
-      return;
-    definitions.push_back({16, 0, "term_born", TermInputs::GeneralizedBorn});
-    if (terms.size() > 1)
-      definitions.push_back({16, 1, "term_surface", TermInputs::Surface});
-  }
-private:
-  static void emitBorn(TermEmission &, unsigned,
-                       const TermPotentialAddition &);
-  static double getDebyeKappa(const Control &);
-};
-} // namespace mdir::driver::builder
-
-std::unique_ptr<TermBuilder> mdir::driver::builder::createBornTermBuilder() {
-  return std::make_unique<BornTermBuilder>();
-}
-
-void BornTermBuilder::collectParameters(TermParameters &context) const {
-  const Control &control = context.getControl();
-  const Topology &topology = context.getTopology();
-  size_t count = topology.getNumParticles();
-  // Generalized Born (D144): the radius less its offset, 0.009 nm, the
-  // radius that screens the others, that times the scale of the particle,
-  // and the radius itself, in nm.
-  if (control.implicitSolvent != Control::ImplicitSolvent::None) {
-    Program::Field offset, scaled, radius;
-    offset.name = "gb_offset";
-    scaled.name = "gb_scaled";
-    radius.name = "gb_radius";
-    for (size_t i = 0; i != count; ++i) {
-      double rho = topology.bornRadii[i];
-      offset.values.push_back(rho - 0.009);
-      scaled.values.push_back(topology.bornScreens[i] * (rho - 0.009));
-      radius.values.push_back(rho);
-    }
-    context.getFields().push_back(std::move(offset));
-    context.getFields().push_back(std::move(scaled));
-    context.getFields().push_back(std::move(radius));
-  }
-}
-
-void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
-                       const TermPotentialAddition & add) {
-  const Control &control = context.getControl();
-  const System &system = context.getSystem();
-  BornIRConfig config;
-  config.cutoff = control.cutoffDistance * units::length;
-  config.radiusCutoff = control.bornRadiusCutoff * units::length;
-  config.reachCutoff = config.cutoff;
-  if (config.radiusCutoff > 0.0) {
-    double largest = 0.0;
-    for (size_t i = 0, e = system.topology->bornRadii.size(); i != e; ++i)
-      largest = std::max(largest, system.topology->bornScreens[i] *
-                                      (system.topology->bornRadii[i] - 0.009));
-    config.reachCutoff = std::min(config.radiusCutoff + largest, config.cutoff);
-  }
-  config.hct = control.implicitSolvent == Control::ImplicitSolvent::HCT;
-  bool first = control.implicitSolvent == Control::ImplicitSolvent::OBC1;
-  config.alpha = first ? 0.8 : 1.0;
-  config.beta = first ? 0.0 : 0.8;
-  config.gamma = first ? 2.909125 : 4.85;
-  config.energy = terms & TermInputs::GeneralizedBorn;
-  if (config.energy) {
-    config.inverseSolute = 1.0 / control.soluteDielectric;
-    config.inverseSolvent = 1.0 / control.solventDielectric;
-    config.tau = config.inverseSolute - config.inverseSolvent;
-    config.kappa = getDebyeKappa(control);
-  }
-  llvm::SmallVector<StringRef> outputs = {"%gb_born"}, resultTypes = {"!real"};
-  llvm::SmallVector<StringRef> operands = {"%x", "%cell", "%p_gb_offset",
-                                           "%p_gb_scaled", "%p_gb_radius"};
-  llvm::SmallVector<StringRef> operandTypes = {"!vec", "!md.cell", "!real",
-                                               "!real", "!real"};
-  if (config.energy) {
-    outputs.push_back("%u_born");
-    resultTypes.push_back("f64");
-    operands.push_back("%p_q");
-    operandTypes.push_back("!real");
-  }
-  context.emitIRFragment(
-      "  ", outputs, resultTypes, operands, operandTypes,
-      [config](mlir::OpBuilder &builder,
-               mlir::ValueRange values) -> TermIRValues {
+static TermIRValues buildBornContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const BornIRConfig &config) {
         using namespace mlir;
         auto *ctx = builder.getContext();
         auto loc = builder.getUnknownLoc();
@@ -287,19 +183,9 @@ void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
           results.push_back(add(pairs.getResult(), self.getResult()));
         }
         return results;
-      });
-  // Add the Born contribution before constructing the dependent surface
-  // energy, preserving the outer accumulation order as well as loop order.
-  if (config.energy)
-    add("born");
-  if ((terms & TermInputs::Surface) && control.surfaceAreaEnergy > 0.0) {
-    double tension = control.surfaceAreaEnergy * units::energy /
-                     (units::length * units::length);
-    context.emitIRFragment(
-        "  ", {"%u_surface"}, {"f64"}, {"%p_gb_radius", "%gb_born"},
-        {"!real", "!real"},
-        [tension](mlir::OpBuilder &builder,
-                  mlir::ValueRange values) -> TermIRValues {
+}
+
+static mlir::Value buildSurfaceContribution(mlir::OpBuilder &builder, mlir::ValueRange values, double tension) {
           using namespace mlir;
           auto loc = builder.getUnknownLoc();
           auto sum = mdir::md::SumParticlesOp::create(
@@ -324,10 +210,157 @@ void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
             Value energy = arith::MulFOp::create(builder, loc, a, r6);
             mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
           }
-          return {sum.getResult()};
+          return sum.getResult();
+}
+
+namespace mdir::driver::builder {
+class BornTermBuilder final : public TermBuilder {
+public:
+  BornTermBuilder() {
+    potentialMask = TermInputs::GeneralizedBorn | TermInputs::Surface;
+    nativePotentialMask = potentialMask;
+    alchemicalMask = 0;
+  }
+  int parameterRank() const override { return -2; }
+  int potentialRank() const override { return -1; }
+  void collectParameters(TermParameters &context) const override;
+  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (!(selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) ||
+        context.getControl().implicitSolvent == Control::ImplicitSolvent::None) return;
+    auto config = configure(context, selection.terms);
+    TermIRValues values{state.physical.positions, state.physical.cell,
+        state.physical.field("gb_offset"), state.physical.field("gb_scaled"), state.physical.field("gb_radius")};
+    if (config.energy) values.push_back(state.physical.field("q"));
+    auto born = buildBornContribution(builder, values, config);
+    if (config.energy) add(born[1]);
+    if ((selection.terms & TermInputs::Surface) && context.getControl().surfaceAreaEnergy > 0.0) {
+      double tension = context.getControl().surfaceAreaEnergy * units::energy / (units::length * units::length);
+      add(buildSurfaceContribution(builder,
+          mlir::ValueRange{state.physical.field("gb_radius"), born[0]}, tension));
+    }
+  }
+  void emitTopologyPotential(
+      TermEmission &context, const PotentialSelection &selection,
+      const TermPotentialAddition & add) const override {
+    if ((selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) &&
+        context.getControl().implicitSolvent != Control::ImplicitSolvent::None)
+      emitBorn(context, selection.terms, add);
+  }
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
+    const auto &terms = context.getSystem().bornTermNames;
+    if (terms.empty())
+      return;
+    definitions.push_back({16, 0, "term_born", TermInputs::GeneralizedBorn});
+    if (terms.size() > 1)
+      definitions.push_back({16, 1, "term_surface", TermInputs::Surface});
+  }
+private:
+  static BornIRConfig configure(const TermInputs &, unsigned);
+  static void emitBorn(TermEmission &, unsigned,
+                       const TermPotentialAddition &);
+  static double getDebyeKappa(const Control &);
+};
+} // namespace mdir::driver::builder
+
+std::unique_ptr<TermBuilder> mdir::driver::builder::createBornTermBuilder() {
+  return std::make_unique<BornTermBuilder>();
+}
+
+void BornTermBuilder::collectParameters(TermParameters &context) const {
+  const Control &control = context.getControl();
+  const Topology &topology = context.getTopology();
+  size_t count = topology.getNumParticles();
+  // Generalized Born (D144): the radius less its offset, 0.009 nm, the
+  // radius that screens the others, that times the scale of the particle,
+  // and the radius itself, in nm.
+  if (control.implicitSolvent != Control::ImplicitSolvent::None) {
+    Program::Field offset, scaled, radius;
+    offset.name = "gb_offset";
+    scaled.name = "gb_scaled";
+    radius.name = "gb_radius";
+    for (size_t i = 0; i != count; ++i) {
+      double rho = topology.bornRadii[i];
+      offset.values.push_back(rho - 0.009);
+      scaled.values.push_back(topology.bornScreens[i] * (rho - 0.009));
+      radius.values.push_back(rho);
+    }
+    context.getFields().push_back(std::move(offset));
+    context.getFields().push_back(std::move(scaled));
+    context.getFields().push_back(std::move(radius));
+  }
+}
+
+void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
+                       const TermPotentialAddition & add) {
+  const Control &control = context.getControl();
+  BornIRConfig config = configure(context, terms);
+  llvm::SmallVector<StringRef> outputs = {"%gb_born"}, resultTypes = {"!real"};
+  llvm::SmallVector<StringRef> operands = {"%x", "%cell", "%p_gb_offset",
+                                           "%p_gb_scaled", "%p_gb_radius"};
+  llvm::SmallVector<StringRef> operandTypes = {"!vec", "!md.cell", "!real",
+                                               "!real", "!real"};
+  if (config.energy) {
+    outputs.push_back("%u_born");
+    resultTypes.push_back("f64");
+    operands.push_back("%p_q");
+    operandTypes.push_back("!real");
+  }
+  context.emitIRFragment(
+      "  ", outputs, resultTypes, operands, operandTypes,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        return buildBornContribution(builder, values, config);
+      });
+  // Add the Born contribution before constructing the dependent surface
+  // energy, preserving the outer accumulation order as well as loop order.
+  if (config.energy)
+    add("born");
+  if ((terms & TermInputs::Surface) && control.surfaceAreaEnergy > 0.0) {
+    double tension = control.surfaceAreaEnergy * units::energy /
+                     (units::length * units::length);
+    context.emitIRFragment(
+        "  ", {"%u_surface"}, {"f64"}, {"%p_gb_radius", "%gb_born"},
+        {"!real", "!real"},
+        [tension](mlir::OpBuilder &builder,
+                  mlir::ValueRange values) -> TermIRValues {
+          return {buildSurfaceContribution(builder, values, tension)};
         });
     add("surface");
   }
+}
+
+BornIRConfig BornTermBuilder::configure(const TermInputs &context, unsigned terms) {
+  const Control &control = context.getControl();
+  const System &system = context.getSystem();
+  BornIRConfig config;
+  config.cutoff = control.cutoffDistance * units::length;
+  config.radiusCutoff = control.bornRadiusCutoff * units::length;
+  config.reachCutoff = config.cutoff;
+  if (config.radiusCutoff > 0.0) {
+    double largest = 0.0;
+    for (size_t i = 0, e = system.topology->bornRadii.size(); i != e; ++i)
+      largest = std::max(largest, system.topology->bornScreens[i] *
+                                      (system.topology->bornRadii[i] - 0.009));
+    config.reachCutoff = std::min(config.radiusCutoff + largest, config.cutoff);
+  }
+  config.hct = control.implicitSolvent == Control::ImplicitSolvent::HCT;
+  bool first = control.implicitSolvent == Control::ImplicitSolvent::OBC1;
+  config.alpha = first ? 0.8 : 1.0;
+  config.beta = first ? 0.0 : 0.8;
+  config.gamma = first ? 2.909125 : 4.85;
+  config.energy = terms & TermInputs::GeneralizedBorn;
+  if (config.energy) {
+    config.inverseSolute = 1.0 / control.soluteDielectric;
+    config.inverseSolvent = 1.0 / control.solventDielectric;
+    config.tau = config.inverseSolute - config.inverseSolvent;
+    config.kappa = getDebyeKappa(control);
+  }
+  return config;
 }
 
 double BornTermBuilder::getDebyeKappa(const Control &control) {

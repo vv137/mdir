@@ -219,3 +219,7 @@ emission ranks preserve the original arithmetic and accumulation order.
 External potentials bind semantic expression variables directly to actual
 fields, tables, time, lambda and observed arguments. Their native signature
 and body retain frame scaling, argument order and the shared expression kernel.
+
+Generalized Born and surface potentials construct native bodies together.
+Computed Born radii remain private to the adapter; radii, energy and surface
+contributions retain their original construction and accumulation order.

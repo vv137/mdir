@@ -247,5 +247,8 @@ External potentials also use native bodies with actual particle fields, tables,
 frame/time values and semantic expression bindings. Lambda and observed arguments
 retain their declaration and binding order; their native expression kernel is
 shared with the remaining topology path.
+Generalized Born and surface potentials construct native bodies together.
+Computed Born radii remain private to the adapter; radii, energy and surface
+contributions retain their original construction and accumulation order.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
