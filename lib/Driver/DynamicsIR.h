@@ -4,6 +4,7 @@
 #include "mlir/IR/Value.h"
 #include "ConstraintIR.h"
 #include "PotentialIR.h"
+#include "NoiseIR.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include <vector>
 #include <string>
@@ -24,9 +25,22 @@ struct DescentSiteIR {
   bool amber, derived;
   std::string potential;
 };
-mdir::dyn::ProgramOp buildNativeVerletStep(
-    mlir::OpBuilder &, llvm::StringRef name, mlir::TypeRange parameters,
-    bool energy, bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites = {});
+struct StepProgramIR {
+  std::string name;
+  bool energy = false, virial = false, scales = false;
+};
+struct StepNoiseIR {
+  bool active = false, brownian = false;
+  NoiseIRConfig parameters{};
+  double friction = 0.0;
+};
+mdir::dyn::ProgramOp buildNativeStep(
+    mlir::OpBuilder &, const StepProgramIR &, mlir::TypeRange parameters,
+    bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites = {},
+    bool referenceScale = false, bool hosted = false,
+    llvm::function_ref<EnergyResults(mlir::OpBuilder &, const PotentialStateIR &,
+                                    EnergyResults, mlir::Value)> complete = {},
+    StepNoiseIR noise = {});
 mdir::dyn::ProgramOp buildNativeDescent(
     mlir::OpBuilder &, mlir::TypeRange parameters, double particles, bool timed,
     llvm::ArrayRef<DescentConstraintGroupIR> groups = {},
