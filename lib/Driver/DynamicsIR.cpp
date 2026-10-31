@@ -2,6 +2,8 @@
 #include "DynamicsIR.h"
 #include "PotentialIR.h"
 #include "BarostatIR.h"
+#include "KineticIR.h"
+#include "CouplingIR.h"
 #include "SiteIR.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
@@ -258,9 +260,14 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
   return program;
 }
 
-mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
-    OpBuilder &builder, StringRef name, TypeRange parameters,
-    bool energy, bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites) {
+mdir::dyn::ProgramOp mdir::driver::builder::buildNativeStep(
+    OpBuilder &builder, const StepProgramIR &config, TypeRange parameters,
+    bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites,
+    bool referenceScale, bool hosted,
+    llvm::function_ref<EnergyResults(OpBuilder &, const PotentialStateIR &, EnergyResults, Value)> complete, StepNoiseIR noise) {
+  bool energy = config.energy, virial = config.virial, scales = config.scales;
+  bool molecular = virial && !noise.brownian;
+  bool returnsCurrent = leapfrog && (virial || scales);
   auto loc = builder.getUnknownLoc();
   auto ctx = builder.getContext();
   auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
@@ -268,36 +275,69 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
   auto vec = mdir::md::FieldType::get(ctx, atoms, 3, f64);
   auto real = mdir::md::FieldType::get(ctx, atoms, 1, f64);
   SmallVector<Type> inputs{vec, vec, vec, real, mdir::md::CellType::get(ctx), f64};
+  if (scales) inputs.push_back(VectorType::get({3}, f64));
+  if (referenceScale) inputs.push_back(VectorType::get({3}, f64));
+  const unsigned parameterBase = inputs.size();
   llvm::append_range(inputs, parameters);
-  if (timed) {
+  if (timed || noise.active) {
     inputs.push_back(builder.getI64Type());
     inputs.push_back(mdir::md::FieldType::get(ctx, atoms, 1, builder.getI32Type()));
   }
   SmallVector<Type> outputs{vec, vec, vec};
-  if (energy) {
-    outputs.push_back(f64);
-    outputs.push_back(VectorType::get({9}, f64));
-    outputs.push_back(VectorType::get({3}, f64));
-    if (leapfrog) outputs.push_back(vec);
-  }
-  auto program = mdir::dyn::ProgramOp::create(builder, loc, name,
+  if (energy) outputs.push_back(f64);
+  if (virial) outputs.push_back(VectorType::get({9}, f64));
+  if (molecular) outputs.push_back(VectorType::get({3}, f64));
+  if (returnsCurrent) outputs.push_back(vec);
+  if (scales) outputs.push_back(VectorType::get({3}, f64));
+  auto program = mdir::dyn::ProgramOp::create(builder, loc, config.name,
       builder.getFunctionType(inputs, outputs), StringAttr{}, ArrayAttr{}, ArrayAttr{},
       leapfrog ? builder.getF64FloatAttr(-0.5) : FloatAttr{}, ArrayAttr{},
-      builder.getStrArrayAttr({"symplectic", "time_reversible"}), builder.getDictionaryAttr({}));
+      (noise.brownian ? builder.getStrArrayAttr({"thermostatting"})
+                       : builder.getStrArrayAttr({"symplectic", "time_reversible"})), hosted
+          ? builder.getDictionaryAttr({builder.getNamedAttr("read", builder.getStrArrayAttr({"<Default>"})),
+                                       builder.getNamedAttr("write", builder.getStrArrayAttr({"<Default>"}))})
+          : builder.getDictionaryAttr({}));
   OpBuilder::InsertionGuard guard(builder);
   SmallVector<Location> locations(inputs.size(), loc);
   auto args = builder.createBlock(&program.getBody(), {}, inputs, locations)->getArguments();
   Value half = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
   half = arith::MulFOp::create(builder, loc, half, args[5]);
-  Value time = timed ? buildSimulationTime(builder, args[6 + parameters.size()], args[5]) : Value{};
-  Value kicked = buildKick(builder, args[1], args[2], args[3], leapfrog ? args[5] : half);
-  Value positions = buildDrift(builder, args[0], kicked, args[5]);
-  auto parameter = [&](unsigned slot) { return args[6 + slot]; };
+  Value time = timed ? buildSimulationTime(builder, args[parameterBase + parameters.size()], args[5]) : Value{};
+  auto applyNoise = [&](Value velocities) {
+    return buildNoise(builder,
+        {velocities, args[3], args[parameterBase + parameters.size() + 1],
+         args[parameterBase + parameters.size()]}, noise.parameters);
+  };
+  Value kicked;
+  if (noise.brownian) {
+    Value drift = buildBrownianDrift(builder, args[2], args[3], noise.friction);
+    kicked = applyNoise(drift);
+  } else {
+    kicked = buildKick(builder, args[1], args[2], args[3], leapfrog ? args[5] : half);
+  }
+  Value positions, middleKinetic;
+  if (scales) {
+    Value middle = buildDrift(builder, args[0], kicked, half);
+    auto scale = buildDriftScale(builder, args[6]);
+    if (noise.active) kicked = applyNoise(kicked);
+    Value scaled = buildGroupScaling(builder,
+        {middle, args[6], scale.oneMinus, {}, {}, {}});
+    middleKinetic = buildKineticVector(builder, kicked, args[3]);
+    kicked = buildVelocityScaling(builder, kicked, scale.inverse);
+    positions = buildDrift(builder, scaled, kicked, half);
+  } else if (noise.active && !noise.brownian) {
+    Value middle = buildDrift(builder, args[0], kicked, half);
+    kicked = applyNoise(kicked);
+    positions = buildDrift(builder, middle, kicked, half);
+  } else {
+    positions = buildDrift(builder, args[0], kicked, args[5]);
+  }
+  auto parameter = [&](unsigned slot) { return args[parameterBase + slot]; };
   for (const auto &site : sites)
     positions = buildPlacedSites(builder,
         {parameter(site.relation), positions, args[4], parameter(site.a), parameter(site.b)}, site.amber);
   auto evaluation = buildEnergyEvaluation(builder,
-      {positions, args[4], ValueRange(args).slice(6, parameters.size()), time}, {energy, true, energy});
+      {positions, args[4], ValueRange(args).slice(parameterBase, parameters.size()), time}, {energy, true, energy || virial});
   for (const auto &site : sites) {
     auto spread = buildSiteSpread(builder,
         {parameter(site.relation), positions, args[4], parameter(site.a), parameter(site.b),
@@ -305,18 +345,30 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
     evaluation.forces = spread.forces;
     evaluation.virial = spread.virial;
   }
+  if (complete)
+    evaluation = complete(builder,
+        {positions, args[4], ValueRange(args).slice(parameterBase, parameters.size()), time},
+        evaluation, referenceScale ? args[6 + unsigned(scales)] : Value{});
+  if (noise.brownian) {
+    SmallVector<Value> results{positions, kicked, evaluation.forces};
+    if (energy) results.push_back(evaluation.energy);
+    if (virial) results.push_back(evaluation.virial);
+    mdir::dyn::ReturnOp::create(builder, loc, results);
+    return program;
+  }
   Value diagonal;
-  if (energy) diagonal = buildVirialDiagonal(builder, evaluation.virial).vector;
-  if (leapfrog && !energy) {
+  if (molecular) diagonal = buildVirialDiagonal(builder, evaluation.virial).vector;
+  if (leapfrog && !virial && !scales) {
     mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, kicked, evaluation.forces});
     return program;
   }
   Value current = buildKick(builder, kicked, evaluation.forces, args[3], half);
   SmallVector<Value> results{positions, leapfrog ? kicked : current, evaluation.forces};
-  if (energy) {
-    results.append({evaluation.energy, evaluation.virial, diagonal});
-    if (leapfrog) results.push_back(current);
-  }
+  if (energy) results.push_back(evaluation.energy);
+  if (virial) results.push_back(evaluation.virial);
+  if (molecular) results.push_back(diagonal);
+  if (returnsCurrent) results.push_back(current);
+  if (scales) results.push_back(middleKinetic);
   mdir::dyn::ReturnOp::create(builder, loc, results);
   return program;
 }

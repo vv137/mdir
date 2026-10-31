@@ -196,8 +196,9 @@ corrections and hosted evaluations borrow actual physical values synchronously
 through narrow roles. Their native kernels are shared with the remaining
 emitters; the complete minimization body is native. Other scopes remain in progress.
 
-Basic unconstrained Verlet and leapfrog step functions also construct complete
-native signatures and bodies, including time-dependent potential evaluations,
-virtual-site placement and force spreading.
-Construction coverage checks module-owned operations and actual block arguments
-across the energy, velocity-staggering and time combinations.
+Unconstrained dynamics programs also construct complete native signatures and
+bodies, including Langevin and Brownian noise, virtual sites, restraint and hosted
+evaluations, independent energy/virial results and Trotter scaling within the
+drift. Owned scalar configuration and actual block arguments preserve the
+existing stochastic counters, velocity staggering and kernel order. Constrained
+dynamics and the remaining scopes are still in progress.

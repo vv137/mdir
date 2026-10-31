@@ -256,7 +256,12 @@ static void checkNativeDescentBody() {
 static void checkNativeVerletBodies() {
  for (bool timed : {false, true})
   for (bool leapfrog : {false, true})
-   for (bool withEnergy : {false, true}) {
+   for (bool withEnergy : {false, true})
+    for (int motion : {0, 1, 2})
+     for (bool scales : {false, true})
+      for (bool withVirial : {false, true}) {
+  if (withEnergy && !withVirial) continue;
+  if (motion == 2 && (leapfrog || scales)) continue;
   TermIRPlan plan;
   mdir::driver::Program program;
   program.fields.emplace_back().name = "parameter";
@@ -301,7 +306,9 @@ static void checkNativeVerletBodies() {
   }
   StringRef name = withEnergy ? "step_energy" : "step";
   DescentSiteIR site{6, 7, 8, false, false, "spread_sites_linear"};
-  auto native = buildNativeVerletStep(builder, name, parameters, withEnergy, leapfrog, timed, {site});
+  StepNoiseIR noise{motion != 0, motion == 2, {123, motion == 2 ? 1.0 : 0.8, 0.1}, 2.5};
+  auto native = buildNativeStep(builder, {name.str(), withEnergy, withVirial, scales}, parameters, leapfrog, timed,
+                                      {site}, false, false, {}, noise);
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
   llvm::raw_string_ostream stream(program.module);

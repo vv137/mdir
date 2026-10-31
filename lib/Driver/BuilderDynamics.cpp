@@ -175,9 +175,7 @@ void Builder::emitPrograms() {
     bool projectsState =
         leapfrog && constraints && (control.isLangevin() || scales);
     bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
-    if ((StringRef(kind.name) == "step" || StringRef(kind.name) == "step_energy") &&
-        !constraints && !control.isLangevin() && !brownian &&
-        !scales && !measured && !hasForceCorrections() && !hasHostEvaluation()) {
+    if (!constraints && !measured) {
       auto &context = termIR.getContext();
       mlir::OpBuilder builder(&context);
       builder.setInsertionPointToEnd(termIR.getModule().getBody());
@@ -197,8 +195,46 @@ void Builder::emitPrograms() {
         siteSets.push_back({slot, fieldSlot("a"), fieldSlot("b"), selected->name == "sites_amber",
                            spreadsSitesDerived(), "spread_" + selected->name});
       }
-      auto nativeProgram = buildNativeVerletStep(
-          builder, kind.name, types, withEnergy, leapfrog, control.usesTime, siteSets);
+      StepNoiseIR noise;
+      noise.active = control.isLangevin() || brownian;
+      noise.brownian = brownian;
+      noise.friction = control.friction;
+      double kT = units::boltzmann * control.temperature;
+      if (brownian) {
+        noise.parameters = {control.seed, 1.0,
+            std::sqrt(2.0 * kT / (control.friction * control.timestep))};
+      } else if (control.isLangevin()) {
+        double damping = std::exp(-control.friction * control.timestep);
+        noise.parameters = {control.seed, damping, std::sqrt((1.0 - damping * damping) * kT)};
+      }
+      auto nativeProgram = buildNativeStep(
+          builder, {kind.name, withEnergy, withVirial, scales}, types, leapfrog, control.usesTime,
+          siteSets, scalesReference(), hasHostEvaluation(),
+          [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
+              mlir::Value scale) {
+            auto field = [&](StringRef name) -> mlir::Value {
+              auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
+              assert(found != program.fields.end() && "evaluation field must exist");
+              return state.fields[std::distance(program.fields.begin(), found)];
+            };
+            for (const TermBuilder *term : getTermBuilders())
+              if (const auto *role = term->getRoles().postEvaluation;
+                  role && role->hasForceCorrection(*this)) {
+                auto result = role->build(*this, at,
+                    {state.positions, state.cell, evaluation.forces, evaluation.energy,
+                     evaluation.virial, scale, field});
+                evaluation = {result.energy, result.forces, result.virial};
+              }
+            for (const TermBuilder *term : getTermBuilders())
+              if (const auto *role = term->getRoles().hostEvaluation;
+                  role && role->applies(*this)) {
+                auto result = role->build(*this, at,
+                    {state.positions, state.cell, evaluation.forces, evaluation.energy,
+                     evaluation.virial, scale, field});
+                evaluation = {result.energy, result.forces, result.virial};
+              }
+            return evaluation;
+          }, noise);
       emitIRFragment("", {}, {}, {}, {},
           [nativeProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
             nativeProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());

@@ -225,8 +225,11 @@ narrow roles with actual physical values and semantic particle-field bindings;
 shared kernels preserve correction order and effects. The old minimization
 signature/body assembly is removed.
 
-Basic unconstrained Verlet and leapfrog step/energy functions also construct
-complete native signatures and bodies, including time-dependent evaluations, site placement and force spreading.
-Construction tests cover energy, velocity staggering and time combinations.
-Other variants and native scopes remain in progress; the temporary assembly
+Unconstrained dynamics functions construct complete native signatures and bodies
+for Verlet, leapfrog, Langevin and Brownian motion, including time-dependent
+potentials, virtual sites, restraint and hosted-model evaluation, virial-only
+programs and within-drift Trotter scaling. Explicit result configuration retains
+velocity staggering, molecular diagonals and middle-step kinetic measurements.
+Construction coverage spans time, noise, energy, virial and scaling layouts.
+Constrained dynamics and other scopes remain in progress; the temporary assembly
 join and loop-carry connections remain until those scopes move.
