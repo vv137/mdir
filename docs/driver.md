@@ -1281,7 +1281,7 @@ No generic behavioral hook has only one implementer.
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
 | `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
-| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface, 1–4 pairs, custom tuples/centroids, custom pairs |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface, 1–4 pairs, custom tuples/centroids, custom pairs, staged models |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1394,15 +1394,13 @@ derived lists, and topology renumbering from typed state and semantic slots.
 `BuilderPotential.cpp` constructs shared neighborhood selection, scalar
 accumulation, lambda constants, and potential returns with native operations.
 `PotentialIR.cpp` supplies shared physical state, explicit energy/force/virial
-evaluations, and step-time conversion. Potential/program signatures, remaining schedule operations, and native
-scope construction remain in progress. The
+evaluations, and step-time conversion. Entry/schedule scope construction remains in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
 
 Step kicks, drifts, scale inverses, velocity corrections, minimization constants,
 and dynamic returns are constructed with native operations. Their original
-operand order and control-flow positions are preserved. Program signatures
-and schedule scopes remain transitional.
+operand order and control-flow positions are preserved. Entry and schedule scopes remain transitional.
 
 Schedule energy evaluations, half-kicks, optimal-temperature arithmetic,
 Trotter state reads, energy rows, spread/frame/checkpoint calls, and
@@ -1483,6 +1481,10 @@ Custom pair potentials use the same native topology boundary and shared
 expression kernel, retaining grouped masks, lookup and constant binding order,
 tunable arguments and the selected truncation. The owner constructs their
 shared neighborhood before ranked contributions.
+Staged-model contributions clone their checked input body directly into the
+native topology potential using actual positions, cell and atomic-number values.
+Native potential construction propagates errors and discards incomplete bodies;
+construction coverage verifies that failure boundary explicitly.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 

@@ -66,13 +66,15 @@ public:
     definitions.push_back(
         {10, 0, "term_urey_bradley", TermInputs::UreyBradleys});
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::UreyBradleys)) return;
+    if (!(selection.terms & TermInputs::UreyBradleys)) return llvm::Error::success();
     auto relation = state.relation("urey_bradley");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildUreyBradleysContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("urey_bradley", "k"), state.tupleField("urey_bradley", "r0")}));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,

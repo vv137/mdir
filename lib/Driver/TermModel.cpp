@@ -160,6 +160,19 @@ public:
       context.getFields().push_back(std::move(numbers));
     }
   }
+  llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
+      const TermNativeTopology &point, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (selection.terms != TermInputs::AllTerms) return llvm::Error::success();
+    for (const auto &model : state->potentials) {
+      auto energy = model->cloneBody(builder,
+          mlir::ValueRange{point.physical.positions, point.physical.cell,
+                          point.physical.field("model_z")});
+      if (!energy) return energy.takeError();
+      add(*energy);
+    }
+    return llvm::Error::success();
+  }
   void
   emitTopologyPotential(TermEmission &context,
                         const PotentialSelection &selection,

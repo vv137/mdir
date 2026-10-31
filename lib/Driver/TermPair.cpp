@@ -472,7 +472,7 @@ public:
     return (selection.terms & TermInputs::PairTerms) &&
            !context.getControl().pairs.empty();
   }
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
     const Control &control = context.getControl();
@@ -607,6 +607,8 @@ public:
                                            operand(state.physical.table(name)));
       add(buildTopologyPairContribution(builder, values, config));
     }
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,

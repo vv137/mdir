@@ -224,11 +224,11 @@ public:
   int parameterRank() const override { return -2; }
   int potentialRank() const override { return -1; }
   void collectParameters(TermParameters &context) const override;
-  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
     if (!(selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) ||
-        context.getControl().implicitSolvent == Control::ImplicitSolvent::None) return;
+        context.getControl().implicitSolvent == Control::ImplicitSolvent::None) return llvm::Error::success();
     auto config = configure(context, selection.terms);
     TermIRValues values{state.physical.positions, state.physical.cell,
         state.physical.field("gb_offset"), state.physical.field("gb_scaled"), state.physical.field("gb_radius")};
@@ -240,6 +240,8 @@ public:
       add(buildSurfaceContribution(builder,
           mlir::ValueRange{state.physical.field("gb_radius"), born[0]}, tension));
     }
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,

@@ -53,8 +53,7 @@ The build context outlives the adapters and their captured input modules;
 recipe construction errors propagate to the producer. Input buffers remain
 owned for parsed resource lifetimes. Native tests cover the frozen exported
 model, user string literals and nondefault SSA names, signature rejection,
-foreign program operands, and context ownership. The remaining program
-construction follows. Particle sets, tuple sets, and the constraint disjoint
+foreign program operands, and context ownership. Entry/schedule construction and the remaining nonbonded potential follow. Particle sets, tuple sets, and the constraint disjoint
 union are already native operations in the owned destination module. Their
 operation identity and order survive the join with remaining assembly.
 Runtime declarations are native `func.func` operations at their original
@@ -259,5 +258,9 @@ Custom pair potentials use the same native topology boundary and shared
 expression kernel, retaining grouped masks, lookup and constant binding order,
 tunable arguments and the selected truncation. The owner constructs their
 shared neighborhood before ranked contributions.
+Staged-model contributions clone their checked input body directly into the
+native topology potential using actual positions, cell and atomic-number values.
+Native potential construction propagates errors and discards incomplete bodies;
+construction coverage verifies that failure boundary explicitly.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

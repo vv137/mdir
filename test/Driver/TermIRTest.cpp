@@ -391,10 +391,12 @@ static void checkNativeBarePotentialBody() {
                            mdir::md::CellType::get(&context)};
   llvm::append_range(inputs, buildParameterTypes(context, metadata));
   double constant = 2.5;
-  auto potential = buildScalarPotential(builder, "energy", inputs,
+  auto builtPotential = buildScalarPotential(builder, "energy", inputs,
       [&](OpBuilder &at, ValueRange) -> Value {
         return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(constant));
       });
+  require(bool(builtPotential), "native scalar potential construction failed");
+  auto potential = *builtPotential;
   Value original = potential.getBody().front().getArgument(0);
   constant = -1.0;
   metadata.fields.clear();
@@ -416,6 +418,18 @@ static void checkNativeBarePotentialBody() {
   require(cast<FloatAttr>(value.getValue()).getValueAsDouble() == 2.5,
           "native potential retained transient construction state");
   require(succeeded(verify(module)), "native potential did not verify");
+  builder.setInsertionPointToEnd(module.getBody());
+  auto failed = buildScalarPotential(builder, "failed", inputs,
+      [](OpBuilder &, ValueRange) -> llvm::Expected<Value> {
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                       "staged construction boundary failure");
+      });
+  require(!failed, "native scalar potential swallowed a construction error");
+  require(llvm::toString(failed.takeError()) == "staged construction boundary failure",
+          "native scalar potential changed its construction error");
+  require(!module.lookupSymbol<mdir::md::PotentialOp>("failed"),
+          "failed scalar potential retained an incomplete body");
+
 }
 
 int main(int argc, char **argv) {

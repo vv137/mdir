@@ -156,7 +156,7 @@ public:
               fillTupleParameter(field, term);
     }
   }
-  void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &, const TermNativeTopology &,
+  llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &, const TermNativeTopology &,
       const PotentialSelection &, llvm::function_ref<void(mlir::Value)>) const override;
   void emitTopologyPotential(TermEmission &context,
       const PotentialSelection &selection,
@@ -499,7 +499,7 @@ void TupleTermBuilder::emitTopologyPotential(TermEmission &context,
 
 }
 
-void TupleTermBuilder::buildTopologyPotential(const TermInputs &context,
+llvm::Error TupleTermBuilder::buildTopologyPotential(const TermInputs &context,
     mlir::OpBuilder &builder, const TermNativeTopology &state,
     const PotentialSelection &selection, llvm::function_ref<void(mlir::Value)> add) const {
   const Control &control = context.getControl();
@@ -603,4 +603,6 @@ void TupleTermBuilder::buildTopologyPotential(const TermInputs &context,
     }
     add(buildTupleContribution(builder, values, config));
   }
-}
+
+    return llvm::Error::success();
+  }

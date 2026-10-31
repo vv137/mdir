@@ -64,15 +64,17 @@ public:
       std::vector<TermDefinition> &definitions) const override {
     definitions.push_back({3, 0, "term_angles", TermInputs::Angles});
   }
-  void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
+  llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
       const TermNativeTopology &state, const PotentialSelection &selection,
       llvm::function_ref<void(mlir::Value)> add) const override {
-    if (!(selection.terms & TermInputs::Angles)) return;
+    if (!(selection.terms & TermInputs::Angles)) return llvm::Error::success();
     auto relation = state.relation("angles");
-    if (!relation) return;
+    if (!relation) return llvm::Error::success();
     add(buildAnglesContribution(builder,
         mlir::ValueRange{relation, state.physical.positions, state.physical.cell,
                         state.tupleField("angles", "k"), state.tupleField("angles", "theta0")}));
+
+    return llvm::Error::success();
   }
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
