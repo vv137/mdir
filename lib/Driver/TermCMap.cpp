@@ -8,59 +8,7 @@
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
-namespace mdir::driver::builder {
-class CMapTermBuilder final : public TermBuilder {
-public:
-  CMapTermBuilder() {
-    potentialMask = TermInputs::CMaps;
-    tupleRank = 2;
-  }
-  int topologyRank() const override { return 4; }
-  void collectTupleSets(TermParameters &context) const override {
-    const Topology &topology = context.getTopology();
-    if (!topology.cmaps.empty()) {
-      // The map of each term, and the bicubic patches of every map: a row
-      // of 16 coefficients for each cell.
-      Program::TupleSet &set = addTupleSet(context.getTupleSets(), "cmap", 5);
-      set.reversible = false;
-      size_t map = addTupleField(set, "map");
-      for (const Topology::CMap &cmap : topology.cmaps) {
-        for (unsigned member : {cmap.i, cmap.j, cmap.k, cmap.l, cmap.m})
-          set.members.push_back(member);
-        set.fields[map].values.push_back(cmap.map);
-      }
-      Program::Table table;
-      table.name = "cmap";
-      table.values = getCMapCoefficients(topology);
-      table.columns = 16;
-      table.count = table.values.size() / 16;
-      context.getTables().push_back(std::move(table));
-    }
-  }
-  void appendTermDefinitions(
-      const TermInputs &,
-      std::vector<TermDefinition> &definitions) const override {
-    definitions.push_back({7, 0, "term_cmap", TermInputs::CMaps});
-  }
-  void emitTopologyPotential(TermEmission &context,
-                             const PotentialSelection &selection,
-                             const TermPotentialAddition &add) const override {
-    unsigned terms = selection.terms;
-    auto has = [&](StringRef name) {
-      return llvm::any_of(context.getTupleSets(),
-                          [&](const auto &set) { return set.name == name; });
-    };
-    if ((terms & TermInputs::CMaps) && has("cmap")) {
-      // The cell of φ and ψ, each from −180° in steps of 360° / n, and the
-      // places t and u in it; φ = 180° is the first cell again. The patch
-      // is E = Σ c_ij t^i u^j [MacKerell2004].
-      unsigned n = context.getTopology().cmapResolution;
-      context.emitIRFragment(
-          "  ", {"%u_cmap"}, {"f64"},
-          {"%r_cmap", "%x", "%cell", "%f_cmap_map", "%t_cmap"},
-          {"!rel_cmap", "!vec", "!md.cell", "!of_cmap", "!grid"},
-          [n](mlir::OpBuilder &builder,
-              mlir::ValueRange values) -> TermIRValues {
+static mlir::Value buildCMapsContribution(mlir::OpBuilder &builder, mlir::ValueRange values, unsigned n) {
             using namespace mlir;
             auto loc = builder.getUnknownLoc();
             llvm::SmallVector<mdir::md::Coordinate> coordinates = {
@@ -132,7 +80,72 @@ public:
               }
               mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
             }
-            return {sum.getResult()};
+            return sum.getResult();
+}
+
+namespace mdir::driver::builder {
+class CMapTermBuilder final : public TermBuilder {
+public:
+  CMapTermBuilder() {
+    potentialMask = TermInputs::CMaps;
+    nativePotentialMask = potentialMask;
+    tupleRank = 2;
+  }
+  int topologyRank() const override { return 4; }
+  void collectTupleSets(TermParameters &context) const override {
+    const Topology &topology = context.getTopology();
+    if (!topology.cmaps.empty()) {
+      // The map of each term, and the bicubic patches of every map: a row
+      // of 16 coefficients for each cell.
+      Program::TupleSet &set = addTupleSet(context.getTupleSets(), "cmap", 5);
+      set.reversible = false;
+      size_t map = addTupleField(set, "map");
+      for (const Topology::CMap &cmap : topology.cmaps) {
+        for (unsigned member : {cmap.i, cmap.j, cmap.k, cmap.l, cmap.m})
+          set.members.push_back(member);
+        set.fields[map].values.push_back(cmap.map);
+      }
+      Program::Table table;
+      table.name = "cmap";
+      table.values = getCMapCoefficients(topology);
+      table.columns = 16;
+      table.count = table.values.size() / 16;
+      context.getTables().push_back(std::move(table));
+    }
+  }
+  void appendTermDefinitions(
+      const TermInputs &,
+      std::vector<TermDefinition> &definitions) const override {
+    definitions.push_back({7, 0, "term_cmap", TermInputs::CMaps});
+  }
+  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (!(selection.terms & TermInputs::CMaps)) return;
+    auto relation = state.relation("cmap");
+    if (!relation) return;
+    add(buildCMapsContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("cmap", "map"), state.physical.table("cmap")}, context.getTopology().cmapResolution));
+  }
+  void emitTopologyPotential(TermEmission &context,
+                             const PotentialSelection &selection,
+                             const TermPotentialAddition &add) const override {
+    unsigned terms = selection.terms;
+    auto has = [&](StringRef name) {
+      return llvm::any_of(context.getTupleSets(),
+                          [&](const auto &set) { return set.name == name; });
+    };
+    if ((terms & TermInputs::CMaps) && has("cmap")) {
+      // The cell of φ and ψ, each from −180° in steps of 360° / n, and the
+      // places t and u in it; φ = 180° is the first cell again. The patch
+      // is E = Σ c_ij t^i u^j [MacKerell2004].
+      unsigned n = context.getTopology().cmapResolution;
+      context.emitIRFragment(
+          "  ", {"%u_cmap"}, {"f64"},
+          {"%r_cmap", "%x", "%cell", "%f_cmap_map", "%t_cmap"},
+          {"!rel_cmap", "!vec", "!md.cell", "!of_cmap", "!grid"},
+          [n](mlir::OpBuilder &builder,
+              mlir::ValueRange values) -> TermIRValues {
+            return {buildCMapsContribution(builder, values, n)};
           });
       add("cmap");
     }

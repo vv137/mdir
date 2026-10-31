@@ -211,3 +211,7 @@ Bare pair and triplet contributions borrow actual fields and tables through
 typed hooks. Their complete scalar potential is native, with module-owned
 operations and block arguments independent of transient construction metadata.
 Topology potential and entry/schedule scopes remain in progress.
+
+Built-in bonded term potentials construct native signatures and bodies
+from actual tuple relations and parameter fields. Shared kernels and explicit
+emission ranks preserve the original arithmetic and accumulation order.

@@ -1281,6 +1281,7 @@ No generic behavioral hook has only one implementer.
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
 | `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1463,7 +1464,10 @@ synchronous typed contribution hooks. Semantic particle-field/table bindings
 supply actual operands, and a shared scalar-potential factory owns the complete
 body before its temporary placement join. Construction tests verify operation,
 argument and scalar-capture lifetime after transient metadata is cleared.
-Topology-potential and entry/schedule scopes remain in progress; their temporary assembly
+Built-in bonded term potentials use native scalar-potential signatures
+and typed tuple-relation/parameter bindings, sharing their kernels with the
+remaining topology path. Rank and accumulation order are unchanged.
+Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
 ## 3. Decided
