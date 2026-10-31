@@ -1,5 +1,8 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
+#include "../../lib/Driver/PotentialIR.h"
+#include "../../lib/Driver/DynamicsIR.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
 #include "../../lib/Driver/StagedModelIR.h"
 #include "../../lib/Driver/BarostatIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -183,9 +186,67 @@ static void checkFrameEvaluations() {
   }
 }
 
+// Complete native bodies keep their operations and arguments at the module
+// boundary, even after the transient metadata that described them is gone.
+static void checkNativeDescentBody() {
+  TermIRPlan plan;
+  mdir::driver::Program program;
+  program.fields.emplace_back().name = "parameter";
+  program.fields.emplace_back().name = "species";
+  program.fields.back().isInteger = true;
+  program.tables.emplace_back().name = "pairs";
+  program.tables.emplace_back().name = "grid";
+  program.tables.back().columns = 3;
+  program.tupleSets.emplace_back().name = "bonds";
+  program.tupleSets.back().arity = 2;
+  program.tupleSets.back().fields.emplace_back().name = "length";
+  auto &context = plan.getContext();
+  OpBuilder builder(&context);
+  auto module = plan.getModule();
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::md::TupleSetOp::create(builder, loc, "bonds", "atoms", 2,
+                               mdir::md::Orientation::Unordered, false);
+  auto parameters = buildParameterTypes(context, program);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> energyInputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(energyInputs, parameters);
+  auto energy = mdir::md::PotentialOp::create(
+      builder, loc, "energy", builder.getFunctionType(energyInputs, {builder.getF64Type()}),
+      StringAttr{}, ArrayAttr{}, ArrayAttr{});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    SmallVector<Location> locations(energyInputs.size(), loc);
+    builder.createBlock(&energy.getBody(), {}, energyInputs, locations);
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    mdir::md::ReturnOp::create(builder, loc, ValueRange{zero});
+  }
+  auto native = buildUnconstrainedDescent(builder, parameters, 4.0, false);
+  Value original = native.getBody().front().getArgument(0);
+  program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
+  llvm::raw_string_ostream stream(program.module);
+  stream << "module { ";
+  plan.emit(stream, "", {}, {}, {}, {},
+      [native](OpBuilder &where, ValueRange) -> TermIRValues {
+        native->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+        return {};
+      });
+  stream << "}";
+  stream.flush();
+  require(!finishTermIRProgram(program, plan), "owned native descent failed its module boundary");
+  require(module.lookupSymbol<mdir::dyn::ProgramOp>("descend") == native,
+          "native function was reparsed or cloned");
+  require(native.getBody().front().getArgument(0) == original,
+          "native function lost its actual block argument");
+  require(succeeded(verify(module)), "native descent did not verify");
+}
+
 int main(int argc, char **argv) {
   checkDiagonalExports();
   checkFrameEvaluations();
+  checkNativeDescentBody();
   require(argc == 2, "expected the frozen staged-model fixture");
   auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
   require(bool(fixture), "cannot read the frozen staged-model fixture");

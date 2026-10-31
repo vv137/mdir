@@ -1,5 +1,7 @@
 // Mass-metric descent with the existing scaled 16-norm and rejected trials.
 #include "DynamicsIR.h"
+#include "PotentialIR.h"
+#include "llvm/ADT/STLExtras.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -133,4 +135,63 @@ Value mdir::driver::builder::buildFieldDifference(OpBuilder &builder, Value firs
     mdir::md::YieldOp::create(builder, loc, ValueRange{result});
   }
   return map.getResult();
+}
+
+Value mdir::driver::builder::buildDescentDirection(OpBuilder &builder, Value forces, Value masses) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto f64 = builder.getF64Type();
+  auto vec = VectorType::get({3}, f64);
+  auto map = mdir::md::MapParticlesOp::create(
+      builder, loc, forces.getType(), ValueRange{forces, masses});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = builder.createBlock(&map.getKernel(), {}, {vec, f64},
+                                      {loc, loc})->getArguments();
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    Value unit = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0));
+    Value zeroVector = arith::ConstantOp::create(
+        builder, loc, DenseElementsAttr::get(vec, 0.0));
+    Value massive = arith::CmpFOp::create(builder, loc,
+                                          arith::CmpFPredicate::OGT,
+                                          args[1], zero);
+    Value safe = arith::SelectOp::create(builder, loc, massive, args[1], unit);
+    Value mass = vector::BroadcastOp::create(builder, loc, vec, safe);
+    Value ratio = arith::DivFOp::create(builder, loc, args[0], mass);
+    Value result = arith::SelectOp::create(builder, loc, massive, ratio,
+                                           zeroVector);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+  }
+  return map.getResult();
+}
+
+mdir::dyn::ProgramOp mdir::driver::builder::buildUnconstrainedDescent(
+    OpBuilder &builder, TypeRange parameters, double particles, bool timed) {
+  auto loc = builder.getUnknownLoc();
+  auto ctx = builder.getContext();
+  auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
+  auto f64 = builder.getF64Type();
+  auto vec = mdir::md::FieldType::get(ctx, atoms, 3, f64);
+  auto real = mdir::md::FieldType::get(ctx, atoms, 1, f64);
+  SmallVector<Type> inputs{vec, vec, real, mdir::md::CellType::get(ctx), f64};
+  llvm::append_range(inputs, parameters);
+  auto function = builder.getFunctionType(inputs, {vec, vec, f64});
+  auto program = mdir::dyn::ProgramOp::create(
+      builder, loc, "descend", function, StringAttr{}, ArrayAttr{}, ArrayAttr{},
+      FloatAttr{}, ArrayAttr{}, ArrayAttr{}, builder.getDictionaryAttr({}));
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    SmallVector<Location> locations(inputs.size(), loc);
+    auto args = builder.createBlock(&program.getBody(), {}, inputs, locations)->getArguments();
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    Value tiny = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0e-300));
+    Value count = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(particles));
+    Value direction = buildDescentDirection(builder, args[1], args[2]);
+    Value positions = buildDescentPositions(builder, args[0], direction, args[4], count, tiny);
+    auto evaluation = buildEnergyEvaluation(
+        builder, {positions, args[3], ValueRange(args).drop_front(5), timed ? zero : Value{}},
+        {true, true, false});
+    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, evaluation.forces, evaluation.energy});
+  }
+  return program;
 }

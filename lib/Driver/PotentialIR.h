@@ -3,8 +3,11 @@
 #define MDIR_LIB_DRIVER_POTENTIALIR_H
 #include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/SmallVector.h"
-namespace mlir { class OpBuilder; }
+namespace mlir { class OpBuilder; class MLIRContext; }
+namespace mdir::driver { struct Program; }
 namespace mdir::driver::builder {
+// Parameter fields, tables and relations in their declared semantic order.
+llvm::SmallVector<mlir::Type> buildParameterTypes(mlir::MLIRContext &, const Program &);
 struct PotentialStateIR {
   mlir::Value positions, cell;
   mlir::ValueRange fields;
