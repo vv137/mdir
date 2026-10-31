@@ -191,5 +191,7 @@ the ownership contract recorded there.
 
 Native minimization bodies now include constrained trials and virtual-site
 placement and force spreading through semantic parameter slots and actual block
-arguments. Shared construction preserves kernel and operation order. Force
-corrections, hosted evaluations and the remaining scopes are still in progress.
+arguments. Shared construction preserves kernel and operation order. Restraint
+corrections and hosted evaluations borrow actual physical values synchronously
+through narrow roles. Their native kernels are shared with the remaining
+emitters; the complete minimization body is native. Other scopes remain in progress.

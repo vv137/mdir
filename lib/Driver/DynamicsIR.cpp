@@ -168,7 +168,8 @@ Value mdir::driver::builder::buildDescentDirection(OpBuilder &builder, Value for
 
 mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
     OpBuilder &builder, TypeRange parameters, double particles, bool timed,
-    llvm::ArrayRef<DescentConstraintGroupIR> groups, llvm::ArrayRef<DescentSiteIR> sites) {
+    llvm::ArrayRef<DescentConstraintGroupIR> groups, llvm::ArrayRef<DescentSiteIR> sites, bool hosted,
+    llvm::function_ref<EnergyResults(OpBuilder &, const PotentialStateIR &, EnergyResults)> complete) {
   auto loc = builder.getUnknownLoc();
   auto ctx = builder.getContext();
   auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
@@ -180,7 +181,10 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
   auto function = builder.getFunctionType(inputs, {vec, vec, f64});
   auto program = mdir::dyn::ProgramOp::create(
       builder, loc, "descend", function, StringAttr{}, ArrayAttr{}, ArrayAttr{},
-      FloatAttr{}, ArrayAttr{}, ArrayAttr{}, builder.getDictionaryAttr({}));
+      FloatAttr{}, ArrayAttr{}, ArrayAttr{}, hosted
+          ? builder.getDictionaryAttr({builder.getNamedAttr("read", builder.getStrArrayAttr({"<Default>"})),
+                                       builder.getNamedAttr("write", builder.getStrArrayAttr({"<Default>"}))})
+          : builder.getDictionaryAttr({}));
   {
     OpBuilder::InsertionGuard guard(builder);
     SmallVector<Location> locations(inputs.size(), loc);
@@ -241,6 +245,11 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
       forces = buildSiteSpread(builder,
           {parameter(site.relation), positions, args[3], parameter(site.a), parameter(site.b), forces, {}},
           site.amber, site.derived, site.potential).forces;
+    evaluation.forces = forces;
+    if (complete)
+      evaluation = complete(builder,
+          {positions, args[3], ValueRange(args).drop_front(5), timed ? zero : Value{}}, evaluation);
+    forces = evaluation.forces;
     Value energy = groups.empty() ? evaluation.energy
                                   : buildTrialEnergy(builder, evaluation.energy, intact);
     mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, forces, energy});

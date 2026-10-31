@@ -3,6 +3,8 @@
 #define MDIR_LIB_DRIVER_DYNAMICSIR_H
 #include "mlir/IR/Value.h"
 #include "ConstraintIR.h"
+#include "PotentialIR.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include <vector>
 #include <string>
 #include "mlir/IR/TypeRange.h"
@@ -25,7 +27,9 @@ struct DescentSiteIR {
 mdir::dyn::ProgramOp buildNativeDescent(
     mlir::OpBuilder &, mlir::TypeRange parameters, double particles, bool timed,
     llvm::ArrayRef<DescentConstraintGroupIR> groups = {},
-    llvm::ArrayRef<DescentSiteIR> sites = {});
+    llvm::ArrayRef<DescentSiteIR> sites = {}, bool hosted = false,
+    llvm::function_ref<EnergyResults(mlir::OpBuilder &, const PotentialStateIR &,
+                                    EnergyResults)> complete = {});
 mlir::Value buildDescentPositions(mlir::OpBuilder &, mlir::Value positions,
                                    mlir::Value gradient, mlir::Value distance,
                                    mlir::Value count, mlir::Value tiny);

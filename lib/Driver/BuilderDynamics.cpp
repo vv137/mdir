@@ -1313,11 +1313,9 @@ void Builder::emitDescend() {
   // particles by their masses, so that the step stays downhill once they
   // take the groups back to their shapes. Virtual sites have no mass and
   // do not move.
-  bool sites = hasSites();
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
-  bool constraints = settles || !shakeSets.empty();
-  if (!hasForceCorrections() && !hasHostEvaluation()) {
+  {
     auto &context = termIR.getContext();
     mlir::OpBuilder builder(&context);
     builder.setInsertionPointToEnd(termIR.getModule().getBody());
@@ -1357,7 +1355,38 @@ void Builder::emitDescend() {
       siteSets.push_back({relationSlot(*set), fieldSlot(*set, "a"), fieldSlot(*set, "b"),
                          set->name == "sites_amber", spreadsSitesDerived(), "spread_" + set->name});
     auto nativeProgram = buildNativeDescent(
-        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime, groups, siteSets);
+        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime,
+        groups, siteSets, hasHostEvaluation(),
+        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation) {
+          auto field = [&](StringRef name) -> mlir::Value {
+            auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
+            assert(found != program.fields.end() && "evaluation field must exist");
+            return state.fields[std::distance(program.fields.begin(), found)];
+          };
+          mlir::Value virial;
+          if (hasForceCorrections()) {
+            auto vec = mlir::VectorType::get({9}, at.getF64Type());
+            virial = mlir::arith::ConstantOp::create(at, at.getUnknownLoc(),
+                mlir::DenseElementsAttr::get(vec, 0.0));
+          }
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().postEvaluation;
+                role && role->hasForceCorrection(*this)) {
+              auto result = role->build(*this, at,
+                  {state.positions, state.cell, evaluation.forces, evaluation.energy, virial, {}, field});
+              evaluation.forces = result.forces;
+              evaluation.energy = result.energy;
+              virial = result.virial;
+            }
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().hostEvaluation; role && role->applies(*this)) {
+              auto result = role->build(*this, at,
+                  {state.positions, state.cell, evaluation.forces, evaluation.energy, {}, {}, field});
+              evaluation.forces = result.forces;
+              evaluation.energy = result.energy;
+            }
+          return evaluation;
+        });
     // The module owns this complete native body. Only its top-level placement
     // crosses the temporary join; no argument or operation in it is reparsed.
     emitIRFragment("", {}, {}, {}, {},
@@ -1368,109 +1397,6 @@ void Builder::emitDescend() {
     return;
   }
 
-  os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
-        "%cell: !md.cell,\n    %h: f64"
-     << getFieldParameters() << ")\n    -> (!vec, !vec, f64)"
-     << " attributes {effects = "
-     << (hasHostEvaluation()
-             ? "{read = [\"<Default>\"], write = [\"<Default>\"]}"
-             : "{}")
-     << "} {\n";
-  emitIRFragment(
-      "  ", {"%zero", "%tiny", "%count"}, {"f64", "f64", "f64"}, {}, {},
-      [count = static_cast<double>(system.getNumParticles())](
-          mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
-        auto loc = builder.getUnknownLoc();
-        mlir::Value zero = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
-        mlir::Value tiny = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0e-300));
-        mlir::Value particles = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(count));
-        return {zero, tiny, particles};
-      });
-  emitConstrainedDescent("  ", "%x", "%f", "%g");
-  std::string trial = sites || constraints ? "%x1d" : "%x1";
-  emitIRFragment(
-      "  ", {trial}, {"!vec"}, {"%x", "%g", "%h", "%count", "%tiny"},
-      {"!vec", "!vec", "f64", "f64", "f64"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        return {buildDescentPositions(builder, values[0], values[1], values[2],
-                                        values[3], values[4])};
-      });
-  // The rigid groups back to their shapes, and the sites where their
-  // atoms put them.
-  if (constraints) {
-    std::string current = "%x1d";
-    std::string constrained = "%x1k";
-    unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-    auto next = [&]() {
-      ++step;
-      return step == steps ? constrained : "%x1c" + std::to_string(step);
-    };
-    if (settles) {
-      std::string result = next();
-      emitSettlePositions("  ", "%x", current, "%dx1", result);
-      current = result;
-    }
-    for (const Program::TupleSet *set : shakeSets) {
-      std::string result = next();
-      emitShakePositions("  ", "%x", current, *set, result);
-      current = result;
-    }
-    // A trial whose groups the constraints did not take back to their
-    // shapes, a step too long for SETTLE or M-SHAKE, is not taken: the
-    // energy is evaluated where the step began, so that no position that
-    // is not a number reaches the neighbor structure, and is returned as
-    // +inf, so that the step shrinks. Taken, it would leave the surface of
-    // the constraints, and every later trial would hold the change that
-    // takes the group back, which does not shrink with the step
-    // (D259, #343).
-    emitConstraintFailures("  ", "%x1k", "%broken");
-    std::string chosen = sites ? "%x1s" : "%x1";
-    emitIRFragment(
-        "  ", {chosen, "%intact"}, {"!vec", "i1"},
-        {"%x1k", "%x", "%broken", "%zero"}, {"!vec", "!vec", "f64", "f64"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          auto result = buildConstrainedTrial(builder, values[0], values[1],
-                                                values[2], values[3]);
-          return {result.positions, result.intact};
-        });
-  }
-  if (sites)
-    emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
-  std::string raw = sites ? "e" : "";
-  std::string held = hasForceCorrections() ? "p" : "";
-  // A learned potential adds its energy and forces to `%u1c` and `%f1c`
-  // (D270).
-  bool hostTerms = hasHostEvaluation();
-  std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-  emitEnergyEvaluation("  ", "%x1", "%cell", "%p_", "%zero",
-                         "%u1" + held + modelled, "%f1" + held + raw + modelled, "");
-  if (sites)
-    emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
-  if (hasForceCorrections()) {
-    emitIRFragment(
-        "  ", {"%w1z"}, {"vector<9xf64>"}, {}, {},
-        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
-          auto vec = mlir::VectorType::get({9}, builder.getF64Type());
-          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
-                                                  mlir::DenseElementsAttr::get(vec, 0.0))};
-        });
-    emitForceCorrections("  ", "%x1", "%p_", "%f1p", hostTerms ? "%f1c" : "%f1",
-                   "%u1p", hostTerms ? "%u1c" : "%u1", "%w1z", "%w1r");
-  }
-  if (hostTerms)
-    emitHostEvaluation("  ", "%x1", "%cell", "%p_", "%f1c", "%f1", "%u1c", "%u1",
-                   "", "1");
-  std::string energy = "%u1";
-  if (constraints) {
-    emitIRFragment(
-        "  ", {"%u1c"}, {"f64"}, {"%u1", "%intact"}, {"f64", "i1"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          return {buildTrialEnergy(builder, values[0], values[1])};
-        });
-    energy = "%u1c";
-  }
-  emitDynamicsReturn("  ", {"%x1", "%f1", energy}, {"!vec", "!vec", "f64"});
-  os << "}\n\n";
 }
 
 void Builder::emitCellOf(StringRef indent, StringRef name, StringRef prefix) {

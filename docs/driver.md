@@ -1444,7 +1444,11 @@ Semantic parameter slots drive ordered gradient projection, position correction,
 failure counts, rejected-trial selection, site placement and force spreading.
 The module owns each body; only its placement crosses the temporary assembly
 join. Mass-safe descent, constraint-test and site-placement kernels are shared.
-Force corrections, hosted evaluations and other function scopes remain in progress.
+Restraint corrections and hosted-model evaluations use synchronous narrow-role
+capabilities with actual physical values and semantic particle-field bindings.
+Their shared native kernels retain correction/evaluation order and effects;
+minimization no longer emits a generated signature or body. Other function
+scopes remain in progress.
 
 ## 3. Decided
 
