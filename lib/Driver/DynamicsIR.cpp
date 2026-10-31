@@ -1,6 +1,7 @@
 // Mass-metric descent with the existing scaled 16-norm and rejected trials.
 #include "DynamicsIR.h"
 #include "PotentialIR.h"
+#include "SiteIR.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -165,8 +166,9 @@ Value mdir::driver::builder::buildDescentDirection(OpBuilder &builder, Value for
   return map.getResult();
 }
 
-mdir::dyn::ProgramOp mdir::driver::builder::buildUnconstrainedDescent(
-    OpBuilder &builder, TypeRange parameters, double particles, bool timed) {
+mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
+    OpBuilder &builder, TypeRange parameters, double particles, bool timed,
+    llvm::ArrayRef<DescentConstraintGroupIR> groups) {
   auto loc = builder.getUnknownLoc();
   auto ctx = builder.getContext();
   auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
@@ -186,12 +188,54 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildUnconstrainedDescent(
     Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
     Value tiny = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0e-300));
     Value count = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(particles));
+    auto parameter = [&](unsigned slot) { return args[5 + slot]; };
+    auto groupParameters = [&](const DescentConstraintGroupIR &group) {
+      SmallVector<Value> fields;
+      for (unsigned slot : group.parameters) fields.push_back(parameter(slot));
+      return fields;
+    };
     Value direction = buildDescentDirection(builder, args[1], args[2]);
+    for (const auto &group : groups) {
+      auto fields = groupParameters(group);
+      ConstraintVelocityInputs input{parameter(group.relation), args[0], args[3],
+                                      direction, args[2], fields, {}, {}};
+      direction = group.water ? buildSettleVelocities(builder, input).velocities
+                              : buildShakeVelocities(builder, input, group.arity).velocities;
+    }
     Value positions = buildDescentPositions(builder, args[0], direction, args[4], count, tiny);
+    for (const auto &group : groups) {
+      auto fields = groupParameters(group);
+      ConstraintPositionInputs input{parameter(group.relation), positions, args[3],
+                                      args[0], args[2], fields};
+      auto projected = group.settlePosition
+                           ? buildSettlePositions(builder, input, false, group.position.tolerance)
+                           : buildBondConstraints(builder, input, group.arity, group.bonds, group.position);
+      positions = buildAddChange(builder, positions, projected.change);
+    }
+    Value intact;
+    if (!groups.empty()) {
+      SmallVector<Value> failures;
+      for (const auto &group : groups) {
+        auto fields = groupParameters(group);
+        failures.push_back(buildConstraintTest(builder,
+            {parameter(group.relation), positions, args[3], fields}, group.bonds,
+            false, group.position.tolerance));
+      }
+      Value total;
+      for (Value failed : failures)
+        total = total ? arith::AddFOp::create(builder, loc, total, failed) : failed;
+      Value none = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+      Value broken = arith::AddFOp::create(builder, loc, total, none);
+      auto trial = buildConstrainedTrial(builder, positions, args[0], broken, zero);
+      positions = trial.positions;
+      intact = trial.intact;
+    }
     auto evaluation = buildEnergyEvaluation(
         builder, {positions, args[3], ValueRange(args).drop_front(5), timed ? zero : Value{}},
         {true, true, false});
-    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, evaluation.forces, evaluation.energy});
+    Value energy = groups.empty() ? evaluation.energy
+                                  : buildTrialEnergy(builder, evaluation.energy, intact);
+    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, evaluation.forces, energy});
   }
   return program;
 }

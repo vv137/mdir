@@ -222,3 +222,8 @@ evaluations constructs its complete native signature and body from actual
 block arguments and semantic parameter types. The module owns that body;
 only its placement crosses the temporary assembly join. Other function
 variants and scopes remain in progress. Mass-safe descent direction is shared.
+
+Complete native minimization bodies also cover SETTLE and M-SHAKE without
+virtual sites, force corrections or hosted evaluations. Semantic parameter
+slots drive the ordered gradient projection, position corrections, failure
+counts and rejected-trial selection; constraint-test kernels are shared.

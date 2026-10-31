@@ -2,6 +2,7 @@
 #include "ConstraintIR.h"
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -742,4 +743,64 @@ ConstraintPositionResult mdir::driver::builder::buildBondConstraints(
     mdir::md::YieldOp::create(builder, loc, results);
   }
   return {change.getResult(), config.withFailure ? change.getFailed() : Value{}};
+}
+
+Value mdir::driver::builder::buildConstraintTest(
+    OpBuilder &builder, const ConstraintTestInputs &input,
+    llvm::ArrayRef<ConstraintBond> bonds, bool flag, double tolerance) {
+  SmallVector<Value> operands{input.relation, input.positions, input.cell};
+  llvm::append_range(operands, input.parameters);
+  ValueRange values(operands);
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto f64 = builder.getF64Type();
+  auto vec = VectorType::get({3}, f64);
+  llvm::SmallVector<mdir::md::Coordinate> coordinates;
+  for (const auto &bond : bonds)
+    coordinates.push_back({mdir::md::CoordinateKind::Displacement,
+                            {bond.second, bond.first}});
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+  Type resultType = flag ? Type(builder.getI1Type()) : Type(f64);
+  auto sum = mdir::md::SumTuplesOp::create(
+      builder, loc, resultType, values[0], values[1], values[2],
+      ValueRange{}, values.drop_front(3), kinds, members);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    llvm::SmallVector<Type> types(bonds.size(), vec);
+    types.append(values.size() - 3, f64);
+    llvm::SmallVector<Location> locations(types.size(), loc);
+    auto args = builder.createBlock(&sum.getKernel(), {}, types,
+                                      locations)->getArguments();
+    auto constant = [&](double value) -> Value {
+      return arith::ConstantOp::create(builder, loc,
+                                        builder.getF64FloatAttr(value));
+    };
+    Value one = constant(1.0), zero = constant(0.0), limit = constant(tolerance);
+    Value count;
+    for (auto [index, bond] : llvm::enumerate(bonds)) {
+      Value length = args[bonds.size() + bond.length];
+      Value d2 = arith::MulFOp::create(builder, loc, length, length);
+      Value r = args[index];
+      Value square = arith::MulFOp::create(builder, loc, r, r);
+      Value norm = vector::ReductionOp::create(
+          builder, loc, vector::CombiningKind::ADD, square);
+      Value ratio = arith::DivFOp::create(builder, loc, norm, d2);
+      Value off = arith::SubFOp::create(builder, loc, ratio, one);
+      Value magnitude = math::AbsFOp::create(builder, loc, off);
+      Value bad = arith::CmpFOp::create(builder, loc,
+                                        arith::CmpFPredicate::UGT,
+                                        magnitude, limit);
+      if (flag) {
+        count = count ? arith::OrIOp::create(builder, loc, count, bad) : bad;
+      } else {
+        Value failed = arith::SelectOp::create(builder, loc, bad, one, zero);
+        count = count ? arith::AddFOp::create(builder, loc, count, failed)
+                      : failed;
+      }
+    }
+    mdir::md::YieldOp::create(builder, loc, ValueRange{count});
+  }
+  return sum.getResult();
 }

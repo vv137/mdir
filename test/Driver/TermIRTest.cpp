@@ -207,7 +207,7 @@ static void checkNativeDescentBody() {
   auto loc = builder.getUnknownLoc();
   mdir::md::ParticleSetOp::create(builder, loc, "atoms");
   mdir::md::TupleSetOp::create(builder, loc, "bonds", "atoms", 2,
-                               mdir::md::Orientation::Unordered, false);
+                               mdir::md::Orientation::Unordered, true);
   auto parameters = buildParameterTypes(context, program);
   auto vec = mdir::md::FieldType::get(&context,
       FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
@@ -223,7 +223,9 @@ static void checkNativeDescentBody() {
     Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
     mdir::md::ReturnOp::create(builder, loc, ValueRange{zero});
   }
-  auto native = buildUnconstrainedDescent(builder, parameters, 4.0, false);
+  DescentConstraintGroupIR group{
+      4, 2, {5}, {{0, 1, 0}}, {false, false, 1.0e-8, 1.0e-12}, false, false};
+  auto native = buildNativeDescent(builder, parameters, 4.0, false, {group});
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
   llvm::raw_string_ostream stream(program.module);
