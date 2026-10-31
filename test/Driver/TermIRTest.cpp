@@ -468,7 +468,7 @@ static void checkNativeSimpleEntry() {
   runtime.state64 = runtime.force64 = true;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
-  auto built = buildSimpleStepEntry(builder, metadata, *step, 3);
+  auto built = buildSimpleStepEntry(builder, metadata, *step, {}, {3});
   require(bool(built), "native plain-step entry did not construct");
   auto entry = *built;
   auto loop = *entry.getOps<scf::ForOp>().begin();
@@ -476,12 +476,24 @@ static void checkNativeSimpleEntry() {
   auto call = *loop.getBody()->getOps<mdir::dyn::StepOp>().begin();
   require(llvm::equal(call.getOperands().take_front(3), loop.getRegionIterArgs()),
       "native plain-step call reads stale outer state");
+  auto energyStep = buildNativeStep(builder, {"step_energy", true, true}, parameters, false, false);
+  require(bool(energyStep), "native energy-step program did not construct");
+  metadata.entry = "native_energy_steps";
+  auto reporting = buildSimpleStepEntry(builder, metadata, *step, *energyStep, {2, 3, false});
+  require(bool(reporting), "native energy-interval entry did not construct");
+  auto outer = *reporting->getOps<scf::ForOp>().begin();
+  auto inner = *outer.getBody()->getOps<scf::ForOp>().begin();
+  auto closing = *outer.getBody()->getOps<mdir::dyn::StepOp>().begin();
+  require(llvm::equal(inner.getInitArgs(), outer.getRegionIterArgs()),
+      "native energy interval's plain loop reads stale outer state");
+  require(llvm::equal(closing.getOperands().take_front(3), inner.getResults()),
+      "native energy step lost the plain loop's final state");
   metadata.fields.clear();
   metadata.entry = "changed";
   require(module.lookupSymbol<func::FuncOp>("native_steps") == entry,
       "native plain-step entry retained mutable metadata");
   require(succeeded(verify(module)), "native plain-step module did not verify");
-  auto missing = buildSimpleStepEntry(builder, metadata, {}, 3);
+  auto missing = buildSimpleStepEntry(builder, metadata, {}, {}, {3});
   require(!missing, "native plain-step entry accepted a missing dynamics program");
   reject(missing.takeError(), "a generated step has no program definition");
   require(!module.lookupSymbol<func::FuncOp>("changed"), "failed native entry retained its function");
