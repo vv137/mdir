@@ -1092,11 +1092,7 @@ llvm::Error Builder::emitEntry() {
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&
       !isRestart() &&
-      !hasHostEvaluation() &&
-      llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
-        const auto *role = term->getRoles().coordinateOutput;
-        return role && role->hasCoordinateOutput(*this);
-      });
+      !hasHostEvaluation();
   if (nativeFrames) {
     mlir::OpBuilder ir(&termIR.getContext());
     auto *moduleBody = termIR.getModule().getBody();
@@ -1288,6 +1284,27 @@ llvm::Error Builder::emitEntry() {
               llvm::append_range(stored, result.storedTerms);
             }
           return FrameCompletionIR{evaluation, std::move(stored)};
+        }, [&](mlir::OpBuilder &at, const PotentialStateIR &state, mlir::Value step) {
+          auto tuple = [&](StringRef name) {
+            unsigned offset = program.fields.size() + program.tables.size();
+            for (const auto &set : program.tupleSets) {
+              if (set.name == name) return std::make_pair(&set, offset);
+              offset += 1 + set.fields.size();
+            }
+            llvm_unreachable("output relation must exist");
+          };
+          auto relation = [&](StringRef name) { return state.fields[tuple(name).second]; };
+          auto field = [&](StringRef set, StringRef name) {
+            auto [metadata, offset] = tuple(set);
+            auto found = llvm::find_if(metadata->fields,
+                [&](const auto &field) { return field.name == name; });
+            assert(found != metadata->fields.end() && "output parameter must exist");
+            return state.fields[offset + 1 + std::distance(metadata->fields.begin(), found)];
+          };
+          TermNativeOutput point{state, step, relation, field};
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().coordinateOutput)
+              role->buildOutput(*this, at, point);
         });
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;

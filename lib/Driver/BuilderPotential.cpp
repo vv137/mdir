@@ -18,49 +18,6 @@ using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
-llvm::StringMap<std::string> Builder::emitCentroidCoordinates(
-    const TupleTerm &term, StringRef indent, StringRef x, StringRef cell,
-    StringRef relations, StringRef prefix) {
-  const size_t groups = term.centers.size();
-  const unsigned arity = term.arity;
-  std::string set = "cg_" + term.name;
-  std::string relationType = "!rel_" + set, fieldType = "!of_" + set;
-  std::vector<std::string> names = {(relations + set).str(), x.str(),
-                                    cell.str()};
-  llvm::SmallVector<StringRef> types = {relationType, "!vec", "!md.cell"};
-  for (size_t slot = 0; slot + 1 < 2 * groups; ++slot) {
-    names.push_back("%f_" + set + "_w" + std::to_string(slot));
-    types.push_back(fieldType);
-  }
-  llvm::SmallVector<StringRef> operands;
-  for (const auto &name : names)
-    operands.push_back(name);
-  std::vector<std::string> results;
-  llvm::StringMap<std::string> mapping;
-  llvm::SmallVector<StringRef> keys;
-  if (arity == 2)
-    keys = {"r", "dx", "dy", "dz"};
-  else
-    keys = {"theta"};
-  for (StringRef key : keys) {
-    results.push_back((prefix + key).str());
-    mapping[key] = results.back();
-  }
-  llvm::SmallVector<StringRef> resultNames, resultTypes;
-  for (const auto &result : results) {
-    resultNames.push_back(result);
-    resultTypes.push_back("f64");
-  }
-  emitIRFragment(
-      indent, resultNames, resultTypes, operands, types,
-      [groups, arity](mlir::OpBuilder &builder,
-                      mlir::ValueRange values) -> TermIRValues {
-        return buildCentroidCoordinates(builder, values, groups, arity);
-      });
-  return mapping;
-}
-
-
 unsigned Builder::getNumPotentialArguments() const {
   unsigned count = 2 + program.fields.size() + program.tables.size();
   for (const Program::TupleSet &set : program.tupleSets)

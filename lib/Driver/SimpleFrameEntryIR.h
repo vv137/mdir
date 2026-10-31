@@ -54,6 +54,8 @@ struct SimpleFrameEntryIRConfig {
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
     mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &,
     llvm::function_ref<FrameCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
-                                        EnergyResults, mlir::Value scale)> complete = {});
+                                        EnergyResults, mlir::Value scale)> complete = {},
+    llvm::function_ref<void(mlir::OpBuilder &, const PotentialStateIR &, mlir::Value step)>
+        coordinateOutput = {});
 }
 #endif
