@@ -113,7 +113,7 @@ Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
 Stage C (#718, D[builder-native-program]) owns the native module and
-staged-model input boundary, complete dynamics/minimization and every term-potential family. The orthorhombic/triclinic frame entry family across integrators, including virtual sites, constraints, restraint corrections and observable/free-energy/gradient output, is also native; other entry/schedule scopes
+staged-model input boundary, complete dynamics/minimization and every term-potential family. The orthorhombic/triclinic frame entry family across integrators and barostats, including virtual sites, constraints, restraint corrections and observable/free-energy/gradient output, is also native; other entry/schedule scopes
 and final assembly cleanup remain in progress.
 
 ### 2.2 The dialects

@@ -67,6 +67,24 @@ EntryFieldsIR reorderedFrame(OpBuilder &builder, const Program &program,
     fields.tuples[index].members = relation;
   return fields;
 }
+Value constraintTrace(OpBuilder &builder, const EntryFieldsIR &physical,
+    const PotentialStateIR &state, Value forces, Value trace,
+    llvm::ArrayRef<FrameConstraintIR> groups, bool axes) {
+  Value descent = buildDescentDirection(builder, forces, physical.masses);
+  for (const auto &group : groups) {
+    SmallVector<Value> lengths;
+    for (unsigned slot : group.parameters) lengths.push_back(state.fields[slot]);
+    ConstraintVelocityInputs input{state.fields[group.relation], physical.positions,
+        state.cell, descent, physical.masses, lengths, {}, {}};
+    descent = group.water ? buildSettleVelocities(builder, input).velocities
+                          : buildShakeVelocities(builder, input, group.arity).velocities;
+  }
+  for (const auto &group : groups)
+    trace = buildConstraintTrace(builder,
+        {state.fields[group.relation], physical.positions, state.cell, descent,
+         forces, physical.velocities, physical.masses, trace}, group.arity, axes);
+  return trace;
+}
 void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
   mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), TypeRange{},
       FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameForces"),
@@ -77,7 +95,7 @@ void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config,
     llvm::function_ref<FrameCompletionIR(OpBuilder &, const PotentialStateIR &,
-                                        EnergyResults)> complete) {
+                                        EnergyResults, Value)> complete) {
   return buildEntryFunction(builder, program, {false, config.branchesStart},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
@@ -99,15 +117,51 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     }
     for (int64_t count : config.counts) arith::ConstantIndexOp::create(at, loc, count);
     for (int64_t period : config.periods) arith::ConstantIndexOp::create(at, loc, period);
+    auto startValue = [&](StringRef name) -> Value {
+      auto found = llvm::find_if(program.startValues,
+          [&](const auto &value) { return value.name == name; });
+      assert(found != program.startValues.end() && "cell start value must exist");
+      return arguments.startValues[std::distance(program.startValues.begin(), found)];
+    };
+    SmallVector<Value> replaced{arguments.positions, arguments.lengthX, arguments.lengthY, arguments.lengthZ};
+    for (auto [metadata, value] : llvm::zip(program.startValues, arguments.startValues))
+      if (StringRef(metadata.name).starts_with("tilt_")) replaced.push_back(value);
+    Value boxMemory, trotterMemory, reference;
+    if (config.changesCell) {
+      boxMemory = memref::AllocaOp::create(at, loc,
+          MemRefType::get({int64_t(config.cellEdges)}, at.getF64Type()));
+      if (config.scalesEveryStep)
+        trotterMemory = memref::AllocaOp::create(at, loc, MemRefType::get({9}, at.getF64Type()));
+      SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
+      if (config.cellEdges == 6)
+        edges.append({startValue("tilt_bx"), startValue("tilt_cx"), startValue("tilt_cy")});
+      for (auto [index, edge] : llvm::enumerate(edges)) {
+        Value slot = arith::ConstantIndexOp::create(at, loc, index);
+        memref::StoreOp::create(at, loc, edge, boxMemory, slot);
+      }
+      replaced.push_back(boxMemory);
+    }
+    if (config.referenceEdges) {
+      SmallVector<Value> edges;
+      for (unsigned slot : *config.referenceEdges) edges.push_back(arguments.startValues[slot]);
+      reference = vector::FromElementsOp::create(at, loc, VectorType::get({3}, at.getF64Type()), edges);
+    }
     auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
+    CouplingMassIR massParameters;
+
     if (config.coupled) {
-      buildCouplingMass(at, imported.masses);
+      massParameters = buildCouplingMass(at, imported.masses);
       if (config.thermostat) {
         const auto &thermostat = *config.thermostat;
+        if (config.barostatParameters) buildBarostatParameters(at, *config.barostatParameters);
         arith::ConstantIntOp::create(at, loc, thermostat.seed, 64);
         for (double value : {thermostat.freedom, thermostat.target, thermostat.decay})
           arith::ConstantOp::create(at, loc, at.getF64FloatAttr(value));
       }
+    }
+    if (config.leapfrog && config.barostat) {
+      Value back = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(-0.5));
+      arith::MulFOp::create(at, loc, back, arguments.interval);
     }
     Value cellMemory = memref::AllocaOp::create(at, loc,
         MemRefType::get({6}, at.getF64Type()));
@@ -127,6 +181,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         edges.push_back(memref::LoadOp::create(frame, loc, cellMemory, index));
       for (unsigned index = 0; index != 2; ++index)
         asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
+      Value scale;
+      if (config.referenceEdges) scale = buildReferenceScale(frame, ValueRange(edges).take_front(3), reference);
       Value cell = buildCell(frame, edges);
       auto physical = imported;
       physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
@@ -150,7 +206,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           result.virial = spread.virial;
         }
         if (complete) {
-          auto completed = complete(at, state, result);
+          auto completed = complete(at, state, result, scale);
           result = completed.physical;
           if (requests.energy) storedTerms = std::move(completed.storedTerms);
         }
@@ -212,21 +268,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           correction = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
         }
         Value trace = buildVirialTrace(body, energy.virial);
-        if (!config.constraints.empty()) {
-          Value descent = buildDescentDirection(body, energy.forces, physical.masses);
-          for (const auto &group : config.constraints) {
-            SmallVector<Value> lengths;
-            for (unsigned slot : group.parameters) lengths.push_back(parameters[slot]);
-            ConstraintVelocityInputs input{parameters[group.relation], physical.positions,
-                cell, descent, physical.masses, lengths, {}, {}};
-            descent = group.water ? buildSettleVelocities(body, input).velocities
-                                  : buildShakeVelocities(body, input, group.arity).velocities;
-          }
-          for (const auto &group : config.constraints)
-            trace = buildConstraintTrace(body,
-                {parameters[group.relation], physical.positions, cell, descent,
-                 energy.forces, physical.velocities, physical.masses, trace}, group.arity, false);
-        }
+        if (!config.constraints.empty())
+          trace = constraintTrace(body, physical, state, energy.forces, trace, config.constraints, false);
         Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
@@ -250,6 +293,24 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
               zero, one, gradient.output.fieldArguments.empty() ? Value{} : physical.identities,
               constants, seeds, gradient.output);
         }
+        if (config.scalesEveryStep) {
+          auto virial = buildVirialDiagonal(body, energy.virial);
+          Value diagonal = virial.vector;
+          if (!config.constraints.empty())
+            diagonal = constraintTrace(body, physical, state, energy.forces, diagonal, config.constraints, true);
+          SmallVector<RigidGroupIR> groups;
+          for (const auto &group : config.constraints)
+            groups.push_back({parameters[group.relation], group.arity});
+          Value molecular = virial.vector;
+          if (!groups.empty())
+            molecular = buildMolecularDiagonal(body,
+                {virial.vector, physical.positions, energy.forces, cell, physical.masses, groups});
+          auto kinetic = buildGroupKinetic(body,
+              {groups.empty() ? Value{} : physical.positions, physical.velocities, energy.forces,
+               groups.empty() ? Value{} : cell, physical.masses, arguments.interval,
+               config.removesMotion ? massParameters.totalMass : Value{}, groups});
+          buildStoreBarostatState(body, trotterMemory, diagonal, molecular, kinetic.half);
+        }
         if (config.leapfrog) {
           Value back = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(-0.5));
           Value interval = arith::MulFOp::create(body, loc, back, arguments.interval);
@@ -271,15 +332,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       return SmallVector<Value>{};
     });
     if (!frames) return frames.takeError();
-    if (!arguments.positions.use_empty() || !arguments.lengthX.use_empty() ||
-        !arguments.lengthY.use_empty() || !arguments.lengthZ.use_empty())
+    if (!arguments.positions.use_empty())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "native frame iteration read entry positions or cell values");
-    if (config.cellEdges == 6)
-      for (auto [metadata, argument] : llvm::zip(program.startValues, arguments.startValues))
-        if (StringRef(metadata.name).starts_with("tilt_") && !argument.use_empty())
-          return llvm::createStringError(llvm::inconvertibleErrorCode(),
-              "native frame iteration read entry tilt values");
+    if (llvm::Error error = checkFrameInputs(*frames->getOperation(), replaced))
+      return std::move(error);
     return llvm::Error::success();
   });
 }

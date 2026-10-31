@@ -13,6 +13,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -436,6 +437,13 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static llvm::Error verifyNativeFrameEntry(ModuleOp module) {
+  if (failed(verify(module)))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native frame entry did not verify");
+  return llvm::Error::success();
+}
+
 static void checkNativeFrameEntry() {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -477,7 +485,9 @@ static void checkNativeFrameEntry() {
         return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(2.5));
       });
   require(bool(energy), "native frame fixture energy did not construct");
+  const bool storesBarostatState = true;
   RuntimeDeclarationConfig runtime{};
+  runtime.barostatState = storesBarostatState;
   runtime.state64 = runtime.force64 = true;
   runtime.frames = runtime.segments = true;
   emitRuntimeDeclarations(builder, runtime, false);
@@ -488,6 +498,9 @@ static void checkNativeFrameEntry() {
   config.constraints.push_back({6, 2, {7}, false});
   config.stepMemory = config.leapfrog = config.coupled = true;
   config.thermostat = FrameThermostatIR{7, 9.0, 4.5, 0.9};
+  config.barostat = config.changesCell = config.removesMotion = true;
+  config.scalesEveryStep = storesBarostatState;
+  config.barostatParameters = BarostatParameters{{0.1, 0.1, 0.1}, 1.0, 0.1, 0.2, 2.5, 0.1, 0.0};
   auto built = buildSimpleFrameEntry(builder, metadata, config);
   require(bool(built), "native frame entry did not construct");
   auto entry = *built;
@@ -495,6 +508,54 @@ static void checkNativeFrameEntry() {
   require(positions.use_empty(), "native frame entry read outer positions");
   require(bool(entry.getArgAttr(3, "mdrt.read_only")), "native frame entry lost read-only masses");
   require(!checkFrameEvaluation(*entry.getOperation()), "native frame entry lost its actual evaluation");
+  auto frame = *entry.getOps<scf::ForOp>().begin();
+  Value rawEdge = entry.getArgument(entry.getNumArguments() - 6);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(frame);
+    auto derived = arith::NegFOp::create(builder, loc, rawEdge);
+    builder.setInsertionPoint(frame.getBody()->getTerminator());
+    auto stale = arith::NegFOp::create(builder, loc, derived.getResult());
+    reject(checkFrameInputs(*frame.getOperation(), ValueRange{rawEdge}),
+        "native frame iteration read entry positions or cell values");
+    stale.erase();
+    derived.erase();
+    builder.setInsertionPoint(frame);
+    auto memory = memref::AllocaOp::create(builder, loc, MemRefType::get({3}, builder.getF64Type()));
+    auto alias = memref::CastOp::create(builder, loc,
+        MemRefType::get({ShapedType::kDynamic}, builder.getF64Type()), memory.getResult());
+    builder.setInsertionPoint(frame.getBody()->getTerminator());
+    auto loaded = memref::LoadOp::create(builder, loc, alias.getResult(), frame.getLowerBound());
+    reject(checkFrameInputs(*frame.getOperation(), ValueRange{memory.getResult()}),
+        "native frame iteration read entry positions or cell values");
+    loaded.erase();
+    alias.erase();
+    memory.erase();
+    require(!checkFrameInputs(*frame.getOperation(), ValueRange{rawEdge}),
+        "native frame input guard rejected independent header initialization");
+    for (bool capturesCell : {false, true}) {
+      builder.setInsertionPoint(frame);
+      auto producer = scf::ExecuteRegionOp::create(builder, loc, TypeRange{builder.getF64Type()});
+      {
+        OpBuilder::InsertionGuard regionGuard(builder);
+        builder.createBlock(&producer.getRegion());
+        Value value = capturesCell ? rawEdge :
+            Value(arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0)));
+        scf::YieldOp::create(builder, loc, ValueRange{value});
+      }
+      builder.setInsertionPoint(frame.getBody()->getTerminator());
+      auto captured = arith::NegFOp::create(builder, loc, producer.getResult(0));
+      if (capturesCell)
+        reject(checkFrameInputs(*frame.getOperation(), ValueRange{rawEdge}),
+            "native frame iteration read entry positions or cell values");
+      else
+        require(!checkFrameInputs(*frame.getOperation(), ValueRange{rawEdge}),
+            "native frame input guard rejected an independent producer region");
+      require(succeeded(verify(entry)), "external producer capture fixture did not verify");
+      captured.erase();
+      producer.erase();
+    }
+  }
   auto empty = func::FuncOp::create(builder, loc, "empty_frames", builder.getFunctionType({}, {}));
   {
     OpBuilder::InsertionGuard guard(builder);
@@ -505,9 +566,11 @@ static void checkNativeFrameEntry() {
          "the program of frames: the start of this program evaluates "
          "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
   metadata.entry = "native_triclinic_frames";
-  metadata.startValues = {{"tilt_bx", 0.1}, {"tilt_cx", 0.2}, {"tilt_cy", 0.3}};
+  metadata.startValues = {{"tilt_bx", 0.1}, {"tilt_cx", 0.2}, {"tilt_cy", 0.3},
+      {"rest_edge0", 3.0}, {"rest_edge1", 3.0}, {"rest_edge2", 3.0}};
   auto wideConfig = config;
   wideConfig.cellEdges = 6;
+  wideConfig.referenceEdges = std::array<unsigned, 3>{3, 4, 5};
   wideConfig.topology = true;
   wideConfig.terms = {"energy"};
   wideConfig.storedTerms = 1;
@@ -515,7 +578,7 @@ static void checkNativeFrameEntry() {
   wideConfig.observableCount = 1;
   wideConfig.observableBaseArgument = inputs.size();
   auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig,
-      [](OpBuilder &at, const PotentialStateIR &, EnergyResults result) -> FrameCompletionIR {
+      [](OpBuilder &at, const PotentialStateIR &, EnergyResults result, Value) -> FrameCompletionIR {
         if (!result.energy) return {result, {}};
         auto loc = at.getUnknownLoc();
         Value stored = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.5));
@@ -523,8 +586,12 @@ static void checkNativeFrameEntry() {
         return {result, {stored}};
       });
   require(bool(wide), "native triclinic frame entry did not construct");
-  for (Value tilt : wide->getArguments().take_back(3))
-    require(tilt.use_empty(), "native triclinic frame entry read an outer tilt");
+  auto wideFrame = *wide->getOps<scf::ForOp>().begin();
+  SmallVector<Value> tilts(wide->getArguments().drop_back(3).take_back(3));
+  for (Value tilt : tilts)
+    require(!tilt.use_empty(), "native triclinic header lost its initial cell state");
+  require(!checkFrameInputs(*wideFrame.getOperation(), tilts),
+      "native triclinic frame entry read an outer tilt");
   metadata.entry = "missing_stored_frame_term";
   auto missing = buildSimpleFrameEntry(builder, metadata, wideConfig);
   require(!missing, "native frame entry accepted a missing stored contribution");
@@ -538,7 +605,23 @@ static void checkNativeFrameEntry() {
   require(module.lookupSymbol<func::FuncOp>("native_frames") == entry,
           "native frame entry was reparsed or lost transient metadata ownership");
   require(entry.getArgument(0) == positions, "native frame entry replaced its actual argument");
-  require(succeeded(verify(module)), "native frame entry did not verify");
+  auto declaration = module.lookupSymbol<func::FuncOp>("mdrtSetBarostatState");
+  require(bool(declaration), "barostat fixture did not declare its state callback");
+  declaration->remove();
+  std::string diagnostic;
+  {
+    ScopedDiagnosticHandler capture(&context, [&](Diagnostic &message) {
+      llvm::raw_string_ostream stream(diagnostic);
+      message.print(stream);
+      return success();
+    });
+    reject(verifyNativeFrameEntry(module), "native frame entry did not verify");
+  }
+  module.getBody()->push_back(declaration.getOperation());
+  require(StringRef(diagnostic).contains("mdrtSetBarostatState") &&
+          StringRef(diagnostic).contains("does not reference a valid function"),
+          "missing barostat declaration lost its verifier diagnostic");
+  require(!verifyNativeFrameEntry(module), "native frame entry did not verify");
   builder.setInsertionPoint(entry.getBody().front().getTerminator());
   Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);

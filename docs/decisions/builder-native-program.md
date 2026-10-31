@@ -280,13 +280,16 @@ with free-energy and observable output through shared typed output kernels.
 Observable and gradient tunables resolve semantic entry-value slots; gradient
 seed fields and derivative argument order retain their metadata layout. Header
 mass/thermostat preparation and initial half-step velocities retain their order.
-Barostat/reference-scale setup, pull output and hosted evaluation remain in the other entry path.
+Barostat/reference-scale setup and initial Trotter state also construct native
+operations. A completed-loop provenance check rejects captured entry positions,
+cell expressions and box-memory aliases while allowing header initialization.
+Pull output and hosted evaluation remain in the other entry path.
 Restraint energy columns receive actual stored contribution values from the adapter.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
 actual SCF regions with checked yield counts, types and insertion scopes.
 `SimpleFrameEntryIR.cpp` preserves boundary/reorder/request/output order and
-checks actual frame evaluations and unused outer position/cell arguments.
+checks actual frame evaluations and frame-input provenance.
 `EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
 Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
