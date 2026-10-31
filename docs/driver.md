@@ -1423,6 +1423,11 @@ and virial output, initial energy rows and leapfrog initialization preserve
 their original order. Part counts use semantic slots; the frame-if-due loop
 and nonfinite-state reduction at part boundaries are constructed natively.
 
+Every dynamics and descent call is constructed as a native `dyn.step`,
+using its actual program definition for result types. Physical state,
+optional scales, parameter fields and noise inputs retain their argument
+order. Restart Trotter vectors and velocity reconstruction are native.
+
 ## 3. Decided
 
 | # | Question | Decision |
