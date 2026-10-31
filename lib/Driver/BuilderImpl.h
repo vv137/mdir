@@ -7,6 +7,7 @@
 
 #include "mdir/Driver/Builder.h"
 #include "TermIR.h"
+#include "DynamicsIR.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
@@ -141,8 +142,23 @@ struct PairTermTail {
   double energy = 0.0, virial = 0.0, shift = 0.0, shiftFixed = 0.0;
 };
 
-class SiteKernel;
 class Builder;
+
+// Temporary private connections to the remaining assembly. Native recipes
+// capture only typed physical state, counts, and owned scalar configuration.
+struct PotentialConnections {
+  std::vector<std::string> values, types;
+  size_t fields;
+  bool timed;
+  PotentialConnections(const Program &, StringRef positions, StringRef cell,
+                         StringRef prefix, StringRef time, bool timed);
+  void add(StringRef value, StringRef type) {
+    values.push_back(value.str());
+    types.push_back(type.str());
+  }
+  llvm::SmallVector<StringRef> names() const { return {values.begin(), values.end()}; }
+  llvm::SmallVector<StringRef> signatures() const { return {types.begin(), types.end()}; }
+};
 
 /// The borrowed read-only inputs of a term adapter (D361).
 /// No accessor returns the builder or its scheduling state.
@@ -158,6 +174,7 @@ public:
   virtual const PairTermPlan &getPairPlan() const = 0;
   virtual llvm::ArrayRef<Parameter> getTypeParameters() const = 0;
   virtual llvm::ArrayRef<Program::Table> getParameterTables() const = 0;
+  virtual llvm::ArrayRef<Program::Field> getParameterFields() const = 0;
   virtual bool includesPair(unsigned index) const = 0;
   virtual double getShiftFixedFactor() const = 0;
   virtual llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const = 0;
@@ -258,24 +275,8 @@ public:
       llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
       llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) = 0;
   virtual Truncation getPairTruncation() const = 0;
-  virtual void emitTopologyPotential(StringRef name, unsigned terms,
-                                    int tupleTerm = -1, int pairTerm = -1,
-                                    int externalTerm = -1) = 0;
-  virtual std::string getFieldParameters() const = 0;
-  virtual std::string getFieldValues(StringRef prefix = "%p_") const = 0;
-  virtual std::string getFieldTypes() const = 0;
-  virtual std::string getTimeParameter() const = 0;
-  virtual std::string getTimeType() const = 0;
-  virtual std::string getTimeValue(StringRef name) const = 0;
   virtual unsigned getNumPotentialArguments() const = 0;
-  virtual void emitLambdaConstants(StringRef indent) = 0;
-  virtual llvm::StringMap<std::string>
-  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
-                          StringRef x, StringRef cell, StringRef relations,
-                          StringRef prefix) = 0;
-  virtual void bindLambdas(llvm::StringMap<std::string> &values) const = 0;
-  virtual void bindObserved(StringRef term,
-                            llvm::StringMap<std::string> &values) const = 0;
+
 };
 
 /// One output site; borrowed names remain valid for the hook call.
@@ -294,18 +295,51 @@ struct TermEvaluation {
   StringRef indent, x, cell, prefix, f, fResult, u, uResult, w, tag;
 };
 
+/// Actual values at a bare potential boundary; semantic fields/tables are borrowed.
+struct TermNativePotential {
+  mlir::Value positions, cell, neighborhood, time;
+  llvm::function_ref<mlir::Value(StringRef)> field, table;
+};
+
+/// Typed topology state; relation and tuple parameters use semantic metadata keys.
+struct TermNativeTopology {
+  TermNativePotential physical;
+  llvm::function_ref<mlir::Value(StringRef)> relation;
+  llvm::function_ref<mlir::Value(StringRef, StringRef)> tupleField;
+  llvm::function_ref<void(llvm::StringMap<mlir::Value> &)> bindLambdas;
+  llvm::function_ref<void(StringRef, llvm::StringMap<mlir::Value> &)> bindObserved;
+  llvm::function_ref<mlir::Value(unsigned)> gradientSeed, gradientConstant;
+  Truncation pairTruncation;
+  bool lambdaArguments, shiftsAtCutoff;
+};
+
+/// Borrowed physical values and semantic particle-field bindings at one evaluation.
+/// This view is consumed synchronously and never retained by an adapter.
+struct TermNativeEvaluation {
+  mlir::Value positions, cell, forces, energy, virial, scale;
+  llvm::function_ref<mlir::Value(StringRef)> field;
+};
+struct TermNativeResults {
+  mlir::Value forces, energy, virial;
+  llvm::SmallVector<mlir::Value> storedTerms;
+};
+
 /// Specialized preparation borrows no mutable program collections.
 class TermPreparation {
 public:
   virtual ~TermPreparation() = default;
   virtual llvm::Error validate(const TermInputs &) const = 0;
-  virtual llvm::Error prepare(const TermInputs &, llvm::raw_ostream &) const = 0;
+  virtual llvm::Error prepare(const TermInputs &, mlir::MLIRContext &,
+                              TermIRWriter) const = 0;
 };
 class TermHostEvaluation {
 public:
   virtual ~TermHostEvaluation() = default;
   virtual bool applies(const TermInputs &) const = 0;
+  virtual TermNativeResults build(const TermInputs &, mlir::OpBuilder &,
+                                  const TermNativeEvaluation &) const = 0;
   virtual void emitDeclarations(const TermInputs &, TermIRWriter) const = 0;
+  virtual void buildDeclarations(const TermInputs &, mlir::OpBuilder &) const = 0;
   virtual std::string emit(const TermInputs &, TermIRWriter,
                            const TermEvaluation &) const = 0;
 };
@@ -314,10 +348,18 @@ class TermPostEvaluation {
 public:
   virtual ~TermPostEvaluation() = default;
   virtual bool hasForceCorrection(const TermInputs &) const = 0;
+  virtual TermNativeResults build(const TermInputs &, mlir::OpBuilder &,
+                                  const TermNativeEvaluation &) const = 0;
   virtual void emitForceCorrection(TermEmission &,
                                    const TermCorrection &) const = 0;
   virtual unsigned getStoredTermCount(const TermInputs &) const = 0;
   virtual void emitStoredTerms(TermEmission &, StringRef, int &) const = 0;
+};
+struct TermNativeOutput {
+  const PotentialStateIR &physical;
+  mlir::Value step;
+  llvm::function_ref<mlir::Value(StringRef)> relation;
+  llvm::function_ref<mlir::Value(StringRef, StringRef)> tupleField;
 };
 class TermCoordinateOutput {
 public:
@@ -325,6 +367,7 @@ public:
   virtual bool hasCoordinateOutput(const TermInputs &) const = 0;
   virtual void emitAuxiliaryPotentials(TermEmission &) const = 0;
   virtual void emitOutput(TermEmission &, const TermOutput &) const = 0;
+  virtual void buildOutput(const TermInputs &, mlir::OpBuilder &, const TermNativeOutput &) const = 0;
 };
 class TermScalarParameters {
 public:
@@ -389,13 +432,6 @@ struct TermRoles {
   const TermNonbonded *nonbonded = nullptr;
 };
 
-/// Adds either a conventional named contribution or an explicit SSA result.
-struct TermPotentialAddition {
-  llvm::function_ref<void(StringRef)> named;
-  llvm::function_ref<void(StringRef, StringRef)> result;
-  void operator()(StringRef name) const { named(name); }
-  void append(StringRef value, StringRef sum) const { result(value, sum); }
-};
 
 /// Typed scalar operands: sigma, epsilon, soft-core distance, physical distance.
 mlir::Value buildLennardJonesIR(mlir::OpBuilder &, mlir::ValueRange,
@@ -454,11 +490,12 @@ public:
   virtual bool needsPairNeighborhood(const TermInputs &, const PotentialSelection &) const {
     return false;
   }
-  virtual void emitBareContributions(TermEmission &, std::string &) const {}
+  virtual mlir::Value buildBareContributions(const TermInputs &, mlir::OpBuilder &,
+      const TermNativePotential &, mlir::Value total) const { return total; }
   virtual void collectParameters(TermParameters &) const {}
-  virtual void emitTopologyPotential(
-      TermEmission &, const PotentialSelection &,
-      const TermPotentialAddition &) const {}
+  virtual llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &,
+      const TermNativeTopology &, const PotentialSelection &,
+      llvm::function_ref<void(mlir::Value)>) const { return llvm::Error::success(); }
   virtual void appendTermDefinitions(const TermInputs &,
                                      std::vector<TermDefinition> &) const {}
   virtual ObservedSelection findObservedTerm(const TermInputs &,
@@ -488,9 +525,6 @@ public:
   virtual llvm::Error
   collectGradients(TermParameters &, TermNonbondedData,
                    llvm::ArrayRef<const TermBuilder *>) const = 0;
-  virtual void emit(TermEmission &, TermNonbondedData,
-                    const TermBuilder::PotentialSelection &,
-                    const TermPotentialAddition &) const = 0;
 };
 
 using TermBuilderFactory = std::unique_ptr<TermBuilder> (*)();
@@ -614,6 +648,7 @@ private:
   llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const override {
     return tupleGradients;
   }
+  llvm::ArrayRef<Program::Field> getParameterFields() const override { return program.fields; }
   bool hasGradientArguments() const override { return gradientArguments; }
   bool hasGradientCharges() const override { return gradientCharges; }
   bool hasTunableGradient() const override { return program.tunableGradient; }
@@ -694,18 +729,9 @@ private:
   /// the terms given by expressions over tuples, pairs, or positions, only
   /// the one of index `tupleTerm`, `pairTerm`, or `externalTerm` if it is
   /// not -1.
-  void emitTopologyPotential(StringRef name, unsigned terms,
+  llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
-                             int externalTerm = -1) override;
-  /// Emits the coordinates of the term `term` over centers, at the
-  /// positions `x` in the cell `cell`, with
-  /// the members of its tuples named `relations` and the name of the set:
-  /// `r`, `dx`, `dy`, `dz` in Å for two centers, `theta` in radians
-  /// otherwise, mapped to their names, which begin with `prefix`.
-  llvm::StringMap<std::string>
-  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
-                          StringRef x, StringRef cell, StringRef relations,
-                          StringRef prefix) override;
+                             int externalTerm = -1);
   /// Whether the force on each virtual site is spread by the derivative of
   /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
   /// out in `emitSpreadSites` (`written`), D298.
@@ -715,20 +741,26 @@ private:
   /// against the place of the site from its owner, whose forces are the
   /// transpose of the derivative of the placement.
   void emitSitePotentials();
-  /// Emits what `emitSpreadSites` does for one set of sites, by the
-  /// derivative of `@spread_<set>`, and returns the virial as it does.
-  std::string emitDerivedSpread(StringRef indent, const Program::TupleSet &set,
-                                StringRef x, StringRef current,
-                                StringRef next, StringRef relations,
-                                StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const override;
 
-  void emitPrograms();
+  void emitProgramCall(StringRef indent, StringRef symbol,
+                           llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes,
+                           llvm::ArrayRef<StringRef> operands, llvm::ArrayRef<StringRef> operandTypes);
+  void emitDynamicsStep(StringRef indent, StringRef symbol, StringRef x,
+                           StringRef v, StringRef f, StringRef cell, StringRef mu,
+                           llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes);
+  void emitBoxEdges(StringRef indent, StringRef prefix);
+  llvm::Error emitPrograms();
+  void emitKick(StringRef indent, StringRef result, StringRef velocity,
+                   StringRef force, StringRef mass, StringRef interval);
+  void emitEnergyEvaluation(StringRef indent, StringRef x, StringRef cell,
+                              StringRef prefix, StringRef time, StringRef energy,
+                              StringRef forces, StringRef virial);
   /// Collects the values of Program::startValues, which the entry takes
   /// as arguments (D227).
   void collectStartValues();
-  void emitEntry();
+  llvm::Error emitEntry();
   /// Emits `@descend`, one step of steepest descent that moves no particle
   /// farther than `%h`, and the loops of a minimization in the entry.
   void emitDescend();
@@ -748,14 +780,6 @@ private:
   std::vector<std::pair<int, std::string>>
   emitConstraintTests(StringRef indent, StringRef x, StringRef prefix,
                       bool flag);
-  /// Emits, after the evaluation of a step, the stop of the run at the
-  /// step `%noise_step` for each set whose test `failures` of
-  /// `emitConstraintTests` failed, then the stop that a build of the
-  /// neighbor structure of the step recorded, if any
-  /// (D278).
-  void emitConstraintStops(
-      StringRef indent,
-      const std::vector<std::pair<int, std::string>> &failures);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
   /// without mass, without their parts along the constraints at the
   /// positions `x`: the direction of steepest descent in the metric of the
@@ -818,13 +842,15 @@ private:
   }
   /// Emits `name` = the cell of the numbers `prefix`_0 to _2, or to _5 for
   /// a triclinic cell.
-  void emitCellOf(StringRef indent, StringRef name, StringRef prefix) {
-    os << indent << name
-       << (isTriclinic() ? " = md.triclinic_cell " : " = md.orthorhombic_cell ");
-    for (int k = 0, e = getCellSize(); k != e; ++k)
-      os << (k ? ", " : "") << prefix << "_" << k;
-    os << "\n";
-  }
+  void emitCellOf(StringRef indent, StringRef name, StringRef prefix);
+  void emitReferenceScale(StringRef indent, StringRef result,
+                           StringRef e0, StringRef e1, StringRef e2);
+  struct DiagonalOutputs {
+    std::string vector, xx, yy, zz;
+  };
+  DiagonalOutputs emitDiagonal(StringRef result, StringRef virial, StringRef indent);
+  void emitTrace(StringRef result, StringRef virial, StringRef indent);
+  void emitSum3(StringRef result, StringRef vector, StringRef indent);
 
   bool hasForceCorrections() const {
     return llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -836,24 +862,6 @@ private:
   /// which a barostat changes: they are those of the file times
   /// `scaleName`, the edge of the cell over that of the file.
   bool scalesReference() const { return hasForceCorrections() && changesCell(); }
-  std::string getScaleValue() const {
-    return scalesReference() ? ", " + scaleName : "";
-  }
-  std::string getScaleType() const {
-    return scalesReference() ? ", vector<3xf64>" : "";
-  }
-  std::string getScaleParameter() const {
-    return scalesReference() ? ", %rest_scale: vector<3xf64>" : "";
-  }
-  /// Langevin dynamics (D135): the programs of the steps take the number of
-  /// the step that they take and the numbers of the particles, which key the
-  /// random numbers of each particle (A13).
-  std::string getNoiseParameter() const {
-    return needsStepNumber() ? ", %noise_step: i64, %noise_ids: !ids" : "";
-  }
-  std::string getNoiseType() const {
-    return needsStepNumber() ? ", i64, !ids" : "";
-  }
   /// Whether the programs of the steps take the number of the step: for the
   /// noise of Langevin dynamics, for the time of terms that take it, and
   /// for the stop of a run whose constraints failed
@@ -861,17 +869,6 @@ private:
   bool needsStepNumber() const {
     return control.isLangevin() || control.isBrownian() || control.usesTime ||
            (hasConstraints() && !control.minimize);
-  }
-  /// Terms whose expressions take the time `t` (D145): the potentials take
-  /// it in ps as their last argument. A program of a step computes it from
-  /// the number of the step, `%time`; the entry has `%time0`, that of the
-  /// first step.
-  std::string getTimeParameter() const override {
-    return control.usesTime ? ", %time: f64" : "";
-  }
-  std::string getTimeType() const override { return control.usesTime ? ", f64" : ""; }
-  std::string getTimeValue(StringRef name) const override {
-    return control.usesTime ? (", " + name).str() : "";
   }
   /// [free_energy] (D161): whether the run decouples a selection.
   bool decouples() const { return !system.alchemical.empty(); }
@@ -883,25 +880,6 @@ private:
   /// arguments, `%lambda_<name>`; the others hold them as constants, the
   /// values of the state of the run, under the same names.
   bool lambdaArguments = false;
-  std::string getLambdaParameters() const {
-    std::string text;
-    if (lambdaArguments)
-      for (const auto &[name, values] : control.freeEnergy.lambdas)
-        text += ", %lambda_" + name + ": f64";
-    return text;
-  }
-  void emitLambdaConstants(StringRef indent) override {
-    if (lambdaArguments)
-      return;
-    for (const auto &[name, values] : control.freeEnergy.lambdas)
-      os << indent << "%lambda_" << name << " = arith.constant "
-         << formatReal(getLambda(name)) << " : f64\n";
-  }
-  /// Binds the parameters `lambda_<name>` of the expressions.
-  void bindLambdas(llvm::StringMap<std::string> &values) const override {
-    for (const auto &[name, v] : control.freeEnergy.lambdas)
-      values["lambda_" + name] = "%lambda_" + name;
-  }
   /// Whether the potential being emitted is one whose derivatives enter
   /// free energies and gradients, `@alchemical` and `@observe<k>`
   /// (D210): its pair terms cut at the cutoff without a
@@ -921,36 +899,11 @@ private:
   /// (D189).
   std::string observedTerm;
   std::vector<std::string> observedConstants;
-  std::string getObservedParameters() const {
-    std::string text;
-    for (const std::string &name : observedConstants)
-      text += ", %ob_" + name + ": f64";
-    return text;
-  }
-  /// Binds the observed constants of the term `term` to the arguments of
-  /// `@observe<k>`, after the term has bound its own values.
-  void bindObserved(StringRef term,
-                    llvm::StringMap<std::string> &values) const override {
-    if (term != observedTerm)
-      return;
-    for (const std::string &name : observedConstants)
-      values[name] = "%ob_" + name;
-  }
   /// The potential `@tunable` (D230) takes the tunable
   /// constants of the pair terms as its last arguments, `%tg_c<column>`, in
   /// place of the values of the table `tunable_constants`, so that the
   /// differentiation of parameters gives the derivatives in them (D161).
   bool gradientArguments = false;
-  std::string getGradientParameters() const {
-    std::string text;
-    if (!gradientArguments)
-      return text;
-    for (size_t k = 0; k != control.tunableConstants.size(); ++k)
-      text += ", %tg_c" + std::to_string(k) + ": f64";
-    for (size_t c = 0; c != getNumGradientSeeds(); ++c)
-      text += ", %tg_d" + std::to_string(c) + ": !real";
-    return text;
-  }
   /// Whether the program carries the derivative in the charges, the last of
   /// Program::gradientFields then: the derivative of `@tunable` in its
   /// field of the charges itself, where the others are those in fields of
@@ -1004,7 +957,7 @@ private:
     llvm_unreachable("Control checks the observed constants");
   }
   /// Emits `@observe<k>` for each term of `[output] observe`.
-  void emitObservedPotentials();
+  llvm::Error emitObservedPotentials();
   /// Emits the energies and the derivatives of `[output] observe` at the
   /// positions `x` in the cell `cell` and their call to the writer
   /// (D189).
@@ -1033,18 +986,7 @@ private:
   /// Emits the number of the step about to be taken, from the counter on
   /// the host that each step advances, and returns the operands that a
   /// program of a step takes for it.
-  std::string emitNoiseValue(StringRef indent) {
-    if (!needsStepNumber())
-      return "";
-    std::string name = "%noise" + std::to_string(numNoiseSteps++);
-    os << indent << name << "_last = memref.load %noise_memory[%c0]"
-       << " : memref<1xi64>\n"
-       << indent << name << " = arith.addi " << name << "_last, %noise_one"
-       << " : i64\n"
-       << indent << "memref.store " << name << ", %noise_memory[%c0]"
-       << " : memref<1xi64>\n";
-    return ", " + name + ", " + idName;
-  }
+  std::string emitNoiseValue(StringRef indent);
   unsigned numNoiseSteps = 0;
   /// Whether the thermostat rescales the velocities at the end of a period,
   /// rather than acting in every step.
@@ -1111,22 +1053,6 @@ private:
   /// Emits the positions `result`: the positions `x` with the virtual sites
   /// placed from the members of the tuples of `relations`, the prefix of
   /// the names of the relations.
-  /// Emits the friction and the noise of Langevin dynamics (D135) on the
-  /// velocities `velocities` into `result`, in a program of a step that has
-  /// `%m`, `%noise_step`, and `%noise_ids`.
-  void emitLangevin(StringRef indent, StringRef velocities,
-                    StringRef result);
-  /// Emits `result` = c `velocities` + (spread / √m) R for each particle of
-  /// mass m, with R three normal numbers of stream 2 of the particle and
-  /// the step (D135); a particle of mass 0 keeps its velocity.
-  void emitNoise(StringRef indent, StringRef velocities, StringRef result,
-                 double c, double spread);
-  /// Emits `result`, the velocity of a step of Brownian dynamics (D163b),
-  /// F / (m γ) + √(2 k_B T / (m γ Δt)) R, from the forces `forces`; the
-  /// positions drift by it over the step. A particle of mass 0 does not
-  /// drift.
-  void emitBrownianVelocity(StringRef indent, StringRef forces,
-                            StringRef result);
   void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                       StringRef relations);
   /// Emits the forces `result`: the forces `f` at the positions `x` with
@@ -1162,16 +1088,8 @@ private:
   /// are the drifts of its two A around the end of the step
   /// (D265). Brownian dynamics has no momenta.
   bool measuresHalfSteps() const {
-    return hasConstraints() && !control.isBrownian();
+    return mdir::driver::builder::measuresHalfSteps(hasConstraints(), control.isBrownian());
   }
-  /// Emits `%khs`, in a program of a step, the kinetic energy of each axis
-  /// at the half steps around its end, from `velocities`, those it drifted
-  /// with after the constraints, and those of a drift of the next step.
-  /// With `solvent`, also `%kws`, the kinetic energies of the rigid waters:
-  /// that of the velocities of the time of the positions, `%v2`, and
-  /// K_half.
-  void emitHalfStepKinetic(StringRef velocities, bool leapfrog,
-                           bool solvent = false, bool geodesic = false);
   /// Whether the steps of energy report the kinetic energies of the rigid
   /// waters, from which the log gives the temperatures of the solvent and
   /// of the solute (D203).
@@ -1189,18 +1107,14 @@ private:
   /// `set` brought back to their lengths along the bonds of `old`, by the
   /// iterations of SHAKE [Ryckaert1977].
   /// With `failed`, the kernel also yields whether a length it gives is
-  /// off its target, `failed`, an i1 (`emitLengthTest`,
-  /// D278); so do those of emitBondConstraints and
+  /// off its target, `failed`, an i1 (D278); so do those of emitBondConstraints and
   /// emitSettlePositions.
   void emitShakePositions(StringRef indent, StringRef old, StringRef x,
                           const Program::TupleSet &set, StringRef result,
                           StringRef failed = "");
   /// A bond of a group of constraints: its members, by their places in the
   /// tuple, and the argument of the kernel that holds its length.
-  struct ConstrainedBond {
-    unsigned first, second;
-    std::string length;
-  };
+  using ConstrainedBond = ConstraintBond;
   /// Emits `change`, what bringing the bonds `bonds` of the groups of the
   /// tuple set `setName` (of `arity` members, with the fields `tuple`) back
   /// to their lengths along the bonds of `old` adds to the positions `x`,
@@ -1210,13 +1124,6 @@ private:
                            llvm::ArrayRef<std::string> tuple, StringRef old,
                            StringRef x, StringRef change,
                            StringRef failed = "");
-  /// Emits, in a kernel of the constraints, whether one of the bonds
-  /// `bonds`, given by their vectors and lengths, is off its target by the
-  /// tolerance of `emitConstraintFailures`, or is not a number; returns the
-  /// name of the i1 (D278).
-  std::string emitLengthTest(
-      SiteKernel &k,
-      llvm::ArrayRef<std::pair<std::string, std::string>> bonds);
   /// Whether the step tests the constraints in their own kernels (the
   /// default) or in loops of their own (`MDIR_CONSTRAINT_TEST=separate`,
   /// for comparison, D278).
@@ -1231,28 +1138,10 @@ private:
   /// parts along the bonds of the groups of `set` (RATTLE [Andersen1983]),
   /// and returns the virial `virial` with that of the constraints added, as
   /// `emitSettleVelocities` does.
-  /// Returns the virial `virial` with that of the forces of the constraints
-  /// of `set` over the first half of the step added, from `change`, what
-  /// the constraints added to the positions `old` moved by the drift.
-  std::string emitConstraintVirial(StringRef indent,
-                                   const Program::TupleSet &set,
-                                   StringRef old, StringRef change,
-                                   StringRef virial, StringRef virialResult);
   std::string emitShakeVelocities(StringRef indent, StringRef x, StringRef v,
                                   const Program::TupleSet &set,
                                   StringRef result, StringRef virial,
                                   StringRef virialResult);
-  /// Returns the virial `virial` with that of the forces of the constraints
-  /// at the positions `x`, the velocities `v` (with none along the bonds),
-  /// and the forces `f` added: the forces G along the bonds that keep them
-  /// at their lengths, e·(a_q − a_p) = −|v_q − v_p|²/d with a = (F + G)/m,
-  /// and Σ (x_j − x_0) ⊗ G_j, for the rigid waters and each set of SHAKE.
-  /// Under Langevin dynamics the changes that the constraints make within a
-  /// step hold part of the friction and the noise, and these forces do not
-  /// (D135).
-  std::string emitConstraintForceVirial(StringRef indent, StringRef x,
-                                        StringRef v, StringRef f,
-                                        StringRef virial);
   /// Emits `result`, the positions `x` with the rigid waters brought back
   /// to their shape from `old`, the positions before the drift, and
   /// `change`, what that adds to the positions [Miyamoto1992].
@@ -1333,6 +1222,10 @@ struct Coupled {
                        StringRef energy, StringRef tag, StringRef step,
                        StringRef trace, StringRef groups, StringRef optimal,
                        const TrotterScaling *trotter = nullptr);
+  void emitKineticVector(StringRef result, StringRef velocities,
+                           StringRef masses, StringRef indent);
+  void emitKineticEnergy(StringRef result, StringRef velocities,
+                           StringRef masses, StringRef indent);
   /// Emits and returns the name of K_half - K of each axis at the end of a
   /// step, a vector<3xf64>: from `measured`, the K_half that the step
   /// returned (measuresHalfSteps), less the kinetic energy of `full`, the
@@ -1374,18 +1267,6 @@ struct Coupled {
   /// `groups`, and the kinetic energy `kinetic` in `%trotter_memory`.
   void emitStoreTrotterState(StringRef indent, StringRef trace,
                              StringRef groups, StringRef kinetic);
-  /// The stores of emitStoreTrotterState so far, which number their values.
-  /// It counts per build, so that the text of a program depends only on
-  /// its inputs, not on what the process built before (#152).
-  unsigned trotterStores = 0;
-
-  /// The arguments that pass the fields of the parameters on: their
-  /// declarations, their values, and their types, each after a comma.
-  std::string getFieldParameters() const override;
-  /// The fields of the parameters, as arguments that follow others.
-  /// `prefix` comes before the name of each.
-  std::string getFieldValues(StringRef prefix = "%p_") const override;
-  std::string getFieldTypes() const override;
 
   /// Emits the order of the particles at the positions `positions`, and
   /// the fields in that order. `from` and `to` are the ends of the names
@@ -1529,233 +1410,6 @@ inline double getDispersionScreen(double x) {
   return std::exp(-x2) * (1.0 + x2 + 0.5 * x2 * x2);
 }
 
-/// The diagonal of the virial `virial`, a vector of three, whose elements
-/// enter the pressure of each axis.
-inline void emitDiagonal(llvm::raw_ostream &os, StringRef result,
-                         StringRef virial, StringRef indent) {
-  for (StringRef part : {"0", "4", "8"})
-    os << indent << result << "_" << part << " = vector.extract " << virial
-       << "[" << part << "] : f64 from vector<9xf64>\n";
-  os << indent << result << " = vector.from_elements " << result << "_0, "
-     << result << "_4, " << result << "_8 : vector<3xf64>\n";
-}
-
-/// `result`, the scale of each axis of the reference positions of the
-/// restraints: the edges of the cell over those of the file
-/// (`%rest_edges`).
-inline void emitReferenceScale(llvm::raw_ostream &os, StringRef indent,
-                               StringRef result, const std::string &e0,
-                               const std::string &e1, const std::string &e2) {
-  os << indent << result << "_e = vector.from_elements " << e0 << ", " << e1
-     << ", " << e2 << " : vector<3xf64>\n"
-     << indent << result << " = arith.divf " << result
-     << "_e, %rest_edges : vector<3xf64>\n";
-}
-
-/// The sum of the elements of the vector of three `vector`.
-inline void emitSum3(llvm::raw_ostream &os, StringRef result,
-                     StringRef vector, StringRef indent) {
-  os << indent << result << " = vector.reduction <add>, " << vector
-     << " : vector<3xf64> into f64\n";
-}
-
-namespace mdir {
-namespace driver {
-namespace builder {
-/// Emits the arithmetic of a kernel of virtual sites on vectors of three
-/// numbers, with names of its own.
-class SiteKernel {
-public:
-  SiteKernel(llvm::raw_ostream &os, StringRef indent,
-             StringRef prefix = "%vs")
-      : os(os), indent(indent.str()), prefix(prefix.str()) {}
-
-  std::string vector(StringRef op, StringRef a, StringRef b) {
-    std::string name = fresh();
-    os << indent << name << " = arith." << op << " " << a << ", " << b
-       << " : vector<3xf64>\n";
-    return name;
-  }
-  std::string real(StringRef op, StringRef a, StringRef b) {
-    std::string name = fresh();
-    os << indent << name << " = arith." << op << " " << a << ", " << b
-       << " : f64\n";
-    return name;
-  }
-  std::string negate(StringRef a) {
-    std::string name = fresh();
-    os << indent << name << " = arith.negf " << a << " : vector<3xf64>\n";
-    return name;
-  }
-  std::string dot(StringRef a, StringRef b) {
-    std::string product = vector("mulf", a, b), name = fresh();
-    os << indent << name << " = vector.reduction <add>, " << product
-       << " : vector<3xf64> into f64\n";
-    return name;
-  }
-  std::string norm(StringRef a) {
-    std::string square = dot(a, a), name = fresh();
-    os << indent << name << " = math.sqrt " << square << " : f64\n";
-    return name;
-  }
-  std::string splat(StringRef a) {
-    std::string name = fresh();
-    os << indent << name << " = vector.broadcast " << a
-       << " : f64 to vector<3xf64>\n";
-    return name;
-  }
-  std::string scale(StringRef factor, StringRef a) {
-    return vector("mulf", splat(factor), a);
-  }
-  std::string component(StringRef a, int index) {
-    std::string name = fresh();
-    os << indent << name << " = vector.extract " << a << "[" << index
-       << "] : f64 from vector<3xf64>\n";
-    return name;
-  }
-  std::string zero() {
-    std::string name = fresh();
-    os << indent << name
-       << " = arith.constant dense<0.0> : vector<3xf64>\n";
-    return name;
-  }
-  std::string constant(double value) {
-    std::string name = fresh();
-    os << indent << name << " = arith.constant " << formatReal(value)
-       << " : f64\n";
-    return name;
-  }
-  std::string root(StringRef a) {
-    std::string name = fresh();
-    os << indent << name << " = math.sqrt " << a << " : f64\n";
-    return name;
-  }
-  std::string compose(StringRef x, StringRef y, StringRef z) {
-    std::string name = fresh();
-    os << indent << name << " = vector.from_elements " << x << ", " << y
-       << ", " << z << " : vector<3xf64>\n";
-    return name;
-  }
-  std::string cross(StringRef a, StringRef b) {
-    std::string a0 = component(a, 0), a1 = component(a, 1),
-                a2 = component(a, 2), b0 = component(b, 0),
-                b1 = component(b, 1), b2 = component(b, 2);
-    auto term = [&](StringRef p, StringRef q, StringRef r, StringRef t) {
-      return real("subf", real("mulf", p, q), real("mulf", r, t));
-    };
-    return compose(term(a1, b2, a2, b1), term(a2, b0, a0, b2),
-                   term(a0, b1, a1, b0));
-  }
-  std::string unit(StringRef a) { return vector("divf", a, splat(norm(a))); }
-  /// `op a`, of an f64, such as `math.absf`.
-  std::string unary(StringRef op, StringRef a) {
-    std::string name = fresh();
-    os << indent << name << " = " << op << " " << a << " : f64\n";
-    return name;
-  }
-  /// `arith.cmpf predicate, a, b` of two f64.
-  std::string compare(StringRef predicate, StringRef a, StringRef b) {
-    std::string name = fresh();
-    os << indent << name << " = arith.cmpf " << predicate << ", " << a
-       << ", " << b << " : f64\n";
-    return name;
-  }
-  /// `arith.op a, b` of two i1.
-  std::string boolean(StringRef op, StringRef a, StringRef b) {
-    std::string name = fresh();
-    os << indent << name << " = arith." << op << " " << a << ", " << b
-       << " : i1\n";
-    return name;
-  }
-  /// `a x + b y + c z`.
-  std::string combine(StringRef a, StringRef x, StringRef b, StringRef y,
-                      StringRef c, StringRef z) {
-    return vector("addf", vector("addf", scale(a, x), scale(b, y)),
-                  scale(c, z));
-  }
-
-private:
-  std::string fresh() { return prefix + std::to_string(next++); }
-
-  llvm::raw_ostream &os;
-  std::string indent;
-  std::string prefix;
-  unsigned next = 0;
-};
-
-/// The frame of the extra point of Amber: the unit vectors from the owner
-/// to the two hydrogens, `u` and `v`, their lengths, and the unit vector
-/// along their sum, with the length of the sum.
-struct AmberFrame {
-  std::string u, v, lengthU, lengthV, sum, lengthSum;
-
-  AmberFrame(SiteKernel &k, StringRef toJ, StringRef toK) {
-    lengthU = k.norm(toJ);
-    lengthV = k.norm(toK);
-    u = k.vector("divf", toJ, k.splat(lengthU));
-    v = k.vector("divf", toK, k.splat(lengthV));
-    sum = k.vector("addf", u, v);
-    lengthSum = k.norm(sum);
-  }
-
-  /// The forces on the owner and on the two hydrogens from the force
-  /// `force` on the extra point at the distance `d`: the transpose of the
-  /// derivative of the position. Perpendicular to the bisector, then to
-  /// each bond: the extra point moves with the directions of the bonds,
-  /// not with their lengths.
-  std::array<std::string, 3> spread(SiteKernel &k, StringRef force,
-                                    StringRef d) {
-    std::string bisector = k.vector("divf", sum, k.splat(lengthSum));
-    std::string across =
-        k.vector("subf", force, k.scale(k.dot(force, bisector), bisector));
-    auto toHydrogen = [&](StringRef unit, StringRef length) {
-      std::string factor =
-          k.real("divf", d, k.real("mulf", length, lengthSum));
-      std::string perpendicular =
-          k.vector("subf", across, k.scale(k.dot(across, unit), unit));
-      return k.scale(factor, perpendicular);
-    };
-    std::string first = toHydrogen(u, lengthU),
-                second = toHydrogen(v, lengthV);
-    std::string owner =
-        k.vector("subf", k.vector("subf", force, first), second);
-    return {owner, first, second};
-  }
-};
-/// The place of a site from its owner, p(d_j, d_k), in a kernel whose
-/// arguments `%vs_j` and `%vs_k` are the displacements of the other two
-/// atoms from the owner and `%vs_a` and `%vs_b` the parameters of the site:
-/// a d_j + b d_k, or for Amber's extra point a along the bisector of the
-/// two bonds.
-inline std::string emitPlacement(SiteKernel &k, bool amber) {
-  if (amber) {
-    AmberFrame frame(k, "%vs_j", "%vs_k");
-    return k.scale(k.real("divf", "%vs_a", frame.lengthSum), frame.sum);
-  }
-  return k.vector("addf", k.scale("%vs_a", "%vs_j"),
-                  k.scale("%vs_b", "%vs_k"));
-}
-} // namespace builder
-} // namespace driver
-} // namespace mdir
-
-/// The kernel of the kinetic energy of one particle.
-inline void emitKineticEnergy(llvm::raw_ostream &os, StringRef result,
-                              StringRef velocities, StringRef masses,
-                              StringRef indent) {
-  os << indent << result << " = md.sum_particles gather(" << velocities
-     << ", " << masses << " : !vec, !real) {\n"
-     << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
-     << indent << "  %half = arith.constant 5.0e-01 : f64\n"
-     << indent << "  %sq = arith.mulf %v_i, %v_i : vector<3xf64>\n"
-     << indent
-     << "  %v2 = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
-     << indent << "  %mv2 = arith.mulf %m_i, %v2 : f64\n"
-     << indent << "  %ke = arith.mulf %half, %mv2 : f64\n"
-     << indent << "  md.yield %ke : f64\n"
-     << indent << "} : f64\n";
-}
-
 /// Whether `line` names the value `name` (and not a longer name that
 /// begins with it).
 inline bool namesValue(StringRef line, StringRef name) {
@@ -1780,9 +1434,8 @@ inline bool namesValue(StringRef line, StringRef name) {
 ///   the cell of a frame are values of the loop; the positions and the cell
 ///   that the entry is given, and the memory of the barostat that is filled
 ///   from them, are those of the program, the same at every frame.
-/// - An evaluation. The loop evaluates what the start of a run evaluates; a
-///   program whose start evaluates nothing would wait for frames and give
-///   nothing.
+/// Evaluation presence is checked on native operations by checkFrameEvaluation,
+/// after the recipes of the frame iteration have materialized.
 ///
 /// A call in the generic form or a `return` in the loop, and a name of the
 /// loop taken twice, need no check here: the parser refuses them. Memory of
@@ -1797,7 +1450,6 @@ inline std::string checkFrameLoop(StringRef body) {
   static const char *const replaced[] = {
       "%positions", "%lx", "%ly", "%lz", "%tilt_bx", "%tilt_cx", "%tilt_cy",
       "%box_memory"};
-  bool evaluates = false;
   for (StringRef rest = body; !rest.empty();) {
     auto [line, tail] = rest.split('\n');
     rest = tail;
@@ -1814,12 +1466,7 @@ inline std::string checkFrameLoop(StringRef body) {
                     "', which is of the program and not of the frame: in "
                     "the loop the positions of the frame are '%x0' and its "
                     "cell is '%cell', made from '%frame_cell'");
-    evaluates |= line.contains("md.evaluate ");
   }
-  if (!evaluates)
-    return "the program of frames: the start of this program evaluates "
-           "nothing, so its loop over frames would give nothing "
-           "(Builder::emitEntry)";
   return std::string();
 }
 

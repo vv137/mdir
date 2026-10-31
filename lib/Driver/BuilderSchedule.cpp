@@ -3,6 +3,25 @@
 // minimization (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "ScheduleIR.h"
+#include "CouplingIR.h"
+#include "EntryRuntimeIR.h"
+#include "SimpleFrameEntryIR.h"
+#include "SimpleStepEntryIR.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "PotentialIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
+#include "BarostatIR.h"
+#include "DynamicsIR.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -22,7 +41,11 @@ void Builder::emitStartBranch(std::string chunk,
   // A loop of one iteration on the first call and none on the others: the
   // passes that place fields know the loops that carry them.
   if (!emittedFirstTrips) {
-    os << "  %first_trips = arith.select %is_first, %c1, %c0 : index\n";
+    emitIRFragment(
+        "  ", {"%first_trips"}, {"index"}, {"%is_first", "%c1", "%c0"}, {"i1", "index", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::SelectOp::create(builder, builder.getUnknownLoc(), values[0], values[1], values[2])};
+        });
     emittedFirstTrips = true;
   }
   os << "  ";
@@ -58,18 +81,6 @@ void Builder::emitStartBranch(std::string chunk,
     os << "}";
   }
   os << "\n";
-}
-
-/// The trace of the virial `virial`, which enters the pressure.
-static void emitTrace(llvm::raw_ostream &os, StringRef result,
-                      StringRef virial, StringRef indent) {
-  for (StringRef part : {"0", "4", "8"})
-    os << indent << result << "_" << part << " = vector.extract " << virial
-       << "[" << part << "] : f64 from vector<9xf64>\n";
-  os << indent << result << "_04 = arith.addf " << result << "_0, " << result
-     << "_4 : f64\n"
-     << indent << result << " = arith.addf " << result << "_04, " << result
-     << "_8 : f64\n";
 }
 
 void Builder::emitLevel(unsigned level, StringRef indent) {
@@ -136,14 +147,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   std::string outerCell = cellName, outerScale = scaleName;
   if (changesCell()) {
     cellName = "%cell" + here;
-    for (int k = 0; k != getCellSize(); ++k)
-      os << inner << "%edge" << here << "_" << k << " = memref.load "
-         << "%box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
-         << "\n";
+    emitBoxEdges(inner, "%edge" + here);
     emitCellOf(inner, cellName, "%edge" + here);
     if (scalesReference()) {
       scaleName = "%rest_scale" + here;
-      emitReferenceScale(os, inner, scaleName, "%edge" + here + "_0",
+      emitReferenceScale(inner, scaleName, "%edge" + here + "_0",
                          "%edge" + here + "_1", "%edge" + here + "_2");
     }
   }
@@ -158,13 +166,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 
   if (isStepLoop) {
-    std::string noise1 = emitNoiseValue(inner);
-    os << inner << getValues("b" + here) << " = dyn.step @step(";
-    os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
-         << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise1
-         << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-         << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
+    emitDynamicsStep(inner, "step", "%xa" + here, "%va" + here, "%fa" + here,
+                         cellName, "", {"%xb" + here, "%vb" + here, "%fb" + here},
+                         {"!vec", "!vec", "!vec"});
     os << inner << "scf.yield " << getValues("b" + here) << " : " << state
        << "\n";
   } else {
@@ -175,65 +179,50 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // after it take the cell from where the barostat keeps it.
     if (changesCell()) {
       cellName = "%cellr" + here;
-      for (int k = 0; k != getCellSize(); ++k)
-        os << inner << "%edger" << here << "_" << k << " = memref.load "
-           << "%box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
-           << "\n";
+      emitBoxEdges(inner, "%edger" + here);
       emitCellOf(inner, cellName, "%edger" + here);
       if (scalesReference()) {
         scaleName = "%rest_scaler" + here;
-        emitReferenceScale(os, inner, scaleName, "%edger" + here + "_0",
+        emitReferenceScale(inner, scaleName, "%edger" + here + "_0",
                            "%edger" + here + "_1", "%edger" + here + "_2");
       }
     }
 
-    // The iteration of the loop of `upto` that is under way, counted over
-    // the whole run.
-    auto emitIteration = [&](unsigned upto) {
-      std::string counted;
-      for (unsigned i = nestBegin; i <= upto; ++i) {
-        std::string index = "%i" + std::to_string(i);
-        if (counted.empty()) {
-          counted = index;
-          continue;
-        }
-        std::string scaled = "%s" + here + "_" + std::to_string(i);
-        os << inner << scaled << "m = arith.muli " << counted << ", %n" << i
-           << " : index\n";
-        os << inner << scaled << " = arith.addi " << scaled << "m, " << index
-           << " : index\n";
-        counted = scaled;
-      }
-      return counted;
-    };
-    // The number of the step that has just been taken.
+    // Count the completed step from the enclosing loop state.
     auto emitStep = [&]() {
-      if (current.name == "couple" && level != nestBegin &&
-          levels[level - 1].name == "energy") {
-        // The interval between energies holds one period more than its
-        // loop over periods: the steps before the interval, and those of
-        // the periods of this interval so far.
-        std::string outer = std::to_string(level - 1);
-        std::string counted = emitIteration(level - 1);
-        os << inner << "%before" << here << " = arith.muli " << counted
-           << ", %per" << outer << " : index\n";
-        os << inner << "%done" << here << " = arith.addi %i" << here
-           << ", %c1 : index\n";
-        os << inner << "%within" << here << " = arith.muli %done" << here
-           << ", %per" << here << " : index\n";
-        os << inner << "%steps" << here << " = arith.addi %before" << here
-           << ", %within" << here << " : index\n";
-      } else {
-        std::string counted = emitIteration(level);
-        os << inner << "%done" << here << " = arith.addi " << counted
-           << ", %c1 : index\n";
-        os << inner << "%steps" << here << " = arith.muli %done" << here
-           << ", %per" << here << " : index\n";
+      bool split = current.name == "couple" && level != nestBegin &&
+                   levels[level - 1].name == "energy";
+      unsigned upto = split ? level - 1 : level;
+      std::vector<std::string> inputs, signatures;
+      for (unsigned i = nestBegin; i <= upto; ++i) {
+        inputs.push_back("%i" + std::to_string(i)); signatures.push_back("index");
+        if (i != nestBegin) { inputs.push_back("%n" + std::to_string(i)); signatures.push_back("index"); }
       }
-      os << inner << "%since" << here << " = arith.index_cast %steps"
-         << here << " : index to i64\n";
-      os << inner << "%step" << here << " = arith.addi %since" << here
-         << ", " << nestStart << " : i64\n";
+      unsigned loops = upto - nestBegin + 1, tail = inputs.size();
+      inputs.push_back("%i" + here); signatures.push_back("index");
+      if (split) { inputs.push_back("%per" + std::to_string(level - 1)); signatures.push_back("index"); }
+      inputs.push_back("%per" + here); signatures.push_back("index");
+      inputs.push_back("%c1"); signatures.push_back("index");
+      inputs.push_back(nestStart); signatures.push_back("i64");
+      llvm::SmallVector<StringRef> names, types;
+      for (const auto &name : inputs) names.push_back(name);
+      for (const auto &type : signatures) types.push_back(type);
+      emitIRFragment(
+          inner, {"%step" + here}, {"i64"}, names, types,
+          [loops, tail, split](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            llvm::SmallVector<LoopIterationIR> iterations;
+            unsigned slot = 0;
+            for (unsigned i = 0; i != loops; ++i) {
+              mlir::Value index = values[slot++], extent;
+              if (i) extent = values[slot++];
+              iterations.push_back({index, extent});
+            }
+            unsigned at = tail;
+            mlir::Value current = values[at++], outerPeriod;
+            if (split) outerPeriod = values[at++];
+            return {buildStepNumber(builder, iterations, current, outerPeriod,
+                                    values[at], values[at + 1], values[at + 2])};
+          });
     };
     // The velocities as the step after the coupling takes them, and the
     // state that the loop yields.
@@ -254,12 +243,22 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string velocities = coupled.velocities;
       if (!current.empty()) {
         std::string behind = "%vh" + here;
-        os << inner << behind << " = dyn.kick " << velocities << ", "
-           << coupled.forces << ", " << massName
-           << ", %half_back : !vec\n";
+        emitKick(inner, behind, velocities, coupled.forces, massName, "%half_back");
         velocities = behind;
       }
       return coupled.positions + ", " + velocities + ", " + coupled.forces;
+    };
+    auto emitOptimalEnergy = [&](StringRef at, StringRef result,
+                                 StringRef kinetic, StringRef excess) {
+      emitIRFragment(
+          at, {result}, {"f64"}, {kinetic, excess}, {"f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value weight = mlir::arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(2.0 / 3.0));
+            mlir::Value change = mlir::arith::MulFOp::create(builder, loc, weight, values[1]);
+            return {mlir::arith::AddFOp::create(builder, loc, values[0], change)};
+          });
     };
     // The kinetic energy of the optimal temperature at the end of a step,
     // K + (2/3)(K_half − K) [Jung2019], which the thermostat controls
@@ -275,22 +274,25 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
           emitKineticExcess(inner, ("o" + tag).str(), measured, f, full);
       if (excess.empty())
         return "";
-      emitKineticEnergy(os, o + "k", full, massName, inner);
-      emitSum3(os, o + "g", excess, inner);
-      os << inner << o << "c = arith.constant " << formatReal(2.0 / 3.0)
-         << " : f64\n"
-         << inner << o << "e = arith.mulf " << o << "c, " << o << "g : f64\n"
-         << inner << o << " = arith.addf " << o << "k, " << o << "e : f64\n";
+      emitKineticEnergy(o + "k", full, massName, inner);
+      emitSum3(o + "g", excess, inner);
+      emitOptimalEnergy(inner, o, o + "k", o + "g");
       return o;
     };
     // The velocities of the time of the positions of a plain step of
     // leapfrog, half a kick ahead of those it stores.
     auto emitAhead = [&](StringRef tag, StringRef v, StringRef f) {
       std::string name = ("%vah" + tag).str();
-      os << inner << name << "c = arith.constant 5.0e-01 : f64\n"
-         << inner << name << "t = arith.mulf " << name << "c, %dt : f64\n"
-         << inner << name << " = dyn.kick " << v << ", " << f << ", "
-         << massName << ", " << name << "t : !vec\n";
+      emitIRFragment(
+          inner, {name}, {"!vec"}, {"%dt", v, f, massName},
+          {"f64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value half = mlir::arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value interval = mlir::arith::MulFOp::create(builder, loc, half, values[0]);
+            return {buildKick(builder, values[1], values[2], values[3], interval)};
+          });
       return name;
     };
     bool couplesBelow = levels[level + 1].name == "couple";
@@ -309,21 +311,27 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // diagonals of the virial and of the virial of the groups, and the
         // kinetic energy of each axis.
         std::string m = "%tm" + here;
-        std::string loaded[9];
-        for (int slot = 0; slot != 9; ++slot) {
-          loaded[slot] = m + "_" + std::to_string(slot);
-          os << inner << m << "_i" << slot << " = arith.constant " << slot
-             << " : index\n"
-             << inner << loaded[slot] << " = memref.load %trotter_memory["
-             << m << "_i" << slot << "] : memref<9xf64>\n";
-        }
         std::string vectors[3];
-        for (int v = 0; v != 3; ++v) {
+        for (int v = 0; v != 3; ++v)
           vectors[v] = m + "_v" + std::to_string(v);
-          os << inner << vectors[v] << " = vector.from_elements "
-             << loaded[3 * v] << ", " << loaded[3 * v + 1] << ", "
-             << loaded[3 * v + 2] << " : vector<3xf64>\n";
-        }
+        emitIRFragment(
+            inner, {vectors[0], vectors[1], vectors[2]},
+            {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"},
+            {"%trotter_memory"}, {"memref<9xf64>"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              auto loc = builder.getUnknownLoc();
+              llvm::SmallVector<mlir::Value> loaded;
+              for (int slot = 0; slot != 9; ++slot) {
+                mlir::Value index = mlir::arith::ConstantIndexOp::create(builder, loc, slot);
+                loaded.push_back(mlir::memref::LoadOp::create(builder, loc, values[0], index));
+              }
+              auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+              TermIRValues result;
+              for (int axis = 0; axis != 3; ++axis)
+                result.push_back(mlir::vector::FromElementsOp::create(
+                    builder, loc, vec, mlir::ValueRange(loaded).slice(3 * axis, 3)));
+              return result;
+            });
         trace = vectors[0];
         groups = vectors[1];
         kinetic = vectors[2];
@@ -331,18 +339,15 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         v = "%v" + last;
       } else {
         // The step whose pressure gives the strain.
-        std::string noise2 = emitNoiseValue(inner);
-        os << inner << getValues(a) << ", %w" << a << ", %gw" << a
-           << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_virial(%x"
-           << last << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << noise2 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, vector<9xf64>, vector<3xf64>"
-           << (leapfrog ? ", !vec" : "") << ")\n";
+        std::vector<std::string> results{"%x" + a, "%v" + a, "%f" + a, "%w" + a, "%gw" + a};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "vector<9xf64>", "vector<3xf64>"};
+        if (leapfrog) { results.push_back("%vc" + a); types.push_back("!vec"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, "step_virial", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
         trace = "%dg" + a;
-        emitDiagonal(os, trace, "%w" + a, inner);
+        emitDiagonal(trace, "%w" + a, inner);
         groups = "%gw" + a;
         x = "%x" + a;
         v = "%v" + a;
@@ -361,27 +366,19 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       bool virial = withEnergy || countsAfterScaling();
       bool measuredHere =
           measuresHalfSteps() && (withEnergy || measuresCoupling());
-      std::string noise3 = emitNoiseValue(inner);
-      os << inner << "%x" << n << ", %v" << n << ", %f" << n
-         << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
-         << (virial ? ", %gw" + n : "")
-         << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
-         << (measuredHere ? ", %khs" + n : "")
-         << (withEnergy && reportsSolvent() ? ", %kws" + n : "")
-         << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
-         << "(" << x << ", " << v << ", %f"
-         << (scalesEveryStep() ? last : a) << ", " << massName << ", "
-         << scaling.cell << ", %dt, " << scaling.mu << getScaleValue()
-         << getFieldValues(fieldPrefix) << noise3 << ")\n"
-         << inner
-         << "    : (!vec, !vec, !vec, !real, !md.cell, f64, vector<3xf64>"
-         << getScaleType() << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
-         << (withEnergy ? ", f64" : "")
-         << (virial ? ", vector<9xf64>, vector<3xf64>" : "")
-         << (leapfrog ? ", !vec" : "") << ", vector<3xf64>"
-         << (measuredHere ? ", vector<3xf64>" : "")
-         << (withEnergy && reportsSolvent() ? ", vector<3xf64>" : "")
-         << ")\n";
+      std::vector<std::string> results{"%x" + n, "%v" + n, "%f" + n};
+      std::vector<std::string> types{"!vec", "!vec", "!vec"};
+      if (withEnergy) { results.push_back("%u" + n); types.push_back("f64"); }
+      if (virial) { results.push_back("%w" + n); types.push_back("vector<9xf64>"); }
+      if (virial) { results.push_back("%gw" + n); types.push_back("vector<3xf64>"); }
+      if (leapfrog) { results.push_back("%vc" + n); types.push_back("!vec"); }
+      if (true) { results.push_back("%kh" + n); types.push_back("vector<3xf64>"); }
+      if (measuredHere) { results.push_back("%khs" + n); types.push_back("vector<3xf64>"); }
+      if (withEnergy && reportsSolvent()) { results.push_back("%kws" + n); types.push_back("vector<3xf64>"); }
+      llvm::SmallVector<StringRef> names, signatures;
+      for (const auto &name : results) names.push_back(name);
+      for (const auto &type : types) signatures.push_back(type);
+      emitDynamicsStep(inner, withEnergy ? "step_trotter_energy" : "step_trotter", x, v, "%f" + (scalesEveryStep() ? last : a), scaling.cell, scaling.mu, names, signatures);
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
       if (virial)
@@ -398,7 +395,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         TrotterScaling scaling = emitTrotterSteps(k, /*withEnergy=*/false);
         if (countsAfterScaling()) {
           trace = "%dg" + k;
-          emitDiagonal(os, trace, "%w" + k, inner);
+          emitDiagonal(trace, "%w" + k, inner);
         }
         std::string optimal = emitOptimal(
             k, isLeapfrog() ? "%vc" + k : "%v" + k,
@@ -417,23 +414,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // the positions, which the step of energy returns.
         std::string current = isLeapfrog() ? "%vck" + here : "";
         bool measured = measuresCoupling();
-        std::string noise4 = emitNoiseValue(inner);
-        os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
-           << here << ", %gwk" << here
-           << (isLeapfrog() ? ", " + current : "")
-           << (measured ? ", %khsk" + here : "")
-           << " = dyn.step @step_"
-           << (measuresHalfSteps() ? "coupling" : "energy") << "(%x" << last
-           << ", %v" << last << ", %f" << last << ", " << massName << ", "
-           << cellName
-           << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise4 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>, vector<3xf64>"
-           << (isLeapfrog() ? ", !vec" : "")
-           << (measured ? ", vector<3xf64>" : "") << ")\n";
+        std::vector<std::string> results{"%x" + ("k" + here), "%v" + ("k" + here), "%f" + ("k" + here), "%uk" + here, "%wk" + here, "%gwk" + here};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>", "vector<3xf64>"};
+        if (isLeapfrog()) { results.push_back(current); types.push_back("!vec"); }
+        if (measured) { results.push_back("%khsk" + here); types.push_back("vector<3xf64>"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, measuresHalfSteps() ? "step_coupling" : "step_energy", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
         trace = "%dgk" + here;
-        emitDiagonal(os, trace, "%wk" + here, inner);
+        emitDiagonal(trace, "%wk" + here, inner);
         emitStep();
         std::string optimal = emitOptimal(
             "k" + here, isLeapfrog() ? current : "%vk" + here,
@@ -451,18 +441,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // measures the half steps (D263).
       bool measured = measuresCoupling();
       bool ahead = isLeapfrog() && rescalesVelocities();
-      std::string noise5 = emitNoiseValue(inner);
-      os << inner << getValues("k" + here)
-         << (measured && isLeapfrog() ? ", %vck" + here : "")
-         << (measured ? ", %khsk" + here : "")
-         << " = dyn.step @step" << (measured ? "_thermostat" : "") << "(";
-      os << "%x" << last << ", %v" << last << ", %f" << last << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise5
-           << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
-           << (measured && isLeapfrog() ? ", !vec" : "")
-           << (measured ? ", vector<3xf64>" : "") << ")\n";
+      std::vector<std::string> results{"%x" + ("k" + here), "%v" + ("k" + here), "%f" + ("k" + here)};
+      std::vector<std::string> types{"!vec", "!vec", "!vec"};
+      if (measured && isLeapfrog()) { results.push_back("%vck" + here); types.push_back("!vec"); }
+      if (measured) { results.push_back("%khsk" + here); types.push_back("vector<3xf64>"); }
+      llvm::SmallVector<StringRef> names, signatures;
+      for (const auto &name : results) names.push_back(name);
+      for (const auto &type : types) signatures.push_back(type);
+      emitDynamicsStep(inner, measured ? "step_thermostat" : "step", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
       emitStep();
       std::string full = "%vk" + here;
       if (ahead)
@@ -488,13 +474,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << " = %c0 to %n" << steps << " step %c1\n"
          << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
          << inner << "    -> (" << state << ") {\n";
-      std::string noise6 = emitNoiseValue((inner + "  "));
-      os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
-      os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise6
-           << ")\n"
-           << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
+      emitDynamicsStep(inner + "  ", "step", "%xp" + here, "%vp" + here, "%fp" + here,
+                           cellName, "", {"%xr" + here, "%vr" + here, "%fr" + here},
+                           {"!vec", "!vec", "!vec"});
       os << inner << "  scf.yield " << getValues("r" + here) << " : "
          << state << "\n"
          << inner << "}\n";
@@ -516,55 +498,62 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         energyName = "%ul";
         now = "%vcl";
       } else {
-        std::string noise7 = emitNoiseValue(inner);
-        os << inner << "%xl, %vl, %fl, %u, %w"
-           << (control.isBrownian() ? "" : ", %gwl")
-           << (isLeapfrog() ? ", %vn" : "")
-           << (measuresHalfSteps() ? ", %khsl" : "")
-           << (reportsSolvent() ? ", %kwsl" : "")
-           << " = dyn.step @step_energy(%x"
-           << last << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << noise7 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-           << (control.isBrownian() ? "" : ", vector<3xf64>")
-           << (isLeapfrog() ? ", !vec" : "")
-           << (measuresHalfSteps() ? ", vector<3xf64>" : "")
-           << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
+        std::vector<std::string> results{"%xl", "%vl", "%fl", "%u", "%w"};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>"};
+        if (!control.isBrownian()) { results.push_back("%gwl"); types.push_back("vector<3xf64>"); }
+        if (isLeapfrog()) { results.push_back("%vn"); types.push_back("!vec"); }
+        if (measuresHalfSteps()) { results.push_back("%khsl"); types.push_back("vector<3xf64>"); }
+        if (reportsSolvent()) { results.push_back("%kwsl"); types.push_back("vector<3xf64>"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, "step_energy", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
       }
       std::string full = isLeapfrog() ? now : "%vl";
-      emitKineticEnergy(os, "%k", full, massName, inner);
+      emitKineticEnergy("%k", full, massName, inner);
       // K_half - K, measured from the velocities of the half steps with
       // constraints and from the forces without (D203).
       std::string excess = emitKineticExcess(
           inner, "l" + here, measuresHalfSteps() ? "%khsl" : "", "%fl", full);
       if (excess.empty())
-        os << inner << "%g = arith.constant 0.0 : f64\n";
+        emitIRFragment(
+            inner, {"%g"}, {"f64"}, {}, {},
+            [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+              return {mlir::arith::ConstantOp::create(
+                  builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+            });
       else
-        emitSum3(os, "%g", excess, inner);
+        emitSum3("%g", excess, inner);
       if (reportsSolvent())
         emitWriteSolvent(inner, "%kwsl");
       // The pressure of the log is that of the barostat, of the groups
       // (D264): the trace of their virial and the
       // kinetic energy of their centers at the half steps.
       if (control.isBrownian()) {
-        emitTrace(os, "%tr", virialName, inner);
-        os << inner << "%kph = arith.addf %k, %g : f64\n";
+        emitTrace("%tr", virialName, inner);
+        emitIRFragment(
+            inner, {"%kph"}, {"f64"}, {"%k", "%g"}, {"f64", "f64"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              return {mlir::arith::AddFOp::create(
+                  builder, builder.getUnknownLoc(), values[0], values[1])};
+            });
       } else {
-        emitSum3(os, "%tr", "%gwl", inner);
+        emitSum3("%tr", "%gwl", inner);
         GroupKinetic centers =
             emitGroupKinetic(inner, "%xl", full, "%fl", "l" + here);
-        emitSum3(os, "%kph", centers.half, inner);
+        emitSum3("%kph", centers.half, inner);
       }
       if (couplesBelow && control.barostat)
-        emitDiagonal(os, "%dg", virialName, inner);
+        emitDiagonal("%dg", virialName, inner);
       if (!scalesHere)
         emitStep();
-      os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
-         << energyName
-         << ", %k, %g, %tr, %kph) : (i64, f64, f64, f64, f64, f64) -> ()\n";
+      emitIRFragment(
+          inner, {}, {}, {"%step" + here, energyName, "%k", "%g", "%tr", "%kph"}, {"i64", "f64", "f64", "f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtWriteEnergies",
+                mlir::TypeRange{}, values);
+            return {};
+          });
       // The cell of the positions of the row: with the barostat of Trotter
       // type the step has scaled them, and they are in the cell after the
       // scaling, not in that of the start of the interval (#218). The
@@ -581,10 +570,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // after the step (D161).
         std::string time = "%fe_time" + here;
         if (control.usesTime)
-          os << inner << time << "_steps = arith.sitofp %step" << here
-             << " : i64 to f64\n"
-             << inner << time << " = arith.mulf " << time << "_steps, %dt"
-             << " : f64\n";
+          emitIRFragment(
+              inner, {time}, {"f64"}, {"%step" + here, "%dt"}, {"i64", "f64"},
+              [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+                return {buildSimulationTime(builder, values[0], values[1])};
+              });
         emitFreeEnergyOutput(inner, "%xl", rowCell, fieldPrefix,
                              "%step" + here, time);
       }
@@ -592,10 +582,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // The observed terms at the positions after the step (D189).
         std::string time = "%ob_time" + here;
         if (control.usesTime)
-          os << inner << time << "_steps = arith.sitofp %step" << here
-             << " : i64 to f64\n"
-             << inner << time << " = arith.mulf " << time << "_steps, %dt"
-             << " : f64\n";
+          emitIRFragment(
+              inner, {time}, {"f64"}, {"%step" + here, "%dt"}, {"i64", "f64"},
+              [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+                return {buildSimulationTime(builder, values[0], values[1])};
+              });
         emitObservablesOutput(inner, "%xl", rowCell, fieldPrefix,
                               "%step" + here, time);
       }
@@ -603,14 +594,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // so far that images interact, at every row of the log as well as at
       // the frames and checkpoints.
       if (!control.periodic && !framesAtEnergies)
-        os << inner << "mdrt.host_call @mdrtCheckSpread(%step" << here
-           << ", %xl, " << idName << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%xl", idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtCheckSpread"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       std::string optimal;
       if (couplesBelow && rescalesVelocities() && !excess.empty()) {
-        os << inner << "%kolc = arith.constant " << formatReal(2.0 / 3.0)
-           << " : f64\n"
-           << inner << "%kole = arith.mulf %kolc, %g : f64\n"
-           << inner << "%kol = arith.addf %k, %kole : f64\n";
+        emitOptimalEnergy(inner, "%kol", "%k", "%g");
         optimal = "%kol";
       }
       std::string yielded =
@@ -624,9 +617,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // The frame of the positions that the interval leaves, as a loop
       // over frames writes them.
       if (framesAtEnergies)
-        os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here << ", "
-           << StringRef(yielded).split(',').first << ", " << idName
-           << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, StringRef(yielded).split(',').first, idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       else if (control.segments)
         emitFrameIfDue(inner, "%step" + here,
                        StringRef(yielded).split(',').first, here);
@@ -634,15 +631,24 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     } else {
       if (current.name == "frame") {
         emitStep();
-        os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here
-           << ", %x" << last << ", " << idName << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%x" + last, idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       }
       if (current.name == "segment") {
         // The state as the next step needs it.
         emitStep();
-        os << inner << "mdrt.host_call @mdrtWriteCheckpoint(%step" << here
-           << ", " << getValues(last) << ", " << idName << ")\n"
-           << inner << "    : (i64, " << state << ", !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%x" + last, "%v" + last, "%f" + last, idName}, {"i64", "!vec", "!vec", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteCheckpoint"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       }
       os << inner << "scf.yield " << getValues(last) << moreYielded << " : "
          << state << moreTypes << "\n";
@@ -723,16 +729,19 @@ void Builder::emitMinimization(StringRef velocities) {
   std::string held = hasForceCorrections() ? "p" : "";
   bool hostTerms = hasHostEvaluation();
   std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-  os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
-     << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
-     << getTimeValue("%time0") << ")\n"
-     << "      request [energy, forces]\n"
-     << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-     << ") -> (f64, !vec)\n";
+  emitEnergyEvaluation("  ", x0, "%cell", "%p_", "%time0",
+                           "%u0" + held + modelled,
+                           "%f0" + held + raw + modelled, "");
   if (hasSites())
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasForceCorrections()) {
-    os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
+    emitIRFragment(
+        "  ", {"%w0z"}, {"vector<9xf64>"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          auto vec = mlir::VectorType::get({9}, builder.getF64Type());
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+                                                  mlir::DenseElementsAttr::get(vec, 0.0))};
+        });
     emitForceCorrections("  ", x0, "%p_", "%f0p", hostTerms ? "%f0c" : "%f0", "%u0p",
                    hostTerms ? "%u0c" : "%u0", "%w0z", "%w0r");
   }
@@ -756,20 +765,28 @@ void Builder::emitMinimization(StringRef velocities) {
   // that the last segment left.
   std::string h0 = control.segments ? "%first_size" : "%h0";
   if (!control.segments)
-    os << "  %h0 = arith.constant "
-       << formatReal(control.minimizeStep * units::length) << " : f64\n";
+    emitIRFragment(
+        "  ", {"%h0"}, {"f64"}, {}, {},
+        [step = control.minimizeStep * units::length](
+            mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantOp::create(
+              builder, builder.getUnknownLoc(), builder.getF64FloatAttr(step))};
+        });
   // A step grows to at most 0.1 Å (D260): longer ones turn
   // rigid groups beyond what the constraints take back, and are not taken
   // (D259); on 103,292 OPC waters the largest force fell
   // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
-  os << "  %h_most = arith.constant "
-     << formatReal(Control::minimizeStepCap * units::length)
-     << " : f64\n"
-     << "  %grow = arith.constant 1.2 : f64\n"
-     << "  %shrink = arith.constant 0.2 : f64\n"
-     << "  %one = arith.constant 1.0 : f64\n"
-     << "  %zero = arith.constant 0.0 : f64\n"
-     ;
+  emitIRFragment(
+      "  ", {"%h_most", "%grow", "%shrink", "%one", "%zero"},
+      {"f64", "f64", "f64", "f64", "f64"}, {}, {},
+      [cap = Control::minimizeStepCap * units::length](
+          mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        TermIRValues result;
+        for (double value : {cap, 1.2, 0.2, 1.0, 0.0})
+          result.push_back(mlir::arith::ConstantOp::create(
+              builder, builder.getUnknownLoc(), builder.getF64FloatAttr(value)));
+        return result;
+      });
   // The log has the forces without their parts along the constraints,
   // those that the minimization lowers.
   auto emitReported = [&](StringRef indent, StringRef x, StringRef f,
@@ -777,19 +794,35 @@ void Builder::emitMinimization(StringRef velocities) {
     std::string direction = ("%gr" + tag).str();
     emitConstrainedDescent(indent, x, f, direction);
     std::string reported = ("%fr" + tag).str();
-    os << indent << reported << " = md.map_particles gather(" << direction
-       << ", %m : !vec, !real) {\n"
-       << indent << "^bb0(%g_i: vector<3xf64>, %m_i: f64):\n"
-       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << indent << "  %f_i = arith.mulf %mb, %g_i : vector<3xf64>\n"
-       << indent << "  md.yield %f_i : vector<3xf64>\n"
-       << indent << "} : !vec\n";
+    emitIRFragment(
+        indent, {reported}, {"!vec"}, {direction, "%m"}, {"!vec", "!real"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          auto map = mdir::md::MapParticlesOp::create(
+              builder, loc, values[0].getType(), values);
+          {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            auto args = builder.createBlock(&map.getKernel(), {},
+                {vec, builder.getF64Type()}, {loc, loc})->getArguments();
+            mlir::Value mass = mlir::vector::BroadcastOp::create(builder, loc, vec, args[1]);
+            mlir::Value force = mlir::arith::MulFOp::create(builder, loc, mass, args[0]);
+            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{force});
+          }
+          return {map.getResult()};
+        });
     return reported;
   };
   std::string reported = emitReported("  ", x0, "%f0", "0");
-  os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, " << h0 << ", "
-     << reported << ", %id)\n"
-     << "      : (i64, f64, f64, !vec, !ids)\n";
+  emitIRFragment(
+      "  ", {}, {}, {"%start", "%u0", h0, reported, "%id"},
+      {"i64", "f64", "f64", "!vec", "!ids"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteMinimization"),
+            values, mlir::ValueRange{}, mlir::UnitAttr{});
+        return {};
+      });
   // The host compares the largest force of each row with the tolerance
   // (D219), and the length of the next step with the floor
   // (D274), and keeps, in a buffer of its own, whether a
@@ -799,15 +832,13 @@ void Builder::emitMinimization(StringRef velocities) {
   // waits for the device anyway, so the check takes no wait of its own.
   bool stops = stopsMinimization();
   if (stops) {
-    os << "  %conv = memref.alloca() : memref<2xi64>\n"
-       << "  %conv_at0 = arith.constant 0 : index\n"
-       << "  %conv_at1 = arith.constant 1 : index\n"
-       << "  %conv_no = arith.constant 0 : i64\n"
-       << "  %conv_steps = arith.constant " << control.numSteps << " : i64\n"
-       << "  %conv_last = arith.addi %start, %conv_steps : i64\n"
-       << "  memref.store %conv_no, %conv[%conv_at0] : memref<2xi64>\n"
-       << "  memref.store %conv_last, %conv[%conv_at1] : memref<2xi64>\n"
-       << "  mdrt.host_call @mdrtCheckMinimization(%conv) : (memref<2xi64>)\n";
+    emitIRFragment(
+        "  ", {"%conv", "%conv_at0", "%conv_at1", "%conv_no"},
+        {"memref<2xi64>", "index", "index", "i64"}, {"%start"}, {"i64"},
+        [steps = control.numSteps](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto stop = buildMinimizationStop(builder, values[0], steps);
+          return {stop.memory, stop.flagIndex, stop.stepIndex, stop.notDone};
+        });
   }
 
   // A step is taken if it lowers the energy, and the next one is longer;
@@ -820,19 +851,31 @@ void Builder::emitMinimization(StringRef velocities) {
   size_t partMark = program.module.size();
   std::string state = "!vec, !vec, f64, f64";
   if (control.segments) {
-    os << "  %n0 = arith.constant 1 : index\n"
-       << "  %n1 = arith.constant 1 : index\n"
-       << "  %n2 = arith.index_cast %count_outer : i64 to index\n"
-       << "  %per0 = arith.addi %n2, %c0 : index\n";
+    emitIRFragment(
+        "  ", {"%n0", "%n1", "%n2", "%per0"}, {"index", "index", "index", "index"},
+        {"%count_outer", "%c0"}, {"i64", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value n0 = mlir::arith::ConstantIndexOp::create(builder, loc, 1);
+          mlir::Value n1 = mlir::arith::ConstantIndexOp::create(builder, loc, 1);
+          mlir::Value n2 = mlir::arith::IndexCastOp::create(builder, loc, builder.getIndexType(), values[0]);
+          mlir::Value period = mlir::arith::AddIOp::create(builder, loc, n2, values[1]);
+          return {n0, n1, n2, period};
+        });
   } else {
     int64_t period = control.energyPeriod;
     int64_t framePeriod =
         control.framePeriod > 0 ? control.framePeriod : control.numSteps;
-    os << "  %n0 = arith.constant " << control.numSteps / framePeriod
-       << " : index\n"
-       << "  %n1 = arith.constant " << framePeriod / period << " : index\n"
-       << "  %n2 = arith.constant " << period << " : index\n"
-       << "  %per0 = arith.constant " << framePeriod << " : index\n";
+    std::array<int64_t, 4> counts{control.numSteps / framePeriod,
+                                   framePeriod / period, period, framePeriod};
+    emitIRFragment(
+        "  ", {"%n0", "%n1", "%n2", "%per0"}, {"index", "index", "index", "index"}, {}, {},
+        [counts](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          TermIRValues result;
+          for (int64_t count : counts)
+            result.push_back(mlir::arith::ConstantIndexOp::create(builder, builder.getUnknownLoc(), count));
+          return result;
+        });
   }
   os << "  %xe0, %fe0, %ue0, %he0 = scf.for %i0 = %c0 to %n0 step %c1\n"
      << "      iter_args(%xa0 = " << x0
@@ -845,82 +888,135 @@ void Builder::emitMinimization(StringRef velocities) {
   // After the row that converged, no step and no row.
   std::string n2 = "%n2";
   if (stops) {
-    os << "      %conv_done = memref.load %conv[%conv_at0] : memref<2xi64>\n"
-       << "      %conv_open = arith.cmpi eq, %conv_done, %conv_no : i64\n"
-       << "      %n2_open = arith.select %conv_open, %n2, %c0 : index\n"
-       << "      %row_open = arith.select %conv_open, %c1, %c0 : index\n";
+    emitIRFragment(
+        "      ", {"%n2_open", "%row_open"}, {"index", "index"},
+        {"%conv", "%conv_at0", "%conv_at1", "%conv_no", "%n2", "%c0", "%c1"},
+        {"memref<2xi64>", "index", "index", "i64", "index", "index", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto bounds = buildMinimizationBounds(builder,
+              {values[0], values[1], values[2], values[3]}, values[4], values[5], values[6]);
+          return {bounds.steps, bounds.rows};
+        });
     n2 = "%n2_open";
   }
   os << "      %xe2, %fe2, %ue2, %he2 = scf.for %i2 = %c0 to " << n2
      << " step %c1\n"
      << "          iter_args(%xa2 = %xa1, %fa2 = %fa1, %ua2 = %ua1, "
         "%ha2 = %ha1)\n"
-     << "          -> (" << state << ") {\n"
-     << "        %xt, %ft, %ut = dyn.step @descend(%xa2, %fa2, %m, %cell, "
-        "%ha2" << getFieldValues() << ")\n"
-     << "            : (!vec, !vec, !real, !md.cell, f64" << getFieldTypes()
-     << ") -> (!vec, !vec, f64)\n"
-     << "        %lower = arith.cmpf olt, %ut, %ua2 : f64\n"
-     << "        %longer = arith.mulf %ha2, %grow : f64\n"
-     << "        %capped = arith.minimumf %longer, %h_most : f64\n"
-     << "        %shorter = arith.mulf %ha2, %shrink : f64\n"
-     << "        %ub = arith.select %lower, %ut, %ua2 : f64\n"
-     << "        %hb = arith.select %lower, %capped, %shorter : f64\n"
-     << "        %keep = arith.select %lower, %one, %zero : f64\n";
-  // The fields are chosen particle by particle, so that each has storage
-  // of its own.
-  for (StringRef field : {"x", "f"})
-    os << "        %" << field << "b = md.map_particles gather(%" << field
-       << "t, %" << field << "a2 : !vec, !vec) {\n"
-       << "        ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
-       << "          %half = arith.constant 5.0e-01 : f64\n"
-       << "          %taken = arith.cmpf ogt, %keep, %half : f64\n"
-       << "          %chosen = arith.select %taken, %new_i, %old_i "
-          ": vector<3xf64>\n"
-       << "          md.yield %chosen : vector<3xf64>\n"
-       << "        } : !vec\n";
+     << "          -> (" << state << ") {\n";
+  PotentialConnections descentFields(program, "%xa2", "%cell", "%p_", "", false);
+  std::vector<std::string> descentInputs{"%xa2", "%fa2", "%m", "%cell", "%ha2"};
+  std::vector<std::string> descentTypes{"!vec", "!vec", "!real", "!md.cell", "f64"};
+  for (unsigned slot = 2; slot != descentFields.values.size(); ++slot) {
+    descentInputs.push_back(descentFields.values[slot]);
+    descentTypes.push_back(descentFields.types[slot]);
+  }
+  llvm::SmallVector<StringRef> descentOperands, descentSignatures;
+  for (const auto &input : descentInputs) descentOperands.push_back(input);
+  for (const auto &type : descentTypes) descentSignatures.push_back(type);
+  emitProgramCall("        ", "descend", {"%xt", "%ft", "%ut"},
+                     {"!vec", "!vec", "f64"}, descentOperands, descentSignatures);
+  emitIRFragment(
+      "        ", {"%xb", "%fb", "%ub", "%hb"}, {"!vec", "!vec", "f64", "f64"},
+      {"%ut", "%ua2", "%ha2", "%grow", "%h_most", "%shrink", "%one", "%zero",
+       "%xt", "%xa2", "%ft", "%fa2"},
+      {"f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64",
+       "!vec", "!vec", "!vec", "!vec"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value lower = mlir::arith::CmpFOp::create(
+            builder, loc, mlir::arith::CmpFPredicate::OLT, values[0], values[1]);
+        mlir::Value longer = mlir::arith::MulFOp::create(builder, loc, values[2], values[3]);
+        mlir::Value capped = mlir::arith::MinimumFOp::create(builder, loc, longer, values[4]);
+        mlir::Value shorter = mlir::arith::MulFOp::create(builder, loc, values[2], values[5]);
+        mlir::Value energy = mlir::arith::SelectOp::create(builder, loc, lower, values[0], values[1]);
+        mlir::Value interval = mlir::arith::SelectOp::create(builder, loc, lower, capped, shorter);
+        mlir::Value keep = mlir::arith::SelectOp::create(builder, loc, lower, values[6], values[7]);
+        auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+        TermIRValues fields;
+        for (unsigned slot : {8u, 10u}) {
+          auto map = mdir::md::MapParticlesOp::create(
+              builder, loc, values[slot].getType(), values.slice(slot, 2));
+          {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            auto args = builder.createBlock(&map.getKernel(), {}, {vec, vec}, {loc, loc})->getArguments();
+            mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value taken = mlir::arith::CmpFOp::create(
+                builder, loc, mlir::arith::CmpFPredicate::OGT, keep, half);
+            mlir::Value chosen = mlir::arith::SelectOp::create(builder, loc, taken, args[0], args[1]);
+            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{chosen});
+          }
+          fields.push_back(map.getResult());
+        }
+        return {fields[0], fields[1], energy, interval};
+      });
   os << "        scf.yield %xb, %fb, %ub, %hb : " << state << "\n"
-     << "      }\n"
-     << "      %before = arith.muli %i0, %per0 : index\n"
-     << "      %done = arith.addi %i1, %c1 : index\n"
-     << "      %within = arith.muli %done, %n2 : index\n"
-     << "      %steps = arith.addi %before, %within : index\n"
-     << "      %since = arith.index_cast %steps : index to i64\n"
-     << "      %step = arith.addi %since, %start : i64\n";
+     << "      }\n";
+  emitIRFragment(
+      "      ", {"%step"}, {"i64"}, {"%i0", "%per0", "%i1", "%c1", "%n2", "%start"},
+      {"index", "index", "index", "index", "index", "i64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        LoopIterationIR loop{values[0], {}};
+        return {buildStepNumber(builder, {loop}, values[2], values[1], values[4], values[3], values[5])};
+      });
   // A row, unless an earlier one converged: a loop of one iteration or
   // none, as emitFrameIfDue.
   std::string rowIndent = stops ? "        " : "      ";
   if (stops)
     os << "      scf.for %i_row = %c0 to %row_open step %c1 {\n";
   reported = emitReported(rowIndent, "%xe2", "%fe2", "1");
-  os << rowIndent << "mdrt.host_call @mdrtWriteMinimization(%step, %ue2, "
-     << "%he2, " << reported << ", %id)\n"
-     << rowIndent << "    : (i64, f64, f64, !vec, !ids)\n";
-  if (stops)
-    os << "        mdrt.host_call @mdrtCheckMinimization(%conv) "
-          ": (memref<2xi64>)\n"
-       << "      }\n";
+  emitIRFragment(
+      rowIndent, {}, {}, {"%step", "%ue2", "%he2", reported, "%id"},
+      {"i64", "f64", "f64", "!vec", "!ids"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteMinimization"),
+            values, mlir::ValueRange{}, mlir::UnitAttr{});
+        return {};
+      });
+  if (stops) {
+    emitIRFragment(
+        "        ", {}, {}, {"%conv"}, {"memref<2xi64>"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtCheckMinimization"),
+              values, mlir::ValueRange{}, mlir::UnitAttr{});
+          return {};
+        });
+    os << "      }\n";
+  }
   os << "      scf.yield %xe2, %fe2, %ue2, %he2 : " << state << "\n"
      << "    }\n";
   if (control.framePeriod > 0) {
-    os << "    %frames = arith.addi %i0, %c1 : index\n"
-       << "    %frame_steps = arith.muli %frames, %per0 : index\n"
-       << "    %frame_since = arith.index_cast %frame_steps : index to i64\n"
-       << "    %frame_step = arith.addi %frame_since, %start : i64\n";
+    emitIRFragment(
+        "    ", {"%frame_step"}, {"i64"}, {"%i0", "%c1", "%per0", "%start"},
+        {"index", "index", "index", "i64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          LoopIterationIR loop{values[0], {}};
+          return {buildStepNumber(builder, {loop}, {}, {}, values[2], values[1], values[3])};
+        });
     std::string frameIndent = "    ";
     if (stops) {
       // The frame at the row that converged, and none after it.
-      os << "    %conv_fdone = memref.load %conv[%conv_at0] : memref<2xi64>\n"
-         << "    %conv_fstep = memref.load %conv[%conv_at1] : memref<2xi64>\n"
-         << "    %conv_fopen = arith.cmpi eq, %conv_fdone, %conv_no : i64\n"
-         << "    %conv_fat = arith.cmpi eq, %conv_fstep, %frame_step : i64\n"
-         << "    %conv_fdue = arith.ori %conv_fopen, %conv_fat : i1\n"
-         << "    %conv_fn = arith.select %conv_fdue, %c1, %c0 : index\n"
-         << "    scf.for %i_frame = %c0 to %conv_fn step %c1 {\n";
+      emitIRFragment(
+          "    ", {"%conv_fn"}, {"index"},
+          {"%conv", "%conv_at0", "%conv_at1", "%conv_no", "%frame_step", "%c0", "%c1"},
+          {"memref<2xi64>", "index", "index", "i64", "i64", "index", "index"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildMinimizationFrameBound(builder,
+                {values[0], values[1], values[2], values[3]}, values[4], values[5], values[6])};
+          });
+      os << "    scf.for %i_frame = %c0 to %conv_fn step %c1 {\n";
       frameIndent = "      ";
     }
-    os << frameIndent << "mdrt.host_call @mdrtWriteFrame(%frame_step, %xe1, "
-       << "%id) : (i64, !vec, !ids)\n";
+    emitIRFragment(
+        frameIndent, {}, {}, {"%frame_step", "%xe1", "%id"}, {"i64", "!vec", "!ids"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"),
+              values, mlir::ValueRange{}, mlir::UnitAttr{});
+          return {};
+        });
     if (stops)
       os << "    }\n";
   }
@@ -943,73 +1039,338 @@ void Builder::emitMinimization(StringRef velocities) {
   // step or at the row that converged.
   if (control.checkpointPeriod > 0) {
     if (stops)
-      os << "  %end = memref.load %conv[%conv_at1] : memref<2xi64>\n";
+      emitIRFragment(
+          "  ", {"%end"}, {"i64"}, {"%conv", "%conv_at1"}, {"memref<2xi64>", "index"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {mlir::memref::LoadOp::create(builder, builder.getUnknownLoc(), values[0], values[1])};
+          });
     else
-      os << "  %c_total = arith.constant " << control.numSteps << " : i64\n"
-         << "  %end = arith.addi %start, %c_total : i64\n";
-    os << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
-       << "      : (i64, !vec, !vec, !ids)\n";
+      emitIRFragment(
+          "  ", {"%end"}, {"i64"}, {"%start"}, {"i64"},
+          [steps = control.numSteps](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value count = mlir::arith::ConstantIntOp::create(builder, loc, steps, 64);
+            return {mlir::arith::AddIOp::create(builder, loc, values[0], count)};
+          });
+    emitIRFragment(
+        "  ", {}, {}, {"%end", "%xe0", "%v0", "%id"}, {"i64", "!vec", "!vec", "!ids"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteCheckpoint"),
+              values, mlir::ValueRange{}, mlir::UnitAttr{});
+          return {};
+        });
   }
-  os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n";
+  emitIRFragment(
+      "  ", {}, {}, {"%xe0", "%v0", "%id"}, {"!vec", "!vec", "!ids"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtFinish"),
+            values, mlir::ValueRange{}, mlir::UnitAttr{});
+        return {};
+      });
   os << "  return\n}\n";
 }
 
-void Builder::emitEntry() {
+
+llvm::Error Builder::emitEntry() {
   collectStartValues();
   StringRef state = getName(program.state);
   StringRef force = getName(program.force);
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
-  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64, f64)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWritePull(i64, memref<?xf64>, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteFreeEnergy(i64, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteObservables(i64, memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << (program.tunableGradient
-             ? "func.func private @mdrtWriteTunableGradient(memref<?xf64>)\n"
-               "    attributes {llvm.emit_c_interface}\n"
-               "func.func private @mdrtWriteTunableGradientField(i64, "
-               "memref<?xf64>, memref<?xi32>)\n"
-               "    attributes {llvm.emit_c_interface}\n"
-             : "")
-     << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
-     << "    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
-     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtCheckSpread(i64, memref<?x3x" << state
-     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-     ;
-  // A program of segments hands its state to the host where it is at the
-  // end of each part, and takes the counts of the next part there
-  // (D215); a run ends with its state in the buffers of the
-  // host.
-  if (control.frames)
-    // The boundary of a frame also says what the host asks of the frame
-    // (D252): its forces, its virial. The two calls below
-    // hand them over, each in a branch that a frame without the request
-    // does not take.
-    os << "func.func private @mdrtFrameBoundary(memref<6xf64>, memref<2xf64>)"
-          " -> memref<?x3x"
-       << state << ">\n    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtWriteFrameForces(memref<?x3x" << force
-       << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtWriteFrameVirial(f64, f64, f64, f64, f64, "
-          "f64, f64, f64, f64)\n    attributes {llvm.emit_c_interface}\n";
-  else if (control.segments)
-    os << "func.func private @mdrtPartBoundary(memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">, memref<?x3x" << force
-       << ">, memref<?xi32>, f64, memref<" << getPartCountsSize()
-       << "xi64>)\n    attributes {llvm.emit_c_interface}\n";
-  else
-    os << "func.func private @mdrtFinish(memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
+  RuntimeDeclarationConfig declarations{
+      program.state == Element::F64, program.force == Element::F64,
+      program.tunableGradient, bool(control.frames), control.segments,
+      static_cast<int64_t>(getPartCountsSize()), bool(control.minimize),
+      stopsMinimization(), reportsSolvent(),
+      hasConstraints() && !control.minimize, rescalesVelocities(),
+      control.isNoseHoover(), control.getCouplingPeriod() > 0,
+      bool(control.barostat), scalesEveryStep(), control.checkpointPeriod > 0,
+      program.writesForces};
+  // Each selected entry is complete native IR, including every loop body.
+  // Other physical families keep their existing entry until their scopes move.
+  bool nativeFrames = control.frames && !control.minimize &&
+      !isRestart() &&
+      !hasHostEvaluation();
+  if (nativeFrames) {
+    mlir::OpBuilder ir(&termIR.getContext());
+    auto *moduleBody = termIR.getModule().getBody();
+    ir.setInsertionPointToEnd(moduleBody);
+    size_t before = std::distance(moduleBody->begin(), moduleBody->end());
+    emitRuntimeDeclarations(ir, declarations, false);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation)
+        role->buildDeclarations(*this, ir);
+    emitRuntimeDeclarations(ir, declarations, true);
+    SimpleFrameEntryIRConfig config;
+    config.branchesStart = branchesStart();
+    config.givenForces = branchesStart() && program.takesForces;
+    config.timed = control.usesTime;
+    config.stepMemory = needsStepNumber();
+    config.leapfrog = isLeapfrog();
+    config.brownian = control.isBrownian();
+    config.coupled = control.getCouplingPeriod() > 0;
+    config.barostat = bool(control.barostat);
+    config.changesCell = changesCell();
+    config.scalesEveryStep = scalesEveryStep();
+    config.removesMotion = control.comPeriod > 0;
+    if (scalesReference()) {
+      std::array<unsigned, 3> slots;
+      for (unsigned index = 0; index != 3; ++index) {
+        std::string name = "rest_edge" + std::to_string(index);
+        auto found = llvm::find_if(program.startValues,
+            [&](const auto &value) { return value.name == name; });
+        assert(found != program.startValues.end() && "reference edge must be an entry value");
+        slots[index] = std::distance(program.startValues.begin(), found);
+      }
+      config.referenceEdges = slots;
+    }
+    if (config.coupled && control.thermostat) {
+      double freedom = system.getDegreesOfFreedom();
+      double target = 0.5 * freedom * units::boltzmann * control.temperature;
+      double decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) *
+          control.timestep / control.tauT);
+      config.thermostat = FrameThermostatIR{static_cast<int64_t>(control.seed), freedom, target, decay};
+      if (control.barostat) {
+        double bar = 1.01325;
+        config.barostatParameters = BarostatParameters{
+            {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
+             control.compressibilities[2] / bar},
+            control.pressure * bar, control.compressibility / bar,
+            static_cast<double>(control.barostatPeriod) * control.timestep / control.tauP,
+            units::boltzmann * control.temperature, control.compressibilityZ / bar,
+            control.surfaceTension * control.surfaces * units::dynePerCmToBarNm};
+      }
+    }
+    config.cellEdges = getCellSize();
+    config.topology = bool(system.topology);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().postEvaluation)
+        config.storedTerms += role->getStoredTermCount(*this);
+    for (const Program::TupleSet *selected : getSiteSets()) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "site parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      config.sites.push_back({slot, fieldSlot("a"), fieldSlot("b"),
+          selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
+    }
+    auto groups = getShakeSets();
+    for (const auto &set : program.tupleSets)
+      if (set.name == "settles") groups.insert(groups.begin(), &set);
+    for (const Program::TupleSet *selected : groups) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "constraint parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      FrameConstraintIR group{slot, selected->arity, {}, selected->name == "settles"};
+      if (group.water) {
+        group.parameters = {fieldSlot("doh"), fieldSlot("dhh")};
+      } else {
+        for (unsigned member = 1; member != selected->arity; ++member)
+          group.parameters.push_back(fieldSlot("d" + std::to_string(member)));
+      }
+      config.constraints.push_back(std::move(group));
+    }
+    if (config.topology)
+      for (const auto &definition : getTermDefinitions())
+        config.terms.push_back(definition.name);
+    if (!control.freeEnergyFile.empty()) {
+      config.freeEnergy.emplace(FreeEnergyOutputConfig{
+          {}, static_cast<size_t>(control.freeEnergy.state), getNumPotentialArguments()});
+      for (const auto &component : control.freeEnergy.lambdas)
+        config.freeEnergy->lambdas.push_back(component.second);
+    }
+    config.observableCount = control.observables.size();
+    config.observableBaseArgument = getNumPotentialArguments();
+    const auto observedTerms = getObservedTerms();
+    for (auto [index, term] : llvm::enumerate(observedTerms)) {
+      ObservableOutputTermIR output;
+      output.potential = "observe" + std::to_string(index);
+      for (const auto &constant : term.constants) {
+        bool tunable = control.isObservedTunable(term.name, constant);
+        std::optional<unsigned> slot;
+        if (tunable) {
+          slot = config.observableTunables.size();
+          std::string name = "obv_" + term.name + "_" + constant;
+          auto found = llvm::find_if(program.startValues,
+              [&](const auto &value) { return value.name == name; });
+          assert(found != program.startValues.end() && "observed tunable must be an entry value");
+          config.observableTunables.push_back(std::distance(program.startValues.begin(), found));
+        }
+        output.constants.push_back({tunable ? 0.0 : getObservedValue(term, constant), slot});
+      }
+      for (auto column : term.columns)
+        output.columns.push_back({column.first, column.second});
+      config.observables.push_back(std::move(output));
+    }
+    if (program.tunableGradient) {
+      auto &gradient = config.gradient.emplace();
+      auto startSlot = [&](StringRef name) -> unsigned {
+        auto found = llvm::find_if(program.startValues,
+            [&](const auto &value) { return value.name == name; });
+        assert(found != program.startValues.end() && "gradient input must be an entry value");
+        return std::distance(program.startValues.begin(), found);
+      };
+      gradient.request = startSlot("tunable_gradient");
+      size_t constants = control.tunableConstants.size(), seeds = getNumGradientSeeds();
+      for (size_t index = 0; index != constants; ++index)
+        gradient.constants.push_back(startSlot("tg_c" + std::to_string(index)));
+      gradient.seeds = seeds;
+      if (seeds) {
+        auto found = llvm::find_if(program.fields,
+            [](const auto &field) { return field.name == "tg_zero"; });
+        assert(found != program.fields.end() && "gradient seed field must exist");
+        gradient.seedField = std::distance(program.fields.begin(), found);
+      }
+      unsigned base = getNumPotentialArguments(), chargeArgument = 2;
+      for (const auto &field : program.fields) {
+        if (field.name == "q") break;
+        ++chargeArgument;
+      }
+      program.gradientArguments.clear();
+      for (auto [index, slot] : llvm::enumerate(program.gradientSlots)) {
+        unsigned argument = base + gradientColumns[index];
+        gradient.output.scalarArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, slot.tunable});
+      }
+      for (auto [index, field] : llvm::enumerate(program.gradientFields)) {
+        unsigned argument = index < seeds ? base + constants + index : chargeArgument;
+        gradient.output.fieldArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, field.tunable});
+      }
+    }
+    if (!control.segments) {
+      for (const auto &level : levels) config.counts.push_back(level.count);
+      int64_t steps = 1;
+      for (unsigned index = levels.size(); index-- != 0;) {
+        config.periods.push_back(steps);
+        steps *= levels[index].count;
+        if (index && levels[index - 1].name == "couple")
+          steps += usesTrotter() && !scalesEveryStep() ? 2 : 1;
+        else if (index && levels[index - 1].name == "energy")
+          steps += levels[index].name == "couple" ? control.getCouplingPeriod() : 1;
+      }
+    }
+    auto entry = buildSimpleFrameEntry(ir, program, config,
+        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
+            mlir::Value scale) {
+          llvm::SmallVector<mlir::Value> stored;
+          auto field = [&](StringRef name) -> mlir::Value {
+            auto found = llvm::find_if(program.fields,
+                [&](const auto &field) { return field.name == name; });
+            assert(found != program.fields.end() && "evaluation field must exist");
+            return state.fields[std::distance(program.fields.begin(), found)];
+          };
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().postEvaluation;
+                role && role->hasForceCorrection(*this)) {
+              auto result = role->build(*this, at,
+                  {state.positions, state.cell, evaluation.forces, evaluation.energy,
+                   evaluation.virial, scale, field});
+              evaluation = {result.energy, result.forces, result.virial};
+              llvm::append_range(stored, result.storedTerms);
+            }
+          return FrameCompletionIR{evaluation, std::move(stored)};
+        }, [&](mlir::OpBuilder &at, const PotentialStateIR &state, mlir::Value step) {
+          auto tuple = [&](StringRef name) {
+            unsigned offset = program.fields.size() + program.tables.size();
+            for (const auto &set : program.tupleSets) {
+              if (set.name == name) return std::make_pair(&set, offset);
+              offset += 1 + set.fields.size();
+            }
+            llvm_unreachable("output relation must exist");
+          };
+          auto relation = [&](StringRef name) { return state.fields[tuple(name).second]; };
+          auto field = [&](StringRef set, StringRef name) {
+            auto [metadata, offset] = tuple(set);
+            auto found = llvm::find_if(metadata->fields,
+                [&](const auto &field) { return field.name == name; });
+            assert(found != metadata->fields.end() && "output parameter must exist");
+            return state.fields[offset + 1 + std::distance(metadata->fields.begin(), found)];
+          };
+          TermNativeOutput point{state, step, relation, field};
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().coordinateOutput)
+              role->buildOutput(*this, at, point);
+        });
+    if (!entry) return entry.takeError();
+    llvm::SmallVector<mlir::Operation *> operations;
+    for (auto &operation : llvm::drop_begin(*moduleBody, before))
+      operations.push_back(&operation);
+    emitIRFragment("", {}, {}, {}, {},
+        [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          for (auto *operation : operations)
+            operation->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return llvm::Error::success();
+  }
+  bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
+      !system.topology && !isRestart() && !control.usesTime && !isTriclinic() &&
+      !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
+      control.getCouplingPeriod() == 0 && !control.barostat &&
+      !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
+      control.freeEnergyFile.empty() && control.observables.empty() && !program.tunableGradient &&
+      levels.back().name == "step" && levels.size() <= 4 &&
+      llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
+        return level.name == "segment" || level.name == "frame" || level.name == "energy";
+      });
+  if (nativeSteps) {
+    mlir::OpBuilder ir(&termIR.getContext());
+    auto *body = termIR.getModule().getBody();
+    ir.setInsertionPointToEnd(body);
+    size_t before = std::distance(body->begin(), body->end());
+    emitRuntimeDeclarations(ir, declarations, false);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation) role->buildDeclarations(*this, ir);
+    emitRuntimeDeclarations(ir, declarations, true);
+    auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
+    SimpleStepEntryIRConfig config{levels.back().count};
+    config.periodic = control.periodic;
+    mdir::dyn::ProgramOp energy;
+    config.framesAtEnergies = framesAtEnergies;
+    for (const auto &level : levels) {
+      if (level.name == "segment") config.checkpointIntervals = level.count;
+      if (level.name == "frame") config.frameIntervals = level.count;
+      if (level.name == "energy") {
+        config.energyIntervals = level.count;
+        energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
+      }
+    }
+    auto entry = buildSimpleStepEntry(ir, program, step, energy, config);
+    if (!entry) return entry.takeError();
+    llvm::SmallVector<mlir::Operation *> operations;
+    for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);
+    emitIRFragment("", {}, {}, {}, {},
+        [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          for (auto *operation : operations)
+            operation->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return llvm::Error::success();
+  }
+  emitIRFragment("", {}, {}, {}, {},
+                 [declarations](mlir::OpBuilder &builder, mlir::ValueRange) {
+                   emitRuntimeDeclarations(builder, declarations, false);
+                   return TermIRValues{};
+                 });
   auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
                        llvm::ArrayRef<StringRef> resultTypes,
                        llvm::ArrayRef<StringRef> operands,
@@ -1021,57 +1382,11 @@ void Builder::emitEntry() {
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
       role->emitDeclarations(*this, emitIR);
-  if (control.minimize)
-    os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
-       << force << ">, memref<?xi32>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (stopsMinimization())
-    os << "func.func private @mdrtCheckMinimization(memref<2xi64>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (reportsSolvent())
-    os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
-  if (hasConstraints() && !control.minimize)
-    // With their effects, which a program that calls them states
-    // (D355): each records or delivers a stop of the run.
-    os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n"
-       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
-       << "func.func private @mdrtDeferStops()\n"
-       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
-       << "func.func private @mdrtStopPending()\n"
-       << "    attributes {dyn.effects = {read = [\"dyn.stop\"], "
-          "write = [\"dyn.stop\"]}}\n";
-  if (rescalesVelocities() && control.isNoseHoover())
-    os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
-  else if (rescalesVelocities())
-    os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
-          "-> f64\n";
-  if (control.getCouplingPeriod() > 0)
-    os << "func.func private @mdrtAddBath(f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (control.barostat)
-    os << "func.func private @mdrtBarostatStrain(i64, i64, f64, f64, f64, f64, "
-          "f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainArea(i64, i64, f64, f64, f64, "
-          "f64, f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainHeight(i64, i64, f64, f64, "
-          "f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtBarostatStrainAxis(i64, i64, i64, f64, f64, "
-          "f64, f64, f64, f64) -> f64\n"
-       << "func.func private @mdrtSetBox(f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtSetTilt(f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (scalesEveryStep())
-    os << "func.func private @mdrtSetBarostatState(f64, f64, f64, f64, f64, "
-          "f64, f64, f64, f64)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  if (control.checkpointPeriod > 0) {
-    os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
-       << ">, memref<?x3x" << state << ">";
-    if (program.writesForces)
-      os << ", memref<?x3x" << force << ">";
-    os << ", memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n";
-  }
+  emitIRFragment("", {}, {}, {}, {},
+                 [declarations](mlir::OpBuilder &builder, mlir::ValueRange) {
+                   emitRuntimeDeclarations(builder, declarations, true);
+                   return TermIRValues{};
+                 });
   os << "\n";
 
   os << "func.func @" << program.entry << "(\n"
@@ -1119,32 +1434,65 @@ void Builder::emitEntry() {
     os << ", %" << value.name << ": f64";
   os << ") {\n";
 
-  os << "  %c0 = arith.constant 0 : index\n"
-     << "  %c1 = arith.constant 1 : index\n";
+  emitIRFragment(
+      "  ", {"%c0", "%c1"}, {"index", "index"}, {}, {},
+      [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value zero = mlir::arith::ConstantIndexOp::create(builder, loc, 0);
+        mlir::Value one = mlir::arith::ConstantIndexOp::create(builder, loc, 1);
+        return {zero, one};
+      });
   if (branchesStart())
-    os << "  %first_none = arith.constant 0 : i64\n"
-       << "  %is_first = arith.cmpi ne, %first_call, %first_none : i64\n";
+    emitIRFragment(
+        "  ", {"%is_first"}, {"i1"}, {"%first_call"}, {"i64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value none = mlir::arith::ConstantIntOp::create(builder, loc, 0, 64);
+          return {mlir::arith::CmpIOp::create(
+              builder, loc, mlir::arith::CmpIPredicate::ne, values[0], none)};
+        });
   // The time of the first step, which the evaluations at the start take
   // (D145); a minimization takes 0.
   if (control.usesTime) {
     if (control.minimize)
-      os << "  %time0 = arith.constant 0.0 : f64\n";
+      emitIRFragment(
+          "  ", {"%time0"}, {"f64"}, {}, {},
+          [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            return {mlir::arith::ConstantOp::create(
+                builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+          });
     else
-      os << "  %time0_steps = arith.sitofp %start : i64 to f64\n"
-         << "  %time0 = arith.mulf %time0_steps, %dt : f64\n";
+      emitIRFragment(
+          "  ", {"%time0"}, {"f64"}, {"%start", "%dt"}, {"i64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildSimulationTime(builder, values[0], values[1])};
+          });
   }
   // The number of the last step taken, which keys the random numbers of
   // Langevin dynamics (D135).
   if (needsStepNumber())
-    os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
-       << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
-       << "  %noise_one = arith.constant 1 : i64\n";
+    emitIRFragment(
+        "  ", {"%noise_memory", "%noise_one"}, {"memref<1xi64>", "i64"},
+        {"%start", "%c0"}, {"i64", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value memory = mlir::memref::AllocaOp::create(
+              builder, loc, mlir::MemRefType::get({1}, builder.getI64Type()));
+          mlir::memref::StoreOp::create(builder, loc, values[0], memory, values[1]);
+          mlir::Value one = mlir::arith::ConstantIntOp::create(builder, loc, 1, 64);
+          return {memory, one};
+        });
   // A minimization has loops of its own (emitMinimization), and a program
   // of segments takes its counts in the loop over parts (emitPartCounts).
   if (!control.segments) {
-    for (auto [index, level] : llvm::enumerate(levels))
-      os << "  %n" << index << " = arith.constant " << level.count
-         << " : index\n";
+    for (auto [index, level] : llvm::enumerate(levels)) {
+      std::string result = "%n" + std::to_string(index);
+      emitIRFragment(
+          "  ", {result}, {"index"}, {}, {},
+          [count = level.count](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            return {mlir::arith::ConstantIndexOp::create(builder, builder.getUnknownLoc(), count)};
+          });
+    }
   }
   // The number of steps in one iteration of each loop. An iteration of
   // the loop over energy intervals takes one step after its loop over
@@ -1154,7 +1502,12 @@ void Builder::emitEntry() {
   // periods.
   int64_t steps = 1;
   for (unsigned i = control.segments ? 0 : levels.size(); i-- != 0;) {
-    os << "  %per" << i << " = arith.constant " << steps << " : index\n";
+    std::string result = "%per" + std::to_string(i);
+    emitIRFragment(
+        "  ", {result}, {"index"}, {}, {},
+        [steps](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantIndexOp::create(builder, builder.getUnknownLoc(), steps)};
+        });
     steps *= levels[i].count;
     if (i == 0)
       continue;
@@ -1165,6 +1518,23 @@ void Builder::emitEntry() {
       steps += levels[i].name == "couple" ? control.getCouplingPeriod() : 1;
   }
 
+  // A field's logical element type is independent of its storage precision.
+  auto emitFieldBuffer = [&](StringRef result, StringRef input,
+                             StringRef storage, StringRef signature,
+                             unsigned components, bool integer,
+                             StringRef set = "atoms") {
+    emitIRFragment(
+        "  ", {result}, {signature}, {input}, {storage},
+        [components, integer, set = set.str()](mlir::OpBuilder &builder,
+                                               mlir::ValueRange values) -> TermIRValues {
+          mlir::Type element = integer ? mlir::Type(builder.getI32Type())
+                                       : mlir::Type(builder.getF64Type());
+          auto type = mdir::md::FieldType::get(
+              builder.getContext(), mlir::FlatSymbolRefAttr::get(builder.getContext(), set),
+              components, element);
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+  };
   // The fields as the buffers hold them, and in the order of the positions
   // if the run keeps that order.
   // A program of segments takes the forces and the velocities of the last
@@ -1179,30 +1549,52 @@ void Builder::emitEntry() {
       branchesStart() ? "%fg" : "%f0";
   std::string given = program.reorders ? "_in" : "";
   if (changesCell()) {
-    // Where the barostat keeps the cell, on the host.
-    os << "  %box_memory = memref.alloca() : " << getBoxMemoryType() << "\n";
-    // With a scaling every step, the diagonals of the virial and of that of
-    // the rigid groups, and the kinetic energy of each axis without the
-    // center of mass, of the state that the last step left (D92, D119).
-    if (scalesEveryStep())
-      os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
-    // A triclinic cell keeps its tilts after its diagonal (I3 of
-    // docs/triclinic.md: the barostat scales them with their columns).
-    // The tilts at the start are arguments of the entry
-    // (collectStartValues).
-    static const char *const initial[] = {"%lx", "%ly", "%lz",
-                                          "%tilt_bx", "%tilt_cx", "%tilt_cy"};
-    for (int k = 0; k != getCellSize(); ++k)
-      os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
-         << "  memref.store " << initial[k] << ", %box_memory[%c_edge" << k
-         << "] : " << getBoxMemoryType() << "\n";
+    static const char *const initial[] = {"%lx", "%ly", "%lz", "%tilt_bx", "%tilt_cx", "%tilt_cy"};
+    unsigned edgeCount = getCellSize();
+    std::vector<std::string> outputs{"%box_memory"}, signatures{getBoxMemoryType()};
+    if (scalesEveryStep()) {
+      outputs.push_back("%trotter_memory");
+      signatures.push_back("memref<9xf64>");
+    }
+    for (unsigned k = 0; k != edgeCount; ++k) {
+      outputs.push_back("%c_edge" + std::to_string(k));
+      signatures.push_back("index");
+    }
+    llvm::SmallVector<StringRef> names, types;
+    for (const auto &name : outputs) names.push_back(name);
+    for (const auto &type : signatures) types.push_back(type);
+    llvm::SmallVector<StringRef> edges(initial, initial + edgeCount);
+    llvm::SmallVector<StringRef> edgeTypes(edgeCount, "f64");
+    emitIRFragment(
+        "  ", names, types, edges, edgeTypes,
+        [edgeCount, trotter = scalesEveryStep()](mlir::OpBuilder &builder,
+                                                  mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value memory = mlir::memref::AllocaOp::create(
+              builder, loc, mlir::MemRefType::get({int64_t(edgeCount)}, builder.getF64Type()));
+          TermIRValues results{memory};
+          if (trotter)
+            results.push_back(mlir::memref::AllocaOp::create(
+                builder, loc, mlir::MemRefType::get({9}, builder.getF64Type())));
+          for (unsigned k = 0; k != edgeCount; ++k) {
+            mlir::Value index = mlir::arith::ConstantIndexOp::create(builder, loc, k);
+            mlir::memref::StoreOp::create(builder, loc, values[k], memory, index);
+            results.push_back(index);
+          }
+          return results;
+        });
   }
   if (scalesReference())
     // The edges of the cell of the file, which the reference positions of
     // the restraints are for, arguments of the entry (collectStartValues);
     // they scale with the cell, axis by axis.
-    os << "  %rest_edges = vector.from_elements %rest_edge0, %rest_edge1, "
-          "%rest_edge2 : vector<3xf64>\n";
+    emitIRFragment(
+        "  ", {"%rest_edges"}, {"vector<3xf64>"},
+        {"%rest_edge0", "%rest_edge1", "%rest_edge2"}, {"f64", "f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          return {mlir::vector::FromElementsOp::create(builder, builder.getUnknownLoc(), vec, values)};
+        });
   // A program of frames (D251) takes the cell and the
   // positions of each frame in its loop over frames, where this text goes:
   // the boundary gives the buffer of the host that holds the positions of
@@ -1213,70 +1605,118 @@ void Builder::emitEntry() {
   os.flush();
   size_t frameMark = program.module.size();
   if (control.frames) {
-    os << "  %frame_positions = func.call @mdrtFrameBoundary(%frame_cell, "
-          "%frame_asks) : (memref<6xf64>, memref<2xf64>) -> memref<?x3x"
-       << state << ">\n";
-    for (int k = 0; k != getCellSize(); ++k)
-      os << "  %frame_cell_" << k << " = memref.load %frame_cell[%frame_at"
-         << k << "] : memref<6xf64>\n";
-    // What the host asks of this frame: its forces, its virial; each a
-    // number that is not 0 if it is asked.
-    for (int k = 0; k != 2; ++k)
-      os << "  %frame_ask_" << k << " = memref.load %frame_asks[%frame_at" << k
-         << "] : memref<2xf64>\n";
+    unsigned edges = getCellSize();
+    std::vector<std::string> outputs{"%frame_positions"};
+    std::vector<std::string> types{("memref<?x3x" + state + ">").str()};
+    std::vector<std::string> inputs{"%frame_cell", "%frame_asks"};
+    std::vector<std::string> signatures{"memref<6xf64>", "memref<2xf64>"};
+    for (unsigned k = 0; k != edges; ++k) {
+      outputs.push_back("%frame_cell_" + std::to_string(k));
+      types.push_back("f64");
+    }
+    for (unsigned k = 0; k != 2; ++k) {
+      outputs.push_back("%frame_ask_" + std::to_string(k));
+      types.push_back("f64");
+    }
+    for (unsigned k = 0; k != std::max(edges, 2u); ++k) {
+      inputs.push_back("%frame_at" + std::to_string(k));
+      signatures.push_back("index");
+    }
+    llvm::SmallVector<StringRef> resultNames, resultTypes, names, operandTypes;
+    for (const auto &name : outputs) resultNames.push_back(name);
+    for (const auto &type : types) resultTypes.push_back(type);
+    for (const auto &name : inputs) names.push_back(name);
+    for (const auto &type : signatures) operandTypes.push_back(type);
+    emitIRFragment(
+        "  ", resultNames, resultTypes, names, operandTypes,
+        [edges, state64 = program.state == Element::F64](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Type element = state64 ? mlir::Type(builder.getF64Type()) : mlir::Type(builder.getF32Type());
+          auto storage = mlir::MemRefType::get({mlir::ShapedType::kDynamic, 3}, element);
+          auto boundary = mlir::func::CallOp::create(
+              builder, loc, "mdrtFrameBoundary", mlir::TypeRange{storage}, values.take_front(2));
+          TermIRValues results{boundary.getResult(0)};
+          for (unsigned k = 0; k != edges; ++k)
+            results.push_back(mlir::memref::LoadOp::create(builder, loc, values[0], values[2 + k]));
+          for (unsigned k = 0; k != 2; ++k)
+            results.push_back(mlir::memref::LoadOp::create(builder, loc, values[1], values[2 + k]));
+          return results;
+        });
     if (scalesReference())
-      emitReferenceScale(os, "  ", "%rest_scale", "%frame_cell_0",
+      emitReferenceScale("  ", "%rest_scale", "%frame_cell_0",
                          "%frame_cell_1", "%frame_cell_2");
     emitCellOf("  ", "%cell", "%frame_cell");
   } else {
     if (scalesReference())
-      emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
-    if (isTriclinic()) {
-      os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
-            "%tilt_cy\n";
-    } else
-      os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
+      emitReferenceScale("  ", "%rest_scale", "%lx", "%ly", "%lz");
+    llvm::SmallVector<StringRef> edges{"%lx", "%ly", "%lz"};
+    if (isTriclinic())
+      edges.append({"%tilt_bx", "%tilt_cx", "%tilt_cy"});
+    llvm::SmallVector<StringRef> edgeTypes(edges.size(), "f64");
+    emitIRFragment(
+        "  ", {"%cell"}, {"!md.cell"}, edges, edgeTypes,
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {buildCell(builder, values)};
+        });
   }
-  os << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
-     << " = mdrt.from_buffer "
-     << (control.frames ? "%frame_positions" : "%positions")
-     << " : memref<?x3x" << state << "> to !vec\n";
+  std::string positionName = "%x" + std::string(program.reorders ? "_in" : "0") +
+                             (hasSites() ? "u" : "");
+  emitFieldBuffer(positionName, control.frames ? "%frame_positions" : "%positions",
+                  ("memref<?x3x" + state + ">").str(), "!vec", 3, false);
   if (control.frames) {
     os.flush();
     frameHead = program.module.substr(frameMark);
     program.module.resize(frameMark);
   }
-  os << "  " << (program.reorders ? "%v_in" : velocities)
-     << " = mdrt.from_buffer %velocities : memref<?x3x" << state
-     << "> to !vec\n"
-     << "  %m" << given << " = mdrt.from_buffer %masses : memref<?x" << mass
-     << "> to !real\n";
-  for (const Program::Field &field : program.fields)
-    os << "  %p" << given << "_" << field.name << " = mdrt.from_buffer %b_"
-       << field.name << " : memref<?x"
-       << (field.isInteger ? StringRef("i32") : parameter) << "> to "
-       << getFieldType(field) << "\n";
-  for (const Program::Table &table : program.tables)
-    os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
-       << " : memref<?x?xf64> to " << table.getType() << "\n";
-  for (const Program::TupleSet &set : program.tupleSets) {
-    // The members in the order of the files, which a new order of the
-    // particles renumbers.
-    os << "  %r" << (program.reorders ? "o" : "") << "_" << set.name
-       << " = mdrt.from_buffer %br_" << set.name << " : memref<?x"
-       << set.arity << "xi32> to !rel_" << set.name << "\n";
-    for (const Program::Field &field : set.fields)
-      os << "  %f_" << set.name << "_" << field.name
-         << " = mdrt.from_buffer %bf_" << set.name << "_" << field.name
-         << " : memref<?xf64> to !of_" << set.name << "\n";
+  emitFieldBuffer(program.reorders ? "%v_in" : velocities, "%velocities",
+                  ("memref<?x3x" + state + ">").str(), "!vec", 3, false);
+  emitFieldBuffer("%m" + given, "%masses", ("memref<?x" + mass + ">").str(),
+                  "!real", 1, false);
+  for (const Program::Field &field : program.fields) {
+    StringRef element = field.isInteger ? StringRef("i32") : parameter;
+    emitFieldBuffer("%p" + given + "_" + field.name, "%b_" + field.name,
+                    ("memref<?x" + element + ">").str(), getFieldType(field),
+                    1, field.isInteger);
   }
-  os << "  %id" << given
-     << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
-  // A run that continues an earlier one has the forces of the step before.
+  for (const Program::Table &table : program.tables) {
+    emitIRFragment(
+        "  ", {"%t_" + table.name}, {table.getType()}, {"%bt_" + table.name},
+        {"memref<?x?xf64>"},
+        [symmetric = table.isSquare()](mlir::OpBuilder &builder,
+                                         mlir::ValueRange values) -> TermIRValues {
+          auto type = mdir::md::TableType::get(
+              builder.getContext(), 2, builder.getF64Type(), symmetric);
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+  }
+  for (const Program::TupleSet &set : program.tupleSets) {
+    std::string result = "%r" + std::string(program.reorders ? "o" : "") + "_" + set.name;
+    std::string relation = "!rel_" + set.name;
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    emitIRFragment(
+        "  ", {result}, {relation}, {"%br_" + set.name},
+        {"memref<?x" + std::to_string(set.arity) + "xi32>"},
+        [name = set.name, arity = set.arity, orientation](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto ctx = builder.getContext();
+          auto type = mdir::md::RelationType::get(
+              ctx, mlir::FlatSymbolRefAttr::get(ctx, "atoms"), arity, orientation,
+              mlir::FlatSymbolRefAttr::get(ctx, name));
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+    for (const Program::Field &field : set.fields)
+      emitFieldBuffer("%f_" + set.name + "_" + field.name,
+                      "%bf_" + set.name + "_" + field.name, "memref<?xf64>",
+                      "!of_" + set.name, 1, false, set.name);
+  }
+  emitFieldBuffer("%id" + given, "%identities", "memref<?xi32>", "!ids", 1, true);
   if (givenForces)
-    os << "  " << (program.reorders ? "%f_in" : givenForcesName)
-       << " = mdrt.from_buffer %forces : memref<?x3x" << force
-       << "> to !vec\n";
+    emitFieldBuffer(program.reorders ? "%f_in" : givenForcesName, "%forces",
+                    ("memref<?x3x" + force + ">").str(), "!vec", 3, false);
   os.flush();
   frameMark = program.module.size();
   // The virtual sites where their atoms put them, whatever the file says.
@@ -1295,7 +1735,7 @@ void Builder::emitEntry() {
   }
   if (control.minimize) {
     emitMinimization(velocities);
-    return;
+    return llvm::Error::success();
   }
 
   if (control.getCouplingPeriod() > 0) {
@@ -1303,13 +1743,13 @@ void Builder::emitEntry() {
     // the thermostat the key of the random numbers, the degrees of freedom,
     // the mean kinetic energy at the temperature of the bath, and how much
     // of the kinetic energy is kept over one period.
-    os << "  %couple_half = arith.constant 5.0e-01 : f64\n"
-       << "  %total_mass = md.sum_particles gather(%m" << given
-       << " : !real) {\n"
-       << "  ^bb0(%m_i: f64):\n"
-       << "    %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << "    md.yield %mb : vector<3xf64>\n"
-       << "  } : vector<3xf64>\n";
+    emitIRFragment(
+        "  ", {"%couple_half", "%total_mass"}, {"f64", "vector<3xf64>"},
+        {"%m" + given}, {"!real"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto result = buildCouplingMass(builder, values[0]);
+          return {result.half, result.totalMass};
+        });
     if (control.thermostat) {
       // The degrees of freedom of the log. The momentum stays 0 with or
       // without its removal, from velocities that begin with none.
@@ -1325,45 +1765,49 @@ void Builder::emitEntry() {
         // the corrections times the volume are arguments of the entry
         // (collectStartValues).
         double bar = 1.01325;
-        for (int k = 0; k != 3; ++k)
-          os << "  %baro_beta_" << k << " = arith.constant "
-             << formatReal(control.compressibilities[k] / bar) << " : f64\n";
-        os << "  %baro_target = arith.constant "
-           << formatReal(control.pressure * bar) << " : f64\n"
-           << "  %baro_beta = arith.constant "
-           << formatReal(control.compressibility / bar) << " : f64\n"
-           << "  %baro_rate = arith.constant "
-           << formatReal(static_cast<double>(control.barostatPeriod) *
-                         control.timestep / control.tauP)
-           << " : f64\n"
-           << "  %baro_kt = arith.constant "
-           << formatReal(units::boltzmann * control.temperature) << " : f64\n";
-        os << "  %c_bar = arith.constant 16.6053906717 : f64\n"
-           << "  %c_three = arith.constant 3.0 : f64\n"
-           << "  %c_third = arith.constant "
-           << formatReal(1.0 / 3.0) << " : f64\n"
-           << "  %c_unit = arith.constant 1.0 : f64\n"
-           << "  %c_unit3 = arith.constant dense<1.0> : vector<3xf64>\n"
-           << "  %c_half3 = arith.constant dense<5.0e-01> : vector<3xf64>\n"
-           << "  %baro_beta_z = arith.constant "
-           << formatReal(control.compressibilityZ / bar) << " : f64\n"
-           << "  %baro_tension = arith.constant "
-           << formatReal(control.surfaceTension * control.surfaces *
-                         units::dynePerCmToBarNm)
-           << " : f64\n";
+        BarostatParameters parameters{
+            {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
+             control.compressibilities[2] / bar},
+            control.pressure * bar, control.compressibility / bar,
+            static_cast<double>(control.barostatPeriod) * control.timestep / control.tauP,
+            units::boltzmann * control.temperature, control.compressibilityZ / bar,
+            control.surfaceTension * control.surfaces * units::dynePerCmToBarNm};
+        emitIRFragment(
+            "  ", {"%baro_beta_0", "%baro_beta_1", "%baro_beta_2", "%baro_target",
+                   "%baro_beta", "%baro_rate", "%baro_kt", "%c_bar", "%c_three",
+                   "%c_third", "%c_unit", "%c_unit3", "%c_half3", "%baro_beta_z", "%baro_tension"},
+            {"f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64",
+             "f64", "vector<3xf64>", "vector<3xf64>", "f64", "f64"}, {}, {},
+            [parameters](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+              auto p = buildBarostatParameters(builder, parameters);
+              return {p.axisCompressibility[0], p.axisCompressibility[1], p.axisCompressibility[2],
+                      p.pressure, p.compressibility, p.rate, p.thermal, p.bar, p.three, p.third,
+                      p.unit, p.unitVector, p.halfVector, p.zCompressibility, p.tension};
+            });
       }
-      os << "  %seed = arith.constant " << static_cast<int64_t>(control.seed)
-         << " : i64\n"
-         << "  %freedom = arith.constant " << formatReal(freedom) << " : f64\n"
-         << "  %target_kinetic = arith.constant " << formatReal(target)
-         << " : f64\n"
-         << "  %decay = arith.constant " << formatReal(decay) << " : f64\n";
+      emitIRFragment(
+          "  ", {"%seed", "%freedom", "%target_kinetic", "%decay"},
+          {"i64", "f64", "f64", "f64"}, {}, {},
+          [seed = static_cast<int64_t>(control.seed), freedom, target, decay](
+              mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value key = mlir::arith::ConstantIntOp::create(builder, loc, seed, 64);
+            TermIRValues result{key};
+            for (double value : {freedom, target, decay})
+              result.push_back(mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(value)));
+            return result;
+          });
     }
   }
 
   if (isLeapfrog() && control.barostat)
-    os << "  %c_half_back = arith.constant -5.0e-01 : f64\n"
-       << "  %half_back = arith.mulf %c_half_back, %dt : f64\n";
+    emitIRFragment(
+        "  ", {"%half_back"}, {"f64"}, {"%dt"}, {"f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value factor = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(-0.5));
+          return {mlir::arith::MulFOp::create(builder, loc, factor, values[0])};
+        });
 
   // The energy, the forces, and the virial of the state at the start, as
   // %u0, %f0, and %w0; returns the name of the virial.
@@ -1374,13 +1818,10 @@ void Builder::emitEntry() {
     // (D270).
     bool hostTerms = hasHostEvaluation();
     std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
-       << ", %w0" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-       << getTimeValue("%time0") << ")\n"
-       << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> (f64, !vec, vector<9xf64>)\n";
+    emitEnergyEvaluation("  ", "%x0", "%cell", "%p_", "%time0",
+                             "%u0" + held + modelled,
+                             "%f0" + held + raw.str() + modelled,
+                             "%w0" + held + raw.str());
     std::string virial = "%w0" + held;
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
@@ -1438,15 +1879,9 @@ void Builder::emitEntry() {
       std::string held = hasForceCorrections() ? "p" : "";
       auto emitAsked = [&](StringRef tag, bool withVirial) {
         std::string f = ("%f" + tag + "0").str(), w = ("%w" + tag + "0").str();
-        os << "    " << f << held << raw;
-        if (withVirial)
-          os << ", " << w << held << raw;
-        os << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-           << getTimeValue("%time0") << ")\n"
-           << "        request [forces" << (withVirial ? ", virial" : "")
-           << "]\n        : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-           << ") -> " << (withVirial ? "(!vec, vector<9xf64>)" : "!vec")
-           << "\n";
+        emitEnergyEvaluation("    ", "%x0", "%cell", "%p_", "%time0", "",
+                                 f + held + raw.str(),
+                                 withVirial ? w + held + raw.str() : std::string());
         std::string tensor = withVirial ? w + held + raw.str() : std::string();
         if (hasSites())
           tensor = emitSpreadSites(
@@ -1460,18 +1895,31 @@ void Builder::emitEntry() {
         }
         return std::make_pair(f, tensor);
       };
-      auto emitForces = [&](StringRef indent, StringRef f) {
-        os << indent << "mdrt.host_call @mdrtWriteFrameForces(" << f << ", "
-           << idName << ") : (!vec, !ids)\n";
+      auto emitForces = [&](StringRef indent, StringRef force) {
+        emitIRFragment(
+            indent, {}, {}, {force, idName}, {"!vec", "!ids"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              mdir::mdrt::HostCallOp::create(
+                  builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                  mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameForces"),
+                  values, mlir::ValueRange{}, mlir::UnitAttr{});
+              return {};
+            });
       };
-      os << "  %frame_none = arith.constant 0.0 : f64\n"
-         << "  %frame_wf = arith.cmpf one, %frame_ask_0, %frame_none : f64\n"
-         << "  %frame_ww = arith.cmpf one, %frame_ask_1, %frame_none : f64\n"
-         << "  %frame_nf = arith.select %frame_wf, %c1, %c0 : index\n"
-         << "  %frame_nw = arith.select %frame_ww, %c1, %c0 : index\n"
-         // The forces alone: asked without the virial.
-         << "  %frame_no = arith.select %frame_ww, %c0, %frame_nf : index\n"
-         << "  scf.for %frame_if = %c0 to %frame_no step %c1 {\n";
+      emitIRFragment(
+          "  ", {"%frame_nf", "%frame_nw", "%frame_no"}, {"index", "index", "index"},
+          {"%frame_ask_0", "%frame_ask_1", "%c1", "%c0"}, {"f64", "f64", "index", "index"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value zero = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+            mlir::Value force = mlir::arith::CmpFOp::create(builder, loc, mlir::arith::CmpFPredicate::ONE, values[0], zero);
+            mlir::Value virial = mlir::arith::CmpFOp::create(builder, loc, mlir::arith::CmpFPredicate::ONE, values[1], zero);
+            mlir::Value nf = mlir::arith::SelectOp::create(builder, loc, force, values[2], values[3]);
+            mlir::Value nw = mlir::arith::SelectOp::create(builder, loc, virial, values[2], values[3]);
+            mlir::Value no = mlir::arith::SelectOp::create(builder, loc, virial, values[3], nf);
+            return {nf, nw, no};
+          });
+      os << "  scf.for %frame_if = %c0 to %frame_no step %c1 {\n";
       emitForces("    ", emitAsked("g", false).first);
       os << "  }\n"
          << "  scf.for %frame_iw = %c0 to %frame_nw step %c1 {\n";
@@ -1479,55 +1927,76 @@ void Builder::emitEntry() {
       os << "    scf.for %frame_ib = %c0 to %frame_nf step %c1 {\n";
       emitForces("      ", forces);
       os << "    }\n";
-      for (int k = 0; k != 9; ++k)
-        os << "    %frame_w" << k << " = vector.extract " << tensor << "[" << k
-           << "] : f64 from vector<9xf64>\n";
-      os << "    func.call @mdrtWriteFrameVirial(";
-      for (int k = 0; k != 9; ++k)
-        os << (k ? ", " : "") << "%frame_w" << k;
-      os << ")\n        : (f64, f64, f64, f64, f64, f64, f64, f64, f64) -> ()\n"
-         << "  }\n";
+      emitIRFragment(
+          "    ", {}, {}, {tensor}, {"vector<9xf64>"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mlir::Value> entries;
+            for (int k = 0; k != 9; ++k)
+              entries.push_back(mlir::vector::ExtractOp::create(builder, loc, values[0], k));
+            mlir::func::CallOp::create(builder, loc, "mdrtWriteFrameVirial", mlir::TypeRange{}, entries);
+            return {};
+          });
+      os << "  }\n";
     }
     emitTerms();
     // The diagonal of the virial, which semi-isotropic coupling takes axis
     // by axis, for comparison with other programs (D119).
     if (system.topology) {
-      emitDiagonal(os, "%dgw0", virial, "  ");
-      os << "  func.call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
-            " : (f64, f64, f64) -> ()\n";
+      auto diagonal = emitDiagonal("%dgw0", virial, "  ");
+      emitIRFragment(
+          "  ", {}, {}, {diagonal.xx, diagonal.yy, diagonal.zz},
+          {"f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mlir::func::CallOp::create(builder, builder.getUnknownLoc(),
+                                        "mdrtWriteVirial", mlir::TypeRange{}, values);
+            return {};
+          });
     }
-    emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
+    emitKineticEnergy("%k0", velocities, "%m", "  ");
     // K_half - K from the forces without constraints; with them there is
     // no step before the start to measure, and the row takes K
     // (D203).
     std::string startExcess =
         emitKineticExcess("  ", "s0", "", "%f0", velocities);
     if (startExcess.empty())
-      os << "  %g0 = arith.constant 0.0 : f64\n";
+      emitIRFragment(
+          "  ", {"%g0"}, {"f64"}, {}, {},
+          [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+          });
     else
-      emitSum3(os, "%g0", startExcess, "  ");
+      emitSum3("%g0", startExcess, "  ");
     std::string trace = "%tr0", pressureKinetic = "%kph0";
     if (control.frames || control.isBrownian()) {
       // The frame evaluator reports the atomic virial of the forces.
-      emitTrace(os, "%tr0", virial, "  ");
+      emitTrace("%tr0", virial, "  ");
       if (hasConstraints())
         trace = emitStartConstraintTrace("%x0", "%f0", velocities, trace);
-      os << "  %kph0 = arith.addf %k0, %g0 : f64\n";
+      emitIRFragment(
+          "  ", {"%kph0"}, {"f64"}, {"%k0", "%g0"}, {"f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(), values[0], values[1])};
+          });
     } else {
       // The pressure of the groups, whose kinetic energy at the half steps
       // the forces give with constraints as well
       // (D264).
-      emitDiagonal(os, "%dgp0", virial, "  ");
+      emitDiagonal("%dgp0", virial, "  ");
       std::string groups = emitMolecularDiagonal(
           "  ", "%dgp0", "%x0", "%f0", "%cell", "%m", "%r_", "p0");
-      emitSum3(os, "%tr0", groups, "  ");
+      emitSum3("%tr0", groups, "  ");
       GroupKinetic centers =
           emitGroupKinetic("  ", "%x0", velocities, "%f0", "s0");
-      emitSum3(os, "%kph0", centers.half, "  ");
+      emitSum3("%kph0", centers.half, "  ");
     }
-    os << "  func.call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
-       << ", " << pressureKinetic << ")\n"
-       << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
+    emitIRFragment(
+        "  ", {}, {}, {"%start", "%u0", "%k0", "%g0", trace, pressureKinetic},
+        {"i64", "f64", "f64", "f64", "f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtWriteEnergies", mlir::TypeRange{}, values);
+          return {};
+        });
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().coordinateOutput)
         role->emitOutput(*this, {"  ", "%x0", "%cell", "%p_", "%start",
@@ -1538,7 +2007,7 @@ void Builder::emitEntry() {
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
-      emitDiagonal(os, "%dg0", virial, "  ");
+      emitDiagonal("%dg0", virial, "  ");
       std::string diagonal = "%dg0";
       if (hasConstraints())
         diagonal = emitStartConstraintTrace("%x0", "%f0", velocities,
@@ -1556,19 +2025,29 @@ void Builder::emitEntry() {
       // (%first_call = 2, D213) or at the start of a stage of other
       // physics from a checkpoint (D223) has the
       // velocities of the half step already.
-      os << "  %back = arith.constant -5.0e-01 : f64\n"
-         << "  %back_dt = arith.mulf %back, %dt : f64\n"
-         << "  %back_none = arith.constant 0.0 : f64\n"
-         << "  %back_first = arith.constant 1 : i64\n"
-         << "  %back_begins = arith.cmpi eq, %first_call, %back_first : i64\n"
-         << "  %behind = arith.select %back_begins, %back_dt, %back_none"
-            " : f64\n"
-         << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
+      emitIRFragment(
+          "  ", {"%v0"}, {"!vec"}, {"%dt", "%first_call", "%vg", "%f0", "%m"},
+          {"f64", "i64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value back = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(-0.5));
+            mlir::Value interval = mlir::arith::MulFOp::create(builder, loc, back, values[0]);
+            mlir::Value none = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+            mlir::Value first = mlir::arith::ConstantIntOp::create(builder, loc, 1, 64);
+            mlir::Value begins = mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::eq, values[1], first);
+            mlir::Value behind = mlir::arith::SelectOp::create(builder, loc, begins, interval, none);
+            return {buildKick(builder, values[2], values[3], values[4], behind)};
+          });
     } else if (isLeapfrog()) {
-      // v(-dt/2) = v(0) - (dt/2) F(0) / m.
-      os << "  %back = arith.constant -5.0e-01 : f64\n"
-         << "  %behind = arith.mulf %back, %dt : f64\n"
-         << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
+      emitIRFragment(
+          "  ", {"%v0"}, {"!vec"}, {"%dt", "%vg", "%f0", "%m"},
+          {"f64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value back = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(-0.5));
+            mlir::Value behind = mlir::arith::MulFOp::create(builder, loc, back, values[0]);
+            return {buildKick(builder, values[1], values[2], values[3], behind)};
+          });
     }
   }
   if (control.frames) {
@@ -1577,6 +2056,17 @@ void Builder::emitEntry() {
     // the positions of a frame, places the virtual sites, and evaluates
     // what the start of a run evaluates, in a segment of its own, so that
     // the neighbor structures are built anew (D218).
+    // This marker follows the evaluation recipes inside the frame iteration.
+    // Its guard sees their native operations, not their assembly connections.
+    emitIRFragment(
+        "  ", {}, {}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange)
+            -> llvm::Expected<TermIRValues> {
+          if (llvm::Error error = checkFrameEvaluation(
+                  *builder.getInsertionBlock()->getParentOp()))
+            return std::move(error);
+          return TermIRValues{};
+        });
     os.flush();
     std::string chunk = frameHead + "  scf.for %i_frame_once = %c0 to %c1 "
                                     "step %c1 {\n" +
@@ -1586,18 +2076,30 @@ void Builder::emitEntry() {
     // What this assembly assumes of the text, which would otherwise break
     // without a sign (#302).
     frameLoopError = checkFrameLoop(chunk);
-    os << "  %frame_cell = memref.alloca() : memref<6xf64>\n"
-       << "  %frame_asks = memref.alloca() : memref<2xf64>\n";
-    // The places of the cell, of which the first two are those of what the
-    // host asks as well.
-    for (int k = getCellSize(); k < 2; ++k)
-      os << "  %frame_at" << k << " = arith.constant " << k << " : index\n";
-    for (int k = 0; k != getCellSize(); ++k)
-      os << "  %frame_at" << k << " = arith.constant " << k << " : index\n";
-    os << "  %frame_end = arith.constant 9223372036854775807 : index\n"
-       << "  scf.for %i_frame = %c0 to %frame_end step %c1 {\n"
+    std::vector<unsigned> indices;
+    for (int k = getCellSize(); k < 2; ++k) indices.push_back(k);
+    for (int k = 0; k != getCellSize(); ++k) indices.push_back(k);
+    std::vector<std::string> outputs{"%frame_cell", "%frame_asks"};
+    for (unsigned index : indices) outputs.push_back("%frame_at" + std::to_string(index));
+    outputs.push_back("%frame_end");
+    llvm::SmallVector<StringRef> names, types{"memref<6xf64>", "memref<2xf64>"};
+    for (const auto &name : outputs) names.push_back(name);
+    types.append(indices.size() + 1, "index");
+    emitIRFragment(
+        "  ", names, types, {}, {},
+        [indices](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value cell = mlir::memref::AllocaOp::create(builder, loc, mlir::MemRefType::get({6}, builder.getF64Type()));
+          mlir::Value asks = mlir::memref::AllocaOp::create(builder, loc, mlir::MemRefType::get({2}, builder.getF64Type()));
+          TermIRValues results{cell, asks};
+          for (unsigned index : indices)
+            results.push_back(mlir::arith::ConstantIndexOp::create(builder, loc, index));
+          results.push_back(mlir::arith::ConstantIndexOp::create(builder, loc, INT64_MAX));
+          return results;
+        });
+    os << "  scf.for %i_frame = %c0 to %frame_end step %c1 {\n"
        << chunk << "  }\n  return\n}\n";
-    return;
+    return llvm::Error::success();
   }
   if (branchesStart()) {
     os.flush();
@@ -1619,15 +2121,22 @@ void Builder::emitEntry() {
     // The state that the first scaling takes its pressure from, as the
     // checkpoint keeps it (D92).
     // Its numbers are arguments of the entry (collectStartValues).
-    std::string vectors[3];
-    for (int v = 0; v != 3; ++v) {
-      std::string names[3];
-      for (int k = 0; k != 3; ++k)
-        names[k] = "%bstate" + std::to_string(3 * v + k);
-      vectors[v] = "%bstatev" + std::to_string(v);
-      os << "  " << vectors[v] << " = vector.from_elements " << names[0]
-         << ", " << names[1] << ", " << names[2] << " : vector<3xf64>\n";
-    }
+    std::string vectors[3]{"%bstatev0", "%bstatev1", "%bstatev2"};
+    std::vector<std::string> inputs;
+    for (unsigned k = 0; k != 9; ++k) inputs.push_back("%bstate" + std::to_string(k));
+    llvm::SmallVector<StringRef> names, types(9, "f64");
+    for (const auto &name : inputs) names.push_back(name);
+    emitIRFragment(
+        "  ", {vectors[0], vectors[1], vectors[2]},
+        {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"}, names, types,
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          TermIRValues results;
+          for (unsigned axis = 0; axis != 3; ++axis)
+            results.push_back(mlir::vector::FromElementsOp::create(
+                builder, builder.getUnknownLoc(), vec, values.slice(3 * axis, 3)));
+          return results;
+        });
     emitStoreTrotterState("  ", vectors[0], vectors[1], vectors[2]);
   } else if (isRestart() && scalesEveryStep()) {
     // A checkpoint of a run that did not scale every step holds no virial:
@@ -1640,13 +2149,10 @@ void Builder::emitEntry() {
     // (D270).
     bool hostTerms = hasHostEvaluation();
     std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    os << "  %ubs" << held << modelled << ", %fbs" << held << raw << modelled
-       << ", %wbs" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-       << getTimeValue("%time0") << ")\n"
-       << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> (f64, !vec, vector<9xf64>)\n";
+    emitEnergyEvaluation("  ", "%x0", "%cell", "%p_", "%time0",
+                             "%ubs" + held + modelled,
+                             "%fbs" + held + raw.str() + modelled,
+                             "%wbs" + held + raw.str());
     std::string virial = "%wbs" + held;
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,
@@ -1661,13 +2167,18 @@ void Builder::emitEntry() {
                               "%ubsc", "%ubs", virial, "bs");
     std::string current = velocities;
     if (isLeapfrog()) {
-      os << "  %ahead = arith.constant 5.0e-01 : f64\n"
-         << "  %ahead_dt = arith.mulf %ahead, %dt : f64\n"
-         << "  %vs_now = dyn.kick " << velocities
-         << ", %fbs, %m, %ahead_dt : !vec\n";
+      emitIRFragment(
+          "  ", {"%vs_now"}, {"!vec"}, {"%dt", velocities, "%fbs", "%m"},
+          {"f64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value interval = mlir::arith::MulFOp::create(builder, loc, half, values[0]);
+            return {buildKick(builder, values[1], values[2], values[3], interval)};
+          });
       current = "%vs_now";
     }
-    emitDiagonal(os, "%dgs", virial, "  ");
+    emitDiagonal("%dgs", virial, "  ");
     std::string diagonal = "%dgs";
     if (hasConstraints())
       diagonal = emitStartConstraintTrace("%x0", "%fbs", current, diagonal,
@@ -1691,27 +2202,20 @@ void Builder::emitEntry() {
     std::string outerCell = cellName, outerScale = scaleName;
     if (changesCell()) {
       cellName = "%cell_tail";
-      for (int k = 0; k != getCellSize(); ++k)
-        os << "  %edge_tail_" << k << " = memref.load %box_memory[%c_edge"
-           << k << "] : " << getBoxMemoryType() << "\n";
+      emitBoxEdges("  ", "%edge_tail");
       emitCellOf("  ", cellName, "%edge_tail");
       if (scalesReference()) {
         scaleName = "%rest_scale_tail";
-        emitReferenceScale(os, "  ", scaleName, "%edge_tail_0",
+        emitReferenceScale("  ", scaleName, "%edge_tail_0",
                            "%edge_tail_1", "%edge_tail_2");
       }
     }
     os << "  %xt, %vt, %ft = scf.for %i_tail = %c0 to %n_tail step %c1\n"
        << "      iter_args(%xta = %xe0, %vta = %ve0, %fta = %fe0)\n"
        << "      -> (!vec, !vec, !vec) {\n";
-    std::string noise = emitNoiseValue("    ");
-    os << "    %xtb, %vtb, %ftb = dyn.step @step(%xta, %vta, %fta, "
-       << massName << ", " << cellName << ", %dt" << getScaleValue()
-       << getFieldValues(fieldPrefix) << noise << ")\n"
-       << "        : (!vec, !vec, !vec, !real, !md.cell, f64"
-       << getScaleType() << getFieldTypes() << getNoiseType()
-       << ") -> (!vec, !vec, !vec)\n"
-       << "    scf.yield %xtb, %vtb, %ftb : !vec, !vec, !vec\n"
+    emitDynamicsStep("    ", "step", "%xta", "%vta", "%fta", cellName, "",
+                         {"%xtb", "%vtb", "%ftb"}, {"!vec", "!vec", "!vec"});
+    os << "    scf.yield %xtb, %vtb, %ftb : !vec, !vec, !vec\n"
        << "  }\n";
     last = emitSegmentEnergyStep("%xt", "%vt", "%ft");
     cellName = outerCell;
@@ -1721,11 +2225,12 @@ void Builder::emitEntry() {
     // period that closes, or the intervals of the reports
     // (D207).
     unsigned second = levels[0].name == "couple" ? 2 : 1;
-    os << "  %steps_a = arith.muli %n0, %per0 : index\n"
-       << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
-       << "  %steps_p = arith.addi %steps_t, %n_plain : index\n"
-       << "  %steps_e = arith.index_cast %steps_p : index to i64\n"
-       << "  %start_e = arith.addi %start, %steps_e : i64\n";
+    emitIRFragment(
+        "  ", {"%start_e"}, {"i64"}, {"%n0", "%per0", "%n_tail", "%n_plain", "%start"},
+        {"index", "index", "index", "index", "i64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {buildSegmentStep(builder, values[0], values[1], values[2], values[3], values[4])};
+        });
     nestBegin = second;
     nestEnd = levels.size();
     nestOutside = last;
@@ -1740,12 +2245,19 @@ void Builder::emitEntry() {
                  {"%x" + last, "%v" + last, "%f" + last},
                  {"%x0", "%v0", "%f0"});
     os << "  return\n}\n";
-    return;
+    return llvm::Error::success();
   }
   emitLevel(0, "  ");
-  os << "  mdrt.host_call @mdrtFinish(%x" << last << ", %v" << last << ", "
-     << idName << ") : (!vec, !vec, !ids)\n";
+  emitIRFragment(
+      "  ", {}, {}, {"%x" + last, "%v" + last, idName}, {"!vec", "!vec", "!ids"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtFinish"),
+            values, mlir::ValueRange{}, mlir::UnitAttr{});
+        return {};
+      });
   os << "  return\n}\n";
+  return llvm::Error::success();
 }
 
 void Builder::emitPartCounts() {
@@ -1760,50 +2272,73 @@ void Builder::emitPartCounts() {
   // written at a step of energy whose number is a multiple of
   // %frame_period (0: none) (D207). A minimization takes its steps in
   // %count_outer (D202).
-  static const char *const names[] = {
-      "%start$part",        "%count_outer",        "%count_inner",
-      "%count_tail",        "%count_energy_plain", "%count_energy_close",
-      "%count_energy_inner", "%count_energy_periods", "%frame_period"};
-  static_assert(sizeof(names) / sizeof(names[0]) == 9, "");
-  int64_t count = control.minimize ? 2 : getPartCountsSize();
-  for (int64_t k = 0; k != count; ++k)
-    os << "    %part_at" << k << " = arith.constant " << k << " : index\n"
-       << "    " << names[k] << " = memref.load %part_counts[%part_at" << k
-       << "] : memref<" << getPartCountsSize() << "xi64>\n";
-  if (control.minimize)
-    return;
-  // The first nest is over the periods of coupling, with plain steps
-  // inside, or over steps; the second, if any, is one period that closes
-  // with a step of energy.
-  bool couples = levels[0].name == "couple";
-  os << "    %n0 = arith.index_cast %count_outer : i64 to index\n";
-  if (couples)
-    os << "    %n1 = arith.index_cast %count_inner : i64 to index\n"
-       << "    %n2 = arith.index_cast %count_energy_close : i64 to index\n"
-       << "    %n3 = arith.index_cast %count_energy_periods : i64 to index\n"
-       << "    %n4 = arith.index_cast %count_energy_inner : i64 to index\n";
-  else
-    os << "    %n1 = arith.index_cast %count_energy_close : i64 to index\n"
-       << "    %n2 = arith.index_cast %count_energy_inner : i64 to index\n";
-  os << "    %n_tail = arith.index_cast %count_tail : i64 to index\n"
-     << "    %n_plain = arith.index_cast %count_energy_plain : i64 to index\n";
-  // The steps of an iteration of each loop. An iteration over a period
-  // takes its plain steps and those that close it: one, or two with the
-  // barostat of Trotter type. The period of the second nest is the whole of
-  // its one interval of energy. Without coupling, the second nest is
-  // intervals of %n2 plain steps and a step of energy.
-  if (couples)
-    os << "    %per1 = arith.constant 1 : index\n"
-       << "    %closing = arith.constant " << getClosingSteps() << " : index\n"
-       << "    %per0 = arith.addi %n1, %closing : index\n"
-       << "    %per4 = arith.constant 1 : index\n"
-       << "    %per3 = arith.addi %n4, %closing : index\n"
-       << "    %periods2 = arith.addi %n3, %c1 : index\n"
-       << "    %per2 = arith.muli %periods2, %per3 : index\n";
-  else
-    os << "    %per0 = arith.constant 1 : index\n"
-       << "    %per2 = arith.constant 1 : index\n"
-       << "    %per1 = arith.addi %n2, %c1 : index\n";
+  static const char *const countNames[] = {
+      "%start$part", "%count_outer", "%count_inner", "%count_tail",
+      "%count_energy_plain", "%count_energy_close", "%count_energy_inner",
+      "%count_energy_periods", "%frame_period"};
+  unsigned count = control.minimize ? 2 : getPartCountsSize();
+  bool couples = !control.minimize && levels[0].name == "couple";
+  llvm::SmallVector<StringRef> names(countNames, countNames + count);
+  llvm::SmallVector<StringRef> types(count, "i64");
+  if (!control.minimize) {
+    if (couples)
+      names.append({"%n0", "%n1", "%n2", "%n3", "%n4", "%n_tail", "%n_plain",
+                    "%per1", "%per0", "%per4", "%per3", "%per2"});
+    else
+      names.append({"%n0", "%n1", "%n2", "%n_tail", "%n_plain", "%per0", "%per2", "%per1"});
+    types.append(names.size() - count, "index");
+  }
+  std::string memoryType = "memref<" + std::to_string(getPartCountsSize()) + "xi64>";
+  llvm::SmallVector<StringRef> inputs{"%part_counts"}, inputTypes{memoryType};
+  if (!control.minimize) { inputs.push_back("%c1"); inputTypes.push_back("index"); }
+  emitIRFragment(
+      "    ", names, types, inputs, inputTypes,
+      [count, couples, minimize = bool(control.minimize), closing = getClosingSteps()](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        TermIRValues counts;
+        for (unsigned k = 0; k != count; ++k) {
+          mlir::Value index = mlir::arith::ConstantIndexOp::create(builder, loc, k);
+          counts.push_back(mlir::memref::LoadOp::create(builder, loc, values[0], index));
+        }
+        if (minimize) return counts;
+        auto cast = [&](mlir::Value value) -> mlir::Value {
+          return mlir::arith::IndexCastOp::create(builder, loc, builder.getIndexType(), value);
+        };
+        auto one = [&]() -> mlir::Value {
+          return mlir::arith::ConstantIndexOp::create(builder, loc, 1);
+        };
+        auto add = [&](mlir::Value a, mlir::Value b) -> mlir::Value {
+          return mlir::arith::AddIOp::create(builder, loc, a, b);
+        };
+        mlir::Value n0 = cast(counts[1]);
+        counts.push_back(n0);
+        mlir::Value n1, n2, n3, n4;
+        if (couples) {
+          n1 = cast(counts[2]); n2 = cast(counts[5]); n3 = cast(counts[7]); n4 = cast(counts[6]);
+          counts.append({n1, n2, n3, n4});
+        } else {
+          n1 = cast(counts[5]); n2 = cast(counts[6]);
+          counts.append({n1, n2});
+        }
+        mlir::Value tail = cast(counts[3]), plain = cast(counts[4]);
+        counts.append({tail, plain});
+        if (couples) {
+          mlir::Value per1 = one();
+          mlir::Value last = mlir::arith::ConstantIndexOp::create(builder, loc, closing);
+          mlir::Value per0 = add(n1, last);
+          mlir::Value per4 = one();
+          mlir::Value per3 = add(n4, last);
+          mlir::Value periods = add(n3, values[1]);
+          mlir::Value per2 = mlir::arith::MulIOp::create(builder, loc, periods, per3);
+          counts.append({per1, per0, per4, per3, per2});
+        } else {
+          mlir::Value per0 = one(), per2 = one();
+          mlir::Value per1 = add(n2, values[1]);
+          counts.append({per0, per2, per1});
+        }
+        return counts;
+      });
 }
 
 void Builder::emitPartLoop(std::string chunk,
@@ -1823,9 +2358,16 @@ void Builder::emitPartLoop(std::string chunk,
       "memref<" + std::to_string(getPartCountsSize()) + "xi64>";
   // The loop has no end of its own: the host ends the activation at a
   // boundary (Simulation.cpp).
-  os << "  %part_counts = memref.alloca() : " << counts << "\n"
-     << "  %part_end = arith.constant 9223372036854775807 : index\n"
-     << "  ";
+  emitIRFragment(
+      "  ", {"%part_counts", "%part_end"}, {counts, "index"}, {}, {},
+      [count = getPartCountsSize()](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value memory = mlir::memref::AllocaOp::create(
+            builder, loc, mlir::MemRefType::get({int64_t(count)}, builder.getI64Type()));
+        mlir::Value end = mlir::arith::ConstantIndexOp::create(builder, loc, INT64_MAX);
+        return {memory, end};
+      });
+  os << "  ";
   for (size_t i = 0; i != carried.size(); ++i)
     os << (i ? ", " : "") << carried[i] << "$parts";
   os << " = scf.for %i_part = %c0 to %part_end step %c1\n"
@@ -1840,27 +2382,36 @@ void Builder::emitPartLoop(std::string chunk,
               f = boundary[2] + "$part";
   if (llvm::is_contained(carried, boundary[1]))
     v += "$part";
-  os << "    %nf_s = md.sum_particles gather(" << x << ", " << v << ", " << f
-     << " : !vec, !vec, !vec) {\n"
-     << "    ^bb0(%nf_x: vector<3xf64>, %nf_v: vector<3xf64>, "
-        "%nf_f: vector<3xf64>):\n"
-     << "      %nf_one = arith.constant dense<1.0> : vector<3xf64>\n"
-     << "      %nf_zero = arith.constant dense<0.0> : vector<3xf64>\n";
-  for (StringRef c : {"x", "v", "f"})
-    os << "      %nf_d" << c << " = arith.subf %nf_" << c << ", %nf_" << c
-       << " : vector<3xf64>\n"
-       << "      %nf_k" << c << " = arith.cmpf ord, %nf_d" << c << ", %nf_d"
-       << c << " : vector<3xf64>\n"
-       << "      %nf_b" << c << " = arith.select %nf_k" << c
-       << ", %nf_zero, %nf_one : vector<3xi1>, vector<3xf64>\n";
-  os << "      %nf_bxv = arith.addf %nf_bx, %nf_bv : vector<3xf64>\n"
-     << "      %nf_b = arith.addf %nf_bxv, %nf_bf : vector<3xf64>\n"
-     << "      md.yield %nf_b : vector<3xf64>\n"
-     << "    } : vector<3xf64>\n";
-  emitSum3(os, "%nf", "%nf_s", "    ");
-  os << "    mdrt.host_call @mdrtPartBoundary(" << x << ", " << v << ", " << f
-     << ", " << idName << ", %nf, %part_counts) {in_place}\n"
-     << "        : (!vec, !vec, !vec, !ids, f64, " << counts << ")\n";
+  emitIRFragment(
+      "    ", {}, {}, {x, v, f, idName, "%part_counts"},
+      {"!vec", "!vec", "!vec", "!ids", counts},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+        auto sum = mdir::md::SumParticlesOp::create(builder, loc, vec, values.take_front(3));
+        {
+          mlir::OpBuilder::InsertionGuard guard(builder);
+          auto args = builder.createBlock(&sum.getKernel(), {}, {vec, vec, vec}, {loc, loc, loc})->getArguments();
+          mlir::Value one = mlir::arith::ConstantOp::create(builder, loc, mlir::DenseElementsAttr::get(vec, 1.0));
+          mlir::Value zero = mlir::arith::ConstantOp::create(builder, loc, mlir::DenseElementsAttr::get(vec, 0.0));
+          llvm::SmallVector<mlir::Value> bad;
+          for (mlir::Value field : args) {
+            mlir::Value difference = mlir::arith::SubFOp::create(builder, loc, field, field);
+            mlir::Value finite = mlir::arith::CmpFOp::create(builder, loc, mlir::arith::CmpFPredicate::ORD, difference, difference);
+            bad.push_back(mlir::arith::SelectOp::create(builder, loc, finite, zero, one));
+          }
+          mlir::Value first = mlir::arith::AddFOp::create(builder, loc, bad[0], bad[1]);
+          mlir::Value all = mlir::arith::AddFOp::create(builder, loc, first, bad[2]);
+          mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{all});
+        }
+        mlir::Value invalid = buildSum3(builder, sum.getResult());
+        mdir::mdrt::HostCallOp::create(
+            builder, loc, mlir::TypeRange{},
+            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtPartBoundary"),
+            mlir::ValueRange{values[0], values[1], values[2], values[3], invalid, values[4]},
+            mlir::ValueRange{}, builder.getUnitAttr());
+        return {};
+      });
   emitPartCounts();
   // %start of the chunk is the step of the part (carryLoopValues).
   os << "    %start$mark = builtin.unrealized_conversion_cast %start$part, "
@@ -1875,90 +2426,113 @@ void Builder::emitFrameIfDue(StringRef indent, StringRef step,
   // A frame of a reporter (D207) where the number of the step
   // is a multiple of the frame period that the entry takes; only then are
   // the positions copied.
-  std::string t = ("%frame_" + tag).str();
-  os << indent << t << "_z = arith.constant 0 : i64\n"
-     << indent << t << "_o = arith.constant 1 : i64\n"
-     << indent << t << "_h = arith.cmpi sgt, %frame_period, " << t
-     << "_z : i64\n"
-     << indent << t << "_s = arith.select " << t << "_h, %frame_period, " << t
-     << "_o : i64\n"
-     << indent << t << "_r = arith.remsi " << step << ", " << t << "_s : i64\n"
-     << indent << t << "_e = arith.cmpi eq, " << t << "_r, " << t
-     << "_z : i64\n"
-     << indent << t << "_d = arith.andi " << t << "_h, " << t << "_e : i1\n"
-     // A loop of one iteration or none: the passes that place the buffers
-     // carry their storage through scf.for, not scf.if.
-     << indent << t << "_w = arith.extui " << t << "_d : i1 to i64\n"
-     << indent << t << "_n = arith.index_cast " << t << "_w : i64 to index\n"
-     << indent << "scf.for " << t << "_i = %c0 to " << t << "_n step %c1 {\n"
-     << indent << "  mdrt.host_call @mdrtWriteFrame(" << step << ", "
-     << positions << ", " << idName << ") : (i64, !vec, !ids)\n"
-     << indent << "}\n";
+  emitIRFragment(
+      indent, {}, {}, {"%frame_period", step, positions, idName, "%c0", "%c1"},
+      {"i64", "i64", "!vec", "!ids", "index", "index"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value zero = mlir::arith::ConstantIntOp::create(builder, loc, 0, 64);
+        mlir::Value one = mlir::arith::ConstantIntOp::create(builder, loc, 1, 64);
+        mlir::Value hasPeriod = mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::sgt, values[0], zero);
+        mlir::Value safe = mlir::arith::SelectOp::create(builder, loc, hasPeriod, values[0], one);
+        mlir::Value remainder = mlir::arith::RemSIOp::create(builder, loc, values[1], safe);
+        mlir::Value exact = mlir::arith::CmpIOp::create(builder, loc, mlir::arith::CmpIPredicate::eq, remainder, zero);
+        mlir::Value due = mlir::arith::AndIOp::create(builder, loc, hasPeriod, exact);
+        mlir::Value wide = mlir::arith::ExtUIOp::create(builder, loc, builder.getI64Type(), due);
+        mlir::Value trips = mlir::arith::IndexCastOp::create(builder, loc, builder.getIndexType(), wide);
+        auto loop = mlir::scf::ForOp::create(builder, loc, values[4], trips, values[5]);
+        {
+          mlir::OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPointToStart(loop.getBody());
+          mdir::mdrt::HostCallOp::create(
+              builder, loc, mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"),
+              values.slice(1, 3), mlir::ValueRange{}, mlir::UnitAttr{});
+        }
+        return {};
+      });
 }
 
 std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
                                            StringRef f) {
   // At most one plain step, of energy, as `mdir run` takes at a row of its
   // log without coupling: its energies go to mdrtWriteEnergies.
-  os << "  %steps_pa = arith.muli %n0, %per0 : index\n"
-     << "  %steps_pt = arith.addi %steps_pa, %n_tail : index\n"
-     << "  %steps_pe = arith.addi %steps_pt, %c1 : index\n"
-     << "  %steps_pi = arith.index_cast %steps_pe : index to i64\n"
-     << "  %step_plain = arith.addi %start, %steps_pi : i64\n";
+  emitIRFragment(
+      "  ", {"%step_plain"}, {"i64"}, {"%n0", "%per0", "%n_tail", "%c1", "%start"},
+      {"index", "index", "index", "index", "i64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildSegmentStep(builder, values[0], values[1], values[2], values[3], values[4])};
+      });
   os << "  %xp, %vp, %fp = scf.for %i_plain = %c0 to %n_plain step %c1\n"
      << "      iter_args(%xpa = " << x << ", %vpa = " << v << ", %fpa = "
      << f << ")\n"
      << "      -> (!vec, !vec, !vec) {\n";
-  std::string noise = emitNoiseValue("    ");
-  bool brownian = control.isBrownian();
-  os << "    %xpl, %vpl, %fpl, %upl, %wpl" << (brownian ? "" : ", %gwpl")
-     << (isLeapfrog() ? ", %vpn" : "")
-     << (measuresHalfSteps() ? ", %khspl" : "")
-     << (reportsSolvent() ? ", %kwspl" : "")
-     << " = dyn.step @step_energy(%xpa, %vpa, %fpa, " << massName << ", "
-     << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
-     << noise << ")\n"
-     << "        : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-     << getFieldTypes() << getNoiseType()
-     << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-     << (brownian ? "" : ", vector<3xf64>")
-     << (isLeapfrog() ? ", !vec" : "")
-     << (measuresHalfSteps() ? ", vector<3xf64>" : "")
-     << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
+  std::vector<std::string> results{"%xpl", "%vpl", "%fpl", "%upl", "%wpl"};
+  std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>"};
+  if (!control.isBrownian()) { results.push_back("%gwpl"); types.push_back("vector<3xf64>"); }
+  if (isLeapfrog()) { results.push_back("%vpn"); types.push_back("!vec"); }
+  if (measuresHalfSteps()) { results.push_back("%khspl"); types.push_back("vector<3xf64>"); }
+  if (reportsSolvent()) { results.push_back("%kwspl"); types.push_back("vector<3xf64>"); }
+  llvm::SmallVector<StringRef> names, signatures;
+  for (const auto &name : results) names.push_back(name);
+  for (const auto &type : types) signatures.push_back(type);
+  emitDynamicsStep("    ", "step_energy", "%xpa", "%vpa", "%fpa", cellName, "", names, signatures);
   if (reportsSolvent())
     emitWriteSolvent("    ", "%kwspl");
   std::string plainFull = isLeapfrog() ? "%vpn" : "%vpl";
-  emitKineticEnergy(os, "%kpl", plainFull, massName, "    ");
+  emitKineticEnergy("%kpl", plainFull, massName, "    ");
   std::string plainExcess = emitKineticExcess(
       "    ", "pl", measuresHalfSteps() ? "%khspl" : "", "%fpl", plainFull);
   if (plainExcess.empty())
-    os << "    %gpl = arith.constant 0.0 : f64\n";
+    emitIRFragment(
+        "    ", {"%gpl"}, {"f64"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+        });
   else
-    emitSum3(os, "%gpl", plainExcess, "    ");
+    emitSum3("%gpl", plainExcess, "    ");
   // The pressure of the groups (D264).
-  if (brownian) {
-    emitTrace(os, "%trpl", "%wpl", "    ");
-    os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";
+  if (control.isBrownian()) {
+    emitTrace("%trpl", "%wpl", "    ");
+    emitIRFragment(
+        "    ", {"%kphpl"}, {"f64"}, {"%kpl", "%gpl"}, {"f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(), values[0], values[1])};
+        });
   } else {
-    emitSum3(os, "%trpl", "%gwpl", "    ");
+    emitSum3("%trpl", "%gwpl", "    ");
     GroupKinetic centers =
         emitGroupKinetic("    ", "%xpl", plainFull, "%fpl", "pl");
-    emitSum3(os, "%kphpl", centers.half, "    ");
+    emitSum3("%kphpl", centers.half, "    ");
   }
-  os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
-        "%trpl, %kphpl) : (i64, f64, f64, f64, f64, f64) -> ()\n";
+  emitIRFragment(
+      "    ", {}, {}, {"%step_plain", "%upl", "%kpl", "%gpl", "%trpl", "%kphpl"},
+      {"i64", "f64", "f64", "f64", "f64", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtWriteEnergies", mlir::TypeRange{}, values);
+        return {};
+      });
   if (!control.observables.empty()) {
     // The observed terms at the positions after the step (D189), as at a
     // row of the second nest.
     if (control.usesTime)
-      os << "    %ob_time_pl_steps = arith.sitofp %step_plain : i64 to f64\n"
-         << "    %ob_time_pl = arith.mulf %ob_time_pl_steps, %dt : f64\n";
+      emitIRFragment(
+          "    ", {"%ob_time_pl"}, {"f64"}, {"%step_plain", "%dt"}, {"i64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildSimulationTime(builder, values[0], values[1])};
+          });
     emitObservablesOutput("    ", "%xpl", cellName, fieldPrefix, "%step_plain",
                           "%ob_time_pl");
   }
   if (!control.periodic)
-    os << "    mdrt.host_call @mdrtCheckSpread(%step_plain, %xpl, " << idName
-       << ") : (i64, !vec, !ids)\n";
+    emitIRFragment(
+        "    ", {}, {}, {"%step_plain", "%xpl", idName}, {"i64", "!vec", "!ids"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtCheckSpread"),
+              values, mlir::ValueRange{}, mlir::UnitAttr{});
+          return {};
+        });
   emitFrameIfDue("    ", "%step_plain", "%xpl", "pl");
   os << "    scf.yield %xpl, %vpl, %fpl : !vec, !vec, !vec\n"
      << "  }\n";
@@ -2005,4 +2579,68 @@ void Builder::setSchedule() {
   } else {
     levels.push_back({"step", steps});
   }
+}
+
+void Builder::emitProgramCall(
+    StringRef indent, StringRef symbol, llvm::ArrayRef<StringRef> results,
+    llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
+    llvm::ArrayRef<StringRef> operandTypes) {
+  emitIRFragment(
+      indent, results, resultTypes, operands, operandTypes,
+      [symbol = symbol.str()](mlir::OpBuilder &builder, mlir::ValueRange values)
+          -> llvm::Expected<TermIRValues> {
+        auto module = builder.getInsertionBlock()->getParentOp()->getParentOfType<mlir::ModuleOp>();
+        auto callee = module.lookupSymbol<mdir::dyn::ProgramOp>(symbol);
+        if (!callee)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                         "a generated step has no program definition");
+        auto call = mdir::dyn::StepOp::create(
+            builder, builder.getUnknownLoc(), callee.getFunctionType().getResults(), symbol, values);
+        TermIRValues result;
+        llvm::append_range(result, call.getResults());
+        return result;
+      });
+}
+void Builder::emitDynamicsStep(
+    StringRef indent, StringRef symbol, StringRef x, StringRef v, StringRef f,
+    StringRef cell, StringRef mu, llvm::ArrayRef<StringRef> results,
+    llvm::ArrayRef<StringRef> resultTypes) {
+  PotentialConnections fields(program, x, cell, fieldPrefix, "", false);
+  std::vector<std::string> inputs{x.str(), v.str(), f.str(), massName, cell.str(), "%dt"};
+  std::vector<std::string> types{"!vec", "!vec", "!vec", "!real", "!md.cell", "f64"};
+  if (!mu.empty()) { inputs.push_back(mu.str()); types.push_back("vector<3xf64>"); }
+  if (scalesReference()) { inputs.push_back(scaleName); types.push_back("vector<3xf64>"); }
+  for (unsigned slot = 2; slot != fields.values.size(); ++slot) {
+    inputs.push_back(fields.values[slot]); types.push_back(fields.types[slot]);
+  }
+  std::string noise = emitNoiseValue(indent);
+  if (!noise.empty()) {
+    inputs.push_back(noise); types.push_back("i64");
+    inputs.push_back(idName); types.push_back("!ids");
+  }
+  llvm::SmallVector<StringRef> operands, signatures;
+  for (const auto &input : inputs) operands.push_back(input);
+  for (const auto &type : types) signatures.push_back(type);
+  emitProgramCall(indent, symbol, results, resultTypes, operands, signatures);
+}
+
+void Builder::emitBoxEdges(StringRef indent, StringRef prefix) {
+  unsigned count = getCellSize();
+  std::vector<std::string> outputs, inputs{"%box_memory"};
+  std::vector<std::string> inputTypes{getBoxMemoryType()};
+  for (unsigned k = 0; k != count; ++k) {
+    outputs.push_back((prefix + "_" + std::to_string(k)).str());
+    inputs.push_back("%c_edge" + std::to_string(k)); inputTypes.push_back("index");
+  }
+  llvm::SmallVector<StringRef> names, operands, types, resultTypes(count, "f64");
+  for (const auto &name : outputs) names.push_back(name);
+  for (const auto &name : inputs) operands.push_back(name);
+  for (const auto &type : inputTypes) types.push_back(type);
+  emitIRFragment(indent, names, resultTypes, operands, types,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        TermIRValues result;
+        for (mlir::Value index : values.drop_front())
+          result.push_back(mlir::memref::LoadOp::create(builder, builder.getUnknownLoc(), values[0], index));
+        return result;
+      });
 }

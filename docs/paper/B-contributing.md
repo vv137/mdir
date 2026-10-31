@@ -183,3 +183,110 @@ remaining generated-text boundary and keeps parsing at user input boundaries.
 A new dialect in a generated program belongs in `insertProgramDialects`, with
 its library in `lib/Dialect/Program/CMakeLists.txt`. Keep construction and
 lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-files-of-the-builder).
+
+Stage C (#718, D[builder-native-program]) owns the native module and parses
+staged-model input in its build context, cloning declarations and value
+dependencies. Remaining native program construction is in progress under
+the ownership contract recorded there.
+
+Native minimization bodies now include constrained trials and virtual-site
+placement and force spreading through semantic parameter slots and actual block
+arguments. Shared construction preserves kernel and operation order. Restraint
+corrections and hosted evaluations borrow actual physical values synchronously
+through narrow roles. Their native kernels are shared with the remaining
+emitters; the complete minimization body is native. Other scopes remain in progress.
+
+All dynamics programs construct complete native signatures and bodies. Semantic
+constraint groups preserve position correction, velocity projection, failure
+reporting, molecular pressure, constraint virial and future half-step kinetic
+measurements, including geodesic Langevin and within-drift Trotter scaling.
+Borrowed physical values and owned scalar configuration retain the prior kernel
+and accumulation order. Entry/schedule scopes remain in progress.
+
+Half-step eligibility is shared by the owner, construction tests and native
+function builder. A checked return boundary reports the physical combination
+when the signature and returned state disagree, before ordinary verification.
+
+Bare pair and triplet contributions borrow actual fields and tables through
+typed hooks. Their complete scalar potential is native, with module-owned
+operations and block arguments independent of transient construction metadata.
+Topology potential and entry/schedule scopes remain in progress.
+
+Built-in bonded term potentials construct native signatures and bodies
+from actual tuple relations and parameter fields. Shared kernels and explicit
+emission ranks preserve the original arithmetic and accumulation order.
+
+External potentials bind semantic expression variables directly to actual
+fields, tables, time, lambda and observed arguments. Their native signature
+and body retain frame scaling, argument order and the shared expression kernel.
+
+Generalized Born and surface potentials construct native bodies together.
+Computed Born radii remain private to the adapter; radii, energy and surface
+contributions retain their original construction and accumulation order.
+
+Special 1–4 pair potentials use native tuple relations and fields, including
+charge-gradient products and the original LJ/Coulomb accumulation order.
+
+Custom tuple and centroid potentials also construct native bodies. Shared
+centroid geometry and expression kernels retain coordinate, parameter and
+observed-binding precedence; gradient seeds are actual boundary arguments.
+
+Custom pair potentials use the same native topology boundary and shared
+expression kernel, retaining grouped masks, lookup and constant binding order,
+tunable arguments and the selected truncation. The owner constructs their
+shared neighborhood before ranked contributions.
+
+Staged-model contributions clone their checked input body directly into the
+native topology potential using actual positions, cell and atomic-number values.
+Native potential construction propagates errors and discards incomplete bodies;
+construction coverage verifies that failure boundary explicitly.
+
+Primary, excluded, within-selection and reciprocal nonbonded contributions
+now construct native bodies through the same topology hook. Their seven shared
+kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
+order. Boundary flags are supplied at the current potential; parameter-field
+metadata is read-only and computed reciprocal outputs retain their original order.
+
+All topology potential signatures and bodies now construct native operations,
+including empty selections. The obsolete assembly fallback, named contribution
+callbacks and signature/value formatters are removed. Pull auxiliary potentials
+resolve time and tables through semantic metadata slots instead of generated
+SSA spellings. Entry/schedule assembly remains for the next construction phase.
+
+Native frame entries cover Verlet, leapfrog, Langevin and
+Brownian integrators in orthorhombic or triclinic cells,
+including time-dependent terms, topology energy columns and virtual-site
+placement/spreading, constrained-frame start traces and restraint corrections,
+with free-energy and observable output through shared typed output kernels.
+Observable and gradient tunables resolve semantic entry-value slots; gradient
+seed fields and derivative argument order retain their metadata layout. Header
+mass/thermostat preparation and initial half-step velocities retain their order.
+Barostat/reference-scale setup and initial Trotter state also construct native
+operations. A completed-loop provenance check rejects captured entry positions,
+cell expressions and box-memory aliases while allowing header initialization.
+Pull output consumes actual relation and tuple-field bindings through its narrow
+native output role; both entry paths share the coordinate/force output core.
+The obsolete centroid SSA-name formatter is removed. Hosted runtime declarations
+also share a native construction core across both declaration phases; hosted
+evaluation and other entry scopes remain in the other entry path.
+Restraint energy columns receive actual stored contribution values from the adapter.
+`EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
+`EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
+actual SCF regions with checked yield counts, types and insertion scopes.
+`SimpleFrameEntryIR.cpp` preserves boundary/reorder/request/output order and
+checks actual frame evaluations and frame-input provenance.
+`EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
+Other entry families and their final assembly join remain in progress.
+
+A bare fixed-cell Verlet entry with plain steps, energy, trajectory and checkpoint intervals constructs
+its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
+energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
+finish. Energy intervals use the inner loop results for their closing energy
+step, retain completed-step arithmetic and check nonperiodic spread. Nested
+trajectory intervals and frames written at energy boundaries preserve output
+order and the outer fresh boundary. Checkpoint segments carry reordered masses,
+particle parameters and identities with the physical state, regenerate relations
+from the original imports, and retain checkpoint output and segment boundaries.
+It shares semantic field flattening and reordering with the
+frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
+progress.

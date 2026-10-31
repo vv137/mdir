@@ -62,6 +62,25 @@ add_mlir_library(MDIRDriver
   TermLennardJones.cpp
   TermNonbonded.cpp
   TermModel.cpp
+  StagedModelIR.cpp
+  SiteIR.cpp
+  SiteSpreadIR.cpp
+  ConstraintIR.cpp
+  CouplingIR.cpp
+  NoiseIR.cpp
+  KineticIR.cpp
+  OutputIR.cpp
+  PotentialIR.cpp
+  ScheduleIR.cpp
+  EntryBoundaryIR.cpp
+  EntryFieldsIR.cpp
+  EntryLoopIR.cpp
+  EntryRuntimeIR.cpp
+  SimpleFrameEntryIR.cpp
+  SimpleStepEntryIR.cpp
+  BarostatIR.cpp
+  DynamicsIR.cpp
+  ReorderIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

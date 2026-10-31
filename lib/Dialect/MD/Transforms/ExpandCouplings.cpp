@@ -567,8 +567,7 @@ buildTupleOp(OpBuilder &b, Location loc, StringRef name, Type result,
   return op;
 }
 
-/// `factor` (f64) times `value` (vector<3xf64>), as SiteKernel::scale
-/// writes it.
+/// `factor` (f64) broadcast before multiplying `value` (vector<3xf64>).
 static Value scaleBy(Emitter &e, Value factor, Value value) {
   return e.mul(e.splat(factor), value);
 }
@@ -632,8 +631,8 @@ void ExpandCouplings::expandGroupKinetic(dyn::GroupKineticOp op) {
               for (unsigned j = 1; j <= count; ++j)
                 resultant = e.add(resultant, values[j]);
               for (unsigned j = 0; j <= count; ++j) {
-                // The order of the arguments of SiteKernel::scale as the
-                // compiler of the driver evaluates them.
+                // Keep the builder's order: the vector square precedes
+                // the inverse-mass scale.
                 Value square = e.mul(values[j], values[j]);
                 Value term =
                     scaleBy(e, e.div(e.real(1.0), masses[j]), square);

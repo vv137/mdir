@@ -8,6 +8,36 @@
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
+static mlir::Value buildBondsContribution(mlir::OpBuilder &builder, mlir::ValueRange values) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+      {mdir::md::CoordinateKind::Distance, {0, 1}}};
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+  auto sum = mdir::md::SumTuplesOp::create(
+      builder, loc, builder.getF64Type(), values[0], values[1],
+      values[2], ValueRange{}, values.drop_front(3), kinds, members);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    llvm::SmallVector<Type> types(3, builder.getF64Type());
+    llvm::SmallVector<Location> locations(3, loc);
+    Block *block =
+        builder.createBlock(&sum.getKernel(), {}, types, locations);
+    auto args = block->getArguments();
+    Value half = arith::ConstantOp::create(
+        builder, loc, builder.getF64FloatAttr(0.5));
+    Value delta =
+        arith::SubFOp::create(builder, loc, args[0], args[2]);
+    Value square = arith::MulFOp::create(builder, loc, delta, delta);
+    Value hk = arith::MulFOp::create(builder, loc, half, args[1]);
+    Value energy = arith::MulFOp::create(builder, loc, hk, square);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+  }
+  return sum.getResult();
+}
+
 namespace mdir::driver::builder {
 class BondTermBuilder final : public TermBuilder {
 public:
@@ -34,51 +64,17 @@ public:
       std::vector<TermDefinition> &definitions) const override {
     definitions.push_back({2, 0, "term_bonds", TermInputs::Bonds});
   }
-  void emitTopologyPotential(TermEmission &context,
-                             const PotentialSelection &selection,
-                             const TermPotentialAddition &add) const override {
-    unsigned terms = selection.terms;
-    auto has = [&](StringRef name) {
-      return llvm::any_of(context.getTupleSets(),
-                          [&](const auto &set) { return set.name == name; });
-    };
-    if ((terms & TermInputs::Bonds) && has("bonds")) {
-      context.emitIRFragment(
-          "  ", {"%u_bonds"}, {"f64"},
-          {"%r_bonds", "%x", "%cell", "%f_bonds_k", "%f_bonds_r0"},
-          {"!rel_bonds", "!vec", "!md.cell", "!of_bonds", "!of_bonds"},
-          [](mlir::OpBuilder &builder,
-             mlir::ValueRange values) -> TermIRValues {
-            using namespace mlir;
-            auto loc = builder.getUnknownLoc();
-            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
-                {mdir::md::CoordinateKind::Distance, {0, 1}}};
-            DenseI32ArrayAttr kinds;
-            DenseI64ArrayAttr members;
-            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
-            auto sum = mdir::md::SumTuplesOp::create(
-                builder, loc, builder.getF64Type(), values[0], values[1],
-                values[2], ValueRange{}, values.drop_front(3), kinds, members);
-            {
-              OpBuilder::InsertionGuard guard(builder);
-              llvm::SmallVector<Type> types(3, builder.getF64Type());
-              llvm::SmallVector<Location> locations(3, loc);
-              Block *block =
-                  builder.createBlock(&sum.getKernel(), {}, types, locations);
-              auto args = block->getArguments();
-              Value half = arith::ConstantOp::create(
-                  builder, loc, builder.getF64FloatAttr(0.5));
-              Value delta =
-                  arith::SubFOp::create(builder, loc, args[0], args[2]);
-              Value square = arith::MulFOp::create(builder, loc, delta, delta);
-              Value hk = arith::MulFOp::create(builder, loc, half, args[1]);
-              Value energy = arith::MulFOp::create(builder, loc, hk, square);
-              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-            }
-            return {sum.getResult()};
-          });
-      add("bonds");
-    }
+  llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (!(selection.terms & TermInputs::Bonds)) return llvm::Error::success();
+    auto relation = state.relation("bonds");
+    if (!relation) return llvm::Error::success();
+    add(buildBondsContribution(builder,
+        mlir::ValueRange{relation, state.physical.positions, state.physical.cell,
+                        state.tupleField("bonds", "k"), state.tupleField("bonds", "r0")}));
+
+    return llvm::Error::success();
   }
 };
 } // namespace mdir::driver::builder

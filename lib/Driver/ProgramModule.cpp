@@ -160,9 +160,7 @@ llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
                                                        TermIRPlan &plan) {
   // The producer boundary applies even when there are no typed recipes.
   // A construction parse failure must never return raw generated text.
-  mlir::MLIRContext context(getProgramDialects(),
-                            mlir::MLIRContext::Threading::DISABLED);
-  context.loadAllAvailableDialects();
+  mlir::MLIRContext &context = plan.getContext();
   mlir::ScopedDiagnosticHandler quiet(
       &context, [](mlir::Diagnostic &) { return mlir::success(); });
   // The transitional connections are not executable scalar operations.
@@ -172,14 +170,20 @@ llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
   if (!module)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "the builder produced invalid assembly");
-  if (llvm::Error error = plan.materialize(*module))
+  // Declarations already belong to the build's native module. Only the
+  // transitional assembly is parsed; its operations join that same module.
+  auto native = plan.getModule();
+  native.getBody()->getOperations().splice(
+      native.getBody()->end(), module->getBody()->getOperations());
+  module = {};
+  if (llvm::Error error = plan.materialize(native))
     return error;
-  carryLoopValues(*module);
+  carryLoopValues(native);
   std::string printed;
   llvm::raw_string_ostream os(printed);
   mlir::OpPrintingFlags flags;
   flags.enableDebugInfo(/*enable=*/true, /*prettyForm=*/false);
-  module->print(os, flags);
+  native.print(os, flags);
   os << "\n";
   os.flush();
   program.module = std::move(printed);

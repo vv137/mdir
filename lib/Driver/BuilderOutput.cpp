@@ -1,121 +1,65 @@
-// The outputs of free energy, observables, tunable gradients, and solvent (docs/driver.md, Section 2.12).
-
+// Term-energy, free-energy, observable, tunable-gradient, and solvent outputs.
 #include "BuilderImpl.h"
+#include "OutputIR.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
-namespace prolate = mdir::prolate;
-namespace influence = mdir::influence;
+
+PotentialConnections::PotentialConnections(
+    const Program &program, StringRef positions, StringRef cell,
+    StringRef prefix, StringRef time, bool timed) : timed(timed) {
+  add(positions, "!vec");
+  add(cell, "!md.cell");
+  for (const auto &field : program.fields)
+    add((prefix + field.name).str(), field.isInteger ? "!ids" : "!real");
+  for (const auto &table : program.tables)
+    add("%t_" + table.name, table.getType());
+  std::string relations = ("%r" + prefix.drop_front(2)).str();
+  for (const auto &set : program.tupleSets) {
+    add(relations + set.name, "!rel_" + set.name);
+    for (const auto &field : set.fields)
+      add("%f_" + set.name + "_" + field.name, "!of_" + set.name);
+  }
+  fields = values.size() - 2;
+  if (timed)
+    add(time, "f64");
+}
+
+namespace {
+PotentialStateIR state(mlir::ValueRange values, size_t fields, bool timed) {
+  return {values[0], values[1], values.slice(2, fields),
+          timed ? values[2 + fields] : mlir::Value{}};
+}
+} // namespace
 
 void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
                                    StringRef cell, StringRef prefix,
                                    StringRef step, StringRef time) {
   if (control.freeEnergyFile.empty())
     return;
-  // `@alchemical` at the state of the run with its derivatives in each
-  // component of λ, and its energy at every other state; the host adds the
-  // constant terms (D161). The values: the derivatives, then the energies
-  // of the states in order. With one state its energy differs from itself
-  // only, so the states are not evaluated (D190).
-  const Control::FreeEnergy &energy = control.freeEnergy;
-  size_t components = energy.lambdas.size(), states = energy.getNumStates();
-  if (states == 1)
-    states = 0;
-  std::string name = ("%fe" + step.drop_front()).str();
-  std::string type =
-      "memref<" + std::to_string(components + states) + "xf64>";
-  os << indent << name << " = memref.alloca() : " << type << "\n";
-  unsigned base = getNumPotentialArguments();
-  auto lambdas = [&](size_t k) {
-    std::string text;
-    for (size_t c = 0; c != components; ++c) {
-      std::string value = name + "_l" + std::to_string(k) + "_" +
-                          std::to_string(c);
-      os << indent << value << " = arith.constant "
-         << formatReal(energy.lambdas[c].second[k]) << " : f64\n";
-      text += ", " + value;
-    }
-    return text;
-  };
-  std::string types = "(!vec, !md.cell" + getFieldTypes() + getTimeType();
-  for (size_t c = 0; c != components; ++c)
-    types += ", f64";
-  types += ")";
-  auto store = [&](const std::string &value, size_t slot) {
-    std::string place = name + "_s" + std::to_string(slot);
-    os << indent << place << " = arith.constant " << slot << " : index\n"
-       << indent << "memref.store " << value << ", " << name << "["
-       << place << "] : " << type << "\n";
-  };
-  // The derivatives at the state of the run, then the energy at every
-  // state in a loop, whose kernels are compiled once, with the components
-  // of each state from a table.
-  size_t state = static_cast<size_t>(energy.state);
-  std::string arguments = lambdas(state);
-  os << indent;
-  for (size_t c = 0; c != components; ++c)
-    os << (c ? ", " : "") << name << "_d" << c;
-  os << " = md.evaluate @alchemical(" << x << ", " << cell
-     << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
-     << indent << "    request [";
-  for (size_t c = 0; c != components; ++c)
-    os << (c ? ", " : "") << "derivative(" << base + c << ")";
-  os << "]\n" << indent << "    : " << types << " -> (";
-  for (size_t c = 0; c != components; ++c)
-    os << (c ? ", " : "") << "f64";
-  os << ")\n";
-  for (size_t c = 0; c != components; ++c)
-    store(name + "_d" + std::to_string(c), c);
-  if (states == 0) {
-    os << indent << name << "_cast = memref.cast " << name << " : " << type
-       << " to memref<?xf64>\n"
-       << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
-       << "_cast) : (i64, memref<?xf64>) -> ()\n";
-    return;
+  // Derivatives at the run's state, then energies in state order. A single
+  // state has no relative energy to evaluate (D161, D190).
+  FreeEnergyOutputConfig config{{}, static_cast<size_t>(control.freeEnergy.state),
+                                  getNumPotentialArguments()};
+  for (const auto &component : control.freeEnergy.lambdas)
+    config.lambdas.push_back(component.second);
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
+  size_t tail = input.values.size();
+  input.add(step, "i64");
+  bool loop = control.freeEnergy.getNumStates() > 1;
+  if (loop) {
+    input.add("%c0", "index");
+    input.add("%c1", "index");
   }
-  std::string table = name + "_table";
-  std::string tableType = "memref<" + std::to_string(states) + "x" +
-                          std::to_string(components) + "xf64>";
-  os << indent << table << " = memref.alloca() : " << tableType << "\n";
-  for (size_t k = 0; k != states; ++k)
-    for (size_t c = 0; c != components; ++c) {
-      std::string at = name + "_t" + std::to_string(k) + "_" +
-                       std::to_string(c);
-      os << indent << at << "v = arith.constant "
-         << formatReal(energy.lambdas[c].second[k]) << " : f64\n"
-         << indent << at << "k = arith.constant " << k << " : index\n"
-         << indent << at << "c = arith.constant " << c << " : index\n"
-         << indent << "memref.store " << at << "v, " << table << "[" << at
-         << "k, " << at << "c] : " << tableType << "\n";
-    }
-  std::string inner = (indent + "  ").str();
-  os << indent << name << "_count = arith.constant " << states
-     << " : index\n"
-     << indent << name << "_first = arith.constant " << components
-     << " : index\n"
-     << indent << "scf.for " << name << "_k = %c0 to " << name
-     << "_count step %c1 {\n";
-  std::string loaded;
-  for (size_t c = 0; c != components; ++c) {
-    std::string value = name + "_lk" + std::to_string(c);
-    os << inner << name << "_ci" << c << " = arith.constant " << c
-       << " : index\n"
-       << inner << value << " = memref.load " << table << "[" << name
-       << "_k, " << name << "_ci" << c << "] : " << tableType << "\n";
-    loaded += ", " + value;
-  }
-  os << inner << name << "_e = md.evaluate @alchemical(" << x << ", " << cell
-     << getFieldValues(prefix) << getTimeValue(time) << loaded << ")\n"
-     << inner << "    request [energy] : " << types << " -> f64\n"
-     << inner << name << "_slot = arith.addi " << name << "_first, " << name
-     << "_k : index\n"
-     << inner << "memref.store " << name << "_e, " << name << "[" << name
-     << "_slot] : " << type << "\n"
-     << indent << "}\n";
-  os << indent << name << "_cast = memref.cast " << name << " : " << type
-     << " to memref<?xf64>\n"
-     << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
-     << "_cast) : (i64, memref<?xf64>) -> ()\n";
+  emitIRFragment(
+      indent, {}, {}, input.names(), input.signatures(),
+      [config = std::move(config), fields = input.fields, timed = input.timed,
+       tail, loop](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildFreeEnergyOutput(builder, state(values, fields, timed), values[tail],
+                                loop ? values[tail + 1] : mlir::Value{},
+                                loop ? values[tail + 2] : mlir::Value{}, config);
+        return {};
+      });
 }
 
 void Builder::emitObservablesOutput(StringRef indent, StringRef x,
@@ -124,61 +68,36 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
   std::vector<ObservedTerm> terms = getObservedTerms();
   if (terms.empty())
     return;
-  // The values in the order of `observe`, in kJ/mol and kJ/mol per unit of
-  // the constant; the writer converts them.
-  std::string name = ("%ob" + step.drop_front()).str();
-  std::string type =
-      "memref<" + std::to_string(control.observables.size()) + "xf64>";
-  os << indent << name << " = memref.alloca() : " << type << "\n";
-  unsigned base = getNumPotentialArguments();
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
+  size_t tail = input.values.size();
+  input.add(step, "i64");
+  std::vector<ObservableOutputTermIR> config;
+  unsigned tunables = 0;
   for (auto [k, term] : llvm::enumerate(terms)) {
-    std::string at = name + "_" + std::to_string(k);
-    std::string arguments, types = "(!vec, !md.cell" + getFieldTypes() +
-                                   getTimeType();
-    // The constants at their values, which the term holds for each of its
-    // tuples, particles, or pairs alike.
-    for (auto [c, constant] : llvm::enumerate(term.constants)) {
-      std::string value = at + "_v" + std::to_string(c);
-      // That of a tunable is a value of the entry, which an update changes
-      // without changing the text (D232).
-      if (control.isObservedTunable(term.name, constant))
-        value = "%obv_" + term.name + "_" + constant;
-      else
-        os << indent << value << " = arith.constant "
-           << formatReal(getObservedValue(term, constant)) << " : f64\n";
-      arguments += ", " + value;
-      types += ", f64";
+    ObservableOutputTermIR output;
+    output.potential = "observe" + std::to_string(k);
+    for (const auto &constant : term.constants) {
+      // Tunables are entry values; updates leave the program unchanged (D232).
+      bool tunable = control.isObservedTunable(term.name, constant);
+      output.constants.push_back({tunable ? 0.0 : getObservedValue(term, constant),
+                                  tunable ? std::optional<unsigned>(tunables++)
+                                          : std::nullopt});
+      if (tunable)
+        input.add("%obv_" + term.name + "_" + constant, "f64");
     }
-    types += ")";
-    os << indent;
-    for (auto [i, column] : llvm::enumerate(term.columns))
-      os << (i ? ", " : "") << at << "_r" << i;
-    os << " = md.evaluate @observe" << k << "(" << x << ", " << cell
-       << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
-       << indent << "    request [";
-    for (auto [i, column] : llvm::enumerate(term.columns)) {
-      os << (i ? ", " : "");
-      if (column.first < 0)
-        os << "energy";
-      else
-        os << "derivative(" << base + column.first << ")";
-    }
-    os << "]\n" << indent << "    : " << types << " -> (";
-    for (size_t i = 0; i != term.columns.size(); ++i)
-      os << (i ? ", " : "") << "f64";
-    os << ")\n";
-    for (auto [i, column] : llvm::enumerate(term.columns)) {
-      std::string place = at + "_s" + std::to_string(i);
-      os << indent << place << " = arith.constant " << column.second
-         << " : index\n"
-         << indent << "memref.store " << at << "_r" << i << ", " << name
-         << "[" << place << "] : " << type << "\n";
-    }
+    for (auto column : term.columns)
+      output.columns.push_back({column.first, column.second});
+    config.push_back(std::move(output));
   }
-  os << indent << name << "_cast = memref.cast " << name << " : " << type
-     << " to memref<?xf64>\n"
-     << indent << "func.call @mdrtWriteObservables(" << step << ", " << name
-     << "_cast) : (i64, memref<?xf64>) -> ()\n";
+  emitIRFragment(
+      indent, {}, {}, input.names(), input.signatures(),
+      [config = std::move(config), fields = input.fields, timed = input.timed,
+       tail, count = control.observables.size(), base = getNumPotentialArguments()](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildObservablesOutput(builder, state(values, fields, timed), values[tail],
+                                 count, base, config, values.drop_front(tail + 1));
+        return {};
+      });
 }
 
 void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
@@ -186,108 +105,92 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
                                         StringRef time) {
   if (!program.tunableGradient)
     return;
-  // A loop of one iteration if the host asks (the start value
-  // `tunable_gradient` is not 0) and none otherwise, as the branch of the
-  // start is: a run takes none of it.
-  std::string inner = (indent + "  ").str();
-  size_t count = program.gradientSlots.size();
-  std::string type = "memref<" + std::to_string(count + 1) + "xf64>";
-  os << indent << "%tg_none = arith.constant 0.0 : f64\n"
-     << indent << "%tg_asked = arith.cmpf one, %tunable_gradient, %tg_none"
-                  " : f64\n"
-     << indent << "%tg_trips = arith.select %tg_asked, %c1, %c0 : index\n"
-     << indent << "scf.for %tg_i = %c0 to %tg_trips step %c1 {\n"
-     << inner << "%tg_out = memref.alloca() : " << type << "\n";
-  size_t fields = program.gradientFields.size();
-  {
-    unsigned base = getNumPotentialArguments();
-    size_t constants = control.tunableConstants.size();
-    std::string arguments,
-        types = "(!vec, !md.cell" + getFieldTypes() + getTimeType();
-    for (size_t c = 0; c != constants; ++c) {
-      arguments += ", %tg_c" + std::to_string(c);
-      types += ", f64";
-    }
-    // The fields of zeros through which the derivatives in the parameters
-    // of tuples leave as fields of the particles: one field of the program
-    // serves all.
-    size_t seeds = getNumGradientSeeds();
-    for (size_t c = 0; c != seeds; ++c) {
-      arguments += (", " + prefix + "tg_zero").str();
-      types += ", !real";
-    }
-    // The argument of `@tunable` that each field is the derivative in: the
-    // fields of zeros, then the charges.
-    unsigned chargeArgument = 2;
-    for (const Program::Field &field : program.fields) {
-      if (field.name == "q")
-        break;
-      ++chargeArgument;
-    }
-    auto getArgument = [&](size_t c) {
-      return c < seeds ? base + constants + c : chargeArgument;
-    };
-    types += ")";
-    os << inner << "%tg_e";
-    for (size_t i = 0; i != count; ++i)
-      os << ", %tg_r" << i;
-    for (size_t c = 0; c != fields; ++c)
-      os << ", %tg_f" << c;
-    os << " = md.evaluate @tunable(" << x << ", " << cell
-       << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
-       << inner << "    request [energy";
-    for (size_t i = 0; i != count; ++i)
-      os << ", derivative(" << base + gradientColumns[i] << ")";
-    for (size_t c = 0; c != fields; ++c)
-      os << ", derivative(" << getArgument(c) << ")";
-    program.gradientArguments.clear();
-    for (size_t i = 0; i != count; ++i)
-      program.gradientArguments.push_back(
-          {base + gradientColumns[i], program.gradientSlots[i].tunable});
-    for (size_t c = 0; c != fields; ++c)
-      program.gradientArguments.push_back(
-          {static_cast<unsigned>(getArgument(c)),
-           program.gradientFields[c].tunable});
-    os << "]\n" << inner << "    : " << types << " -> (f64";
-    for (size_t i = 0; i != count; ++i)
-      os << ", f64";
-    for (size_t c = 0; c != fields; ++c)
-      os << ", !real";
-    os << ")\n";
-    // The energy of that potential less that of the potential of the run,
-    // which the host adds to the energy that the run reports.
-    os << inner << "%tg_u = md.evaluate @energy(" << x << ", " << cell
-       << getFieldValues(prefix) << getTimeValue(time) << ")\n"
-       << inner << "    request [energy]\n"
-       << inner << "    : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> f64\n"
-       << inner << "%tg_shift = arith.subf %tg_e, %tg_u : f64\n"
-       << inner << "%tg_last = arith.constant " << count << " : index\n"
-       << inner << "memref.store %tg_shift, %tg_out[%tg_last] : " << type
-       << "\n";
-    for (size_t c = 0; c != fields; ++c)
-      os << inner << "%tg_n" << c << " = arith.constant " << c << " : i64\n"
-         << inner << "mdrt.host_call @mdrtWriteTunableGradientField(%tg_n"
-         << c << ", %tg_f" << c << ", " << idName << ")\n"
-         << inner << "    : (i64, !real, !ids)\n";
-    for (size_t i = 0; i != count; ++i)
-      os << inner << "%tg_s" << i << " = arith.constant " << i << " : index\n"
-         << inner << "memref.store %tg_r" << i << ", %tg_out[%tg_s" << i
-         << "] : " << type << "\n";
+  // A one-iteration loop only when the host asks. Runtime gradients never
+  // introduce work into an ordinary run.
+  PotentialConnections input(program, x, cell, prefix, time, control.usesTime);
+  size_t tail = input.values.size();
+  input.add("%tunable_gradient", "f64");
+  input.add("%c0", "index");
+  input.add("%c1", "index");
+  size_t constants = control.tunableConstants.size(), seeds = getNumGradientSeeds();
+  for (size_t c = 0; c != constants; ++c)
+    input.add("%tg_c" + std::to_string(c), "f64");
+  for (size_t c = 0; c != seeds; ++c)
+    input.add((prefix + "tg_zero").str(), "!real");
+  bool fieldResults = !program.gradientFields.empty();
+  if (fieldResults)
+    input.add(idName, "!ids");
+  unsigned base = getNumPotentialArguments(), chargeArgument = 2;
+  for (const auto &field : program.fields) {
+    if (field.name == "q")
+      break;
+    ++chargeArgument;
   }
-  os << inner << "%tg_cast = memref.cast %tg_out : " << type
-     << " to memref<?xf64>\n"
-     << inner << "func.call @mdrtWriteTunableGradient(%tg_cast)"
-                 " : (memref<?xf64>) -> ()\n"
-     << indent << "}\n";
+  TunableGradientOutputConfig config;
+  program.gradientArguments.clear();
+  for (auto [i, slot] : llvm::enumerate(program.gradientSlots)) {
+    unsigned argument = base + gradientColumns[i];
+    config.scalarArguments.push_back(argument);
+    program.gradientArguments.push_back({argument, slot.tunable});
+  }
+  for (auto [c, field] : llvm::enumerate(program.gradientFields)) {
+    unsigned argument = c < seeds ? base + constants + c : chargeArgument;
+    config.fieldArguments.push_back(argument);
+    program.gradientArguments.push_back({argument, field.tunable});
+  }
+  emitIRFragment(
+      indent, {}, {}, input.names(), input.signatures(),
+      [config = std::move(config), fields = input.fields, timed = input.timed,
+       tail, constants, seeds, fieldResults](mlir::OpBuilder &builder,
+                                            mlir::ValueRange values) -> TermIRValues {
+        buildTunableGradientOutput(
+            builder, state(values, fields, timed), values[tail], values[tail + 1],
+            values[tail + 2], fieldResults ? values.back() : mlir::Value{},
+            values.slice(tail + 3, constants), values.slice(tail + 3 + constants, seeds),
+            config);
+        return {};
+      });
 }
 
 void Builder::emitWriteSolvent(StringRef indent, StringRef sums) {
-  std::string base = sums.str();
-  os << indent << base << "_k = vector.extract " << sums
-     << "[0] : f64 from vector<3xf64>\n"
-     << indent << base << "_h = vector.extract " << sums
-     << "[1] : f64 from vector<3xf64>\n"
-     << indent << "func.call @mdrtWriteSolvent(" << base << "_k, " << base
-     << "_h) : (f64, f64) -> ()\n";
+  emitIRFragment(
+      indent, {}, {}, {sums}, {"vector<3xf64>"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildWriteSolvent(builder, values[0]);
+        return {};
+      });
+}
+
+void Builder::emitTerms(StringRef x) {
+  if (!system.topology)
+    return;
+  // Expressions retain topology/tuple/pair order. Stored corrections follow
+  // the evaluated terms, as in the initial energy row.
+  const auto definitions = getTermDefinitions();
+  unsigned storedTermCount = 0;
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const auto *role = builder->getRoles().postEvaluation)
+      storedTermCount += role->getStoredTermCount(*this);
+  size_t count = definitions.size() + storedTermCount;
+  std::string type = "memref<" + std::to_string(count) + "xf64>";
+  std::vector<std::string> potentials;
+  for (const auto &definition : definitions)
+    potentials.push_back(definition.name);
+  PotentialConnections input(program, x, "%cell", "%p_", "%time0", control.usesTime);
+  emitIRFragment(
+      "  ", {"%terms"}, {type}, input.names(), input.signatures(),
+      [potentials = std::move(potentials), count, fields = input.fields,
+       timed = input.timed](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildTermEnergyBuffer(builder, state(values, fields, timed), potentials, count)};
+      });
+  int index = definitions.size();
+  for (const TermBuilder *builder : getTermBuilders())
+    if (const auto *role = builder->getRoles().postEvaluation)
+      role->emitStoredTerms(*this, type, index);
+  emitIRFragment(
+      "  ", {}, {}, {"%terms"}, {type},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        buildWriteTerms(builder, values[0]);
+        return {};
+      });
 }

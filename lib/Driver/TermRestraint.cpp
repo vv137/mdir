@@ -17,6 +17,117 @@ struct RestraintIRConfig {
   size_t fields = 0, scaleSlot = 0, energySlot = 0, virialSlot = 0;
 };
 
+static TermIRValues buildRestraintCorrection(mlir::OpBuilder &builder, mlir::ValueRange values, const RestraintIRConfig &config) {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto f64 = builder.getF64Type();
+        auto vec = VectorType::get({3}, f64);
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        auto mul = [&](Value a, Value b) -> Value {
+          return arith::MulFOp::create(builder, loc, a, b);
+        };
+        auto add = [&](Value a, Value b) -> Value {
+          return arith::AddFOp::create(builder, loc, a, b);
+        };
+        auto sub = [&](Value a, Value b) -> Value {
+          return arith::SubFOp::create(builder, loc, a, b);
+        };
+        // x_ref = s * c + o: only reference centers follow the cell (D124).
+        // Return the unscaled offset, d = x-x_ref, and k*d in their old order.
+        auto offset = [&](Block *block, unsigned base) -> std::array<Value, 3> {
+          Value reference = vector::FromElementsOp::create(
+              builder, loc, vec,
+              ValueRange{block->getArgument(base + 1),
+                         block->getArgument(base + 2),
+                         block->getArgument(base + 3)});
+          Value scaledReference = reference;
+          if (config.barostat) {
+            Value center = vector::FromElementsOp::create(
+                builder, loc, vec,
+                ValueRange{block->getArgument(base + 4),
+                           block->getArgument(base + 5),
+                           block->getArgument(base + 6)});
+            Value scaled = mul(values[config.scaleSlot], center);
+            scaledReference = add(scaled, reference);
+          }
+          Value d = sub(block->getArgument(0), scaledReference);
+          Value kb = vector::BroadcastOp::create(builder, loc, vec,
+                                                 block->getArgument(base));
+          Value kd = mul(kb, d);
+          return {reference, d, kd};
+        };
+        auto force = mdir::md::MapParticlesOp::create(
+            builder, loc, values[1].getType(),
+            values.take_front(2 + config.fields));
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          llvm::SmallVector<Type> types(2 + config.fields, f64);
+          types[0] = types[1] = vec;
+          llvm::SmallVector<Location> locations(types.size(), loc);
+          Block *block =
+              builder.createBlock(&force.getKernel(), {}, types, locations);
+          auto terms = offset(block, 2);
+          Value two = arith::ConstantOp::create(
+              builder, loc, DenseElementsAttr::get(vec, 2.0));
+          Value pull = mul(two, terms[2]),
+                result = sub(block->getArgument(1), pull);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+        }
+        TermIRValues result = {force.getResult()};
+        if (!config.energy && !config.virial)
+          return result;
+        llvm::SmallVector<Value> fields = {values[0]};
+        llvm::append_range(fields, values.slice(2, config.fields));
+        auto sumParts = [&](bool virial) -> Value {
+          auto sum =
+              mdir::md::SumParticlesOp::create(builder, loc, vec, fields);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types(1 + config.fields, f64);
+            types[0] = vec;
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&sum.getKernel(), {}, types, locations);
+            auto terms = offset(block, 1);
+            Value displacement = terms[1];
+            if (virial)
+              displacement = add(displacement, terms[0]);
+            Value product = mul(terms[2], displacement);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{product});
+          }
+          return sum.getResult();
+        };
+        Value sum = sumParts(false), virialSum = sum;
+        if (config.virial && config.barostat)
+          virialSum = sumParts(true);
+        if (config.energy) {
+          Value energy = vector::ReductionOp::create(
+              builder, loc, vector::CombiningKind::ADD, sum);
+          Value total = add(values[config.energySlot], energy);
+          result.push_back(energy);
+          result.push_back(total);
+        }
+        if (config.virial) {
+          Value zero = constant(0.0), minusTwo = constant(-2.0);
+          std::array<Value, 3> diagonal;
+          for (int c = 0; c != 3; ++c) {
+            Value element =
+                vector::ExtractOp::create(builder, loc, virialSum, c);
+            diagonal[c] = mul(element, minusTwo);
+          }
+          auto matrix = VectorType::get({9}, f64);
+          Value correction = vector::FromElementsOp::create(
+              builder, loc, matrix,
+              ValueRange{diagonal[0], zero, zero, zero, diagonal[1], zero, zero,
+                         zero, diagonal[2]});
+          result.push_back(add(values[config.virialSlot], correction));
+        }
+        return result;
+}
+
 namespace mdir::driver::builder {
 class RestraintTermBuilder final : public TermBuilder,
                                    public TermPostEvaluation {
@@ -26,6 +137,37 @@ public:
   void collectParameters(TermParameters &context) const override;
   bool hasForceCorrection(const TermInputs &context) const override {
     return !context.getSystem().restraintConstants.empty();
+  }
+  TermNativeResults build(const TermInputs &context, mlir::OpBuilder &builder,
+                          const TermNativeEvaluation &point) const override {
+    RestraintIRConfig config;
+    config.barostat = bool(context.getControl().barostat);
+    config.energy = bool(point.energy);
+    config.virial = bool(point.virial);
+    TermIRValues values{point.positions, point.forces};
+    for (StringRef name : {"rest_k", "rest_x", "rest_y", "rest_z"})
+      values.push_back(point.field(name));
+    config.fields = 4;
+    if (config.barostat) {
+      for (StringRef name : {"rest_cx", "rest_cy", "rest_cz"})
+        values.push_back(point.field(name));
+      config.fields = 7;
+      config.scaleSlot = values.size();
+      values.push_back(point.scale);
+    }
+    if (config.energy) {
+      config.energySlot = values.size();
+      values.push_back(point.energy);
+    }
+    if (config.virial) {
+      config.virialSlot = values.size();
+      values.push_back(point.virial);
+    }
+    auto result = buildRestraintCorrection(builder, values, config);
+    return {result[0], config.energy ? result[2] : mlir::Value{},
+            config.virial ? result[config.energy ? 3 : 1] : mlir::Value{},
+            config.energy ? llvm::SmallVector<mlir::Value>{result[1]}
+                          : llvm::SmallVector<mlir::Value>{}};
   }
   void emitForceCorrection(TermEmission &context,
                            const TermCorrection &point) const override {
@@ -183,113 +325,6 @@ void RestraintTermBuilder::emitCorrection(TermEmission &context,
       indent, out, outTypes, in, inTypes,
       [config](mlir::OpBuilder &builder,
                mlir::ValueRange values) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        auto f64 = builder.getF64Type();
-        auto vec = VectorType::get({3}, f64);
-        auto constant = [&](double value) -> Value {
-          return arith::ConstantOp::create(builder, loc,
-                                           builder.getF64FloatAttr(value));
-        };
-        auto mul = [&](Value a, Value b) -> Value {
-          return arith::MulFOp::create(builder, loc, a, b);
-        };
-        auto add = [&](Value a, Value b) -> Value {
-          return arith::AddFOp::create(builder, loc, a, b);
-        };
-        auto sub = [&](Value a, Value b) -> Value {
-          return arith::SubFOp::create(builder, loc, a, b);
-        };
-        // x_ref = s * c + o: only reference centers follow the cell (D124).
-        // Return the unscaled offset, d = x-x_ref, and k*d in their old order.
-        auto offset = [&](Block *block, unsigned base) -> std::array<Value, 3> {
-          Value reference = vector::FromElementsOp::create(
-              builder, loc, vec,
-              ValueRange{block->getArgument(base + 1),
-                         block->getArgument(base + 2),
-                         block->getArgument(base + 3)});
-          Value scaledReference = reference;
-          if (config.barostat) {
-            Value center = vector::FromElementsOp::create(
-                builder, loc, vec,
-                ValueRange{block->getArgument(base + 4),
-                           block->getArgument(base + 5),
-                           block->getArgument(base + 6)});
-            Value scaled = mul(values[config.scaleSlot], center);
-            scaledReference = add(scaled, reference);
-          }
-          Value d = sub(block->getArgument(0), scaledReference);
-          Value kb = vector::BroadcastOp::create(builder, loc, vec,
-                                                 block->getArgument(base));
-          Value kd = mul(kb, d);
-          return {reference, d, kd};
-        };
-        auto force = mdir::md::MapParticlesOp::create(
-            builder, loc, values[1].getType(),
-            values.take_front(2 + config.fields));
-        {
-          OpBuilder::InsertionGuard guard(builder);
-          llvm::SmallVector<Type> types(2 + config.fields, f64);
-          types[0] = types[1] = vec;
-          llvm::SmallVector<Location> locations(types.size(), loc);
-          Block *block =
-              builder.createBlock(&force.getKernel(), {}, types, locations);
-          auto terms = offset(block, 2);
-          Value two = arith::ConstantOp::create(
-              builder, loc, DenseElementsAttr::get(vec, 2.0));
-          Value pull = mul(two, terms[2]),
-                result = sub(block->getArgument(1), pull);
-          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
-        }
-        TermIRValues result = {force.getResult()};
-        if (!config.energy && !config.virial)
-          return result;
-        llvm::SmallVector<Value> fields = {values[0]};
-        llvm::append_range(fields, values.slice(2, config.fields));
-        auto sumParts = [&](bool virial) -> Value {
-          auto sum =
-              mdir::md::SumParticlesOp::create(builder, loc, vec, fields);
-          {
-            OpBuilder::InsertionGuard guard(builder);
-            llvm::SmallVector<Type> types(1 + config.fields, f64);
-            types[0] = vec;
-            llvm::SmallVector<Location> locations(types.size(), loc);
-            Block *block =
-                builder.createBlock(&sum.getKernel(), {}, types, locations);
-            auto terms = offset(block, 1);
-            Value displacement = terms[1];
-            if (virial)
-              displacement = add(displacement, terms[0]);
-            Value product = mul(terms[2], displacement);
-            mdir::md::YieldOp::create(builder, loc, ValueRange{product});
-          }
-          return sum.getResult();
-        };
-        Value sum = sumParts(false), virialSum = sum;
-        if (config.virial && config.barostat)
-          virialSum = sumParts(true);
-        if (config.energy) {
-          Value energy = vector::ReductionOp::create(
-              builder, loc, vector::CombiningKind::ADD, sum);
-          Value total = add(values[config.energySlot], energy);
-          result.push_back(energy);
-          result.push_back(total);
-        }
-        if (config.virial) {
-          Value zero = constant(0.0), minusTwo = constant(-2.0);
-          std::array<Value, 3> diagonal;
-          for (int c = 0; c != 3; ++c) {
-            Value element =
-                vector::ExtractOp::create(builder, loc, virialSum, c);
-            diagonal[c] = mul(element, minusTwo);
-          }
-          auto matrix = VectorType::get({9}, f64);
-          Value correction = vector::FromElementsOp::create(
-              builder, loc, matrix,
-              ValueRange{diagonal[0], zero, zero, zero, diagonal[1], zero, zero,
-                         zero, diagonal[2]});
-          result.push_back(add(values[config.virialSlot], correction));
-        }
-        return result;
+        return buildRestraintCorrection(builder, values, config);
       });
 }

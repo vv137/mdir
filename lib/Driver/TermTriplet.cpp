@@ -35,14 +35,14 @@ class TripletTermBuilder final : public TermBuilder {
 public:
   int potentialRank() const override { return 1; }
   llvm::Error collectBareParameters(TermParameters &context) const override;
-  void emitBareContributions(TermEmission &context,
-                             std::string &total) const override;
+  mlir::Value buildBareContributions(const TermInputs &, mlir::OpBuilder &,
+      const TermNativePotential &, mlir::Value total) const override;
 
 private:
   static std::string getTripletParameter(const Control &, const TripletTerm &,
                                          StringRef);
-  static std::string emitTripletTerm(TermEmission &, size_t,
-                                     const TripletTerm &);
+  static mlir::Value buildTripletTerm(const TermInputs &, mlir::OpBuilder &,
+      const TermNativePotential &, const TripletTerm &);
 };
 } // namespace mdir::driver::builder
 
@@ -109,25 +109,19 @@ std::string TripletTermBuilder::getTripletParameter(const Control &control,
   return stem.str();
 }
 
-void TripletTermBuilder::emitBareContributions(TermEmission &context,
-                                               std::string &total) const {
-  const Control &control = context.getControl();
-  for (auto [index, term] : llvm::enumerate(control.triplets)) {
-    std::string result = emitTripletTerm(context, index, term);
-    std::string sum = "%total_t" + std::to_string(index);
-    context.emitIRFragment(
-        "  ", {sum}, {"f64"}, {total, result}, {"f64", "f64"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
-                                              values[0], values[1])};
-        });
-    total = sum;
+mlir::Value TripletTermBuilder::buildBareContributions(
+    const TermInputs &context, mlir::OpBuilder &builder,
+    const TermNativePotential &state, mlir::Value total) const {
+  for (const auto &term : context.getControl().triplets) {
+    auto result = buildTripletTerm(context, builder, state, term);
+    total = mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(), total, result);
   }
+  return total;
 }
 
-std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
-                                                size_t index,
-                                                const TripletTerm &term) {
+mlir::Value TripletTermBuilder::buildTripletTerm(
+    const TermInputs &context, mlir::OpBuilder &builder,
+    const TermNativePotential &state, const TripletTerm &term) {
   const Control &control = context.getControl();
   auto parameters = context.getTypeParameters();
   Expression expression =
@@ -181,25 +175,22 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
                            places[name.back() - '1'];
     config.parameters.push_back(std::move(parameter));
   }
-  std::vector<std::string> operandsStorage = {"%n", "%x", "%cell"};
-  llvm::SmallVector<StringRef> types = {"!pairs", "!vec", "!md.cell"};
-  auto operand = [&](std::string name, StringRef type) {
-    size_t slot = operandsStorage.size();
-    operandsStorage.push_back(std::move(name));
-    types.push_back(type);
+  TermIRValues values{state.neighborhood, state.positions, state.cell};
+  auto operand = [&](mlir::Value value) {
+    size_t slot = values.size();
+    values.push_back(value);
     return slot;
   };
-  for (const auto &stem : gathered)
-    operand("%p_" + stem, "!real");
-  llvm::StringMap<std::string> bindings;
+  for (const auto &stem : gathered) operand(state.field(stem));
+  llvm::StringMap<mlir::Value> bindings;
   for (const auto &coordinate : config.coordinates)
-    bindings[coordinate.name] = "";
+    bindings[coordinate.name] = {};
   for (const auto &[name, value] : config.constants)
-    bindings[name] = "";
+    bindings[name] = {};
   for (const auto &parameter : config.parameters)
-    bindings[parameter.name] = "";
+    bindings[parameter.name] = {};
   if (control.usesTime)
-    bindings["t"] = "%time";
+    bindings["t"] = state.time;
   llvm::SmallVector<StringRef> supplied;
   for (const auto &entry : bindings)
     supplied.push_back(entry.getKey());
@@ -207,19 +198,11 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
   for (const auto &name : inputs.names) {
     auto found = bindings.find(name);
     assert(found != bindings.end() && "missing triplet expression binding");
-    if (!found->second.empty())
-      config.externalBindings.emplace_back(name, operand(found->second, "f64"));
+    if (found->second)
+      config.externalBindings.emplace_back(name, operand(found->second));
   }
   for (const auto &name : inputs.tables)
-    config.functionTables.emplace_back(name, operand("%t_" + name, "!grid"));
-  llvm::SmallVector<StringRef> operands;
-  for (const auto &name : operandsStorage)
-    operands.push_back(name);
-  std::string result = "%u_triplet" + std::to_string(index);
-  context.emitIRFragment(
-      "  ", {result}, {"f64"}, operands, types,
-      [config](mlir::OpBuilder &builder,
-               mlir::ValueRange values) -> TermIRValues {
+    config.functionTables.emplace_back(name, operand(state.table(name)));
         using namespace mlir;
         auto loc = builder.getUnknownLoc();
         auto pairType = cast<mdir::md::RelationType>(values[0].getType());
@@ -237,7 +220,7 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
         mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
         auto sum = mdir::md::SumTuplesOp::create(
             builder, loc, builder.getF64Type(), relation.getResult(), values[1],
-            values[2], values.slice(3, config.gatheredCount), ValueRange{},
+            values[2], mlir::ValueRange(values).slice(3, config.gatheredCount), ValueRange{},
             kinds, members);
         {
           OpBuilder::InsertionGuard guard(builder);
@@ -277,7 +260,5 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
               arith::MulFOp::create(builder, loc, expression, toEnergy);
           mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
         }
-        return {sum.getResult()};
-      });
-  return result;
+        return sum.getResult();
 }

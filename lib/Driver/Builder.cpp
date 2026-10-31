@@ -2,129 +2,117 @@
 // points of mdir/Driver/Builder.h (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "ReorderIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
-std::string Builder::getFieldParameters() const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += ", %p_" + field.name + ": " + getFieldType(field).str();
-  for (const Program::Table &table : program.tables)
-    text += ", %t_" + table.name + ": " + table.getType().str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", %r_" + set.name + ": !rel_" + set.name;
-    for (const Program::Field &field : set.fields)
-      text += ", %f_" + set.name + "_" + field.name + ": !of_" + set.name;
-  }
-  return text;
-}
 
-std::string Builder::getFieldValues(StringRef prefix) const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += (", " + prefix + field.name).str();
-  // Tables do not change with the order of the particles; they keep their
-  // names everywhere.
-  for (const Program::Table &table : program.tables)
-    text += ", %t_" + table.name;
-  // Neither do the tuples of a topology: the program does not put the
-  // particles in a new order when it has them.
-  // The members of the tuples follow the order of the particles: their
-  // names are those of the fields with `%r` for `%p`.
-  std::string relations = ("%r" + prefix.drop_front(2)).str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", " + relations + set.name;
-    for (const Program::Field &field : set.fields)
-      text += ", %f_" + set.name + "_" + field.name;
-  }
-  return text;
-}
 
 void Builder::emitReorder(StringRef indent, StringRef from,
                           StringRef stateTo, StringRef otherTo,
                           bool withForces, StringRef velocities,
                           StringRef forcesTo) {
-  StringRef order = "!mdrt.permutation<@atoms>";
-  // A particle goes where the anchor of its constraint group is (D110):
-  // the positions that the order takes are those of the anchors, from the
-  // pairs of the anchors in the order the particles are in now.
-  std::string ordered = ("%x" + from).str();
-  if (llvm::any_of(program.tupleSets, [](const Program::TupleSet &set) {
-        return set.name == "anchors";
-      })) {
-    ordered = ("%xanchor" + stateTo).str();
-    os << indent << "%ranchor" << stateTo << " = md_exec.renumber %ro_anchors, %id"
-       << from << " : !rel_anchors, !ids\n"
-       << indent << ordered << " = md.gather_tuples %ranchor" << stateTo << ", %x"
-       << from << ", " << cellName << " coordinates(displacement(1, 0)) gather(%x" << from
-       << " : !vec) {\n"
-       << indent << "^bb0(%xanchor_d: vector<3xf64>, %xanchor_0: vector<3xf64>, "
-       << "%xanchor_1: vector<3xf64>):\n"
-       << indent << "  %xanchor_none = arith.constant dense<0.0> : vector<3xf64>\n"
-       << indent << "  md.yield %xanchor_1, %xanchor_none : vector<3xf64>, vector<3xf64>\n"
-       << indent << "} : !rel_anchors, !vec -> !vec\n";
-  }
-  os << indent << "%order" << stateTo << " = md_exec.spatial_order "
-     << ordered << ", " << cellName << ", %id" << from << " width("
-     << formatReal(program.orderWidth) << ")\n"
-     << indent << "    : !vec, !ids -> " << order << "\n";
-  auto permute = [&](const llvm::Twine &result, const llvm::Twine &field,
-                     StringRef type) {
-    os << indent << result << " = md_exec.permute " << field << ", %order"
-       << stateTo << "\n"
-       << indent << "    : " << type << ", " << order << " -> " << type
-       << "\n";
-  };
-  permute("%x" + stateTo, "%x" + from, "!vec");
-  permute(velocities, "%v" + from, "!vec");
+  std::vector<std::string> inputs = {("%x" + from).str(), ("%v" + from).str(),
+      ("%m" + from).str(), ("%id" + from).str(), cellName};
+  std::vector<std::string> types = {"!vec", "!vec", "!real", "!ids", "!md.cell"};
   if (withForces) {
-    if (forcesTo.empty())
-      permute("%f" + stateTo, "%f" + from, "!vec");
-    else
-      permute(forcesTo, "%f" + from, "!vec");
+    inputs.push_back(("%f" + from).str());
+    types.push_back("!vec");
   }
-  permute("%m" + otherTo, "%m" + from, "!real");
-  for (const Program::Field &field : program.fields) {
-    // A list of the places of particles is made again from the permuted
-    // field that it lists (D262), which comes
-    // before it.
-    StringRef name = field.name;
-    if (name == "pme_listed" || name == "ljpme_listed") {
-      StringRef source = name == "pme_listed" ? "q" : "ljpme_c";
-      os << indent << "%p" << otherTo << "_" << name << " = md_exec.nonzero %p"
-         << otherTo << "_" << source << " : !real -> !ids\n";
-      continue;
+  std::vector<std::string> outputs = {("%x" + stateTo).str(), velocities.str()};
+  std::vector<std::string> outTypes = {"!vec", "!vec"};
+  if (withForces) {
+    outputs.push_back(forcesTo.empty() ? ("%f" + stateTo).str() : forcesTo.str());
+    outTypes.push_back("!vec");
+  }
+  outputs.push_back(("%m" + otherTo).str());
+  outTypes.push_back("!real");
+  std::vector<unsigned> inputSlots;
+  std::vector<std::optional<unsigned>> regenerated;
+  for (auto [index, field] : llvm::enumerate(program.fields)) {
+    outputs.push_back(("%p" + otherTo + "_" + field.name).str());
+    outTypes.push_back(getFieldType(field).str());
+    if (field.name == "pme_listed" || field.name == "ljpme_listed") {
+      StringRef source = field.name == "pme_listed" ? "q" : "ljpme_c";
+      auto found = llvm::find_if(program.fields, [&](const auto &candidate) {
+        return candidate.name == source;
+      });
+      unsigned slot = std::distance(program.fields.begin(), found);
+      assert(slot < index && "derived list must follow its source field");
+      regenerated.push_back(slot);
+      inputSlots.push_back(0);
+    } else {
+      regenerated.push_back(std::nullopt);
+      inputSlots.push_back(inputs.size());
+      inputs.push_back(("%p" + from + "_" + field.name).str());
+      types.push_back(getFieldType(field).str());
     }
-    permute("%p" + otherTo + "_" + field.name,
-            "%p" + from + "_" + field.name, getFieldType(field));
   }
-  permute("%id" + otherTo, "%id" + from, "!ids");
-  emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
+  outputs.push_back(("%id" + otherTo).str());
+  outTypes.push_back("!ids");
+  size_t relationBase = inputs.size();
+  ReorderIRConfig config{program.orderWidth, {}};
+  for (auto [index, set] : llvm::enumerate(program.tupleSets)) {
+    inputs.push_back("%ro_" + set.name);
+    types.push_back("!rel_" + set.name);
+    outputs.push_back(("%r" + otherTo + "_" + set.name).str());
+    outTypes.push_back("!rel_" + set.name);
+    if (set.name == "anchors")
+      config.anchorRelation = index;
+  }
+  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
+      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
+      resultTypes(outTypes.begin(), outTypes.end());
+  emitIRFragment(
+      indent, out, resultTypes, in, inTypes,
+      [config, withForces, inputSlots = std::move(inputSlots),
+       regenerated = std::move(regenerated), relationBase](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        std::vector<ReorderFieldIR> fields;
+        for (size_t k = 0; k != inputSlots.size(); ++k)
+          fields.push_back({regenerated[k] ? mlir::Value{} : values[inputSlots[k]], regenerated[k]});
+        ReorderIRInputs input{values[0], values[1], withForces ? values[5] : mlir::Value{},
+            values[2], values[3], values[4], fields, values.drop_front(relationBase)};
+        auto result = buildReorder(builder, input, config);
+        TermIRValues outputs{result.positions, result.velocities};
+        if (withForces)
+          outputs.push_back(result.forces);
+        outputs.push_back(result.masses);
+        llvm::append_range(outputs, result.fields);
+        outputs.push_back(result.ids);
+        llvm::append_range(outputs, result.relations);
+        return outputs;
+      });
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
                            const llvm::Twine &prefix) {
-  // From the members in the order of the files.
-  for (const Program::TupleSet &set : program.tupleSets)
-    os << indent << prefix << set.name << " = md_exec.renumber %ro_"
-       << set.name << ", " << ids << " : !rel_" << set.name << ", !ids\n";
-}
-
-std::string Builder::getFieldTypes() const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += ", " + getFieldType(field).str();
-  for (const Program::Table &table : program.tables)
-    text += ", " + table.getType().str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", !rel_" + set.name;
-    for (size_t i = 0, e = set.fields.size(); i != e; ++i)
-      text += ", !of_" + set.name;
+  if (program.tupleSets.empty())
+    return;
+  std::vector<std::string> inputs{ids.str()}, types{"!ids"}, outputs, outTypes;
+  for (const auto &set : program.tupleSets) {
+    inputs.push_back("%ro_" + set.name);
+    types.push_back("!rel_" + set.name);
+    outputs.push_back((prefix + set.name).str());
+    outTypes.push_back("!rel_" + set.name);
   }
-  return text;
+  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
+      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
+      resultTypes(outTypes.begin(), outTypes.end());
+  emitIRFragment(
+      indent, out, resultTypes, in, inTypes,
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        TermIRValues results;
+        for (mlir::Value relation : values.drop_front())
+          results.push_back(buildRenumber(builder, relation, values[0]));
+        return results;
+      });
 }
 
 std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
@@ -356,11 +344,19 @@ llvm::Error Builder::build() {
        << ", " << set.getOrientation() << ", @" << set.name << ">\n"
        << "!of_" << set.name << " = !md.field<@" << set.name << ", f64>\n";
   }
-  os << "\nmd.particle_set @atoms\n";
-  for (const Program::TupleSet &set : program.tupleSets)
-    os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
-       << ") orientation(" << set.getOrientation() << ")"
-       << (set.arity > 1 && set.isDisjoint() ? " disjoint" : "") << "\n";
+  mlir::OpBuilder declarationBuilder(&termIR.getContext());
+  declarationBuilder.setInsertionPointToEnd(termIR.getModule().getBody());
+  auto declarationLoc = declarationBuilder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(declarationBuilder, declarationLoc, "atoms");
+  for (const Program::TupleSet &set : program.tupleSets) {
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    mdir::md::TupleSetOp::create(
+        declarationBuilder, declarationLoc, set.name, "atoms", set.arity,
+        orientation, set.arity > 1 && set.isDisjoint());
+  }
   // The groups of the constraints share no atom with one another either
   // (D83): the bonds of a rigid water are gone before SHAKE groups the
   // bonds of hydrogen, and a hydrogen is in one group only (findShakes).
@@ -376,26 +372,35 @@ llvm::Error Builder::build() {
   for (const Program::TupleSet *set : groups)
     members.insert(members.end(), set->members.begin(), set->members.end());
   if (groups.size() >= 2 && Program::TupleSet::hasNoRepeat({&members})) {
-    os << "md.disjoint_union @constraints on(@atoms) of [";
-    llvm::interleaveComma(groups, os, [&](const Program::TupleSet *set) {
-      os << "@" << set->name;
-    });
-    os << "]\n";
+    llvm::SmallVector<mlir::Attribute> sets;
+    for (const Program::TupleSet *set : groups)
+      sets.push_back(mlir::FlatSymbolRefAttr::get(&termIR.getContext(), set->name));
+    mdir::md::DisjointUnionOp::create(
+        declarationBuilder, declarationLoc, "constraints", "atoms",
+        declarationBuilder.getArrayAttr(sets));
   }
   os << "\n";
   mark.next("rebuild.build.text");
+  auto prepareIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
+                          llvm::ArrayRef<StringRef> resultTypes,
+                          llvm::ArrayRef<StringRef> operands,
+                          llvm::ArrayRef<StringRef> operandTypes,
+                          TermIRRecipe recipe) {
+    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
+                   std::move(recipe));
+  };
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermPreparation *role = builder->getRoles().preparation)
-      if (llvm::Error error = role->prepare(*this, os))
+      if (llvm::Error error = role->prepare(*this, termIR.getContext(), prepareIR))
         return error;
   if (system.topology) {
-    emitTopologyPotential("energy", AllTerms);
+    if (llvm::Error error = emitTopologyPotential("energy", AllTerms)) return error;
     // One definition list fixes both the declaration and output-column order.
     if (!isRestart())
       for (const TermDefinition &definition : getTermDefinitions())
-        emitTopologyPotential(definition.name, definition.terms,
+        if (llvm::Error error = emitTopologyPotential(definition.name, definition.terms,
                               definition.tupleTerm, definition.pairTerm,
-                              definition.externalTerm);
+                              definition.externalTerm)) return error;
   }
   else if (llvm::Error error = emitPotential())
     return error;
@@ -404,7 +409,7 @@ llvm::Error Builder::build() {
   if (system.topology && !control.freeEnergyFile.empty()) {
     lambdaArguments = true;
     shiftsAtCutoff = true;
-    emitTopologyPotential("alchemical", AllTerms | Alchemical);
+    if (llvm::Error error = emitTopologyPotential("alchemical", AllTerms | Alchemical)) return error;
     shiftsAtCutoff = false;
     lambdaArguments = false;
   }
@@ -418,21 +423,22 @@ llvm::Error Builder::build() {
     // pair term at the cutoff, shifted to 0 there (D210).
     gradientArguments = true;
     shiftsAtCutoff = true;
-    emitTopologyPotential("tunable", AllTerms);
+    if (llvm::Error error = emitTopologyPotential("tunable", AllTerms)) return error;
     shiftsAtCutoff = false;
     gradientArguments = false;
   }
   // The energies and derivatives of `observe`, of the potential that the
   // forces sample (D210).
   shiftsAtCutoff = true;
-  emitObservedPotentials();
+  if (llvm::Error error = emitObservedPotentials()) return error;
   shiftsAtCutoff = false;
   for (const TermBuilder *term : getTermBuilders())
     if (const auto *role = term->getRoles().coordinateOutput)
       role->emitAuxiliaryPotentials(*this);
   emitSitePotentials();
-  emitPrograms();
-  emitEntry();
+  if (llvm::Error error = emitPrograms())
+    return error;
+  if (llvm::Error error = emitEntry()) return error;
   if (!frameLoopError.empty())
     return makeError(frameLoopError);
   return llvm::Error::success();

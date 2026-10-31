@@ -1,0 +1,300 @@
+// Frame positions and cell values are local to their native iteration.
+#include "SimpleFrameEntryIR.h"
+#include "EntryFieldsIR.h"
+#include "EntryLoopIR.h"
+#include "BarostatIR.h"
+#include "KineticIR.h"
+#include "PotentialIR.h"
+#include "OutputIR.h"
+#include "ReorderIR.h"
+#include "SiteIR.h"
+#include "CouplingIR.h"
+#include "TermIR.h"
+#include "mdir/Driver/Builder.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
+#include <limits>
+using namespace mlir;
+using namespace mdir::driver;
+using namespace mdir::driver::builder;
+
+namespace {
+Value constraintTrace(OpBuilder &builder, const EntryFieldsIR &physical,
+    const PotentialStateIR &state, Value forces, Value trace,
+    llvm::ArrayRef<FrameConstraintIR> groups, bool axes) {
+  Value descent = buildDescentDirection(builder, forces, physical.masses);
+  for (const auto &group : groups) {
+    SmallVector<Value> lengths;
+    for (unsigned slot : group.parameters) lengths.push_back(state.fields[slot]);
+    ConstraintVelocityInputs input{state.fields[group.relation], physical.positions,
+        state.cell, descent, physical.masses, lengths, {}, {}};
+    descent = group.water ? buildSettleVelocities(builder, input).velocities
+                          : buildShakeVelocities(builder, input, group.arity).velocities;
+  }
+  for (const auto &group : groups)
+    trace = buildConstraintTrace(builder,
+        {state.fields[group.relation], physical.positions, state.cell, descent,
+         forces, physical.velocities, physical.masses, trace}, group.arity, axes);
+  return trace;
+}
+void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
+  mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), TypeRange{},
+      FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameForces"),
+      ValueRange{forces, identities}, ValueRange{}, UnitAttr{});
+}
+}
+
+llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
+    OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config,
+    llvm::function_ref<FrameCompletionIR(OpBuilder &, const PotentialStateIR &,
+                                        EnergyResults, Value)> complete,
+    llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
+  return buildEntryFunction(builder, program, {false, config.branchesStart},
+      [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
+    auto loc = at.getUnknownLoc();
+    Value zero = arith::ConstantIndexOp::create(at, loc, 0);
+    Value one = arith::ConstantIndexOp::create(at, loc, 1);
+    if (config.branchesStart) {
+      Value none = arith::ConstantIntOp::create(at, loc, 0, 64);
+      arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, arguments.firstCall, none);
+    }
+    Value time;
+    if (config.timed) {
+      time = buildSimulationTime(at, arguments.start, arguments.interval);
+    }
+    if (config.stepMemory || config.timed || !config.constraints.empty()) {
+      Value memory = memref::AllocaOp::create(at, loc,
+          MemRefType::get({1}, at.getI64Type()));
+      memref::StoreOp::create(at, loc, arguments.start, memory, zero);
+      arith::ConstantIntOp::create(at, loc, 1, 64);
+    }
+    for (int64_t count : config.counts) arith::ConstantIndexOp::create(at, loc, count);
+    for (int64_t period : config.periods) arith::ConstantIndexOp::create(at, loc, period);
+    auto startValue = [&](StringRef name) -> Value {
+      auto found = llvm::find_if(program.startValues,
+          [&](const auto &value) { return value.name == name; });
+      assert(found != program.startValues.end() && "cell start value must exist");
+      return arguments.startValues[std::distance(program.startValues.begin(), found)];
+    };
+    SmallVector<Value> replaced{arguments.positions, arguments.lengthX, arguments.lengthY, arguments.lengthZ};
+    for (auto [metadata, value] : llvm::zip(program.startValues, arguments.startValues))
+      if (StringRef(metadata.name).starts_with("tilt_")) replaced.push_back(value);
+    Value boxMemory, trotterMemory, reference;
+    if (config.changesCell) {
+      boxMemory = memref::AllocaOp::create(at, loc,
+          MemRefType::get({int64_t(config.cellEdges)}, at.getF64Type()));
+      if (config.scalesEveryStep)
+        trotterMemory = memref::AllocaOp::create(at, loc, MemRefType::get({9}, at.getF64Type()));
+      SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
+      if (config.cellEdges == 6)
+        edges.append({startValue("tilt_bx"), startValue("tilt_cx"), startValue("tilt_cy")});
+      for (auto [index, edge] : llvm::enumerate(edges)) {
+        Value slot = arith::ConstantIndexOp::create(at, loc, index);
+        memref::StoreOp::create(at, loc, edge, boxMemory, slot);
+      }
+      replaced.push_back(boxMemory);
+    }
+    if (config.referenceEdges) {
+      SmallVector<Value> edges;
+      for (unsigned slot : *config.referenceEdges) edges.push_back(arguments.startValues[slot]);
+      reference = vector::FromElementsOp::create(at, loc, VectorType::get({3}, at.getF64Type()), edges);
+    }
+    auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
+    CouplingMassIR massParameters;
+
+    if (config.coupled) {
+      massParameters = buildCouplingMass(at, imported.masses);
+      if (config.thermostat) {
+        const auto &thermostat = *config.thermostat;
+        if (config.barostatParameters) buildBarostatParameters(at, *config.barostatParameters);
+        arith::ConstantIntOp::create(at, loc, thermostat.seed, 64);
+        for (double value : {thermostat.freedom, thermostat.target, thermostat.decay})
+          arith::ConstantOp::create(at, loc, at.getF64FloatAttr(value));
+      }
+    }
+    if (config.leapfrog && config.barostat) {
+      Value back = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(-0.5));
+      arith::MulFOp::create(at, loc, back, arguments.interval);
+    }
+    Value cellMemory = memref::AllocaOp::create(at, loc,
+        MemRefType::get({6}, at.getF64Type()));
+    Value requests = memref::AllocaOp::create(at, loc,
+        MemRefType::get({2}, at.getF64Type()));
+    SmallVector<Value> indices;
+    for (int64_t index = 0; index != config.cellEdges; ++index)
+      indices.push_back(arith::ConstantIndexOp::create(at, loc, index));
+    Value end = arith::ConstantIndexOp::create(at, loc, std::numeric_limits<int64_t>::max());
+    auto frames = buildEntryLoop(at, "frames", zero, end, one, {},
+        [&](OpBuilder &frame, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+      auto storage = cast<MemRefType>(arguments.positions.getType());
+      auto boundary = func::CallOp::create(frame, loc, "mdrtFrameBoundary",
+          TypeRange{storage}, ValueRange{cellMemory, requests});
+      SmallVector<Value> edges, asks;
+      for (Value index : indices)
+        edges.push_back(memref::LoadOp::create(frame, loc, cellMemory, index));
+      for (unsigned index = 0; index != 2; ++index)
+        asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
+      Value scale;
+      if (config.referenceEdges) scale = buildReferenceScale(frame, ValueRange(edges).take_front(3), reference);
+      Value cell = buildCell(frame, edges);
+      auto physical = imported;
+      physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
+      auto originalParameters = buildEntryPotentialFields(physical);
+      for (const auto &site : config.sites)
+        physical.positions = buildPlacedSites(frame,
+            {originalParameters[site.relation], physical.positions, cell,
+             originalParameters[site.a], originalParameters[site.b]}, site.amber);
+      physical = buildEntryReorder(frame, program, std::move(physical), cell);
+      auto parameters = buildEntryPotentialFields(physical);
+      PotentialStateIR state{physical.positions, cell, parameters, time};
+      SmallVector<Value> storedTerms;
+      auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {
+        auto result = buildEnergyEvaluation(at, state, requests);
+        for (const auto &site : config.sites) {
+          auto spread = buildSiteSpread(at,
+              {parameters[site.relation], physical.positions, cell,
+               parameters[site.a], parameters[site.b], result.forces, result.virial},
+              site.amber, site.derived, site.potential);
+          result.forces = spread.forces;
+          result.virial = spread.virial;
+        }
+        if (complete) {
+          auto completed = complete(at, state, result, scale);
+          result = completed.physical;
+          if (requests.energy) storedTerms = std::move(completed.storedTerms);
+        }
+        return result;
+      };
+      auto iteration = buildEntryLoop(frame, "frame evaluation", zero, one, one, {},
+          [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+        auto energy = evaluate(body, {true, true, true});
+        if (storedTerms.size() != config.storedTerms)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+              "native frame evaluation returned an unexpected stored-term count");
+        Value nil = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
+        Value force = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[0], nil);
+        Value virial = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[1], nil);
+        Value forceCount = arith::SelectOp::create(body, loc, force, one, zero);
+        Value virialCount = arith::SelectOp::create(body, loc, virial, one, zero);
+        Value forceOnlyCount = arith::SelectOp::create(body, loc, virial, zero, forceCount);
+        auto forceOnly = buildEntryLoop(body, "frame force request", zero, forceOnlyCount, one, {},
+            [&](OpBuilder &requested, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          auto result = evaluate(requested, {false, true, false});
+          writeFrameForces(requested, result.forces, physical.identities);
+          return SmallVector<Value>{};
+        });
+        if (!forceOnly) return forceOnly.takeError();
+        auto withVirial = buildEntryLoop(body, "frame virial request", zero, virialCount, one, {},
+            [&](OpBuilder &requested, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          auto result = evaluate(requested, {false, true, true});
+          auto forces = buildEntryLoop(requested, "frame shared force request", zero, forceCount, one, {},
+              [&](OpBuilder &write, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+            writeFrameForces(write, result.forces, physical.identities);
+            return SmallVector<Value>{};
+          });
+          if (!forces) return forces.takeError();
+          SmallVector<Value> entries;
+          for (int index = 0; index != 9; ++index)
+            entries.push_back(vector::ExtractOp::create(requested, loc, result.virial, index));
+          func::CallOp::create(requested, loc, "mdrtWriteFrameVirial", TypeRange{}, entries);
+          return SmallVector<Value>{};
+        });
+        if (!withVirial) return withVirial.takeError();
+        if (config.topology) {
+          Value terms = buildTermEnergyBuffer(body, state, config.terms,
+              config.terms.size() + config.storedTerms);
+          for (auto [index, value] : llvm::enumerate(storedTerms)) {
+            Value slot = arith::ConstantIndexOp::create(body, loc, config.terms.size() + index);
+            memref::StoreOp::create(body, loc, value, terms, slot);
+          }
+          buildWriteTerms(body, terms);
+          auto diagonal = buildVirialDiagonal(body, energy.virial);
+          func::CallOp::create(body, loc, "mdrtWriteVirial", TypeRange{},
+              ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
+        }
+        Value kinetic = buildKineticEnergy(body, physical.velocities, physical.masses);
+        Value correction;
+        if (config.constraints.empty() && !config.brownian) {
+          Value excess = buildKineticExcess(body, energy.forces, physical.masses, arguments.interval);
+          correction = buildSum3(body, excess);
+        } else {
+          correction = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
+        }
+        Value trace = buildVirialTrace(body, energy.virial);
+        if (!config.constraints.empty())
+          trace = constraintTrace(body, physical, state, energy.forces, trace, config.constraints, false);
+        Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
+        func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
+            ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
+        if (coordinateOutput) coordinateOutput(body, state, arguments.start);
+        if (config.freeEnergy)
+          buildFreeEnergyOutput(body, state, arguments.start, zero, one, *config.freeEnergy);
+        if (!config.observables.empty()) {
+          SmallVector<Value> tunables;
+          for (unsigned slot : config.observableTunables)
+            tunables.push_back(arguments.startValues[slot]);
+          buildObservablesOutput(body, state, arguments.start, config.observableCount,
+              config.observableBaseArgument, config.observables, tunables);
+        }
+        if (config.gradient) {
+          const auto &gradient = *config.gradient;
+          SmallVector<Value> constants, seeds;
+          for (unsigned slot : gradient.constants)
+            constants.push_back(arguments.startValues[slot]);
+          if (gradient.seeds)
+            seeds.assign(gradient.seeds, physical.fields[*gradient.seedField]);
+          buildTunableGradientOutput(body, state, arguments.startValues[gradient.request],
+              zero, one, gradient.output.fieldArguments.empty() ? Value{} : physical.identities,
+              constants, seeds, gradient.output);
+        }
+        if (config.scalesEveryStep) {
+          auto virial = buildVirialDiagonal(body, energy.virial);
+          Value diagonal = virial.vector;
+          if (!config.constraints.empty())
+            diagonal = constraintTrace(body, physical, state, energy.forces, diagonal, config.constraints, true);
+          SmallVector<RigidGroupIR> groups;
+          for (const auto &group : config.constraints)
+            groups.push_back({parameters[group.relation], group.arity});
+          Value molecular = virial.vector;
+          if (!groups.empty())
+            molecular = buildMolecularDiagonal(body,
+                {virial.vector, physical.positions, energy.forces, cell, physical.masses, groups});
+          auto kinetic = buildGroupKinetic(body,
+              {groups.empty() ? Value{} : physical.positions, physical.velocities, energy.forces,
+               groups.empty() ? Value{} : cell, physical.masses, arguments.interval,
+               config.removesMotion ? massParameters.totalMass : Value{}, groups});
+          buildStoreBarostatState(body, trotterMemory, diagonal, molecular, kinetic.half);
+        }
+        if (config.leapfrog) {
+          Value back = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(-0.5));
+          Value interval = arith::MulFOp::create(body, loc, back, arguments.interval);
+          if (config.branchesStart) {
+            Value none = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
+            Value first = arith::ConstantIntOp::create(body, loc, 1, 64);
+            Value begins = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                arguments.firstCall, first);
+            interval = arith::SelectOp::create(body, loc, begins, interval, none);
+          }
+          buildKick(body, physical.velocities, energy.forces, physical.masses, interval);
+        }
+        return SmallVector<Value>{};
+      });
+      if (!iteration) return iteration.takeError();
+      (*iteration)->setAttr("mdrt.segment", frame.getUnitAttr());
+      if (llvm::Error error = checkFrameEvaluation(*iteration->getOperation()))
+        return std::move(error);
+      return SmallVector<Value>{};
+    });
+    if (!frames) return frames.takeError();
+    if (!arguments.positions.use_empty())
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "native frame iteration read entry positions or cell values");
+    if (llvm::Error error = checkFrameInputs(*frames->getOperation(), replaced))
+      return std::move(error);
+    return llvm::Error::success();
+  });
+}
