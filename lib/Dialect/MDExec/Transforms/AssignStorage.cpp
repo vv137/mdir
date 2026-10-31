@@ -71,7 +71,11 @@ struct Scope {
   /// Makes `buffer` available to later requests of its type and size. The
   /// buffers of a particle set and of a tuple set can have one type and
   /// different sizes, so a buffer is reused only for its size.
+  /// A buffer of a fixed length that has the type of buffers with a row a
+  /// particle (the partial sums of `scratch`) is never put in the pool.
   void release(Value buffer) {
+    if (getRoot().fixedLength.contains(buffer))
+      return;
     pool[{buffer.getType(), getSet(buffer)}].push_back(buffer);
   }
 
@@ -92,6 +96,10 @@ struct Scope {
   /// by which it is reused: buffers of one type are of one size only within
   /// a set. The scope of the function keeps them for all scopes.
   llvm::DenseMap<Value, Attribute> setOf;
+  /// The buffers whose length is not the size of their set, although their
+  /// type is that of a buffer of the set: the scope of the function keeps
+  /// them for all scopes.
+  llvm::DenseSet<Value> fixedLength;
   Attribute getSet(Value buffer) {
     if (auto type = dyn_cast<MemRefType>(buffer.getType()))
       if (auto layout = dyn_cast_if_present<SetLayoutAttr>(type.getLayout()))
@@ -192,6 +200,10 @@ private:
   /// `field` is the type of a field of the particle set.
   LogicalResult getScratch(Operation *op, ArrayRef<Type> sums, Type field,
                            Scope &scope, SmallVectorImpl<Value> &scratch);
+  /// A buffer of the partial sums of a reduction on a device, of `type`,
+  /// the second buffer of a sum in `scratch`, that the op has not `taken`.
+  Value getPartials(MemRefType type, Attribute set,
+                    llvm::SmallPtrSetImpl<void *> &taken, Location loc);
 
   /// The buffer that holds the field `field`.
   LogicalResult getBuffer(Value field, Scope &scope, Value &buffer);
@@ -282,6 +294,9 @@ private:
   /// sums that run one after another can take one buffer.
   using ScratchKey = std::tuple<Type, Value, int64_t, unsigned, unsigned>;
   llvm::DenseMap<ScratchKey, SmallVector<Value, 1>> sharedScratch;
+  /// The buffers of the partial sums of the reductions on a device, by
+  /// type, shared by the sums of the function (getPartials).
+  llvm::DenseMap<Type, SmallVector<Value, 1>> sharedPartials;
 
   /// The scope of the body of the function that is being converted.
   Scope *root = nullptr;
@@ -438,15 +453,53 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
       {ShapedType::kDynamic}, Float64Type::get(context),
       SetLayoutAttr::get(context, getStorageSet(field), 1),
       IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+  // The buffers of partial sums that this op has taken, so that no two of
+  // its sums take one.
+  llvm::SmallPtrSet<void *, 4> taken;
   for (Type sum : sums) {
     // A number, or a vector of numbers: the virial has nine.
     MemRefType type = getScratchType(sum, device);
     scratch.push_back(
         scope.request(type, size, getStorageSet(field), op->getLoc()));
-    scratch.push_back(
-        scope.request(type, size, getStorageSet(field), op->getLoc()));
+    scratch.push_back(getPartials(type, getStorageSet(field), taken,
+                                  op->getLoc()));
   }
   return success();
+}
+
+Value Assignment::getPartials(MemRefType type, Attribute set,
+                              llvm::SmallPtrSetImpl<void *> &taken,
+                              Location loc) {
+  // The partial sums take a row for each part of the reduction, at most
+  // maxReductionParts, where they took a row a particle (#711): 13.5 MiB
+  // for the virial alone at 196,608 particles. They are allocated once in
+  // the body of the function and shared by the sums of the function by
+  // type, as the scratch of the reciprocal sums is (D315): a sum writes
+  // the partial sums before it reads them, within one reduction, and two
+  // sums that take one buffer are not independent (the op reads and writes
+  // its scratch), so md-exec-assign-streams orders them. Their number
+  // depends on the most sums of one type in one op, not on the loops
+  // around the ops: one for each buffer of contributions, which a loop
+  // carries anew, held more blocks for a run of more steps
+  // (test/Driver/pool-retention-gpu.test).
+  SmallVector<Value, 1> &shared = sharedPartials[type];
+  for (Value buffer : shared)
+    if (taken.insert(buffer.getAsOpaquePointer()).second)
+      return buffer;
+  OpBuilder &builder = root->builder;
+  Value length =
+      arith::ConstantIndexOp::create(builder, loc, maxReductionParts);
+  Value partials = gpu::AllocOp::create(builder, loc, type,
+                                        /*asyncToken=*/Type(),
+                                        /*asyncDependencies=*/ValueRange(),
+                                        ValueRange{length},
+                                        /*symbolOperands=*/ValueRange())
+                       .getMemref();
+  root->fixedLength.insert(partials);
+  root->setSet(partials, set);
+  shared.push_back(partials);
+  taken.insert(partials.getAsOpaquePointer());
+  return partials;
 }
 
 void Assignment::bind(Value field, Value buffer, Scope &scope) {
@@ -2289,6 +2342,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
 
     sizes.clear();
     sharedScratch.clear();
+    sharedPartials.clear();
     neighborStorages.clear();
     hostBuffers.clear();
     readOnly.clear();

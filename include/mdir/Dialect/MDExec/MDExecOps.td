@@ -608,7 +608,9 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
 
     `scratch` holds buffers that the op may use as it likes. What they hold
     before and after is unspecified. On a device the test of validity needs
-    two, with one value of the type of the positions per particle.
+    two, of the type of a buffer with one value of the type of the positions
+    per particle: the first has a row a particle, the second a row for each
+    part of the reduction (`maxReductionParts`, #711).
 
     With `moved`, the op does not test the displacements: `moved` tells
     whether the condition above fails for a particle. A loop over particles
@@ -1000,8 +1002,9 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
 
     `scratch` holds buffers that the loop may use as it likes. What they
     hold before and after is unspecified. On a device a loop needs two for
-    each value in `reduce`, with one value of the type of the sum per
-    particle.
+    each value in `reduce`, of the type of a buffer with one value of the
+    type of the sum per particle: the first has a row a particle, the second
+    a row for each part of the reduction (`maxReductionParts`, #711).
 
     `exchange` has one contract for each field in `outs` and then each
     value in `reduce`, in the order of the yield: how the kernel of that
