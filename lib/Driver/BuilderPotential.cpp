@@ -223,7 +223,7 @@ llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
             ir.getF64FloatAttr(control.cutoffDistance * units::length));
       }
       TermNativeTopology state{{args[0], args[1], neighborhood,
-          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField, bindLambdas, bindObserved, gradientSeed, gradientConstant, getPairTruncation()};
+          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField, bindLambdas, bindObserved, gradientSeed, gradientConstant, getPairTruncation(), lambdaArguments, shiftsAtCutoff};
       mlir::Value total;
       auto add = [&](mlir::Value energy) {
         total = total ? mlir::arith::AddFOp::create(ir, loc, total, energy).getResult() : energy;

@@ -174,6 +174,7 @@ public:
   virtual const PairTermPlan &getPairPlan() const = 0;
   virtual llvm::ArrayRef<Parameter> getTypeParameters() const = 0;
   virtual llvm::ArrayRef<Program::Table> getParameterTables() const = 0;
+  virtual llvm::ArrayRef<Program::Field> getParameterFields() const = 0;
   virtual bool includesPair(unsigned index) const = 0;
   virtual double getShiftFixedFactor() const = 0;
   virtual llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const = 0;
@@ -324,6 +325,7 @@ struct TermNativeTopology {
   llvm::function_ref<void(StringRef, llvm::StringMap<mlir::Value> &)> bindObserved;
   llvm::function_ref<mlir::Value(unsigned)> gradientSeed, gradientConstant;
   Truncation pairTruncation;
+  bool lambdaArguments, shiftsAtCutoff;
 };
 
 /// Borrowed physical values and semantic particle-field bindings at one evaluation.
@@ -666,6 +668,7 @@ private:
   llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const override {
     return tupleGradients;
   }
+  llvm::ArrayRef<Program::Field> getParameterFields() const override { return program.fields; }
   bool hasGradientArguments() const override { return gradientArguments; }
   bool hasGradientCharges() const override { return gradientCharges; }
   bool hasTunableGradient() const override { return program.tunableGradient; }

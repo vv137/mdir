@@ -113,9 +113,8 @@ Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
 Stage C (#718, D[builder-native-program]) owns the native module and
-staged-model input boundary, complete dynamics/minimization and most potential
-bodies. Nonbonded potential and entry/schedule scopes, plus final assembly
-cleanup, remain in progress.
+staged-model input boundary, complete dynamics/minimization and every term-potential family. Entry/schedule
+scopes and final assembly cleanup remain in progress.
 
 ### 2.2 The dialects
 

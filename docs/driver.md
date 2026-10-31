@@ -1281,7 +1281,7 @@ No generic behavioral hook has only one implementer.
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
 | `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
-| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface, 1–4 pairs, custom tuples/centroids, custom pairs, staged models |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface, 1–4 pairs, custom tuples/centroids, custom pairs, staged models, nonbonded |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1297,8 +1297,8 @@ No generic behavioral hook has only one implementer.
 | Narrow role and its complete hooks | Implementer |
 |---|---|
 | `TermPreparation`: `validate`, `prepare` | Models; read-only inputs, the build context, and a typed recipe writer |
-| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names and a synchronous `TermIRWriter` |
-| `TermPostEvaluation`: `hasForceCorrection`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; borrowed correction names and the stored-column destination |
+| `TermHostEvaluation`: `applies`, `build`, `emitDeclarations`, `emit` | Opaque models; actual physical values in native functions, with borrowed names/writer at remaining entry sites |
+| `TermPostEvaluation`: `hasForceCorrection`, `build`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; actual physical values in native functions, with borrowed correction names and store destinations at remaining entry sites |
 | `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
 | `TermScalarParameters`: `collectBareConstants`, `collectObservedConstants`, `appendInitialConstants` | Custom pairs; named scalar collections and a bounded start-value appender |
 | `TermNonbonded`: `collect`, `collectGradientFields`, `collectGradients`, `emit` | Nonbonded; projected mesh/correction data and the shared parameter/emission capabilities |
@@ -1485,7 +1485,12 @@ Staged-model contributions clone their checked input body directly into the
 native topology potential using actual positions, cell and atomic-number values.
 Native potential construction propagates errors and discards incomplete bodies;
 construction coverage verifies that failure boundary explicitly.
-Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
+Primary, excluded, within-selection and reciprocal nonbonded contributions
+now construct native bodies through the same topology hook. Their seven shared
+kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
+order. Boundary flags are supplied at the current potential; parameter-field
+metadata is read-only and computed reciprocal outputs retain their original order.
+Entry/schedule scopes and the obsolete topology fallback remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
 ## 3. Decided

@@ -201,7 +201,7 @@ constraint groups preserve position correction, velocity projection, failure
 reporting, molecular pressure, constraint virial and future half-step kinetic
 measurements, including geodesic Langevin and within-drift Trotter scaling.
 Borrowed physical values and owned scalar configuration retain the prior kernel
-and accumulation order. Nonbonded potential and entry/schedule scopes remain in progress.
+and accumulation order. Entry/schedule scopes remain in progress.
 
 Half-step eligibility is shared by the owner, construction tests and native
 function builder. A checked return boundary reports the physical combination
@@ -240,3 +240,9 @@ Staged-model contributions clone their checked input body directly into the
 native topology potential using actual positions, cell and atomic-number values.
 Native potential construction propagates errors and discards incomplete bodies;
 construction coverage verifies that failure boundary explicitly.
+
+Primary, excluded, within-selection and reciprocal nonbonded contributions
+now construct native bodies through the same topology hook. Their seven shared
+kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
+order. Boundary flags are supplied at the current potential; parameter-field
+metadata is read-only and computed reciprocal outputs retain their original order.
