@@ -1093,7 +1093,7 @@ llvm::Error Builder::emitEntry() {
       !isRestart() && !control.isLangevin() &&
       !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
-      !hasConstraints() && !hasForceCorrections() &&
+      !hasForceCorrections() &&
       !hasHostEvaluation() && control.freeEnergyFile.empty() &&
       control.observables.empty() && !program.tunableGradient &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -1127,6 +1127,30 @@ llvm::Error Builder::emitEntry() {
       };
       config.sites.push_back({slot, fieldSlot("a"), fieldSlot("b"),
           selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
+    }
+    auto groups = getShakeSets();
+    for (const auto &set : program.tupleSets)
+      if (set.name == "settles") groups.insert(groups.begin(), &set);
+    for (const Program::TupleSet *selected : groups) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "constraint parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      FrameConstraintIR group{slot, selected->arity, {}, selected->name == "settles"};
+      if (group.water) {
+        group.parameters = {fieldSlot("doh"), fieldSlot("dhh")};
+      } else {
+        for (unsigned member = 1; member != selected->arity; ++member)
+          group.parameters.push_back(fieldSlot("d" + std::to_string(member)));
+      }
+      config.constraints.push_back(std::move(group));
     }
     if (config.topology)
       for (const auto &definition : getTermDefinitions())

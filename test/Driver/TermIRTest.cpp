@@ -461,6 +461,13 @@ static void checkNativeFrameEntry() {
   site.fields.push_back({"b", {}, false});
   mdir::md::TupleSetOp::create(builder, loc, site.name, "atoms", site.arity,
       mdir::md::Orientation::Ordered, false);
+  metadata.tupleSets.emplace_back();
+  auto &bond = metadata.tupleSets.back();
+  bond.name = "bonds";
+  bond.arity = 2;
+  bond.fields.push_back({"d1", {}, false});
+  mdir::md::TupleSetOp::create(builder, loc, bond.name, "atoms", bond.arity,
+      mdir::md::Orientation::Unordered, true);
   auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
   SmallVector<Type> inputs{mdir::md::FieldType::get(&context, atoms, 3, builder.getF64Type()),
       mdir::md::CellType::get(&context)};
@@ -478,6 +485,7 @@ static void checkNativeFrameEntry() {
   SimpleFrameEntryIRConfig config;
   config.branchesStart = config.givenForces = true;
   config.sites.push_back({3, 4, 5, false, false, "spread_sites_linear"});
+  config.constraints.push_back({6, 2, {7}, false});
   auto built = buildSimpleFrameEntry(builder, metadata, config);
   require(bool(built), "native frame entry did not construct");
   auto entry = *built;

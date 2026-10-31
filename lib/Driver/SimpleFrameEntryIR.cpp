@@ -87,6 +87,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     Value time;
     if (config.timed) {
       time = buildSimulationTime(at, arguments.start, arguments.interval);
+    }
+    if (config.timed || !config.constraints.empty()) {
       Value memory = memref::AllocaOp::create(at, loc,
           MemRefType::get({1}, at.getI64Type()));
       memref::StoreOp::create(at, loc, arguments.start, memory, zero);
@@ -176,9 +178,29 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
               ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
         }
         Value kinetic = buildKineticEnergy(body, physical.velocities, physical.masses);
-        Value excess = buildKineticExcess(body, energy.forces, physical.masses, arguments.interval);
-        Value correction = buildSum3(body, excess);
+        Value correction;
+        if (config.constraints.empty()) {
+          Value excess = buildKineticExcess(body, energy.forces, physical.masses, arguments.interval);
+          correction = buildSum3(body, excess);
+        } else {
+          correction = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
+        }
         Value trace = buildVirialTrace(body, energy.virial);
+        if (!config.constraints.empty()) {
+          Value descent = buildDescentDirection(body, energy.forces, physical.masses);
+          for (const auto &group : config.constraints) {
+            SmallVector<Value> lengths;
+            for (unsigned slot : group.parameters) lengths.push_back(parameters[slot]);
+            ConstraintVelocityInputs input{parameters[group.relation], physical.positions,
+                cell, descent, physical.masses, lengths, {}, {}};
+            descent = group.water ? buildSettleVelocities(body, input).velocities
+                                  : buildShakeVelocities(body, input, group.arity).velocities;
+          }
+          for (const auto &group : config.constraints)
+            trace = buildConstraintTrace(body,
+                {parameters[group.relation], physical.positions, cell, descent,
+                 energy.forces, physical.velocities, physical.masses, trace}, group.arity, false);
+        }
         Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});

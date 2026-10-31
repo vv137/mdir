@@ -7,12 +7,18 @@
 #include <string>
 #include <vector>
 namespace mdir::driver::builder {
+struct FrameConstraintIR {
+  unsigned relation, arity;
+  llvm::SmallVector<unsigned> parameters;
+  bool water;
+};
 struct SimpleFrameEntryIRConfig {
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
   bool topology = false;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
+  std::vector<FrameConstraintIR> constraints;
   llvm::SmallVector<int64_t> counts, periods;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
