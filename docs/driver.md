@@ -1504,7 +1504,10 @@ mass/thermostat preparation and initial half-step velocities retain their order.
 Barostat/reference-scale setup and initial Trotter state also construct native
 operations. A completed-loop provenance check rejects captured entry positions,
 cell expressions and box-memory aliases while allowing header initialization.
-Pull output and hosted evaluation remain in the other entry path.
+Pull output consumes actual relation and tuple-field bindings through its narrow
+native output role; both entry paths share the coordinate/force output core.
+The obsolete centroid SSA-name formatter is removed. Hosted evaluation remains
+in the other entry path.
 Restraint energy columns receive actual stored contribution values from the adapter.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs

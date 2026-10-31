@@ -95,7 +95,8 @@ void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config,
     llvm::function_ref<FrameCompletionIR(OpBuilder &, const PotentialStateIR &,
-                                        EnergyResults, Value)> complete) {
+                                        EnergyResults, Value)> complete,
+    llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
   return buildEntryFunction(builder, program, {false, config.branchesStart},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
@@ -273,6 +274,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
+        if (coordinateOutput) coordinateOutput(body, state, arguments.start);
         if (config.freeEnergy)
           buildFreeEnergyOutput(body, state, arguments.start, zero, one, *config.freeEnergy);
         if (!config.observables.empty()) {

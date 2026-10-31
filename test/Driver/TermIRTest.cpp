@@ -501,10 +501,21 @@ static void checkNativeFrameEntry() {
   config.barostat = config.changesCell = config.removesMotion = true;
   config.scalesEveryStep = storesBarostatState;
   config.barostatParameters = BarostatParameters{{0.1, 0.1, 0.1}, 1.0, 0.1, 0.2, 2.5, 0.1, 0.0};
-  auto built = buildSimpleFrameEntry(builder, metadata, config);
+  unsigned outputCalls = 0;
+  Value outputPositions, outputCell, outputStep;
+  auto built = buildSimpleFrameEntry(builder, metadata, config, {},
+      [&](OpBuilder &, const PotentialStateIR &state, Value step) {
+        ++outputCalls;
+        outputPositions = state.positions;
+        outputCell = state.cell;
+        outputStep = step;
+      });
   require(bool(built), "native frame entry did not construct");
   auto entry = *built;
   auto positions = entry.getArgument(0);
+  require(outputCalls == 1 && outputPositions && outputCell &&
+          outputStep == entry.getArgument(entry.getNumArguments() - 2),
+          "native frame coordinate output lost its physical state or step");
   require(positions.use_empty(), "native frame entry read outer positions");
   require(bool(entry.getArgAttr(3, "mdrt.read_only")), "native frame entry lost read-only masses");
   require(!checkFrameEvaluation(*entry.getOperation()), "native frame entry lost its actual evaluation");

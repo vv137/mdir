@@ -276,10 +276,7 @@ public:
       llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) = 0;
   virtual Truncation getPairTruncation() const = 0;
   virtual unsigned getNumPotentialArguments() const = 0;
-  virtual llvm::StringMap<std::string>
-  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
-                          StringRef x, StringRef cell, StringRef relations,
-                          StringRef prefix) = 0;
+
 };
 
 /// One output site; borrowed names remain valid for the hook call.
@@ -357,12 +354,19 @@ public:
   virtual unsigned getStoredTermCount(const TermInputs &) const = 0;
   virtual void emitStoredTerms(TermEmission &, StringRef, int &) const = 0;
 };
+struct TermNativeOutput {
+  const PotentialStateIR &physical;
+  mlir::Value step;
+  llvm::function_ref<mlir::Value(StringRef)> relation;
+  llvm::function_ref<mlir::Value(StringRef, StringRef)> tupleField;
+};
 class TermCoordinateOutput {
 public:
   virtual ~TermCoordinateOutput() = default;
   virtual bool hasCoordinateOutput(const TermInputs &) const = 0;
   virtual void emitAuxiliaryPotentials(TermEmission &) const = 0;
   virtual void emitOutput(TermEmission &, const TermOutput &) const = 0;
+  virtual void buildOutput(const TermInputs &, mlir::OpBuilder &, const TermNativeOutput &) const = 0;
 };
 class TermScalarParameters {
 public:
@@ -727,15 +731,6 @@ private:
   llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
                              int externalTerm = -1);
-  /// Emits the coordinates of the term `term` over centers, at the
-  /// positions `x` in the cell `cell`, with
-  /// the members of its tuples named `relations` and the name of the set:
-  /// `r`, `dx`, `dy`, `dz` in Å for two centers, `theta` in radians
-  /// otherwise, mapped to their names, which begin with `prefix`.
-  llvm::StringMap<std::string>
-  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
-                          StringRef x, StringRef cell, StringRef relations,
-                          StringRef prefix) override;
   /// Whether the force on each virtual site is spread by the derivative of
   /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
   /// out in `emitSpreadSites` (`written`), D298.
