@@ -196,9 +196,13 @@ corrections and hosted evaluations borrow actual physical values synchronously
 through narrow roles. Their native kernels are shared with the remaining
 emitters; the complete minimization body is native. Other scopes remain in progress.
 
-Unconstrained dynamics programs also construct complete native signatures and
-bodies, including Langevin and Brownian noise, virtual sites, restraint and hosted
-evaluations, independent energy/virial results and Trotter scaling within the
-drift. Owned scalar configuration and actual block arguments preserve the
-existing stochastic counters, velocity staggering and kernel order. Constrained
-dynamics and the remaining scopes are still in progress.
+All dynamics programs construct complete native signatures and bodies. Semantic
+constraint groups preserve position correction, velocity projection, failure
+reporting, molecular pressure, constraint virial and future half-step kinetic
+measurements, including geodesic Langevin and within-drift Trotter scaling.
+Borrowed physical values and owned scalar configuration retain the prior kernel
+and accumulation order. Potential and entry/schedule scopes remain in progress.
+
+Half-step eligibility is shared by the owner, construction tests and native
+function builder. A checked return boundary reports the physical combination
+when the signature and returned state disagree, before ordinary verification.

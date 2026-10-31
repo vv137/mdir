@@ -41,54 +41,16 @@ void Builder::emitKineticEnergy(StringRef result, StringRef velocities,
       });
 }
 
-void Builder::emitPrograms() {
+llvm::Error Builder::emitPrograms() {
   if (control.minimize) {
     emitDescend();
-    return;
+    return llvm::Error::success();
   }
   // Virtual sites are placed after the positions move, and the forces on
   // them are moved to their atoms before the velocities do. Rigid waters
   // are constrained before the sites are placed.
-  bool sites = hasSites();
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
-  bool constraints = settles || !shakeSets.empty();
-
-  // With restraints the names of an evaluation have `p`, and the
-  // restraints give those that the step goes on with.
-  std::string held = hasForceCorrections() ? "p" : "";
-  // The velocities that leave none along a constrained bond (the second
-  // half of RATTLE), with the virial of the impulses if `virial` is given.
-  // Returns the velocities and the virial.
-  auto project = [&](StringRef x, StringRef input, StringRef base,
-                     std::string virial) {
-    std::string current = input.str();
-    unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-    auto next = [&]() {
-      ++step;
-      return step == steps ? base.str()
-                           : (base + "c" + std::to_string(step)).str();
-    };
-    if (settles) {
-      std::string result = next();
-      std::string w = step == steps ? "%w1c" : "%w1c1";
-      std::string sum = emitSettleVelocities("  ", x, current, result,
-                                             virial, w);
-      if (!virial.empty())
-        virial = sum;
-      current = result;
-    }
-    for (const Program::TupleSet *set : shakeSets) {
-      std::string result = next();
-      std::string w = "%w1s_" + set->name;
-      std::string sum = emitShakeVelocities("  ", x, current, *set, result,
-                                            virial, w);
-      if (!virial.empty())
-        virial = sum;
-      current = result;
-    }
-    return std::make_pair(current, virial);
-  };
 
   // Velocity Verlet (Swope et al., J. Chem. Phys. 76, 637 (1982)) stores
   // the velocities of the time of the positions; leapfrog, those half a
@@ -146,11 +108,9 @@ void Builder::emitPrograms() {
     // a thermostat, return the kinetic energy of each axis at the half
     // steps around their end, measured (D203, D263).
     bool measured = measuresHalfSteps() && kind.measures;
-    bool returnsCurrent = leapfrog && (withVirial || scales || measured);
     // The steps with the virial also return the diagonal of the virial of
     // the groups, which the pressure (D264) and the
     // count of the work of a scaling of Trotter type (D116) take.
-    bool molecular = withVirial && !control.isBrownian();
     // The steps of the rows of the log also report the rigid waters, the
     // solvent (D203).
     bool solvent = measured && withEnergy && reportsSolvent() &&
@@ -172,10 +132,7 @@ void Builder::emitPrograms() {
     // the virial takes the drift of velocity Verlet on the side, for the
     // virial of the constraints alone (`sideVirial`). Either way a step
     // leaves the same state, to the bit, whatever else it returns.
-    bool projectsState =
-        leapfrog && constraints && (control.isLangevin() || scales);
-    bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
-    if (!constraints && !measured) {
+    {
       auto &context = termIR.getContext();
       mlir::OpBuilder builder(&context);
       builder.setInsertionPointToEnd(termIR.getModule().getBody());
@@ -195,6 +152,36 @@ void Builder::emitPrograms() {
         siteSets.push_back({slot, fieldSlot("a"), fieldSlot("b"), selected->name == "sites_amber",
                            spreadsSitesDerived(), "spread_" + selected->name});
       }
+      auto relationSlot = [&](const Program::TupleSet &selected) {
+        unsigned slot = program.fields.size() + program.tables.size();
+        for (const auto &set : program.tupleSets) {
+          if (&set == &selected) return slot;
+          slot += 1 + set.fields.size();
+        }
+        llvm_unreachable("constraint set must belong to the program");
+      };
+      auto fieldSlot = [&](const Program::TupleSet &set, StringRef name) {
+        auto found = llvm::find_if(set.fields, [&](const auto &field) { return field.name == name; });
+        assert(found != set.fields.end() && "constraint parameter must exist");
+        return relationSlot(set) + 1 + unsigned(std::distance(set.fields.begin(), found));
+      };
+      std::vector<DescentConstraintGroupIR> constraintGroups;
+      ConstraintPositionConfig config{false, control.analyticBonds,
+          control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+          control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
+      if (settles) {
+        const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });
+        constraintGroups.push_back({relationSlot(set), 3, {fieldSlot(set, "doh"), fieldSlot(set, "dhh")},
+            {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}}, config, true, control.precision == Precision::Double});
+      }
+      for (const Program::TupleSet *set : shakeSets) {
+        DescentConstraintGroupIR group{relationSlot(*set), set->arity, {}, {}, config, false, false};
+        for (unsigned member = 1; member != set->arity; ++member) {
+          group.parameters.push_back(fieldSlot(*set, "d" + std::to_string(member)));
+          group.bonds.push_back({0, member, member - 1});
+        }
+        constraintGroups.push_back(std::move(group));
+      }
       StepNoiseIR noise;
       noise.active = control.isLangevin() || brownian;
       noise.brownian = brownian;
@@ -208,7 +195,7 @@ void Builder::emitPrograms() {
         noise.parameters = {control.seed, damping, std::sqrt((1.0 - damping * damping) * kT)};
       }
       auto nativeProgram = buildNativeStep(
-          builder, {kind.name, withEnergy, withVirial, scales}, types, leapfrog, control.usesTime,
+          builder, {kind.name, withEnergy, withVirial, scales, measured, solvent}, types, leapfrog, control.usesTime,
           siteSets, scalesReference(), hasHostEvaluation(),
           [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
               mlir::Value scale) {
@@ -234,478 +221,18 @@ void Builder::emitPrograms() {
                 evaluation = {result.energy, result.forces, result.virial};
               }
             return evaluation;
-          }, noise);
+          }, noise, constraintGroups, testsConstraintsApart());
+      if (!nativeProgram) return nativeProgram.takeError();
+      auto ownedProgram = *nativeProgram;
       emitIRFragment("", {}, {}, {}, {},
-          [nativeProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
-            nativeProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          [ownedProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+            ownedProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
             return {};
           });
       continue;
     }
-    std::string effects =
-        constraints ? "{read = [\"dyn.stop\"], write = [\"dyn.stop\"]}" : "{}";
-    if (hasHostEvaluation())
-      effects = constraints
-                    ? "{read = [\"dyn.stop\", \"<Default>\"], write = "
-                      "[\"dyn.stop\", \"<Default>\"]}"
-                    : "{read = [\"<Default>\"], write = [\"<Default>\"]}";
-    os << "dyn.program @" << kind.name
-       << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
-       << "    %cell: !md.cell, %dt: f64"
-       << (scales ? ", %mu: vector<3xf64>" : "") << getScaleParameter()
-       << getFieldParameters() << getNoiseParameter() << ")\n"
-       << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-       << (withVirial ? ", vector<9xf64>" : "")
-       << (molecular ? ", vector<3xf64>" : "")
-       << (returnsCurrent ? ", !vec" : "") << (scales ? ", vector<3xf64>" : "")
-       << (measured ? ", vector<3xf64>" : "")
-       << (solvent ? ", vector<3xf64>" : "") << ")\n"
-       << "    attributes {"
-       << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
-       // The effects of the body, which dyn.step takes (D355):
-       // the deferred stops and the hosted evaluation's ordinary memory.
-       << "effects = " << effects << ",\n                "
-       << (brownian ? "provides = [\"thermostatting\"]} {\n"
-                    : "provides = [\"symplectic\", \"time_reversible\"]} {\n");
-    emitIRFragment(
-        "  ", {"%half"}, {"f64"}, {"%dt"}, {"f64"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          auto loc = builder.getUnknownLoc();
-          mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
-          return {mlir::arith::MulFOp::create(builder, loc, half, values[0])};
-        });
-    // With constraints, a build of the neighbor structure in the step that
-    // finds positions that are not numbers records its stop, and the step
-    // runs to its end: a failed set of constraints then stops the run with
-    // its own message, and the recorded stop follows the tests otherwise
-    // (D278, the maintainer's ruling on PR #381).
-    if (constraints)
-      emitIRFragment(
-          "  ", {}, {}, {}, {},
-          [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
-            mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtDeferStops",
-                                         mlir::TypeRange{}, mlir::ValueRange{});
-            return {};
-          });
-    // The time at the end of the step, at which its forces are evaluated
-    // (D145).
-    if (control.usesTime)
-      emitIRFragment(
-          "  ", {"%time"}, {"f64"}, {"%noise_step", "%dt"}, {"i64", "f64"},
-          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-            return {buildSimulationTime(builder, values[0], values[1])};
-          });
-    if (brownian) {
-      // The velocity of the step, which the drift takes over Δt; the
-      // velocities stored are those of the displacement, Δx / Δt.
-      emitBrownianVelocity("  ", "%f", "%v1");
-    } else if (!leapfrog) {
-      emitKick("  ", "%v1", "%v", "%f", "%m", "%half");
-    } else if (projectsState) {
-      // The velocities of the time of the positions, as velocity Verlet
-      // has them, with none along the constraints, and its first half
-      // kick: the friction or the scaling of the middle of the drift
-      // would act on what a kick of a whole step leaves along the
-      // constraints.
-      emitKick("  ", "%v0u", "%v", "%f", "%m", "%half");
-      std::string current = project("%x", "%v0u", "%v0", "").first;
-      emitKick("  ", "%v1", current, "%f", "%m", "%half");
-    } else {
-      emitKick("  ", "%v1", "%v", "%f", "%m", "%dt");
-      if (sideVirial) {
-        // The first half kick of velocity Verlet, from the velocities of
-        // the time of the positions with none along the constraints: its
-        // drift, `%x1dp` below, ends where the constraints give the
-        // virial of the first half of the step (D76). The constraints
-        // bring both drifts to the same place, and the state is that of
-        // the plain step: nothing of this feeds it.
-        emitKick("  ", "%v0u", "%v", "%f", "%m", "%half");
-        std::string current = project("%x", "%v0u", "%v0", "").first;
-        emitKick("  ", "%v1p", current, "%f", "%m", "%half");
-      }
-    }
-    std::string drifting = "%v1";
-    std::string drifted = sites || constraints ? "%x1d" : "%x1";
-    // The positions that the constraints of the drift below take as their
-    // reference, and the length of that drift.
-    std::string reference = "%x", length = "%dt";
-    // Langevin dynamics with constraints: the g-BAOAB step of
-    // [Leimkuhler2016] (its Appendix, one drift in each A), which projects
-    // the velocities on the constraints after each part of the step
-    // (D265). B: the half kick, projected. A: a drift of
-    // Δt/2, the constraints of the positions with those before the drift as
-    // the reference, the velocities of the displacement, projected at the
-    // new positions. O: the friction and the noise, projected. Under the
-    // barostat of Trotter type the scaling follows. A: as the first, by the
-    // block of the constraints below. Then the forces and the half kick.
-    bool geodesic = constraints && control.isLangevin();
-    if (geodesic) {
-      std::string kicked = project("%x", "%v1", "%vgk", "").first;
-      emitDrift("  ", "%xga", "%x", kicked, "%half");
-      std::string current = "%xga";
-      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-      auto next = [&]() {
-        ++step;
-        return step == steps ? std::string("%xgc")
-                             : "%xgc" + std::to_string(step);
-      };
-      if (settles) {
-        std::string result = next();
-        emitSettlePositions("  ", "%x", current, "%dxg", result);
-        current = result;
-      }
-      for (const Program::TupleSet *set : shakeSets) {
-        std::string result = next();
-        emitShakePositions("  ", "%x", current, *set, result);
-        current = result;
-      }
-      emitIRFragment(
-          "  ", {"%vga"}, {"!vec"}, {kicked, current, "%xga", "%half"},
-          {"!vec", "!vec", "!vec", "f64"},
-          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-            return {buildCorrectedHalfVelocity(builder, values[0], values[1], values[2], values[3])};
-          });
-      // The projection of the A at the new positions and that after O are
-      // one: the projection is linear at fixed positions, so that of
-      // c v + σ R is c times that of v plus that of σ R, and the projection
-      // after O alone gives what both give.
-      emitLangevin("  ", "%vga", "%vgo");
-      std::string thermal = project("%xgc", "%vgo", "%vgp", "").first;
-      reference = "%xgc";
-      drifting = thermal;
-      if (scales) {
-        // The scale of each axis, μ (D119): each rigid group with its
-        // center, which keeps its shape, and the velocities by 1/μ; the
-        // constraints of the second A take back what an anisotropic
-        // scaling leaves along them.
-        emitDriftScale("  ");
-        reference = emitGroupScaling("  ", "%xgc", "%mu", "%mu_m1", "%cell",
-                                     "%m", "%r_", "_t");
-        emitKineticVector("%khalf", thermal, "%m", "  ");
-        emitVelocityScaling("  ", "%v1t", thermal, "%muinv");
-        drifting = "%v1t";
-      }
-      emitDrift("  ", drifted, reference, drifting, "%half");
-      length = "%half";
-    } else if (scales) {
-      // The scale of each axis, μ, the same for the three with isotropic
-      // coupling (D119).
-      emitDrift("  ", "%xh", "%x", "%v1", "%half");
-      emitDriftScale("  ");
-      // Langevin dynamics acts before the scaling, which takes the kinetic
-      // energy of the velocities that it scales.
-      std::string middle = "%v1";
-      if (control.isLangevin()) {
-        emitLangevin("  ", "%v1", "%v1o");
-        middle = "%v1o";
-      }
-      std::string scaled = emitGroupScaling("  ", "%xh", "%mu", "%mu_m1",
-                                            "%cell", "%m", "%r_", "_t");
-      // The kinetic energy of each axis of the velocities that the
-      // scaling takes.
-      emitKineticVector("%khalf", middle, "%m", "  ");
-      emitVelocityScaling("  ", "%v1t", middle, "%muinv");
-      emitDrift("  ", drifted, scaled, "%v1t", "%half");
-      drifting = "%v1t";
-    } else if (control.isLangevin()) {
-      // The middle scheme: half a drift, the friction and the noise, and
-      // the other half ([Zhang2019]; BAOAB of [Leimkuhler2013]).
-      emitDrift("  ", "%xh", "%x", "%v1", "%half");
-      emitLangevin("  ", "%v1", "%v1o");
-      emitDrift("  ", drifted, "%xh", "%v1o", "%half");
-      drifting = "%v1o";
-    } else {
-      emitDrift("  ", drifted, "%x", "%v1", "%dt");
-      if (sideVirial)
-        emitDrift("  ", "%x1dp", "%x", "%v1p", "%dt");
-    }
-    // The constraints back to their lengths, and the velocities that take
-    // the atoms there over the step (the first half of RATTLE).
-    std::string velocities = drifting;
-    std::vector<std::pair<const Program::TupleSet *, std::string>> changes;
-    // Each set of constraints tests the lengths it gives in its own kernel,
-    // which yields whether one fails; with MDIR_CONSTRAINT_TEST=separate a
-    // loop of its own tests them below (D278).
-    bool apart = testsConstraintsApart();
-    std::vector<std::pair<int, std::string>> failures;
-    if (constraints) {
-      std::string current = "%x1d";
-      std::string constrained = sites ? "%x1s" : "%x1";
-      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-      auto next = [&]() {
-        ++step;
-        return step == steps ? constrained
-                             : "%x1c" + std::to_string(step);
-      };
-      if (settles) {
-        std::string result = next();
-        if (!apart)
-          failures.push_back({0, "%broken_settles"});
-        emitSettlePositions("  ", reference, current, "%dx1", result,
-                            apart ? "" : "%broken_settles");
-        changes.push_back({program.tupleSets.data(), "%dx1"});
-        for (const Program::TupleSet &set : program.tupleSets)
-          if (set.name == "settles")
-            changes.back().first = &set;
-        current = result;
-      }
-      for (const Program::TupleSet *set : shakeSets) {
-        std::string result = next();
-        std::string failed = "%broken_" + set->name;
-        if (!apart)
-          failures.push_back({static_cast<int>(set->arity) - 1, failed});
-        emitShakePositions("  ", reference, current, *set, result,
-                           apart ? "" : failed);
-        changes.push_back({set, result + "_change"});
-        current = result;
-      }
-      emitIRFragment(
-          "  ", {"%v1c"}, {"!vec"}, {drifting, current, "%x1d", length},
-          {"!vec", "!vec", "!vec", "f64"},
-          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-            return {buildCorrectedHalfVelocity(builder, values[0], values[1], values[2], values[3])};
-          });
-      velocities = "%v1c";
-      if (sideVirial) {
-        // What the constraints add to the drift of velocity Verlet: their
-        // change of this drift, and what this drift is ahead of that one,
-        // which lies along the constraints. Each set reads its own
-        // particles.
-        emitIRFragment(
-            "  ", {"%dxp"}, {"!vec"}, {"%x1d", "%x1dp"}, {"!vec", "!vec"},
-            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-              return {buildFieldDifference(builder, values[0], values[1])};
-            });
-        unsigned index = 0;
-        for (auto &[set, change] : changes) {
-          std::string whole = "%dxp" + std::to_string(index++);
-          emitAddChange("  ", change, "%dxp", whole);
-          change = whole;
-        }
-      }
-    }
-    // With MDIR_CONSTRAINT_TEST=separate, each set of constraints tested at
-    // the positions it gave, by a loop of its own, after the loops that
-    // update the velocities from them, so that the run of the constraints
-    // stays one kernel with those loops (D110); the flags are read after the
-    // evaluation (D278).
-    if (constraints && apart)
-      failures = emitConstraintTests("  ", sites ? "%x1s" : "%x1",
-                                     "%broken", /*flag=*/true);
-    if (sites)
-      emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
-    std::string raw = sites ? "e" : "";
-    // With a learned potential the forces and the energy of the evaluation
-    // are `%f1c` and `%u1c`, and those of the model are added to give `%f1`
-    // and `%u1` (D270).
-    bool hostTerms = hasHostEvaluation();
-    std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    std::string energyName = withEnergy ? "%u1" + held + modelled : "";
-    std::string forceName = "%f1" + held + raw + modelled;
-    std::string virialName = withEnergy || withVirial ? "%w1" + held + raw : "";
-    emitEnergyEvaluation("  ", "%x1", "%cell", "%p_", "%time", energyName, forceName, virialName);
-    std::string virial = "%w1" + held;
-    if (sites)
-      virial = emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held,
-                               "%r_", withVirial ? "%w1" + held + "e" : "",
-                               "%w1" + held);
-    if (hasForceCorrections()) {
-      emitForceCorrections("  ", "%x1", "%p_", "%f1p", hostTerms ? "%f1c" : "%f1",
-                     withEnergy ? "%u1p" : "",
-                     withEnergy ? (hostTerms ? "%u1c" : "%u1") : "",
-                     withVirial ? virial : "", withVirial ? "%w1" : "");
-      virial = "%w1";
-    }
-    if (hostTerms)
-      virial = emitHostEvaluation("  ", "%x1", "%cell", "%p_", "%f1c", "%f1",
-                              withEnergy ? "%u1c" : "", "%u1",
-                              withVirial ? virial : "", "1");
-    emitConstraintStops("  ", failures);
-    std::string groups;
-    if (molecular) {
-      emitDiagonal("%gd1", virial, "  ");
-      groups = emitMolecularDiagonal("  ", "%gd1", "%x1", "%f1", "%cell",
-                                     "%m", "%r_", "1");
-    }
-    if (leapfrog && !withVirial && !scales && !measured) {
-      emitDynamicsReturn("  ", {"%x1", velocities, "%f1"}, {"!vec", "!vec", "!vec"});
-      os << "}\n\n";
-      continue;
-    }
-    if (brownian) {
-      // No kick: the velocities are those of the displacement, with the
-      // constraints. The virial is that of the forces alone.
-      llvm::SmallVector<StringRef> values{"%x1", velocities, "%f1"}, types{"!vec", "!vec", "!vec"};
-      if (withEnergy) { values.push_back("%u1"); types.push_back("f64"); }
-      if (withVirial) { values.push_back(virial); types.push_back("vector<9xf64>"); }
-      emitDynamicsReturn("  ", values, types);
-      os << "}\n\n";
-      continue;
-    }
-    // The second half kick, to the velocities of the time of the new
-    // positions: those of the next step with velocity Verlet, and those of
-    // the energies with leapfrog.
-    emitKick("  ", constraints ? "%v2u" : "%v2", velocities, "%f1", "%m", "%half");
-    // The virial of the constraints: the mean of those of the two halves of
-    // the step, or, under Langevin dynamics, whose friction and noise act
-    // within the drift, that of their forces at its end (D135).
-    bool instantaneous = control.isLangevin();
-    if (constraints && withVirial && !instantaneous) {
-      unsigned index = 0;
-      for (auto [set, change] : changes)
-        virial = emitConstraintVirial("  ", *set, "%x", change, virial,
-                                      "%w1x" + std::to_string(index++));
-    }
-    if (constraints) {
-      std::string halves =
-          project("%x1", "%v2u", "%v2",
-                  withVirial && !instantaneous ? virial : "")
-              .second;
-      if (withVirial)
-        virial = instantaneous
-                     ? emitConstraintForceVirial("  ", "%x1", "%v2", "%f1",
-                                                 virial)
-                     : halves;
-    }
-    std::string stored = leapfrog ? velocities : "%v2";
-    // The steps of energy also report the rigid waters, the solvent.
-    if (measured)
-      emitHalfStepKinetic(velocities, leapfrog && !geodesic, solvent,
-                          geodesic);
-    if (withVirial || scales || measured) {
-      llvm::SmallVector<StringRef> values{"%x1", stored, "%f1"}, types{"!vec", "!vec", "!vec"};
-      if (withEnergy) { values.push_back("%u1"); types.push_back("f64"); }
-      if (withVirial) { values.push_back(virial); types.push_back("vector<9xf64>"); }
-      if (molecular) { values.push_back(groups); types.push_back("vector<3xf64>"); }
-      if (returnsCurrent) { values.push_back("%v2"); types.push_back("!vec"); }
-      if (scales) { values.push_back("%khalf"); types.push_back("vector<3xf64>"); }
-      if (measured) { values.push_back("%khs"); types.push_back("vector<3xf64>"); }
-      if (solvent) { values.push_back("%kws"); types.push_back("vector<3xf64>"); }
-      emitDynamicsReturn("  ", values, types);
-    } else {
-      emitDynamicsReturn("  ", {"%x1", "%v2", "%f1"}, {"!vec", "!vec", "!vec"});
-    }
-    os << "}\n\n";
   }
-}
-
-void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
-                                  bool solvent, bool geodesic) {
-  // The kinetic energy of each axis at the half steps around the end of
-  // the step, K_half = [K(t - dt/2) + K(t + dt/2)] / 2 [Jung2019], from the
-  // velocities after their constraints: `velocities`, those that this step
-  // drifted with, and those that the next step will drift with, which are
-  // taken here as that step takes them, by a kick, a drift, and the
-  // constraints of the positions. The forces alone do not give them with
-  // constraints (D203). Nothing here feeds the state
-  // that the step returns. Under g-BAOAB (`geodesic`, D265)
-  // the half steps are the drifts of the two A of half a step around the
-  // end of the step: that of this step, and that of the next without its
-  // noise, which comes after it.
-  bool settles = hasSettles();
-  std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
-  StringRef length = geodesic ? "%half" : "%dt";
-  emitIRFragment(
-      "  ", {"%v3k", "%x3d"}, {"!vec", "!vec"},
-      {leapfrog ? velocities : StringRef("%v2"), "%f1", "%m",
-       leapfrog ? StringRef("%dt") : StringRef("%half"), "%x1", length},
-      {"!vec", "!vec", "!real", "f64", "!vec", "f64"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        auto loc = builder.getUnknownLoc();
-        mlir::Value kick = mdir::dyn::KickOp::create(
-            builder, loc, values[0].getType(), values[0], values[1], values[2], values[3]);
-        mlir::Value drift = mdir::dyn::DriftOp::create(
-            builder, loc, values[4].getType(), values[4], kick, values[5]);
-        return {kick, drift};
-      });
-  std::string current = "%x3d";
-  unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-  auto next = [&]() {
-    ++step;
-    return step == steps ? std::string("%x3c")
-                         : "%x3c" + std::to_string(step);
-  };
-  if (settles) {
-    std::string result = next();
-    emitSettlePositions("  ", "%x1", current, "%dx3", result);
-    current = result;
-  }
-  for (const Program::TupleSet *set : shakeSets) {
-    std::string result = next();
-    emitShakePositions("  ", "%x1", current, *set, result);
-    current = result;
-  }
-  emitIRFragment(
-      "  ", {"%v3c", "%khs"}, {"!vec", "vector<3xf64>"},
-      {"%v3k", current, "%x3d", length, velocities, "%m"},
-      {"!vec", "!vec", "!vec", "f64", "!vec", "!real"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        mlir::Value corrected = buildCorrectedHalfVelocity(
-            builder, values[0], values[1], values[2], values[3]);
-        mlir::Value kinetic = buildHalfStepKinetic(
-            builder, values[4], corrected, values[5]);
-        return {corrected, kinetic};
-      });
-  if (!solvent)
-    return;
-  // The kinetic energies of the rigid waters, K and K_half, as the first
-  // two elements of a vector. Its otherwise unused coordinate is retained.
-  emitIRFragment(
-      "  ", {"%kws"}, {"vector<3xf64>"},
-      {"%r_settles", "%x1", "%cell", "%v2", velocities, "%v3c", "%m"},
-      {"!rel_settles", "!vec", "!md.cell", "!vec", "!vec", "!vec", "!real"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        SolventKineticInputs input{values[0], values[1], values[2], values[3],
-                                     values[4], values[5], values[6]};
-        return {buildSolventKinetic(builder, input)};
-      });
-}
-
-void Builder::emitLangevin(StringRef indent, StringRef velocities,
-                           StringRef result) {
-  // v' = c v + sqrt((1 - c^2) k_B T / m) R, with c = exp(-gamma dt) and R
-  // three standard normal numbers.
-  double c = std::exp(-control.friction * control.timestep);
-  double kT = units::boltzmann * control.temperature;
-  emitNoise(indent, velocities, result, c, std::sqrt((1.0 - c * c) * kT));
-}
-
-void Builder::emitBrownianVelocity(StringRef indent, StringRef forces,
-                                   StringRef result) {
-  // The step of Ermak and McCammon, J. Chem. Phys. 69, 1352 (1978), without
-  // hydrodynamic interactions: Δx = Δt F / (m γ) + √(2 k_B T Δt /
-  // (m γ)) R, written as a velocity that the positions drift by over Δt. A
-  // particle of mass 0 (a virtual site, placed after the drift) does not
-  // drift; the step does not read the velocities of the step before.
-  double gamma = control.friction;
-  double kT = units::boltzmann * control.temperature;
-  std::string drift = (result + "_drift").str();
-  emitIRFragment(
-      indent, {drift}, {"!vec"}, {forces, "%m"}, {"!vec", "!real"},
-      [gamma](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        return {buildBrownianDrift(builder, values[0], values[1], gamma)};
-      });
-  emitNoise(indent, drift, result, 1.0,
-            std::sqrt(2.0 * kT / (gamma * control.timestep)));
-}
-
-void Builder::emitNoise(StringRef indent, StringRef velocities,
-                        StringRef result, double c, double spread) {
-  // The normal numbers R come from one block of Philox 4x32-10
-  // [Salmon2011] under the key of A13: the seed; the counter of the step,
-  // the number of the particle, and stream 2 in the high byte of the last
-  // word. The four words give four uniform numbers, (w + 1/2) 2^-32, and
-  // the method of Box and Muller two pairs of normal numbers, of which the
-  // first three are taken. A particle of mass 0 keeps its velocity.
-  NoiseIRConfig config{control.seed, c, spread};
-  emitIRFragment(
-      indent, {result}, {"!vec"},
-      {velocities, "%m", "%noise_ids", "%noise_step"},
-      {"!vec", "!real", "!ids", "i64"},
-      [config](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        NoiseIRInputs input{values[0], values[1], values[2], values[3]};
-        return {buildNoise(builder, input, config)};
-      });
+  return llvm::Error::success();
 }
 
 std::string Builder::emitNoiseValue(StringRef indent) {
@@ -1549,36 +1076,5 @@ void Builder::emitKick(StringRef indent, StringRef result, StringRef velocity,
       {"!vec", "!vec", "!real", "f64"},
       [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
         return {buildKick(builder, values[0], values[1], values[2], values[3])};
-      });
-}
-void Builder::emitDrift(StringRef indent, StringRef result, StringRef positions,
-                          StringRef velocities, StringRef interval) {
-  emitIRFragment(indent, {result}, {"!vec"}, {positions, velocities, interval},
-      {"!vec", "!vec", "f64"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        return {buildDrift(builder, values[0], values[1], values[2])};
-      });
-}
-void Builder::emitDriftScale(StringRef indent) {
-  emitIRFragment(indent, {"%mu_m1", "%muinv"}, {"vector<3xf64>", "vector<3xf64>"},
-      {"%mu"}, {"vector<3xf64>"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        auto result = buildDriftScale(builder, values[0]);
-        return {result.oneMinus, result.inverse};
-      });
-}
-void Builder::emitVelocityScaling(StringRef indent, StringRef result,
-                                     StringRef velocities, StringRef scale) {
-  emitIRFragment(indent, {result}, {"!vec"}, {velocities, scale}, {"!vec", "vector<3xf64>"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        return {buildVelocityScaling(builder, values[0], values[1])};
-      });
-}
-void Builder::emitDynamicsReturn(StringRef indent, llvm::ArrayRef<StringRef> values,
-                                    llvm::ArrayRef<StringRef> types) {
-  emitIRFragment(indent, {}, {}, values, types,
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        mdir::dyn::ReturnOp::create(builder, builder.getUnknownLoc(), values);
-        return {};
       });
 }
