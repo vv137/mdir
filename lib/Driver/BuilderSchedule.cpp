@@ -1093,7 +1093,7 @@ llvm::Error Builder::emitEntry() {
       !isRestart() && !control.isLangevin() &&
       !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
-      !hasForceCorrections() &&
+      !control.barostat &&
       !hasHostEvaluation() && control.freeEnergyFile.empty() &&
       control.observables.empty() && !program.tunableGradient &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -1113,6 +1113,9 @@ llvm::Error Builder::emitEntry() {
     config.timed = control.usesTime;
     config.cellEdges = getCellSize();
     config.topology = bool(system.topology);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().postEvaluation)
+        config.storedTerms += role->getStoredTermCount(*this);
     for (const Program::TupleSet *selected : getSiteSets()) {
       unsigned slot = program.fields.size() + program.tables.size();
       for (const auto &set : program.tupleSets) {
@@ -1164,7 +1167,26 @@ llvm::Error Builder::emitEntry() {
         if (index && levels[index - 1].name == "energy") ++steps;
       }
     }
-    auto entry = buildSimpleFrameEntry(ir, program, config);
+    auto entry = buildSimpleFrameEntry(ir, program, config,
+        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation) {
+          llvm::SmallVector<mlir::Value> stored;
+          auto field = [&](StringRef name) -> mlir::Value {
+            auto found = llvm::find_if(program.fields,
+                [&](const auto &field) { return field.name == name; });
+            assert(found != program.fields.end() && "evaluation field must exist");
+            return state.fields[std::distance(program.fields.begin(), found)];
+          };
+          for (const TermBuilder *term : getTermBuilders())
+            if (const auto *role = term->getRoles().postEvaluation;
+                role && role->hasForceCorrection(*this)) {
+              auto result = role->build(*this, at,
+                  {state.positions, state.cell, evaluation.forces, evaluation.energy,
+                   evaluation.virial, {}, field});
+              evaluation = {result.energy, result.forces, result.virial};
+              llvm::append_range(stored, result.storedTerms);
+            }
+          return FrameCompletionIR{evaluation, std::move(stored)};
+        });
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*moduleBody, before))

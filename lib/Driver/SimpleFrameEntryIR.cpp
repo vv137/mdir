@@ -74,7 +74,9 @@ void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
 }
 
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
-    OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config) {
+    OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config,
+    llvm::function_ref<FrameCompletionIR(OpBuilder &, const PotentialStateIR &,
+                                        EnergyResults)> complete) {
   return buildEntryFunction(builder, program, {false, config.branchesStart},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
@@ -126,6 +128,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       physical = reorderedFrame(frame, program, std::move(physical), cell);
       auto parameters = potentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
+      SmallVector<Value> storedTerms;
       auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {
         auto result = buildEnergyEvaluation(at, state, requests);
         for (const auto &site : config.sites) {
@@ -136,11 +139,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           result.forces = spread.forces;
           result.virial = spread.virial;
         }
+        if (complete) {
+          auto completed = complete(at, state, result);
+          result = completed.physical;
+          if (requests.energy) storedTerms = std::move(completed.storedTerms);
+        }
         return result;
       };
       auto iteration = buildEntryLoop(frame, "frame evaluation", zero, one, one, {},
           [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
         auto energy = evaluate(body, {true, true, true});
+        if (storedTerms.size() != config.storedTerms)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+              "native frame evaluation returned an unexpected stored-term count");
         Value nil = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
         Value force = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[0], nil);
         Value virial = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[1], nil);
@@ -171,7 +182,12 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         });
         if (!withVirial) return withVirial.takeError();
         if (config.topology) {
-          Value terms = buildTermEnergyBuffer(body, state, config.terms, config.terms.size());
+          Value terms = buildTermEnergyBuffer(body, state, config.terms,
+              config.terms.size() + config.storedTerms);
+          for (auto [index, value] : llvm::enumerate(storedTerms)) {
+            Value slot = arith::ConstantIndexOp::create(body, loc, config.terms.size() + index);
+            memref::StoreOp::create(body, loc, value, terms, slot);
+          }
           buildWriteTerms(body, terms);
           auto diagonal = buildVirialDiagonal(body, energy.virial);
           func::CallOp::create(body, loc, "mdrtWriteVirial", TypeRange{},

@@ -165,7 +165,9 @@ public:
     }
     auto result = buildRestraintCorrection(builder, values, config);
     return {result[0], config.energy ? result[2] : mlir::Value{},
-            config.virial ? result[config.energy ? 3 : 1] : mlir::Value{}};
+            config.virial ? result[config.energy ? 3 : 1] : mlir::Value{},
+            config.energy ? llvm::SmallVector<mlir::Value>{result[1]}
+                          : llvm::SmallVector<mlir::Value>{}};
   }
   void emitForceCorrection(TermEmission &context,
                            const TermCorrection &point) const override {

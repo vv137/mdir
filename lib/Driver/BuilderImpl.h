@@ -324,6 +324,7 @@ struct TermNativeEvaluation {
 };
 struct TermNativeResults {
   mlir::Value forces, energy, virial;
+  llvm::SmallVector<mlir::Value> storedTerms;
 };
 
 /// Specialized preparation borrows no mutable program collections.
