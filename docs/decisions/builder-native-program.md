@@ -276,8 +276,9 @@ The first complete native entry family is the Verlet frame evaluator in orthorho
 including time-dependent terms, topology energy columns and virtual-site
 placement/spreading, constrained-frame start traces and restraint corrections,
 with free-energy and observable output through shared typed output kernels.
-Observable tunables resolve semantic entry-value slots. Coupling, pull output,
-tunable gradients and hosted evaluation remain in the other entry path.
+Observable and gradient tunables resolve semantic entry-value slots; gradient
+seed fields and derivative argument order retain their metadata layout. Coupling,
+pull output and hosted evaluation remain in the other entry path.
 Restraint energy columns receive actual stored contribution values from the adapter.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
