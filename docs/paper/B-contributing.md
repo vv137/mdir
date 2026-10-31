@@ -246,3 +246,9 @@ now construct native bodies through the same topology hook. Their seven shared
 kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
 order. Boundary flags are supplied at the current potential; parameter-field
 metadata is read-only and computed reciprocal outputs retain their original order.
+
+All topology potential signatures and bodies now construct native operations,
+including empty selections. The obsolete assembly fallback, named contribution
+callbacks and signature/value formatters are removed. Pull auxiliary potentials
+resolve time and tables through semantic metadata slots instead of generated
+SSA spellings. Entry/schedule assembly remains for the next construction phase.

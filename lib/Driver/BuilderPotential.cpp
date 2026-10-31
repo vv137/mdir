@@ -128,9 +128,7 @@ llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
     active |= builder->getPotentialMask(
         *this, dependent ? &*dependent : nullptr, alchemicalOnly);
   terms &= active;
-  unsigned nativeMask = 0;
-  for (const TermBuilder *term : getTermBuilders()) nativeMask |= term->getNativePotentialMask();
-  if (terms && !(terms & ~nativeMask)) {
+
     auto &context = termIR.getContext();
     mlir::OpBuilder ir(&context);
     ir.setInsertionPointToEnd(termIR.getModule().getBody());
@@ -242,89 +240,7 @@ llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
           return {};
         });
     return llvm::Error::success();
-  }
-  os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
-     << getFieldParameters() << getTimeParameter() << getLambdaParameters()
-     << getObservedParameters() << getGradientParameters()
-     << ") -> f64 {\n";
-  emitLambdaConstants("  ");
-  std::string total;
-  auto add = [&](StringRef term) {
-    std::string value = ("%u_" + term).str();
-    if (total.empty()) {
-      total = value;
-      return;
-    }
-    std::string sum = ("%total_" + term).str();
-    emitIRFragment(
-        "  ", {sum}, {"f64"}, {total, value}, {"f64", "f64"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
-                                               values[0], values[1])};
-        });
-    total = sum;
-  };
 
-  auto addResult = [&](StringRef value, StringRef sum) {
-    if (total.empty()) {
-      total = value.str();
-      return;
-    }
-    emitIRFragment(
-        "  ", {sum}, {"f64"}, {total, value}, {"f64", "f64"},
-        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
-                                               values[0], values[1])};
-        });
-    total = sum.str();
-  };
-  TermPotentialAddition addition{add, addResult};
-
-  // Lennard-Jones and Coulomb, both cut at the cutoff, over the pairs that
-  // are not excluded: as the modifiers say, and in `@alchemical` and
-  // `@observe<k>` shifted to 0 at the cutoff (D210).
-  bool pairTerms = llvm::any_of(getTermBuilders(), [&](const TermBuilder *builder) {
-    return builder->needsPairNeighborhood(
-        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly});
-  });
-  if (pairTerms) {
-    std::string excluded;
-    for (const TermBuilder *builder : getTermBuilders()) {
-      StringRef set = builder->getPairExclusion();
-      if (!set.empty() && llvm::any_of(program.tupleSets,
-              [&](const auto &data) { return data.name == set; })) {
-        assert(excluded.empty() && "a neighborhood has one exclusion relation");
-        excluded = set.str();
-      }
-    }
-    emitPairNeighborhood("  ", "%n", "%x", "%cell", excluded);
-  }
-  for (const TermBuilder *builder :
-       mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders())) {
-    TermBuilder::PotentialSelection selection{terms, tupleTerm, pairTerm,
-                                              externalTerm, alchemicalOnly};
-    if (const auto *role = builder->getRoles().nonbonded)
-      role->emit(*this, getNonbondedData(), selection, addition);
-    else
-      builder->emitTopologyPotential(*this, selection, addition);
-  }
-  if (total.empty()) {
-    emitIRFragment(
-        "  ", {"%zero"}, {"f64"}, {}, {},
-        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
-          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
-                                                   builder.getF64FloatAttr(0.0))};
-        });
-    total = "%zero";
-  }
-  emitIRFragment(
-      "  ", {}, {}, {total}, {"f64"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        mdir::md::ReturnOp::create(builder, builder.getUnknownLoc(), values);
-        return {};
-      });
-  os << "}\n\n";
-  return llvm::Error::success();
 }
 
 llvm::Error Builder::emitPotential() {
@@ -470,48 +386,4 @@ std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
       if (role->applies(*this))
         virial = role->emit(*this, emitIR, point);
   return virial;
-}
-
-void Builder::emitPairNeighborhood(StringRef indent, StringRef result,
-                                     StringRef positions, StringRef cell,
-                                     StringRef excluded) {
-  llvm::SmallVector<StringRef> inputs{positions, cell}, types{"!vec", "!md.cell"};
-  std::string relation = ("%r_" + excluded).str(), type = ("!rel_" + excluded).str();
-  if (!excluded.empty()) {
-    inputs.push_back(relation);
-    types.push_back(type);
-  }
-  double cutoff = control.cutoffDistance * units::length;
-  emitIRFragment(
-      indent, {result}, {"!pairs"}, inputs, types,
-      [cutoff](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        auto atoms = mlir::cast<mdir::md::FieldType>(values[0].getType()).getParticleSet();
-        auto pairs = mdir::md::RelationType::get(builder.getContext(), atoms, 2,
-            mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
-        return {mdir::md::NeighborhoodOp::create(builder, builder.getUnknownLoc(),
-            pairs, values[0], values[1], values.size() == 3 ? values[2] : mlir::Value{},
-            builder.getF64FloatAttr(cutoff))};
-      });
-}
-
-void Builder::emitLambdaConstants(StringRef indent) {
-  if (lambdaArguments || control.freeEnergy.lambdas.empty())
-    return;
-  std::vector<std::string> names;
-  std::vector<double> constants;
-  for (const auto &[name, values] : control.freeEnergy.lambdas) {
-    names.push_back("%lambda_" + name);
-    constants.push_back(getLambda(name));
-  }
-  llvm::SmallVector<StringRef> outputs(names.begin(), names.end()), types(names.size(), "f64");
-  emitIRFragment(
-      indent, outputs, types, {}, {},
-      [constants = std::move(constants)](mlir::OpBuilder &builder,
-                                        mlir::ValueRange) -> TermIRValues {
-        TermIRValues values;
-        for (double constant : constants)
-          values.push_back(mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
-                                                          builder.getF64FloatAttr(constant)));
-        return values;
-      });
 }

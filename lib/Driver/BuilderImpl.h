@@ -275,23 +275,11 @@ public:
       llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
       llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) = 0;
   virtual Truncation getPairTruncation() const = 0;
-  virtual llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
-                                    int tupleTerm = -1, int pairTerm = -1,
-                                    int externalTerm = -1) = 0;
-  virtual std::string getFieldParameters() const = 0;
-  virtual std::string getFieldValues(StringRef prefix = "%p_") const = 0;
-  virtual std::string getTimeParameter() const = 0;
-  virtual std::string getTimeType() const = 0;
-  virtual std::string getTimeValue(StringRef name) const = 0;
   virtual unsigned getNumPotentialArguments() const = 0;
-  virtual void emitLambdaConstants(StringRef indent) = 0;
   virtual llvm::StringMap<std::string>
   emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
                           StringRef x, StringRef cell, StringRef relations,
                           StringRef prefix) = 0;
-  virtual void bindLambdas(llvm::StringMap<std::string> &values) const = 0;
-  virtual void bindObserved(StringRef term,
-                            llvm::StringMap<std::string> &values) const = 0;
 };
 
 /// One output site; borrowed names remain valid for the hook call.
@@ -438,13 +426,6 @@ struct TermRoles {
   const TermNonbonded *nonbonded = nullptr;
 };
 
-/// Adds either a conventional named contribution or an explicit SSA result.
-struct TermPotentialAddition {
-  llvm::function_ref<void(StringRef)> named;
-  llvm::function_ref<void(StringRef, StringRef)> result;
-  void operator()(StringRef name) const { named(name); }
-  void append(StringRef value, StringRef sum) const { result(value, sum); }
-};
 
 /// Typed scalar operands: sigma, epsilon, soft-core distance, physical distance.
 mlir::Value buildLennardJonesIR(mlir::OpBuilder &, mlir::ValueRange,
@@ -506,13 +487,9 @@ public:
   virtual mlir::Value buildBareContributions(const TermInputs &, mlir::OpBuilder &,
       const TermNativePotential &, mlir::Value total) const { return total; }
   virtual void collectParameters(TermParameters &) const {}
-  unsigned getNativePotentialMask() const { return nativePotentialMask; }
   virtual llvm::Error buildTopologyPotential(const TermInputs &, mlir::OpBuilder &,
       const TermNativeTopology &, const PotentialSelection &,
       llvm::function_ref<void(mlir::Value)>) const { return llvm::Error::success(); }
-  virtual void emitTopologyPotential(
-      TermEmission &, const PotentialSelection &,
-      const TermPotentialAddition &) const {}
   virtual void appendTermDefinitions(const TermInputs &,
                                      std::vector<TermDefinition> &) const {}
   virtual ObservedSelection findObservedTerm(const TermInputs &,
@@ -524,7 +501,7 @@ public:
     return std::nullopt;
   }
 protected:
-  unsigned potentialMask = 0, alchemicalMask = 0, nativePotentialMask = 0;
+  unsigned potentialMask = 0, alchemicalMask = 0;
   int tupleRank = 0;
   StringRef pairExclusion;
   TermRoles roles;
@@ -542,9 +519,6 @@ public:
   virtual llvm::Error
   collectGradients(TermParameters &, TermNonbondedData,
                    llvm::ArrayRef<const TermBuilder *>) const = 0;
-  virtual void emit(TermEmission &, TermNonbondedData,
-                    const TermBuilder::PotentialSelection &,
-                    const TermPotentialAddition &) const = 0;
 };
 
 using TermBuilderFactory = std::unique_ptr<TermBuilder> (*)();
@@ -751,7 +725,7 @@ private:
   /// not -1.
   llvm::Error emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
-                             int externalTerm = -1) override;
+                             int externalTerm = -1);
   /// Emits the coordinates of the term `term` over centers, at the
   /// positions `x` in the cell `cell`, with
   /// the members of its tuples named `relations` and the name of the set:
@@ -899,17 +873,6 @@ private:
     return control.isLangevin() || control.isBrownian() || control.usesTime ||
            (hasConstraints() && !control.minimize);
   }
-  /// Terms whose expressions take the time `t` (D145): the potentials take
-  /// it in ps as their last argument. A program of a step computes it from
-  /// the number of the step, `%time`; the entry has `%time0`, that of the
-  /// first step.
-  std::string getTimeParameter() const override {
-    return control.usesTime ? ", %time: f64" : "";
-  }
-  std::string getTimeType() const override { return control.usesTime ? ", f64" : ""; }
-  std::string getTimeValue(StringRef name) const override {
-    return control.usesTime ? (", " + name).str() : "";
-  }
   /// [free_energy] (D161): whether the run decouples a selection.
   bool decouples() const { return !system.alchemical.empty(); }
   /// The component `name` of λ at the state of the run.
@@ -920,22 +883,6 @@ private:
   /// arguments, `%lambda_<name>`; the others hold them as constants, the
   /// values of the state of the run, under the same names.
   bool lambdaArguments = false;
-  std::string getLambdaParameters() const {
-    std::string text;
-    if (lambdaArguments)
-      for (const auto &[name, values] : control.freeEnergy.lambdas)
-        text += ", %lambda_" + name + ": f64";
-    return text;
-  }
-  void emitLambdaConstants(StringRef indent) override;
-  void emitPairNeighborhood(StringRef indent, StringRef result,
-                              StringRef positions, StringRef cell,
-                              StringRef excluded);
-  /// Binds the parameters `lambda_<name>` of the expressions.
-  void bindLambdas(llvm::StringMap<std::string> &values) const override {
-    for (const auto &[name, v] : control.freeEnergy.lambdas)
-      values["lambda_" + name] = "%lambda_" + name;
-  }
   /// Whether the potential being emitted is one whose derivatives enter
   /// free energies and gradients, `@alchemical` and `@observe<k>`
   /// (D210): its pair terms cut at the cutoff without a
@@ -955,36 +902,11 @@ private:
   /// (D189).
   std::string observedTerm;
   std::vector<std::string> observedConstants;
-  std::string getObservedParameters() const {
-    std::string text;
-    for (const std::string &name : observedConstants)
-      text += ", %ob_" + name + ": f64";
-    return text;
-  }
-  /// Binds the observed constants of the term `term` to the arguments of
-  /// `@observe<k>`, after the term has bound its own values.
-  void bindObserved(StringRef term,
-                    llvm::StringMap<std::string> &values) const override {
-    if (term != observedTerm)
-      return;
-    for (const std::string &name : observedConstants)
-      values[name] = "%ob_" + name;
-  }
   /// The potential `@tunable` (D230) takes the tunable
   /// constants of the pair terms as its last arguments, `%tg_c<column>`, in
   /// place of the values of the table `tunable_constants`, so that the
   /// differentiation of parameters gives the derivatives in them (D161).
   bool gradientArguments = false;
-  std::string getGradientParameters() const {
-    std::string text;
-    if (!gradientArguments)
-      return text;
-    for (size_t k = 0; k != control.tunableConstants.size(); ++k)
-      text += ", %tg_c" + std::to_string(k) + ": f64";
-    for (size_t c = 0; c != getNumGradientSeeds(); ++c)
-      text += ", %tg_d" + std::to_string(c) + ": !real";
-    return text;
-  }
   /// Whether the program carries the derivative in the charges, the last of
   /// Program::gradientFields then: the derivative of `@tunable` in its
   /// field of the charges itself, where the others are those in fields of
@@ -1348,12 +1270,6 @@ struct Coupled {
   /// `groups`, and the kinetic energy `kinetic` in `%trotter_memory`.
   void emitStoreTrotterState(StringRef indent, StringRef trace,
                              StringRef groups, StringRef kinetic);
-  /// The arguments that pass the fields of the parameters on: their
-  /// declarations, their values, and their types, each after a comma.
-  std::string getFieldParameters() const override;
-  /// The fields of the parameters, as arguments that follow others.
-  /// `prefix` comes before the name of each.
-  std::string getFieldValues(StringRef prefix = "%p_") const override;
 
   /// Emits the order of the particles at the positions `positions`, and
   /// the fields in that order. `from` and `to` are the ends of the names

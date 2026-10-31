@@ -1290,7 +1290,6 @@ No generic behavioral hook has only one implementer.
 | `collectDispersionConstants`, `collectGradientShiftConstants` | Custom pairs, nonbonded; primary terms precede custom terms |
 | `rejectsTunables` | Pulls, nonbonded; the existing diagnostic is unchanged |
 | `needsPairNeighborhood` | Custom pairs, nonbonded |
-| `emitTopologyPotential` | Externals, Born/surface, custom tuples, custom pairs, models, all seven bonded adapters; nonbonded uses its narrow role at rank 1 |
 | `appendTermDefinitions` | Externals, Born/surface, custom tuples, custom pairs, all seven bonded adapters, nonbonded |
 | `findObservedTerm`, `getObservedValue` | Externals, custom tuples, custom pairs |
 
@@ -1301,7 +1300,7 @@ No generic behavioral hook has only one implementer.
 | `TermPostEvaluation`: `hasForceCorrection`, `build`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; actual physical values in native functions, with borrowed correction names and store destinations at remaining entry sites |
 | `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
 | `TermScalarParameters`: `collectBareConstants`, `collectObservedConstants`, `appendInitialConstants` | Custom pairs; named scalar collections and a bounded start-value appender |
-| `TermNonbonded`: `collect`, `collectGradientFields`, `collectGradients`, `emit` | Nonbonded; projected mesh/correction data and the shared parameter/emission capabilities |
+| `TermNonbonded`: `collect`, `collectGradientFields`, `collectGradients` | Nonbonded; projected mesh/correction data and shared parameter capabilities; emission uses the generic native topology hook |
 
 The audit folds separate tuple/table refill hooks into `refillArrays` and
 read-only/mutable tunable classification into `collectTunableOutcome`.
@@ -1463,12 +1462,11 @@ supply actual operands, and a shared scalar-potential factory owns the complete
 body before its temporary placement join. Construction tests verify operation,
 argument and scalar-capture lifetime after transient metadata is cleared.
 Built-in bonded term potentials use native scalar-potential signatures
-and typed tuple-relation/parameter bindings, sharing their kernels with the
-remaining topology path. Rank and accumulation order are unchanged.
+and typed tuple-relation/parameter bindings, using their shared typed kernels. Rank and accumulation order are unchanged.
 External potentials also use native bodies with actual particle fields, tables,
 frame/time values and semantic expression bindings. Lambda and observed arguments
 retain their declaration and binding order; their native expression kernel is
-shared with the remaining topology path.
+shared across the native potential variants.
 Generalized Born and surface potentials construct native bodies together.
 Computed Born radii remain private to the adapter; radii, energy and surface
 contributions retain their original construction and accumulation order.
@@ -1490,7 +1488,12 @@ now construct native bodies through the same topology hook. Their seven shared
 kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
 order. Boundary flags are supplied at the current potential; parameter-field
 metadata is read-only and computed reciprocal outputs retain their original order.
-Entry/schedule scopes and the obsolete topology fallback remain in progress; their temporary assembly
+All topology potential signatures and bodies now construct native operations,
+including empty selections. The obsolete assembly fallback, named contribution
+callbacks and signature/value formatters are removed. Pull auxiliary potentials
+resolve time and tables through semantic metadata slots instead of generated
+SSA spellings. Entry/schedule assembly remains for the next construction phase.
+Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
 ## 3. Decided

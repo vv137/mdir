@@ -19,51 +19,51 @@ static void fillPairProducts(const TermInputs &context, Program::Field &field) {
 }
 
 static mlir::Value buildPairs14Contribution(mlir::OpBuilder &builder, mlir::ValueRange values, bool lj14, bool coulomb14, bool products, double cutoff, double from, Truncation modifier) {
-            using namespace mlir;
-            auto loc = builder.getUnknownLoc();
-            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
-                {mdir::md::CoordinateKind::Distance, {0, 1}}};
-            DenseI32ArrayAttr kinds;
-            DenseI64ArrayAttr members;
-            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
-            size_t gathered = products ? 1 : 0;
-            auto sum = mdir::md::SumTuplesOp::create(
-                builder, loc, builder.getF64Type(), values[0], values[1],
-                values[2], values.slice(3, gathered),
-                values.drop_front(3 + gathered), kinds, members);
-            {
-              OpBuilder::InsertionGuard guard(builder);
-              unsigned count = products ? 7 : 4;
-              llvm::SmallVector<Type> types(count, builder.getF64Type());
-              llvm::SmallVector<Location> locations(count, loc);
-              Block *block =
-                  builder.createBlock(&sum.getKernel(), {}, types, locations);
-              auto args = block->getArguments();
-              unsigned tuple = products ? 3 : 1;
-              Value qq = args[tuple + 2];
-              if (products) {
-                Value charges =
-                    arith::MulFOp::create(builder, loc, args[1], args[2]);
-                qq = arith::MulFOp::create(builder, loc, args[tuple + 3],
-                                           charges);
-              }
-              Value energy;
-              if (lj14)
-                energy = buildLennardJonesIR(
-                    builder,
-                    ValueRange{args[tuple], args[tuple + 1], args[0], args[0]},
-                    cutoff, from, modifier);
-              if (coulomb14) {
-                Value coulomb =
-                    arith::DivFOp::create(builder, loc, qq, args[0]);
-                if (energy)
-                  energy = arith::AddFOp::create(builder, loc, energy, coulomb);
-                else
-                  energy = coulomb;
-              }
-              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-            }
-            return sum.getResult();
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+      {mdir::md::CoordinateKind::Distance, {0, 1}}};
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+  size_t gathered = products ? 1 : 0;
+  auto sum = mdir::md::SumTuplesOp::create(
+      builder, loc, builder.getF64Type(), values[0], values[1],
+      values[2], values.slice(3, gathered),
+      values.drop_front(3 + gathered), kinds, members);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    unsigned count = products ? 7 : 4;
+    llvm::SmallVector<Type> types(count, builder.getF64Type());
+    llvm::SmallVector<Location> locations(count, loc);
+    Block *block =
+        builder.createBlock(&sum.getKernel(), {}, types, locations);
+    auto args = block->getArguments();
+    unsigned tuple = products ? 3 : 1;
+    Value qq = args[tuple + 2];
+    if (products) {
+      Value charges =
+          arith::MulFOp::create(builder, loc, args[1], args[2]);
+      qq = arith::MulFOp::create(builder, loc, args[tuple + 3],
+                                 charges);
+    }
+    Value energy;
+    if (lj14)
+      energy = buildLennardJonesIR(
+          builder,
+          ValueRange{args[tuple], args[tuple + 1], args[0], args[0]},
+          cutoff, from, modifier);
+    if (coulomb14) {
+      Value coulomb =
+          arith::DivFOp::create(builder, loc, qq, args[0]);
+      if (energy)
+        energy = arith::AddFOp::create(builder, loc, energy, coulomb);
+      else
+        energy = coulomb;
+    }
+    mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+  }
+  return sum.getResult();
 }
 
 namespace mdir::driver::builder {
@@ -71,7 +71,6 @@ class Pairs14TermBuilder final : public TermBuilder {
 public:
   Pairs14TermBuilder() {
     potentialMask = TermInputs::LennardJones14 | TermInputs::Coulomb14;
-    nativePotentialMask = potentialMask;
     tupleRank = 1;
   }
   unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
@@ -148,57 +147,6 @@ public:
         control.switchDistance * units::length, modifier));
 
     return llvm::Error::success();
-  }
-  void emitTopologyPotential(TermEmission &context,
-                             const PotentialSelection &selection,
-                             const TermPotentialAddition &add) const override {
-    const auto &control = context.getControl();
-    unsigned terms = selection.terms;
-    auto has = [&](StringRef name) {
-      return llvm::any_of(context.getTupleSets(),
-                          [&](const auto &set) { return set.name == name; });
-    };
-    bool lj14 = terms & TermInputs::LennardJones14,
-         coulomb14 = terms & TermInputs::Coulomb14;
-    if ((lj14 || coulomb14) && has("pairs14")) {
-      // In `@tunable` with the derivative in the charges, the product of
-      // the charges is formed here, f s_C q_i q_j, from the charges
-      // themselves (D230).
-      bool products = context.hasGradientArguments() &&
-                      context.hasGradientCharges() && coulomb14;
-      double cutoff = control.cutoffDistance * units::length;
-      double from = control.switchDistance * units::length;
-      Truncation modifier =
-          (control.truncation == Truncation::PowerForceSwitch ||
-           control.truncation == Truncation::SquaredDistanceSwitch)
-              ? control.truncation
-              : Truncation::None;
-      std::vector<std::string> names = {"%r_pairs14", "%x", "%cell"};
-      std::vector<StringRef> types = {"!rel_pairs14", "!vec", "!md.cell"};
-      if (products) {
-        names.push_back("%p_q");
-        types.push_back("!real");
-      }
-      for (StringRef field : {"sigma", "epsilon", "qq"}) {
-        names.push_back(("%f_pairs14_" + field).str());
-        types.push_back("!of_pairs14");
-      }
-      if (products) {
-        names.push_back("%f_pairs14_tgs");
-        types.push_back("!of_pairs14");
-      }
-      llvm::SmallVector<StringRef> operands;
-      for (const auto &name : names)
-        operands.push_back(name);
-      context.emitIRFragment(
-          "  ", {"%u_pairs14"}, {"f64"}, operands, types,
-          [lj14, coulomb14, products, cutoff, from,
-           modifier](mlir::OpBuilder &builder,
-                     mlir::ValueRange values) -> TermIRValues {
-            return {buildPairs14Contribution(builder, values, lj14, coulomb14, products, cutoff, from, modifier)};
-          });
-      add("pairs14");
-    }
   }
 };
 } // namespace mdir::driver::builder

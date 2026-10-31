@@ -22,74 +22,74 @@ struct HostedModelIRConfig {
 };
 
 static TermIRValues buildHostedModelEvaluation(mlir::OpBuilder &builder, mlir::ValueRange values, const HostedModelIRConfig &config) {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        auto *ctx = builder.getContext();
-        auto f64 = builder.getF64Type();
-        auto vec6 = VectorType::get({6}, f64), vec9 = VectorType::get({9}, f64);
-        Value cell =
-            mdir::md_exec::CellNumbersOp::create(builder, loc, vec6, values[0]);
-        llvm::SmallVector<Value> cells;
-        for (int c = 0; c != 6; ++c)
-          cells.push_back(vector::ExtractOp::create(builder, loc, cell, c));
-        Value bits =
-            arith::ConstantIntOp::create(builder, loc, config.stateBits, 64);
-        Value forceBits =
-            arith::ConstantIntOp::create(builder, loc, config.forceBits, 64);
-        Value forces = values[3], energy, virial;
-        if (config.energy)
-          energy = values[config.energySlot];
-        if (config.virial)
-          virial = values[config.virialSlot];
-        auto atoms =
-            cast<mdir::md::FieldType>(values[1].getType()).getParticleSet();
-        auto pairsType = mdir::md::RelationType::get(
-            ctx, atoms, 2, mdir::md::Orientation::Unordered,
-            FlatSymbolRefAttr{});
-        auto edgesType = mdir::md::EdgesType::get(ctx, atoms);
-        bool numbers = config.energy || config.virial;
-        std::string callee = std::string("mdrtModelEvaluate") +
-                             (config.edges ? "Edges" : "") +
-                             (numbers ? "Energy" : "");
-        for (size_t index = 0; index != config.count; ++index) {
-          Value edges;
-          if (config.edges) {
-            auto cutoff = builder.getF64FloatAttr(config.cutoffs[index]);
-            Value neighborhood = mdir::md::NeighborhoodOp::create(
-                builder, loc, pairsType, values[1], values[0], Value{}, cutoff);
-            edges =
-                mdir::md::EdgesOp::create(builder, loc, edgesType, neighborhood,
-                                          values[1], values[0], cutoff);
-          }
-          Value model = arith::ConstantIntOp::create(builder, loc, index, 64);
-          llvm::SmallVector<Value> inputs = {model, values[1], values[2]};
-          if (config.edges)
-            inputs.push_back(edges);
-          llvm::append_range(inputs, cells);
-          inputs.push_back(bits);
-          inputs.push_back(forceBits);
-          llvm::SmallVector<Type> results = {forces.getType()};
-          if (numbers) {
-            results.push_back(f64);
-            results.push_back(vec9);
-          }
-          auto call = mdir::mdrt::HostCallOp::create(
-              builder, loc, results, FlatSymbolRefAttr::get(ctx, callee),
-              inputs, ValueRange{forces}, builder.getUnitAttr());
-          forces = call.getResults()[0];
-          if (config.energy)
-            energy = arith::AddFOp::create(builder, loc, energy,
-                                           call.getResults()[1]);
-          if (config.virial)
-            virial = arith::AddFOp::create(builder, loc, virial,
-                                           call.getResults()[2]);
-        }
-        TermIRValues results = {forces};
-        if (config.energy)
-          results.push_back(energy);
-        if (config.virial)
-          results.push_back(virial);
-        return results;
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto *ctx = builder.getContext();
+  auto f64 = builder.getF64Type();
+  auto vec6 = VectorType::get({6}, f64), vec9 = VectorType::get({9}, f64);
+  Value cell =
+      mdir::md_exec::CellNumbersOp::create(builder, loc, vec6, values[0]);
+  llvm::SmallVector<Value> cells;
+  for (int c = 0; c != 6; ++c)
+    cells.push_back(vector::ExtractOp::create(builder, loc, cell, c));
+  Value bits =
+      arith::ConstantIntOp::create(builder, loc, config.stateBits, 64);
+  Value forceBits =
+      arith::ConstantIntOp::create(builder, loc, config.forceBits, 64);
+  Value forces = values[3], energy, virial;
+  if (config.energy)
+    energy = values[config.energySlot];
+  if (config.virial)
+    virial = values[config.virialSlot];
+  auto atoms =
+      cast<mdir::md::FieldType>(values[1].getType()).getParticleSet();
+  auto pairsType = mdir::md::RelationType::get(
+      ctx, atoms, 2, mdir::md::Orientation::Unordered,
+      FlatSymbolRefAttr{});
+  auto edgesType = mdir::md::EdgesType::get(ctx, atoms);
+  bool numbers = config.energy || config.virial;
+  std::string callee = std::string("mdrtModelEvaluate") +
+                       (config.edges ? "Edges" : "") +
+                       (numbers ? "Energy" : "");
+  for (size_t index = 0; index != config.count; ++index) {
+    Value edges;
+    if (config.edges) {
+      auto cutoff = builder.getF64FloatAttr(config.cutoffs[index]);
+      Value neighborhood = mdir::md::NeighborhoodOp::create(
+          builder, loc, pairsType, values[1], values[0], Value{}, cutoff);
+      edges =
+          mdir::md::EdgesOp::create(builder, loc, edgesType, neighborhood,
+                                    values[1], values[0], cutoff);
+    }
+    Value model = arith::ConstantIntOp::create(builder, loc, index, 64);
+    llvm::SmallVector<Value> inputs = {model, values[1], values[2]};
+    if (config.edges)
+      inputs.push_back(edges);
+    llvm::append_range(inputs, cells);
+    inputs.push_back(bits);
+    inputs.push_back(forceBits);
+    llvm::SmallVector<Type> results = {forces.getType()};
+    if (numbers) {
+      results.push_back(f64);
+      results.push_back(vec9);
+    }
+    auto call = mdir::mdrt::HostCallOp::create(
+        builder, loc, results, FlatSymbolRefAttr::get(ctx, callee),
+        inputs, ValueRange{forces}, builder.getUnitAttr());
+    forces = call.getResults()[0];
+    if (config.energy)
+      energy = arith::AddFOp::create(builder, loc, energy,
+                                     call.getResults()[1]);
+    if (config.virial)
+      virial = arith::AddFOp::create(builder, loc, virial,
+                                     call.getResults()[2]);
+  }
+  TermIRValues results = {forces};
+  if (config.energy)
+    results.push_back(energy);
+  if (config.virial)
+    results.push_back(virial);
+  return results;
 }
 
 namespace mdir::driver::builder {
@@ -172,28 +172,6 @@ public:
       add(*energy);
     }
     return llvm::Error::success();
-  }
-  void
-  emitTopologyPotential(TermEmission &context,
-                        const PotentialSelection &selection,
-                        const TermPotentialAddition &addition) const override {
-    if (selection.terms != TermInputs::AllTerms)
-      return;
-    for (size_t k = 0; k != state->potentials.size(); ++k) {
-      std::string result = "%u_staged" + std::to_string(k);
-      context.emitIRFragment(
-          "  ", {result}, {"f64"}, {"%x", "%cell", "%p_model_z"},
-          {"!vec", "!md.cell", "!ids"},
-          [model = state->potentials[k]](mlir::OpBuilder &builder,
-                                         mlir::ValueRange inputs)
-              -> llvm::Expected<TermIRValues> {
-            auto energy = model->cloneBody(builder, inputs);
-            if (!energy)
-              return energy.takeError();
-            return TermIRValues{*energy};
-          });
-      addition.append(result, "%total_staged" + std::to_string(k));
-    }
   }
 
 private:
