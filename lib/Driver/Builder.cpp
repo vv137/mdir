@@ -438,7 +438,7 @@ llvm::Error Builder::build() {
   emitSitePotentials();
   if (llvm::Error error = emitPrograms())
     return error;
-  emitEntry();
+  if (llvm::Error error = emitEntry()) return error;
   if (!frameLoopError.empty())
     return makeError(frameLoopError);
   return llvm::Error::success();

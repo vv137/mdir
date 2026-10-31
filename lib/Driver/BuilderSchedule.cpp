@@ -4,6 +4,8 @@
 
 #include "BuilderImpl.h"
 #include "ScheduleIR.h"
+#include "EntryRuntimeIR.h"
+#include "SimpleFrameEntryIR.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "PotentialIR.h"
@@ -1068,120 +1070,8 @@ void Builder::emitMinimization(StringRef velocities) {
   os << "  return\n}\n";
 }
 
-namespace {
-struct RuntimeDeclarationConfig {
-  bool state64, force64, tunableGradient, frames, segments;
-  int64_t partCounts;
-  bool minimize, stopsMinimization, solvent, constraintStops;
-  bool rescales, noseHoover, bath, barostat, barostatState, checkpoints;
-  bool writesForces;
-};
 
-void emitRuntimeDeclarations(mlir::OpBuilder &builder,
-                             const RuntimeDeclarationConfig &config,
-                             bool afterModels) {
-  using namespace mlir;
-  Type f64 = builder.getF64Type(), i64 = builder.getI64Type();
-  Type state = config.state64 ? builder.getF64Type() : builder.getF32Type();
-  Type force = config.force64 ? builder.getF64Type() : builder.getF32Type();
-  auto buffer = [](int64_t count, Type element) {
-    return MemRefType::get({count}, element);
-  };
-  auto vectors = [](Type element) {
-    return MemRefType::get({ShapedType::kDynamic, 3}, element);
-  };
-  Type ids = buffer(ShapedType::kDynamic, builder.getI32Type());
-  Type numbers = buffer(ShapedType::kDynamic, f64);
-  Type positions = vectors(state), forces = vectors(force);
-  auto signature = [&](unsigned integers, unsigned reals) {
-    SmallVector<Type> types(integers, i64);
-    types.append(reals, f64);
-    return types;
-  };
-  auto declare = [&](StringRef name, TypeRange inputs,
-                     TypeRange results = {}, bool cInterface = false) {
-    auto function = func::FuncOp::create(
-        builder, builder.getUnknownLoc(), name,
-        builder.getFunctionType(inputs, results));
-    function.setPrivate();
-    if (cInterface)
-      function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-    return function;
-  };
-  if (!afterModels) {
-    declare("mdrtWriteEnergies", signature(1, 5), {}, true);
-    declare("mdrtWritePull", {i64, numbers, numbers}, {}, true);
-    declare("mdrtWriteFreeEnergy", {i64, numbers}, {}, true);
-    declare("mdrtWriteObservables", {i64, numbers}, {}, true);
-    declare("mdrtWriteTerms", {numbers}, {}, true);
-    if (config.tunableGradient) {
-      declare("mdrtWriteTunableGradient", {numbers}, {}, true);
-      declare("mdrtWriteTunableGradientField", {i64, numbers, ids}, {}, true);
-    }
-    declare("mdrtWriteVirial", signature(0, 3), {}, true);
-    declare("mdrtWriteFrame", {i64, positions, ids}, {}, true);
-    declare("mdrtCheckSpread", {i64, positions, ids}, {}, true);
-    if (config.frames) {
-      declare("mdrtFrameBoundary", {buffer(6, f64), buffer(2, f64)},
-              {positions}, true);
-      declare("mdrtWriteFrameForces", {forces, ids}, {}, true);
-      declare("mdrtWriteFrameVirial", signature(0, 9), {}, true);
-    } else if (config.segments) {
-      declare("mdrtPartBoundary",
-              {positions, positions, forces, ids, f64,
-               buffer(config.partCounts, i64)}, {}, true);
-    } else {
-      declare("mdrtFinish", {positions, positions, ids}, {}, true);
-    }
-    return;
-  }
-  if (config.minimize)
-    declare("mdrtWriteMinimization", {i64, f64, f64, forces, ids}, {}, true);
-  if (config.stopsMinimization)
-    declare("mdrtCheckMinimization", {buffer(2, i64)}, {}, true);
-  if (config.solvent)
-    declare("mdrtWriteSolvent", signature(0, 2));
-  if (config.constraintStops) {
-    auto stop = [&](StringRef name, TypeRange inputs, bool reads) {
-      auto function = declare(name, inputs);
-      auto resources = builder.getStrArrayAttr({"dyn.stop"});
-      SmallVector<NamedAttribute> effects;
-      if (reads)
-        effects.push_back(builder.getNamedAttr("read", resources));
-      effects.push_back(builder.getNamedAttr("write", resources));
-      function->setAttr("dyn.effects", builder.getDictionaryAttr(effects));
-    };
-    stop("mdrtStopConstraintFailure", {i64, i64}, false);
-    stop("mdrtDeferStops", {}, false);
-    stop("mdrtStopPending", {}, true);
-  }
-  if (config.rescales && config.noseHoover)
-    declare("mdrtNoseHooverFactor", signature(1, 1), {f64});
-  else if (config.rescales)
-    declare("mdrtBussiFactor", signature(2, 4), {f64});
-  if (config.bath)
-    declare("mdrtAddBath", {f64}, {}, true);
-  if (config.barostat) {
-    declare("mdrtBarostatStrain", signature(2, 6), {f64});
-    declare("mdrtBarostatStrainArea", signature(2, 8), {f64});
-    declare("mdrtBarostatStrainHeight", signature(2, 6), {f64});
-    declare("mdrtBarostatStrainAxis", signature(3, 6), {f64});
-    declare("mdrtSetBox", signature(0, 3), {}, true);
-    declare("mdrtSetTilt", signature(0, 3), {}, true);
-  }
-  if (config.barostatState)
-    declare("mdrtSetBarostatState", signature(0, 9), {}, true);
-  if (config.checkpoints) {
-    SmallVector<Type> inputs = {i64, positions, positions};
-    if (config.writesForces)
-      inputs.push_back(forces);
-    inputs.push_back(ids);
-    declare("mdrtWriteCheckpoint", inputs, {}, true);
-  }
-}
-} // namespace
-
-void Builder::emitEntry() {
+llvm::Error Builder::emitEntry() {
   collectStartValues();
   StringRef state = getName(program.state);
   StringRef force = getName(program.force);
@@ -1197,6 +1087,47 @@ void Builder::emitEntry() {
       control.isNoseHoover(), control.getCouplingPeriod() > 0,
       bool(control.barostat), scalesEveryStep(), control.checkpointPeriod > 0,
       program.writesForces};
+  // Each selected entry is complete native IR, including every loop body.
+  // Other physical families keep their existing entry until their scopes move.
+  bool nativeFrames = control.frames && !system.topology && !control.minimize &&
+      !isRestart() && !control.usesTime && !control.isLangevin() &&
+      !control.isBrownian() && !isLeapfrog() && !isTriclinic() &&
+      !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
+      !hasConstraints() && !hasSites() && !hasForceCorrections() &&
+      !hasHostEvaluation() && control.freeEnergyFile.empty() &&
+      control.observables.empty() && !program.tunableGradient;
+  if (nativeFrames) {
+    mlir::OpBuilder ir(&termIR.getContext());
+    auto *moduleBody = termIR.getModule().getBody();
+    ir.setInsertionPointToEnd(moduleBody);
+    size_t before = std::distance(moduleBody->begin(), moduleBody->end());
+    emitRuntimeDeclarations(ir, declarations, false);
+    emitRuntimeDeclarations(ir, declarations, true);
+    SimpleFrameEntryIRConfig config;
+    config.branchesStart = branchesStart();
+    config.givenForces = branchesStart() && program.takesForces;
+    if (!control.segments) {
+      for (const auto &level : levels) config.counts.push_back(level.count);
+      int64_t steps = 1;
+      for (unsigned index = levels.size(); index-- != 0;) {
+        config.periods.push_back(steps);
+        steps *= levels[index].count;
+        if (index && levels[index - 1].name == "energy") ++steps;
+      }
+    }
+    auto entry = buildSimpleFrameEntry(ir, program, config);
+    if (!entry) return entry.takeError();
+    llvm::SmallVector<mlir::Operation *> operations;
+    for (auto &operation : llvm::drop_begin(*moduleBody, before))
+      operations.push_back(&operation);
+    emitIRFragment("", {}, {}, {}, {},
+        [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          for (auto *operation : operations)
+            operation->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return llvm::Error::success();
+  }
   emitIRFragment("", {}, {}, {}, {},
                  [declarations](mlir::OpBuilder &builder, mlir::ValueRange) {
                    emitRuntimeDeclarations(builder, declarations, false);
@@ -1566,7 +1497,7 @@ void Builder::emitEntry() {
   }
   if (control.minimize) {
     emitMinimization(velocities);
-    return;
+    return llvm::Error::success();
   }
 
   if (control.getCouplingPeriod() > 0) {
@@ -1903,7 +1834,7 @@ void Builder::emitEntry() {
         [](mlir::OpBuilder &builder, mlir::ValueRange)
             -> llvm::Expected<TermIRValues> {
           if (llvm::Error error = checkFrameEvaluation(
-                  builder.getInsertionBlock()->getParentOp()))
+                  *builder.getInsertionBlock()->getParentOp()))
             return std::move(error);
           return TermIRValues{};
         });
@@ -1939,7 +1870,7 @@ void Builder::emitEntry() {
         });
     os << "  scf.for %i_frame = %c0 to %frame_end step %c1 {\n"
        << chunk << "  }\n  return\n}\n";
-    return;
+    return llvm::Error::success();
   }
   if (branchesStart()) {
     os.flush();
@@ -2085,7 +2016,7 @@ void Builder::emitEntry() {
                  {"%x" + last, "%v" + last, "%f" + last},
                  {"%x0", "%v0", "%f0"});
     os << "  return\n}\n";
-    return;
+    return llvm::Error::success();
   }
   emitLevel(0, "  ");
   emitIRFragment(
@@ -2097,6 +2028,7 @@ void Builder::emitEntry() {
         return {};
       });
   os << "  return\n}\n";
+  return llvm::Error::success();
 }
 
 void Builder::emitPartCounts() {

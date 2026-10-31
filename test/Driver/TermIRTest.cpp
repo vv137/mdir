@@ -1,5 +1,8 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
+#include "../../lib/Driver/SimpleFrameEntryIR.h"
+#include "../../lib/Driver/EntryRuntimeIR.h"
+#include "../../lib/Driver/EntryLoopIR.h"
 #include "../../lib/Driver/PotentialIR.h"
 #include "../../lib/Driver/DynamicsIR.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
@@ -171,7 +174,7 @@ static void checkFrameEvaluations() {
     plan.emit(stream, "", {}, {}, {}, {},
               [](OpBuilder &builder, ValueRange) -> llvm::Expected<TermIRValues> {
                 if (llvm::Error error = checkFrameEvaluation(
-                        builder.getInsertionBlock()->getParentOp()))
+                        *builder.getInsertionBlock()->getParentOp()))
                   return std::move(error);
                 return TermIRValues{};
               });
@@ -432,7 +435,97 @@ static void checkNativeBarePotentialBody() {
 
 }
 
+
+static void checkNativeFrameEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_frames";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.takesForces = true;
+  metadata.reorders = false;
+  metadata.fields.push_back({"q", {}, false});
+  metadata.fields.push_back({"kind", {}, true});
+  metadata.tables.push_back({"grid", 1, {0.0}, 1});
+  auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
+  SmallVector<Type> inputs{mdir::md::FieldType::get(&context, atoms, 3, builder.getF64Type()),
+      mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, buildParameterTypes(context, metadata));
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(2.5));
+      });
+  require(bool(energy), "native frame fixture energy did not construct");
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  runtime.frames = runtime.segments = true;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  SimpleFrameEntryIRConfig config;
+  config.branchesStart = config.givenForces = true;
+  auto built = buildSimpleFrameEntry(builder, metadata, config);
+  require(bool(built), "native frame entry did not construct");
+  auto entry = *built;
+  auto positions = entry.getArgument(0);
+  require(positions.use_empty(), "native frame entry read outer positions");
+  require(bool(entry.getArgAttr(3, "mdrt.read_only")), "native frame entry lost read-only masses");
+  require(!checkFrameEvaluation(*entry.getOperation()), "native frame entry lost its actual evaluation");
+  auto empty = func::FuncOp::create(builder, loc, "empty_frames", builder.getFunctionType({}, {}));
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(empty.addEntryBlock());
+    func::ReturnOp::create(builder, loc);
+  }
+  reject(checkFrameEvaluation(*empty.getOperation()),
+         "the program of frames: the start of this program evaluates "
+         "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+  metadata.fields.clear();
+  metadata.tables.clear();
+  metadata.entry = "changed";
+  config.branchesStart = config.givenForces = false;
+  require(module.lookupSymbol<func::FuncOp>("native_frames") == entry,
+          "native frame entry was reparsed or lost transient metadata ownership");
+  require(entry.getArgument(0) == positions, "native frame entry replaced its actual argument");
+  require(succeeded(verify(module)), "native frame entry did not verify");
+  builder.setInsertionPoint(entry.getBody().front().getTerminator());
+  Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+  Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+  Value initial = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+  auto before = std::distance(entry.getBody().front().begin(), entry.getBody().front().end());
+  auto bad = buildEntryLoop(builder, "frame construction", zero, one, one, ValueRange{initial},
+      [](OpBuilder &, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+        return SmallVector<Value>{};
+      });
+  require(!bad, "native loop accepted a return-count mismatch");
+  reject(bad.takeError(), "native frame construction loop: yield has 0 values, expected 1");
+  require(std::distance(entry.getBody().front().begin(), entry.getBody().front().end()) == before,
+          "failed native loop retained an incomplete region");
+  require(succeeded(verify(module)), "failed native loop damaged its entry");
+  auto nested = buildEntryLoop(builder, "outer frame construction", zero, one, one, {},
+      [&](OpBuilder &at, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+        auto inner = buildEntryLoop(at, "inner frame construction", zero, one, one,
+            ValueRange{initial},
+            [](OpBuilder &, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+              return SmallVector<Value>{};
+            });
+        if (!inner) return inner.takeError();
+        return SmallVector<Value>{};
+      });
+  require(!nested, "nested native loop swallowed an inner construction error");
+  reject(nested.takeError(), "native inner frame construction loop: yield has 0 values, expected 1");
+  require(std::distance(entry.getBody().front().begin(), entry.getBody().front().end()) == before,
+          "failed nested native loop retained an incomplete region");
+  require(succeeded(verify(module)), "failed nested native loop damaged its entry");
+
+}
+
 int main(int argc, char **argv) {
+  checkNativeFrameEntry();
   checkDiagonalExports();
   checkFrameEvaluations();
   checkNativeDescentBody();

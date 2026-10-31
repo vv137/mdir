@@ -1493,6 +1493,15 @@ including empty selections. The obsolete assembly fallback, named contribution
 callbacks and signature/value formatters are removed. Pull auxiliary potentials
 resolve time and tables through semantic metadata slots instead of generated
 SSA spellings. Entry/schedule assembly remains for the next construction phase.
+The first complete native entry family is the bare-system, orthorhombic
+Verlet frame evaluator without time, coupling or extra evaluation roles.
+`EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
+`EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
+actual SCF regions with checked yield counts, types and insertion scopes.
+`SimpleFrameEntryIR.cpp` preserves boundary/reorder/request/output order and
+checks actual frame evaluations and unused outer position/cell arguments.
+`EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
+Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
