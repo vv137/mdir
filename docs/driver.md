@@ -1438,16 +1438,13 @@ plain-segment energy/time/spread outputs use native operations. The initial
 correction virial zero is native as well. Remaining generated schedule text
 is function/loop structure and its temporary carry/connection machinery.
 
-Unconstrained minimization without virtual sites, force corrections or hosted
-evaluations constructs its complete native signature and body from actual
-block arguments and semantic parameter types. The module owns that body;
-only its placement crosses the temporary assembly join. Other function
-variants and scopes remain in progress. Mass-safe descent direction is shared.
-
-Complete native minimization bodies also cover SETTLE and M-SHAKE without
-virtual sites, force corrections or hosted evaluations. Semantic parameter
-slots drive the ordered gradient projection, position corrections, failure
-counts and rejected-trial selection; constraint-test kernels are shared.
+Complete native minimization signatures and bodies use actual block arguments
+and semantic parameter types, including SETTLE, M-SHAKE and virtual sites.
+Semantic parameter slots drive ordered gradient projection, position correction,
+failure counts, rejected-trial selection, site placement and force spreading.
+The module owns each body; only its placement crosses the temporary assembly
+join. Mass-safe descent, constraint-test and site-placement kernels are shared.
+Force corrections, hosted evaluations and other function scopes remain in progress.
 
 ## 3. Decided
 

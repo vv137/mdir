@@ -188,3 +188,8 @@ Stage C (#718, D[builder-native-program]) owns the native module and parses
 staged-model input in its build context, cloning declarations and value
 dependencies. Remaining native program construction is in progress under
 the ownership contract recorded there.
+
+Native minimization bodies now include constrained trials and virtual-site
+placement and force spreading through semantic parameter slots and actual block
+arguments. Shared construction preserves kernel and operation order. Force
+corrections, hosted evaluations and the remaining scopes are still in progress.

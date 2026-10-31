@@ -4,6 +4,7 @@
 #include "mlir/IR/Value.h"
 #include "ConstraintIR.h"
 #include <vector>
+#include <string>
 #include "mlir/IR/TypeRange.h"
 namespace mlir { class OpBuilder; }
 namespace mdir::dyn { class ProgramOp; }
@@ -16,9 +17,15 @@ struct DescentConstraintGroupIR {
   ConstraintPositionConfig position;
   bool water, settlePosition;
 };
+struct DescentSiteIR {
+  unsigned relation, a, b;
+  bool amber, derived;
+  std::string potential;
+};
 mdir::dyn::ProgramOp buildNativeDescent(
     mlir::OpBuilder &, mlir::TypeRange parameters, double particles, bool timed,
-    llvm::ArrayRef<DescentConstraintGroupIR> groups = {});
+    llvm::ArrayRef<DescentConstraintGroupIR> groups = {},
+    llvm::ArrayRef<DescentSiteIR> sites = {});
 mlir::Value buildDescentPositions(mlir::OpBuilder &, mlir::Value positions,
                                    mlir::Value gradient, mlir::Value distance,
                                    mlir::Value count, mlir::Value tiny);
