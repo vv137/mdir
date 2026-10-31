@@ -488,6 +488,24 @@ static void checkNativeSimpleEntry() {
       "native energy interval's plain loop reads stale outer state");
   require(llvm::equal(closing.getOperands().take_front(3), inner.getResults()),
       "native energy step lost the plain loop's final state");
+  metadata.entry = "native_trajectory_steps";
+  SimpleStepEntryIRConfig trajectory{2, 3, false};
+  trajectory.frameIntervals = 2;
+  auto framed = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(bool(framed), "native trajectory-interval entry did not construct");
+  auto frameLoop = *framed->getOps<scf::ForOp>().begin();
+  auto energyLoop = *frameLoop.getBody()->getOps<scf::ForOp>().begin();
+  auto stepLoop = *energyLoop.getBody()->getOps<scf::ForOp>().begin();
+  require(llvm::equal(energyLoop.getInitArgs(), frameLoop.getRegionIterArgs()) &&
+          llvm::equal(stepLoop.getInitArgs(), energyLoop.getRegionIterArgs()),
+      "native trajectory intervals read stale enclosing state");
+  require(frameLoop->hasAttr("mdrt.fresh") && !energyLoop->hasAttr("mdrt.fresh"),
+      "native trajectory intervals moved the fresh boundary");
+  metadata.entry = "native_frequent_frames";
+  trajectory.frameIntervals.reset();
+  trajectory.framesAtEnergies = true;
+  auto frequent = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(bool(frequent), "native frames-at-energy entry did not construct");
   metadata.fields.clear();
   metadata.entry = "changed";
   require(module.lookupSymbol<func::FuncOp>("native_steps") == entry,
