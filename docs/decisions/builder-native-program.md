@@ -236,5 +236,10 @@ Half-step eligibility uses one predicate in the runtime owner, native constructo
 and construction matrix. Native return counts and types are checked before a
 terminator is created; construction errors name the integrator, constraints,
 energy, measurement and site combination.
-Potential and entry/schedule scopes remain in progress; their temporary assembly
+Bare pair and triplet potentials construct native signatures and bodies through
+synchronous typed contribution hooks. Semantic particle-field/table bindings
+supply actual operands, and a shared scalar-potential factory owns the complete
+body before its temporary placement join. Construction tests verify operation,
+argument and scalar-capture lifetime after transient metadata is cleared.
+Topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

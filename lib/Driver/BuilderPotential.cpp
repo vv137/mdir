@@ -3,6 +3,8 @@
 
 #include "BuilderImpl.h"
 #include "SiteIR.h"
+#include "PotentialIR.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -333,20 +335,44 @@ llvm::Error Builder::emitPotential() {
     return makeError("the power force switch is for the Lennard-Jones of a "
                      "topology");
 
-  os << "md.potential @energy(%x: !vec, %cell: !md.cell"
-     << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
-  emitPairNeighborhood("  ", "%n", "%x", "%cell", "");
-
-  std::string total;
-  for (const TermBuilder *builder : termBuildersByPotentialRank())
-    builder->emitBareContributions(*this, total);
-  emitIRFragment(
-      "  ", {}, {}, {total}, {"f64"},
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        mdir::md::ReturnOp::create(builder, builder.getUnknownLoc(), values);
+  auto &context = termIR.getContext();
+  mlir::OpBuilder ir(&context);
+  ir.setInsertionPointToEnd(termIR.getModule().getBody());
+  auto loc = ir.getUnknownLoc();
+  auto atoms = mlir::FlatSymbolRefAttr::get(&context, "atoms");
+  auto vec = mdir::md::FieldType::get(&context, atoms, 3, ir.getF64Type());
+  auto parameters = buildParameterTypes(context, program);
+  llvm::SmallVector<mlir::Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  if (control.usesTime) inputs.push_back(ir.getF64Type());
+  auto potential = buildScalarPotential(ir, "energy", inputs,
+      [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> mlir::Value {
+    auto pairs = mdir::md::RelationType::get(&context, atoms, 2,
+        mdir::md::Orientation::Unordered, mlir::FlatSymbolRefAttr{});
+    mlir::Value neighborhood = mdir::md::NeighborhoodOp::create(ir, loc, pairs,
+        args[0], args[1], mlir::Value{}, ir.getF64FloatAttr(control.cutoffDistance * units::length));
+    auto field = [&](StringRef name) -> mlir::Value {
+      auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
+      assert(found != program.fields.end() && "bare potential field must exist");
+      return args[2 + std::distance(program.fields.begin(), found)];
+    };
+    auto table = [&](StringRef name) -> mlir::Value {
+      auto found = llvm::find_if(program.tables, [&](const auto &table) { return table.name == name; });
+      assert(found != program.tables.end() && "bare potential table must exist");
+      return args[2 + program.fields.size() + std::distance(program.tables.begin(), found)];
+    };
+    TermNativePotential state{args[0], args[1], neighborhood,
+        control.usesTime ? args.back() : mlir::Value{}, field, table};
+    mlir::Value total;
+    for (const TermBuilder *term : termBuildersByPotentialRank())
+      total = term->buildBareContributions(*this, ir, state, total);
+    return total;
+  });
+  emitIRFragment("", {}, {}, {}, {},
+      [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+        potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
         return {};
       });
-  os << "}\n\n";
   return llvm::Error::success();
 }
 

@@ -206,3 +206,8 @@ and accumulation order. Potential and entry/schedule scopes remain in progress.
 Half-step eligibility is shared by the owner, construction tests and native
 function builder. A checked return boundary reports the physical combination
 when the signature and returned state disagree, before ordinary verification.
+
+Bare pair and triplet contributions borrow actual fields and tables through
+typed hooks. Their complete scalar potential is native, with module-owned
+operations and block arguments independent of transient construction metadata.
+Topology potential and entry/schedule scopes remain in progress.

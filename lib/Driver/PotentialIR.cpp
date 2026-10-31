@@ -74,3 +74,17 @@ SmallVector<Type> mdir::driver::builder::buildParameterTypes(
   }
   return types;
 }
+
+mdir::md::PotentialOp mdir::driver::builder::buildScalarPotential(
+    OpBuilder &builder, llvm::StringRef name, TypeRange inputs,
+    llvm::function_ref<Value(OpBuilder &, ValueRange)> body) {
+  auto loc = builder.getUnknownLoc();
+  auto potential = mdir::md::PotentialOp::create(builder, loc, name,
+      builder.getFunctionType(inputs, {builder.getF64Type()}), StringAttr{}, ArrayAttr{}, ArrayAttr{});
+  OpBuilder::InsertionGuard guard(builder);
+  SmallVector<Location> locations(inputs.size(), loc);
+  auto args = builder.createBlock(&potential.getBody(), {}, inputs, locations)->getArguments();
+  Value energy = body(builder, args);
+  mdir::md::ReturnOp::create(builder, loc, ValueRange{energy});
+  return potential;
+}

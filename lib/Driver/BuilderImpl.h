@@ -309,6 +309,12 @@ struct TermEvaluation {
   StringRef indent, x, cell, prefix, f, fResult, u, uResult, w, tag;
 };
 
+/// Actual values at a bare potential boundary; semantic fields/tables are borrowed.
+struct TermNativePotential {
+  mlir::Value positions, cell, neighborhood, time;
+  llvm::function_ref<mlir::Value(StringRef)> field, table;
+};
+
 /// Borrowed physical values and semantic particle-field bindings at one evaluation.
 /// This view is consumed synchronously and never retained by an adapter.
 struct TermNativeEvaluation {
@@ -484,7 +490,8 @@ public:
   virtual bool needsPairNeighborhood(const TermInputs &, const PotentialSelection &) const {
     return false;
   }
-  virtual void emitBareContributions(TermEmission &, std::string &) const {}
+  virtual mlir::Value buildBareContributions(const TermInputs &, mlir::OpBuilder &,
+      const TermNativePotential &, mlir::Value total) const { return total; }
   virtual void collectParameters(TermParameters &) const {}
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,

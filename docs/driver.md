@@ -1280,7 +1280,7 @@ No generic behavioral hook has only one implementer.
 | `topologyRank` | Nonbonded, all seven bonded adapters, tuples, models; early adapters use rank 0 |
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
-| `collectBareParameters`, `emitBareContributions` | Custom pairs, triplets |
+| `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1458,7 +1458,12 @@ Half-step eligibility uses one predicate in the runtime owner, native constructo
 and construction matrix. Native return counts and types are checked before a
 terminator is created; construction errors name the integrator, constraints,
 energy, measurement and site combination.
-Potential and entry/schedule scopes remain in progress; their temporary assembly
+Bare pair and triplet potentials construct native signatures and bodies through
+synchronous typed contribution hooks. Semantic particle-field/table bindings
+supply actual operands, and a shared scalar-potential factory owns the complete
+body before its temporary placement join. Construction tests verify operation,
+argument and scalar-capture lifetime after transient metadata is cleared.
+Topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
 ## 3. Decided
