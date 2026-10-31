@@ -1494,7 +1494,8 @@ callbacks and signature/value formatters are removed. Pull auxiliary potentials
 resolve time and tables through semantic metadata slots instead of generated
 SSA spellings. Entry/schedule assembly remains for the next construction phase.
 The first complete native entry family is the Verlet frame evaluator in orthorhombic or triclinic cells,
-including time-dependent terms and topology energy columns, without coupling or
+including time-dependent terms, topology energy columns and virtual-site
+placement/spreading, without coupling or
 extra evaluation roles.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
