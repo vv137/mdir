@@ -11,9 +11,6 @@
 namespace mlir { class OpBuilder; }
 namespace mdir::dyn { class ProgramOp; }
 namespace mdir::driver::builder {
-mdir::dyn::ProgramOp buildNativeVerletStep(
-    mlir::OpBuilder &, llvm::StringRef name, mlir::TypeRange parameters,
-    bool energy, bool leapfrog, bool timed);
 mlir::Value buildDescentDirection(mlir::OpBuilder &, mlir::Value forces, mlir::Value masses);
 struct DescentConstraintGroupIR {
   unsigned relation, arity;
@@ -27,6 +24,9 @@ struct DescentSiteIR {
   bool amber, derived;
   std::string potential;
 };
+mdir::dyn::ProgramOp buildNativeVerletStep(
+    mlir::OpBuilder &, llvm::StringRef name, mlir::TypeRange parameters,
+    bool energy, bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites = {});
 mdir::dyn::ProgramOp buildNativeDescent(
     mlir::OpBuilder &, mlir::TypeRange parameters, double particles, bool timed,
     llvm::ArrayRef<DescentConstraintGroupIR> groups = {},

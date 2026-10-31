@@ -1449,7 +1449,7 @@ capabilities with actual physical values and semantic particle-field bindings.
 Their shared native kernels retain correction/evaluation order and effects;
 minimization no longer emits a generated signature or body. Basic unconstrained
 Verlet and leapfrog step/energy functions also own native signatures and bodies,
-including time-dependent evaluations. Their construction tests cover energy,
+including time-dependent evaluations, site placement and force spreading. Their construction tests cover energy,
 velocity staggering and time combinations. Other variants and scopes remain
 in progress.
 

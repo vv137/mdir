@@ -300,7 +300,8 @@ static void checkNativeVerletBodies() {
     mdir::md::ReturnOp::create(builder, loc, ValueRange{zero});
   }
   StringRef name = withEnergy ? "step_energy" : "step";
-  auto native = buildNativeVerletStep(builder, name, parameters, withEnergy, leapfrog, timed);
+  DescentSiteIR site{6, 7, 8, false, false, "spread_sites_linear"};
+  auto native = buildNativeVerletStep(builder, name, parameters, withEnergy, leapfrog, timed, {site});
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
   llvm::raw_string_ostream stream(program.module);
