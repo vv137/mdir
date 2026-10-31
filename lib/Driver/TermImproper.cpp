@@ -8,52 +8,7 @@
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
-namespace mdir::driver::builder {
-class ImproperTermBuilder final : public TermBuilder {
-public:
-  ImproperTermBuilder() {
-    potentialMask = TermInputs::HarmonicImpropers;
-    tupleRank = -1;
-  }
-  int topologyRank() const override { return 2; }
-  void collectTupleSets(TermParameters &context) const override {
-    const Topology &topology = context.getTopology();
-    if (!topology.harmonicImpropers.empty()) {
-      Program::TupleSet &set =
-          addTupleSet(context.getTupleSets(), "impropers", 4);
-      size_t k = addTupleField(set, "k"), xi0 = addTupleField(set, "xi0");
-      for (const Topology::HarmonicImproper &term :
-           topology.harmonicImpropers) {
-        for (unsigned member : {term.i, term.j, term.k, term.l})
-          set.members.push_back(member);
-        set.fields[k].values.push_back(term.force);
-        set.fields[xi0].values.push_back(term.xi0);
-      }
-    }
-  }
-  void appendTermDefinitions(
-      const TermInputs &,
-      std::vector<TermDefinition> &definitions) const override {
-    definitions.push_back(
-        {11, 0, "term_impropers", TermInputs::HarmonicImpropers});
-  }
-  void emitTopologyPotential(TermEmission &context,
-                             const PotentialSelection &selection,
-                             const TermPotentialAddition &add) const override {
-    unsigned terms = selection.terms;
-    auto has = [&](StringRef name) {
-      return llvm::any_of(context.getTupleSets(),
-                          [&](const auto &set) { return set.name == name; });
-    };
-    if ((terms & TermInputs::HarmonicImpropers) && has("impropers")) {
-      // ½ k (ξ − ξ0)², with ξ − ξ0 brought into [−π, π).
-      context.emitIRFragment(
-          "  ", {"%u_impropers"}, {"f64"},
-          {"%r_impropers", "%x", "%cell", "%f_impropers_k", "%f_impropers_xi0"},
-          {"!rel_impropers", "!vec", "!md.cell", "!of_impropers",
-           "!of_impropers"},
-          [](mlir::OpBuilder &builder,
-             mlir::ValueRange values) -> TermIRValues {
+static mlir::Value buildHarmonicImpropersContribution(mlir::OpBuilder &builder, mlir::ValueRange values) {
             using namespace mlir;
             auto loc = builder.getUnknownLoc();
             llvm::SmallVector<mdir::md::Coordinate> coordinates = {
@@ -93,7 +48,65 @@ public:
               Value energy = arith::MulFOp::create(builder, loc, hk, square);
               mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
             }
-            return {sum.getResult()};
+            return sum.getResult();
+}
+
+namespace mdir::driver::builder {
+class ImproperTermBuilder final : public TermBuilder {
+public:
+  ImproperTermBuilder() {
+    potentialMask = TermInputs::HarmonicImpropers;
+    nativePotentialMask = potentialMask;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
+  void collectTupleSets(TermParameters &context) const override {
+    const Topology &topology = context.getTopology();
+    if (!topology.harmonicImpropers.empty()) {
+      Program::TupleSet &set =
+          addTupleSet(context.getTupleSets(), "impropers", 4);
+      size_t k = addTupleField(set, "k"), xi0 = addTupleField(set, "xi0");
+      for (const Topology::HarmonicImproper &term :
+           topology.harmonicImpropers) {
+        for (unsigned member : {term.i, term.j, term.k, term.l})
+          set.members.push_back(member);
+        set.fields[k].values.push_back(term.force);
+        set.fields[xi0].values.push_back(term.xi0);
+      }
+    }
+  }
+  void appendTermDefinitions(
+      const TermInputs &,
+      std::vector<TermDefinition> &definitions) const override {
+    definitions.push_back(
+        {11, 0, "term_impropers", TermInputs::HarmonicImpropers});
+  }
+  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (!(selection.terms & TermInputs::HarmonicImpropers)) return;
+    auto relation = state.relation("impropers");
+    if (!relation) return;
+    add(buildHarmonicImpropersContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("impropers", "k"), state.tupleField("impropers", "xi0")}));
+  }
+  void emitTopologyPotential(TermEmission &context,
+                             const PotentialSelection &selection,
+                             const TermPotentialAddition &add) const override {
+    unsigned terms = selection.terms;
+    auto has = [&](StringRef name) {
+      return llvm::any_of(context.getTupleSets(),
+                          [&](const auto &set) { return set.name == name; });
+    };
+    if ((terms & TermInputs::HarmonicImpropers) && has("impropers")) {
+      // ½ k (ξ − ξ0)², with ξ − ξ0 brought into [−π, π).
+      context.emitIRFragment(
+          "  ", {"%u_impropers"}, {"f64"},
+          {"%r_impropers", "%x", "%cell", "%f_impropers_k", "%f_impropers_xi0"},
+          {"!rel_impropers", "!vec", "!md.cell", "!of_impropers",
+           "!of_impropers"},
+          [](mlir::OpBuilder &builder,
+             mlir::ValueRange values) -> TermIRValues {
+            return {buildHarmonicImpropersContribution(builder, values)};
           });
       add("impropers");
     }

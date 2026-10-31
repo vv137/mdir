@@ -7,51 +7,7 @@
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
-namespace mdir::driver::builder {
-class UreyBradleyTermBuilder final : public TermBuilder {
-public:
-  UreyBradleyTermBuilder() {
-    potentialMask = TermInputs::UreyBradleys;
-    tupleRank = -1;
-  }
-  int topologyRank() const override { return 2; }
-  void collectTupleSets(TermParameters &context) const override {
-    const Topology &topology = context.getTopology();
-    if (!topology.ureyBradleys.empty()) {
-      Program::TupleSet &set =
-          addTupleSet(context.getTupleSets(), "urey_bradley", 2);
-      size_t k = addTupleField(set, "k"), r0 = addTupleField(set, "r0");
-      for (const Topology::UreyBradley &term : topology.ureyBradleys) {
-        set.members.push_back(term.i);
-        set.members.push_back(term.k);
-        set.fields[k].values.push_back(term.force);
-        set.fields[r0].values.push_back(term.r0);
-      }
-    }
-  }
-  void appendTermDefinitions(
-      const TermInputs &,
-      std::vector<TermDefinition> &definitions) const override {
-    definitions.push_back(
-        {10, 0, "term_urey_bradley", TermInputs::UreyBradleys});
-  }
-  void emitTopologyPotential(TermEmission &context,
-                             const PotentialSelection &selection,
-                             const TermPotentialAddition &add) const override {
-    unsigned terms = selection.terms;
-    auto has = [&](StringRef name) {
-      return llvm::any_of(context.getTupleSets(),
-                          [&](const auto &set) { return set.name == name; });
-    };
-    if ((terms & TermInputs::UreyBradleys) && has("urey_bradley")) {
-      context.emitIRFragment(
-          "  ", {"%u_urey_bradley"}, {"f64"},
-          {"%r_urey_bradley", "%x", "%cell", "%f_urey_bradley_k",
-           "%f_urey_bradley_r0"},
-          {"!rel_urey_bradley", "!vec", "!md.cell", "!of_urey_bradley",
-           "!of_urey_bradley"},
-          [](mlir::OpBuilder &builder,
-             mlir::ValueRange values) -> TermIRValues {
+static mlir::Value buildUreyBradleysContribution(mlir::OpBuilder &builder, mlir::ValueRange values) {
             using namespace mlir;
             auto loc = builder.getUnknownLoc();
             llvm::SmallVector<mdir::md::Coordinate> coordinates = {
@@ -78,7 +34,64 @@ public:
               Value energy = arith::MulFOp::create(builder, loc, hk, square);
               mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
             }
-            return {sum.getResult()};
+            return sum.getResult();
+}
+
+namespace mdir::driver::builder {
+class UreyBradleyTermBuilder final : public TermBuilder {
+public:
+  UreyBradleyTermBuilder() {
+    potentialMask = TermInputs::UreyBradleys;
+    nativePotentialMask = potentialMask;
+    tupleRank = -1;
+  }
+  int topologyRank() const override { return 2; }
+  void collectTupleSets(TermParameters &context) const override {
+    const Topology &topology = context.getTopology();
+    if (!topology.ureyBradleys.empty()) {
+      Program::TupleSet &set =
+          addTupleSet(context.getTupleSets(), "urey_bradley", 2);
+      size_t k = addTupleField(set, "k"), r0 = addTupleField(set, "r0");
+      for (const Topology::UreyBradley &term : topology.ureyBradleys) {
+        set.members.push_back(term.i);
+        set.members.push_back(term.k);
+        set.fields[k].values.push_back(term.force);
+        set.fields[r0].values.push_back(term.r0);
+      }
+    }
+  }
+  void appendTermDefinitions(
+      const TermInputs &,
+      std::vector<TermDefinition> &definitions) const override {
+    definitions.push_back(
+        {10, 0, "term_urey_bradley", TermInputs::UreyBradleys});
+  }
+  void buildTopologyPotential(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativeTopology &state, const PotentialSelection &selection,
+      llvm::function_ref<void(mlir::Value)> add) const override {
+    if (!(selection.terms & TermInputs::UreyBradleys)) return;
+    auto relation = state.relation("urey_bradley");
+    if (!relation) return;
+    add(buildUreyBradleysContribution(builder, mlir::ValueRange{relation, state.physical.positions, state.physical.cell, state.tupleField("urey_bradley", "k"), state.tupleField("urey_bradley", "r0")}));
+  }
+  void emitTopologyPotential(TermEmission &context,
+                             const PotentialSelection &selection,
+                             const TermPotentialAddition &add) const override {
+    unsigned terms = selection.terms;
+    auto has = [&](StringRef name) {
+      return llvm::any_of(context.getTupleSets(),
+                          [&](const auto &set) { return set.name == name; });
+    };
+    if ((terms & TermInputs::UreyBradleys) && has("urey_bradley")) {
+      context.emitIRFragment(
+          "  ", {"%u_urey_bradley"}, {"f64"},
+          {"%r_urey_bradley", "%x", "%cell", "%f_urey_bradley_k",
+           "%f_urey_bradley_r0"},
+          {"!rel_urey_bradley", "!vec", "!md.cell", "!of_urey_bradley",
+           "!of_urey_bradley"},
+          [](mlir::OpBuilder &builder,
+             mlir::ValueRange values) -> TermIRValues {
+            return {buildUreyBradleysContribution(builder, values)};
           });
       add("urey_bradley");
     }

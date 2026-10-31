@@ -241,5 +241,7 @@ synchronous typed contribution hooks. Semantic particle-field/table bindings
 supply actual operands, and a shared scalar-potential factory owns the complete
 body before its temporary placement join. Construction tests verify operation,
 argument and scalar-capture lifetime after transient metadata is cleared.
-Topology-potential and entry/schedule scopes remain in progress; their temporary assembly
+Built-in bond, angle, Urey-Bradley, improper, dihedral and CMAP potentials use native signatures and semantic tuple
+bindings, with shared kernels and unchanged accumulation order.
+Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

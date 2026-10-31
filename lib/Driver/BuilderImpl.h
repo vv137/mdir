@@ -315,6 +315,13 @@ struct TermNativePotential {
   llvm::function_ref<mlir::Value(StringRef)> field, table;
 };
 
+/// Typed topology state; relation and tuple parameters use semantic metadata keys.
+struct TermNativeTopology {
+  TermNativePotential physical;
+  llvm::function_ref<mlir::Value(StringRef)> relation;
+  llvm::function_ref<mlir::Value(StringRef, StringRef)> tupleField;
+};
+
 /// Borrowed physical values and semantic particle-field bindings at one evaluation.
 /// This view is consumed synchronously and never retained by an adapter.
 struct TermNativeEvaluation {
@@ -493,6 +500,10 @@ public:
   virtual mlir::Value buildBareContributions(const TermInputs &, mlir::OpBuilder &,
       const TermNativePotential &, mlir::Value total) const { return total; }
   virtual void collectParameters(TermParameters &) const {}
+  unsigned getNativePotentialMask() const { return nativePotentialMask; }
+  virtual void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &,
+      const TermNativeTopology &, const PotentialSelection &,
+      llvm::function_ref<void(mlir::Value)>) const {}
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
       const TermPotentialAddition &) const {}
@@ -507,7 +518,7 @@ public:
     return std::nullopt;
   }
 protected:
-  unsigned potentialMask = 0, alchemicalMask = 0;
+  unsigned potentialMask = 0, alchemicalMask = 0, nativePotentialMask = 0;
   int tupleRank = 0;
   StringRef pairExclusion;
   TermRoles roles;

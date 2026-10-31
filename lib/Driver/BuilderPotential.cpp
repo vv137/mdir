@@ -246,6 +246,79 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     active |= builder->getPotentialMask(
         *this, dependent ? &*dependent : nullptr, alchemicalOnly);
   terms &= active;
+  unsigned nativeMask = 0;
+  for (const TermBuilder *term : getTermBuilders()) nativeMask |= term->getNativePotentialMask();
+  if (terms && !(terms & ~nativeMask)) {
+    auto &context = termIR.getContext();
+    mlir::OpBuilder ir(&context);
+    ir.setInsertionPointToEnd(termIR.getModule().getBody());
+    auto loc = ir.getUnknownLoc();
+    auto atoms = mlir::FlatSymbolRefAttr::get(&context, "atoms");
+    auto vec = mdir::md::FieldType::get(&context, atoms, 3, ir.getF64Type());
+    auto real = mdir::md::FieldType::get(&context, atoms, 1, ir.getF64Type());
+    auto parameters = buildParameterTypes(context, program);
+    llvm::SmallVector<mlir::Type> inputs{vec, mdir::md::CellType::get(&context)};
+    llvm::append_range(inputs, parameters);
+    if (control.usesTime) inputs.push_back(ir.getF64Type());
+    if (lambdaArguments) inputs.append(control.freeEnergy.lambdas.size(), ir.getF64Type());
+    inputs.append(observedConstants.size(), ir.getF64Type());
+    if (gradientArguments) {
+      inputs.append(control.tunableConstants.size(), ir.getF64Type());
+      inputs.append(getNumGradientSeeds(), real);
+    }
+    auto potential = buildScalarPotential(ir, name, inputs,
+        [&](mlir::OpBuilder &ir, mlir::ValueRange args) -> mlir::Value {
+      if (!lambdaArguments)
+        for (const auto &[name, values] : control.freeEnergy.lambdas)
+          mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(getLambda(name)));
+      auto field = [&](StringRef name) -> mlir::Value {
+        auto found = llvm::find_if(program.fields, [&](const auto &field) { return field.name == name; });
+        assert(found != program.fields.end() && "potential field must exist");
+        return args[2 + std::distance(program.fields.begin(), found)];
+      };
+      auto table = [&](StringRef name) -> mlir::Value {
+        auto found = llvm::find_if(program.tables, [&](const auto &table) { return table.name == name; });
+        assert(found != program.tables.end() && "potential table must exist");
+        return args[2 + program.fields.size() + std::distance(program.tables.begin(), found)];
+      };
+      auto tuple = [&](StringRef name) -> std::pair<const Program::TupleSet *, unsigned> {
+        unsigned slot = program.fields.size() + program.tables.size();
+        for (const auto &set : program.tupleSets) {
+          if (set.name == name) return {&set, slot};
+          slot += 1 + set.fields.size();
+        }
+        return {nullptr, 0};
+      };
+      auto relation = [&](StringRef name) -> mlir::Value {
+        auto [set, slot] = tuple(name);
+        return set ? args[2 + slot] : mlir::Value{};
+      };
+      auto tupleField = [&](StringRef setName, StringRef name) -> mlir::Value {
+        auto [set, slot] = tuple(setName);
+        assert(set && "potential tuple set must exist");
+        auto found = llvm::find_if(set->fields, [&](const auto &field) { return field.name == name; });
+        assert(found != set->fields.end() && "potential tuple field must exist");
+        return args[2 + slot + 1 + std::distance(set->fields.begin(), found)];
+      };
+      TermNativeTopology state{{args[0], args[1], {},
+          control.usesTime ? args[2 + parameters.size()] : mlir::Value{}, field, table}, relation, tupleField};
+      mlir::Value total;
+      auto add = [&](mlir::Value energy) {
+        total = total ? mlir::arith::AddFOp::create(ir, loc, total, energy).getResult() : energy;
+      };
+      TermBuilder::PotentialSelection selection{terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly};
+      for (const TermBuilder *term : mdir::driver::builder::termBuildersByTopologyRank(getTermBuilders()))
+        term->buildTopologyPotential(*this, ir, state, selection, add);
+      if (!total) total = mlir::arith::ConstantOp::create(ir, loc, ir.getF64FloatAttr(0.0));
+      return total;
+    });
+    emitIRFragment("", {}, {}, {}, {},
+        [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return;
+  }
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << getLambdaParameters()
      << getObservedParameters() << getGradientParameters()
