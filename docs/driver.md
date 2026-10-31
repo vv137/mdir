@@ -1393,8 +1393,8 @@ derived lists, and topology renumbering from typed state and semantic slots.
 `BuilderPotential.cpp` constructs shared neighborhood selection, scalar
 accumulation, lambda constants, and potential returns with native operations.
 `PotentialIR.cpp` supplies shared physical state, explicit energy/force/virial
-evaluations, and step-time conversion. Potential signatures, remaining
-dynamics, entry energy rows, and schedule construction remain in progress. The
+evaluations, and step-time conversion. Potential/program signatures, remaining schedule operations, and native
+scope construction remain in progress. The
 recipe/assembly join and carry fixups remain until those responsibilities
 construct native operations directly.
 
@@ -1416,6 +1416,12 @@ Entry indices, start/time/noise state, loop counts, cell memory and edge
 indices, reference edges, buffer imports, total mass and the backward half
 step use native operations. Logical field, table and relation types are
 constructed from their semantic metadata, preserving storage precision.
+
+Barostat and thermostat parameters are owned snapshots with native constants
+and explicit typed results. Frame boundary buffers and request masks, force
+and virial output, initial energy rows and leapfrog initialization preserve
+their original order. Part counts use semantic slots; the frame-if-due loop
+and nonfinite-state reduction at part boundaries are constructed natively.
 
 ## 3. Decided
 

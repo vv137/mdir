@@ -195,3 +195,9 @@ Entry indices, start/time/noise state, loop counts, cell memory and edge
 indices, reference edges, buffer imports, total mass and the backward half
 step use native operations. Logical field, table and relation types are
 constructed from their semantic metadata, preserving storage precision.
+
+Barostat and thermostat parameters are owned snapshots with native constants
+and explicit typed results. Frame boundary buffers and request masks, force
+and virial output, initial energy rows and leapfrog initialization preserve
+their original order. Part counts use semantic slots; the frame-if-due loop
+and nonfinite-state reduction at part boundaries are constructed natively.

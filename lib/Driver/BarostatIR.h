@@ -56,5 +56,15 @@ struct ExactBathInputs {
   mlir::Value unit, oldVolume, constantEnergy, newEnergy, oldEnergy, kineticChange, bath;
 };
 mlir::Value buildExactBath(mlir::OpBuilder &, const ExactBathInputs &);
+struct BarostatParameters {
+  std::array<double, 3> axisCompressibility;
+  double pressure, compressibility, rate, thermal, zCompressibility, tension;
+};
+struct BarostatParameterValues {
+  std::array<mlir::Value, 3> axisCompressibility;
+  mlir::Value pressure, compressibility, rate, thermal;
+  mlir::Value bar, three, third, unit, unitVector, halfVector, zCompressibility, tension;
+};
+BarostatParameterValues buildBarostatParameters(mlir::OpBuilder &, const BarostatParameters &);
 } // namespace mdir::driver::builder
 #endif
