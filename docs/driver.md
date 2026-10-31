@@ -1281,7 +1281,7 @@ No generic behavioral hook has only one implementer.
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
 | `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
-| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1471,6 +1471,9 @@ External potentials also use native bodies with actual particle fields, tables,
 frame/time values and semantic expression bindings. Lambda and observed arguments
 retain their declaration and binding order; their native expression kernel is
 shared with the remaining topology path.
+Generalized Born and surface potentials construct native bodies together.
+Computed Born radii remain private to the adapter; radii, energy and surface
+contributions retain their original construction and accumulation order.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
