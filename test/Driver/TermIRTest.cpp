@@ -259,7 +259,8 @@ static void checkNativeVerletBodies() {
    for (bool withEnergy : {false, true})
     for (int motion : {0, 1, 2})
      for (bool scales : {false, true})
-      for (bool withVirial : {false, true}) {
+      for (bool withVirial : {false, true})
+       for (bool constrained : {false, true}) {
   if (withEnergy && !withVirial) continue;
   if (motion == 2 && (leapfrog || scales)) continue;
   TermIRPlan plan;
@@ -307,8 +308,36 @@ static void checkNativeVerletBodies() {
   StringRef name = withEnergy ? "step_energy" : "step";
   DescentSiteIR site{6, 7, 8, false, false, "spread_sites_linear"};
   StepNoiseIR noise{motion != 0, motion == 2, {123, motion == 2 ? 1.0 : 0.8, 0.1}, 2.5};
-  auto native = buildNativeStep(builder, {name.str(), withEnergy, withVirial, scales}, parameters, leapfrog, timed,
-                                      {site}, false, false, {}, noise);
+  if (constrained) {
+    auto stop = [&](StringRef symbol, TypeRange inputs, bool reads) {
+      auto function = func::FuncOp::create(builder, loc, symbol, builder.getFunctionType(inputs, {}));
+      function.setPrivate();
+      auto resources = builder.getStrArrayAttr({"dyn.stop"});
+      SmallVector<NamedAttribute> effects;
+      if (reads) effects.push_back(builder.getNamedAttr("read", resources));
+      effects.push_back(builder.getNamedAttr("write", resources));
+      function->setAttr("dyn.effects", builder.getDictionaryAttr(effects));
+    };
+    auto i64 = builder.getI64Type();
+    stop("mdrtDeferStops", {}, false);
+    stop("mdrtStopConstraintFailure", TypeRange{i64, i64}, false);
+    stop("mdrtStopPending", {}, true);
+  }
+  DescentConstraintGroupIR group{4, 2, {5}, {{0, 1, 0}},
+      {false, false, 1.0e-8, 1.0e-12}, false, false};
+  SmallVector<DescentConstraintGroupIR> groups;
+  if (constrained) groups.push_back(group);
+  bool measured = measuresHalfSteps(constrained, noise.brownian) && withEnergy;
+  std::string combination = describeStepCombination(leapfrog, noise, constrained,
+      withEnergy, measured, true);
+  auto constructed = buildNativeStep(builder,
+      {name.str(), withEnergy, withVirial, scales, measured, false}, parameters, leapfrog, timed,
+      {site}, false, false, {}, noise, groups, false);
+  if (!constructed) {
+    llvm::errs() << combination << ": " << llvm::toString(constructed.takeError()) << "\n";
+    std::exit(1);
+  }
+  auto native = *constructed;
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
   llvm::raw_string_ostream stream(program.module);
@@ -320,13 +349,31 @@ static void checkNativeVerletBodies() {
       });
   stream << "}";
   stream.flush();
-  require(!finishTermIRProgram(program, plan), "owned native Verlet failed its module boundary");
+  require(!finishTermIRProgram(program, plan), std::string("owned native Verlet failed its module boundary: ") + combination);
   require(module.lookupSymbol<mdir::dyn::ProgramOp>(name) == native,
-          "native function was reparsed or cloned");
+          std::string("native function was reparsed or cloned: ") + combination);
   require(native.getBody().front().getArgument(0) == original,
-          "native function lost its actual block argument");
-  require(succeeded(verify(module)), "native Verlet did not verify");
+          std::string("native function lost its actual block argument: ") + combination);
+  require(succeeded(verify(module)), std::string("native Verlet did not verify: ") + combination);
 }
+}
+
+static void checkNativeStepReturnGuard() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(plan.getModule().getBody());
+  mdir::md::ParticleSetOp::create(builder, builder.getUnknownLoc(), "atoms");
+  StepNoiseIR noise;
+  auto combination = describeStepCombination(true, noise, false, true, false, false);
+  // A malformed internal request must fail construction before IR verification.
+  auto result = buildNativeStep(builder, {"guard", true, false, false, false, false}, {}, true, false);
+  require(!result, std::string("native return guard accepted an invalid layout: ") + combination);
+  auto message = llvm::toString(result.takeError());
+  require(message.find(combination) != std::string::npos,
+          std::string("native return guard omitted its combination: ") + combination);
+  require(message.find("return has 3 values but signature has 4 results") != std::string::npos,
+          std::string("native return guard omitted its result counts: ") + combination);
 }
 
 int main(int argc, char **argv) {
@@ -334,6 +381,7 @@ int main(int argc, char **argv) {
   checkFrameEvaluations();
   checkNativeDescentBody();
   checkNativeVerletBodies();
+  checkNativeStepReturnGuard();
   require(argc == 2, "expected the frozen staged-model fixture");
   auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
   require(bool(fixture), "cannot read the frozen staged-model fixture");

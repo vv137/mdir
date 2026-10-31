@@ -132,31 +132,6 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
   emitAddChange(indent, x, change, result);
 }
 
-std::string Builder::emitConstraintVirial(StringRef indent,
-                                          const Program::TupleSet &set,
-                                          StringRef old, StringRef change,
-                                          StringRef virial,
-                                          StringRef virialResult) {
-  // The forces of the constraints over the first half of the step: the
-  // drift took x + dt v + dt² F / 2m to x + Δ, so G = 2 m Δ / dt², along
-  // the bonds before the drift. Their virial Σ (x_j − x_0) ⊗ G_j, taken at
-  // those positions, with the weight ½: with that of the second half, the
-  // virial of the constraints is the mean of the two, as the kinetic
-  // energy of the pressure is (D45).
-  std::string relation = "%r_" + set.name, relationType = "!rel_" + set.name;
-  emitIRFragment(
-      indent, {virialResult}, {"vector<9xf64>"},
-      {relation, old, "%cell", change, "%m", "%dt", virial},
-      {relationType, "!vec", "!md.cell", "!vec", "!real", "f64", "vector<9xf64>"},
-      [arity = set.arity](mlir::OpBuilder &builder,
-                           mlir::ValueRange values) -> TermIRValues {
-        ConstraintVirialInputs input{values[0], values[1], values[2], values[3],
-                                      values[4], values[5], values[6]};
-        return {buildConstraintVirial(builder, input, arity)};
-      });
-  return virialResult.str();
-}
-
 void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
                                  StringRef result, StringRef failed) {
@@ -265,42 +240,6 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
         return outputs;
       });
   return withVirial ? virialResult.str() : "";
-}
-
-std::string Builder::emitConstraintForceVirial(StringRef indent,
-                                               StringRef x, StringRef v,
-                                               StringRef f,
-                                               StringRef virial) {
-  std::string current = virial.str();
-  unsigned count = 0;
-  // A group and its bonds, with member displacements measured from the first.
-  auto emitGroup = [&](StringRef setName, unsigned arity,
-                       llvm::ArrayRef<std::pair<unsigned, unsigned>> bonds) {
-    std::string relation = ("%r_" + setName).str();
-    std::string relationType = ("!rel_" + setName).str();
-    std::string next = "%cfw" + std::to_string(count++) + "_total";
-    emitIRFragment(
-        indent, {next}, {"vector<9xf64>"},
-        {relation, x, "%cell", v, f, "%m", current},
-        {relationType, "!vec", "!md.cell", "!vec", "!vec", "!real", "vector<9xf64>"},
-        [arity, bonds = std::vector<std::pair<unsigned, unsigned>>(bonds.begin(), bonds.end())](
-            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          ConstraintForceInputs input{values[0], values[1], values[2], values[3],
-                                       values[4], values[5], values[6]};
-          return {buildConstraintForceVirial(builder, input, arity, bonds)};
-        });
-    current = next;
-  };
-  for (const Program::TupleSet &set : program.tupleSets)
-    if (set.name == "settles")
-      emitGroup(set.name, 3, {{0, 1}, {0, 2}, {1, 2}});
-  for (const Program::TupleSet *set : getShakeSets()) {
-    std::vector<std::pair<unsigned, unsigned>> bonds;
-    for (unsigned j = 1; j != set->arity; ++j)
-      bonds.push_back({0, j});
-    emitGroup(set->name, set->arity, bonds);
-  }
-  return current;
 }
 
 std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
@@ -426,39 +365,6 @@ void Builder::emitConstraintFailures(StringRef indent, StringRef x,
         if (!current)
           current = none;
         return {arith::AddFOp::create(builder, loc, current, none)};
-      });
-}
-
-void Builder::emitConstraintStops(
-    StringRef indent,
-    const std::vector<std::pair<int, std::string>> &failures) {
-  if (failures.empty())
-    return;
-  // The preceding step evaluation has already waited for the stream's flag;
-  // reading it here adds no wait (D118). Stops keep their existing effects.
-  llvm::SmallVector<StringRef> inputs = {"%noise_step"}, types = {"i64"};
-  std::vector<int> sets;
-  for (const auto &[set, failed] : failures) {
-    sets.push_back(set);
-    inputs.push_back(failed);
-    types.push_back("i1");
-  }
-  emitIRFragment(
-      indent, {}, {}, inputs, types,
-      [sets](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        for (auto [index, set] : llvm::enumerate(sets)) {
-          auto branch = scf::IfOp::create(builder, loc, values[index + 1], false);
-          OpBuilder::InsertionGuard guard(builder);
-          builder.setInsertionPointToStart(branch.thenBlock());
-          Value number = arith::ConstantIntOp::create(builder, loc, set, 64);
-          func::CallOp::create(builder, loc, "mdrtStopConstraintFailure",
-                               TypeRange{}, ValueRange{values[0], number});
-        }
-        func::CallOp::create(builder, loc, "mdrtStopPending", TypeRange{},
-                             ValueRange{});
-        return {};
       });
 }
 

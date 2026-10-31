@@ -11,6 +11,9 @@ namespace mlir {
 class OpBuilder;
 }
 namespace mdir::driver::builder {
+void buildConstraintStops(mlir::OpBuilder &, mlir::Value step,
+                            mlir::ValueRange failures,
+                            llvm::ArrayRef<int> groups);
 struct ConstraintVirialInputs {
   mlir::Value relation, positions, cell, change, masses, timeStep, virial;
 };

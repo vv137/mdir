@@ -4,6 +4,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -803,4 +804,20 @@ Value mdir::driver::builder::buildConstraintTest(
     mdir::md::YieldOp::create(builder, loc, ValueRange{count});
   }
   return sum.getResult();
+}
+
+void mdir::driver::builder::buildConstraintStops(
+    OpBuilder &builder, Value step, ValueRange failures,
+    llvm::ArrayRef<int> groups) {
+  assert(failures.size() == groups.size());
+  if (failures.empty()) return;
+  auto loc = builder.getUnknownLoc();
+  for (auto [index, group] : llvm::enumerate(groups)) {
+    auto branch = scf::IfOp::create(builder, loc, failures[index], false);
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(branch.thenBlock());
+    Value number = arith::ConstantIntOp::create(builder, loc, group, 64);
+    func::CallOp::create(builder, loc, "mdrtStopConstraintFailure", TypeRange{}, ValueRange{step, number});
+  }
+  func::CallOp::create(builder, loc, "mdrtStopPending", TypeRange{}, ValueRange{});
 }

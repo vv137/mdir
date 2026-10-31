@@ -469,7 +469,8 @@ llvm::Error Builder::build() {
     if (const auto *role = term->getRoles().coordinateOutput)
       role->emitAuxiliaryPotentials(*this);
   emitSitePotentials();
-  emitPrograms();
+  if (llvm::Error error = emitPrograms())
+    return error;
   emitEntry();
   if (!frameLoopError.empty())
     return makeError(frameLoopError);

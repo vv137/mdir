@@ -225,11 +225,16 @@ narrow roles with actual physical values and semantic particle-field bindings;
 shared kernels preserve correction order and effects. The old minimization
 signature/body assembly is removed.
 
-Unconstrained dynamics functions construct complete native signatures and bodies
-for Verlet, leapfrog, Langevin and Brownian motion, including time-dependent
-potentials, virtual sites, restraint and hosted-model evaluation, virial-only
-programs and within-drift Trotter scaling. Explicit result configuration retains
-velocity staggering, molecular diagonals and middle-step kinetic measurements.
-Construction coverage spans time, noise, energy, virial and scaling layouts.
-Constrained dynamics and other scopes remain in progress; the temporary assembly
+All dynamics functions construct complete native signatures and bodies for
+Verlet, leapfrog, Langevin and Brownian motion. Semantic constraint groups retain
+SETTLE/M-SHAKE position corrections, RATTLE projection, integrated or separate
+failure tests, ordered stops, molecular/constraint virials and future half-step
+kinetic and solvent measurements. Time-dependent potentials, virtual sites,
+restraint/hosted evaluation and Trotter scaling preserve their existing order.
+Explicit result configuration retains velocity staggering and every measurement.
+Half-step eligibility uses one predicate in the runtime owner, native constructor
+and construction matrix. Native return counts and types are checked before a
+terminator is created; construction errors name the integrator, constraints,
+energy, measurement and site combination.
+Potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

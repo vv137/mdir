@@ -7,7 +7,7 @@
 
 #include "mdir/Driver/Builder.h"
 #include "TermIR.h"
-#include "ConstraintIR.h"
+#include "DynamicsIR.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
@@ -755,16 +755,9 @@ private:
                            StringRef v, StringRef f, StringRef cell, StringRef mu,
                            llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes);
   void emitBoxEdges(StringRef indent, StringRef prefix);
-  void emitPrograms();
+  llvm::Error emitPrograms();
   void emitKick(StringRef indent, StringRef result, StringRef velocity,
                    StringRef force, StringRef mass, StringRef interval);
-  void emitDrift(StringRef indent, StringRef result, StringRef positions,
-                    StringRef velocities, StringRef interval);
-  void emitDriftScale(StringRef indent);
-  void emitVelocityScaling(StringRef indent, StringRef result,
-                               StringRef velocities, StringRef scale);
-  void emitDynamicsReturn(StringRef indent, llvm::ArrayRef<StringRef> values,
-                              llvm::ArrayRef<StringRef> types);
   void emitEnergyEvaluation(StringRef indent, StringRef x, StringRef cell,
                               StringRef prefix, StringRef time, StringRef energy,
                               StringRef forces, StringRef virial);
@@ -791,14 +784,6 @@ private:
   std::vector<std::pair<int, std::string>>
   emitConstraintTests(StringRef indent, StringRef x, StringRef prefix,
                       bool flag);
-  /// Emits, after the evaluation of a step, the stop of the run at the
-  /// step `%noise_step` for each set whose test `failures` of
-  /// `emitConstraintTests` failed, then the stop that a build of the
-  /// neighbor structure of the step recorded, if any
-  /// (D278).
-  void emitConstraintStops(
-      StringRef indent,
-      const std::vector<std::pair<int, std::string>> &failures);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
   /// without mass, without their parts along the constraints at the
   /// positions `x`: the direction of steepest descent in the metric of the
@@ -881,15 +866,6 @@ private:
   /// which a barostat changes: they are those of the file times
   /// `scaleName`, the edge of the cell over that of the file.
   bool scalesReference() const { return hasForceCorrections() && changesCell(); }
-  std::string getScaleParameter() const {
-    return scalesReference() ? ", %rest_scale: vector<3xf64>" : "";
-  }
-  /// Langevin dynamics (D135): the programs of the steps take the number of
-  /// the step that they take and the numbers of the particles, which key the
-  /// random numbers of each particle (A13).
-  std::string getNoiseParameter() const {
-    return needsStepNumber() ? ", %noise_step: i64, %noise_ids: !ids" : "";
-  }
   /// Whether the programs of the steps take the number of the step: for the
   /// noise of Langevin dynamics, for the time of terms that take it, and
   /// for the stop of a run whose constraints failed
@@ -1133,22 +1109,6 @@ private:
   /// Emits the positions `result`: the positions `x` with the virtual sites
   /// placed from the members of the tuples of `relations`, the prefix of
   /// the names of the relations.
-  /// Emits the friction and the noise of Langevin dynamics (D135) on the
-  /// velocities `velocities` into `result`, in a program of a step that has
-  /// `%m`, `%noise_step`, and `%noise_ids`.
-  void emitLangevin(StringRef indent, StringRef velocities,
-                    StringRef result);
-  /// Emits `result` = c `velocities` + (spread / √m) R for each particle of
-  /// mass m, with R three normal numbers of stream 2 of the particle and
-  /// the step (D135); a particle of mass 0 keeps its velocity.
-  void emitNoise(StringRef indent, StringRef velocities, StringRef result,
-                 double c, double spread);
-  /// Emits `result`, the velocity of a step of Brownian dynamics (D163b),
-  /// F / (m γ) + √(2 k_B T / (m γ Δt)) R, from the forces `forces`; the
-  /// positions drift by it over the step. A particle of mass 0 does not
-  /// drift.
-  void emitBrownianVelocity(StringRef indent, StringRef forces,
-                            StringRef result);
   void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                       StringRef relations);
   /// Emits the forces `result`: the forces `f` at the positions `x` with
@@ -1184,16 +1144,8 @@ private:
   /// are the drifts of its two A around the end of the step
   /// (D265). Brownian dynamics has no momenta.
   bool measuresHalfSteps() const {
-    return hasConstraints() && !control.isBrownian();
+    return mdir::driver::builder::measuresHalfSteps(hasConstraints(), control.isBrownian());
   }
-  /// Emits `%khs`, in a program of a step, the kinetic energy of each axis
-  /// at the half steps around its end, from `velocities`, those it drifted
-  /// with after the constraints, and those of a drift of the next step.
-  /// With `solvent`, also `%kws`, the kinetic energies of the rigid waters:
-  /// that of the velocities of the time of the positions, `%v2`, and
-  /// K_half.
-  void emitHalfStepKinetic(StringRef velocities, bool leapfrog,
-                           bool solvent = false, bool geodesic = false);
   /// Whether the steps of energy report the kinetic energies of the rigid
   /// waters, from which the log gives the temperatures of the solvent and
   /// of the solute (D203).
@@ -1242,28 +1194,10 @@ private:
   /// parts along the bonds of the groups of `set` (RATTLE [Andersen1983]),
   /// and returns the virial `virial` with that of the constraints added, as
   /// `emitSettleVelocities` does.
-  /// Returns the virial `virial` with that of the forces of the constraints
-  /// of `set` over the first half of the step added, from `change`, what
-  /// the constraints added to the positions `old` moved by the drift.
-  std::string emitConstraintVirial(StringRef indent,
-                                   const Program::TupleSet &set,
-                                   StringRef old, StringRef change,
-                                   StringRef virial, StringRef virialResult);
   std::string emitShakeVelocities(StringRef indent, StringRef x, StringRef v,
                                   const Program::TupleSet &set,
                                   StringRef result, StringRef virial,
                                   StringRef virialResult);
-  /// Returns the virial `virial` with that of the forces of the constraints
-  /// at the positions `x`, the velocities `v` (with none along the bonds),
-  /// and the forces `f` added: the forces G along the bonds that keep them
-  /// at their lengths, e·(a_q − a_p) = −|v_q − v_p|²/d with a = (F + G)/m,
-  /// and Σ (x_j − x_0) ⊗ G_j, for the rigid waters and each set of SHAKE.
-  /// Under Langevin dynamics the changes that the constraints make within a
-  /// step hold part of the friction and the noise, and these forces do not
-  /// (D135).
-  std::string emitConstraintForceVirial(StringRef indent, StringRef x,
-                                        StringRef v, StringRef f,
-                                        StringRef virial);
   /// Emits `result`, the positions `x` with the rigid waters brought back
   /// to their shape from `old`, the positions before the drift, and
   /// `change`, what that adds to the positions [Miyamoto1992].
