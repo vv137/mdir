@@ -309,6 +309,16 @@ struct TermEvaluation {
   StringRef indent, x, cell, prefix, f, fResult, u, uResult, w, tag;
 };
 
+/// Borrowed physical values and semantic particle-field bindings at one evaluation.
+/// This view is consumed synchronously and never retained by an adapter.
+struct TermNativeEvaluation {
+  mlir::Value positions, cell, forces, energy, virial, scale;
+  llvm::function_ref<mlir::Value(StringRef)> field;
+};
+struct TermNativeResults {
+  mlir::Value forces, energy, virial;
+};
+
 /// Specialized preparation borrows no mutable program collections.
 class TermPreparation {
 public:
@@ -321,6 +331,8 @@ class TermHostEvaluation {
 public:
   virtual ~TermHostEvaluation() = default;
   virtual bool applies(const TermInputs &) const = 0;
+  virtual TermNativeResults build(const TermInputs &, mlir::OpBuilder &,
+                                  const TermNativeEvaluation &) const = 0;
   virtual void emitDeclarations(const TermInputs &, TermIRWriter) const = 0;
   virtual std::string emit(const TermInputs &, TermIRWriter,
                            const TermEvaluation &) const = 0;
@@ -330,6 +342,8 @@ class TermPostEvaluation {
 public:
   virtual ~TermPostEvaluation() = default;
   virtual bool hasForceCorrection(const TermInputs &) const = 0;
+  virtual TermNativeResults build(const TermInputs &, mlir::OpBuilder &,
+                                  const TermNativeEvaluation &) const = 0;
   virtual void emitForceCorrection(TermEmission &,
                                    const TermCorrection &) const = 0;
   virtual unsigned getStoredTermCount(const TermInputs &) const = 0;
