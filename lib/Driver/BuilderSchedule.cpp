@@ -1089,13 +1089,17 @@ llvm::Error Builder::emitEntry() {
       program.writesForces};
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
-  bool nativeFrames = control.frames && !system.topology && !control.minimize &&
-      !isRestart() && !control.usesTime && !control.isLangevin() &&
-      !control.isBrownian() && !isLeapfrog() && !isTriclinic() &&
+  bool nativeFrames = control.frames && !control.minimize &&
+      !isRestart() && !control.isLangevin() &&
+      !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
       !hasConstraints() && !hasSites() && !hasForceCorrections() &&
       !hasHostEvaluation() && control.freeEnergyFile.empty() &&
-      control.observables.empty() && !program.tunableGradient;
+      control.observables.empty() && !program.tunableGradient &&
+      llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
+        const auto *role = term->getRoles().coordinateOutput;
+        return role && role->hasCoordinateOutput(*this);
+      });
   if (nativeFrames) {
     mlir::OpBuilder ir(&termIR.getContext());
     auto *moduleBody = termIR.getModule().getBody();
@@ -1106,6 +1110,12 @@ llvm::Error Builder::emitEntry() {
     SimpleFrameEntryIRConfig config;
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
+    config.timed = control.usesTime;
+    config.cellEdges = getCellSize();
+    config.topology = bool(system.topology);
+    if (config.topology)
+      for (const auto &definition : getTermDefinitions())
+        config.terms.push_back(definition.name);
     if (!control.segments) {
       for (const auto &level : levels) config.counts.push_back(level.count);
       int64_t steps = 1;

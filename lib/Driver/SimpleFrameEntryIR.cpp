@@ -5,6 +5,7 @@
 #include "BarostatIR.h"
 #include "KineticIR.h"
 #include "PotentialIR.h"
+#include "OutputIR.h"
 #include "ReorderIR.h"
 #include "TermIR.h"
 #include "mdir/Driver/Builder.h"
@@ -82,6 +83,14 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       Value none = arith::ConstantIntOp::create(at, loc, 0, 64);
       arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, arguments.firstCall, none);
     }
+    Value time;
+    if (config.timed) {
+      time = buildSimulationTime(at, arguments.start, arguments.interval);
+      Value memory = memref::AllocaOp::create(at, loc,
+          MemRefType::get({1}, at.getI64Type()));
+      memref::StoreOp::create(at, loc, arguments.start, memory, zero);
+      arith::ConstantIntOp::create(at, loc, 1, 64);
+    }
     for (int64_t count : config.counts) arith::ConstantIndexOp::create(at, loc, count);
     for (int64_t period : config.periods) arith::ConstantIndexOp::create(at, loc, period);
     auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
@@ -90,7 +99,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     Value requests = memref::AllocaOp::create(at, loc,
         MemRefType::get({2}, at.getF64Type()));
     SmallVector<Value> indices;
-    for (int64_t index = 0; index != 3; ++index)
+    for (int64_t index = 0; index != config.cellEdges; ++index)
       indices.push_back(arith::ConstantIndexOp::create(at, loc, index));
     Value end = arith::ConstantIndexOp::create(at, loc, std::numeric_limits<int64_t>::max());
     auto frames = buildEntryLoop(at, "frames", zero, end, one, {},
@@ -108,7 +117,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
       physical = reorderedFrame(frame, program, std::move(physical), cell);
       auto parameters = potentialFields(physical);
-      PotentialStateIR state{physical.positions, cell, parameters, {}};
+      PotentialStateIR state{physical.positions, cell, parameters, time};
       auto iteration = buildEntryLoop(frame, "frame evaluation", zero, one, one, {},
           [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
         auto energy = buildEnergyEvaluation(body, state, {true, true, true});
@@ -141,6 +150,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           return SmallVector<Value>{};
         });
         if (!withVirial) return withVirial.takeError();
+        if (config.topology) {
+          Value terms = buildTermEnergyBuffer(body, state, config.terms, config.terms.size());
+          buildWriteTerms(body, terms);
+          auto diagonal = buildVirialDiagonal(body, energy.virial);
+          func::CallOp::create(body, loc, "mdrtWriteVirial", TypeRange{},
+              ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
+        }
         Value kinetic = buildKineticEnergy(body, physical.velocities, physical.masses);
         Value excess = buildKineticExcess(body, energy.forces, physical.masses, arguments.interval);
         Value correction = buildSum3(body, excess);
@@ -161,6 +177,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         !arguments.lengthY.use_empty() || !arguments.lengthZ.use_empty())
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "native frame iteration read entry positions or cell values");
+    if (config.cellEdges == 6)
+      for (auto [metadata, argument] : llvm::zip(program.startValues, arguments.startValues))
+        if (StringRef(metadata.name).starts_with("tilt_") && !argument.use_empty())
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+              "native frame iteration read entry tilt values");
     return llvm::Error::success();
   });
 }

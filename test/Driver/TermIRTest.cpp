@@ -484,6 +484,16 @@ static void checkNativeFrameEntry() {
   reject(checkFrameEvaluation(*empty.getOperation()),
          "the program of frames: the start of this program evaluates "
          "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+  metadata.entry = "native_triclinic_frames";
+  metadata.startValues = {{"tilt_bx", 0.1}, {"tilt_cx", 0.2}, {"tilt_cy", 0.3}};
+  auto wideConfig = config;
+  wideConfig.cellEdges = 6;
+  wideConfig.topology = true;
+  wideConfig.terms = {"energy"};
+  auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig);
+  require(bool(wide), "native triclinic frame entry did not construct");
+  for (Value tilt : wide->getArguments().take_back(3))
+    require(tilt.use_empty(), "native triclinic frame entry read an outer tilt");
   metadata.fields.clear();
   metadata.tables.clear();
   metadata.entry = "changed";
