@@ -1094,8 +1094,7 @@ llvm::Error Builder::emitEntry() {
       !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
       !control.barostat &&
-      !hasHostEvaluation() && control.freeEnergyFile.empty() &&
-      control.observables.empty() && !program.tunableGradient &&
+      !hasHostEvaluation() && !program.tunableGradient &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
         const auto *role = term->getRoles().coordinateOutput;
         return role && role->hasCoordinateOutput(*this);
@@ -1158,6 +1157,35 @@ llvm::Error Builder::emitEntry() {
     if (config.topology)
       for (const auto &definition : getTermDefinitions())
         config.terms.push_back(definition.name);
+    if (!control.freeEnergyFile.empty()) {
+      config.freeEnergy.emplace(FreeEnergyOutputConfig{
+          {}, static_cast<size_t>(control.freeEnergy.state), getNumPotentialArguments()});
+      for (const auto &component : control.freeEnergy.lambdas)
+        config.freeEnergy->lambdas.push_back(component.second);
+    }
+    config.observableCount = control.observables.size();
+    config.observableBaseArgument = getNumPotentialArguments();
+    const auto observedTerms = getObservedTerms();
+    for (auto [index, term] : llvm::enumerate(observedTerms)) {
+      ObservableOutputTermIR output;
+      output.potential = "observe" + std::to_string(index);
+      for (const auto &constant : term.constants) {
+        bool tunable = control.isObservedTunable(term.name, constant);
+        std::optional<unsigned> slot;
+        if (tunable) {
+          slot = config.observableTunables.size();
+          std::string name = "obv_" + term.name + "_" + constant;
+          auto found = llvm::find_if(program.startValues,
+              [&](const auto &value) { return value.name == name; });
+          assert(found != program.startValues.end() && "observed tunable must be an entry value");
+          config.observableTunables.push_back(std::distance(program.startValues.begin(), found));
+        }
+        output.constants.push_back({tunable ? 0.0 : getObservedValue(term, constant), slot});
+      }
+      for (auto column : term.columns)
+        output.columns.push_back({column.first, column.second});
+      config.observables.push_back(std::move(output));
+    }
     if (!control.segments) {
       for (const auto &level : levels) config.counts.push_back(level.count);
       int64_t steps = 1;

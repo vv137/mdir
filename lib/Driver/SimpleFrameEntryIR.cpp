@@ -220,6 +220,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
+        if (config.freeEnergy)
+          buildFreeEnergyOutput(body, state, arguments.start, zero, one, *config.freeEnergy);
+        if (!config.observables.empty()) {
+          SmallVector<Value> tunables;
+          for (unsigned slot : config.observableTunables)
+            tunables.push_back(arguments.startValues[slot]);
+          buildObservablesOutput(body, state, arguments.start, config.observableCount,
+              config.observableBaseArgument, config.observables, tunables);
+        }
         return SmallVector<Value>{};
       });
       if (!iteration) return iteration.takeError();

@@ -256,8 +256,10 @@ SSA spellings. Entry/schedule assembly remains for the next construction phase.
 The first complete native entry family is the Verlet frame evaluator in orthorhombic or triclinic cells,
 including time-dependent terms, topology energy columns and virtual-site
 placement/spreading, constrained-frame start traces and restraint corrections,
-without coupling or extra output/host roles. Restraint energy columns receive
-actual stored contribution values from the adapter.
+with free-energy and observable output through shared typed output kernels.
+Observable tunables resolve semantic entry-value slots. Coupling, pull output,
+tunable gradients and hosted evaluation remain in the other entry path.
+Restraint energy columns receive actual stored contribution values from the adapter.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
 actual SCF regions with checked yield counts, types and insertion scopes.

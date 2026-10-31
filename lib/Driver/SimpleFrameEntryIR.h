@@ -3,6 +3,8 @@
 #define MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #include "EntryBoundaryIR.h"
 #include "DynamicsIR.h"
+#include "OutputIR.h"
+#include <optional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,6 +23,12 @@ struct SimpleFrameEntryIRConfig {
   unsigned cellEdges = 3;
   bool topology = false;
   unsigned storedTerms = 0;
+  std::optional<FreeEnergyOutputConfig> freeEnergy;
+  std::vector<ObservableOutputTermIR> observables;
+  size_t observableCount = 0;
+  unsigned observableBaseArgument = 0;
+  // Ordinals in Program.startValues, resolved from semantic control metadata.
+  std::vector<unsigned> observableTunables;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
   std::vector<FrameConstraintIR> constraints;
