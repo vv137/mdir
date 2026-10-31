@@ -211,3 +211,8 @@ order. Restart Trotter vectors and velocity reconstruction are native.
 nested-period arithmetic. Minimization convergence memory, polling bounds,
 row/frame counters, loop counts and boundary calls are native. Cell reloads
 export every scalar edge explicitly at their original positions.
+
+Segment step/start counters, part-count memory, first-call selection and
+plain-segment energy/time/spread outputs use native operations. The initial
+correction virial zero is native as well. Remaining generated schedule text
+is function/loop structure and its temporary carry/connection machinery.

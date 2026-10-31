@@ -10,6 +10,9 @@ struct LoopIterationIR { mlir::Value index, extent; };
 mlir::Value buildStepNumber(mlir::OpBuilder &, llvm::ArrayRef<LoopIterationIR>,
                               mlir::Value current, mlir::Value outerPeriod,
                               mlir::Value period, mlir::Value one, mlir::Value start);
+mlir::Value buildSegmentStep(mlir::OpBuilder &, mlir::Value outerCount,
+                               mlir::Value outerPeriod, mlir::Value tail,
+                               mlir::Value extra, mlir::Value start);
 struct MinimizationStopIR { mlir::Value memory, flagIndex, stepIndex, notDone; };
 MinimizationStopIR buildMinimizationStop(mlir::OpBuilder &, mlir::Value start, int64_t steps);
 struct MinimizationBoundsIR { mlir::Value steps, rows; };
