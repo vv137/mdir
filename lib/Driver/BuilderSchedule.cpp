@@ -37,7 +37,11 @@ void Builder::emitStartBranch(std::string chunk,
   // A loop of one iteration on the first call and none on the others: the
   // passes that place fields know the loops that carry them.
   if (!emittedFirstTrips) {
-    os << "  %first_trips = arith.select %is_first, %c1, %c0 : index\n";
+    emitIRFragment(
+        "  ", {"%first_trips"}, {"index"}, {"%is_first", "%c1", "%c0"}, {"i1", "index", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::SelectOp::create(builder, builder.getUnknownLoc(), values[0], values[1], values[2])};
+        });
     emittedFirstTrips = true;
   }
   os << "  ";
@@ -727,7 +731,13 @@ void Builder::emitMinimization(StringRef velocities) {
   if (hasSites())
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasForceCorrections()) {
-    os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
+    emitIRFragment(
+        "  ", {"%w0z"}, {"vector<9xf64>"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          auto vec = mlir::VectorType::get({9}, builder.getF64Type());
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+                                                  mlir::DenseElementsAttr::get(vec, 0.0))};
+        });
     emitForceCorrections("  ", x0, "%p_", "%f0p", hostTerms ? "%f0c" : "%f0", "%u0p",
                    hostTerms ? "%u0c" : "%u0", "%w0z", "%w0r");
   }
@@ -2055,11 +2065,12 @@ void Builder::emitEntry() {
     // period that closes, or the intervals of the reports
     // (D207).
     unsigned second = levels[0].name == "couple" ? 2 : 1;
-    os << "  %steps_a = arith.muli %n0, %per0 : index\n"
-       << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
-       << "  %steps_p = arith.addi %steps_t, %n_plain : index\n"
-       << "  %steps_e = arith.index_cast %steps_p : index to i64\n"
-       << "  %start_e = arith.addi %start, %steps_e : i64\n";
+    emitIRFragment(
+        "  ", {"%start_e"}, {"i64"}, {"%n0", "%per0", "%n_tail", "%n_plain", "%start"},
+        {"index", "index", "index", "index", "i64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {buildSegmentStep(builder, values[0], values[1], values[2], values[3], values[4])};
+        });
     nestBegin = second;
     nestEnd = levels.size();
     nestOutside = last;
@@ -2186,9 +2197,16 @@ void Builder::emitPartLoop(std::string chunk,
       "memref<" + std::to_string(getPartCountsSize()) + "xi64>";
   // The loop has no end of its own: the host ends the activation at a
   // boundary (Simulation.cpp).
-  os << "  %part_counts = memref.alloca() : " << counts << "\n"
-     << "  %part_end = arith.constant 9223372036854775807 : index\n"
-     << "  ";
+  emitIRFragment(
+      "  ", {"%part_counts", "%part_end"}, {counts, "index"}, {}, {},
+      [count = getPartCountsSize()](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value memory = mlir::memref::AllocaOp::create(
+            builder, loc, mlir::MemRefType::get({int64_t(count)}, builder.getI64Type()));
+        mlir::Value end = mlir::arith::ConstantIndexOp::create(builder, loc, INT64_MAX);
+        return {memory, end};
+      });
+  os << "  ";
   for (size_t i = 0; i != carried.size(); ++i)
     os << (i ? ", " : "") << carried[i] << "$parts";
   os << " = scf.for %i_part = %c0 to %part_end step %c1\n"
@@ -2278,11 +2296,12 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
                                            StringRef f) {
   // At most one plain step, of energy, as `mdir run` takes at a row of its
   // log without coupling: its energies go to mdrtWriteEnergies.
-  os << "  %steps_pa = arith.muli %n0, %per0 : index\n"
-     << "  %steps_pt = arith.addi %steps_pa, %n_tail : index\n"
-     << "  %steps_pe = arith.addi %steps_pt, %c1 : index\n"
-     << "  %steps_pi = arith.index_cast %steps_pe : index to i64\n"
-     << "  %step_plain = arith.addi %start, %steps_pi : i64\n";
+  emitIRFragment(
+      "  ", {"%step_plain"}, {"i64"}, {"%n0", "%per0", "%n_tail", "%c1", "%start"},
+      {"index", "index", "index", "index", "i64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        return {buildSegmentStep(builder, values[0], values[1], values[2], values[3], values[4])};
+      });
   os << "  %xp, %vp, %fp = scf.for %i_plain = %c0 to %n_plain step %c1\n"
      << "      iter_args(%xpa = " << x << ", %vpa = " << v << ", %fpa = "
      << f << ")\n"
@@ -2304,33 +2323,55 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   std::string plainExcess = emitKineticExcess(
       "    ", "pl", measuresHalfSteps() ? "%khspl" : "", "%fpl", plainFull);
   if (plainExcess.empty())
-    os << "    %gpl = arith.constant 0.0 : f64\n";
+    emitIRFragment(
+        "    ", {"%gpl"}, {"f64"}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantOp::create(builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+        });
   else
     emitSum3("%gpl", plainExcess, "    ");
   // The pressure of the groups (D264).
   if (control.isBrownian()) {
     emitTrace("%trpl", "%wpl", "    ");
-    os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";
+    emitIRFragment(
+        "    ", {"%kphpl"}, {"f64"}, {"%kpl", "%gpl"}, {"f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(), values[0], values[1])};
+        });
   } else {
     emitSum3("%trpl", "%gwpl", "    ");
     GroupKinetic centers =
         emitGroupKinetic("    ", "%xpl", plainFull, "%fpl", "pl");
     emitSum3("%kphpl", centers.half, "    ");
   }
-  os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
-        "%trpl, %kphpl) : (i64, f64, f64, f64, f64, f64) -> ()\n";
+  emitIRFragment(
+      "    ", {}, {}, {"%step_plain", "%upl", "%kpl", "%gpl", "%trpl", "%kphpl"},
+      {"i64", "f64", "f64", "f64", "f64", "f64"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtWriteEnergies", mlir::TypeRange{}, values);
+        return {};
+      });
   if (!control.observables.empty()) {
     // The observed terms at the positions after the step (D189), as at a
     // row of the second nest.
     if (control.usesTime)
-      os << "    %ob_time_pl_steps = arith.sitofp %step_plain : i64 to f64\n"
-         << "    %ob_time_pl = arith.mulf %ob_time_pl_steps, %dt : f64\n";
+      emitIRFragment(
+          "    ", {"%ob_time_pl"}, {"f64"}, {"%step_plain", "%dt"}, {"i64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildSimulationTime(builder, values[0], values[1])};
+          });
     emitObservablesOutput("    ", "%xpl", cellName, fieldPrefix, "%step_plain",
                           "%ob_time_pl");
   }
   if (!control.periodic)
-    os << "    mdrt.host_call @mdrtCheckSpread(%step_plain, %xpl, " << idName
-       << ") : (i64, !vec, !ids)\n";
+    emitIRFragment(
+        "    ", {}, {}, {"%step_plain", "%xpl", idName}, {"i64", "!vec", "!ids"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+              mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtCheckSpread"),
+              values, mlir::ValueRange{}, mlir::UnitAttr{});
+          return {};
+        });
   emitFrameIfDue("    ", "%step_plain", "%xpl", "pl");
   os << "    scf.yield %xpl, %vpl, %fpl : !vec, !vec, !vec\n"
      << "  }\n";

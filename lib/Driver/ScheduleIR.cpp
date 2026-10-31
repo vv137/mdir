@@ -66,3 +66,14 @@ Value mdir::driver::builder::buildMinimizationFrameBound(
   Value due = arith::OrIOp::create(builder, loc, open, final);
   return arith::SelectOp::create(builder, loc, due, one, zero);
 }
+
+Value mdir::driver::builder::buildSegmentStep(
+    OpBuilder &builder, Value outerCount, Value outerPeriod, Value tail,
+    Value extra, Value start) {
+  auto loc = builder.getUnknownLoc();
+  Value before = arith::MulIOp::create(builder, loc, outerCount, outerPeriod);
+  Value withTail = arith::AddIOp::create(builder, loc, before, tail);
+  Value total = arith::AddIOp::create(builder, loc, withTail, extra);
+  Value since = arith::IndexCastOp::create(builder, loc, builder.getI64Type(), total);
+  return arith::AddIOp::create(builder, loc, start, since);
+}
