@@ -297,3 +297,17 @@ Value mdir::driver::builder::buildCoupledVelocities(
   }
   return map.getResult();
 }
+
+CouplingMassIR mdir::driver::builder::buildCouplingMass(OpBuilder &builder, Value masses) {
+  auto loc = builder.getUnknownLoc();
+  Value half = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+  auto vec = VectorType::get({3}, builder.getF64Type());
+  auto total = mdir::md::SumParticlesOp::create(builder, loc, vec, ValueRange{masses});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = builder.createBlock(&total.getKernel(), {}, {builder.getF64Type()}, {loc})->getArguments();
+    Value mass = vector::BroadcastOp::create(builder, loc, vec, args[0]);
+    mdir::md::YieldOp::create(builder, loc, ValueRange{mass});
+  }
+  return {half, total.getResult()};
+}

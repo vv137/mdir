@@ -24,9 +24,15 @@ struct FrameGradientOutputIR {
   std::vector<unsigned> constants;
   std::optional<unsigned> seedField;
 };
+struct FrameThermostatIR {
+  int64_t seed;
+  double freedom, target, decay;
+};
 struct SimpleFrameEntryIRConfig {
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
+  bool stepMemory = false, leapfrog = false, brownian = false, coupled = false;
+  std::optional<FrameThermostatIR> thermostat;
   bool topology = false;
   unsigned storedTerms = 0;
   std::optional<FreeEnergyOutputConfig> freeEnergy;

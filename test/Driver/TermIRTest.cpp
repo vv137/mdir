@@ -486,6 +486,8 @@ static void checkNativeFrameEntry() {
   config.branchesStart = config.givenForces = true;
   config.sites.push_back({3, 4, 5, false, false, "spread_sites_linear"});
   config.constraints.push_back({6, 2, {7}, false});
+  config.stepMemory = config.leapfrog = config.coupled = true;
+  config.thermostat = FrameThermostatIR{7, 9.0, 4.5, 0.9};
   auto built = buildSimpleFrameEntry(builder, metadata, config);
   require(bool(built), "native frame entry did not construct");
   auto entry = *built;

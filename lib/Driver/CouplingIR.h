@@ -9,6 +9,8 @@ namespace mlir {
 class OpBuilder;
 }
 namespace mdir::driver::builder {
+struct CouplingMassIR { mlir::Value half, totalMass; };
+CouplingMassIR buildCouplingMass(mlir::OpBuilder &, mlir::Value masses);
 struct RigidGroupIR {
   mlir::Value relation;
   unsigned arity;
