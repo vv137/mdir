@@ -93,22 +93,12 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
     return;
   // The shared energy potential supplies the exact common argument types.
   // A recipe borrows those types only when it constructs the auxiliary IR.
-  std::vector<std::string> commonNames = {"%x", "%cell"};
-  for (const auto &field : context.getFields())
-    commonNames.push_back("%p_" + field.name);
-  for (const auto &table : context.getTables())
-    commonNames.push_back("%t_" + table.name);
-  for (const auto &set : context.getTupleSets()) {
-    commonNames.push_back("%r_" + set.name);
-    for (const auto &field : set.fields)
-      commonNames.push_back("%f_" + set.name + "_" + field.name);
-  }
-  if (control.usesTime)
-    commonNames.push_back("%time");
-  auto argument = [&](StringRef name) -> size_t {
-    auto found = llvm::find(commonNames, name);
-    assert(found != commonNames.end() && "missing pull potential argument");
-    return found - commonNames.begin();
+  const size_t timeSlot = control.usesTime ? context.getNumPotentialArguments() - 1 : 0;
+  auto tableArgument = [&](StringRef name) -> size_t {
+    auto tables = context.getParameterTables();
+    auto found = llvm::find_if(tables, [&](const auto &table) { return table.name == name; });
+    assert(found != tables.end() && "missing pull potential table");
+    return 2 + context.getParameterFields().size() + std::distance(tables.begin(), found);
   };
   for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
     if (!term.isCentroid())
@@ -118,23 +108,24 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
     PullPotentialIRConfig config(expression.prepareIR());
     config.symbol = "pullterm" + std::to_string(index);
     config.termName = term.name;
-    llvm::StringMap<std::string> variables;
+    llvm::StringMap<bool> variables;
     for (const auto &[k, quantity] : columns)
       if (k == index) {
-        variables[quantity] = "";
+        variables[quantity] = false;
         config.quantities.push_back(quantity);
       }
     for (const auto &parameter : term.parameters) {
       config.parameters.emplace_back(parameter.first, parameter.second.front());
-      variables[parameter.first] = "";
+      variables[parameter.first] = false;
     }
     if (control.usesTime)
-      variables["t"] = "%time";
-    context.bindLambdas(variables);
-    for (const auto &[name, values] : control.freeEnergy.lambdas)
+      variables["t"] = true;
+    for (const auto &[name, values] : control.freeEnergy.lambdas) {
+      variables["lambda_" + name] = false;
       config.lambdas.emplace_back(
           "lambda_" + name,
           control.freeEnergy.get(name, control.freeEnergy.state));
+    }
     llvm::SmallVector<StringRef> supplied;
     for (const auto &entry : variables)
       supplied.push_back(entry.getKey());
@@ -142,11 +133,11 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
     for (const auto &name : inputs.names) {
       auto found = variables.find(name);
       assert(found != variables.end() && "missing pull expression binding");
-      if (!found->second.empty() && found->second == "%time")
-        config.argumentBindings.emplace_back(name, argument(found->second));
+      if (found->second)
+        config.argumentBindings.emplace_back(name, timeSlot);
     }
     for (const auto &name : inputs.tables)
-      config.tableBindings.emplace_back(name, argument("%t_" + name));
+      config.tableBindings.emplace_back(name, tableArgument(name));
     context.emitIRFragment(
         "", {}, {}, {}, {},
         [config](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {

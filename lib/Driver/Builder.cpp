@@ -12,40 +12,7 @@ using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
-std::string Builder::getFieldParameters() const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += ", %p_" + field.name + ": " + getFieldType(field).str();
-  for (const Program::Table &table : program.tables)
-    text += ", %t_" + table.name + ": " + table.getType().str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", %r_" + set.name + ": !rel_" + set.name;
-    for (const Program::Field &field : set.fields)
-      text += ", %f_" + set.name + "_" + field.name + ": !of_" + set.name;
-  }
-  return text;
-}
 
-std::string Builder::getFieldValues(StringRef prefix) const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += (", " + prefix + field.name).str();
-  // Tables do not change with the order of the particles; they keep their
-  // names everywhere.
-  for (const Program::Table &table : program.tables)
-    text += ", %t_" + table.name;
-  // Neither do the tuples of a topology: the program does not put the
-  // particles in a new order when it has them.
-  // The members of the tuples follow the order of the particles: their
-  // names are those of the fields with `%r` for `%p`.
-  std::string relations = ("%r" + prefix.drop_front(2)).str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", " + relations + set.name;
-    for (const Program::Field &field : set.fields)
-      text += ", %f_" + set.name + "_" + field.name;
-  }
-  return text;
-}
 
 void Builder::emitReorder(StringRef indent, StringRef from,
                           StringRef stateTo, StringRef otherTo,

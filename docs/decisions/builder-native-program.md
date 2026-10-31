@@ -245,7 +245,7 @@ bindings, with shared kernels and unchanged accumulation order.
 External potentials also use native bodies with actual particle fields, tables,
 frame/time values and semantic expression bindings. Lambda and observed arguments
 retain their declaration and binding order; their native expression kernel is
-shared with the remaining topology path.
+shared across the native potential variants.
 Generalized Born and surface potentials construct native bodies together.
 Computed Born radii remain private to the adapter; radii, energy and surface
 contributions retain their original construction and accumulation order.
@@ -267,5 +267,10 @@ now construct native bodies through the same topology hook. Their seven shared
 kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
 order. Boundary flags are supplied at the current potential; parameter-field
 metadata is read-only and computed reciprocal outputs retain their original order.
-Entry/schedule scopes and the obsolete topology fallback remain in progress; their temporary assembly
+All topology potential signatures and bodies now construct native operations,
+including empty selections. The obsolete assembly fallback, named contribution
+callbacks and signature/value formatters are removed. Pull auxiliary potentials
+resolve time and tables through semantic metadata slots instead of generated
+SSA spellings. Entry/schedule assembly remains for the next construction phase.
+Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
