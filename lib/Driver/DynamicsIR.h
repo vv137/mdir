@@ -11,6 +11,9 @@
 namespace mlir { class OpBuilder; }
 namespace mdir::dyn { class ProgramOp; }
 namespace mdir::driver::builder {
+mdir::dyn::ProgramOp buildNativeVerletStep(
+    mlir::OpBuilder &, llvm::StringRef name, mlir::TypeRange parameters,
+    bool energy, bool leapfrog, bool timed);
 mlir::Value buildDescentDirection(mlir::OpBuilder &, mlir::Value forces, mlir::Value masses);
 struct DescentConstraintGroupIR {
   unsigned relation, arity;

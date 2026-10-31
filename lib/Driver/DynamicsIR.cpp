@@ -1,6 +1,7 @@
 // Mass-metric descent with the existing scaled 16-norm and rejected trials.
 #include "DynamicsIR.h"
 #include "PotentialIR.h"
+#include "BarostatIR.h"
 #include "SiteIR.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
@@ -254,5 +255,57 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
                                   : buildTrialEnergy(builder, evaluation.energy, intact);
     mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, forces, energy});
   }
+  return program;
+}
+
+mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
+    OpBuilder &builder, StringRef name, TypeRange parameters,
+    bool energy, bool leapfrog, bool timed) {
+  auto loc = builder.getUnknownLoc();
+  auto ctx = builder.getContext();
+  auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
+  auto f64 = builder.getF64Type();
+  auto vec = mdir::md::FieldType::get(ctx, atoms, 3, f64);
+  auto real = mdir::md::FieldType::get(ctx, atoms, 1, f64);
+  SmallVector<Type> inputs{vec, vec, vec, real, mdir::md::CellType::get(ctx), f64};
+  llvm::append_range(inputs, parameters);
+  if (timed) {
+    inputs.push_back(builder.getI64Type());
+    inputs.push_back(mdir::md::FieldType::get(ctx, atoms, 1, builder.getI32Type()));
+  }
+  SmallVector<Type> outputs{vec, vec, vec};
+  if (energy) {
+    outputs.push_back(f64);
+    outputs.push_back(VectorType::get({9}, f64));
+    outputs.push_back(VectorType::get({3}, f64));
+    if (leapfrog) outputs.push_back(vec);
+  }
+  auto program = mdir::dyn::ProgramOp::create(builder, loc, name,
+      builder.getFunctionType(inputs, outputs), StringAttr{}, ArrayAttr{}, ArrayAttr{},
+      leapfrog ? builder.getF64FloatAttr(-0.5) : FloatAttr{}, ArrayAttr{},
+      builder.getStrArrayAttr({"symplectic", "time_reversible"}), builder.getDictionaryAttr({}));
+  OpBuilder::InsertionGuard guard(builder);
+  SmallVector<Location> locations(inputs.size(), loc);
+  auto args = builder.createBlock(&program.getBody(), {}, inputs, locations)->getArguments();
+  Value half = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+  half = arith::MulFOp::create(builder, loc, half, args[5]);
+  Value time = timed ? buildSimulationTime(builder, args[6 + parameters.size()], args[5]) : Value{};
+  Value kicked = buildKick(builder, args[1], args[2], args[3], leapfrog ? args[5] : half);
+  Value positions = buildDrift(builder, args[0], kicked, args[5]);
+  auto evaluation = buildEnergyEvaluation(builder,
+      {positions, args[4], ValueRange(args).slice(6, parameters.size()), time}, {energy, true, energy});
+  Value diagonal;
+  if (energy) diagonal = buildVirialDiagonal(builder, evaluation.virial).vector;
+  if (leapfrog && !energy) {
+    mdir::dyn::ReturnOp::create(builder, loc, ValueRange{positions, kicked, evaluation.forces});
+    return program;
+  }
+  Value current = buildKick(builder, kicked, evaluation.forces, args[3], half);
+  SmallVector<Value> results{positions, leapfrog ? kicked : current, evaluation.forces};
+  if (energy) {
+    results.append({evaluation.energy, evaluation.virial, diagonal});
+    if (leapfrog) results.push_back(current);
+  }
+  mdir::dyn::ReturnOp::create(builder, loc, results);
   return program;
 }

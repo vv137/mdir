@@ -175,6 +175,22 @@ void Builder::emitPrograms() {
     bool projectsState =
         leapfrog && constraints && (control.isLangevin() || scales);
     bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
+    if ((StringRef(kind.name) == "step" || StringRef(kind.name) == "step_energy") &&
+        !sites && !constraints && !control.isLangevin() && !brownian &&
+        !scales && !measured && !hasForceCorrections() && !hasHostEvaluation()) {
+      auto &context = termIR.getContext();
+      mlir::OpBuilder builder(&context);
+      builder.setInsertionPointToEnd(termIR.getModule().getBody());
+      auto types = buildParameterTypes(context, program);
+      auto nativeProgram = buildNativeVerletStep(
+          builder, kind.name, types, withEnergy, leapfrog, control.usesTime);
+      emitIRFragment("", {}, {}, {}, {},
+          [nativeProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+            nativeProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+            return {};
+          });
+      continue;
+    }
     std::string effects =
         constraints ? "{read = [\"dyn.stop\"], write = [\"dyn.stop\"]}" : "{}";
     if (hasHostEvaluation())
