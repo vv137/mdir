@@ -299,9 +299,10 @@ Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
-A bare fixed-cell Verlet entry with a single plain-step loop also constructs
+A bare fixed-cell Verlet entry with plain steps and optional energy intervals constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
-energy/pressure row, actual loop-carried state, fresh neighbor boundary and
-finish. It shares semantic field flattening and initial reordering with the
+energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
+finish. Energy intervals use the inner loop results for their closing energy
+step, retain completed-step arithmetic and check nonperiodic spread. It shares semantic field flattening and initial reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.

@@ -1325,10 +1325,12 @@ llvm::Error Builder::emitEntry() {
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       !system.topology && !isRestart() && !control.usesTime && !isTriclinic() &&
       !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
+      control.framePeriod == 0 && control.checkpointPeriod == 0 &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
       control.freeEnergyFile.empty() && control.observables.empty() && !program.tunableGradient &&
-      levels.size() == 1 && levels.front().name == "step";
+      ((levels.size() == 1 && levels.front().name == "step") ||
+       (levels.size() == 2 && levels.front().name == "energy" && levels.back().name == "step"));
   if (nativeSteps) {
     mlir::OpBuilder ir(&termIR.getContext());
     auto *body = termIR.getModule().getBody();
@@ -1339,7 +1341,14 @@ llvm::Error Builder::emitEntry() {
       if (const auto *role = term->getRoles().hostEvaluation) role->buildDeclarations(*this, ir);
     emitRuntimeDeclarations(ir, declarations, true);
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
-    auto entry = buildSimpleStepEntry(ir, program, step, levels.front().count);
+    SimpleStepEntryIRConfig config{levels.back().count};
+    config.periodic = control.periodic;
+    mdir::dyn::ProgramOp energy;
+    if (levels.size() == 2) {
+      config.energyIntervals = levels.front().count;
+      energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
+    }
+    auto entry = buildSimpleStepEntry(ir, program, step, energy, config);
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);
