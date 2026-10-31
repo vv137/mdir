@@ -1,5 +1,6 @@
 // Typed fragments become operations in their original shared regions (#568).
 #include "TermIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -126,5 +127,17 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
         llvm::inconvertibleErrorCode(),
         "internal term IR connection survived materialization");
   recipes.clear();
+  return llvm::Error::success();
+}
+
+llvm::Error mdir::driver::builder::checkFrameEvaluation(mlir::Operation *scope) {
+  bool evaluates = false;
+  scope->walk([&](mdir::md::EvaluateOp) { evaluates = true; });
+  if (!evaluates)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the program of frames: the start of this program evaluates "
+        "nothing, so its loop over frames would give nothing "
+        "(Builder::emitEntry)");
   return llvm::Error::success();
 }

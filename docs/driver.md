@@ -1403,6 +1403,15 @@ and dynamic returns are constructed with native operations. Their original
 operand order and control-flow positions are preserved. Program signatures
 and schedule scopes remain transitional.
 
+Schedule energy evaluations, half-kicks, optimal-temperature arithmetic,
+Trotter state reads, energy rows, spread/frame/checkpoint calls, and
+minimization trial acceptance use native operations in their original order.
+The surrounding loop and function scopes remain transitional.
+
+Frame evaluation presence is checked on actual operations after native
+recipes materialize, rather than by searching the generated assembly for
+an evaluation token. The existing frame-source guard remains transitional.
+
 ## 3. Decided
 
 | # | Question | Decision |

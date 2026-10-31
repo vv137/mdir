@@ -17,6 +17,7 @@ namespace mlir {
 class MLIRContext;
 class ModuleOp;
 class OpBuilder;
+class Operation;
 } // namespace mlir
 namespace mdir::driver {
 struct Program;
@@ -58,6 +59,9 @@ private:
   std::unique_ptr<OwnedProgram> program;
   std::vector<TermIRRecipe> recipes;
 };
+
+/// A frame iteration must contain an actual potential evaluation.
+llvm::Error checkFrameEvaluation(mlir::Operation *scope);
 
 /// Joins the remaining assembly and typed fragments before printing/lowering.
 /// No recipe or internal connection survives into a valid generated program.

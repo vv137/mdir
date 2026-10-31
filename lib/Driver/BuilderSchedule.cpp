@@ -3,6 +3,15 @@
 // minimization (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "PotentialIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
+#include "BarostatIR.h"
+#include "DynamicsIR.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 
@@ -244,12 +253,22 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string velocities = coupled.velocities;
       if (!current.empty()) {
         std::string behind = "%vh" + here;
-        os << inner << behind << " = dyn.kick " << velocities << ", "
-           << coupled.forces << ", " << massName
-           << ", %half_back : !vec\n";
+        emitKick(inner, behind, velocities, coupled.forces, massName, "%half_back");
         velocities = behind;
       }
       return coupled.positions + ", " + velocities + ", " + coupled.forces;
+    };
+    auto emitOptimalEnergy = [&](StringRef at, StringRef result,
+                                 StringRef kinetic, StringRef excess) {
+      emitIRFragment(
+          at, {result}, {"f64"}, {kinetic, excess}, {"f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value weight = mlir::arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(2.0 / 3.0));
+            mlir::Value change = mlir::arith::MulFOp::create(builder, loc, weight, values[1]);
+            return {mlir::arith::AddFOp::create(builder, loc, values[0], change)};
+          });
     };
     // The kinetic energy of the optimal temperature at the end of a step,
     // K + (2/3)(K_half − K) [Jung2019], which the thermostat controls
@@ -267,20 +286,23 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         return "";
       emitKineticEnergy(o + "k", full, massName, inner);
       emitSum3(o + "g", excess, inner);
-      os << inner << o << "c = arith.constant " << formatReal(2.0 / 3.0)
-         << " : f64\n"
-         << inner << o << "e = arith.mulf " << o << "c, " << o << "g : f64\n"
-         << inner << o << " = arith.addf " << o << "k, " << o << "e : f64\n";
+      emitOptimalEnergy(inner, o, o + "k", o + "g");
       return o;
     };
     // The velocities of the time of the positions of a plain step of
     // leapfrog, half a kick ahead of those it stores.
     auto emitAhead = [&](StringRef tag, StringRef v, StringRef f) {
       std::string name = ("%vah" + tag).str();
-      os << inner << name << "c = arith.constant 5.0e-01 : f64\n"
-         << inner << name << "t = arith.mulf " << name << "c, %dt : f64\n"
-         << inner << name << " = dyn.kick " << v << ", " << f << ", "
-         << massName << ", " << name << "t : !vec\n";
+      emitIRFragment(
+          inner, {name}, {"!vec"}, {"%dt", v, f, massName},
+          {"f64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value half = mlir::arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value interval = mlir::arith::MulFOp::create(builder, loc, half, values[0]);
+            return {buildKick(builder, values[1], values[2], values[3], interval)};
+          });
       return name;
     };
     bool couplesBelow = levels[level + 1].name == "couple";
@@ -299,21 +321,27 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // diagonals of the virial and of the virial of the groups, and the
         // kinetic energy of each axis.
         std::string m = "%tm" + here;
-        std::string loaded[9];
-        for (int slot = 0; slot != 9; ++slot) {
-          loaded[slot] = m + "_" + std::to_string(slot);
-          os << inner << m << "_i" << slot << " = arith.constant " << slot
-             << " : index\n"
-             << inner << loaded[slot] << " = memref.load %trotter_memory["
-             << m << "_i" << slot << "] : memref<9xf64>\n";
-        }
         std::string vectors[3];
-        for (int v = 0; v != 3; ++v) {
+        for (int v = 0; v != 3; ++v)
           vectors[v] = m + "_v" + std::to_string(v);
-          os << inner << vectors[v] << " = vector.from_elements "
-             << loaded[3 * v] << ", " << loaded[3 * v + 1] << ", "
-             << loaded[3 * v + 2] << " : vector<3xf64>\n";
-        }
+        emitIRFragment(
+            inner, {vectors[0], vectors[1], vectors[2]},
+            {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"},
+            {"%trotter_memory"}, {"memref<9xf64>"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              auto loc = builder.getUnknownLoc();
+              llvm::SmallVector<mlir::Value> loaded;
+              for (int slot = 0; slot != 9; ++slot) {
+                mlir::Value index = mlir::arith::ConstantIndexOp::create(builder, loc, slot);
+                loaded.push_back(mlir::memref::LoadOp::create(builder, loc, values[0], index));
+              }
+              auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+              TermIRValues result;
+              for (int axis = 0; axis != 3; ++axis)
+                result.push_back(mlir::vector::FromElementsOp::create(
+                    builder, loc, vec, mlir::ValueRange(loaded).slice(3 * axis, 3)));
+              return result;
+            });
         trace = vectors[0];
         groups = vectors[1];
         kinetic = vectors[2];
@@ -531,7 +559,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string excess = emitKineticExcess(
           inner, "l" + here, measuresHalfSteps() ? "%khsl" : "", "%fl", full);
       if (excess.empty())
-        os << inner << "%g = arith.constant 0.0 : f64\n";
+        emitIRFragment(
+            inner, {"%g"}, {"f64"}, {}, {},
+            [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+              return {mlir::arith::ConstantOp::create(
+                  builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+            });
       else
         emitSum3("%g", excess, inner);
       if (reportsSolvent())
@@ -541,7 +574,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // kinetic energy of their centers at the half steps.
       if (control.isBrownian()) {
         emitTrace("%tr", virialName, inner);
-        os << inner << "%kph = arith.addf %k, %g : f64\n";
+        emitIRFragment(
+            inner, {"%kph"}, {"f64"}, {"%k", "%g"}, {"f64", "f64"},
+            [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+              return {mlir::arith::AddFOp::create(
+                  builder, builder.getUnknownLoc(), values[0], values[1])};
+            });
       } else {
         emitSum3("%tr", "%gwl", inner);
         GroupKinetic centers =
@@ -552,9 +590,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitDiagonal("%dg", virialName, inner);
       if (!scalesHere)
         emitStep();
-      os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
-         << energyName
-         << ", %k, %g, %tr, %kph) : (i64, f64, f64, f64, f64, f64) -> ()\n";
+      emitIRFragment(
+          inner, {}, {}, {"%step" + here, energyName, "%k", "%g", "%tr", "%kph"}, {"i64", "f64", "f64", "f64", "f64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mlir::func::CallOp::create(builder, builder.getUnknownLoc(), "mdrtWriteEnergies",
+                mlir::TypeRange{}, values);
+            return {};
+          });
       // The cell of the positions of the row: with the barostat of Trotter
       // type the step has scaled them, and they are in the cell after the
       // scaling, not in that of the start of the interval (#218). The
@@ -571,10 +613,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // after the step (D161).
         std::string time = "%fe_time" + here;
         if (control.usesTime)
-          os << inner << time << "_steps = arith.sitofp %step" << here
-             << " : i64 to f64\n"
-             << inner << time << " = arith.mulf " << time << "_steps, %dt"
-             << " : f64\n";
+          emitIRFragment(
+              inner, {time}, {"f64"}, {"%step" + here, "%dt"}, {"i64", "f64"},
+              [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+                return {buildSimulationTime(builder, values[0], values[1])};
+              });
         emitFreeEnergyOutput(inner, "%xl", rowCell, fieldPrefix,
                              "%step" + here, time);
       }
@@ -582,10 +625,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // The observed terms at the positions after the step (D189).
         std::string time = "%ob_time" + here;
         if (control.usesTime)
-          os << inner << time << "_steps = arith.sitofp %step" << here
-             << " : i64 to f64\n"
-             << inner << time << " = arith.mulf " << time << "_steps, %dt"
-             << " : f64\n";
+          emitIRFragment(
+              inner, {time}, {"f64"}, {"%step" + here, "%dt"}, {"i64", "f64"},
+              [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+                return {buildSimulationTime(builder, values[0], values[1])};
+              });
         emitObservablesOutput(inner, "%xl", rowCell, fieldPrefix,
                               "%step" + here, time);
       }
@@ -593,14 +637,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // so far that images interact, at every row of the log as well as at
       // the frames and checkpoints.
       if (!control.periodic && !framesAtEnergies)
-        os << inner << "mdrt.host_call @mdrtCheckSpread(%step" << here
-           << ", %xl, " << idName << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%xl", idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtCheckSpread"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       std::string optimal;
       if (couplesBelow && rescalesVelocities() && !excess.empty()) {
-        os << inner << "%kolc = arith.constant " << formatReal(2.0 / 3.0)
-           << " : f64\n"
-           << inner << "%kole = arith.mulf %kolc, %g : f64\n"
-           << inner << "%kol = arith.addf %k, %kole : f64\n";
+        emitOptimalEnergy(inner, "%kol", "%k", "%g");
         optimal = "%kol";
       }
       std::string yielded =
@@ -614,9 +660,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // The frame of the positions that the interval leaves, as a loop
       // over frames writes them.
       if (framesAtEnergies)
-        os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here << ", "
-           << StringRef(yielded).split(',').first << ", " << idName
-           << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, StringRef(yielded).split(',').first, idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       else if (control.segments)
         emitFrameIfDue(inner, "%step" + here,
                        StringRef(yielded).split(',').first, here);
@@ -624,15 +674,24 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     } else {
       if (current.name == "frame") {
         emitStep();
-        os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here
-           << ", %x" << last << ", " << idName << ") : (i64, !vec, !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%x" + last, idName}, {"i64", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrame"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       }
       if (current.name == "segment") {
         // The state as the next step needs it.
         emitStep();
-        os << inner << "mdrt.host_call @mdrtWriteCheckpoint(%step" << here
-           << ", " << getValues(last) << ", " << idName << ")\n"
-           << inner << "    : (i64, " << state << ", !ids)\n";
+        emitIRFragment(
+          inner, {}, {}, {"%step" + here, "%x" + last, "%v" + last, "%f" + last, idName}, {"i64", "!vec", "!vec", "!vec", "!ids"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+                mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteCheckpoint"), values, mlir::ValueRange{}, mlir::UnitAttr{});
+            return {};
+          });
       }
       os << inner << "scf.yield " << getValues(last) << moreYielded << " : "
          << state << moreTypes << "\n";
@@ -713,12 +772,9 @@ void Builder::emitMinimization(StringRef velocities) {
   std::string held = hasForceCorrections() ? "p" : "";
   bool hostTerms = hasHostEvaluation();
   std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-  os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
-     << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
-     << getTimeValue("%time0") << ")\n"
-     << "      request [energy, forces]\n"
-     << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-     << ") -> (f64, !vec)\n";
+  emitEnergyEvaluation("  ", x0, "%cell", "%p_", "%time0",
+                           "%u0" + held + modelled,
+                           "%f0" + held + raw + modelled, "");
   if (hasSites())
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasForceCorrections()) {
@@ -746,20 +802,28 @@ void Builder::emitMinimization(StringRef velocities) {
   // that the last segment left.
   std::string h0 = control.segments ? "%first_size" : "%h0";
   if (!control.segments)
-    os << "  %h0 = arith.constant "
-       << formatReal(control.minimizeStep * units::length) << " : f64\n";
+    emitIRFragment(
+        "  ", {"%h0"}, {"f64"}, {}, {},
+        [step = control.minimizeStep * units::length](
+            mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantOp::create(
+              builder, builder.getUnknownLoc(), builder.getF64FloatAttr(step))};
+        });
   // A step grows to at most 0.1 Å (D260): longer ones turn
   // rigid groups beyond what the constraints take back, and are not taken
   // (D259); on 103,292 OPC waters the largest force fell
   // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
-  os << "  %h_most = arith.constant "
-     << formatReal(Control::minimizeStepCap * units::length)
-     << " : f64\n"
-     << "  %grow = arith.constant 1.2 : f64\n"
-     << "  %shrink = arith.constant 0.2 : f64\n"
-     << "  %one = arith.constant 1.0 : f64\n"
-     << "  %zero = arith.constant 0.0 : f64\n"
-     ;
+  emitIRFragment(
+      "  ", {"%h_most", "%grow", "%shrink", "%one", "%zero"},
+      {"f64", "f64", "f64", "f64", "f64"}, {}, {},
+      [cap = Control::minimizeStepCap * units::length](
+          mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        TermIRValues result;
+        for (double value : {cap, 1.2, 0.2, 1.0, 0.0})
+          result.push_back(mlir::arith::ConstantOp::create(
+              builder, builder.getUnknownLoc(), builder.getF64FloatAttr(value)));
+        return result;
+      });
   // The log has the forces without their parts along the constraints,
   // those that the minimization lowers.
   auto emitReported = [&](StringRef indent, StringRef x, StringRef f,
@@ -767,13 +831,23 @@ void Builder::emitMinimization(StringRef velocities) {
     std::string direction = ("%gr" + tag).str();
     emitConstrainedDescent(indent, x, f, direction);
     std::string reported = ("%fr" + tag).str();
-    os << indent << reported << " = md.map_particles gather(" << direction
-       << ", %m : !vec, !real) {\n"
-       << indent << "^bb0(%g_i: vector<3xf64>, %m_i: f64):\n"
-       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << indent << "  %f_i = arith.mulf %mb, %g_i : vector<3xf64>\n"
-       << indent << "  md.yield %f_i : vector<3xf64>\n"
-       << indent << "} : !vec\n";
+    emitIRFragment(
+        indent, {reported}, {"!vec"}, {direction, "%m"}, {"!vec", "!real"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          auto map = mdir::md::MapParticlesOp::create(
+              builder, loc, values[0].getType(), values);
+          {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            auto args = builder.createBlock(&map.getKernel(), {},
+                {vec, builder.getF64Type()}, {loc, loc})->getArguments();
+            mlir::Value mass = mlir::vector::BroadcastOp::create(builder, loc, vec, args[1]);
+            mlir::Value force = mlir::arith::MulFOp::create(builder, loc, mass, args[0]);
+            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{force});
+          }
+          return {map.getResult()};
+        });
     return reported;
   };
   std::string reported = emitReported("  ", x0, "%f0", "0");
@@ -849,26 +923,41 @@ void Builder::emitMinimization(StringRef velocities) {
      << "        %xt, %ft, %ut = dyn.step @descend(%xa2, %fa2, %m, %cell, "
         "%ha2" << getFieldValues() << ")\n"
      << "            : (!vec, !vec, !real, !md.cell, f64" << getFieldTypes()
-     << ") -> (!vec, !vec, f64)\n"
-     << "        %lower = arith.cmpf olt, %ut, %ua2 : f64\n"
-     << "        %longer = arith.mulf %ha2, %grow : f64\n"
-     << "        %capped = arith.minimumf %longer, %h_most : f64\n"
-     << "        %shorter = arith.mulf %ha2, %shrink : f64\n"
-     << "        %ub = arith.select %lower, %ut, %ua2 : f64\n"
-     << "        %hb = arith.select %lower, %capped, %shorter : f64\n"
-     << "        %keep = arith.select %lower, %one, %zero : f64\n";
-  // The fields are chosen particle by particle, so that each has storage
-  // of its own.
-  for (StringRef field : {"x", "f"})
-    os << "        %" << field << "b = md.map_particles gather(%" << field
-       << "t, %" << field << "a2 : !vec, !vec) {\n"
-       << "        ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
-       << "          %half = arith.constant 5.0e-01 : f64\n"
-       << "          %taken = arith.cmpf ogt, %keep, %half : f64\n"
-       << "          %chosen = arith.select %taken, %new_i, %old_i "
-          ": vector<3xf64>\n"
-       << "          md.yield %chosen : vector<3xf64>\n"
-       << "        } : !vec\n";
+     << ") -> (!vec, !vec, f64)\n";
+  emitIRFragment(
+      "        ", {"%xb", "%fb", "%ub", "%hb"}, {"!vec", "!vec", "f64", "f64"},
+      {"%ut", "%ua2", "%ha2", "%grow", "%h_most", "%shrink", "%one", "%zero",
+       "%xt", "%xa2", "%ft", "%fa2"},
+      {"f64", "f64", "f64", "f64", "f64", "f64", "f64", "f64",
+       "!vec", "!vec", "!vec", "!vec"},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value lower = mlir::arith::CmpFOp::create(
+            builder, loc, mlir::arith::CmpFPredicate::OLT, values[0], values[1]);
+        mlir::Value longer = mlir::arith::MulFOp::create(builder, loc, values[2], values[3]);
+        mlir::Value capped = mlir::arith::MinimumFOp::create(builder, loc, longer, values[4]);
+        mlir::Value shorter = mlir::arith::MulFOp::create(builder, loc, values[2], values[5]);
+        mlir::Value energy = mlir::arith::SelectOp::create(builder, loc, lower, values[0], values[1]);
+        mlir::Value interval = mlir::arith::SelectOp::create(builder, loc, lower, capped, shorter);
+        mlir::Value keep = mlir::arith::SelectOp::create(builder, loc, lower, values[6], values[7]);
+        auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+        TermIRValues fields;
+        for (unsigned slot : {8u, 10u}) {
+          auto map = mdir::md::MapParticlesOp::create(
+              builder, loc, values[slot].getType(), values.slice(slot, 2));
+          {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            auto args = builder.createBlock(&map.getKernel(), {}, {vec, vec}, {loc, loc})->getArguments();
+            mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value taken = mlir::arith::CmpFOp::create(
+                builder, loc, mlir::arith::CmpFPredicate::OGT, keep, half);
+            mlir::Value chosen = mlir::arith::SelectOp::create(builder, loc, taken, args[0], args[1]);
+            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{chosen});
+          }
+          fields.push_back(map.getResult());
+        }
+        return {fields[0], fields[1], energy, interval};
+      });
   os << "        scf.yield %xb, %fb, %ub, %hb : " << state << "\n"
      << "      }\n"
      << "      %before = arith.muli %i0, %per0 : index\n"
@@ -1396,13 +1485,10 @@ void Builder::emitEntry() {
     // (D270).
     bool hostTerms = hasHostEvaluation();
     std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
-       << ", %w0" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-       << getTimeValue("%time0") << ")\n"
-       << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> (f64, !vec, vector<9xf64>)\n";
+    emitEnergyEvaluation("  ", "%x0", "%cell", "%p_", "%time0",
+                             "%u0" + held + modelled,
+                             "%f0" + held + raw.str() + modelled,
+                             "%w0" + held + raw.str());
     std::string virial = "%w0" + held;
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
@@ -1460,15 +1546,9 @@ void Builder::emitEntry() {
       std::string held = hasForceCorrections() ? "p" : "";
       auto emitAsked = [&](StringRef tag, bool withVirial) {
         std::string f = ("%f" + tag + "0").str(), w = ("%w" + tag + "0").str();
-        os << "    " << f << held << raw;
-        if (withVirial)
-          os << ", " << w << held << raw;
-        os << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-           << getTimeValue("%time0") << ")\n"
-           << "        request [forces" << (withVirial ? ", virial" : "")
-           << "]\n        : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-           << ") -> " << (withVirial ? "(!vec, vector<9xf64>)" : "!vec")
-           << "\n";
+        emitEnergyEvaluation("    ", "%x0", "%cell", "%p_", "%time0", "",
+                                 f + held + raw.str(),
+                                 withVirial ? w + held + raw.str() : std::string());
         std::string tensor = withVirial ? w + held + raw.str() : std::string();
         if (hasSites())
           tensor = emitSpreadSites(
@@ -1605,6 +1685,17 @@ void Builder::emitEntry() {
     // the positions of a frame, places the virtual sites, and evaluates
     // what the start of a run evaluates, in a segment of its own, so that
     // the neighbor structures are built anew (D218).
+    // This marker follows the evaluation recipes inside the frame iteration.
+    // Its guard sees their native operations, not their assembly connections.
+    emitIRFragment(
+        "  ", {}, {}, {}, {},
+        [](mlir::OpBuilder &builder, mlir::ValueRange)
+            -> llvm::Expected<TermIRValues> {
+          if (llvm::Error error = checkFrameEvaluation(
+                  builder.getInsertionBlock()->getParentOp()))
+            return std::move(error);
+          return TermIRValues{};
+        });
     os.flush();
     std::string chunk = frameHead + "  scf.for %i_frame_once = %c0 to %c1 "
                                     "step %c1 {\n" +
@@ -1668,13 +1759,10 @@ void Builder::emitEntry() {
     // (D270).
     bool hostTerms = hasHostEvaluation();
     std::string modelled = !hostTerms || !held.empty() ? "" : "c";
-    os << "  %ubs" << held << modelled << ", %fbs" << held << raw << modelled
-       << ", %wbs" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
-       << getTimeValue("%time0") << ")\n"
-       << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
-       << ") -> (f64, !vec, vector<9xf64>)\n";
+    emitEnergyEvaluation("  ", "%x0", "%cell", "%p_", "%time0",
+                             "%ubs" + held + modelled,
+                             "%fbs" + held + raw.str() + modelled,
+                             "%wbs" + held + raw.str());
     std::string virial = "%wbs" + held;
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,

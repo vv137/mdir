@@ -1552,9 +1552,8 @@ inline bool namesValue(StringRef line, StringRef name) {
 ///   the cell of a frame are values of the loop; the positions and the cell
 ///   that the entry is given, and the memory of the barostat that is filled
 ///   from them, are those of the program, the same at every frame.
-/// - An evaluation. The loop evaluates what the start of a run evaluates; a
-///   program whose start evaluates nothing would wait for frames and give
-///   nothing.
+/// Evaluation presence is checked on native operations by checkFrameEvaluation,
+/// after the recipes of the frame iteration have materialized.
 ///
 /// A call in the generic form or a `return` in the loop, and a name of the
 /// loop taken twice, need no check here: the parser refuses them. Memory of
@@ -1569,7 +1568,6 @@ inline std::string checkFrameLoop(StringRef body) {
   static const char *const replaced[] = {
       "%positions", "%lx", "%ly", "%lz", "%tilt_bx", "%tilt_cx", "%tilt_cy",
       "%box_memory"};
-  bool evaluates = false;
   for (StringRef rest = body; !rest.empty();) {
     auto [line, tail] = rest.split('\n');
     rest = tail;
@@ -1586,12 +1584,7 @@ inline std::string checkFrameLoop(StringRef body) {
                     "', which is of the program and not of the frame: in "
                     "the loop the positions of the frame are '%x0' and its "
                     "cell is '%cell', made from '%frame_cell'");
-    evaluates |= line.contains("md.evaluate ");
   }
-  if (!evaluates)
-    return "the program of frames: the start of this program evaluates "
-           "nothing, so its loop over frames would give nothing "
-           "(Builder::emitEntry)";
   return std::string();
 }
 
