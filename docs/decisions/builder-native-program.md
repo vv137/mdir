@@ -298,3 +298,10 @@ checks actual frame evaluations and frame-input provenance.
 Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
+
+A bare fixed-cell Verlet entry with a single plain-step loop also constructs
+its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
+energy/pressure row, actual loop-carried state, fresh neighbor boundary and
+finish. It shares semantic field flattening and initial reordering with the
+frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
+progress.

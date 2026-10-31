@@ -277,3 +277,10 @@ actual SCF regions with checked yield counts, types and insertion scopes.
 checks actual frame evaluations and frame-input provenance.
 `EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
 Other entry families and their final assembly join remain in progress.
+
+A bare fixed-cell Verlet entry with a single plain-step loop also constructs
+its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
+energy/pressure row, actual loop-carried state, fresh neighbor boundary and
+finish. It shares semantic field flattening and initial reordering with the
+frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
+progress.

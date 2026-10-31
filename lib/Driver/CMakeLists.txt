@@ -77,6 +77,7 @@ add_mlir_library(MDIRDriver
   EntryLoopIR.cpp
   EntryRuntimeIR.cpp
   SimpleFrameEntryIR.cpp
+  SimpleStepEntryIR.cpp
   BarostatIR.cpp
   DynamicsIR.cpp
   ReorderIR.cpp
