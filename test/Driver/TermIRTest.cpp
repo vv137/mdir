@@ -464,8 +464,12 @@ static void checkNativeSimpleEntry() {
   require(bool(energy), "native step-entry energy did not construct");
   auto step = buildNativeStep(builder, {"step"}, parameters, false, false);
   require(bool(step), "native step-entry dynamics did not construct");
+  const std::optional<int64_t> checkpointIntervals = 2;
+  metadata.writesForces = true;
   RuntimeDeclarationConfig runtime{};
   runtime.state64 = runtime.force64 = true;
+  runtime.checkpoints = checkpointIntervals.has_value();
+  runtime.writesForces = metadata.writesForces;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
   auto built = buildSimpleStepEntry(builder, metadata, *step, {}, {3});
@@ -506,6 +510,24 @@ static void checkNativeSimpleEntry() {
   trajectory.framesAtEnergies = true;
   auto frequent = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
   require(bool(frequent), "native frames-at-energy entry did not construct");
+  metadata.entry = "native_checkpoint_steps";
+  trajectory.checkpointIntervals = checkpointIntervals;
+  trajectory.frameIntervals = 2;
+  trajectory.framesAtEnergies = false;
+  auto checkpointed = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(bool(checkpointed), "native checkpoint entry did not construct");
+  auto segment = *checkpointed->getOps<scf::ForOp>().begin();
+  require(segment->hasAttr("mdrt.segment") && !segment->hasAttr("mdrt.fresh"),
+      "native checkpoint segment lost its neighbor boundary");
+  require(segment.getRegionIterArgs().size() == 5 + metadata.fields.size(),
+      "native checkpoint segment lost reordered parameter state");
+  unsigned calls = 0;
+  segment.walk([&](mdir::dyn::StepOp call) {
+    ++calls;
+    require(segment->isProperAncestor(call.getOperand(3).getDefiningOp()),
+        "native checkpoint step reads stale header masses");
+  });
+  require(calls == 2, "native checkpoint schedule lost a dynamics call");
   metadata.fields.clear();
   metadata.entry = "changed";
   require(module.lookupSymbol<func::FuncOp>("native_steps") == entry,

@@ -1325,15 +1325,13 @@ llvm::Error Builder::emitEntry() {
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       !system.topology && !isRestart() && !control.usesTime && !isTriclinic() &&
       !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
-      control.checkpointPeriod == 0 &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
       control.freeEnergyFile.empty() && control.observables.empty() && !program.tunableGradient &&
-      ((levels.size() == 1 && levels.front().name == "step") ||
-       (levels.size() == 2 && (levels.front().name == "energy" || levels.front().name == "frame") &&
-        levels.back().name == "step") ||
-       (levels.size() == 3 && levels[0].name == "frame" && levels[1].name == "energy" &&
-        levels[2].name == "step"));
+      levels.back().name == "step" && levels.size() <= 4 &&
+      llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
+        return level.name == "segment" || level.name == "frame" || level.name == "energy";
+      });
   if (nativeSteps) {
     mlir::OpBuilder ir(&termIR.getContext());
     auto *body = termIR.getModule().getBody();
@@ -1349,6 +1347,7 @@ llvm::Error Builder::emitEntry() {
     mdir::dyn::ProgramOp energy;
     config.framesAtEnergies = framesAtEnergies;
     for (const auto &level : levels) {
+      if (level.name == "segment") config.checkpointIntervals = level.count;
       if (level.name == "frame") config.frameIntervals = level.count;
       if (level.name == "energy") {
         config.energyIntervals = level.count;

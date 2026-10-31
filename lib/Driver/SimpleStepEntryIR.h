@@ -12,6 +12,7 @@ struct SimpleStepEntryIRConfig {
   bool periodic = true;
   std::optional<int64_t> frameIntervals;
   bool framesAtEnergies = false;
+  std::optional<int64_t> checkpointIntervals;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,
