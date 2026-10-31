@@ -43,6 +43,12 @@ mlir::Value buildConstraintForceVirial(
 struct ConstraintBond {
   unsigned first, second, length;
 };
+struct ConstraintTestInputs {
+  mlir::Value relation, positions, cell;
+  mlir::ValueRange parameters;
+};
+mlir::Value buildConstraintTest(mlir::OpBuilder &, const ConstraintTestInputs &,
+                                  llvm::ArrayRef<ConstraintBond>, bool flag, double tolerance);
 struct ConstraintPositionInputs {
   mlir::Value relation, positions, cell, oldPositions, masses;
   mlir::ValueRange parameters;

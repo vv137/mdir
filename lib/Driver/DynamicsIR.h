@@ -2,13 +2,23 @@
 #ifndef MDIR_LIB_DRIVER_DYNAMICSIR_H
 #define MDIR_LIB_DRIVER_DYNAMICSIR_H
 #include "mlir/IR/Value.h"
+#include "ConstraintIR.h"
+#include <vector>
 #include "mlir/IR/TypeRange.h"
 namespace mlir { class OpBuilder; }
 namespace mdir::dyn { class ProgramOp; }
 namespace mdir::driver::builder {
 mlir::Value buildDescentDirection(mlir::OpBuilder &, mlir::Value forces, mlir::Value masses);
-mdir::dyn::ProgramOp buildUnconstrainedDescent(mlir::OpBuilder &, mlir::TypeRange parameters,
-                                                double particles, bool timed);
+struct DescentConstraintGroupIR {
+  unsigned relation, arity;
+  std::vector<unsigned> parameters;
+  std::vector<ConstraintBond> bonds;
+  ConstraintPositionConfig position;
+  bool water, settlePosition;
+};
+mdir::dyn::ProgramOp buildNativeDescent(
+    mlir::OpBuilder &, mlir::TypeRange parameters, double particles, bool timed,
+    llvm::ArrayRef<DescentConstraintGroupIR> groups = {});
 mlir::Value buildDescentPositions(mlir::OpBuilder &, mlir::Value positions,
                                    mlir::Value gradient, mlir::Value distance,
                                    mlir::Value count, mlir::Value tiny);

@@ -1317,13 +1317,43 @@ void Builder::emitDescend() {
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
-  if (!sites && !constraints && !hasForceCorrections() && !hasHostEvaluation()) {
+  if (!sites && !hasForceCorrections() && !hasHostEvaluation()) {
     auto &context = termIR.getContext();
     mlir::OpBuilder builder(&context);
     builder.setInsertionPointToEnd(termIR.getModule().getBody());
     auto types = buildParameterTypes(context, program);
-    auto nativeProgram = buildUnconstrainedDescent(
-        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime);
+    auto relationSlot = [&](const Program::TupleSet &selected) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == &selected) return slot;
+        slot += 1 + set.fields.size();
+      }
+      llvm_unreachable("constraint set must belong to the program");
+    };
+    auto fieldSlot = [&](const Program::TupleSet &set, StringRef name) {
+      auto found = llvm::find_if(set.fields, [&](const auto &field) { return field.name == name; });
+      assert(found != set.fields.end() && "constraint parameter must exist");
+      return relationSlot(set) + 1 + unsigned(std::distance(set.fields.begin(), found));
+    };
+    std::vector<DescentConstraintGroupIR> groups;
+    ConstraintPositionConfig config{false, control.analyticBonds,
+        control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+        control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
+    if (settles) {
+      const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });
+      groups.push_back({relationSlot(set), 3, {fieldSlot(set, "doh"), fieldSlot(set, "dhh")},
+          {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}}, config, true, control.precision == Precision::Double});
+    }
+    for (const Program::TupleSet *set : shakeSets) {
+      DescentConstraintGroupIR group{relationSlot(*set), set->arity, {}, {}, config, false, false};
+      for (unsigned member = 1; member != set->arity; ++member) {
+        group.parameters.push_back(fieldSlot(*set, "d" + std::to_string(member)));
+        group.bonds.push_back({0, member, member - 1});
+      }
+      groups.push_back(std::move(group));
+    }
+    auto nativeProgram = buildNativeDescent(
+        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime, groups);
     // The module owns this complete native body. Only its top-level placement
     // crosses the temporary join; no argument or operation in it is reparsed.
     emitIRFragment("", {}, {}, {}, {},
