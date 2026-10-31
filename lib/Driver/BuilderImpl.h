@@ -339,6 +339,7 @@ public:
   virtual TermNativeResults build(const TermInputs &, mlir::OpBuilder &,
                                   const TermNativeEvaluation &) const = 0;
   virtual void emitDeclarations(const TermInputs &, TermIRWriter) const = 0;
+  virtual void buildDeclarations(const TermInputs &, mlir::OpBuilder &) const = 0;
   virtual std::string emit(const TermInputs &, TermIRWriter,
                            const TermEvaluation &) const = 0;
 };

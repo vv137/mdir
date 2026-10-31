@@ -176,6 +176,7 @@ public:
 
 private:
   void emitDeclarations(const TermInputs &, TermIRWriter) const override;
+  void buildDeclarations(const TermInputs &, mlir::OpBuilder &) const override;
 };
 } // namespace mdir::driver::builder
 
@@ -319,6 +320,57 @@ std::string ModelTermBuilder::emit(const TermInputs &context,
   return virial;
 }
 
+namespace {
+void buildModelDeclarations(mlir::OpBuilder &builder, bool edges, bool state64, bool force64) {
+using namespace mlir;
+auto loc = builder.getUnknownLoc();
+Type state =
+    state64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+Type force =
+    force64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+auto i32 = builder.getI32Type(), i64 = builder.getI64Type();
+auto dynamic = ShapedType::kDynamic;
+llvm::SmallVector<Type> inputs = {i64,
+                                  MemRefType::get({dynamic, 3}, state),
+                                  MemRefType::get({dynamic}, i32)};
+if (edges) {
+  inputs.push_back(MemRefType::get({dynamic, 5}, i32));
+  inputs.push_back(MemRefType::get({dynamic}, i32));
+  inputs.push_back(MemRefType::get({dynamic}, i32));
+  inputs.push_back(i64);
+}
+inputs.append(6, builder.getF64Type());
+inputs.append(2, i64);
+inputs.push_back(MemRefType::get({dynamic, 3}, force));
+std::string name =
+    std::string("mdrtModelEvaluate") + (edges ? "Edges" : "");
+for (bool energy : {false, true}) {
+  llvm::SmallVector<Type> arguments = inputs;
+  if (energy) {
+    arguments.push_back(MemRefType::get({1}, builder.getF64Type()));
+    arguments.push_back(MemRefType::get({9}, builder.getF64Type()));
+  }
+  auto type = builder.getFunctionType(arguments, {});
+  auto function = func::FuncOp::create(
+      builder, loc, name + (energy ? "Energy" : ""), type);
+  function.setPrivate();
+  function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  for (unsigned index : {1u, 2u})
+    function.setArgAttr(index, "mdrt.read_only", builder.getUnitAttr());
+  if (edges)
+    for (unsigned index : {3u, 4u, 5u})
+      function.setArgAttr(index, "mdrt.read_only",
+                          builder.getUnitAttr());
+}
+}
+} // namespace
+
+void ModelTermBuilder::buildDeclarations(const TermInputs &context, mlir::OpBuilder &builder) const {
+  if (context.getControl().models.empty()) return;
+  buildModelDeclarations(builder, state->edges, context.getStateElement() == Element::F64,
+      context.getForceElement() == Element::F64);
+}
+
 void ModelTermBuilder::emitDeclarations(const TermInputs &context,
                                         TermIRWriter emitIR) const {
   if (context.getControl().models.empty())
@@ -330,46 +382,7 @@ void ModelTermBuilder::emitDeclarations(const TermInputs &context,
       "", {}, {}, {}, {},
       [edges, state64, force64](mlir::OpBuilder &builder,
                                 mlir::ValueRange) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        Type state =
-            state64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
-        Type force =
-            force64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
-        auto i32 = builder.getI32Type(), i64 = builder.getI64Type();
-        auto dynamic = ShapedType::kDynamic;
-        llvm::SmallVector<Type> inputs = {i64,
-                                          MemRefType::get({dynamic, 3}, state),
-                                          MemRefType::get({dynamic}, i32)};
-        if (edges) {
-          inputs.push_back(MemRefType::get({dynamic, 5}, i32));
-          inputs.push_back(MemRefType::get({dynamic}, i32));
-          inputs.push_back(MemRefType::get({dynamic}, i32));
-          inputs.push_back(i64);
-        }
-        inputs.append(6, builder.getF64Type());
-        inputs.append(2, i64);
-        inputs.push_back(MemRefType::get({dynamic, 3}, force));
-        std::string name =
-            std::string("mdrtModelEvaluate") + (edges ? "Edges" : "");
-        for (bool energy : {false, true}) {
-          llvm::SmallVector<Type> arguments = inputs;
-          if (energy) {
-            arguments.push_back(MemRefType::get({1}, builder.getF64Type()));
-            arguments.push_back(MemRefType::get({9}, builder.getF64Type()));
-          }
-          auto type = builder.getFunctionType(arguments, {});
-          auto function = func::FuncOp::create(
-              builder, loc, name + (energy ? "Energy" : ""), type);
-          function.setPrivate();
-          function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-          for (unsigned index : {1u, 2u})
-            function.setArgAttr(index, "mdrt.read_only", builder.getUnitAttr());
-          if (edges)
-            for (unsigned index : {3u, 4u, 5u})
-              function.setArgAttr(index, "mdrt.read_only",
-                                  builder.getUnitAttr());
-        }
+        buildModelDeclarations(builder, edges, state64, force64);
         return {};
       });
 }

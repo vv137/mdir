@@ -1099,6 +1099,9 @@ llvm::Error Builder::emitEntry() {
     ir.setInsertionPointToEnd(moduleBody);
     size_t before = std::distance(moduleBody->begin(), moduleBody->end());
     emitRuntimeDeclarations(ir, declarations, false);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation)
+        role->buildDeclarations(*this, ir);
     emitRuntimeDeclarations(ir, declarations, true);
     SimpleFrameEntryIRConfig config;
     config.branchesStart = branchesStart();
