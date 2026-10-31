@@ -4,6 +4,7 @@
 #include "EntryBoundaryIR.h"
 #include "DynamicsIR.h"
 #include "OutputIR.h"
+#include "BarostatIR.h"
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -33,6 +34,9 @@ struct SimpleFrameEntryIRConfig {
   unsigned cellEdges = 3;
   bool stepMemory = false, leapfrog = false, brownian = false, coupled = false;
   std::optional<FrameThermostatIR> thermostat;
+  bool barostat = false, changesCell = false, scalesEveryStep = false, removesMotion = false;
+  std::optional<BarostatParameters> barostatParameters;
+  std::optional<std::array<unsigned, 3>> referenceEdges;
   bool topology = false;
   unsigned storedTerms = 0;
   std::optional<FreeEnergyOutputConfig> freeEnergy;
@@ -50,6 +54,6 @@ struct SimpleFrameEntryIRConfig {
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
     mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &,
     llvm::function_ref<FrameCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
-                                        EnergyResults)> complete = {});
+                                        EnergyResults, mlir::Value scale)> complete = {});
 }
 #endif

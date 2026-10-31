@@ -1091,8 +1091,7 @@ llvm::Error Builder::emitEntry() {
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&
-      !isRestart() && !scalesReference() && !changesCell() &&
-      !control.barostat &&
+      !isRestart() &&
       !hasHostEvaluation() &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
         const auto *role = term->getRoles().coordinateOutput;
@@ -1113,12 +1112,37 @@ llvm::Error Builder::emitEntry() {
     config.leapfrog = isLeapfrog();
     config.brownian = control.isBrownian();
     config.coupled = control.getCouplingPeriod() > 0;
+    config.barostat = bool(control.barostat);
+    config.changesCell = changesCell();
+    config.scalesEveryStep = scalesEveryStep();
+    config.removesMotion = control.comPeriod > 0;
+    if (scalesReference()) {
+      std::array<unsigned, 3> slots;
+      for (unsigned index = 0; index != 3; ++index) {
+        std::string name = "rest_edge" + std::to_string(index);
+        auto found = llvm::find_if(program.startValues,
+            [&](const auto &value) { return value.name == name; });
+        assert(found != program.startValues.end() && "reference edge must be an entry value");
+        slots[index] = std::distance(program.startValues.begin(), found);
+      }
+      config.referenceEdges = slots;
+    }
     if (config.coupled && control.thermostat) {
       double freedom = system.getDegreesOfFreedom();
       double target = 0.5 * freedom * units::boltzmann * control.temperature;
       double decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) *
           control.timestep / control.tauT);
       config.thermostat = FrameThermostatIR{static_cast<int64_t>(control.seed), freedom, target, decay};
+      if (control.barostat) {
+        double bar = 1.01325;
+        config.barostatParameters = BarostatParameters{
+            {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
+             control.compressibilities[2] / bar},
+            control.pressure * bar, control.compressibility / bar,
+            static_cast<double>(control.barostatPeriod) * control.timestep / control.tauP,
+            units::boltzmann * control.temperature, control.compressibilityZ / bar,
+            control.surfaceTension * control.surfaces * units::dynePerCmToBarNm};
+      }
     }
     config.cellEdges = getCellSize();
     config.topology = bool(system.topology);
@@ -1239,13 +1263,14 @@ llvm::Error Builder::emitEntry() {
         config.periods.push_back(steps);
         steps *= levels[index].count;
         if (index && levels[index - 1].name == "couple")
-          ++steps;
+          steps += usesTrotter() && !scalesEveryStep() ? 2 : 1;
         else if (index && levels[index - 1].name == "energy")
           steps += levels[index].name == "couple" ? control.getCouplingPeriod() : 1;
       }
     }
     auto entry = buildSimpleFrameEntry(ir, program, config,
-        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation) {
+        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
+            mlir::Value scale) {
           llvm::SmallVector<mlir::Value> stored;
           auto field = [&](StringRef name) -> mlir::Value {
             auto found = llvm::find_if(program.fields,
@@ -1258,7 +1283,7 @@ llvm::Error Builder::emitEntry() {
                 role && role->hasForceCorrection(*this)) {
               auto result = role->build(*this, at,
                   {state.positions, state.cell, evaluation.forces, evaluation.energy,
-                   evaluation.virial, {}, field});
+                   evaluation.virial, scale, field});
               evaluation = {result.energy, result.forces, result.virial};
               llvm::append_range(stored, result.storedTerms);
             }
