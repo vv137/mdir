@@ -226,3 +226,7 @@ contributions retain their original construction and accumulation order.
 
 Special 1–4 pair potentials use native tuple relations and fields, including
 charge-gradient products and the original LJ/Coulomb accumulation order.
+
+Custom tuple and centroid potentials also construct native bodies. Shared
+centroid geometry and expression kernels retain coordinate, parameter and
+observed-binding precedence; gradient seeds are actual boundary arguments.

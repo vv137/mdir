@@ -1,4 +1,5 @@
 // Custom tuple and centroid terms (D359, D361, #683).
+#include "PotentialIR.h"
 #include "BuilderImpl.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -32,12 +33,111 @@ struct CentroidTermIRConfig {
   std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
 };
 
+static mlir::Value buildCentroidContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const CentroidTermIRConfig &config) {
+using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        llvm::StringMap<Value> bindings, tables;
+        for (const auto &[name, value] : config.parameters)
+          bindings[name] = constant(value);
+        for (const auto &[name, slot] : config.externalBindings)
+          bindings[name] = values[slot];
+        for (const auto &[name, slot] : config.functionTables)
+          tables[name] = values[slot];
+        Value expression =
+            config.expression.build(builder, bindings, tables, config.termName);
+        Value kj = constant(units::energy);
+        return arith::MulFOp::create(builder, loc, expression, kj);
+
+}
+
+static mlir::Value buildTupleContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const TupleLoopIRConfig &config) {
+using namespace mlir;
+          auto loc = builder.getUnknownLoc();
+          DenseI32ArrayAttr kinds;
+          DenseI64ArrayAttr members;
+          mdir::md::getCoordinateAttrs(builder, config.coordinates, kinds,
+                                       members);
+          auto sum = mdir::md::SumTuplesOp::create(
+              builder, loc, builder.getF64Type(), values[0], values[1],
+              values[2], values.slice(3, config.gatheredCount),
+              values.slice(3 + config.gatheredCount,
+                           config.parameters.size() + config.gradients.size()),
+              kinds, members);
+          size_t coordinateCount = config.coordinates.size();
+          size_t parameterStart =
+              coordinateCount + config.gatheredCount * config.arity;
+          size_t count = parameterStart + config.parameters.size() +
+                         config.gradients.size();
+          llvm::SmallVector<Type> blockTypes(count, builder.getF64Type());
+          llvm::SmallVector<Location> locations(count, loc);
+          OpBuilder::InsertionGuard insertionGuard(builder);
+          Block *block =
+              builder.createBlock(&sum.getKernel(), {}, blockTypes, locations);
+          auto args = block->getArguments();
+          auto constant = [&](double value) -> Value {
+            return arith::ConstantOp::create(builder, loc,
+                                             builder.getF64FloatAttr(value));
+          };
+          llvm::StringMap<Value> bindings, tables;
+          Value scale;
+          if (config.scaleDistances)
+            scale = constant(1.0 / units::length);
+          for (size_t k = 0; k != coordinateCount; ++k) {
+            Value value = args[k];
+            if (config.coordinates[k].kind ==
+                mdir::md::CoordinateKind::Distance)
+              value = arith::MulFOp::create(builder, loc, value, scale);
+            bindings[config.coordinateNames[k]] = value;
+          }
+          for (size_t k = 0; k != config.parameters.size(); ++k)
+            bindings[config.parameters[k]] = args[parameterStart + k];
+          size_t gatherStart = coordinateCount;
+          for (auto [k, gradient] : llvm::enumerate(config.gradients)) {
+            auto parameter = llvm::find(config.parameters, gradient.parameter);
+            assert(parameter != config.parameters.end() &&
+                   "unknown tuple gradient parameter");
+            Value value =
+                args[parameterStart + (parameter - config.parameters.begin())];
+            Value selector =
+                args[parameterStart + config.parameters.size() + k];
+            Value zero = constant(0.0);
+            for (unsigned c = 0; c != gradient.count; ++c) {
+              Value number = constant(static_cast<double>(c));
+              Value equal = arith::CmpFOp::create(
+                  builder, loc, arith::CmpFPredicate::OEQ, selector, number);
+              Value derivative =
+                  args[gatherStart + c * config.arity + gradient.place];
+              Value selected = arith::SelectOp::create(builder, loc, equal,
+                                                       derivative, zero);
+              value = arith::AddFOp::create(builder, loc, value, selected);
+            }
+            bindings[gradient.parameter] = value;
+            gatherStart += gradient.count * config.arity;
+          }
+          for (const auto &[name, slot] : config.externalBindings)
+            bindings[name] = values[slot];
+          for (const auto &[name, slot] : config.functionTables)
+            tables[name] = values[slot];
+          Value expression = config.expression.build(builder, bindings, tables,
+                                                     config.termName);
+          Value kj = constant(units::energy);
+          Value energy = arith::MulFOp::create(builder, loc, expression, kj);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+          return sum.getResult();
+
+}
+
 namespace mdir::driver::builder {
 class TupleTermBuilder final : public TermBuilder {
 public:
   TupleTermBuilder() {
     potentialMask = TermInputs::TupleTerms;
     alchemicalMask = TermInputs::TupleTerms;
+    nativePotentialMask = potentialMask;
   }
   unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
                             bool) const override {
@@ -56,6 +156,8 @@ public:
               fillTupleParameter(field, term);
     }
   }
+  void buildTopologyPotential(const TermInputs &, mlir::OpBuilder &, const TermNativeTopology &,
+      const PotentialSelection &, llvm::function_ref<void(mlir::Value)>) const override;
   void emitTopologyPotential(TermEmission &context,
       const PotentialSelection &selection,
       const TermPotentialAddition & add) const override;
@@ -281,23 +383,7 @@ void TupleTermBuilder::emitCentroidTerm(TermEmission &context, size_t index, con
       "  ", {result}, {"f64"}, operands, types,
       [config](mlir::OpBuilder &builder,
                mlir::ValueRange values) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        auto constant = [&](double value) -> Value {
-          return arith::ConstantOp::create(builder, loc,
-                                           builder.getF64FloatAttr(value));
-        };
-        llvm::StringMap<Value> bindings, tables;
-        for (const auto &[name, value] : config.parameters)
-          bindings[name] = constant(value);
-        for (const auto &[name, slot] : config.externalBindings)
-          bindings[name] = values[slot];
-        for (const auto &[name, slot] : config.functionTables)
-          tables[name] = values[slot];
-        Value expression =
-            config.expression.build(builder, bindings, tables, config.termName);
-        Value kj = constant(units::energy);
-        return {arith::MulFOp::create(builder, loc, expression, kj)};
+        return {buildCentroidContribution(builder, values, config)};
       });
 }
 
@@ -406,80 +492,115 @@ void TupleTermBuilder::emitTopologyPotential(TermEmission &context,
         "  ", {result}, {"f64"}, operands, types,
         [config](mlir::OpBuilder &builder,
                  mlir::ValueRange values) -> TermIRValues {
-          using namespace mlir;
-          auto loc = builder.getUnknownLoc();
-          DenseI32ArrayAttr kinds;
-          DenseI64ArrayAttr members;
-          mdir::md::getCoordinateAttrs(builder, config.coordinates, kinds,
-                                       members);
-          auto sum = mdir::md::SumTuplesOp::create(
-              builder, loc, builder.getF64Type(), values[0], values[1],
-              values[2], values.slice(3, config.gatheredCount),
-              values.slice(3 + config.gatheredCount,
-                           config.parameters.size() + config.gradients.size()),
-              kinds, members);
-          size_t coordinateCount = config.coordinates.size();
-          size_t parameterStart =
-              coordinateCount + config.gatheredCount * config.arity;
-          size_t count = parameterStart + config.parameters.size() +
-                         config.gradients.size();
-          llvm::SmallVector<Type> blockTypes(count, builder.getF64Type());
-          llvm::SmallVector<Location> locations(count, loc);
-          Block *block =
-              builder.createBlock(&sum.getKernel(), {}, blockTypes, locations);
-          auto args = block->getArguments();
-          auto constant = [&](double value) -> Value {
-            return arith::ConstantOp::create(builder, loc,
-                                             builder.getF64FloatAttr(value));
-          };
-          llvm::StringMap<Value> bindings, tables;
-          Value scale;
-          if (config.scaleDistances)
-            scale = constant(1.0 / units::length);
-          for (size_t k = 0; k != coordinateCount; ++k) {
-            Value value = args[k];
-            if (config.coordinates[k].kind ==
-                mdir::md::CoordinateKind::Distance)
-              value = arith::MulFOp::create(builder, loc, value, scale);
-            bindings[config.coordinateNames[k]] = value;
-          }
-          for (size_t k = 0; k != config.parameters.size(); ++k)
-            bindings[config.parameters[k]] = args[parameterStart + k];
-          size_t gatherStart = coordinateCount;
-          for (auto [k, gradient] : llvm::enumerate(config.gradients)) {
-            auto parameter = llvm::find(config.parameters, gradient.parameter);
-            assert(parameter != config.parameters.end() &&
-                   "unknown tuple gradient parameter");
-            Value value =
-                args[parameterStart + (parameter - config.parameters.begin())];
-            Value selector =
-                args[parameterStart + config.parameters.size() + k];
-            Value zero = constant(0.0);
-            for (unsigned c = 0; c != gradient.count; ++c) {
-              Value number = constant(static_cast<double>(c));
-              Value equal = arith::CmpFOp::create(
-                  builder, loc, arith::CmpFPredicate::OEQ, selector, number);
-              Value derivative =
-                  args[gatherStart + c * config.arity + gradient.place];
-              Value selected = arith::SelectOp::create(builder, loc, equal,
-                                                       derivative, zero);
-              value = arith::AddFOp::create(builder, loc, value, selected);
-            }
-            bindings[gradient.parameter] = value;
-            gatherStart += gradient.count * config.arity;
-          }
-          for (const auto &[name, slot] : config.externalBindings)
-            bindings[name] = values[slot];
-          for (const auto &[name, slot] : config.functionTables)
-            tables[name] = values[slot];
-          Value expression = config.expression.build(builder, bindings, tables,
-                                                     config.termName);
-          Value kj = constant(units::energy);
-          Value energy = arith::MulFOp::create(builder, loc, expression, kj);
-          mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-          return {sum.getResult()};
+          return {buildTupleContribution(builder, values, config)};
         });
     add(set);
   }
 
+}
+
+void TupleTermBuilder::buildTopologyPotential(const TermInputs &context,
+    mlir::OpBuilder &builder, const TermNativeTopology &state,
+    const PotentialSelection &selection, llvm::function_ref<void(mlir::Value)> add) const {
+  const Control &control = context.getControl();
+  for (auto [index, term] : llvm::enumerate(context.getTopology().tupleTerms)) {
+    if (!(selection.terms & TermInputs::TupleTerms) ||
+        (selection.tupleTerm >= 0 && static_cast<int>(index) != selection.tupleTerm) ||
+        !context.includesTuple(index) ||
+        (selection.alchemicalOnly && !context.usesLambda(term.expression))) continue;
+    llvm::StringMap<mlir::Value> variables;
+    if (term.isCentroid()) {
+      std::string set = "cg_" + term.name;
+      TermIRValues geometry{state.relation(set), state.physical.positions, state.physical.cell};
+      for (size_t slot = 0; slot + 1 < 2 * term.centers.size(); ++slot)
+        geometry.push_back(state.tupleField(set, "w" + std::to_string(slot)));
+      auto coords = buildCentroidCoordinates(builder, geometry, term.centers.size(), term.arity);
+      if (term.arity == 2) {
+        llvm::SmallVector<StringRef> keys{"r", "dx", "dy", "dz"};
+        for (auto [slot, key] : llvm::enumerate(keys)) variables[key] = coords[slot];
+      } else variables["theta"] = coords[0];
+      auto expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
+      CentroidTermIRConfig config(expression.prepareIR());
+      config.termName = term.name;
+      for (const auto &[name, values] : term.parameters) {
+        config.parameters.emplace_back(name, values.front());
+        variables[name] = {};
+      }
+      if (control.usesTime) variables["t"] = state.physical.time;
+      state.bindLambdas(variables);
+      state.bindObserved(term.name, variables);
+      llvm::SmallVector<StringRef> supplied;
+      for (const auto &entry : variables) supplied.push_back(entry.getKey());
+      auto inputs = config.expression.getInputs(supplied);
+      TermIRValues values;
+      for (const auto &name : inputs.names)
+        if (auto value = variables.lookup(name)) {
+          config.externalBindings.emplace_back(name, values.size()); values.push_back(value);
+        }
+      for (const auto &name : inputs.tables) {
+        config.functionTables.emplace_back(name, values.size()); values.push_back(state.physical.table(name));
+      }
+      add(buildCentroidContribution(builder, values, config));
+      continue;
+    }
+    std::string set = "custom_" + term.name;
+    Expression expression =
+        llvm::cantFail(Expression::parse(term.expression, control.functions));
+    TupleLoopIRConfig config(expression.prepareIR());
+    config.termName = term.name;
+    config.arity = term.arity;
+    config.scaleDistances = term.isCompound() || term.arity == 2;
+    if (term.isCompound()) {
+      for (const auto &coordinate : term.coordinates) {
+        auto kind = mdir::md::symbolizeCoordinateKind(coordinate.kind);
+        assert(kind && "unknown validated tuple coordinate");
+        mdir::md::Coordinate item{*kind, {}};
+        item.members.append(coordinate.places.begin(), coordinate.places.end());
+        config.coordinates.push_back(std::move(item));
+        config.coordinateNames.push_back(coordinate.name);
+      }
+    } else {
+      mdir::md::Coordinate coordinate;
+      coordinate.kind = term.arity == 2   ? mdir::md::CoordinateKind::Distance
+                        : term.arity == 3 ? mdir::md::CoordinateKind::Angle
+                                          : mdir::md::CoordinateKind::Dihedral;
+      for (unsigned k = 0; k != term.arity; ++k)
+        coordinate.members.push_back(k);
+      config.coordinates.push_back(std::move(coordinate));
+      config.coordinateNames.push_back(term.getVariable().str());
+    }
+    if (context.hasGradientArguments())
+      for (const TupleGradient &gradient : context.getTupleGradients())
+        if (gradient.term == index)
+          config.gradients.push_back(gradient);
+
+    TermIRValues values{state.relation(set), state.physical.positions, state.physical.cell};
+    for (const auto &gradient : config.gradients)
+      for (unsigned c = 0; c != gradient.count; ++c)
+        values.push_back(state.gradientSeed(gradient.first + c));
+    config.gatheredCount = values.size() - 3;
+    for (const auto &[name, data] : term.parameters) {
+      config.parameters.push_back(name);
+      values.push_back(state.tupleField(set, name));
+    }
+    for (const auto &gradient : config.gradients)
+      values.push_back(state.tupleField(set, "tgc_" + gradient.parameter));
+    for (const auto &name : config.coordinateNames) variables[name] = {};
+    if (control.usesTime) variables["t"] = state.physical.time;
+    state.bindLambdas(variables);
+    for (const auto &name : config.parameters) variables[name] = {};
+    for (const auto &gradient : config.gradients) variables[gradient.parameter] = {};
+    state.bindObserved(term.name, variables);
+    llvm::SmallVector<StringRef> supplied;
+    for (const auto &entry : variables) supplied.push_back(entry.getKey());
+    auto inputs = config.expression.getInputs(supplied);
+    for (const auto &name : inputs.names)
+      if (auto value = variables.lookup(name)) {
+        config.externalBindings.emplace_back(name, values.size()); values.push_back(value);
+      }
+    for (const auto &name : inputs.tables) {
+      config.functionTables.emplace_back(name, values.size()); values.push_back(state.physical.table(name));
+    }
+    add(buildTupleContribution(builder, values, config));
+  }
 }
