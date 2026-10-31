@@ -1230,32 +1230,65 @@ void Builder::emitEntry() {
     os << ", %" << value.name << ": f64";
   os << ") {\n";
 
-  os << "  %c0 = arith.constant 0 : index\n"
-     << "  %c1 = arith.constant 1 : index\n";
+  emitIRFragment(
+      "  ", {"%c0", "%c1"}, {"index", "index"}, {}, {},
+      [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        mlir::Value zero = mlir::arith::ConstantIndexOp::create(builder, loc, 0);
+        mlir::Value one = mlir::arith::ConstantIndexOp::create(builder, loc, 1);
+        return {zero, one};
+      });
   if (branchesStart())
-    os << "  %first_none = arith.constant 0 : i64\n"
-       << "  %is_first = arith.cmpi ne, %first_call, %first_none : i64\n";
+    emitIRFragment(
+        "  ", {"%is_first"}, {"i1"}, {"%first_call"}, {"i64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value none = mlir::arith::ConstantIntOp::create(builder, loc, 0, 64);
+          return {mlir::arith::CmpIOp::create(
+              builder, loc, mlir::arith::CmpIPredicate::ne, values[0], none)};
+        });
   // The time of the first step, which the evaluations at the start take
   // (D145); a minimization takes 0.
   if (control.usesTime) {
     if (control.minimize)
-      os << "  %time0 = arith.constant 0.0 : f64\n";
+      emitIRFragment(
+          "  ", {"%time0"}, {"f64"}, {}, {},
+          [](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            return {mlir::arith::ConstantOp::create(
+                builder, builder.getUnknownLoc(), builder.getF64FloatAttr(0.0))};
+          });
     else
-      os << "  %time0_steps = arith.sitofp %start : i64 to f64\n"
-         << "  %time0 = arith.mulf %time0_steps, %dt : f64\n";
+      emitIRFragment(
+          "  ", {"%time0"}, {"f64"}, {"%start", "%dt"}, {"i64", "f64"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            return {buildSimulationTime(builder, values[0], values[1])};
+          });
   }
   // The number of the last step taken, which keys the random numbers of
   // Langevin dynamics (D135).
   if (needsStepNumber())
-    os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
-       << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
-       << "  %noise_one = arith.constant 1 : i64\n";
+    emitIRFragment(
+        "  ", {"%noise_memory", "%noise_one"}, {"memref<1xi64>", "i64"},
+        {"%start", "%c0"}, {"i64", "index"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value memory = mlir::memref::AllocaOp::create(
+              builder, loc, mlir::MemRefType::get({1}, builder.getI64Type()));
+          mlir::memref::StoreOp::create(builder, loc, values[0], memory, values[1]);
+          mlir::Value one = mlir::arith::ConstantIntOp::create(builder, loc, 1, 64);
+          return {memory, one};
+        });
   // A minimization has loops of its own (emitMinimization), and a program
   // of segments takes its counts in the loop over parts (emitPartCounts).
   if (!control.segments) {
-    for (auto [index, level] : llvm::enumerate(levels))
-      os << "  %n" << index << " = arith.constant " << level.count
-         << " : index\n";
+    for (auto [index, level] : llvm::enumerate(levels)) {
+      std::string result = "%n" + std::to_string(index);
+      emitIRFragment(
+          "  ", {result}, {"index"}, {}, {},
+          [count = level.count](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+            return {mlir::arith::ConstantIndexOp::create(builder, builder.getUnknownLoc(), count)};
+          });
+    }
   }
   // The number of steps in one iteration of each loop. An iteration of
   // the loop over energy intervals takes one step after its loop over
@@ -1265,7 +1298,12 @@ void Builder::emitEntry() {
   // periods.
   int64_t steps = 1;
   for (unsigned i = control.segments ? 0 : levels.size(); i-- != 0;) {
-    os << "  %per" << i << " = arith.constant " << steps << " : index\n";
+    std::string result = "%per" + std::to_string(i);
+    emitIRFragment(
+        "  ", {result}, {"index"}, {}, {},
+        [steps](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          return {mlir::arith::ConstantIndexOp::create(builder, builder.getUnknownLoc(), steps)};
+        });
     steps *= levels[i].count;
     if (i == 0)
       continue;
@@ -1276,6 +1314,23 @@ void Builder::emitEntry() {
       steps += levels[i].name == "couple" ? control.getCouplingPeriod() : 1;
   }
 
+  // A field's logical element type is independent of its storage precision.
+  auto emitFieldBuffer = [&](StringRef result, StringRef input,
+                             StringRef storage, StringRef signature,
+                             unsigned components, bool integer,
+                             StringRef set = "atoms") {
+    emitIRFragment(
+        "  ", {result}, {signature}, {input}, {storage},
+        [components, integer, set = set.str()](mlir::OpBuilder &builder,
+                                               mlir::ValueRange values) -> TermIRValues {
+          mlir::Type element = integer ? mlir::Type(builder.getI32Type())
+                                       : mlir::Type(builder.getF64Type());
+          auto type = mdir::md::FieldType::get(
+              builder.getContext(), mlir::FlatSymbolRefAttr::get(builder.getContext(), set),
+              components, element);
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+  };
   // The fields as the buffers hold them, and in the order of the positions
   // if the run keeps that order.
   // A program of segments takes the forces and the velocities of the last
@@ -1290,30 +1345,52 @@ void Builder::emitEntry() {
       branchesStart() ? "%fg" : "%f0";
   std::string given = program.reorders ? "_in" : "";
   if (changesCell()) {
-    // Where the barostat keeps the cell, on the host.
-    os << "  %box_memory = memref.alloca() : " << getBoxMemoryType() << "\n";
-    // With a scaling every step, the diagonals of the virial and of that of
-    // the rigid groups, and the kinetic energy of each axis without the
-    // center of mass, of the state that the last step left (D92, D119).
-    if (scalesEveryStep())
-      os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
-    // A triclinic cell keeps its tilts after its diagonal (I3 of
-    // docs/triclinic.md: the barostat scales them with their columns).
-    // The tilts at the start are arguments of the entry
-    // (collectStartValues).
-    static const char *const initial[] = {"%lx", "%ly", "%lz",
-                                          "%tilt_bx", "%tilt_cx", "%tilt_cy"};
-    for (int k = 0; k != getCellSize(); ++k)
-      os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
-         << "  memref.store " << initial[k] << ", %box_memory[%c_edge" << k
-         << "] : " << getBoxMemoryType() << "\n";
+    static const char *const initial[] = {"%lx", "%ly", "%lz", "%tilt_bx", "%tilt_cx", "%tilt_cy"};
+    unsigned edgeCount = getCellSize();
+    std::vector<std::string> outputs{"%box_memory"}, signatures{getBoxMemoryType()};
+    if (scalesEveryStep()) {
+      outputs.push_back("%trotter_memory");
+      signatures.push_back("memref<9xf64>");
+    }
+    for (unsigned k = 0; k != edgeCount; ++k) {
+      outputs.push_back("%c_edge" + std::to_string(k));
+      signatures.push_back("index");
+    }
+    llvm::SmallVector<StringRef> names, types;
+    for (const auto &name : outputs) names.push_back(name);
+    for (const auto &type : signatures) types.push_back(type);
+    llvm::SmallVector<StringRef> edges(initial, initial + edgeCount);
+    llvm::SmallVector<StringRef> edgeTypes(edgeCount, "f64");
+    emitIRFragment(
+        "  ", names, types, edges, edgeTypes,
+        [edgeCount, trotter = scalesEveryStep()](mlir::OpBuilder &builder,
+                                                  mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value memory = mlir::memref::AllocaOp::create(
+              builder, loc, mlir::MemRefType::get({int64_t(edgeCount)}, builder.getF64Type()));
+          TermIRValues results{memory};
+          if (trotter)
+            results.push_back(mlir::memref::AllocaOp::create(
+                builder, loc, mlir::MemRefType::get({9}, builder.getF64Type())));
+          for (unsigned k = 0; k != edgeCount; ++k) {
+            mlir::Value index = mlir::arith::ConstantIndexOp::create(builder, loc, k);
+            mlir::memref::StoreOp::create(builder, loc, values[k], memory, index);
+            results.push_back(index);
+          }
+          return results;
+        });
   }
   if (scalesReference())
     // The edges of the cell of the file, which the reference positions of
     // the restraints are for, arguments of the entry (collectStartValues);
     // they scale with the cell, axis by axis.
-    os << "  %rest_edges = vector.from_elements %rest_edge0, %rest_edge1, "
-          "%rest_edge2 : vector<3xf64>\n";
+    emitIRFragment(
+        "  ", {"%rest_edges"}, {"vector<3xf64>"},
+        {"%rest_edge0", "%rest_edge1", "%rest_edge2"}, {"f64", "f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          return {mlir::vector::FromElementsOp::create(builder, builder.getUnknownLoc(), vec, values)};
+        });
   // A program of frames (D251) takes the cell and the
   // positions of each frame in its loop over frames, where this text goes:
   // the boundary gives the buffer of the host that holds the positions of
@@ -1342,52 +1419,73 @@ void Builder::emitEntry() {
   } else {
     if (scalesReference())
       emitReferenceScale("  ", "%rest_scale", "%lx", "%ly", "%lz");
-    if (isTriclinic()) {
-      os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
-            "%tilt_cy\n";
-    } else
-      os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
+    llvm::SmallVector<StringRef> edges{"%lx", "%ly", "%lz"};
+    if (isTriclinic())
+      edges.append({"%tilt_bx", "%tilt_cx", "%tilt_cy"});
+    llvm::SmallVector<StringRef> edgeTypes(edges.size(), "f64");
+    emitIRFragment(
+        "  ", {"%cell"}, {"!md.cell"}, edges, edgeTypes,
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {buildCell(builder, values)};
+        });
   }
-  os << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
-     << " = mdrt.from_buffer "
-     << (control.frames ? "%frame_positions" : "%positions")
-     << " : memref<?x3x" << state << "> to !vec\n";
+  std::string positionName = "%x" + std::string(program.reorders ? "_in" : "0") +
+                             (hasSites() ? "u" : "");
+  emitFieldBuffer(positionName, control.frames ? "%frame_positions" : "%positions",
+                  ("memref<?x3x" + state + ">").str(), "!vec", 3, false);
   if (control.frames) {
     os.flush();
     frameHead = program.module.substr(frameMark);
     program.module.resize(frameMark);
   }
-  os << "  " << (program.reorders ? "%v_in" : velocities)
-     << " = mdrt.from_buffer %velocities : memref<?x3x" << state
-     << "> to !vec\n"
-     << "  %m" << given << " = mdrt.from_buffer %masses : memref<?x" << mass
-     << "> to !real\n";
-  for (const Program::Field &field : program.fields)
-    os << "  %p" << given << "_" << field.name << " = mdrt.from_buffer %b_"
-       << field.name << " : memref<?x"
-       << (field.isInteger ? StringRef("i32") : parameter) << "> to "
-       << getFieldType(field) << "\n";
-  for (const Program::Table &table : program.tables)
-    os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
-       << " : memref<?x?xf64> to " << table.getType() << "\n";
-  for (const Program::TupleSet &set : program.tupleSets) {
-    // The members in the order of the files, which a new order of the
-    // particles renumbers.
-    os << "  %r" << (program.reorders ? "o" : "") << "_" << set.name
-       << " = mdrt.from_buffer %br_" << set.name << " : memref<?x"
-       << set.arity << "xi32> to !rel_" << set.name << "\n";
-    for (const Program::Field &field : set.fields)
-      os << "  %f_" << set.name << "_" << field.name
-         << " = mdrt.from_buffer %bf_" << set.name << "_" << field.name
-         << " : memref<?xf64> to !of_" << set.name << "\n";
+  emitFieldBuffer(program.reorders ? "%v_in" : velocities, "%velocities",
+                  ("memref<?x3x" + state + ">").str(), "!vec", 3, false);
+  emitFieldBuffer("%m" + given, "%masses", ("memref<?x" + mass + ">").str(),
+                  "!real", 1, false);
+  for (const Program::Field &field : program.fields) {
+    StringRef element = field.isInteger ? StringRef("i32") : parameter;
+    emitFieldBuffer("%p" + given + "_" + field.name, "%b_" + field.name,
+                    ("memref<?x" + element + ">").str(), getFieldType(field),
+                    1, field.isInteger);
   }
-  os << "  %id" << given
-     << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
-  // A run that continues an earlier one has the forces of the step before.
+  for (const Program::Table &table : program.tables) {
+    emitIRFragment(
+        "  ", {"%t_" + table.name}, {table.getType()}, {"%bt_" + table.name},
+        {"memref<?x?xf64>"},
+        [symmetric = table.isSquare()](mlir::OpBuilder &builder,
+                                         mlir::ValueRange values) -> TermIRValues {
+          auto type = mdir::md::TableType::get(
+              builder.getContext(), 2, builder.getF64Type(), symmetric);
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+  }
+  for (const Program::TupleSet &set : program.tupleSets) {
+    std::string result = "%r" + std::string(program.reorders ? "o" : "") + "_" + set.name;
+    std::string relation = "!rel_" + set.name;
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    emitIRFragment(
+        "  ", {result}, {relation}, {"%br_" + set.name},
+        {"memref<?x" + std::to_string(set.arity) + "xi32>"},
+        [name = set.name, arity = set.arity, orientation](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto ctx = builder.getContext();
+          auto type = mdir::md::RelationType::get(
+              ctx, mlir::FlatSymbolRefAttr::get(ctx, "atoms"), arity, orientation,
+              mlir::FlatSymbolRefAttr::get(ctx, name));
+          return {mdir::mdrt::FromBufferOp::create(builder, builder.getUnknownLoc(), type, values[0])};
+        });
+    for (const Program::Field &field : set.fields)
+      emitFieldBuffer("%f_" + set.name + "_" + field.name,
+                      "%bf_" + set.name + "_" + field.name, "memref<?xf64>",
+                      "!of_" + set.name, 1, false, set.name);
+  }
+  emitFieldBuffer("%id" + given, "%identities", "memref<?xi32>", "!ids", 1, true);
   if (givenForces)
-    os << "  " << (program.reorders ? "%f_in" : givenForcesName)
-       << " = mdrt.from_buffer %forces : memref<?x3x" << force
-       << "> to !vec\n";
+    emitFieldBuffer(program.reorders ? "%f_in" : givenForcesName, "%forces",
+                    ("memref<?x3x" + force + ">").str(), "!vec", 3, false);
   os.flush();
   frameMark = program.module.size();
   // The virtual sites where their atoms put them, whatever the file says.
@@ -1414,13 +1512,22 @@ void Builder::emitEntry() {
     // the thermostat the key of the random numbers, the degrees of freedom,
     // the mean kinetic energy at the temperature of the bath, and how much
     // of the kinetic energy is kept over one period.
-    os << "  %couple_half = arith.constant 5.0e-01 : f64\n"
-       << "  %total_mass = md.sum_particles gather(%m" << given
-       << " : !real) {\n"
-       << "  ^bb0(%m_i: f64):\n"
-       << "    %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
-       << "    md.yield %mb : vector<3xf64>\n"
-       << "  } : vector<3xf64>\n";
+    emitIRFragment(
+        "  ", {"%couple_half", "%total_mass"}, {"f64", "vector<3xf64>"},
+        {"%m" + given}, {"!real"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          auto total = mdir::md::SumParticlesOp::create(builder, loc, vec, values);
+          {
+            mlir::OpBuilder::InsertionGuard guard(builder);
+            auto args = builder.createBlock(&total.getKernel(), {}, {builder.getF64Type()}, {loc})->getArguments();
+            mlir::Value mass = mlir::vector::BroadcastOp::create(builder, loc, vec, args[0]);
+            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{mass});
+          }
+          return {half, total.getResult()};
+        });
     if (control.thermostat) {
       // The degrees of freedom of the log. The momentum stays 0 with or
       // without its removal, from velocities that begin with none.
@@ -1473,8 +1580,13 @@ void Builder::emitEntry() {
   }
 
   if (isLeapfrog() && control.barostat)
-    os << "  %c_half_back = arith.constant -5.0e-01 : f64\n"
-       << "  %half_back = arith.mulf %c_half_back, %dt : f64\n";
+    emitIRFragment(
+        "  ", {"%half_back"}, {"f64"}, {"%dt"}, {"f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value factor = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(-0.5));
+          return {mlir::arith::MulFOp::create(builder, loc, factor, values[0])};
+        });
 
   // The energy, the forces, and the virial of the state at the start, as
   // %u0, %f0, and %w0; returns the name of the virial.

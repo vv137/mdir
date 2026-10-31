@@ -1412,6 +1412,11 @@ Frame evaluation presence is checked on actual operations after native
 recipes materialize, rather than by searching the generated assembly for
 an evaluation token. The existing frame-source guard remains transitional.
 
+Entry indices, start/time/noise state, loop counts, cell memory and edge
+indices, reference edges, buffer imports, total mass and the backward half
+step use native operations. Logical field, table and relation types are
+constructed from their semantic metadata, preserving storage precision.
+
 ## 3. Decided
 
 | # | Question | Decision |
