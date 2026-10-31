@@ -266,8 +266,9 @@ operations. A completed-loop provenance check rejects captured entry positions,
 cell expressions and box-memory aliases while allowing header initialization.
 Pull output consumes actual relation and tuple-field bindings through its narrow
 native output role; both entry paths share the coordinate/force output core.
-The obsolete centroid SSA-name formatter is removed. Hosted evaluation remains
-in the other entry path.
+The obsolete centroid SSA-name formatter is removed. Hosted runtime declarations
+also share a native construction core across both declaration phases; hosted
+evaluation and other entry scopes remain in the other entry path.
 Restraint energy columns receive actual stored contribution values from the adapter.
 `EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
 `EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
