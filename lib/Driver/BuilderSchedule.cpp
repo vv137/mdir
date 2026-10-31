@@ -3,6 +3,8 @@
 // minimization (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "mdir/Dialect/Dyn/DynOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "PotentialIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -158,13 +160,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 
   if (isStepLoop) {
-    std::string noise1 = emitNoiseValue(inner);
-    os << inner << getValues("b" + here) << " = dyn.step @step(";
-    os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
-         << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise1
-         << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-         << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
+    emitDynamicsStep(inner, "step", "%xa" + here, "%va" + here, "%fa" + here,
+                         cellName, "", {"%xb" + here, "%vb" + here, "%fb" + here},
+                         {"!vec", "!vec", "!vec"});
     os << inner << "scf.yield " << getValues("b" + here) << " : " << state
        << "\n";
   } else {
@@ -350,16 +348,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         v = "%v" + last;
       } else {
         // The step whose pressure gives the strain.
-        std::string noise2 = emitNoiseValue(inner);
-        os << inner << getValues(a) << ", %w" << a << ", %gw" << a
-           << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_virial(%x"
-           << last << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << noise2 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, vector<9xf64>, vector<3xf64>"
-           << (leapfrog ? ", !vec" : "") << ")\n";
+        std::vector<std::string> results{"%x" + a, "%v" + a, "%f" + a, "%w" + a, "%gw" + a};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "vector<9xf64>", "vector<3xf64>"};
+        if (leapfrog) { results.push_back("%vc" + a); types.push_back("!vec"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, "step_virial", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
         trace = "%dg" + a;
         emitDiagonal(trace, "%w" + a, inner);
         groups = "%gw" + a;
@@ -380,27 +375,19 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       bool virial = withEnergy || countsAfterScaling();
       bool measuredHere =
           measuresHalfSteps() && (withEnergy || measuresCoupling());
-      std::string noise3 = emitNoiseValue(inner);
-      os << inner << "%x" << n << ", %v" << n << ", %f" << n
-         << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
-         << (virial ? ", %gw" + n : "")
-         << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
-         << (measuredHere ? ", %khs" + n : "")
-         << (withEnergy && reportsSolvent() ? ", %kws" + n : "")
-         << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
-         << "(" << x << ", " << v << ", %f"
-         << (scalesEveryStep() ? last : a) << ", " << massName << ", "
-         << scaling.cell << ", %dt, " << scaling.mu << getScaleValue()
-         << getFieldValues(fieldPrefix) << noise3 << ")\n"
-         << inner
-         << "    : (!vec, !vec, !vec, !real, !md.cell, f64, vector<3xf64>"
-         << getScaleType() << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
-         << (withEnergy ? ", f64" : "")
-         << (virial ? ", vector<9xf64>, vector<3xf64>" : "")
-         << (leapfrog ? ", !vec" : "") << ", vector<3xf64>"
-         << (measuredHere ? ", vector<3xf64>" : "")
-         << (withEnergy && reportsSolvent() ? ", vector<3xf64>" : "")
-         << ")\n";
+      std::vector<std::string> results{"%x" + n, "%v" + n, "%f" + n};
+      std::vector<std::string> types{"!vec", "!vec", "!vec"};
+      if (withEnergy) { results.push_back("%u" + n); types.push_back("f64"); }
+      if (virial) { results.push_back("%w" + n); types.push_back("vector<9xf64>"); }
+      if (virial) { results.push_back("%gw" + n); types.push_back("vector<3xf64>"); }
+      if (leapfrog) { results.push_back("%vc" + n); types.push_back("!vec"); }
+      if (true) { results.push_back("%kh" + n); types.push_back("vector<3xf64>"); }
+      if (measuredHere) { results.push_back("%khs" + n); types.push_back("vector<3xf64>"); }
+      if (withEnergy && reportsSolvent()) { results.push_back("%kws" + n); types.push_back("vector<3xf64>"); }
+      llvm::SmallVector<StringRef> names, signatures;
+      for (const auto &name : results) names.push_back(name);
+      for (const auto &type : types) signatures.push_back(type);
+      emitDynamicsStep(inner, withEnergy ? "step_trotter_energy" : "step_trotter", x, v, "%f" + (scalesEveryStep() ? last : a), scaling.cell, scaling.mu, names, signatures);
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
       if (virial)
@@ -436,21 +423,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // the positions, which the step of energy returns.
         std::string current = isLeapfrog() ? "%vck" + here : "";
         bool measured = measuresCoupling();
-        std::string noise4 = emitNoiseValue(inner);
-        os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
-           << here << ", %gwk" << here
-           << (isLeapfrog() ? ", " + current : "")
-           << (measured ? ", %khsk" + here : "")
-           << " = dyn.step @step_"
-           << (measuresHalfSteps() ? "coupling" : "energy") << "(%x" << last
-           << ", %v" << last << ", %f" << last << ", " << massName << ", "
-           << cellName
-           << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise4 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>, vector<3xf64>"
-           << (isLeapfrog() ? ", !vec" : "")
-           << (measured ? ", vector<3xf64>" : "") << ")\n";
+        std::vector<std::string> results{"%x" + ("k" + here), "%v" + ("k" + here), "%f" + ("k" + here), "%uk" + here, "%wk" + here, "%gwk" + here};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>", "vector<3xf64>"};
+        if (isLeapfrog()) { results.push_back(current); types.push_back("!vec"); }
+        if (measured) { results.push_back("%khsk" + here); types.push_back("vector<3xf64>"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, measuresHalfSteps() ? "step_coupling" : "step_energy", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
         trace = "%dgk" + here;
         emitDiagonal(trace, "%wk" + here, inner);
         emitStep();
@@ -470,18 +450,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // measures the half steps (D263).
       bool measured = measuresCoupling();
       bool ahead = isLeapfrog() && rescalesVelocities();
-      std::string noise5 = emitNoiseValue(inner);
-      os << inner << getValues("k" + here)
-         << (measured && isLeapfrog() ? ", %vck" + here : "")
-         << (measured ? ", %khsk" + here : "")
-         << " = dyn.step @step" << (measured ? "_thermostat" : "") << "(";
-      os << "%x" << last << ", %v" << last << ", %f" << last << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise5
-           << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
-           << (measured && isLeapfrog() ? ", !vec" : "")
-           << (measured ? ", vector<3xf64>" : "") << ")\n";
+      std::vector<std::string> results{"%x" + ("k" + here), "%v" + ("k" + here), "%f" + ("k" + here)};
+      std::vector<std::string> types{"!vec", "!vec", "!vec"};
+      if (measured && isLeapfrog()) { results.push_back("%vck" + here); types.push_back("!vec"); }
+      if (measured) { results.push_back("%khsk" + here); types.push_back("vector<3xf64>"); }
+      llvm::SmallVector<StringRef> names, signatures;
+      for (const auto &name : results) names.push_back(name);
+      for (const auto &type : types) signatures.push_back(type);
+      emitDynamicsStep(inner, measured ? "step_thermostat" : "step", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
       emitStep();
       std::string full = "%vk" + here;
       if (ahead)
@@ -507,13 +483,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << " = %c0 to %n" << steps << " step %c1\n"
          << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
          << inner << "    -> (" << state << ") {\n";
-      std::string noise6 = emitNoiseValue((inner + "  "));
-      os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
-      os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise6
-           << ")\n"
-           << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
+      emitDynamicsStep(inner + "  ", "step", "%xp" + here, "%vp" + here, "%fp" + here,
+                           cellName, "", {"%xr" + here, "%vr" + here, "%fr" + here},
+                           {"!vec", "!vec", "!vec"});
       os << inner << "  scf.yield " << getValues("r" + here) << " : "
          << state << "\n"
          << inner << "}\n";
@@ -535,23 +507,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         energyName = "%ul";
         now = "%vcl";
       } else {
-        std::string noise7 = emitNoiseValue(inner);
-        os << inner << "%xl, %vl, %fl, %u, %w"
-           << (control.isBrownian() ? "" : ", %gwl")
-           << (isLeapfrog() ? ", %vn" : "")
-           << (measuresHalfSteps() ? ", %khsl" : "")
-           << (reportsSolvent() ? ", %kwsl" : "")
-           << " = dyn.step @step_energy(%x"
-           << last << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << noise7 << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-           << (control.isBrownian() ? "" : ", vector<3xf64>")
-           << (isLeapfrog() ? ", !vec" : "")
-           << (measuresHalfSteps() ? ", vector<3xf64>" : "")
-           << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
+        std::vector<std::string> results{"%xl", "%vl", "%fl", "%u", "%w"};
+        std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>"};
+        if (!control.isBrownian()) { results.push_back("%gwl"); types.push_back("vector<3xf64>"); }
+        if (isLeapfrog()) { results.push_back("%vn"); types.push_back("!vec"); }
+        if (measuresHalfSteps()) { results.push_back("%khsl"); types.push_back("vector<3xf64>"); }
+        if (reportsSolvent()) { results.push_back("%kwsl"); types.push_back("vector<3xf64>"); }
+        llvm::SmallVector<StringRef> names, signatures;
+        for (const auto &name : results) names.push_back(name);
+        for (const auto &type : types) signatures.push_back(type);
+        emitDynamicsStep(inner, "step_energy", "%x" + last, "%v" + last, "%f" + last, cellName, "", names, signatures);
       }
       std::string full = isLeapfrog() ? now : "%vl";
       emitKineticEnergy("%k", full, massName, inner);
@@ -920,11 +885,19 @@ void Builder::emitMinimization(StringRef velocities) {
      << " step %c1\n"
      << "          iter_args(%xa2 = %xa1, %fa2 = %fa1, %ua2 = %ua1, "
         "%ha2 = %ha1)\n"
-     << "          -> (" << state << ") {\n"
-     << "        %xt, %ft, %ut = dyn.step @descend(%xa2, %fa2, %m, %cell, "
-        "%ha2" << getFieldValues() << ")\n"
-     << "            : (!vec, !vec, !real, !md.cell, f64" << getFieldTypes()
-     << ") -> (!vec, !vec, f64)\n";
+     << "          -> (" << state << ") {\n";
+  PotentialConnections descentFields(program, "%xa2", "%cell", "%p_", "", false);
+  std::vector<std::string> descentInputs{"%xa2", "%fa2", "%m", "%cell", "%ha2"};
+  std::vector<std::string> descentTypes{"!vec", "!vec", "!real", "!md.cell", "f64"};
+  for (unsigned slot = 2; slot != descentFields.values.size(); ++slot) {
+    descentInputs.push_back(descentFields.values[slot]);
+    descentTypes.push_back(descentFields.types[slot]);
+  }
+  llvm::SmallVector<StringRef> descentOperands, descentSignatures;
+  for (const auto &input : descentInputs) descentOperands.push_back(input);
+  for (const auto &type : descentTypes) descentSignatures.push_back(type);
+  emitProgramCall("        ", "descend", {"%xt", "%ft", "%ut"},
+                     {"!vec", "!vec", "f64"}, descentOperands, descentSignatures);
   emitIRFragment(
       "        ", {"%xb", "%fb", "%ub", "%hb"}, {"!vec", "!vec", "f64", "f64"},
       {"%ut", "%ua2", "%ha2", "%grow", "%h_most", "%shrink", "%one", "%zero",
@@ -1927,15 +1900,22 @@ void Builder::emitEntry() {
     // The state that the first scaling takes its pressure from, as the
     // checkpoint keeps it (D92).
     // Its numbers are arguments of the entry (collectStartValues).
-    std::string vectors[3];
-    for (int v = 0; v != 3; ++v) {
-      std::string names[3];
-      for (int k = 0; k != 3; ++k)
-        names[k] = "%bstate" + std::to_string(3 * v + k);
-      vectors[v] = "%bstatev" + std::to_string(v);
-      os << "  " << vectors[v] << " = vector.from_elements " << names[0]
-         << ", " << names[1] << ", " << names[2] << " : vector<3xf64>\n";
-    }
+    std::string vectors[3]{"%bstatev0", "%bstatev1", "%bstatev2"};
+    std::vector<std::string> inputs;
+    for (unsigned k = 0; k != 9; ++k) inputs.push_back("%bstate" + std::to_string(k));
+    llvm::SmallVector<StringRef> names, types(9, "f64");
+    for (const auto &name : inputs) names.push_back(name);
+    emitIRFragment(
+        "  ", {vectors[0], vectors[1], vectors[2]},
+        {"vector<3xf64>", "vector<3xf64>", "vector<3xf64>"}, names, types,
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
+          TermIRValues results;
+          for (unsigned axis = 0; axis != 3; ++axis)
+            results.push_back(mlir::vector::FromElementsOp::create(
+                builder, builder.getUnknownLoc(), vec, values.slice(3 * axis, 3)));
+          return results;
+        });
     emitStoreTrotterState("  ", vectors[0], vectors[1], vectors[2]);
   } else if (isRestart() && scalesEveryStep()) {
     // A checkpoint of a run that did not scale every step holds no virial:
@@ -1966,10 +1946,15 @@ void Builder::emitEntry() {
                               "%ubsc", "%ubs", virial, "bs");
     std::string current = velocities;
     if (isLeapfrog()) {
-      os << "  %ahead = arith.constant 5.0e-01 : f64\n"
-         << "  %ahead_dt = arith.mulf %ahead, %dt : f64\n"
-         << "  %vs_now = dyn.kick " << velocities
-         << ", %fbs, %m, %ahead_dt : !vec\n";
+      emitIRFragment(
+          "  ", {"%vs_now"}, {"!vec"}, {"%dt", velocities, "%fbs", "%m"},
+          {"f64", "!vec", "!vec", "!real"},
+          [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+            auto loc = builder.getUnknownLoc();
+            mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
+            mlir::Value interval = mlir::arith::MulFOp::create(builder, loc, half, values[0]);
+            return {buildKick(builder, values[1], values[2], values[3], interval)};
+          });
       current = "%vs_now";
     }
     emitDiagonal("%dgs", virial, "  ");
@@ -2009,14 +1994,9 @@ void Builder::emitEntry() {
     os << "  %xt, %vt, %ft = scf.for %i_tail = %c0 to %n_tail step %c1\n"
        << "      iter_args(%xta = %xe0, %vta = %ve0, %fta = %fe0)\n"
        << "      -> (!vec, !vec, !vec) {\n";
-    std::string noise = emitNoiseValue("    ");
-    os << "    %xtb, %vtb, %ftb = dyn.step @step(%xta, %vta, %fta, "
-       << massName << ", " << cellName << ", %dt" << getScaleValue()
-       << getFieldValues(fieldPrefix) << noise << ")\n"
-       << "        : (!vec, !vec, !vec, !real, !md.cell, f64"
-       << getScaleType() << getFieldTypes() << getNoiseType()
-       << ") -> (!vec, !vec, !vec)\n"
-       << "    scf.yield %xtb, %vtb, %ftb : !vec, !vec, !vec\n"
+    emitDynamicsStep("    ", "step", "%xta", "%vta", "%fta", cellName, "",
+                         {"%xtb", "%vtb", "%ftb"}, {"!vec", "!vec", "!vec"});
+    os << "    scf.yield %xtb, %vtb, %ftb : !vec, !vec, !vec\n"
        << "  }\n";
     last = emitSegmentEnergyStep("%xt", "%vt", "%ft");
     cellName = outerCell;
@@ -2252,22 +2232,16 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
      << "      iter_args(%xpa = " << x << ", %vpa = " << v << ", %fpa = "
      << f << ")\n"
      << "      -> (!vec, !vec, !vec) {\n";
-  std::string noise = emitNoiseValue("    ");
-  bool brownian = control.isBrownian();
-  os << "    %xpl, %vpl, %fpl, %upl, %wpl" << (brownian ? "" : ", %gwpl")
-     << (isLeapfrog() ? ", %vpn" : "")
-     << (measuresHalfSteps() ? ", %khspl" : "")
-     << (reportsSolvent() ? ", %kwspl" : "")
-     << " = dyn.step @step_energy(%xpa, %vpa, %fpa, " << massName << ", "
-     << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
-     << noise << ")\n"
-     << "        : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-     << getFieldTypes() << getNoiseType()
-     << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-     << (brownian ? "" : ", vector<3xf64>")
-     << (isLeapfrog() ? ", !vec" : "")
-     << (measuresHalfSteps() ? ", vector<3xf64>" : "")
-     << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
+  std::vector<std::string> results{"%xpl", "%vpl", "%fpl", "%upl", "%wpl"};
+  std::vector<std::string> types{"!vec", "!vec", "!vec", "f64", "vector<9xf64>"};
+  if (!control.isBrownian()) { results.push_back("%gwpl"); types.push_back("vector<3xf64>"); }
+  if (isLeapfrog()) { results.push_back("%vpn"); types.push_back("!vec"); }
+  if (measuresHalfSteps()) { results.push_back("%khspl"); types.push_back("vector<3xf64>"); }
+  if (reportsSolvent()) { results.push_back("%kwspl"); types.push_back("vector<3xf64>"); }
+  llvm::SmallVector<StringRef> names, signatures;
+  for (const auto &name : results) names.push_back(name);
+  for (const auto &type : types) signatures.push_back(type);
+  emitDynamicsStep("    ", "step_energy", "%xpa", "%vpa", "%fpa", cellName, "", names, signatures);
   if (reportsSolvent())
     emitWriteSolvent("    ", "%kwspl");
   std::string plainFull = isLeapfrog() ? "%vpn" : "%vpl";
@@ -2279,7 +2253,7 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   else
     emitSum3("%gpl", plainExcess, "    ");
   // The pressure of the groups (D264).
-  if (brownian) {
+  if (control.isBrownian()) {
     emitTrace("%trpl", "%wpl", "    ");
     os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";
   } else {
@@ -2348,4 +2322,47 @@ void Builder::setSchedule() {
   } else {
     levels.push_back({"step", steps});
   }
+}
+
+void Builder::emitProgramCall(
+    StringRef indent, StringRef symbol, llvm::ArrayRef<StringRef> results,
+    llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
+    llvm::ArrayRef<StringRef> operandTypes) {
+  emitIRFragment(
+      indent, results, resultTypes, operands, operandTypes,
+      [symbol = symbol.str()](mlir::OpBuilder &builder, mlir::ValueRange values)
+          -> llvm::Expected<TermIRValues> {
+        auto module = builder.getInsertionBlock()->getParentOp()->getParentOfType<mlir::ModuleOp>();
+        auto callee = module.lookupSymbol<mdir::dyn::ProgramOp>(symbol);
+        if (!callee)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                         "a generated step has no program definition");
+        auto call = mdir::dyn::StepOp::create(
+            builder, builder.getUnknownLoc(), callee.getFunctionType().getResults(), symbol, values);
+        TermIRValues result;
+        llvm::append_range(result, call.getResults());
+        return result;
+      });
+}
+void Builder::emitDynamicsStep(
+    StringRef indent, StringRef symbol, StringRef x, StringRef v, StringRef f,
+    StringRef cell, StringRef mu, llvm::ArrayRef<StringRef> results,
+    llvm::ArrayRef<StringRef> resultTypes) {
+  PotentialConnections fields(program, x, cell, fieldPrefix, "", false);
+  std::vector<std::string> inputs{x.str(), v.str(), f.str(), massName, cell.str(), "%dt"};
+  std::vector<std::string> types{"!vec", "!vec", "!vec", "!real", "!md.cell", "f64"};
+  if (!mu.empty()) { inputs.push_back(mu.str()); types.push_back("vector<3xf64>"); }
+  if (scalesReference()) { inputs.push_back(scaleName); types.push_back("vector<3xf64>"); }
+  for (unsigned slot = 2; slot != fields.values.size(); ++slot) {
+    inputs.push_back(fields.values[slot]); types.push_back(fields.types[slot]);
+  }
+  std::string noise = emitNoiseValue(indent);
+  if (!noise.empty()) {
+    inputs.push_back(noise); types.push_back("i64");
+    inputs.push_back(idName); types.push_back("!ids");
+  }
+  llvm::SmallVector<StringRef> operands, signatures;
+  for (const auto &input : inputs) operands.push_back(input);
+  for (const auto &type : types) signatures.push_back(type);
+  emitProgramCall(indent, symbol, results, resultTypes, operands, signatures);
 }

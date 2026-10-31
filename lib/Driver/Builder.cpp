@@ -148,20 +148,6 @@ void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
       });
 }
 
-std::string Builder::getFieldTypes() const {
-  std::string text;
-  for (const Program::Field &field : program.fields)
-    text += ", " + getFieldType(field).str();
-  for (const Program::Table &table : program.tables)
-    text += ", " + table.getType().str();
-  for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", !rel_" + set.name;
-    for (size_t i = 0, e = set.fields.size(); i != e; ++i)
-      text += ", !of_" + set.name;
-  }
-  return text;
-}
-
 std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
   std::vector<const Program::TupleSet *> groups = getShakeSets();
   for (const Program::TupleSet &set : program.tupleSets)

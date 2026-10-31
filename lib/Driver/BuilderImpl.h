@@ -279,7 +279,6 @@ public:
                                     int externalTerm = -1) = 0;
   virtual std::string getFieldParameters() const = 0;
   virtual std::string getFieldValues(StringRef prefix = "%p_") const = 0;
-  virtual std::string getFieldTypes() const = 0;
   virtual std::string getTimeParameter() const = 0;
   virtual std::string getTimeType() const = 0;
   virtual std::string getTimeValue(StringRef name) const = 0;
@@ -735,6 +734,12 @@ private:
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const override;
 
+  void emitProgramCall(StringRef indent, StringRef symbol,
+                           llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes,
+                           llvm::ArrayRef<StringRef> operands, llvm::ArrayRef<StringRef> operandTypes);
+  void emitDynamicsStep(StringRef indent, StringRef symbol, StringRef x,
+                           StringRef v, StringRef f, StringRef cell, StringRef mu,
+                           llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes);
   void emitPrograms();
   void emitKick(StringRef indent, StringRef result, StringRef velocity,
                    StringRef force, StringRef mass, StringRef interval);
@@ -861,12 +866,6 @@ private:
   /// which a barostat changes: they are those of the file times
   /// `scaleName`, the edge of the cell over that of the file.
   bool scalesReference() const { return hasForceCorrections() && changesCell(); }
-  std::string getScaleValue() const {
-    return scalesReference() ? ", " + scaleName : "";
-  }
-  std::string getScaleType() const {
-    return scalesReference() ? ", vector<3xf64>" : "";
-  }
   std::string getScaleParameter() const {
     return scalesReference() ? ", %rest_scale: vector<3xf64>" : "";
   }
@@ -875,9 +874,6 @@ private:
   /// random numbers of each particle (A13).
   std::string getNoiseParameter() const {
     return needsStepNumber() ? ", %noise_step: i64, %noise_ids: !ids" : "";
-  }
-  std::string getNoiseType() const {
-    return needsStepNumber() ? ", i64, !ids" : "";
   }
   /// Whether the programs of the steps take the number of the step: for the
   /// noise of Langevin dynamics, for the time of terms that take it, and
@@ -1384,7 +1380,6 @@ struct Coupled {
   /// The fields of the parameters, as arguments that follow others.
   /// `prefix` comes before the name of each.
   std::string getFieldValues(StringRef prefix = "%p_") const override;
-  std::string getFieldTypes() const override;
 
   /// Emits the order of the particles at the positions `positions`, and
   /// the fields in that order. `from` and `to` are the ends of the names

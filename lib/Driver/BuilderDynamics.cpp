@@ -655,7 +655,7 @@ std::string Builder::emitNoiseValue(StringRef indent) {
         memref::StoreOp::create(builder, loc, next, values[0], ValueRange{values[1]});
         return {next};
       });
-  return ", " + name + ", " + idName;
+  return name;
 }
 
 std::string Builder::emitMolecularDiagonal(StringRef indent,
