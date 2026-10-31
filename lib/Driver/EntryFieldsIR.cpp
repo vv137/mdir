@@ -66,7 +66,7 @@ SmallVector<Value> mdir::driver::builder::buildEntryPotentialFields(const EntryF
   return values;
 }
 EntryFieldsIR mdir::driver::builder::buildEntryReorder(OpBuilder &builder, const Program &program,
-    EntryFieldsIR fields, Value cell) {
+    EntryFieldsIR fields, Value cell, bool withForces) {
   if (!program.reorders) return fields;
   SmallVector<ReorderFieldIR> parameters;
   for (auto [index, field] : llvm::enumerate(program.fields)) {
@@ -87,11 +87,12 @@ EntryFieldsIR mdir::driver::builder::buildEntryReorder(OpBuilder &builder, const
     relations.push_back(fields.tuples[index].members);
     if (tuple.name == "anchors") config.anchorRelation = index;
   }
-  ReorderIRInputs input{fields.positions, fields.velocities, {}, fields.masses,
+  ReorderIRInputs input{fields.positions, fields.velocities, withForces ? fields.forces : Value{}, fields.masses,
       fields.identities, cell, parameters, relations};
   auto result = buildReorder(builder, input, config);
   fields.positions = result.positions;
   fields.velocities = result.velocities;
+  if (withForces) fields.forces = result.forces;
   fields.masses = result.masses;
   fields.identities = result.ids;
   fields.fields = std::move(result.fields);

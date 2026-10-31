@@ -12,7 +12,7 @@ mlir::Value buildEntryField(mlir::OpBuilder &, mlir::Value buffer,
     unsigned components, bool integer, llvm::StringRef set = "atoms");
 llvm::SmallVector<mlir::Value> buildEntryPotentialFields(const EntryFieldsIR &);
 EntryFieldsIR buildEntryReorder(mlir::OpBuilder &, const Program &, EntryFieldsIR,
-                                 mlir::Value cell);
+                                 mlir::Value cell, bool withForces = false);
 EntryFieldsIR buildEntryFields(mlir::OpBuilder &, const Program &,
     const EntryArgumentsIR &, bool positions, bool givenForces);
 }
