@@ -250,5 +250,7 @@ shared with the remaining topology path.
 Generalized Born and surface potentials construct native bodies together.
 Computed Born radii remain private to the adapter; radii, energy and surface
 contributions retain their original construction and accumulation order.
+Special 1–4 pair potentials use native tuple relations and fields, including
+charge-gradient products and the original LJ/Coulomb accumulation order.
 Other topology-potential and entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.

@@ -223,3 +223,6 @@ and body retain frame scaling, argument order and the shared expression kernel.
 Generalized Born and surface potentials construct native bodies together.
 Computed Born radii remain private to the adapter; radii, energy and surface
 contributions retain their original construction and accumulation order.
+
+Special 1–4 pair potentials use native tuple relations and fields, including
+charge-gradient products and the original LJ/Coulomb accumulation order.
