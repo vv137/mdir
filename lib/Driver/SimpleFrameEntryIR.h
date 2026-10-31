@@ -12,16 +12,23 @@ struct FrameConstraintIR {
   llvm::SmallVector<unsigned> parameters;
   bool water;
 };
+struct FrameCompletionIR {
+  EnergyResults physical;
+  llvm::SmallVector<mlir::Value> storedTerms;
+};
 struct SimpleFrameEntryIRConfig {
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
   bool topology = false;
+  unsigned storedTerms = 0;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
   std::vector<FrameConstraintIR> constraints;
   llvm::SmallVector<int64_t> counts, periods;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
-    mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &);
+    mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &,
+    llvm::function_ref<FrameCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
+                                        EnergyResults)> complete = {});
 }
 #endif

@@ -508,10 +508,24 @@ static void checkNativeFrameEntry() {
   wideConfig.cellEdges = 6;
   wideConfig.topology = true;
   wideConfig.terms = {"energy"};
-  auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig);
+  wideConfig.storedTerms = 1;
+  auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig,
+      [](OpBuilder &at, const PotentialStateIR &, EnergyResults result) -> FrameCompletionIR {
+        if (!result.energy) return {result, {}};
+        auto loc = at.getUnknownLoc();
+        Value stored = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.5));
+        result.energy = arith::AddFOp::create(at, loc, result.energy, stored);
+        return {result, {stored}};
+      });
   require(bool(wide), "native triclinic frame entry did not construct");
   for (Value tilt : wide->getArguments().take_back(3))
     require(tilt.use_empty(), "native triclinic frame entry read an outer tilt");
+  metadata.entry = "missing_stored_frame_term";
+  auto missing = buildSimpleFrameEntry(builder, metadata, wideConfig);
+  require(!missing, "native frame entry accepted a missing stored contribution");
+  reject(missing.takeError(), "native frame evaluation returned an unexpected stored-term count");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+          "failed native frame entry retained an incomplete function");
   metadata.fields.clear();
   metadata.tables.clear();
   metadata.entry = "changed";
