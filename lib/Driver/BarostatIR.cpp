@@ -218,3 +218,28 @@ Value mdir::driver::builder::buildExactBath(OpBuilder &builder, const ExactBathI
   Value gain = k.add(energyChange, in.kineticChange);
   return k.sub(in.bath, gain);
 }
+
+BarostatParameterValues mdir::driver::builder::buildBarostatParameters(
+    OpBuilder &builder, const BarostatParameters &parameters) {
+  auto loc = builder.getUnknownLoc();
+  auto real = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(value));
+  };
+  BarostatParameterValues result;
+  for (unsigned axis = 0; axis != 3; ++axis)
+    result.axisCompressibility[axis] = real(parameters.axisCompressibility[axis]);
+  result.pressure = real(parameters.pressure);
+  result.compressibility = real(parameters.compressibility);
+  result.rate = real(parameters.rate);
+  result.thermal = real(parameters.thermal);
+  result.bar = real(16.6053906717);
+  result.three = real(3.0);
+  result.third = real(1.0 / 3.0);
+  result.unit = real(1.0);
+  auto vec = VectorType::get({3}, builder.getF64Type());
+  result.unitVector = arith::ConstantOp::create(builder, loc, DenseElementsAttr::get(vec, 1.0));
+  result.halfVector = arith::ConstantOp::create(builder, loc, DenseElementsAttr::get(vec, 0.5));
+  result.zCompressibility = real(parameters.zCompressibility);
+  result.tension = real(parameters.tension);
+  return result;
+}
