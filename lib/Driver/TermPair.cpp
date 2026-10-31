@@ -67,6 +67,88 @@ struct BarePairIRConfig {
   std::vector<std::pair<std::string, size_t>> tables, functions;
 };
 
+static TermIRValues buildBarePairContribution(mlir::OpBuilder &builder, mlir::ValueRange values, const BarePairIRConfig &config) {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            auto *ctx = builder.getContext();
+            auto sum = mdir::md::SumRelationOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, config.gatheredCount),
+                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
+                mdir::md::ExchangeBasisAttr::get(
+                    ctx, mdir::md::ExchangeBasis::Proof),
+                mdir::md::TruncationAttr::get(ctx, config.modifier),
+                config.switched ? builder.getF64FloatAttr(config.switchFrom)
+                                : FloatAttr{});
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> blockTypes = {
+                  builder.getF64Type(),
+                  VectorType::get({3}, builder.getF64Type())};
+              if (config.tableParameters)
+                blockTypes.append(2, builder.getI32Type());
+              else
+                for (const auto &entry : config.parameters)
+                  if (!entry.first.isUniform)
+                    blockTypes.append(2, builder.getF64Type());
+              llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+              Block *block = builder.createBlock(&sum.getKernel(), {},
+                                                 blockTypes, locations);
+              auto args = block->getArguments();
+              auto constant = [&](double value) -> Value {
+                return arith::ConstantOp::create(
+                    builder, loc, builder.getF64FloatAttr(value));
+              };
+              auto mul = [&](Value a, Value b) -> Value {
+                return arith::MulFOp::create(builder, loc, a, b);
+              };
+              Value toLength = constant(1.0 / units::length);
+              Value r = mul(args[0], toLength);
+              llvm::StringMap<Value> bindings, tables;
+              bindings["r"] = r;
+              for (const auto &[name, value] : config.constants)
+                bindings[name] = constant(value);
+              if (config.coulomb)
+                bindings["coulomb"] = constant(coulombConstant);
+              for (const auto &[name, slot] : config.tables)
+                bindings[name] = mdir::md::LookupOp::create(
+                    builder, loc, builder.getF64Type(), values[slot],
+                    ValueRange{args[2], args[3]});
+              size_t argument = 2;
+              for (const auto &[parameter, mixing] : config.parameters) {
+                Value value;
+                if (parameter.isUniform)
+                  value = constant(parameter.value);
+                else {
+                  Value a = args[argument++], b = args[argument++];
+                  if (mixing == Mixing::Arithmetic) {
+                    Value half = constant(0.5);
+                    Value sum = arith::AddFOp::create(builder, loc, a, b);
+                    value = mul(half, sum);
+                  } else {
+                    value = mul(a, b);
+                    if (mixing != Mixing::Product)
+                      value = math::SqrtOp::create(builder, loc, value);
+                  }
+                }
+                bindings[parameter.name] = value;
+              }
+              for (const auto &[name, slot] : config.functions)
+                tables[name] = values[slot];
+              Value expression = config.expression.build(
+                  builder, bindings, tables, config.termName);
+              Value toEnergy = constant(units::energy);
+              Value energy = mul(expression, toEnergy);
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            TermIRValues result = {sum.getResult()};
+            if (config.previousTotal)
+              result.push_back(arith::AddFOp::create(
+                  builder, loc, values[*config.previousTotal],
+                  sum.getResult()));
+            return result;
+}
+
 namespace mdir::driver::builder {
 class PairTermBuilder final : public TermBuilder, public TermScalarParameters {
 public:
@@ -533,8 +615,8 @@ public:
       add(set);
     }
   }
-  void emitBareContributions(TermEmission &context,
-                             std::string &total) const override {
+  mlir::Value buildBareContributions(const TermInputs &context, mlir::OpBuilder &builder,
+      const TermNativePotential &state, mlir::Value total) const override {
     const Control &control = context.getControl();
     const auto &expressions = context.getPairPlan().expressions;
     const auto &termTables = context.getPairPlan().tables;
@@ -547,12 +629,10 @@ public:
       config.coulomb = llvm::is_contained(expression.getNames(), "coulomb");
       for (const auto &entry : term.constants)
         config.constants.push_back(entry);
-      std::vector<std::string> names = {"%n", "%x", "%cell"};
-      llvm::SmallVector<StringRef> types = {"!pairs", "!vec", "!md.cell"};
-      auto operand = [&](std::string name, StringRef type) {
-        size_t slot = names.size();
-        names.push_back(std::move(name));
-        types.push_back(type);
+      TermIRValues values{state.neighborhood, state.positions, state.cell};
+      auto operand = [&](mlir::Value value) {
+        size_t slot = values.size();
+        values.push_back(value);
         return slot;
       };
       llvm::SmallVector<StringRef> supplied = {"r"};
@@ -561,7 +641,7 @@ public:
       if (config.coulomb)
         supplied.push_back("coulomb");
       if (config.tableParameters)
-        operand("%p_type", "!ids");
+        operand(state.field("type"));
       else {
         for (const Parameter &parameter : parameters) {
           if (!llvm::is_contained(expression.getNames(), parameter.name))
@@ -569,14 +649,14 @@ public:
           config.parameters.emplace_back(parameter,
                                          term.mixing.lookup(parameter.name));
           if (!parameter.isUniform)
-            operand("%p_" + parameter.name, "!real");
+            operand(state.field(parameter.name));
         }
       }
-      config.gatheredCount = names.size() - 3;
+      config.gatheredCount = values.size() - 3;
       for (const auto &[name, tableIndex] : termTables[index]) {
         const auto &table = context.getParameterTables()[tableIndex];
         config.tables.emplace_back(name.str(),
-                                   operand("%t_" + table.name, "!table"));
+                                   operand(state.table(table.name)));
       }
       for (const auto &entry : config.tables)
         supplied.push_back(entry.first);
@@ -584,9 +664,9 @@ public:
         supplied.push_back(entry.first.name);
       auto inputs = config.expression.getInputs(supplied);
       for (const auto &name : inputs.tables)
-        config.functions.emplace_back(name, operand("%t_" + name, "!grid"));
-      if (!total.empty())
-        config.previousTotal = operand(total, "f64");
+        config.functions.emplace_back(name, operand(state.table(name)));
+      if (total)
+        config.previousTotal = operand(total);
       config.switchFrom = control.switchDistance * units::length;
       switch (control.truncation) {
       case Truncation::None:
@@ -605,102 +685,9 @@ public:
         config.switched = true;
         break;
       }
-      std::string result = "%u" + std::to_string(index);
-      std::string sum = "%total" + std::to_string(index);
-      llvm::SmallVector<StringRef> operands;
-      for (const auto &name : names)
-        operands.push_back(name);
-      llvm::SmallVector<StringRef> results = {result}, resultTypes = {"f64"};
-      if (config.previousTotal) {
-        results.push_back(sum);
-        resultTypes.push_back("f64");
-      }
-      context.emitIRFragment(
-          "  ", results, resultTypes, operands, types,
-          [config](mlir::OpBuilder &builder,
-                   mlir::ValueRange values) -> TermIRValues {
-            using namespace mlir;
-            auto loc = builder.getUnknownLoc();
-            auto *ctx = builder.getContext();
-            auto sum = mdir::md::SumRelationOp::create(
-                builder, loc, builder.getF64Type(), values[0], values[1],
-                values[2], values.slice(3, config.gatheredCount),
-                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
-                mdir::md::ExchangeBasisAttr::get(
-                    ctx, mdir::md::ExchangeBasis::Proof),
-                mdir::md::TruncationAttr::get(ctx, config.modifier),
-                config.switched ? builder.getF64FloatAttr(config.switchFrom)
-                                : FloatAttr{});
-            {
-              OpBuilder::InsertionGuard guard(builder);
-              llvm::SmallVector<Type> blockTypes = {
-                  builder.getF64Type(),
-                  VectorType::get({3}, builder.getF64Type())};
-              if (config.tableParameters)
-                blockTypes.append(2, builder.getI32Type());
-              else
-                for (const auto &entry : config.parameters)
-                  if (!entry.first.isUniform)
-                    blockTypes.append(2, builder.getF64Type());
-              llvm::SmallVector<Location> locations(blockTypes.size(), loc);
-              Block *block = builder.createBlock(&sum.getKernel(), {},
-                                                 blockTypes, locations);
-              auto args = block->getArguments();
-              auto constant = [&](double value) -> Value {
-                return arith::ConstantOp::create(
-                    builder, loc, builder.getF64FloatAttr(value));
-              };
-              auto mul = [&](Value a, Value b) -> Value {
-                return arith::MulFOp::create(builder, loc, a, b);
-              };
-              Value toLength = constant(1.0 / units::length);
-              Value r = mul(args[0], toLength);
-              llvm::StringMap<Value> bindings, tables;
-              bindings["r"] = r;
-              for (const auto &[name, value] : config.constants)
-                bindings[name] = constant(value);
-              if (config.coulomb)
-                bindings["coulomb"] = constant(coulombConstant);
-              for (const auto &[name, slot] : config.tables)
-                bindings[name] = mdir::md::LookupOp::create(
-                    builder, loc, builder.getF64Type(), values[slot],
-                    ValueRange{args[2], args[3]});
-              size_t argument = 2;
-              for (const auto &[parameter, mixing] : config.parameters) {
-                Value value;
-                if (parameter.isUniform)
-                  value = constant(parameter.value);
-                else {
-                  Value a = args[argument++], b = args[argument++];
-                  if (mixing == Mixing::Arithmetic) {
-                    Value half = constant(0.5);
-                    Value sum = arith::AddFOp::create(builder, loc, a, b);
-                    value = mul(half, sum);
-                  } else {
-                    value = mul(a, b);
-                    if (mixing != Mixing::Product)
-                      value = math::SqrtOp::create(builder, loc, value);
-                  }
-                }
-                bindings[parameter.name] = value;
-              }
-              for (const auto &[name, slot] : config.functions)
-                tables[name] = values[slot];
-              Value expression = config.expression.build(
-                  builder, bindings, tables, config.termName);
-              Value toEnergy = constant(units::energy);
-              Value energy = mul(expression, toEnergy);
-              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
-            }
-            TermIRValues result = {sum.getResult()};
-            if (config.previousTotal)
-              result.push_back(arith::AddFOp::create(
-                  builder, loc, values[*config.previousTotal],
-                  sum.getResult()));
-            return result;
-          });
-      total = config.previousTotal ? sum : result;
+      total = buildBarePairContribution(builder, values, config).back();
     }
+    return total;
   }
 
   void appendTermDefinitions(

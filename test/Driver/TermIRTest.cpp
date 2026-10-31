@@ -376,12 +376,55 @@ static void checkNativeStepReturnGuard() {
           std::string("native return guard omitted its result counts: ") + combination);
 }
 
+static void checkNativeBarePotentialBody() {
+  TermIRPlan plan;
+  mdir::driver::Program metadata;
+  metadata.fields.emplace_back().name = "parameter";
+  auto &context = plan.getContext();
+  OpBuilder builder(&context);
+  auto module = plan.getModule();
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
+  SmallVector<Type> inputs{mdir::md::FieldType::get(&context, atoms, 3, builder.getF64Type()),
+                           mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, buildParameterTypes(context, metadata));
+  double constant = 2.5;
+  auto potential = buildScalarPotential(builder, "energy", inputs,
+      [&](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(constant));
+      });
+  Value original = potential.getBody().front().getArgument(0);
+  constant = -1.0;
+  metadata.fields.clear();
+  llvm::raw_string_ostream stream(metadata.module);
+  stream << "module { ";
+  plan.emit(stream, "", {}, {}, {}, {},
+      [potential](OpBuilder &where, ValueRange) -> TermIRValues {
+        potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+        return {};
+      });
+  stream << "}";
+  stream.flush();
+  require(!finishTermIRProgram(metadata, plan), "owned native potential failed its boundary");
+  require(module.lookupSymbol<mdir::md::PotentialOp>("energy") == potential,
+          "native potential was reparsed or cloned");
+  require(potential.getBody().front().getArgument(0) == original,
+          "native potential lost its actual argument");
+  auto value = cast<arith::ConstantOp>(potential.getBody().front().front());
+  require(cast<FloatAttr>(value.getValue()).getValueAsDouble() == 2.5,
+          "native potential retained transient construction state");
+  require(succeeded(verify(module)), "native potential did not verify");
+}
+
 int main(int argc, char **argv) {
   checkDiagonalExports();
   checkFrameEvaluations();
   checkNativeDescentBody();
   checkNativeVerletBodies();
   checkNativeStepReturnGuard();
+  checkNativeBarePotentialBody();
   require(argc == 2, "expected the frozen staged-model fixture");
   auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
   require(bool(fixture), "cannot read the frozen staged-model fixture");

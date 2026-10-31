@@ -3,9 +3,13 @@
 #define MDIR_LIB_DRIVER_POTENTIALIR_H
 #include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 namespace mlir { class OpBuilder; class MLIRContext; }
 namespace mdir::driver { struct Program; }
+namespace mdir::md { class PotentialOp; }
 namespace mdir::driver::builder {
+mdir::md::PotentialOp buildScalarPotential(mlir::OpBuilder &, llvm::StringRef name,
+    mlir::TypeRange inputs, llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::ValueRange)> body);
 // Parameter fields, tables and relations in their declared semantic order.
 llvm::SmallVector<mlir::Type> buildParameterTypes(mlir::MLIRContext &, const Program &);
 struct PotentialStateIR {
