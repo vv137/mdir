@@ -2,6 +2,7 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "DynamicsIR.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -11,6 +12,7 @@ struct SimpleFrameEntryIRConfig {
   unsigned cellEdges = 3;
   bool topology = false;
   std::vector<std::string> terms;
+  std::vector<DescentSiteIR> sites;
   llvm::SmallVector<int64_t> counts, periods;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(

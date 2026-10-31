@@ -7,6 +7,7 @@
 #include "PotentialIR.h"
 #include "OutputIR.h"
 #include "ReorderIR.h"
+#include "SiteIR.h"
 #include "TermIR.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -115,12 +116,29 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       Value cell = buildCell(frame, edges);
       auto physical = imported;
       physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
+      auto originalParameters = potentialFields(physical);
+      for (const auto &site : config.sites)
+        physical.positions = buildPlacedSites(frame,
+            {originalParameters[site.relation], physical.positions, cell,
+             originalParameters[site.a], originalParameters[site.b]}, site.amber);
       physical = reorderedFrame(frame, program, std::move(physical), cell);
       auto parameters = potentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
+      auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {
+        auto result = buildEnergyEvaluation(at, state, requests);
+        for (const auto &site : config.sites) {
+          auto spread = buildSiteSpread(at,
+              {parameters[site.relation], physical.positions, cell,
+               parameters[site.a], parameters[site.b], result.forces, result.virial},
+              site.amber, site.derived, site.potential);
+          result.forces = spread.forces;
+          result.virial = spread.virial;
+        }
+        return result;
+      };
       auto iteration = buildEntryLoop(frame, "frame evaluation", zero, one, one, {},
           [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
-        auto energy = buildEnergyEvaluation(body, state, {true, true, true});
+        auto energy = evaluate(body, {true, true, true});
         Value nil = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
         Value force = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[0], nil);
         Value virial = arith::CmpFOp::create(body, loc, arith::CmpFPredicate::ONE, asks[1], nil);
@@ -129,14 +147,14 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         Value forceOnlyCount = arith::SelectOp::create(body, loc, virial, zero, forceCount);
         auto forceOnly = buildEntryLoop(body, "frame force request", zero, forceOnlyCount, one, {},
             [&](OpBuilder &requested, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
-          auto result = buildEnergyEvaluation(requested, state, {false, true, false});
+          auto result = evaluate(requested, {false, true, false});
           writeFrameForces(requested, result.forces, physical.identities);
           return SmallVector<Value>{};
         });
         if (!forceOnly) return forceOnly.takeError();
         auto withVirial = buildEntryLoop(body, "frame virial request", zero, virialCount, one, {},
             [&](OpBuilder &requested, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
-          auto result = buildEnergyEvaluation(requested, state, {false, true, true});
+          auto result = evaluate(requested, {false, true, true});
           auto forces = buildEntryLoop(requested, "frame shared force request", zero, forceCount, one, {},
               [&](OpBuilder &write, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
             writeFrameForces(write, result.forces, physical.identities);

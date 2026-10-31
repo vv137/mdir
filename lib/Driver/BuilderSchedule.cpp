@@ -1093,7 +1093,7 @@ llvm::Error Builder::emitEntry() {
       !isRestart() && !control.isLangevin() &&
       !control.isBrownian() && !isLeapfrog() &&
       !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
-      !hasConstraints() && !hasSites() && !hasForceCorrections() &&
+      !hasConstraints() && !hasForceCorrections() &&
       !hasHostEvaluation() && control.freeEnergyFile.empty() &&
       control.observables.empty() && !program.tunableGradient &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -1113,6 +1113,21 @@ llvm::Error Builder::emitEntry() {
     config.timed = control.usesTime;
     config.cellEdges = getCellSize();
     config.topology = bool(system.topology);
+    for (const Program::TupleSet *selected : getSiteSets()) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "site parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      config.sites.push_back({slot, fieldSlot("a"), fieldSlot("b"),
+          selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
+    }
     if (config.topology)
       for (const auto &definition : getTermDefinitions())
         config.terms.push_back(definition.name);
