@@ -740,6 +740,7 @@ private:
   void emitDynamicsStep(StringRef indent, StringRef symbol, StringRef x,
                            StringRef v, StringRef f, StringRef cell, StringRef mu,
                            llvm::ArrayRef<StringRef> results, llvm::ArrayRef<StringRef> resultTypes);
+  void emitBoxEdges(StringRef indent, StringRef prefix);
   void emitPrograms();
   void emitKick(StringRef indent, StringRef result, StringRef velocity,
                    StringRef force, StringRef mass, StringRef interval);

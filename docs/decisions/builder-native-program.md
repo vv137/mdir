@@ -206,3 +206,8 @@ Every dynamics and descent call is constructed as a native `dyn.step`,
 using its actual program definition for result types. Physical state,
 optional scales, parameter fields and noise inputs retain their argument
 order. Restart Trotter vectors and velocity reconstruction are native.
+
+`ScheduleIR.cpp` constructs step numbers from typed loop state and preserves
+nested-period arithmetic. Minimization convergence memory, polling bounds,
+row/frame counters, loop counts and boundary calls are native. Cell reloads
+export every scalar edge explicitly at their original positions.
