@@ -141,8 +141,51 @@ static void checkDiagonalExports() {
   }
 }
 
+// Native recipes carry no printed evaluate token. Conversely, an attribute
+// containing that token cannot stand in for an actual evaluation.
+static void checkFrameEvaluations() {
+  for (bool evaluates : {false, true}) {
+    TermIRPlan plan;
+    mdir::driver::Program program;
+    llvm::raw_string_ostream stream(program.module);
+    stream << "module { md.potential @energy(%x: !md.field<@atoms, 3 x f64>, "
+              "%cell: !md.cell) -> f64 { %zero = arith.constant 0.0 : f64 "
+              "md.return %zero : f64 } "
+              "func.func @entry(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) { "
+              "%c0 = arith.constant 0 : index %c1 = arith.constant 1 : index "
+              "scf.for %i = %c0 to %c1 step %c1 { "
+              "%note = arith.constant {note = \"md.evaluate \"} 0.0 : f64 ";
+    if (evaluates)
+      plan.emit(stream, "", {"%u"}, {"f64"}, {"%x", "%cell"},
+                {"!md.field<@atoms, 3 x f64>", "!md.cell"},
+                [](OpBuilder &builder, ValueRange values) -> TermIRValues {
+                  return {mdir::md::EvaluateOp::create(
+                      builder, builder.getUnknownLoc(), TypeRange{builder.getF64Type()},
+                      FlatSymbolRefAttr::get(builder.getContext(), "energy"), values,
+                      builder.getDenseI32ArrayAttr({int32_t(mdir::md::Request::Energy)}),
+                      builder.getDenseI64ArrayAttr({-1})).getResult(0)};
+                });
+    plan.emit(stream, "", {}, {}, {}, {},
+              [](OpBuilder &builder, ValueRange) -> llvm::Expected<TermIRValues> {
+                if (llvm::Error error = checkFrameEvaluation(
+                        builder.getInsertionBlock()->getParentOp()))
+                  return std::move(error);
+                return TermIRValues{};
+              });
+    stream << "} return } }";
+    stream.flush();
+    if (evaluates)
+      require(!finishTermIRProgram(program, plan), "native frame evaluation was not recognized");
+    else
+      reject(finishTermIRProgram(program, plan),
+             "the program of frames: the start of this program evaluates "
+             "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+  }
+}
+
 int main(int argc, char **argv) {
   checkDiagonalExports();
+  checkFrameEvaluations();
   require(argc == 2, "expected the frozen staged-model fixture");
   auto fixture = llvm::MemoryBuffer::getFile(argv[1]);
   require(bool(fixture), "cannot read the frozen staged-model fixture");
