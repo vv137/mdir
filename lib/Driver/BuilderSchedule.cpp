@@ -4,6 +4,7 @@
 
 #include "BuilderImpl.h"
 #include "ScheduleIR.h"
+#include "CouplingIR.h"
 #include "EntryRuntimeIR.h"
 #include "SimpleFrameEntryIR.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
@@ -1090,9 +1091,7 @@ llvm::Error Builder::emitEntry() {
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&
-      !isRestart() && !control.isLangevin() &&
-      !control.isBrownian() && !isLeapfrog() &&
-      !scalesReference() && !changesCell() && control.getCouplingPeriod() == 0 &&
+      !isRestart() && !scalesReference() && !changesCell() &&
       !control.barostat &&
       !hasHostEvaluation() &&
       llvm::none_of(getTermBuilders(), [&](const TermBuilder *term) {
@@ -1110,6 +1109,17 @@ llvm::Error Builder::emitEntry() {
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
     config.timed = control.usesTime;
+    config.stepMemory = needsStepNumber();
+    config.leapfrog = isLeapfrog();
+    config.brownian = control.isBrownian();
+    config.coupled = control.getCouplingPeriod() > 0;
+    if (config.coupled && control.thermostat) {
+      double freedom = system.getDegreesOfFreedom();
+      double target = 0.5 * freedom * units::boltzmann * control.temperature;
+      double decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) *
+          control.timestep / control.tauT);
+      config.thermostat = FrameThermostatIR{static_cast<int64_t>(control.seed), freedom, target, decay};
+    }
     config.cellEdges = getCellSize();
     config.topology = bool(system.topology);
     for (const TermBuilder *term : getTermBuilders())
@@ -1228,7 +1238,10 @@ llvm::Error Builder::emitEntry() {
       for (unsigned index = levels.size(); index-- != 0;) {
         config.periods.push_back(steps);
         steps *= levels[index].count;
-        if (index && levels[index - 1].name == "energy") ++steps;
+        if (index && levels[index - 1].name == "couple")
+          ++steps;
+        else if (index && levels[index - 1].name == "energy")
+          steps += levels[index].name == "couple" ? control.getCouplingPeriod() : 1;
       }
     }
     auto entry = buildSimpleFrameEntry(ir, program, config,
@@ -1644,17 +1657,8 @@ llvm::Error Builder::emitEntry() {
         "  ", {"%couple_half", "%total_mass"}, {"f64", "vector<3xf64>"},
         {"%m" + given}, {"!real"},
         [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-          auto loc = builder.getUnknownLoc();
-          mlir::Value half = mlir::arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.5));
-          auto vec = mlir::VectorType::get({3}, builder.getF64Type());
-          auto total = mdir::md::SumParticlesOp::create(builder, loc, vec, values);
-          {
-            mlir::OpBuilder::InsertionGuard guard(builder);
-            auto args = builder.createBlock(&total.getKernel(), {}, {builder.getF64Type()}, {loc})->getArguments();
-            mlir::Value mass = mlir::vector::BroadcastOp::create(builder, loc, vec, args[0]);
-            mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{mass});
-          }
-          return {half, total.getResult()};
+          auto result = buildCouplingMass(builder, values[0]);
+          return {result.half, result.totalMass};
         });
     if (control.thermostat) {
       // The degrees of freedom of the log. The momentum stays 0 with or

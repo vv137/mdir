@@ -8,6 +8,7 @@
 #include "OutputIR.h"
 #include "ReorderIR.h"
 #include "SiteIR.h"
+#include "CouplingIR.h"
 #include "TermIR.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -90,7 +91,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     if (config.timed) {
       time = buildSimulationTime(at, arguments.start, arguments.interval);
     }
-    if (config.timed || !config.constraints.empty()) {
+    if (config.stepMemory || config.timed || !config.constraints.empty()) {
       Value memory = memref::AllocaOp::create(at, loc,
           MemRefType::get({1}, at.getI64Type()));
       memref::StoreOp::create(at, loc, arguments.start, memory, zero);
@@ -99,6 +100,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     for (int64_t count : config.counts) arith::ConstantIndexOp::create(at, loc, count);
     for (int64_t period : config.periods) arith::ConstantIndexOp::create(at, loc, period);
     auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
+    if (config.coupled) {
+      buildCouplingMass(at, imported.masses);
+      if (config.thermostat) {
+        const auto &thermostat = *config.thermostat;
+        arith::ConstantIntOp::create(at, loc, thermostat.seed, 64);
+        for (double value : {thermostat.freedom, thermostat.target, thermostat.decay})
+          arith::ConstantOp::create(at, loc, at.getF64FloatAttr(value));
+      }
+    }
     Value cellMemory = memref::AllocaOp::create(at, loc,
         MemRefType::get({6}, at.getF64Type()));
     Value requests = memref::AllocaOp::create(at, loc,
@@ -195,7 +205,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         }
         Value kinetic = buildKineticEnergy(body, physical.velocities, physical.masses);
         Value correction;
-        if (config.constraints.empty()) {
+        if (config.constraints.empty() && !config.brownian) {
           Value excess = buildKineticExcess(body, energy.forces, physical.masses, arguments.interval);
           correction = buildSum3(body, excess);
         } else {
@@ -239,6 +249,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           buildTunableGradientOutput(body, state, arguments.startValues[gradient.request],
               zero, one, gradient.output.fieldArguments.empty() ? Value{} : physical.identities,
               constants, seeds, gradient.output);
+        }
+        if (config.leapfrog) {
+          Value back = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(-0.5));
+          Value interval = arith::MulFOp::create(body, loc, back, arguments.interval);
+          if (config.branchesStart) {
+            Value none = arith::ConstantOp::create(body, loc, body.getF64FloatAttr(0.0));
+            Value first = arith::ConstantIntOp::create(body, loc, 1, 64);
+            Value begins = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                arguments.firstCall, first);
+            interval = arith::SelectOp::create(body, loc, begins, interval, none);
+          }
+          buildKick(body, physical.velocities, energy.forces, physical.masses, interval);
         }
         return SmallVector<Value>{};
       });
