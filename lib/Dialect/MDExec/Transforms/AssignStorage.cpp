@@ -71,7 +71,11 @@ struct Scope {
   /// Makes `buffer` available to later requests of its type and size. The
   /// buffers of a particle set and of a tuple set can have one type and
   /// different sizes, so a buffer is reused only for its size.
+  /// A buffer of a fixed length that has the type of buffers with a row a
+  /// particle (the partial sums of `scratch`) is never put in the pool.
   void release(Value buffer) {
+    if (getRoot().fixedLength.contains(buffer))
+      return;
     pool[{buffer.getType(), getSet(buffer)}].push_back(buffer);
   }
 
@@ -92,6 +96,10 @@ struct Scope {
   /// by which it is reused: buffers of one type are of one size only within
   /// a set. The scope of the function keeps them for all scopes.
   llvm::DenseMap<Value, Attribute> setOf;
+  /// The buffers whose length is not the size of their set, although their
+  /// type is that of a buffer of the set: the scope of the function keeps
+  /// them for all scopes.
+  llvm::DenseSet<Value> fixedLength;
   Attribute getSet(Value buffer) {
     if (auto type = dyn_cast<MemRefType>(buffer.getType()))
       if (auto layout = dyn_cast_if_present<SetLayoutAttr>(type.getLayout()))
@@ -192,6 +200,9 @@ private:
   /// `field` is the type of a field of the particle set.
   LogicalResult getScratch(Operation *op, ArrayRef<Type> sums, Type field,
                            Scope &scope, SmallVectorImpl<Value> &scratch);
+  /// The buffer of the partial sums that go with `contributions`, the
+  /// first buffer of a sum in `scratch` on a device.
+  Value getPartials(Value contributions, Location loc);
 
   /// The buffer that holds the field `field`.
   LogicalResult getBuffer(Value field, Scope &scope, Value &buffer);
@@ -282,6 +293,9 @@ private:
   /// sums that run one after another can take one buffer.
   using ScratchKey = std::tuple<Type, Value, int64_t, unsigned, unsigned>;
   llvm::DenseMap<ScratchKey, SmallVector<Value, 1>> sharedScratch;
+  /// The buffers of the partial sums of the reductions on a device, by the
+  /// buffer of the contributions that they go with (getPartials).
+  llvm::DenseMap<Value, Value> partialsOf;
 
   /// The scope of the body of the function that is being converted.
   Scope *root = nullptr;
@@ -441,12 +455,37 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
   for (Type sum : sums) {
     // A number, or a vector of numbers: the virial has nine.
     MemRefType type = getScratchType(sum, device);
-    scratch.push_back(
-        scope.request(type, size, getStorageSet(field), op->getLoc()));
-    scratch.push_back(
-        scope.request(type, size, getStorageSet(field), op->getLoc()));
+    Value contributions =
+        scope.request(type, size, getStorageSet(field), op->getLoc());
+    scratch.push_back(contributions);
+    scratch.push_back(getPartials(contributions, op->getLoc()));
   }
   return success();
+}
+
+Value Assignment::getPartials(Value contributions, Location loc) {
+  // The partial sums take a row for each part of the reduction, at most
+  // maxReductionParts, where they took a row a particle (#711): 13.5 MiB
+  // for the virial alone at 196,608 particles. Each buffer of
+  // contributions has its own, allocated once in the body of the
+  // function, so that two sums share their partial sums only where they
+  // share their contributions, as before, and md-exec-assign-streams sees
+  // the same dependencies.
+  Value &partials = partialsOf[contributions];
+  if (partials)
+    return partials;
+  OpBuilder &builder = root->builder;
+  Value length =
+      arith::ConstantIndexOp::create(builder, loc, maxReductionParts);
+  partials = gpu::AllocOp::create(builder, loc, contributions.getType(),
+                                  /*asyncToken=*/Type(),
+                                  /*asyncDependencies=*/ValueRange(),
+                                  ValueRange{length},
+                                  /*symbolOperands=*/ValueRange())
+                 .getMemref();
+  root->fixedLength.insert(partials);
+  root->setSet(partials, root->getSet(contributions));
+  return partials;
 }
 
 void Assignment::bind(Value field, Value buffer, Scope &scope) {
@@ -2289,6 +2328,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
 
     sizes.clear();
     sharedScratch.clear();
+    partialsOf.clear();
     neighborStorages.clear();
     hostBuffers.clear();
     readOnly.clear();

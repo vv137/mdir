@@ -41,6 +41,12 @@ bool isScratchType(mlir::Type type);
 /// same particles: the buffer is where that one is.
 mlir::MemRefType getScratchType(mlir::Type value, mlir::MemRefType like);
 
+/// The rows of the second buffer of each sum in `scratch` on a device, which
+/// takes the partial sums of the parts of a reduction (#711): a reduction
+/// has at most as many parts as a block of the lowering has threads, and a
+/// block has at most 1024 threads. The first buffer has a row a particle.
+constexpr int64_t maxReductionParts = 1024;
+
 /// Returns true if `type` is the type of a buffer that holds the members
 /// of tuples: `memref<?xkxi32>`.
 bool isMembersType(mlir::Type type);

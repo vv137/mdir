@@ -40,9 +40,12 @@ func.func @kick(%velocities: memref<?x3xf64>, %f: !vec, %dt: f64)
   return %result : memref<?x3xf64>
 }
 
-// A loop with a global sum gets two buffers for itself, with one value of
-// the type of the sum per particle. They come from the pool, so a loop
-// around them carries them, and nothing is allocated inside it.
+// A loop with a global sum gets two buffers for itself: the contributions,
+// with one value of the type of the sum per particle, and the partial sums,
+// with one for each part of the reduction (at most 1024, #711). The first
+// comes from the pool, so a loop around it carries it; the second is
+// allocated once in the body of the function, and nothing is allocated
+// inside the loop.
 //
 // CHECK-LABEL: func.func @energy(
 // CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf32{{.*}}, 1>, %{{[a-z0-9]+}}: index)
@@ -50,11 +53,12 @@ func.func @energy(%v: !md.field<@atoms, 3 x f32>, %steps: index) -> f64 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %zero = arith.constant 0.0 : f64
-  // CHECK-DAG:  %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64{{.*}}, 1>
-  // CHECK-DAG:  %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64{{.*}}, 1>
-  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9_]+}}, %[[AA:[a-z0-9]+]] = %{{[a-z0-9_]+}}, %[[BA:[a-z0-9]+]] = %{{[a-z0-9_]+}}) -> (f64, memref<?xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>) {
+  // CHECK-DAG:  %[[A:[a-z0-9_]+]] = gpu.alloc (%dim) : memref<?xf64{{.*}}, 1>
+  // CHECK-DAG:  %[[PARTS:[a-z0-9_]+]] = arith.constant 1024 : index
+  // CHECK-DAG:  %[[B:[a-z0-9_]+]] = gpu.alloc (%[[PARTS]]) : memref<?xf64{{.*}}, 1>
+  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9_]+}}, %[[AA:[a-z0-9]+]] = %[[A]]) -> (f64, memref<?xf64{{.*}}, 1>) {
   // CHECK-NOT:    gpu.alloc
-  // CHECK:        md_exec.particle_for ins(%[[V]] : memref<?x3xf32{{.*}}, 1>) reduce(%{{[a-z0-9_]+}} : f64) scratch(%{{[a-z0-9]+}}, %{{[a-z0-9]+}} : memref<?xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>) {
+  // CHECK:        md_exec.particle_for ins(%[[V]] : memref<?x3xf32{{.*}}, 1>) reduce(%{{[a-z0-9_]+}} : f64) scratch(%[[AA]], %[[B]] : memref<?xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>) {
   %total = scf.for %step = %c0 to %steps step %c1
       iter_args(%sum = %zero) -> (f64) {
     %k = md_exec.particle_for ins(%v : !md.field<@atoms, 3 x f32>)
@@ -72,13 +76,16 @@ func.func @energy(%v: !md.field<@atoms, 3 x f32>, %steps: index) -> f64 {
 }
 
 // The storage of a neighbor structure is on the device, and the test of
-// validity gets two buffers of the type of the positions.
+// validity gets two buffers of the type of the positions: a row a particle,
+// and a row for each part of its reduction.
 //
 // CHECK-LABEL: func.func @refresh(
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf32{{.*}}, 1>, %[[CELL:[a-z0-9]+]]: !md.cell)
 func.func @refresh(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell) -> i64 {
   // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf32{{.*}}, 1>) kind(matrix) width(48)
-  // CHECK:      md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]] scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?xf32{{.*}}, 1>, memref<?xf32{{.*}}, 1>)
+  // CHECK:      %[[PARTS:[a-z0-9_]+]] = arith.constant 1024 : index
+  // CHECK:      %[[B:[a-z0-9_]+]] = gpu.alloc (%[[PARTS]]) : memref<?xf32{{.*}}, 1>
+  // CHECK:      md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]] scratch(%{{[a-z0-9_]+}}, %[[B]] : memref<?xf32{{.*}}, 1>, memref<?xf32{{.*}}, 1>)
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
       : !mdrt.neighbors<@atoms>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
