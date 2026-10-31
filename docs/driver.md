@@ -1438,6 +1438,12 @@ plain-segment energy/time/spread outputs use native operations. The initial
 correction virial zero is native as well. Remaining generated schedule text
 is function/loop structure and its temporary carry/connection machinery.
 
+Unconstrained minimization without virtual sites, force corrections or hosted
+evaluations constructs its complete native signature and body from actual
+block arguments and semantic parameter types. The module owns that body;
+only its placement crosses the temporary assembly join. Other function
+variants and scopes remain in progress. Mass-safe descent direction is shared.
+
 ## 3. Decided
 
 | # | Question | Decision |

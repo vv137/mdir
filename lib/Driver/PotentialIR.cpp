@@ -1,5 +1,6 @@
 // Evaluations retain request/result order and the original physical state.
 #include "PotentialIR.h"
+#include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -48,4 +49,28 @@ Value mdir::driver::builder::buildSimulationTime(OpBuilder &builder, Value step,
   auto loc = builder.getUnknownLoc();
   Value real = arith::SIToFPOp::create(builder, loc, builder.getF64Type(), step);
   return arith::MulFOp::create(builder, loc, real, interval);
+}
+
+SmallVector<Type> mdir::driver::builder::buildParameterTypes(
+    MLIRContext &context, const mdir::driver::Program &program) {
+  auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
+  auto f64 = Float64Type::get(&context);
+  auto i32 = IntegerType::get(&context, 32);
+  SmallVector<Type> types;
+  for (const auto &field : program.fields)
+    types.push_back(mdir::md::FieldType::get(&context, atoms, 1,
+        field.isInteger ? Type(i32) : Type(f64)));
+  for (const auto &table : program.tables)
+    types.push_back(mdir::md::TableType::get(&context, 2, f64, table.isSquare()));
+  for (const auto &set : program.tupleSets) {
+    auto symbol = FlatSymbolRefAttr::get(&context, set.name);
+    auto orientation = set.arity == 2 && !set.oriented
+                           ? mdir::md::Orientation::Unordered
+                           : set.reversible ? mdir::md::Orientation::Reversal
+                                            : mdir::md::Orientation::Ordered;
+    types.push_back(mdir::md::RelationType::get(&context, atoms, set.arity, orientation, symbol));
+    for (unsigned i = 0; i != set.fields.size(); ++i)
+      types.push_back(mdir::md::FieldType::get(&context, symbol, 1, f64));
+  }
+  return types;
 }

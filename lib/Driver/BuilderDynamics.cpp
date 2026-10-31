@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -1316,6 +1317,23 @@ void Builder::emitDescend() {
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
+  if (!sites && !constraints && !hasForceCorrections() && !hasHostEvaluation()) {
+    auto &context = termIR.getContext();
+    mlir::OpBuilder builder(&context);
+    builder.setInsertionPointToEnd(termIR.getModule().getBody());
+    auto types = buildParameterTypes(context, program);
+    auto nativeProgram = buildUnconstrainedDescent(
+        builder, types, static_cast<double>(system.getNumParticles()), control.usesTime);
+    // The module owns this complete native body. Only its top-level placement
+    // crosses the temporary join; no argument or operation in it is reparsed.
+    emitIRFragment("", {}, {}, {}, {},
+        [nativeProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          nativeProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return;
+  }
+
   os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
         "%cell: !md.cell,\n    %h: f64"
      << getFieldParameters() << ")\n    -> (!vec, !vec, f64)"

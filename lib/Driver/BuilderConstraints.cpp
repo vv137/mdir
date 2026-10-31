@@ -3,6 +3,7 @@
 
 #include "BuilderImpl.h"
 #include "ConstraintIR.h"
+#include "DynamicsIR.h"
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -377,31 +378,7 @@ void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
   emitIRFragment(
       indent, {current}, {"!vec"}, {f, "%m"}, {"!vec", "!real"},
       [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        auto f64 = builder.getF64Type();
-        auto vec = VectorType::get({3}, f64);
-        auto map = mdir::md::MapParticlesOp::create(
-            builder, loc, values[0].getType(), values);
-        {
-          OpBuilder::InsertionGuard guard(builder);
-          auto args = builder.createBlock(&map.getKernel(), {}, {vec, f64},
-                                            {loc, loc})->getArguments();
-          Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
-          Value unit = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(1.0));
-          Value zeroVector = arith::ConstantOp::create(
-              builder, loc, DenseElementsAttr::get(vec, 0.0));
-          Value massive = arith::CmpFOp::create(builder, loc,
-                                                arith::CmpFPredicate::OGT,
-                                                args[1], zero);
-          Value safe = arith::SelectOp::create(builder, loc, massive, args[1], unit);
-          Value mass = vector::BroadcastOp::create(builder, loc, vec, safe);
-          Value ratio = arith::DivFOp::create(builder, loc, args[0], mass);
-          Value result = arith::SelectOp::create(builder, loc, massive, ratio,
-                                                 zeroVector);
-          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
-        }
-        return {map.getResult()};
+        return {buildDescentDirection(builder, values[0], values[1])};
       });
   // As RATTLE takes the velocities off the constraints.
   auto next = [&]() {
