@@ -509,6 +509,9 @@ static void checkNativeFrameEntry() {
   wideConfig.topology = true;
   wideConfig.terms = {"energy"};
   wideConfig.storedTerms = 1;
+  wideConfig.observables.push_back({"energy", {}, {{-1, 0}}});
+  wideConfig.observableCount = 1;
+  wideConfig.observableBaseArgument = inputs.size();
   auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig,
       [](OpBuilder &at, const PotentialStateIR &, EnergyResults result) -> FrameCompletionIR {
         if (!result.energy) return {result, {}};
