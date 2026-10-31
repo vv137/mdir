@@ -1447,8 +1447,11 @@ join. Mass-safe descent, constraint-test and site-placement kernels are shared.
 Restraint corrections and hosted-model evaluations use synchronous narrow-role
 capabilities with actual physical values and semantic particle-field bindings.
 Their shared native kernels retain correction/evaluation order and effects;
-minimization no longer emits a generated signature or body. Other function
-scopes remain in progress.
+minimization no longer emits a generated signature or body. Basic unconstrained
+Verlet and leapfrog step/energy functions also own native signatures and bodies,
+including time-dependent evaluations. Their construction tests cover energy,
+velocity staggering and time combinations. Other variants and scopes remain
+in progress.
 
 ## 3. Decided
 
