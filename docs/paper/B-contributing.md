@@ -197,6 +197,7 @@ through narrow roles. Their native kernels are shared with the remaining
 emitters; the complete minimization body is native. Other scopes remain in progress.
 
 Basic unconstrained Verlet and leapfrog step functions also construct complete
-native signatures and bodies, including time-dependent potential evaluations.
+native signatures and bodies, including time-dependent potential evaluations,
+virtual-site placement and force spreading.
 Construction coverage checks module-owned operations and actual block arguments
 across the energy, velocity-staggering and time combinations.

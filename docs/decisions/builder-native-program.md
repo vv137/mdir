@@ -226,7 +226,7 @@ shared kernels preserve correction order and effects. The old minimization
 signature/body assembly is removed.
 
 Basic unconstrained Verlet and leapfrog step/energy functions also construct
-complete native signatures and bodies, including time-dependent evaluations.
+complete native signatures and bodies, including time-dependent evaluations, site placement and force spreading.
 Construction tests cover energy, velocity staggering and time combinations.
 Other variants and native scopes remain in progress; the temporary assembly
 join and loop-carry connections remain until those scopes move.

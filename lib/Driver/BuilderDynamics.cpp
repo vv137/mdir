@@ -176,14 +176,29 @@ void Builder::emitPrograms() {
         leapfrog && constraints && (control.isLangevin() || scales);
     bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
     if ((StringRef(kind.name) == "step" || StringRef(kind.name) == "step_energy") &&
-        !sites && !constraints && !control.isLangevin() && !brownian &&
+        !constraints && !control.isLangevin() && !brownian &&
         !scales && !measured && !hasForceCorrections() && !hasHostEvaluation()) {
       auto &context = termIR.getContext();
       mlir::OpBuilder builder(&context);
       builder.setInsertionPointToEnd(termIR.getModule().getBody());
       auto types = buildParameterTypes(context, program);
+      std::vector<DescentSiteIR> siteSets;
+      for (const Program::TupleSet *selected : getSiteSets()) {
+        unsigned slot = program.fields.size() + program.tables.size();
+        for (const auto &set : program.tupleSets) {
+          if (&set == selected) break;
+          slot += 1 + set.fields.size();
+        }
+        auto fieldSlot = [&](StringRef name) {
+          auto found = llvm::find_if(selected->fields, [&](const auto &field) { return field.name == name; });
+          assert(found != selected->fields.end() && "site parameter must exist");
+          return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+        };
+        siteSets.push_back({slot, fieldSlot("a"), fieldSlot("b"), selected->name == "sites_amber",
+                           spreadsSitesDerived(), "spread_" + selected->name});
+      }
       auto nativeProgram = buildNativeVerletStep(
-          builder, kind.name, types, withEnergy, leapfrog, control.usesTime);
+          builder, kind.name, types, withEnergy, leapfrog, control.usesTime, siteSets);
       emitIRFragment("", {}, {}, {}, {},
           [nativeProgram](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
             nativeProgram->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());

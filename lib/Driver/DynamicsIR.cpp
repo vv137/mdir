@@ -260,7 +260,7 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeDescent(
 
 mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
     OpBuilder &builder, StringRef name, TypeRange parameters,
-    bool energy, bool leapfrog, bool timed) {
+    bool energy, bool leapfrog, bool timed, llvm::ArrayRef<DescentSiteIR> sites) {
   auto loc = builder.getUnknownLoc();
   auto ctx = builder.getContext();
   auto atoms = FlatSymbolRefAttr::get(ctx, "atoms");
@@ -292,8 +292,19 @@ mdir::dyn::ProgramOp mdir::driver::builder::buildNativeVerletStep(
   Value time = timed ? buildSimulationTime(builder, args[6 + parameters.size()], args[5]) : Value{};
   Value kicked = buildKick(builder, args[1], args[2], args[3], leapfrog ? args[5] : half);
   Value positions = buildDrift(builder, args[0], kicked, args[5]);
+  auto parameter = [&](unsigned slot) { return args[6 + slot]; };
+  for (const auto &site : sites)
+    positions = buildPlacedSites(builder,
+        {parameter(site.relation), positions, args[4], parameter(site.a), parameter(site.b)}, site.amber);
   auto evaluation = buildEnergyEvaluation(builder,
       {positions, args[4], ValueRange(args).slice(6, parameters.size()), time}, {energy, true, energy});
+  for (const auto &site : sites) {
+    auto spread = buildSiteSpread(builder,
+        {parameter(site.relation), positions, args[4], parameter(site.a), parameter(site.b),
+         evaluation.forces, evaluation.virial}, site.amber, site.derived, site.potential);
+    evaluation.forces = spread.forces;
+    evaluation.virial = spread.virial;
+  }
   Value diagonal;
   if (energy) diagonal = buildVirialDiagonal(builder, evaluation.virial).vector;
   if (leapfrog && !energy) {
