@@ -7,6 +7,7 @@
 #include "CouplingIR.h"
 #include "EntryRuntimeIR.h"
 #include "SimpleFrameEntryIR.h"
+#include "SimpleStepEntryIR.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "PotentialIR.h"
@@ -1313,6 +1314,35 @@ llvm::Error Builder::emitEntry() {
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*moduleBody, before))
       operations.push_back(&operation);
+    emitIRFragment("", {}, {}, {}, {},
+        [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          for (auto *operation : operations)
+            operation->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return llvm::Error::success();
+  }
+  bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
+      !system.topology && !isRestart() && !control.usesTime && !isTriclinic() &&
+      !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
+      control.getCouplingPeriod() == 0 && !control.barostat &&
+      !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
+      control.freeEnergyFile.empty() && control.observables.empty() && !program.tunableGradient &&
+      levels.size() == 1 && levels.front().name == "step";
+  if (nativeSteps) {
+    mlir::OpBuilder ir(&termIR.getContext());
+    auto *body = termIR.getModule().getBody();
+    ir.setInsertionPointToEnd(body);
+    size_t before = std::distance(body->begin(), body->end());
+    emitRuntimeDeclarations(ir, declarations, false);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation) role->buildDeclarations(*this, ir);
+    emitRuntimeDeclarations(ir, declarations, true);
+    auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
+    auto entry = buildSimpleStepEntry(ir, program, step, levels.front().count);
+    if (!entry) return entry.takeError();
+    llvm::SmallVector<mlir::Operation *> operations;
+    for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);
     emitIRFragment("", {}, {}, {}, {},
         [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
           for (auto *operation : operations)

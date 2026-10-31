@@ -23,50 +23,6 @@ using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
 namespace {
-SmallVector<Value> potentialFields(const EntryFieldsIR &fields) {
-  SmallVector<Value> values;
-  llvm::append_range(values, fields.fields);
-  llvm::append_range(values, fields.tables);
-  for (const auto &tuple : fields.tuples) {
-    values.push_back(tuple.members);
-    llvm::append_range(values, tuple.fields);
-  }
-  return values;
-}
-EntryFieldsIR reorderedFrame(OpBuilder &builder, const Program &program,
-    EntryFieldsIR fields, Value cell) {
-  if (!program.reorders) return fields;
-  SmallVector<ReorderFieldIR> parameters;
-  for (auto [index, field] : llvm::enumerate(program.fields)) {
-    std::optional<unsigned> source;
-    if (field.name == "pme_listed" || field.name == "ljpme_listed") {
-      StringRef name = field.name == "pme_listed" ? "q" : "ljpme_c";
-      auto found = llvm::find_if(program.fields,
-          [&](const auto &candidate) { return candidate.name == name; });
-      unsigned slot = std::distance(program.fields.begin(), found);
-      assert(slot < index && "derived list must follow its source field");
-      source = slot;
-    }
-    parameters.push_back({source ? Value{} : fields.fields[index], source});
-  }
-  SmallVector<Value> relations;
-  ReorderIRConfig config{program.orderWidth, {}};
-  for (auto [index, tuple] : llvm::enumerate(program.tupleSets)) {
-    relations.push_back(fields.tuples[index].members);
-    if (tuple.name == "anchors") config.anchorRelation = index;
-  }
-  ReorderIRInputs input{fields.positions, fields.velocities, {}, fields.masses,
-      fields.identities, cell, parameters, relations};
-  auto result = buildReorder(builder, input, config);
-  fields.positions = result.positions;
-  fields.velocities = result.velocities;
-  fields.masses = result.masses;
-  fields.identities = result.ids;
-  fields.fields = std::move(result.fields);
-  for (auto [index, relation] : llvm::enumerate(result.relations))
-    fields.tuples[index].members = relation;
-  return fields;
-}
 Value constraintTrace(OpBuilder &builder, const EntryFieldsIR &physical,
     const PotentialStateIR &state, Value forces, Value trace,
     llvm::ArrayRef<FrameConstraintIR> groups, bool axes) {
@@ -187,13 +143,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       Value cell = buildCell(frame, edges);
       auto physical = imported;
       physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
-      auto originalParameters = potentialFields(physical);
+      auto originalParameters = buildEntryPotentialFields(physical);
       for (const auto &site : config.sites)
         physical.positions = buildPlacedSites(frame,
             {originalParameters[site.relation], physical.positions, cell,
              originalParameters[site.a], originalParameters[site.b]}, site.amber);
-      physical = reorderedFrame(frame, program, std::move(physical), cell);
-      auto parameters = potentialFields(physical);
+      physical = buildEntryReorder(frame, program, std::move(physical), cell);
+      auto parameters = buildEntryPotentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
       SmallVector<Value> storedTerms;
       auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {

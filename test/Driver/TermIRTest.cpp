@@ -1,6 +1,7 @@
 // Internal term connections must disappear before ordinary verification.
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
+#include "../../lib/Driver/SimpleStepEntryIR.h"
 #include "../../lib/Driver/EntryRuntimeIR.h"
 #include "../../lib/Driver/EntryLoopIR.h"
 #include "../../lib/Driver/PotentialIR.h"
@@ -437,6 +438,55 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkNativeSimpleEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_steps";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.takesForces = metadata.reorders = true;
+  metadata.orderWidth = 0.5;
+  metadata.fields.push_back({"q", {}, false});
+  auto parameters = buildParameterTypes(context, metadata);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native step-entry energy did not construct");
+  auto step = buildNativeStep(builder, {"step"}, parameters, false, false);
+  require(bool(step), "native step-entry dynamics did not construct");
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  auto built = buildSimpleStepEntry(builder, metadata, *step, 3);
+  require(bool(built), "native plain-step entry did not construct");
+  auto entry = *built;
+  auto loop = *entry.getOps<scf::ForOp>().begin();
+  require(loop->hasAttr("mdrt.fresh"), "native plain-step loop lost its fresh boundary");
+  auto call = *loop.getBody()->getOps<mdir::dyn::StepOp>().begin();
+  require(llvm::equal(call.getOperands().take_front(3), loop.getRegionIterArgs()),
+      "native plain-step call reads stale outer state");
+  metadata.fields.clear();
+  metadata.entry = "changed";
+  require(module.lookupSymbol<func::FuncOp>("native_steps") == entry,
+      "native plain-step entry retained mutable metadata");
+  require(succeeded(verify(module)), "native plain-step module did not verify");
+  auto missing = buildSimpleStepEntry(builder, metadata, {}, 3);
+  require(!missing, "native plain-step entry accepted a missing dynamics program");
+  reject(missing.takeError(), "a generated step has no program definition");
+  require(!module.lookupSymbol<func::FuncOp>("changed"), "failed native entry retained its function");
+}
+
 static llvm::Error verifyNativeFrameEntry(ModuleOp module) {
   if (failed(verify(module)))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -666,6 +716,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeSimpleEntry();
   checkNativeFrameEntry();
   checkDiagonalExports();
   checkFrameEvaluations();
