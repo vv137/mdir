@@ -8,6 +8,7 @@
 #include "EntryRuntimeIR.h"
 #include "SimpleFrameEntryIR.h"
 #include "SimpleStepEntryIR.h"
+#include "MinimizationEntryIR.h"
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "PotentialIR.h"
@@ -1113,6 +1114,12 @@ llvm::Error Builder::emitEntry() {
   };
   auto complete = [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
       mlir::Value scale) {
+    bool minimizationVirial = control.minimize && !evaluation.virial;
+    if (minimizationVirial && hasForceCorrections()) {
+      auto vec = mlir::VectorType::get({9}, at.getF64Type());
+      evaluation.virial = mlir::arith::ConstantOp::create(at, at.getUnknownLoc(),
+          mlir::DenseElementsAttr::get(vec, 0.0));
+    }
     llvm::SmallVector<mlir::Value> stored;
     auto field = [&](StringRef name) -> mlir::Value {
       auto found = llvm::find_if(program.fields,
@@ -1129,6 +1136,7 @@ llvm::Error Builder::emitEntry() {
         evaluation = {result.energy, result.forces, result.virial};
         llvm::append_range(stored, result.storedTerms);
       }
+    if (minimizationVirial) evaluation.virial = {};
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().hostEvaluation;
           role && role->applies(*this)) {
@@ -1249,6 +1257,76 @@ llvm::Error Builder::emitEntry() {
       }
     }
   };
+  if (control.minimize && !control.frames && !control.segments) {
+    mlir::OpBuilder ir(&termIR.getContext());
+    auto *body = termIR.getModule().getBody();
+    ir.setInsertionPointToEnd(body);
+    size_t before = std::distance(body->begin(), body->end());
+    emitRuntimeDeclarations(ir, declarations, false);
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation) role->buildDeclarations(*this, ir);
+    emitRuntimeDeclarations(ir, declarations, true);
+    MinimizationEntryIRConfig config;
+    config.timed = control.usesTime;
+    config.stepMemory = needsStepNumber();
+    config.restart = isRestart();
+    config.stops = stopsMinimization();
+    config.topology = bool(system.topology);
+    config.checkpoints = control.checkpointPeriod > 0;
+    config.changesCell = changesCell();
+    config.scalesEveryStep = scalesEveryStep();
+    config.cellEdges = getCellSize();
+    config.steps = control.numSteps;
+    config.energyPeriod = control.energyPeriod;
+    config.framePeriod = control.framePeriod;
+    config.firstSize = control.minimizeStep * units::length;
+    config.cap = Control::minimizeStepCap * units::length;
+    if (scalesReference()) {
+      std::array<unsigned, 3> slots;
+      for (unsigned index = 0; index != 3; ++index) {
+        auto found = llvm::find_if(program.startValues, [&](const auto &value) {
+          return value.name == "rest_edge" + std::to_string(index);
+        });
+        assert(found != program.startValues.end() && "reference edge must exist");
+        slots[index] = std::distance(program.startValues.begin(), found);
+      }
+      config.referenceEdges = slots;
+    }
+    configureSites(config.sites);
+    std::vector<EntryConstraintIR> groups;
+    configureConstraints(groups);
+    ConstraintPositionConfig position{false, control.analyticBonds,
+        control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+        control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
+    for (const auto &group : groups) {
+      DescentConstraintGroupIR geometry{group.relation, group.arity,
+          {group.parameters.begin(), group.parameters.end()}, {}, position, group.water,
+          group.water && control.precision == Precision::Double};
+      if (group.water) geometry.bonds = {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}};
+      else for (unsigned member = 1; member != group.arity; ++member)
+        geometry.bonds.push_back({0, member, member - 1});
+      config.constraints.push_back(std::move(geometry));
+    }
+    if (config.topology)
+      for (const auto &definition : getTermDefinitions()) config.terms.push_back(definition.name);
+    config.needsPostEvaluation = hasForceCorrections();
+    config.needsHostedEvaluation = hasHostEvaluation();
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().postEvaluation)
+        config.storedTerms += role->getStoredTermCount(*this);
+    auto descend = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("descend");
+    auto entry = buildMinimizationEntry(ir, program, descend, config, complete);
+    if (!entry) return entry.takeError();
+    llvm::SmallVector<mlir::Operation *> operations;
+    for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);
+    emitIRFragment("", {}, {}, {}, {},
+        [operations = std::move(operations)](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
+          for (auto *operation : operations)
+            operation->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
+          return {};
+        });
+    return llvm::Error::success();
+  }
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&

@@ -1569,6 +1569,12 @@ frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
 
 
+Standalone minimization entries use `MinimizationEntryIR.cpp`: initial constraint
+projection, the existing native descent program, accept/reject maps, nested
+controller state, convergence rows, frames and final checkpoints are constructed
+directly. Restart projection and initial term-report behavior are retained.
+Programs of parts and the remaining coupling scopes are still in progress.
+
 ## 3. Decided
 
 | # | Question | Decision |

@@ -2,6 +2,7 @@
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
 #include "../../lib/Driver/SimpleStepEntryIR.h"
+#include "../../lib/Driver/MinimizationEntryIR.h"
 #include "../../lib/Driver/PullOutputIR.h"
 #include "../../lib/Driver/EntryRuntimeIR.h"
 #include "../../lib/Driver/EntryLoopIR.h"
@@ -440,6 +441,80 @@ static void checkNativeBarePotentialBody() {
 
 }
 
+
+static void checkNativeMinimizationEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_minimization";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.reorders = true;
+  metadata.orderWidth = 0.5;
+  metadata.fields.push_back({"q", {}, false});
+  auto parameters = buildParameterTypes(context, metadata);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native minimization entry potential did not construct");
+  auto descend = buildNativeDescent(builder, parameters, 3.0, false);
+  MinimizationEntryIRConfig config;
+  config.steps = 8;
+  config.energyPeriod = 2;
+  config.framePeriod = 4;
+  config.firstSize = 0.001;
+  config.cap = 0.01;
+  config.checkpoints = true;
+  config.topology = true;
+  config.terms = {"energy"};
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  runtime.minimize = true;
+  runtime.stopsMinimization = config.stops;
+  runtime.checkpoints = config.checkpoints;
+  runtime.writesForces = metadata.writesForces;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  auto missing = buildMinimizationEntry(builder, metadata, {}, config);
+  require(!missing, "native minimization accepted a missing descent program");
+  reject(missing.takeError(), "native minimization has no descent program");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry), "failed native minimization retained its entry");
+  auto built = buildMinimizationEntry(builder, metadata, descend, config);
+  require(bool(built), "native minimization entry did not construct");
+  auto frames = *built->getOps<scf::ForOp>().begin();
+  auto rows = *frames.getBody()->getOps<scf::ForOp>().begin();
+  auto steps = *rows.getBody()->getOps<scf::ForOp>().begin();
+  auto trial = *steps.getBody()->getOps<mdir::dyn::StepOp>().begin();
+  require(llvm::equal(rows.getInitArgs(), frames.getRegionIterArgs()) &&
+          llvm::equal(steps.getInitArgs(), rows.getRegionIterArgs()),
+      "native minimization reads stale enclosing controller state");
+  require(trial.getOperand(0) == steps.getRegionIterArgs()[0] &&
+          trial.getOperand(1) == steps.getRegionIterArgs()[1] &&
+          trial.getOperand(4) == steps.getRegionIterArgs()[3],
+      "native minimization trial reads stale positions, forces or step length");
+  metadata.entry = "native_unstopped_minimization";
+  config.stops = false;
+  config.framePeriod = 0;
+  auto unstopped = buildMinimizationEntry(builder, metadata, descend, config);
+  require(bool(unstopped), "native minimization without stop rows did not construct");
+  metadata.entry = "native_missing_hosted_minimization";
+  config.needsHostedEvaluation = true;
+  auto omitted = buildMinimizationEntry(builder, metadata, descend, config);
+  require(!omitted, "native minimization silently dropped its hosted role");
+  reject(omitted.takeError(), "native minimization requires the hosted-evaluation role");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry), "missing native minimization role retained an entry");
+  metadata.fields.clear();
+  require(succeeded(verify(module)), "native minimization module did not verify");
+}
 
 static void checkNativeConstraintStepEntry() {
   TermIRPlan plan;
@@ -1225,6 +1300,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeMinimizationEntry();
   checkNativeConstraintStepEntry();
   checkNativeSiteStepEntry();
   checkNativeTimedStepEntry();
