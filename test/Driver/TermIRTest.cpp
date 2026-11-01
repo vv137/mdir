@@ -957,6 +957,33 @@ static void checkNativeSimpleEntry() {
   require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
       "invalid native restart retained a partial entry");
   metadata.takesForces = true;
+  metadata.entry = "native_hosted_steps";
+  SimpleStepEntryIRConfig hosted{2, 3};
+  hosted.needsHostedEvaluation = true;
+  auto omittedHost = buildSimpleStepEntry(builder, metadata, *step, *energyStep, hosted);
+  require(!omittedHost, "native entry silently dropped its hosted-evaluation role");
+  reject(omittedHost.takeError(), "native step entry requires the hosted-evaluation role");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "missing hosted-evaluation role retained a partial entry");
+  Value hostedForce, hostedEnergy;
+  auto completedHost = buildSimpleStepEntry(builder, metadata, *step, *energyStep, hosted,
+      [&](OpBuilder &at, const PotentialStateIR &, EnergyResults physical, Value) {
+        hostedForce = buildFieldDifference(at, physical.forces, physical.forces);
+        Value shift = arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.25));
+        hostedEnergy = arith::AddFOp::create(at, at.getUnknownLoc(), physical.energy, shift);
+        return EntryCompletionIR{{hostedEnergy, hostedForce, physical.virial}, {}};
+      });
+  require(bool(completedHost), "native hosted-entry completion did not construct");
+  auto hostedLoop = *completedHost->getOps<scf::ForOp>().begin();
+  require(hostedLoop.getInitArgs()[2] == hostedForce,
+      "native hosted entry carried forces from before hosted completion");
+  unsigned hostedRows = 0;
+  for (auto row : completedHost->getOps<func::CallOp>())
+    if (row.getCallee() == "mdrtWriteEnergies") {
+      ++hostedRows;
+      require(row.getOperand(1) == hostedEnergy, "native hosted entry reported the uncompleted energy");
+    }
+  require(hostedRows == 1, "native hosted entry lost its initial completed row");
   metadata.fields.clear();
   metadata.tupleSets.clear();
   metadata.entry = "changed";

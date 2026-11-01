@@ -1538,7 +1538,10 @@ callback is a named construction error. Post-evaluation shares the frame family'
 typed completion callback; its corrected physical values and stored term energies
 feed the initial output in their existing order. Missing post-evaluation callbacks
 or inconsistent stored-term counts produce named construction errors. Hosted
-configurations remain outside this selector. `EntryOutputIR.cpp` shares owned
+completion follows post-evaluation in the same typed role order as native step
+programs; its energy and forces feed the initial row and loop state. A required
+hosted role without a completion callback is a named construction error. The
+existing hosted-frame restrictions remain unchanged. `EntryOutputIR.cpp` shares owned
 free-energy, observable and gradient configuration with the frame family. It
 preserves initial-only gradient output, free-energy/observable row order and
 separate closing-row time conversions for each active output.

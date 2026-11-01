@@ -32,6 +32,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.needsPostEvaluation && !complete)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry requires the post-evaluation role");
+  if (config.needsHostedEvaluation && !complete)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step entry requires the hosted-evaluation role");
   if (!step || (config.energyIntervals && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");

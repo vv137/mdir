@@ -1129,6 +1129,14 @@ llvm::Error Builder::emitEntry() {
         evaluation = {result.energy, result.forces, result.virial};
         llvm::append_range(stored, result.storedTerms);
       }
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().hostEvaluation;
+          role && role->applies(*this)) {
+        auto result = role->build(*this, at,
+            {state.positions, state.cell, evaluation.forces, evaluation.energy,
+             evaluation.virial, scale, field});
+        evaluation = {result.energy, result.forces, result.virial};
+      }
     return EntryCompletionIR{evaluation, std::move(stored)};
   };
   auto configureSites = [&](std::vector<DescentSiteIR> &sites) {
@@ -1335,7 +1343,6 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
-      !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy";
@@ -1376,6 +1383,7 @@ llvm::Error Builder::emitEntry() {
     configureSites(config.sites);
     configureConstraints(config.constraints);
     config.needsPostEvaluation = hasForceCorrections();
+    config.needsHostedEvaluation = hasHostEvaluation();
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().postEvaluation)
         config.storedTerms += role->getStoredTermCount(*this);
