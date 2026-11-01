@@ -1111,6 +1111,26 @@ llvm::Error Builder::emitEntry() {
       if (const auto *role = term->getRoles().coordinateOutput)
         role->buildOutput(*this, at, point);
   };
+  auto complete = [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
+      mlir::Value scale) {
+    llvm::SmallVector<mlir::Value> stored;
+    auto field = [&](StringRef name) -> mlir::Value {
+      auto found = llvm::find_if(program.fields,
+          [&](const auto &field) { return field.name == name; });
+      assert(found != program.fields.end() && "evaluation field must exist");
+      return state.fields[std::distance(program.fields.begin(), found)];
+    };
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().postEvaluation;
+          role && role->hasForceCorrection(*this)) {
+        auto result = role->build(*this, at,
+            {state.positions, state.cell, evaluation.forces, evaluation.energy,
+             evaluation.virial, scale, field});
+        evaluation = {result.energy, result.forces, result.virial};
+        llvm::append_range(stored, result.storedTerms);
+      }
+    return EntryCompletionIR{evaluation, std::move(stored)};
+  };
   auto configureOutputs = [&](EntryOutputIRConfig &config) {
     if (!control.freeEnergyFile.empty()) {
       config.freeEnergy.emplace(FreeEnergyOutputConfig{
@@ -1294,26 +1314,7 @@ llvm::Error Builder::emitEntry() {
       }
     }
     auto entry = buildSimpleFrameEntry(ir, program, config,
-        [&](mlir::OpBuilder &at, const PotentialStateIR &state, EnergyResults evaluation,
-            mlir::Value scale) {
-          llvm::SmallVector<mlir::Value> stored;
-          auto field = [&](StringRef name) -> mlir::Value {
-            auto found = llvm::find_if(program.fields,
-                [&](const auto &field) { return field.name == name; });
-            assert(found != program.fields.end() && "evaluation field must exist");
-            return state.fields[std::distance(program.fields.begin(), found)];
-          };
-          for (const TermBuilder *term : getTermBuilders())
-            if (const auto *role = term->getRoles().postEvaluation;
-                role && role->hasForceCorrection(*this)) {
-              auto result = role->build(*this, at,
-                  {state.positions, state.cell, evaluation.forces, evaluation.energy,
-                   evaluation.virial, scale, field});
-              evaluation = {result.energy, result.forces, result.virial};
-              llvm::append_range(stored, result.storedTerms);
-            }
-          return FrameCompletionIR{evaluation, std::move(stored)};
-        }, coordinateOutput);
+        complete, coordinateOutput);
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*moduleBody, before))
@@ -1330,7 +1331,7 @@ llvm::Error Builder::emitEntry() {
       !isRestart() &&
       !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
-      !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
+      !hasConstraints() && !hasSites() && !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy";
@@ -1363,11 +1364,15 @@ llvm::Error Builder::emitEntry() {
       }
     }
     configureOutputs(config.output);
+    config.needsPostEvaluation = hasForceCorrections();
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().postEvaluation)
+        config.storedTerms += role->getStoredTermCount(*this);
     config.needsCoordinateOutput = llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
       const auto *role = term->getRoles().coordinateOutput;
       return role && role->hasCoordinateOutput(*this);
     });
-    auto entry = buildSimpleStepEntry(ir, program, step, energy, config, coordinateOutput);
+    auto entry = buildSimpleStepEntry(ir, program, step, energy, config, complete, coordinateOutput);
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);

@@ -2,6 +2,7 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "EntryEvaluationIR.h"
 #include "PotentialIR.h"
 #include "EntryOutputIR.h"
 #include <cstdint>
@@ -23,10 +24,14 @@ struct SimpleStepEntryIRConfig {
   bool timed = false;
   bool triclinic = false;
   EntryOutputIRConfig output;
+  bool needsPostEvaluation = false;
+  unsigned storedTerms = 0;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,
     const SimpleStepEntryIRConfig &,
+    llvm::function_ref<EntryCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
+                                        EnergyResults, mlir::Value scale)> complete = {},
     llvm::function_ref<void(mlir::OpBuilder &, const PotentialStateIR &, mlir::Value step)>
         coordinateOutput = {});
 }

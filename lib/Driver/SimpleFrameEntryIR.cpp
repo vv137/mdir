@@ -50,7 +50,7 @@ void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
 
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     OpBuilder &builder, const Program &program, const SimpleFrameEntryIRConfig &config,
-    llvm::function_ref<FrameCompletionIR(OpBuilder &, const PotentialStateIR &,
+    llvm::function_ref<EntryCompletionIR(OpBuilder &, const PotentialStateIR &,
                                         EnergyResults, Value)> complete,
     llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
   return buildEntryFunction(builder, program, {false, config.branchesStart},

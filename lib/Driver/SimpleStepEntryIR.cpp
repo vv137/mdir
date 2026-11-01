@@ -24,10 +24,14 @@ using namespace mdir::driver::builder;
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     OpBuilder &builder, const Program &program, mdir::dyn::ProgramOp step,
     mdir::dyn::ProgramOp energyStep, const SimpleStepEntryIRConfig &config,
+    llvm::function_ref<EntryCompletionIR(OpBuilder &, const PotentialStateIR &, EnergyResults, Value)> complete,
     llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
   if (config.needsCoordinateOutput && !coordinateOutput)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry requires the coordinate-output role");
+  if (config.needsPostEvaluation && !complete)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step entry requires the post-evaluation role");
   if (!step || (config.energyIntervals && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");
@@ -88,8 +92,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto fields = buildEntryPotentialFields(physical);
     PotentialStateIR state{physical.positions, cell, fields, time};
     auto energy = buildEnergyEvaluation(at, state, {true, true, true});
+    EntryCompletionIR evaluated{energy, {}};
+    if (complete) evaluated = complete(at, state, energy, {});
+    if (evaluated.storedTerms.size() != config.storedTerms)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+          "native step entry post-evaluation term count does not match its configuration");
+    energy = evaluated.physical;
     if (config.topology) {
-      Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size());
+      Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size() + config.storedTerms);
+      for (auto [index, value] : llvm::enumerate(evaluated.storedTerms)) {
+        Value slot = arith::ConstantIndexOp::create(at, loc, config.terms.size() + index);
+        memref::StoreOp::create(at, loc, value, terms, slot);
+      }
       buildWriteTerms(at, terms);
       auto diagonal = buildVirialDiagonal(at, energy.virial);
       func::CallOp::create(at, loc, "mdrtWriteVirial", TypeRange{},

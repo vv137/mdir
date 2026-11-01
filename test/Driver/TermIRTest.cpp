@@ -488,7 +488,7 @@ static void checkNativeTimedStepEntry() {
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
   unsigned outputPoints = 0;
-  auto built = buildSimpleStepEntry(builder, metadata, *step, *reporting, config,
+  auto built = buildSimpleStepEntry(builder, metadata, *step, *reporting, config, {},
       [&](OpBuilder &, const PotentialStateIR &state, Value) {
         ++outputPoints;
         require(bool(state.time) == (outputPoints == 1),
@@ -668,7 +668,7 @@ static void checkNativeSimpleEntry() {
       [&](OpBuilder &, ValueRange args) -> Value { return args[inputs.size()]; });
   require(bool(pull), "native topology pull potential did not construct");
   unsigned outputPoints = 0;
-  auto pulled = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory,
+  auto pulled = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory, {},
       [&](OpBuilder &at, const PotentialStateIR &state, Value completed) {
         ++outputPoints;
         auto row = dyn_cast<func::CallOp>(&at.getInsertionBlock()->back());
@@ -686,6 +686,35 @@ static void checkNativeSimpleEntry() {
       });
   require(bool(pulled) && outputPoints == 2,
       "native topology entry lost initial or energy-boundary pull output");
+  metadata.entry = "native_post_steps";
+  trajectory.needsCoordinateOutput = false;
+  trajectory.needsPostEvaluation = true;
+  trajectory.storedTerms = 1;
+  auto omittedPost = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(!omittedPost, "native topology entry silently dropped its post-evaluation role");
+  reject(omittedPost.takeError(), "native step entry requires the post-evaluation role");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "missing post-evaluation role retained a partial entry");
+  Value storedEnergy;
+  auto complete = [&](OpBuilder &at, const PotentialStateIR &, EnergyResults energy, Value scale) {
+    require(!scale, "fixed-cell post evaluation acquired a reference scale");
+    storedEnergy = arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.5));
+    energy.energy = arith::AddFOp::create(at, at.getUnknownLoc(), energy.energy, storedEnergy);
+    return EntryCompletionIR{energy, {storedEnergy}};
+  };
+  trajectory.storedTerms = 2;
+  auto wrongCount = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory, complete);
+  require(!wrongCount, "native topology entry silently changed its stored-term count");
+  reject(wrongCount.takeError(),
+      "native step entry post-evaluation term count does not match its configuration");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "post-evaluation count mismatch retained a partial entry");
+  trajectory.storedTerms = 1;
+  auto corrected = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory, complete);
+  require(bool(corrected), "native topology post-evaluation entry did not construct");
+  SmallVector<memref::StoreOp> termStores(corrected->getOps<memref::StoreOp>());
+  require(termStores.size() == 2 && termStores.back().getValueToStore() == storedEnergy,
+      "native topology entry lost the post-evaluation energy after its ordinary term");
   metadata.fields.clear();
   metadata.tupleSets.clear();
   metadata.entry = "changed";
@@ -850,7 +879,7 @@ static void checkNativeFrameEntry() {
   wideConfig.output.observableCount = 1;
   wideConfig.output.observableBaseArgument = inputs.size();
   auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig,
-      [](OpBuilder &at, const PotentialStateIR &, EnergyResults result, Value) -> FrameCompletionIR {
+      [](OpBuilder &at, const PotentialStateIR &, EnergyResults result, Value) -> EntryCompletionIR {
         if (!result.energy) return {result, {}};
         auto loc = at.getUnknownLoc();
         Value stored = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.5));

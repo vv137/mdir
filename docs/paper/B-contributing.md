@@ -278,7 +278,7 @@ checks actual frame evaluations and frame-input provenance.
 `EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
 Other entry families and their final assembly join remain in progress.
 
-A fixed-cell orthorhombic/triclinic Verlet entry without constraints or post-evaluation corrections,
+A fixed-cell orthorhombic/triclinic Verlet entry without constraints,
 with plain steps, energy, trajectory and checkpoint intervals, constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
 energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
@@ -292,7 +292,10 @@ Topology entries retain their initial term-energy and virial output before
 kinetic and pressure output. The coordinate-output callback follows the initial
 energy row and every closing energy row, using the same typed pull core as the
 frame and remaining writer paths. A required coordinate-output role without its
-callback is a named construction error; unsupported post-evaluation and hosted
+callback is a named construction error. Post-evaluation shares the frame family's
+typed completion callback; its corrected physical values and stored term energies
+feed the initial output in their existing order. Missing post-evaluation callbacks
+or inconsistent stored-term counts produce named construction errors. Hosted
 configurations remain outside this selector. `EntryOutputIR.cpp` shares owned
 free-energy, observable and gradient configuration with the frame family. It
 preserves initial-only gradient output, free-energy/observable row order and

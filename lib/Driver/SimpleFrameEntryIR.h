@@ -2,6 +2,7 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "EntryEvaluationIR.h"
 #include "DynamicsIR.h"
 #include "EntryOutputIR.h"
 #include "BarostatIR.h"
@@ -14,10 +15,6 @@ struct FrameConstraintIR {
   unsigned relation, arity;
   llvm::SmallVector<unsigned> parameters;
   bool water;
-};
-struct FrameCompletionIR {
-  EnergyResults physical;
-  llvm::SmallVector<mlir::Value> storedTerms;
 };
 struct FrameThermostatIR {
   int64_t seed;
@@ -41,7 +38,7 @@ struct SimpleFrameEntryIRConfig {
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
     mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &,
-    llvm::function_ref<FrameCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
+    llvm::function_ref<EntryCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
                                         EnergyResults, mlir::Value scale)> complete = {},
     llvm::function_ref<void(mlir::OpBuilder &, const PotentialStateIR &, mlir::Value step)>
         coordinateOutput = {});
