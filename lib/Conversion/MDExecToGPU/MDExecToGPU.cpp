@@ -8674,6 +8674,12 @@ void Lowering::releaseStack(func::FuncOp function) {
 LogicalResult Lowering::run() {
   if (blockSize <= 0)
     return module.emitError() << "expected a positive size of a block";
+  // A reduction has at most a part a thread of a block, and the buffers of
+  // the partial sums in `scratch` have that many rows (#711).
+  if (blockSize > md_exec::maxReductionParts)
+    return module.emitError()
+           << "expected a block of at most " << md_exec::maxReductionParts
+           << " threads";
   if (rowLanes < 1 || rowLanes > 32 || (rowLanes & (rowLanes - 1)) != 0 ||
       blockSize % rowLanes != 0)
     return module.emitError()
