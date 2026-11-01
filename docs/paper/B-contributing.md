@@ -278,7 +278,7 @@ checks actual frame evaluations and frame-input provenance.
 `EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
 Other entry families and their final assembly join remain in progress.
 
-A fixed-cell orthorhombic/triclinic Verlet entry without constraints,
+A fixed-cell orthorhombic/triclinic dynamics entry across integrators, without constraints,
 with plain steps, energy, trajectory and checkpoint intervals, constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
 energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
@@ -304,6 +304,10 @@ Timed terms retain the initial simulation time, shared step-counter memory and
 per-call load/increment/store order; active coordinate output derives its time
 from the completed row step. Triclinic tilt operands bind the actual entry
 start values by their semantic names; a missing tilt is a named construction
-error. It shares semantic field flattening and reordering with the
+error. Langevin and Brownian calls retain their counter and current identities.
+Leapfrog retains the initial backward half-step and uses the closing program's
+current-time velocity for reporting; Brownian retains zero kinetic correction
+and atomic virial pressure. A mismatched integrator result layout is a named
+construction error. It shares semantic field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.

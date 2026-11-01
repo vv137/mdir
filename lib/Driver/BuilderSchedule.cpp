@@ -1329,7 +1329,6 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       !isRestart() &&
-      !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasConstraints() && !hasSites() && !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
@@ -1349,6 +1348,9 @@ llvm::Error Builder::emitEntry() {
     SimpleStepEntryIRConfig config{levels.back().count};
     config.periodic = control.periodic;
     config.timed = control.usesTime;
+    config.stepMemory = needsStepNumber();
+    config.leapfrog = isLeapfrog();
+    config.brownian = control.isBrownian();
     config.triclinic = isTriclinic();
     config.topology = bool(system.topology);
     if (config.topology)

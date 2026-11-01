@@ -715,6 +715,51 @@ static void checkNativeSimpleEntry() {
   SmallVector<memref::StoreOp> termStores(corrected->getOps<memref::StoreOp>());
   require(termStores.size() == 2 && termStores.back().getValueToStore() == storedEnergy,
       "native topology entry lost the post-evaluation energy after its ordinary term");
+  for (unsigned motion : {0u, 1u, 2u}) {
+    for (bool leapfrog : {false, true}) {
+      if (motion == 2 && leapfrog) continue;
+      std::string suffix = std::to_string(motion) + (leapfrog ? "_lf" : "_vv");
+      StepNoiseIR noise{motion != 0, motion == 2, {123, motion == 2 ? 1.0 : 0.8, 0.1}, 2.5};
+      auto plain = buildNativeStep(builder, {"motion_" + suffix}, parameters,
+          leapfrog, false, {}, false, false, {}, noise);
+      auto energy = buildNativeStep(builder, {"motion_energy_" + suffix, true, true}, parameters,
+          leapfrog, false, {}, false, false, {}, noise);
+      require(bool(plain) && bool(energy), "native integrator-entry programs did not construct");
+      metadata.entry = "native_motion_" + suffix;
+      SimpleStepEntryIRConfig motionConfig{2, 3};
+      motionConfig.checkpointIntervals = 2;
+      motionConfig.stepMemory = noise.active;
+      motionConfig.brownian = noise.brownian;
+      motionConfig.leapfrog = leapfrog;
+      if (motion == 0 && !leapfrog) {
+        motionConfig.brownian = true;
+        auto mismatch = buildSimpleStepEntry(builder, metadata, *plain, *energy, motionConfig);
+        require(!mismatch, "native integrator entry accepted an incompatible energy-step result layout");
+        reject(mismatch.takeError(),
+            "native step entry dynamics results do not match its integrator (brownian=1, leapfrog=0)");
+        require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+            "integrator result mismatch retained a partial entry");
+        motionConfig.brownian = false;
+      }
+      auto integrated = buildSimpleStepEntry(builder, metadata, *plain, *energy, motionConfig);
+      require(bool(integrated), "native fixed-cell integrator entry did not construct");
+      auto segment = *integrated->getOps<scf::ForOp>().begin();
+      require(bool(segment.getInitArgs()[1].getDefiningOp<mdir::dyn::KickOp>()) == leapfrog,
+          "native integrator entry lost or introduced the initial half-step kick");
+      unsigned calls = 0;
+      integrated->walk([&](mdir::dyn::StepOp call) {
+        ++calls;
+        if (noise.active) {
+          auto ids = call.getOperands().back();
+          require(segment->isProperAncestor(ids.getDefiningOp()),
+              "native noisy step reads identities from before segment reordering");
+          require(bool(call.getOperand(call.getNumOperands() - 2).getDefiningOp<arith::AddIOp>()),
+              "native noisy step lost its completed-step counter");
+        }
+      });
+      require(calls == 2, "native integrator entry lost a plain or closing step");
+    }
+  }
   metadata.fields.clear();
   metadata.tupleSets.clear();
   metadata.entry = "changed";

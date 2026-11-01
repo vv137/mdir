@@ -1,4 +1,4 @@
-// Complete native entry for the fixed-cell Verlet schedule family.
+// Complete native entry for the fixed-cell dynamics schedule family.
 #ifndef MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #include "EntryBoundaryIR.h"
@@ -26,6 +26,7 @@ struct SimpleStepEntryIRConfig {
   EntryOutputIRConfig output;
   bool needsPostEvaluation = false;
   unsigned storedTerms = 0;
+  bool stepMemory = false, leapfrog = false, brownian = false;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,
