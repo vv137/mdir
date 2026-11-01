@@ -1148,6 +1148,32 @@ llvm::Error Builder::emitEntry() {
           selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
     }
   };
+  auto configureConstraints = [&](std::vector<EntryConstraintIR> &constraints) {
+    auto groups = getShakeSets();
+    for (const auto &set : program.tupleSets)
+      if (set.name == "settles") groups.insert(groups.begin(), &set);
+    for (const Program::TupleSet *selected : groups) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "constraint parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      EntryConstraintIR group{slot, selected->arity, {}, selected->name == "settles"};
+      if (group.water) {
+        group.parameters = {fieldSlot("doh"), fieldSlot("dhh")};
+      } else {
+        for (unsigned member = 1; member != selected->arity; ++member)
+          group.parameters.push_back(fieldSlot("d" + std::to_string(member)));
+      }
+      constraints.push_back(std::move(group));
+    }
+  };
   auto configureOutputs = [&](EntryOutputIRConfig &config) {
     if (!control.freeEnergyFile.empty()) {
       config.freeEnergy.emplace(FreeEnergyOutputConfig{
@@ -1276,30 +1302,7 @@ llvm::Error Builder::emitEntry() {
       if (const auto *role = term->getRoles().postEvaluation)
         config.storedTerms += role->getStoredTermCount(*this);
     configureSites(config.sites);
-    auto groups = getShakeSets();
-    for (const auto &set : program.tupleSets)
-      if (set.name == "settles") groups.insert(groups.begin(), &set);
-    for (const Program::TupleSet *selected : groups) {
-      unsigned slot = program.fields.size() + program.tables.size();
-      for (const auto &set : program.tupleSets) {
-        if (&set == selected) break;
-        slot += 1 + set.fields.size();
-      }
-      auto fieldSlot = [&](StringRef name) {
-        auto found = llvm::find_if(selected->fields,
-            [&](const auto &field) { return field.name == name; });
-        assert(found != selected->fields.end() && "constraint parameter must exist");
-        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
-      };
-      FrameConstraintIR group{slot, selected->arity, {}, selected->name == "settles"};
-      if (group.water) {
-        group.parameters = {fieldSlot("doh"), fieldSlot("dhh")};
-      } else {
-        for (unsigned member = 1; member != selected->arity; ++member)
-          group.parameters.push_back(fieldSlot("d" + std::to_string(member)));
-      }
-      config.constraints.push_back(std::move(group));
-    }
+    configureConstraints(config.constraints);
     if (config.topology)
       for (const auto &definition : getTermDefinitions())
         config.terms.push_back(definition.name);
@@ -1333,7 +1336,7 @@ llvm::Error Builder::emitEntry() {
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       !isRestart() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
-      !hasConstraints() && !hasHostEvaluation() &&
+      !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy";
@@ -1370,6 +1373,7 @@ llvm::Error Builder::emitEntry() {
     }
     configureOutputs(config.output);
     configureSites(config.sites);
+    configureConstraints(config.constraints);
     config.needsPostEvaluation = hasForceCorrections();
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().postEvaluation)

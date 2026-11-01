@@ -2,6 +2,7 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "EntryConstraintIR.h"
 #include "EntryEvaluationIR.h"
 #include "DynamicsIR.h"
 #include "EntryOutputIR.h"
@@ -11,11 +12,6 @@
 #include <string>
 #include <vector>
 namespace mdir::driver::builder {
-struct FrameConstraintIR {
-  unsigned relation, arity;
-  llvm::SmallVector<unsigned> parameters;
-  bool water;
-};
 struct FrameThermostatIR {
   int64_t seed;
   double freedom, target, decay;
@@ -33,7 +29,7 @@ struct SimpleFrameEntryIRConfig {
   EntryOutputIRConfig output;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
-  std::vector<FrameConstraintIR> constraints;
+  std::vector<EntryConstraintIR> constraints;
   llvm::SmallVector<int64_t> counts, periods;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(

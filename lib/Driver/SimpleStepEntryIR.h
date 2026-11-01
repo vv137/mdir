@@ -2,6 +2,7 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "EntryConstraintIR.h"
 #include "EntryEvaluationIR.h"
 #include "PotentialIR.h"
 #include "EntryOutputIR.h"
@@ -28,6 +29,7 @@ struct SimpleStepEntryIRConfig {
   unsigned storedTerms = 0;
   bool stepMemory = false, leapfrog = false, brownian = false;
   std::vector<DescentSiteIR> sites;
+  std::vector<EntryConstraintIR> constraints;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

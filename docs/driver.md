@@ -1520,7 +1520,7 @@ Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
-A fixed-cell orthorhombic/triclinic dynamics entry across integrators, without constraints,
+A fixed-cell orthorhombic/triclinic dynamics entry across integrators
 with plain steps, energy, trajectory and checkpoint intervals, constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
 energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
@@ -1553,7 +1553,12 @@ and atomic virial pressure. A mismatched integrator result layout is a named
 construction error. `EntryEvaluationIR.cpp` shares initial virtual-site placement
 before reordering and force/virial spreading before post-evaluation completion
 with the frame family. Both use actual relation and parameter values from their
-respective physical state. It shares semantic field flattening and reordering with the
+respective physical state. Constraints retain initial zero kinetic correction,
+molecular group pressure, Brownian's projected-force initial trace, measured
+closing half-step correction and solvent reporting. `EntryConstraintIR.cpp`
+shares the frame family's projected-force trace; reported result counts use the
+same `measuresHalfSteps()` predicate as the step programs. It shares semantic
+field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
 

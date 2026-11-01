@@ -38,12 +38,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.brownian && config.leapfrog)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry cannot combine Brownian and leapfrog");
-  unsigned reported = 5 + unsigned(!config.brownian) + unsigned(config.leapfrog);
+  bool constrained = !config.constraints.empty();
+  bool measured = measuresHalfSteps(constrained, config.brownian);
+  bool solvent = measured && llvm::any_of(config.constraints, [](const auto &group) { return group.water; });
+  bool needsCounter = config.timed || config.stepMemory || constrained;
+  unsigned measuredSlot = 5 + unsigned(!config.brownian) + unsigned(config.leapfrog);
+  unsigned reported = measuredSlot + unsigned(measured) + unsigned(solvent);
   if (step.getFunctionType().getResults().size() != 3 ||
       (config.energyIntervals && energyStep.getFunctionType().getResults().size() != reported))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
-        "native step entry dynamics results do not match its integrator (brownian=%d, leapfrog=%d)",
-        config.brownian, config.leapfrog);
+        "native step entry dynamics results do not match its integrator (brownian=%d, leapfrog=%d, constrained=%d)",
+        config.brownian, config.leapfrog, constrained);
   SmallVector<unsigned> tiltSlots;
   if (config.triclinic)
     for (StringRef name : {"tilt_bx", "tilt_cx", "tilt_cy"}) {
@@ -61,7 +66,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     Value one = arith::ConstantIndexOp::create(at, loc, 1);
     Value time, stepMemory, stepOne;
     if (config.timed) time = buildSimulationTime(at, arguments.start, arguments.interval);
-    if (config.timed || config.stepMemory) {
+    if (needsCounter) {
       stepMemory = memref::AllocaOp::create(at, loc, MemRefType::get({1}, at.getI64Type()));
       memref::StoreOp::create(at, loc, arguments.start, stepMemory, zero);
       stepOne = arith::ConstantIntOp::create(at, loc, 1, 64);
@@ -121,17 +126,26 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     }
     Value kinetic = buildKineticEnergy(at, physical.velocities, physical.masses);
     Value correction, trace, pressureKinetic;
-    if (config.brownian) {
+    if (config.brownian || constrained)
       correction = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.0));
-      trace = buildVirialTrace(at, energy.virial);
-      pressureKinetic = arith::AddFOp::create(at, loc, kinetic, correction);
-    } else {
+    else {
       Value excess = buildKineticExcess(at, energy.forces, physical.masses, arguments.interval);
       correction = buildSum3(at, excess);
+    }
+    if (config.brownian) {
+      trace = buildVirialTrace(at, energy.virial);
+      if (constrained)
+        trace = buildEntryConstraintTrace(at, physical, state, energy.forces, trace, config.constraints, false);
+      pressureKinetic = arith::AddFOp::create(at, loc, kinetic, correction);
+    } else {
       auto diagonal = buildVirialDiagonal(at, energy.virial);
-      trace = buildSum3(at, diagonal.vector);
+      auto groups = buildEntryGroups(fields, config.constraints);
+      Value molecular = buildMolecularDiagonal(at,
+          {diagonal.vector, physical.positions, energy.forces, cell, physical.masses, groups});
+      trace = buildSum3(at, molecular);
       auto centers = buildGroupKinetic(at,
-          {{}, physical.velocities, energy.forces, {}, physical.masses, arguments.interval, {}, {}});
+          {physical.positions, physical.velocities, energy.forces, cell, physical.masses,
+           arguments.interval, {}, groups});
       pressureKinetic = buildSum3(at, centers.half);
     }
     func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
@@ -149,7 +163,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
       llvm::append_range(inputs, buildEntryPotentialFields(point));
-      if (config.timed || config.stepMemory) {
+      if (needsCounter) {
         Value previous = memref::LoadOp::create(body, loc, stepMemory, zero);
         Value next = arith::AddIOp::create(body, loc, previous, stepOne);
         memref::StoreOp::create(body, loc, next, stepMemory, zero);
@@ -222,16 +236,27 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         Value full = next.getResult(config.leapfrog ? 6 : 1);
         Value kinetic = buildKineticEnergy(inside, full, point.masses);
         Value correction, trace, pressureKinetic;
-        if (config.brownian) {
+        if (measured) {
+          Value current = buildKineticVector(inside, full, point.masses);
+          Value excess = arith::SubFOp::create(inside, loc, next.getResult(measuredSlot), current);
+          correction = buildSum3(inside, excess);
+        } else if (config.brownian)
           correction = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.0));
+        else {
+          Value excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
+          correction = buildSum3(inside, excess);
+        }
+        if (solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
+        if (config.brownian) {
           trace = buildVirialTrace(inside, next.getResult(4));
           pressureKinetic = arith::AddFOp::create(inside, loc, kinetic, correction);
         } else {
-          Value excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
-          correction = buildSum3(inside, excess);
           trace = buildSum3(inside, next.getResult(5));
+          auto parameters = buildEntryPotentialFields(point);
+          auto groups = buildEntryGroups(parameters, config.constraints);
           auto centers = buildGroupKinetic(inside,
-              {{}, full, next.getResult(2), {}, point.masses, arguments.interval, {}, {}});
+              {next.getResult(0), full, next.getResult(2), cell, point.masses,
+               arguments.interval, {}, groups});
           pressureKinetic = buildSum3(inside, centers.half);
         }
         Value completed = number(inside, atLevel, index);

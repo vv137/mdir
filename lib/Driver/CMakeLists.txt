@@ -74,6 +74,7 @@ add_mlir_library(MDIRDriver
   ScheduleIR.cpp
   EntryBoundaryIR.cpp
   EntryFieldsIR.cpp
+  EntryConstraintIR.cpp
   EntryEvaluationIR.cpp
   EntryLoopIR.cpp
   EntryRuntimeIR.cpp

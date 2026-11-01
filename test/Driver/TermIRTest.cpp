@@ -440,6 +440,102 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkNativeConstraintStepEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::md::TupleSetOp::create(builder, loc, "sites_linear", "atoms", 4,
+      mdir::md::Orientation::Ordered, false);
+  mdir::md::TupleSetOp::create(builder, loc, "settles", "atoms", 3,
+      mdir::md::Orientation::Ordered, true);
+  mdir::driver::Program metadata{};
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.takesForces = metadata.writesForces = metadata.reorders = true;
+  metadata.orderWidth = 0.5;
+  metadata.tupleSets.emplace_back();
+  auto &site = metadata.tupleSets.back();
+  site.name = "sites_linear";
+  site.arity = 4;
+  site.reversible = false;
+  site.fields = {{"a", {}, false}, {"b", {}, false}};
+  metadata.tupleSets.emplace_back();
+  auto &water = metadata.tupleSets.back();
+  water.name = "settles";
+  water.arity = 3;
+  water.reversible = false;
+  water.fields = {{"doh", {}, false}, {"dhh", {}, false}};
+  auto parameters = buildParameterTypes(context, metadata);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native constrained-entry potential did not construct");
+  DescentSiteIR placement{0, 1, 2, false, false, "spread_sites_linear"};
+  DescentConstraintGroupIR group{3, 3, {4, 5}, {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}},
+      {false, false, 1.0e-8, 1.0e-12}, true, true};
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  runtime.constraintStops = runtime.solvent = runtime.checkpoints = true;
+  runtime.writesForces = metadata.writesForces;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  for (unsigned motion : {0u, 1u, 2u}) {
+    for (bool leapfrog : {false, true}) {
+      if (motion == 2 && leapfrog) continue;
+      std::string suffix = std::to_string(motion) + (leapfrog ? "_lf" : "_vv");
+      StepNoiseIR noise{motion != 0, motion == 2, {123, motion == 2 ? 1.0 : 0.8, 0.1}, 2.5};
+      bool measured = measuresHalfSteps(true, noise.brownian);
+      auto step = buildNativeStep(builder, {"step_" + suffix}, parameters, leapfrog, false,
+          {placement}, false, false, {}, noise, {group});
+      auto reporting = buildNativeStep(builder, {"energy_" + suffix, true, true, false, measured, measured},
+          parameters, leapfrog, false, {placement}, false, false, {}, noise, {group});
+      require(bool(step) && bool(reporting), "native constrained-entry programs did not construct");
+      metadata.entry = "native_constraints_" + suffix;
+      SimpleStepEntryIRConfig config{2, 3};
+      config.checkpointIntervals = 2;
+      config.brownian = noise.brownian;
+      config.leapfrog = leapfrog;
+      config.sites = {placement};
+      config.constraints = {{3, 3, {4, 5}, true}};
+      auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+      if (!entry) {
+        llvm::errs() << "native constrained entry " << suffix << ": "
+                     << llvm::toString(entry.takeError()) << "\n";
+        std::exit(1);
+      }
+      auto segment = *entry->getOps<scf::ForOp>().begin();
+      unsigned calls = 0, solventRows = 0;
+      entry->walk([&](mdir::dyn::StepOp call) {
+        ++calls;
+        require(segment->isProperAncestor(call.getOperands().back().getDefiningOp()),
+            "native constrained step reads stale identities");
+        require(bool(call.getOperand(call.getNumOperands() - 2).getDefiningOp<arith::AddIOp>()),
+            "native constrained step lost its counter without an explicit memory flag");
+      });
+      entry->walk([&](func::CallOp call) {
+        if (call.getCallee() == "mdrtWriteSolvent") ++solventRows;
+      });
+      require(calls == 2 && solventRows == unsigned(measured),
+          "native constrained entry lost a step or changed solvent reporting");
+      for (auto row : entry->getOps<func::CallOp>()) {
+        if (row.getCallee() != "mdrtWriteEnergies") continue;
+        auto correction = row.getOperand(3).getDefiningOp<arith::ConstantOp>();
+        require(correction && cast<FloatAttr>(correction.getValue()).getValueAsDouble() == 0.0,
+            "native constrained entry estimated an unmeasured initial kinetic correction");
+      }
+    }
+  }
+  require(succeeded(verify(module)), "native constrained-entry module did not verify");
+}
+
 static void checkNativeSiteStepEntry() {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -797,7 +893,7 @@ static void checkNativeSimpleEntry() {
         auto mismatch = buildSimpleStepEntry(builder, metadata, *plain, *energy, motionConfig);
         require(!mismatch, "native integrator entry accepted an incompatible energy-step result layout");
         reject(mismatch.takeError(),
-            "native step entry dynamics results do not match its integrator (brownian=1, leapfrog=0)");
+            "native step entry dynamics results do not match its integrator (brownian=1, leapfrog=0, constrained=0)");
         require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
             "integrator result mismatch retained a partial entry");
         motionConfig.brownian = false;
@@ -1062,6 +1158,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeConstraintStepEntry();
   checkNativeSiteStepEntry();
   checkNativeTimedStepEntry();
   checkNativeSimpleEntry();

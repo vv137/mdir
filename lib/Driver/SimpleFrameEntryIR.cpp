@@ -23,24 +23,6 @@ using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
 namespace {
-Value constraintTrace(OpBuilder &builder, const EntryFieldsIR &physical,
-    const PotentialStateIR &state, Value forces, Value trace,
-    llvm::ArrayRef<FrameConstraintIR> groups, bool axes) {
-  Value descent = buildDescentDirection(builder, forces, physical.masses);
-  for (const auto &group : groups) {
-    SmallVector<Value> lengths;
-    for (unsigned slot : group.parameters) lengths.push_back(state.fields[slot]);
-    ConstraintVelocityInputs input{state.fields[group.relation], physical.positions,
-        state.cell, descent, physical.masses, lengths, {}, {}};
-    descent = group.water ? buildSettleVelocities(builder, input).velocities
-                          : buildShakeVelocities(builder, input, group.arity).velocities;
-  }
-  for (const auto &group : groups)
-    trace = buildConstraintTrace(builder,
-        {state.fields[group.relation], physical.positions, state.cell, descent,
-         forces, physical.velocities, physical.masses, trace}, group.arity, axes);
-  return trace;
-}
 void writeFrameForces(OpBuilder &builder, Value forces, Value identities) {
   mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), TypeRange{},
       FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameForces"),
@@ -212,7 +194,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         }
         Value trace = buildVirialTrace(body, energy.virial);
         if (!config.constraints.empty())
-          trace = constraintTrace(body, physical, state, energy.forces, trace, config.constraints, false);
+          trace = buildEntryConstraintTrace(body, physical, state, energy.forces, trace, config.constraints, false);
         Value pressureKinetic = arith::AddFOp::create(body, loc, kinetic, correction);
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
@@ -224,7 +206,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           auto virial = buildVirialDiagonal(body, energy.virial);
           Value diagonal = virial.vector;
           if (!config.constraints.empty())
-            diagonal = constraintTrace(body, physical, state, energy.forces, diagonal, config.constraints, true);
+            diagonal = buildEntryConstraintTrace(body, physical, state, energy.forces, diagonal, config.constraints, true);
           SmallVector<RigidGroupIR> groups;
           for (const auto &group : config.constraints)
             groups.push_back({parameters[group.relation], group.arity});
