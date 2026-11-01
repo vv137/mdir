@@ -1131,6 +1131,23 @@ llvm::Error Builder::emitEntry() {
       }
     return EntryCompletionIR{evaluation, std::move(stored)};
   };
+  auto configureSites = [&](std::vector<DescentSiteIR> &sites) {
+    for (const Program::TupleSet *selected : getSiteSets()) {
+      unsigned slot = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (&set == selected) break;
+        slot += 1 + set.fields.size();
+      }
+      auto fieldSlot = [&](StringRef name) {
+        auto found = llvm::find_if(selected->fields,
+            [&](const auto &field) { return field.name == name; });
+        assert(found != selected->fields.end() && "site parameter must exist");
+        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
+      };
+      sites.push_back({slot, fieldSlot("a"), fieldSlot("b"),
+          selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
+    }
+  };
   auto configureOutputs = [&](EntryOutputIRConfig &config) {
     if (!control.freeEnergyFile.empty()) {
       config.freeEnergy.emplace(FreeEnergyOutputConfig{
@@ -1258,21 +1275,7 @@ llvm::Error Builder::emitEntry() {
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().postEvaluation)
         config.storedTerms += role->getStoredTermCount(*this);
-    for (const Program::TupleSet *selected : getSiteSets()) {
-      unsigned slot = program.fields.size() + program.tables.size();
-      for (const auto &set : program.tupleSets) {
-        if (&set == selected) break;
-        slot += 1 + set.fields.size();
-      }
-      auto fieldSlot = [&](StringRef name) {
-        auto found = llvm::find_if(selected->fields,
-            [&](const auto &field) { return field.name == name; });
-        assert(found != selected->fields.end() && "site parameter must exist");
-        return slot + 1 + unsigned(std::distance(selected->fields.begin(), found));
-      };
-      config.sites.push_back({slot, fieldSlot("a"), fieldSlot("b"),
-          selected->name == "sites_amber", spreadsSitesDerived(), "spread_" + selected->name});
-    }
+    configureSites(config.sites);
     auto groups = getShakeSets();
     for (const auto &set : program.tupleSets)
       if (set.name == "settles") groups.insert(groups.begin(), &set);
@@ -1330,7 +1333,7 @@ llvm::Error Builder::emitEntry() {
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
       !isRestart() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
-      !hasConstraints() && !hasSites() && !hasHostEvaluation() &&
+      !hasConstraints() && !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy";
@@ -1366,6 +1369,7 @@ llvm::Error Builder::emitEntry() {
       }
     }
     configureOutputs(config.output);
+    configureSites(config.sites);
     config.needsPostEvaluation = hasForceCorrections();
     for (const TermBuilder *term : getTermBuilders())
       if (const auto *role = term->getRoles().postEvaluation)

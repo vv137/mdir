@@ -440,6 +440,67 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkNativeSiteStepEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::md::TupleSetOp::create(builder, loc, "sites_linear", "atoms", 4,
+      mdir::md::Orientation::Ordered, false);
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_site_steps";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.takesForces = metadata.writesForces = metadata.reorders = true;
+  metadata.orderWidth = 0.5;
+  metadata.tupleSets.emplace_back();
+  auto &site = metadata.tupleSets.back();
+  site.name = "sites_linear";
+  site.arity = 4;
+  site.reversible = false;
+  site.fields = {{"a", {}, false}, {"b", {}, false}};
+  auto parameters = buildParameterTypes(context, metadata);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native site-entry potential did not construct");
+  DescentSiteIR placement{0, 1, 2, false, false, "spread_sites_linear"};
+  auto step = buildNativeStep(builder, {"step"}, parameters, false, false, {placement});
+  auto reporting = buildNativeStep(builder, {"step_energy", true, true}, parameters, false, false, {placement});
+  require(bool(step) && bool(reporting), "native site-entry programs did not construct");
+  SimpleStepEntryIRConfig config{2, 2};
+  config.checkpointIntervals = 2;
+  config.sites = {placement};
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  runtime.checkpoints = config.checkpointIntervals.has_value();
+  runtime.writesForces = metadata.writesForces;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  Value completedForce;
+  auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config,
+      [&](OpBuilder &, const PotentialStateIR &, EnergyResults result, Value) {
+        completedForce = result.forces;
+        return EntryCompletionIR{result, {}};
+      });
+  require(bool(entry), "native site entry did not construct");
+  auto order = *entry->getOps<mdir::md_exec::SpatialOrderOp>().begin();
+  require(bool(order.getOperand(0).getDefiningOp<mdir::md::MapParticlesOp>()),
+      "native site entry reordered unplaced positions");
+  auto raw = *entry->getOps<mdir::md::EvaluateOp>().begin();
+  auto segment = *entry->getOps<scf::ForOp>().begin();
+  require(completedForce != raw.getResult(1) && segment.getInitArgs()[2] == completedForce,
+      "native site entry completed or carried forces before site spreading");
+  require(succeeded(verify(module)), "native site-entry module did not verify");
+}
+
 static void checkNativeTimedStepEntry() {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -1001,6 +1062,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeSiteStepEntry();
   checkNativeTimedStepEntry();
   checkNativeSimpleEntry();
   checkNativeFrameEntry();

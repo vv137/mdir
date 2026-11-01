@@ -144,30 +144,16 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       auto physical = imported;
       physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
       auto originalParameters = buildEntryPotentialFields(physical);
-      for (const auto &site : config.sites)
-        physical.positions = buildPlacedSites(frame,
-            {originalParameters[site.relation], physical.positions, cell,
-             originalParameters[site.a], originalParameters[site.b]}, site.amber);
+      physical.positions = buildEntrySites(frame,
+          {physical.positions, cell, originalParameters, time}, config.sites);
       physical = buildEntryReorder(frame, program, std::move(physical), cell);
       auto parameters = buildEntryPotentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
       SmallVector<Value> storedTerms;
       auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {
-        auto result = buildEnergyEvaluation(at, state, requests);
-        for (const auto &site : config.sites) {
-          auto spread = buildSiteSpread(at,
-              {parameters[site.relation], physical.positions, cell,
-               parameters[site.a], parameters[site.b], result.forces, result.virial},
-              site.amber, site.derived, site.potential);
-          result.forces = spread.forces;
-          result.virial = spread.virial;
-        }
-        if (complete) {
-          auto completed = complete(at, state, result, scale);
-          result = completed.physical;
-          if (requests.energy) storedTerms = std::move(completed.storedTerms);
-        }
-        return result;
+        auto result = buildEntryEvaluation(at, state, requests, config.sites, complete, scale);
+        if (requests.energy) storedTerms = std::move(result.storedTerms);
+        return result.physical;
       };
       auto iteration = buildEntryLoop(frame, "frame evaluation", zero, one, one, {},
           [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {

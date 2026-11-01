@@ -97,16 +97,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto physical = buildEntryFields(at, program, arguments, true, false);
     SmallVector<Value> originalRelations;
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
+    auto originalParameters = buildEntryPotentialFields(physical);
+    physical.positions = buildEntrySites(at,
+        {physical.positions, cell, originalParameters, time}, config.sites);
     physical = buildEntryReorder(at, program, std::move(physical), cell);
     auto fields = buildEntryPotentialFields(physical);
     PotentialStateIR state{physical.positions, cell, fields, time};
-    auto energy = buildEnergyEvaluation(at, state, {true, true, true});
-    EntryCompletionIR evaluated{energy, {}};
-    if (complete) evaluated = complete(at, state, energy, {});
+    auto evaluated = buildEntryEvaluation(at, state, {true, true, true}, config.sites, complete);
     if (evaluated.storedTerms.size() != config.storedTerms)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "native step entry post-evaluation term count does not match its configuration");
-    energy = evaluated.physical;
+    auto energy = evaluated.physical;
     if (config.topology) {
       Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size() + config.storedTerms);
       for (auto [index, value] : llvm::enumerate(evaluated.storedTerms)) {

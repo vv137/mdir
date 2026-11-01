@@ -27,6 +27,7 @@ struct SimpleStepEntryIRConfig {
   bool needsPostEvaluation = false;
   unsigned storedTerms = 0;
   bool stepMemory = false, leapfrog = false, brownian = false;
+  std::vector<DescentSiteIR> sites;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

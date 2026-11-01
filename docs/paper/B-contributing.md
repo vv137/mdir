@@ -308,6 +308,9 @@ error. Langevin and Brownian calls retain their counter and current identities.
 Leapfrog retains the initial backward half-step and uses the closing program's
 current-time velocity for reporting; Brownian retains zero kinetic correction
 and atomic virial pressure. A mismatched integrator result layout is a named
-construction error. It shares semantic field flattening and reordering with the
+construction error. `EntryEvaluationIR.cpp` shares initial virtual-site placement
+before reordering and force/virial spreading before post-evaluation completion
+with the frame family. Both use actual relation and parameter values from their
+respective physical state. It shares semantic field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
