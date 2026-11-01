@@ -1,5 +1,6 @@
 // Pull-coordinate potentials and output, registered under D359 (#683).
 #include "BuilderImpl.h"
+#include "PullOutputIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -21,12 +22,6 @@ struct PullPotentialIRConfig {
 };
 
 namespace {
-struct PullOutputTermIR {
-  size_t index, groups;
-  unsigned arity;
-  mlir::Value relation;
-  llvm::SmallVector<mlir::Value> weights;
-};
 struct PullOutputSlots {
   size_t index, groups;
   unsigned arity, relation;
@@ -80,7 +75,9 @@ for (Value value : force)
   store(value);
 return;
 }
-void buildPullOutput(mlir::OpBuilder &builder, const PotentialStateIR &state,
+} // namespace
+
+void mdir::driver::builder::buildPullOutput(mlir::OpBuilder &builder, const PotentialStateIR &state,
     mlir::Value step, llvm::ArrayRef<PullOutputTermIR> inputs) {
   using namespace mlir;
   auto loc = builder.getUnknownLoc();
@@ -133,7 +130,6 @@ void buildPullOutput(mlir::OpBuilder &builder, const PotentialStateIR &state,
   func::CallOp::create(builder, loc, "mdrtWritePull", TypeRange{},
       ValueRange{step, positions, energies});
 }
-} // namespace
 
 namespace mdir::driver::builder {
 class PullTermBuilder final : public TermBuilder, public TermCoordinateOutput {

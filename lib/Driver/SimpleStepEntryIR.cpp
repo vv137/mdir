@@ -8,6 +8,7 @@
 #include "CouplingIR.h"
 #include "KineticIR.h"
 #include "PotentialIR.h"
+#include "OutputIR.h"
 #include "ScheduleIR.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -21,7 +22,11 @@ using namespace mdir::driver::builder;
 
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     OpBuilder &builder, const Program &program, mdir::dyn::ProgramOp step,
-    mdir::dyn::ProgramOp energyStep, const SimpleStepEntryIRConfig &config) {
+    mdir::dyn::ProgramOp energyStep, const SimpleStepEntryIRConfig &config,
+    llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
+  if (config.needsCoordinateOutput && !coordinateOutput)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step entry requires the coordinate-output role");
   if (!step || (config.energyIntervals && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");
@@ -63,6 +68,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto fields = buildEntryPotentialFields(physical);
     PotentialStateIR state{physical.positions, cell, fields, {}};
     auto energy = buildEnergyEvaluation(at, state, {true, true, true});
+    if (config.topology) {
+      Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size());
+      buildWriteTerms(at, terms);
+      auto diagonal = buildVirialDiagonal(at, energy.virial);
+      func::CallOp::create(at, loc, "mdrtWriteVirial", TypeRange{},
+          ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
+    }
     Value kinetic = buildKineticEnergy(at, physical.velocities, physical.masses);
     Value excess = buildKineticExcess(at, energy.forces, physical.masses, arguments.interval);
     Value correction = buildSum3(at, excess);
@@ -73,6 +85,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     Value pressureKinetic = buildSum3(at, centers.half);
     func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
         ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
+    if (coordinateOutput) coordinateOutput(at, state, arguments.start);
     physical.forces = energy.forces;
     auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
@@ -150,6 +163,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         Value completed = number(inside, atLevel, index);
         func::CallOp::create(inside, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{completed, next.getResult(3), kinetic, correction, trace, pressureKinetic});
+        if (coordinateOutput) {
+          auto fields = buildEntryPotentialFields(point);
+          coordinateOutput(inside, {next.getResult(0), cell, fields, {}}, completed);
+        }
         if (!config.periodic && !config.framesAtEnergies)
           mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
               FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),

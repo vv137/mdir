@@ -278,7 +278,8 @@ checks actual frame evaluations and frame-input provenance.
 `EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
 Other entry families and their final assembly join remain in progress.
 
-A bare fixed-cell Verlet entry with plain steps, energy, trajectory and checkpoint intervals constructs
+A fixed-cell Verlet entry without constraints or post-evaluation corrections,
+with plain steps, energy, trajectory and checkpoint intervals, constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
 energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
 finish. Energy intervals use the inner loop results for their closing energy
@@ -287,6 +288,12 @@ trajectory intervals and frames written at energy boundaries preserve output
 order and the outer fresh boundary. Checkpoint segments carry reordered masses,
 particle parameters and identities with the physical state, regenerate relations
 from the original imports, and retain checkpoint output and segment boundaries.
+Topology entries retain their initial term-energy and virial output before
+kinetic and pressure output. The coordinate-output callback follows the initial
+energy row and every closing energy row, using the same typed pull core as the
+frame and remaining writer paths. A required coordinate-output role without its
+callback is a named construction error; unsupported post-evaluation, hosted,
+free-energy, observable and gradient configurations remain outside this selector.
 It shares semantic field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.

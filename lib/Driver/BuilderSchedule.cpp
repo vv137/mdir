@@ -1089,6 +1089,28 @@ llvm::Error Builder::emitEntry() {
       control.isNoseHoover(), control.getCouplingPeriod() > 0,
       bool(control.barostat), scalesEveryStep(), control.checkpointPeriod > 0,
       program.writesForces};
+  auto coordinateOutput = [&](mlir::OpBuilder &at, const PotentialStateIR &state, mlir::Value step) {
+    auto tuple = [&](StringRef name) {
+      unsigned offset = program.fields.size() + program.tables.size();
+      for (const auto &set : program.tupleSets) {
+        if (set.name == name) return std::make_pair(&set, offset);
+        offset += 1 + set.fields.size();
+      }
+      llvm_unreachable("output relation must exist");
+    };
+    auto relation = [&](StringRef name) { return state.fields[tuple(name).second]; };
+    auto field = [&](StringRef set, StringRef name) {
+      auto [metadata, offset] = tuple(set);
+      auto found = llvm::find_if(metadata->fields,
+          [&](const auto &field) { return field.name == name; });
+      assert(found != metadata->fields.end() && "output parameter must exist");
+      return state.fields[offset + 1 + std::distance(metadata->fields.begin(), found)];
+    };
+    TermNativeOutput point{state, step, relation, field};
+    for (const TermBuilder *term : getTermBuilders())
+      if (const auto *role = term->getRoles().coordinateOutput)
+        role->buildOutput(*this, at, point);
+  };
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&
@@ -1288,28 +1310,7 @@ llvm::Error Builder::emitEntry() {
               llvm::append_range(stored, result.storedTerms);
             }
           return FrameCompletionIR{evaluation, std::move(stored)};
-        }, [&](mlir::OpBuilder &at, const PotentialStateIR &state, mlir::Value step) {
-          auto tuple = [&](StringRef name) {
-            unsigned offset = program.fields.size() + program.tables.size();
-            for (const auto &set : program.tupleSets) {
-              if (set.name == name) return std::make_pair(&set, offset);
-              offset += 1 + set.fields.size();
-            }
-            llvm_unreachable("output relation must exist");
-          };
-          auto relation = [&](StringRef name) { return state.fields[tuple(name).second]; };
-          auto field = [&](StringRef set, StringRef name) {
-            auto [metadata, offset] = tuple(set);
-            auto found = llvm::find_if(metadata->fields,
-                [&](const auto &field) { return field.name == name; });
-            assert(found != metadata->fields.end() && "output parameter must exist");
-            return state.fields[offset + 1 + std::distance(metadata->fields.begin(), found)];
-          };
-          TermNativeOutput point{state, step, relation, field};
-          for (const TermBuilder *term : getTermBuilders())
-            if (const auto *role = term->getRoles().coordinateOutput)
-              role->buildOutput(*this, at, point);
-        });
+        }, coordinateOutput);
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*moduleBody, before))
@@ -1323,7 +1324,7 @@ llvm::Error Builder::emitEntry() {
     return llvm::Error::success();
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
-      !system.topology && !isRestart() && !control.usesTime && !isTriclinic() &&
+      !isRestart() && !control.usesTime && !isTriclinic() &&
       !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
@@ -1344,6 +1345,9 @@ llvm::Error Builder::emitEntry() {
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
     SimpleStepEntryIRConfig config{levels.back().count};
     config.periodic = control.periodic;
+    config.topology = bool(system.topology);
+    if (config.topology)
+      for (const auto &definition : getTermDefinitions()) config.terms.push_back(definition.name);
     mdir::dyn::ProgramOp energy;
     config.framesAtEnergies = framesAtEnergies;
     for (const auto &level : levels) {
@@ -1354,7 +1358,11 @@ llvm::Error Builder::emitEntry() {
         energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
       }
     }
-    auto entry = buildSimpleStepEntry(ir, program, step, energy, config);
+    config.needsCoordinateOutput = llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
+      const auto *role = term->getRoles().coordinateOutput;
+      return role && role->hasCoordinateOutput(*this);
+    });
+    auto entry = buildSimpleStepEntry(ir, program, step, energy, config, coordinateOutput);
     if (!entry) return entry.takeError();
     llvm::SmallVector<mlir::Operation *> operations;
     for (auto &operation : llvm::drop_begin(*body, before)) operations.push_back(&operation);

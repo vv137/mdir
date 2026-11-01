@@ -2,6 +2,7 @@
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
 #include "../../lib/Driver/SimpleStepEntryIR.h"
+#include "../../lib/Driver/PullOutputIR.h"
 #include "../../lib/Driver/EntryRuntimeIR.h"
 #include "../../lib/Driver/EntryLoopIR.h"
 #include "../../lib/Driver/PotentialIR.h"
@@ -10,6 +11,7 @@
 #include "../../lib/Driver/StagedModelIR.h"
 #include "../../lib/Driver/BarostatIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -452,6 +454,13 @@ static void checkNativeSimpleEntry() {
   metadata.takesForces = metadata.reorders = true;
   metadata.orderWidth = 0.5;
   metadata.fields.push_back({"q", {}, false});
+  metadata.tupleSets.emplace_back();
+  auto &links = metadata.tupleSets.back();
+  links.name = "links";
+  links.arity = 2;
+  links.fields.push_back({"weight", {}, false});
+  mdir::md::TupleSetOp::create(builder, loc, links.name, "atoms", links.arity,
+      mdir::md::Orientation::Unordered, true);
   auto parameters = buildParameterTypes(context, metadata);
   auto vec = mdir::md::FieldType::get(&context,
       FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
@@ -528,7 +537,55 @@ static void checkNativeSimpleEntry() {
         "native checkpoint step reads stale header masses");
   });
   require(calls == 2, "native checkpoint schedule lost a dynamics call");
+  SmallVector<mdir::md_exec::RenumberOp> renumbers;
+  checkpointed->walk([&](mdir::md_exec::RenumberOp renumber) { renumbers.push_back(renumber); });
+  require(renumbers.size() == 3, "native checkpoint entry lost relation regeneration");
+  require(renumbers[0].getOperand(0) == renumbers[1].getOperand(0) &&
+          renumbers[0].getOperand(0) == renumbers[2].getOperand(0) &&
+          renumbers[2].getOperand(1) == segment.getResults().back(),
+      "native checkpoint relation regeneration lost original imports or final identities");
+  metadata.entry = "native_topology_steps";
+  trajectory.topology = true;
+  trajectory.terms = {"energy"};
+  auto topology = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(bool(topology), "native topology entry did not construct");
+  SmallVector<StringRef> initialWrites;
+  for (auto call : topology->getOps<func::CallOp>()) initialWrites.push_back(call.getCallee());
+  require(llvm::equal(initialWrites, ArrayRef<StringRef>{"mdrtWriteTerms", "mdrtWriteVirial", "mdrtWriteEnergies"}),
+      "native topology entry changed initial output order");
+  metadata.entry = "native_topology_pull_steps";
+  trajectory.needsCoordinateOutput = true;
+  auto omitted = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory);
+  require(!omitted, "native topology entry silently dropped its coordinate-output role");
+  reject(omitted.takeError(), "native step entry requires the coordinate-output role");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "missing coordinate-output role retained a partial entry");
+  SmallVector<Type> pullInputs(inputs);
+  pullInputs.append(4, builder.getF64Type());
+  auto pull = buildScalarPotential(builder, "pullterm0", pullInputs,
+      [&](OpBuilder &, ValueRange args) -> Value { return args[inputs.size()]; });
+  require(bool(pull), "native topology pull potential did not construct");
+  unsigned outputPoints = 0;
+  auto pulled = buildSimpleStepEntry(builder, metadata, *step, *energyStep, trajectory,
+      [&](OpBuilder &at, const PotentialStateIR &state, Value completed) {
+        ++outputPoints;
+        auto row = dyn_cast<func::CallOp>(&at.getInsertionBlock()->back());
+        require(row && row.getCallee() == "mdrtWriteEnergies" && row.getOperand(0) == completed,
+            "native topology coordinate output moved before or away from its energy row");
+        for (auto closing : at.getInsertionBlock()->getOps<mdir::dyn::StepOp>())
+          require(closing.getResult(0) == state.positions,
+              "native topology coordinate output reads stale step positions");
+        PullOutputTermIR term{0, 2, 2, state.fields[1],
+            {state.fields[2], state.fields[2], state.fields[2]}};
+        buildPullOutput(at, state, completed, {term});
+        auto write = dyn_cast<func::CallOp>(&at.getInsertionBlock()->back());
+        require(write && write.getCallee() == "mdrtWritePull" && write.getOperand(0) == completed,
+            "native topology pull term lost its completed step");
+      });
+  require(bool(pulled) && outputPoints == 2,
+      "native topology entry lost initial or energy-boundary pull output");
   metadata.fields.clear();
+  metadata.tupleSets.clear();
   metadata.entry = "changed";
   require(module.lookupSymbol<func::FuncOp>("native_steps") == entry,
       "native plain-step entry retained mutable metadata");
