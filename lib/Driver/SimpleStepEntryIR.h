@@ -19,6 +19,7 @@ struct SimpleStepEntryIRConfig {
   bool topology = false;
   std::vector<std::string> terms;
   bool needsCoordinateOutput = false;
+  bool timed = false;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

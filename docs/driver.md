@@ -1536,7 +1536,9 @@ energy row and every closing energy row, using the same typed pull core as the
 frame and remaining writer paths. A required coordinate-output role without its
 callback is a named construction error; unsupported post-evaluation, hosted,
 free-energy, observable and gradient configurations remain outside this selector.
-It shares semantic field flattening and reordering with the
+Timed terms retain the initial simulation time, shared step-counter memory and
+per-call load/increment/store order; active coordinate output derives its time
+from the completed row step. It shares semantic field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
 

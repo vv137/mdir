@@ -440,6 +440,63 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkNativeTimedStepEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_timed_steps";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  metadata.takesForces = metadata.reorders = metadata.writesForces = true;
+  metadata.orderWidth = 0.5;
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  auto energy = buildScalarPotential(builder, "energy",
+      TypeRange{vec, mdir::md::CellType::get(&context), builder.getF64Type()},
+      [](OpBuilder &, ValueRange args) -> Value { return args.back(); });
+  require(bool(energy), "native timed-entry energy did not construct");
+  auto step = buildNativeStep(builder, {"step"}, {}, false, true);
+  auto reporting = buildNativeStep(builder, {"step_energy", true, true}, {}, false, true);
+  require(bool(step) && bool(reporting), "native timed-entry dynamics did not construct");
+  SimpleStepEntryIRConfig config{2, 3, false};
+  config.timed = true;
+  config.checkpointIntervals = 2;
+  config.frameIntervals = 2;
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = true;
+  runtime.checkpoints = config.checkpointIntervals.has_value();
+  runtime.writesForces = metadata.writesForces;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  unsigned outputPoints = 0;
+  auto built = buildSimpleStepEntry(builder, metadata, *step, *reporting, config,
+      [&](OpBuilder &, const PotentialStateIR &state, Value) {
+        ++outputPoints;
+        require(bool(state.time) == (outputPoints == 1),
+            "native timed entry computed an unused coordinate-output time");
+      });
+  require(bool(built) && outputPoints == 2, "native timed entry did not construct its output points");
+  auto memory = *built->getOps<memref::AllocaOp>().begin();
+  unsigned calls = 0;
+  built->walk([&](mdir::dyn::StepOp call) {
+    ++calls;
+    auto increment = call.getOperand(6).getDefiningOp<arith::AddIOp>();
+    require(bool(increment), "native timed step lost its completed-step increment");
+    auto load = increment.getLhs().getDefiningOp<memref::LoadOp>();
+    require(load && load.getMemRef() == memory.getResult(),
+        "native timed step reads a separate or stale counter");
+    auto store = dyn_cast<memref::StoreOp>(call->getPrevNode());
+    require(store && store.getValueToStore() == increment.getResult() &&
+            store.getMemRef() == memory.getResult(),
+        "native timed step moved its counter store");
+  });
+  require(calls == 2 && succeeded(verify(module)), "native timed entry lost its schedule or validity");
+}
+
 static void checkNativeSimpleEntry() {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -825,6 +882,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeTimedStepEntry();
   checkNativeSimpleEntry();
   checkNativeFrameEntry();
   checkDiagonalExports();

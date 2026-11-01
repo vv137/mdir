@@ -13,6 +13,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/ScopeExit.h"
 #include <functional>
@@ -35,6 +36,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto loc = at.getUnknownLoc();
     Value zero = arith::ConstantIndexOp::create(at, loc, 0);
     Value one = arith::ConstantIndexOp::create(at, loc, 1);
+    Value time, stepMemory, stepOne;
+    if (config.timed) {
+      time = buildSimulationTime(at, arguments.start, arguments.interval);
+      stepMemory = memref::AllocaOp::create(at, loc, MemRefType::get({1}, at.getI64Type()));
+      memref::StoreOp::create(at, loc, arguments.start, stepMemory, zero);
+      stepOne = arith::ConstantIntOp::create(at, loc, 1, 64);
+    }
     enum class Kind { Segment, Frame, Energy, Step };
     SmallVector<Kind> kinds;
     SmallVector<int64_t> counts;
@@ -66,7 +74,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
     physical = buildEntryReorder(at, program, std::move(physical), cell);
     auto fields = buildEntryPotentialFields(physical);
-    PotentialStateIR state{physical.positions, cell, fields, {}};
+    PotentialStateIR state{physical.positions, cell, fields, time};
     auto energy = buildEnergyEvaluation(at, state, {true, true, true});
     if (config.topology) {
       Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size());
@@ -90,6 +98,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
       llvm::append_range(inputs, buildEntryPotentialFields(point));
+      if (config.timed) {
+        Value previous = memref::LoadOp::create(body, loc, stepMemory, zero);
+        Value next = arith::AddIOp::create(body, loc, previous, stepOne);
+        memref::StoreOp::create(body, loc, next, stepMemory, zero);
+        inputs.push_back(next);
+        inputs.push_back(point.identities);
+      }
       return mdir::dyn::StepOp::create(body, loc, callee.getFunctionType().getResults(), callee.getSymName(), inputs);
     };
     auto bind = [](EntryFieldsIR point, ValueRange values, bool parameters) {
@@ -165,7 +180,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             ValueRange{completed, next.getResult(3), kinetic, correction, trace, pressureKinetic});
         if (coordinateOutput) {
           auto fields = buildEntryPotentialFields(point);
-          coordinateOutput(inside, {next.getResult(0), cell, fields, {}}, completed);
+          Value time;
+          if (config.timed && config.needsCoordinateOutput)
+            time = buildSimulationTime(inside, completed, arguments.interval);
+          coordinateOutput(inside, {next.getResult(0), cell, fields, time}, completed);
         }
         if (!config.periodic && !config.framesAtEnergies)
           mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
