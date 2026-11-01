@@ -1557,7 +1557,10 @@ respective physical state. Constraints retain initial zero kinetic correction,
 molecular group pressure, Brownian's projected-force initial trace, measured
 closing half-step correction and solvent reporting. `EntryConstraintIR.cpp`
 shares the frame family's projected-force trace; reported result counts use the
-same `measuresHalfSteps()` predicate as the step programs. It shares semantic
+same `measuresHalfSteps()` predicate as the step programs. Restart entries
+import and reorder checkpoint forces or evaluate them anew when recomputation
+is requested, without repeating initial output or leapfrog's backward half-step.
+A restart without force state or recomputation is a named construction error. It shares semantic
 field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.

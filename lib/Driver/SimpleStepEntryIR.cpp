@@ -35,6 +35,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (!step || (config.energyIntervals && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");
+  if (config.restart && !program.takesForces && !config.recomputeForces)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step restart has no force state");
   if (config.brownian && config.leapfrog)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry cannot combine Brownian and leapfrog");
@@ -99,63 +102,69 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
     for (unsigned slot : tiltSlots) edges.push_back(arguments.startValues[slot]);
     Value cell = buildCell(at, edges);
-    auto physical = buildEntryFields(at, program, arguments, true, false);
+    bool givenForces = config.restart && program.takesForces;
+    auto physical = buildEntryFields(at, program, arguments, true, givenForces);
     SmallVector<Value> originalRelations;
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
     auto originalParameters = buildEntryPotentialFields(physical);
     physical.positions = buildEntrySites(at,
         {physical.positions, cell, originalParameters, time}, config.sites);
-    physical = buildEntryReorder(at, program, std::move(physical), cell);
+    physical = buildEntryReorder(at, program, std::move(physical), cell, givenForces);
     auto fields = buildEntryPotentialFields(physical);
     PotentialStateIR state{physical.positions, cell, fields, time};
-    auto evaluated = buildEntryEvaluation(at, state, {true, true, true}, config.sites, complete);
-    if (evaluated.storedTerms.size() != config.storedTerms)
-      return llvm::createStringError(llvm::inconvertibleErrorCode(),
-          "native step entry post-evaluation term count does not match its configuration");
-    auto energy = evaluated.physical;
-    if (config.topology) {
-      Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size() + config.storedTerms);
-      for (auto [index, value] : llvm::enumerate(evaluated.storedTerms)) {
-        Value slot = arith::ConstantIndexOp::create(at, loc, config.terms.size() + index);
-        memref::StoreOp::create(at, loc, value, terms, slot);
+    EntryCompletionIR evaluated{{}, {}};
+    if (!config.restart || config.recomputeForces) {
+      evaluated = buildEntryEvaluation(at, state, {true, true, true}, config.sites, complete);
+      if (evaluated.storedTerms.size() != config.storedTerms)
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "native step entry post-evaluation term count does not match its configuration");
+      physical.forces = evaluated.physical.forces;
+    }
+    if (!config.restart) {
+      auto energy = evaluated.physical;
+      if (config.topology) {
+        Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size() + config.storedTerms);
+        for (auto [index, value] : llvm::enumerate(evaluated.storedTerms)) {
+          Value slot = arith::ConstantIndexOp::create(at, loc, config.terms.size() + index);
+          memref::StoreOp::create(at, loc, value, terms, slot);
+        }
+        buildWriteTerms(at, terms);
+        auto diagonal = buildVirialDiagonal(at, energy.virial);
+        func::CallOp::create(at, loc, "mdrtWriteVirial", TypeRange{},
+            ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
       }
-      buildWriteTerms(at, terms);
-      auto diagonal = buildVirialDiagonal(at, energy.virial);
-      func::CallOp::create(at, loc, "mdrtWriteVirial", TypeRange{},
-          ValueRange{diagonal.xx, diagonal.yy, diagonal.zz});
+      Value kinetic = buildKineticEnergy(at, physical.velocities, physical.masses);
+      Value correction, trace, pressureKinetic;
+      if (config.brownian || constrained)
+        correction = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.0));
+      else {
+        Value excess = buildKineticExcess(at, energy.forces, physical.masses, arguments.interval);
+        correction = buildSum3(at, excess);
+      }
+      if (config.brownian) {
+        trace = buildVirialTrace(at, energy.virial);
+        if (constrained)
+          trace = buildEntryConstraintTrace(at, physical, state, energy.forces, trace, config.constraints, false);
+        pressureKinetic = arith::AddFOp::create(at, loc, kinetic, correction);
+      } else {
+        auto diagonal = buildVirialDiagonal(at, energy.virial);
+        auto groups = buildEntryGroups(fields, config.constraints);
+        Value molecular = buildMolecularDiagonal(at,
+            {diagonal.vector, physical.positions, energy.forces, cell, physical.masses, groups});
+        trace = buildSum3(at, molecular);
+        auto centers = buildGroupKinetic(at,
+            {physical.positions, physical.velocities, energy.forces, cell, physical.masses,
+             arguments.interval, {}, groups});
+        pressureKinetic = buildSum3(at, centers.half);
+      }
+      func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
+          ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
+      if (coordinateOutput) coordinateOutput(at, state, arguments.start);
+      buildEntryOutputs(at,
+          {state, arguments.start, physical.identities, arguments.interval, zero, one,
+           arguments.startValues, true, config.timed}, config.output);
     }
-    Value kinetic = buildKineticEnergy(at, physical.velocities, physical.masses);
-    Value correction, trace, pressureKinetic;
-    if (config.brownian || constrained)
-      correction = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.0));
-    else {
-      Value excess = buildKineticExcess(at, energy.forces, physical.masses, arguments.interval);
-      correction = buildSum3(at, excess);
-    }
-    if (config.brownian) {
-      trace = buildVirialTrace(at, energy.virial);
-      if (constrained)
-        trace = buildEntryConstraintTrace(at, physical, state, energy.forces, trace, config.constraints, false);
-      pressureKinetic = arith::AddFOp::create(at, loc, kinetic, correction);
-    } else {
-      auto diagonal = buildVirialDiagonal(at, energy.virial);
-      auto groups = buildEntryGroups(fields, config.constraints);
-      Value molecular = buildMolecularDiagonal(at,
-          {diagonal.vector, physical.positions, energy.forces, cell, physical.masses, groups});
-      trace = buildSum3(at, molecular);
-      auto centers = buildGroupKinetic(at,
-          {physical.positions, physical.velocities, energy.forces, cell, physical.masses,
-           arguments.interval, {}, groups});
-      pressureKinetic = buildSum3(at, centers.half);
-    }
-    func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
-        ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
-    if (coordinateOutput) coordinateOutput(at, state, arguments.start);
-    buildEntryOutputs(at,
-        {state, arguments.start, physical.identities, arguments.interval, zero, one,
-         arguments.startValues, true, config.timed}, config.output);
-    physical.forces = energy.forces;
-    if (config.leapfrog) {
+    if (config.leapfrog && !config.restart) {
       Value back = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(-0.5));
       Value interval = arith::MulFOp::create(at, loc, back, arguments.interval);
       physical.velocities = buildKick(at, physical.velocities, physical.forces, physical.masses, interval);

@@ -30,6 +30,7 @@ struct SimpleStepEntryIRConfig {
   bool stepMemory = false, leapfrog = false, brownian = false;
   std::vector<DescentSiteIR> sites;
   std::vector<EntryConstraintIR> constraints;
+  bool restart = false, recomputeForces = false;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

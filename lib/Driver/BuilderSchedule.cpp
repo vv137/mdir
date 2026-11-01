@@ -1174,7 +1174,7 @@ llvm::Error Builder::emitEntry() {
       constraints.push_back(std::move(group));
     }
   };
-  auto configureOutputs = [&](EntryOutputIRConfig &config) {
+  auto configureOutputs = [&](EntryOutputIRConfig &config, bool initial) {
     if (!control.freeEnergyFile.empty()) {
       config.freeEnergy.emplace(FreeEnergyOutputConfig{
           {}, static_cast<size_t>(control.freeEnergy.state), getNumPotentialArguments()});
@@ -1204,7 +1204,7 @@ llvm::Error Builder::emitEntry() {
         output.columns.push_back({column.first, column.second});
       config.observables.push_back(std::move(output));
     }
-    if (program.tunableGradient) {
+    if (program.tunableGradient && initial) {
       auto &gradient = config.gradient.emplace();
       auto startSlot = [&](StringRef name) -> unsigned {
         auto found = llvm::find_if(program.startValues,
@@ -1306,7 +1306,7 @@ llvm::Error Builder::emitEntry() {
     if (config.topology)
       for (const auto &definition : getTermDefinitions())
         config.terms.push_back(definition.name);
-    configureOutputs(config.output);
+    configureOutputs(config.output, true);
     if (!control.segments) {
       for (const auto &level : levels) config.counts.push_back(level.count);
       int64_t steps = 1;
@@ -1334,7 +1334,6 @@ llvm::Error Builder::emitEntry() {
     return llvm::Error::success();
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
-      !isRestart() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasHostEvaluation() &&
       levels.back().name == "step" && levels.size() <= 4 &&
@@ -1353,6 +1352,8 @@ llvm::Error Builder::emitEntry() {
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
     SimpleStepEntryIRConfig config{levels.back().count};
     config.periodic = control.periodic;
+    config.restart = isRestart();
+    config.recomputeForces = recomputes();
     config.timed = control.usesTime;
     config.stepMemory = needsStepNumber();
     config.leapfrog = isLeapfrog();
@@ -1371,7 +1372,7 @@ llvm::Error Builder::emitEntry() {
         energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
       }
     }
-    configureOutputs(config.output);
+    configureOutputs(config.output, !isRestart());
     configureSites(config.sites);
     configureConstraints(config.constraints);
     config.needsPostEvaluation = hasForceCorrections();

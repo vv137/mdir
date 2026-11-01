@@ -12,6 +12,7 @@
 #include "../../lib/Driver/BarostatIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -915,8 +916,47 @@ static void checkNativeSimpleEntry() {
         }
       });
       require(calls == 2, "native integrator entry lost a plain or closing step");
+      metadata.entry = "native_restart_motion_" + suffix;
+      motionConfig.restart = true;
+      auto continued = buildSimpleStepEntry(builder, metadata, *plain, *energy, motionConfig);
+      require(bool(continued), "native restart entry did not construct");
+      require(continued->getOps<mdir::md::EvaluateOp>().empty(),
+          "native restart entry reevaluated checkpoint forces");
+      for (auto row : continued->getOps<func::CallOp>())
+        require(row.getCallee() != "mdrtWriteEnergies", "native restart entry repeated the initial output row");
+      auto resumedLoop = *continued->getOps<scf::ForOp>().begin();
+      require(!resumedLoop.getInitArgs()[1].getDefiningOp<mdir::dyn::KickOp>(),
+          "native restart entry repeated the backward half-step");
+      auto forceOrder = resumedLoop.getInitArgs()[2].getDefiningOp<mdir::md_exec::PermuteOp>();
+      require(bool(forceOrder), "native restart entry did not reorder its force state");
+      auto imported = forceOrder.getOperand(0).getDefiningOp<mdir::mdrt::FromBufferOp>();
+      require(imported && imported.getOperand() == continued->getArgument(2),
+          "native restart entry reads forces other than its actual checkpoint buffer");
+      metadata.entry = "native_recomputed_motion_" + suffix;
+      metadata.takesForces = false;
+      motionConfig.recomputeForces = true;
+      auto recomputed = buildSimpleStepEntry(builder, metadata, *plain, *energy, motionConfig);
+      require(bool(recomputed), "native force-recomputing restart entry did not construct");
+      auto evaluation = *recomputed->getOps<mdir::md::EvaluateOp>().begin();
+      auto recomputedLoop = *recomputed->getOps<scf::ForOp>().begin();
+      require(recomputedLoop.getInitArgs()[2] == evaluation.getResult(1) &&
+              !recomputedLoop.getInitArgs()[1].getDefiningOp<mdir::dyn::KickOp>(),
+          "native recomputing restart lost its new forces or repeated the half-step");
+      for (auto row : recomputed->getOps<func::CallOp>())
+        require(row.getCallee() != "mdrtWriteEnergies", "native recomputing restart repeated initial output");
+      metadata.takesForces = true;
     }
   }
+  metadata.entry = "native_restart_without_forces";
+  metadata.takesForces = false;
+  SimpleStepEntryIRConfig noForces{3};
+  noForces.restart = true;
+  auto noState = buildSimpleStepEntry(builder, metadata, *step, {}, noForces);
+  require(!noState, "native restart entry accepted no force state and no recomputation");
+  reject(noState.takeError(), "native step restart has no force state");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "invalid native restart retained a partial entry");
+  metadata.takesForces = true;
   metadata.fields.clear();
   metadata.tupleSets.clear();
   metadata.entry = "changed";
