@@ -3,7 +3,7 @@
 #define MDIR_LIB_DRIVER_SIMPLEFRAMEENTRYIR_H
 #include "EntryBoundaryIR.h"
 #include "DynamicsIR.h"
-#include "OutputIR.h"
+#include "EntryOutputIR.h"
 #include "BarostatIR.h"
 #include <optional>
 #include <cstdint>
@@ -19,12 +19,6 @@ struct FrameCompletionIR {
   EnergyResults physical;
   llvm::SmallVector<mlir::Value> storedTerms;
 };
-struct FrameGradientOutputIR {
-  TunableGradientOutputConfig output;
-  unsigned request = 0, seeds = 0;
-  std::vector<unsigned> constants;
-  std::optional<unsigned> seedField;
-};
 struct FrameThermostatIR {
   int64_t seed;
   double freedom, target, decay;
@@ -39,13 +33,7 @@ struct SimpleFrameEntryIRConfig {
   std::optional<std::array<unsigned, 3>> referenceEdges;
   bool topology = false;
   unsigned storedTerms = 0;
-  std::optional<FreeEnergyOutputConfig> freeEnergy;
-  std::vector<ObservableOutputTermIR> observables;
-  size_t observableCount = 0;
-  unsigned observableBaseArgument = 0;
-  // Ordinals in Program.startValues, resolved from semantic control metadata.
-  std::vector<unsigned> observableTunables;
-  std::optional<FrameGradientOutputIR> gradient;
+  EntryOutputIRConfig output;
   std::vector<std::string> terms;
   std::vector<DescentSiteIR> sites;
   std::vector<FrameConstraintIR> constraints;

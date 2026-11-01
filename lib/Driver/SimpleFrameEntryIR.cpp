@@ -231,26 +231,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         func::CallOp::create(body, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
         if (coordinateOutput) coordinateOutput(body, state, arguments.start);
-        if (config.freeEnergy)
-          buildFreeEnergyOutput(body, state, arguments.start, zero, one, *config.freeEnergy);
-        if (!config.observables.empty()) {
-          SmallVector<Value> tunables;
-          for (unsigned slot : config.observableTunables)
-            tunables.push_back(arguments.startValues[slot]);
-          buildObservablesOutput(body, state, arguments.start, config.observableCount,
-              config.observableBaseArgument, config.observables, tunables);
-        }
-        if (config.gradient) {
-          const auto &gradient = *config.gradient;
-          SmallVector<Value> constants, seeds;
-          for (unsigned slot : gradient.constants)
-            constants.push_back(arguments.startValues[slot]);
-          if (gradient.seeds)
-            seeds.assign(gradient.seeds, physical.fields[*gradient.seedField]);
-          buildTunableGradientOutput(body, state, arguments.startValues[gradient.request],
-              zero, one, gradient.output.fieldArguments.empty() ? Value{} : physical.identities,
-              constants, seeds, gradient.output);
-        }
+        buildEntryOutputs(body,
+            {state, arguments.start, physical.identities, arguments.interval, zero, one,
+             arguments.startValues, true, config.timed}, config.output);
         if (config.scalesEveryStep) {
           auto virial = buildVirialDiagonal(body, energy.virial);
           Value diagonal = virial.vector;

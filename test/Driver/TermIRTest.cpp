@@ -459,6 +459,13 @@ static void checkNativeTimedStepEntry() {
       TypeRange{vec, mdir::md::CellType::get(&context), builder.getF64Type()},
       [](OpBuilder &, ValueRange args) -> Value { return args.back(); });
   require(bool(energy), "native timed-entry energy did not construct");
+  auto alchemical = buildScalarPotential(builder, "alchemical",
+      TypeRange{vec, mdir::md::CellType::get(&context), builder.getF64Type(), builder.getF64Type()},
+      [](OpBuilder &, ValueRange args) -> Value { return args.back(); });
+  auto tunable = buildScalarPotential(builder, "tunable",
+      TypeRange{vec, mdir::md::CellType::get(&context), builder.getF64Type()},
+      [](OpBuilder &, ValueRange args) -> Value { return args.back(); });
+  require(bool(alchemical) && bool(tunable), "native entry output potentials did not construct");
   auto step = buildNativeStep(builder, {"step"}, {}, false, true);
   auto reporting = buildNativeStep(builder, {"step_energy", true, true}, {}, false, true);
   require(bool(step) && bool(reporting), "native timed-entry dynamics did not construct");
@@ -466,10 +473,18 @@ static void checkNativeTimedStepEntry() {
   config.timed = true;
   config.checkpointIntervals = 2;
   config.frameIntervals = 2;
+  config.output.freeEnergy = FreeEnergyOutputConfig{{{0.0}}, 0, 3};
+  config.output.observables.push_back({"energy", {}, {{-1, 0}}});
+  config.output.observableCount = 1;
+  config.output.observableBaseArgument = 3;
+  config.output.gradient.emplace();
+  metadata.startValues = {{"gradient_request", 1.0}};
+  metadata.tunableGradient = true;
   RuntimeDeclarationConfig runtime{};
   runtime.state64 = runtime.force64 = true;
   runtime.checkpoints = config.checkpointIntervals.has_value();
   runtime.writesForces = metadata.writesForces;
+  runtime.tunableGradient = metadata.tunableGradient;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
   unsigned outputPoints = 0;
@@ -495,6 +510,19 @@ static void checkNativeTimedStepEntry() {
         "native timed step moved its counter store");
   });
   require(calls == 2, "native timed entry lost its dynamics calls");
+  unsigned rows = 0, gradients = 0;
+  built->walk([&](func::CallOp call) {
+    if (call.getCallee() == "mdrtWriteTunableGradient") ++gradients;
+    if (call.getCallee() != "mdrtWriteEnergies") return;
+    ++rows;
+    SmallVector<StringRef> writes;
+    for (Operation *next = call->getNextNode(); next; next = next->getNextNode())
+      if (auto output = dyn_cast<func::CallOp>(next)) writes.push_back(output.getCallee());
+    require(llvm::equal(writes, ArrayRef<StringRef>{"mdrtWriteFreeEnergy", "mdrtWriteObservables"}),
+        "native entry changed free-energy/observable row order");
+  });
+  require(rows == 2 && gradients == 1,
+      "native entry lost output rows or repeated the initial-only gradient");
   config.triclinic = true;
   metadata.entry = "native_timed_triclinic_steps";
   auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
@@ -502,7 +530,9 @@ static void checkNativeTimedStepEntry() {
   reject(missing.takeError(), "native step entry is missing cell start value 'tilt_bx'");
   require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
       "missing triclinic tilt values retained a partial entry");
-  metadata.startValues = {{"tilt_cy", 0.3}, {"unused", 0.0}, {"tilt_bx", 0.1}, {"tilt_cx", 0.2}};
+  metadata.startValues = {{"tilt_cy", 0.3}, {"unused", 0.0}, {"tilt_bx", 0.1}, {"tilt_cx", 0.2},
+      {"gradient_request", 1.0}};
+  config.output.gradient->request = 4;
   auto triclinic = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
   require(bool(triclinic), "native triclinic timed entry did not construct");
   auto cell = *triclinic->getOps<mdir::md::TriclinicCellOp>().begin();
@@ -816,9 +846,9 @@ static void checkNativeFrameEntry() {
   wideConfig.topology = true;
   wideConfig.terms = {"energy"};
   wideConfig.storedTerms = 1;
-  wideConfig.observables.push_back({"energy", {}, {{-1, 0}}});
-  wideConfig.observableCount = 1;
-  wideConfig.observableBaseArgument = inputs.size();
+  wideConfig.output.observables.push_back({"energy", {}, {{-1, 0}}});
+  wideConfig.output.observableCount = 1;
+  wideConfig.output.observableBaseArgument = inputs.size();
   auto wide = buildSimpleFrameEntry(builder, metadata, wideConfig,
       [](OpBuilder &at, const PotentialStateIR &, EnergyResults result, Value) -> FrameCompletionIR {
         if (!result.energy) return {result, {}};

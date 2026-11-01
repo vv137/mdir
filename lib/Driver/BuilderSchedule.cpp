@@ -1111,6 +1111,73 @@ llvm::Error Builder::emitEntry() {
       if (const auto *role = term->getRoles().coordinateOutput)
         role->buildOutput(*this, at, point);
   };
+  auto configureOutputs = [&](EntryOutputIRConfig &config) {
+    if (!control.freeEnergyFile.empty()) {
+      config.freeEnergy.emplace(FreeEnergyOutputConfig{
+          {}, static_cast<size_t>(control.freeEnergy.state), getNumPotentialArguments()});
+      for (const auto &component : control.freeEnergy.lambdas)
+        config.freeEnergy->lambdas.push_back(component.second);
+    }
+    config.observableCount = control.observables.size();
+    config.observableBaseArgument = getNumPotentialArguments();
+    const auto observedTerms = getObservedTerms();
+    for (auto [index, term] : llvm::enumerate(observedTerms)) {
+      ObservableOutputTermIR output;
+      output.potential = "observe" + std::to_string(index);
+      for (const auto &constant : term.constants) {
+        bool tunable = control.isObservedTunable(term.name, constant);
+        std::optional<unsigned> slot;
+        if (tunable) {
+          slot = config.observableTunables.size();
+          std::string name = "obv_" + term.name + "_" + constant;
+          auto found = llvm::find_if(program.startValues,
+              [&](const auto &value) { return value.name == name; });
+          assert(found != program.startValues.end() && "observed tunable must be an entry value");
+          config.observableTunables.push_back(std::distance(program.startValues.begin(), found));
+        }
+        output.constants.push_back({tunable ? 0.0 : getObservedValue(term, constant), slot});
+      }
+      for (auto column : term.columns)
+        output.columns.push_back({column.first, column.second});
+      config.observables.push_back(std::move(output));
+    }
+    if (program.tunableGradient) {
+      auto &gradient = config.gradient.emplace();
+      auto startSlot = [&](StringRef name) -> unsigned {
+        auto found = llvm::find_if(program.startValues,
+            [&](const auto &value) { return value.name == name; });
+        assert(found != program.startValues.end() && "gradient input must be an entry value");
+        return std::distance(program.startValues.begin(), found);
+      };
+      gradient.request = startSlot("tunable_gradient");
+      size_t constants = control.tunableConstants.size(), seeds = getNumGradientSeeds();
+      for (size_t index = 0; index != constants; ++index)
+        gradient.constants.push_back(startSlot("tg_c" + std::to_string(index)));
+      gradient.seeds = seeds;
+      if (seeds) {
+        auto found = llvm::find_if(program.fields,
+            [](const auto &field) { return field.name == "tg_zero"; });
+        assert(found != program.fields.end() && "gradient seed field must exist");
+        gradient.seedField = std::distance(program.fields.begin(), found);
+      }
+      unsigned base = getNumPotentialArguments(), chargeArgument = 2;
+      for (const auto &field : program.fields) {
+        if (field.name == "q") break;
+        ++chargeArgument;
+      }
+      program.gradientArguments.clear();
+      for (auto [index, slot] : llvm::enumerate(program.gradientSlots)) {
+        unsigned argument = base + gradientColumns[index];
+        gradient.output.scalarArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, slot.tunable});
+      }
+      for (auto [index, field] : llvm::enumerate(program.gradientFields)) {
+        unsigned argument = index < seeds ? base + constants + index : chargeArgument;
+        gradient.output.fieldArguments.push_back(argument);
+        program.gradientArguments.push_back({argument, field.tunable});
+      }
+    }
+  };
   // Each selected entry is complete native IR, including every loop body.
   // Other physical families keep their existing entry until their scopes move.
   bool nativeFrames = control.frames && !control.minimize &&
@@ -1213,71 +1280,7 @@ llvm::Error Builder::emitEntry() {
     if (config.topology)
       for (const auto &definition : getTermDefinitions())
         config.terms.push_back(definition.name);
-    if (!control.freeEnergyFile.empty()) {
-      config.freeEnergy.emplace(FreeEnergyOutputConfig{
-          {}, static_cast<size_t>(control.freeEnergy.state), getNumPotentialArguments()});
-      for (const auto &component : control.freeEnergy.lambdas)
-        config.freeEnergy->lambdas.push_back(component.second);
-    }
-    config.observableCount = control.observables.size();
-    config.observableBaseArgument = getNumPotentialArguments();
-    const auto observedTerms = getObservedTerms();
-    for (auto [index, term] : llvm::enumerate(observedTerms)) {
-      ObservableOutputTermIR output;
-      output.potential = "observe" + std::to_string(index);
-      for (const auto &constant : term.constants) {
-        bool tunable = control.isObservedTunable(term.name, constant);
-        std::optional<unsigned> slot;
-        if (tunable) {
-          slot = config.observableTunables.size();
-          std::string name = "obv_" + term.name + "_" + constant;
-          auto found = llvm::find_if(program.startValues,
-              [&](const auto &value) { return value.name == name; });
-          assert(found != program.startValues.end() && "observed tunable must be an entry value");
-          config.observableTunables.push_back(std::distance(program.startValues.begin(), found));
-        }
-        output.constants.push_back({tunable ? 0.0 : getObservedValue(term, constant), slot});
-      }
-      for (auto column : term.columns)
-        output.columns.push_back({column.first, column.second});
-      config.observables.push_back(std::move(output));
-    }
-    if (program.tunableGradient) {
-      auto &gradient = config.gradient.emplace();
-      auto startSlot = [&](StringRef name) -> unsigned {
-        auto found = llvm::find_if(program.startValues,
-            [&](const auto &value) { return value.name == name; });
-        assert(found != program.startValues.end() && "gradient input must be an entry value");
-        return std::distance(program.startValues.begin(), found);
-      };
-      gradient.request = startSlot("tunable_gradient");
-      size_t constants = control.tunableConstants.size(), seeds = getNumGradientSeeds();
-      for (size_t index = 0; index != constants; ++index)
-        gradient.constants.push_back(startSlot("tg_c" + std::to_string(index)));
-      gradient.seeds = seeds;
-      if (seeds) {
-        auto found = llvm::find_if(program.fields,
-            [](const auto &field) { return field.name == "tg_zero"; });
-        assert(found != program.fields.end() && "gradient seed field must exist");
-        gradient.seedField = std::distance(program.fields.begin(), found);
-      }
-      unsigned base = getNumPotentialArguments(), chargeArgument = 2;
-      for (const auto &field : program.fields) {
-        if (field.name == "q") break;
-        ++chargeArgument;
-      }
-      program.gradientArguments.clear();
-      for (auto [index, slot] : llvm::enumerate(program.gradientSlots)) {
-        unsigned argument = base + gradientColumns[index];
-        gradient.output.scalarArguments.push_back(argument);
-        program.gradientArguments.push_back({argument, slot.tunable});
-      }
-      for (auto [index, field] : llvm::enumerate(program.gradientFields)) {
-        unsigned argument = index < seeds ? base + constants + index : chargeArgument;
-        gradient.output.fieldArguments.push_back(argument);
-        program.gradientArguments.push_back({argument, field.tunable});
-      }
-    }
+    configureOutputs(config.output);
     if (!control.segments) {
       for (const auto &level : levels) config.counts.push_back(level.count);
       int64_t steps = 1;
@@ -1328,7 +1331,6 @@ llvm::Error Builder::emitEntry() {
       !control.isLangevin() && !control.isBrownian() && !isLeapfrog() &&
       control.getCouplingPeriod() == 0 && !control.barostat &&
       !hasConstraints() && !hasSites() && !hasForceCorrections() && !hasHostEvaluation() &&
-      control.freeEnergyFile.empty() && control.observables.empty() && !program.tunableGradient &&
       levels.back().name == "step" && levels.size() <= 4 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy";
@@ -1360,6 +1362,7 @@ llvm::Error Builder::emitEntry() {
         energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
       }
     }
+    configureOutputs(config.output);
     config.needsCoordinateOutput = llvm::any_of(getTermBuilders(), [&](const TermBuilder *term) {
       const auto *role = term->getRoles().coordinateOutput;
       return role && role->hasCoordinateOutput(*this);

@@ -313,8 +313,11 @@ Topology entries retain their initial term-energy and virial output before
 kinetic and pressure output. The coordinate-output callback follows the initial
 energy row and every closing energy row, using the same typed pull core as the
 frame and remaining writer paths. A required coordinate-output role without its
-callback is a named construction error; unsupported post-evaluation, hosted,
-free-energy, observable and gradient configurations remain outside this selector.
+callback is a named construction error; unsupported post-evaluation and hosted
+configurations remain outside this selector. `EntryOutputIR.cpp` shares owned
+free-energy, observable and gradient configuration with the frame family. It
+preserves initial-only gradient output, free-energy/observable row order and
+separate closing-row time conversions for each active output.
 Timed terms retain the initial simulation time, shared step-counter memory and
 per-call load/increment/store order; active coordinate output derives its time
 from the completed row step. Triclinic tilt operands bind the actual entry

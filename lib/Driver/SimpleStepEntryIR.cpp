@@ -106,6 +106,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
         ValueRange{arguments.start, energy.energy, kinetic, correction, trace, pressureKinetic});
     if (coordinateOutput) coordinateOutput(at, state, arguments.start);
+    buildEntryOutputs(at,
+        {state, arguments.start, physical.identities, arguments.interval, zero, one,
+         arguments.startValues, true, config.timed}, config.output);
     physical.forces = energy.forces;
     auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
@@ -197,6 +200,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             time = buildSimulationTime(inside, completed, arguments.interval);
           coordinateOutput(inside, {next.getResult(0), cell, fields, time}, completed);
         }
+        auto outputFields = buildEntryPotentialFields(point);
+        PotentialStateIR outputState{next.getResult(0), cell, outputFields, {}};
+        buildEntryOutputs(inside,
+            {outputState, completed, point.identities, arguments.interval, zero, one,
+             arguments.startValues, false, config.timed}, config.output);
         if (!config.periodic && !config.framesAtEnergies)
           mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
               FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),
