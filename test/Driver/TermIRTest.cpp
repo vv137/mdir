@@ -494,7 +494,22 @@ static void checkNativeTimedStepEntry() {
             store.getMemRef() == memory.getResult(),
         "native timed step moved its counter store");
   });
-  require(calls == 2 && succeeded(verify(module)), "native timed entry lost its schedule or validity");
+  require(calls == 2, "native timed entry lost its dynamics calls");
+  config.triclinic = true;
+  metadata.entry = "native_timed_triclinic_steps";
+  auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+  require(!missing, "native triclinic entry accepted missing tilt values");
+  reject(missing.takeError(), "native step entry is missing cell start value 'tilt_bx'");
+  require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+      "missing triclinic tilt values retained a partial entry");
+  metadata.startValues = {{"tilt_cy", 0.3}, {"unused", 0.0}, {"tilt_bx", 0.1}, {"tilt_cx", 0.2}};
+  auto triclinic = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+  require(bool(triclinic), "native triclinic timed entry did not construct");
+  auto cell = *triclinic->getOps<mdir::md::TriclinicCellOp>().begin();
+  auto values = triclinic->getArguments().take_back(metadata.startValues.size());
+  require(llvm::equal(cell.getOperands().take_back(3), ValueRange{values[2], values[3], values[0]}),
+      "native triclinic entry guessed tilt-value positions instead of their semantic slots");
+  require(succeeded(verify(module)), "native timed/triclinic entry module did not verify");
 }
 
 static void checkNativeSimpleEntry() {

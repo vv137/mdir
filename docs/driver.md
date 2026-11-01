@@ -1520,7 +1520,7 @@ Other entry families and their final assembly join remain in progress.
 Entry/schedule scopes remain in progress; their temporary assembly
 join and loop-carry connections remain until those scopes move.
 
-A fixed-cell Verlet entry without constraints or post-evaluation corrections,
+A fixed-cell orthorhombic/triclinic Verlet entry without constraints or post-evaluation corrections,
 with plain steps, energy, trajectory and checkpoint intervals, constructs
 its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
 energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
@@ -1538,7 +1538,9 @@ callback is a named construction error; unsupported post-evaluation, hosted,
 free-energy, observable and gradient configurations remain outside this selector.
 Timed terms retain the initial simulation time, shared step-counter memory and
 per-call load/increment/store order; active coordinate output derives its time
-from the completed row step. It shares semantic field flattening and reordering with the
+from the completed row step. Triclinic tilt operands bind the actual entry
+start values by their semantic names; a missing tilt is a named construction
+error. It shares semantic field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
 

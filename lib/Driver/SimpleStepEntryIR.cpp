@@ -31,6 +31,16 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (!step || (config.energyIntervals && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");
+  SmallVector<unsigned> tiltSlots;
+  if (config.triclinic)
+    for (StringRef name : {"tilt_bx", "tilt_cx", "tilt_cy"}) {
+      auto found = llvm::find_if(program.startValues,
+          [&](const auto &value) { return value.name == name; });
+      if (found == program.startValues.end())
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "native step entry is missing cell start value '%s'", name.str().c_str());
+      tiltSlots.push_back(std::distance(program.startValues.begin(), found));
+    }
   return buildEntryFunction(builder, program, {},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
@@ -68,7 +78,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       taken *= counts[level];
       if (level && kinds[level - 1] == Kind::Energy) ++taken;
     }
-    Value cell = buildCell(at, ValueRange{arguments.lengthX, arguments.lengthY, arguments.lengthZ});
+    SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
+    for (unsigned slot : tiltSlots) edges.push_back(arguments.startValues[slot]);
+    Value cell = buildCell(at, edges);
     auto physical = buildEntryFields(at, program, arguments, true, false);
     SmallVector<Value> originalRelations;
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
