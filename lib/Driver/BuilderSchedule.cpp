@@ -1257,7 +1257,7 @@ llvm::Error Builder::emitEntry() {
       }
     }
   };
-  if (control.minimize && !control.frames && !control.segments) {
+  if (control.minimize && !control.frames) {
     mlir::OpBuilder ir(&termIR.getContext());
     auto *body = termIR.getModule().getBody();
     ir.setInsertionPointToEnd(body);
@@ -1267,12 +1267,14 @@ llvm::Error Builder::emitEntry() {
       if (const auto *role = term->getRoles().hostEvaluation) role->buildDeclarations(*this, ir);
     emitRuntimeDeclarations(ir, declarations, true);
     MinimizationEntryIRConfig config;
+    config.segments = control.segments;
+    config.partCounts = getPartCountsSize();
     config.timed = control.usesTime;
     config.stepMemory = needsStepNumber();
     config.restart = isRestart();
     config.stops = stopsMinimization();
     config.topology = bool(system.topology);
-    config.checkpoints = control.checkpointPeriod > 0;
+    config.checkpointPeriod = control.checkpointPeriod;
     config.changesCell = changesCell();
     config.scalesEveryStep = scalesEveryStep();
     config.cellEdges = getCellSize();
@@ -2520,11 +2522,7 @@ void Builder::emitPartLoop(std::string chunk,
           mdir::md::YieldOp::create(builder, loc, mlir::ValueRange{all});
         }
         mlir::Value invalid = buildSum3(builder, sum.getResult());
-        mdir::mdrt::HostCallOp::create(
-            builder, loc, mlir::TypeRange{},
-            mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtPartBoundary"),
-            mlir::ValueRange{values[0], values[1], values[2], values[3], invalid, values[4]},
-            mlir::ValueRange{}, builder.getUnitAttr());
+        buildPartBoundary(builder, values[0], values[1], values[2], values[3], invalid, values[4]);
         return {};
       });
   emitPartCounts();

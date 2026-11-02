@@ -326,8 +326,17 @@ field flattening and reordering with the
 frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
 progress.
 
+The shared `buildPartBoundary()` helper preserves in-place resorting for dynamics
+and minimization; construction coverage requires `in_place` only on that call.
+
 Standalone minimization entries use `MinimizationEntryIR.cpp`: initial constraint
 projection, the existing native descent program, accept/reject maps, nested
 controller state, convergence rows, frames and final checkpoints are constructed
 directly. Restart projection and initial term-report behavior are retained.
-Programs of parts and the remaining coupling scopes are still in progress.
+Minimization parts retain first-call projection and term output, the incoming
+step size, host boundary checks and counts, and actual carried controller state.
+Segments require zero energy, frame and checkpoint periods, with convergence
+checked by the host; standalone entries require positive step and energy counts.
+Construction coverage derives segmented counts and stop behavior from
+`compiler::getSegmentsControl()` and rejects incompatible periods.
+Dynamics programs of parts and the remaining coupling scopes are still in progress.

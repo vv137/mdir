@@ -3,6 +3,7 @@
 #include "EntryConstraintIR.h"
 #include "EntryFieldsIR.h"
 #include "EntryLoopIR.h"
+#include "EntryRuntimeIR.h"
 #include "BarostatIR.h"
 #include "ScheduleIR.h"
 #include "SiteIR.h"
@@ -22,6 +23,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
     OpBuilder &builder, const Program &program, mdir::dyn::ProgramOp descend,
     const MinimizationEntryIRConfig &config,
     llvm::function_ref<EntryCompletionIR(OpBuilder &, const PotentialStateIR &, EnergyResults, Value)> complete) {
+  if (config.segments && config.partCounts < 2)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization part counts require start and step slots");
   if (!descend)
     return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization has no descent program");
   if (config.needsPostEvaluation && !complete)
@@ -31,7 +34,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
   if (descend.getFunctionType().getResults().size() != 3 ||
       descend.getFunctionType().getResults()[2] != builder.getF64Type())
     return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization descent results do not match its controller");
-  if (config.steps <= 0 || config.energyPeriod <= 0)
+  if (config.segments && config.energyPeriod != 0)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization parts require a zero energy period");
+  if (config.segments && config.framePeriod != 0)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization parts require a zero frame period");
+  if (config.segments && config.checkpointPeriod != 0)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization parts require a zero checkpoint period");
+  if (config.segments && config.stops)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization parts require host convergence checks");
+  if (!config.segments && (config.steps <= 0 || config.energyPeriod <= 0))
     return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization has invalid loop counts");
   SmallVector<unsigned> tilts;
   if (config.cellEdges == 6)
@@ -42,7 +53,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
             "native minimization is missing cell start value '%s'", name.str().c_str());
       tilts.push_back(std::distance(program.startValues.begin(), found));
     }
-  return buildEntryFunction(builder, program, {},
+  return buildEntryFunction(builder, program, {config.segments, config.segments},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
     auto constant = [&](double value) -> Value {
@@ -50,6 +61,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
     };
     Value zero = arith::ConstantIndexOp::create(at, loc, 0);
     Value one = arith::ConstantIndexOp::create(at, loc, 1);
+    Value firstCall, firstTrips;
+    if (config.segments) {
+      Value none = arith::ConstantIntOp::create(at, loc, 0, 64);
+      firstCall = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, arguments.firstCall, none);
+    }
+    auto getFirstTrips = [&]() -> Value {
+      if (!firstTrips) firstTrips = arith::SelectOp::create(at, loc, firstCall, one, zero);
+      return firstTrips;
+    };
     Value time;
     if (config.timed) time = constant(0.0);
     if (config.timed || config.stepMemory) {
@@ -86,32 +106,56 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
       return values;
     };
     if (!config.restart && !config.constraints.empty()) {
-      Value before = physical.positions;
-      for (const auto &group : config.constraints) {
-        auto parameters = lengths(group);
-        ConstraintPositionInputs input{fields[group.relation], physical.positions, cell,
-            before, physical.masses, parameters};
-        auto projected = group.settlePosition
-            ? buildSettlePositions(at, input, false, group.position.tolerance)
-            : buildBondConstraints(at, input, group.arity, group.bonds, group.position);
-        physical.positions = buildAddChange(at, physical.positions, projected.change);
-      }
-      physical.positions = buildEntrySites(at, {physical.positions, cell, fields, time}, config.sites);
+      auto project = [&](OpBuilder &at, Value positions) {
+        Value before = positions;
+        for (const auto &group : config.constraints) {
+          auto parameters = lengths(group);
+          ConstraintPositionInputs input{fields[group.relation], positions, cell,
+              before, physical.masses, parameters};
+          auto projected = group.settlePosition
+              ? buildSettlePositions(at, input, false, group.position.tolerance)
+              : buildBondConstraints(at, input, group.arity, group.bonds, group.position);
+          positions = buildAddChange(at, positions, projected.change);
+        }
+        return buildEntrySites(at, {positions, cell, fields, time}, config.sites);
+      };
+      if (config.segments) {
+        Value trips = getFirstTrips();
+        auto initial = buildEntryLoop(at, "minimization initial projection", zero, trips, one,
+            ValueRange{physical.positions},
+            [&](OpBuilder &body, Value, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+          return SmallVector<Value>{project(body, state[0])};
+        });
+        if (!initial) return initial.takeError();
+        physical.positions = initial->getResult(0);
+      } else physical.positions = project(at, physical.positions);
     }
     PotentialStateIR state{physical.positions, cell, fields, time};
     auto evaluated = buildEntryEvaluation(at, state, {true, true, false}, config.sites, complete, scale);
     if (evaluated.storedTerms.size() != config.storedTerms)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "native minimization post-evaluation term count does not match its configuration");
-    if (config.topology && !config.restart) {
+    auto writeTerms = [&](OpBuilder &at) {
       Value terms = buildTermEnergyBuffer(at, state, config.terms, config.terms.size() + config.storedTerms);
       for (auto [index, value] : llvm::enumerate(evaluated.storedTerms)) {
         Value slot = arith::ConstantIndexOp::create(at, loc, config.terms.size() + index);
         memref::StoreOp::create(at, loc, value, terms, slot);
       }
       buildWriteTerms(at, terms);
-    }
-    Value first = constant(config.firstSize);
+    };
+    if (config.segments) {
+      // The writer omits an empty first-call branch when there are no terms.
+      if (config.topology) {
+        Value trips = getFirstTrips();
+        auto terms = buildEntryLoop(at, "minimization initial terms", zero, trips, one, {},
+            [&](OpBuilder &where, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          writeTerms(where);
+          return SmallVector<Value>{};
+        });
+        if (!terms) return terms.takeError();
+      }
+    } else if (config.topology && !config.restart) writeTerms(at);
+    Value first = config.segments ? arguments.firstSize : constant(config.firstSize);
     Value cap = constant(config.cap), grow = constant(1.2), shrink = constant(0.2);
     Value scalarOne = constant(1.0), scalarZero = constant(0.0);
     auto reported = [&](OpBuilder &body, Value positions, Value forces) {
@@ -142,12 +186,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
     host(at, "mdrtWriteMinimization", {arguments.start, evaluated.physical.energy, first, initialForce, physical.identities});
     MinimizationStopIR stop;
     if (config.stops) stop = buildMinimizationStop(at, arguments.start, config.steps);
+    auto run = [&](OpBuilder &at, Value start, ValueRange initial, Value partCount)
+        -> llvm::Expected<SmallVector<Value>> {
     int64_t framePeriod = config.framePeriod > 0 ? config.framePeriod : config.steps;
     SmallVector<Value> counts;
-    for (int64_t count : {config.steps / framePeriod, framePeriod / config.energyPeriod, config.energyPeriod, framePeriod})
+    if (config.segments) {
+      counts.push_back(arith::ConstantIndexOp::create(at, loc, 1));
+      counts.push_back(arith::ConstantIndexOp::create(at, loc, 1));
+      counts.push_back(arith::IndexCastOp::create(at, loc, at.getIndexType(), partCount));
+      counts.push_back(arith::AddIOp::create(at, loc, counts[2], zero));
+    } else for (int64_t count : {config.steps / framePeriod, framePeriod / config.energyPeriod, config.energyPeriod, framePeriod})
       counts.push_back(arith::ConstantIndexOp::create(at, loc, count));
     auto outer = buildEntryLoop(at, "minimization frames", zero, counts[0], one,
-        ValueRange{physical.positions, evaluated.physical.forces, evaluated.physical.energy, first},
+        initial,
         [&](OpBuilder &frame, Value frameIndex, ValueRange frameState) -> llvm::Expected<SmallVector<Value>> {
       auto rows = buildEntryLoop(frame, "minimization rows", zero, counts[1], one, frameState,
           [&](OpBuilder &row, Value rowIndex, ValueRange rowState) -> llvm::Expected<SmallVector<Value>> {
@@ -183,7 +234,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
           return SmallVector<Value>{chosen[0], chosen[1], energy, size};
         });
         if (!steps) return steps.takeError();
-        Value completed = buildStepNumber(row, {{frameIndex, {}}}, rowIndex, counts[3], counts[2], one, arguments.start);
+        Value completed = buildStepNumber(row, {{frameIndex, {}}}, rowIndex, counts[3], counts[2], one, start);
         auto write = [&](OpBuilder &where) {
           Value force = reported(where, steps->getResult(0), steps->getResult(1));
           host(where, "mdrtWriteMinimization", {completed, steps->getResult(2), steps->getResult(3), force, physical.identities});
@@ -201,7 +252,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
       });
       if (!rows) return rows.takeError();
       if (config.framePeriod > 0) {
-        Value completed = buildStepNumber(frame, {{frameIndex, {}}}, {}, {}, counts[3], one, arguments.start);
+        Value completed = buildStepNumber(frame, {{frameIndex, {}}}, {}, {}, counts[3], one, start);
         if (config.stops) {
           Value trips = buildMinimizationFrameBound(frame, stop, completed, zero, one);
           auto write = buildEntryLoop(frame, "minimization frame", zero, trips, one, {},
@@ -215,16 +266,56 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
       return SmallVector<Value>(rows->getResults());
     });
     if (!outer) return outer.takeError();
-    if (config.checkpoints) {
+    return SmallVector<Value>(outer->getResults());
+    };
+    SmallVector<Value> initial{physical.positions, evaluated.physical.forces, evaluated.physical.energy, first};
+    if (config.segments) {
+      Value memory = memref::AllocaOp::create(at, loc, MemRefType::get({config.partCounts}, at.getI64Type()));
+      Value end = arith::ConstantIndexOp::create(at, loc, INT64_MAX);
+      auto parts = buildEntryLoop(at, "minimization parts", zero, end, one, initial,
+          [&](OpBuilder &part, Value, ValueRange carried) -> llvm::Expected<SmallVector<Value>> {
+        auto vec = VectorType::get({3}, part.getF64Type());
+        auto sum = mdir::md::SumParticlesOp::create(part, loc, vec,
+            ValueRange{carried[0], physical.velocities, carried[1]});
+        {
+          OpBuilder::InsertionGuard guard(part);
+          auto args = part.createBlock(&sum.getKernel(), {}, {vec, vec, vec}, {loc, loc, loc})->getArguments();
+          Value yes = arith::ConstantOp::create(part, loc, DenseElementsAttr::get(vec, 1.0));
+          Value no = arith::ConstantOp::create(part, loc, DenseElementsAttr::get(vec, 0.0));
+          SmallVector<Value> bad;
+          for (Value field : args) {
+            Value difference = arith::SubFOp::create(part, loc, field, field);
+            Value finite = arith::CmpFOp::create(part, loc, arith::CmpFPredicate::ORD, difference, difference);
+            bad.push_back(arith::SelectOp::create(part, loc, finite, no, yes));
+          }
+          Value first = arith::AddFOp::create(part, loc, bad[0], bad[1]);
+          Value all = arith::AddFOp::create(part, loc, first, bad[2]);
+          mdir::md::YieldOp::create(part, loc, ValueRange{all});
+        }
+        Value invalid = buildSum3(part, sum.getResult());
+        buildPartBoundary(part, carried[0], physical.velocities, carried[1], physical.identities, invalid, memory);
+        SmallVector<Value> counts;
+        for (int64_t index : {0, 1}) {
+          Value slot = arith::ConstantIndexOp::create(part, loc, index);
+          counts.push_back(memref::LoadOp::create(part, loc, memory, slot));
+        }
+        return run(part, counts[0], carried, counts[1]);
+      });
+      if (!parts) return parts.takeError();
+      return llvm::Error::success();
+    }
+    auto outer = run(at, arguments.start, initial, {});
+    if (!outer) return outer.takeError();
+    if (config.checkpointPeriod > 0) {
       Value completed;
       if (config.stops) completed = memref::LoadOp::create(at, loc, stop.memory, stop.stepIndex);
       else {
         Value count = arith::ConstantIntOp::create(at, loc, config.steps, 64);
         completed = arith::AddIOp::create(at, loc, arguments.start, count);
       }
-      host(at, "mdrtWriteCheckpoint", {completed, outer->getResult(0), physical.velocities, physical.identities});
+      host(at, "mdrtWriteCheckpoint", {completed, (*outer)[0], physical.velocities, physical.identities});
     }
-    host(at, "mdrtFinish", {outer->getResult(0), physical.velocities, physical.identities});
+    host(at, "mdrtFinish", {(*outer)[0], physical.velocities, physical.identities});
     return llvm::Error::success();
   });
 }

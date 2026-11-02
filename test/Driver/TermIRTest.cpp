@@ -16,6 +16,8 @@
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Compiler/Compile.h"
+#include "mdir/Driver/Control.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -473,14 +475,14 @@ static void checkNativeMinimizationEntry() {
   config.framePeriod = 4;
   config.firstSize = 0.001;
   config.cap = 0.01;
-  config.checkpoints = true;
+  config.checkpointPeriod = 4;
   config.topology = true;
   config.terms = {"energy"};
   RuntimeDeclarationConfig runtime{};
   runtime.state64 = runtime.force64 = true;
   runtime.minimize = true;
   runtime.stopsMinimization = config.stops;
-  runtime.checkpoints = config.checkpoints;
+  runtime.checkpoints = config.checkpointPeriod > 0;
   runtime.writesForces = metadata.writesForces;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
@@ -506,6 +508,77 @@ static void checkNativeMinimizationEntry() {
   config.framePeriod = 0;
   auto unstopped = buildMinimizationEntry(builder, metadata, descend, config);
   require(bool(unstopped), "native minimization without stop rows did not construct");
+  metadata.entry = "native_parts_minimization";
+  mdir::driver::Control control;
+  control.minimize = true;
+  auto segmentsControl = mdir::compiler::getSegmentsControl(control);
+  // Match emitEntry's mapping, including stopsMinimization(). The host checks
+  // convergence between parts; the entry reads counts from part memory.
+  config.segments = segmentsControl.segments;
+  config.steps = segmentsControl.numSteps;
+  config.energyPeriod = segmentsControl.energyPeriod;
+  config.framePeriod = segmentsControl.framePeriod;
+  config.checkpointPeriod = segmentsControl.checkpointPeriod;
+  config.stops = segmentsControl.minimize && !segmentsControl.segments;
+  require(config.steps == std::max<int64_t>(1, segmentsControl.getCouplingPeriod()) &&
+          config.energyPeriod == 0 && config.framePeriod == 0 &&
+          config.checkpointPeriod == 0 && !config.stops,
+      "native minimization fixture differs from production segments control");
+  auto positions = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
+  auto ids = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type());
+  auto partMemory = MemRefType::get({config.partCounts}, builder.getI64Type());
+  auto boundary = func::FuncOp::create(builder, loc, "mdrtPartBoundary",
+      builder.getFunctionType({positions, positions, positions, ids, builder.getF64Type(), partMemory}, {}));
+  boundary.setPrivate();
+  boundary->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto segmented = buildMinimizationEntry(builder, metadata, descend, config);
+  require(bool(segmented), "native minimization parts did not construct");
+  scf::ForOp parts;
+  for (auto loop : segmented->getOps<scf::ForOp>())
+    if (loop.getNumRegionIterArgs() == 4) parts = loop;
+  require(bool(parts), "native minimization has no part state loop");
+  auto partFrames = *parts.getBody()->getOps<scf::ForOp>().begin();
+  require(llvm::equal(partFrames.getInitArgs(), parts.getRegionIterArgs()),
+      "native minimization parts read stale controller state");
+  bool currentBoundary = false;
+  for (auto call : parts.getBody()->getOps<mdir::mdrt::HostCallOp>())
+    if (call.getOperand(0) == parts.getRegionIterArgs()[0] &&
+        call.getOperand(2) == parts.getRegionIterArgs()[1]) {
+      require(call.getInPlace(), "native minimization boundary lost in-place resorting");
+      currentBoundary = true;
+    }
+  module.walk([&](mdir::mdrt::HostCallOp call) {
+    bool boundary = call.getCalleeAttr().getValue() == "mdrtPartBoundary";
+    require(bool(call.getInPlace()) == boundary,
+        "native minimization host call has the wrong in-place contract");
+  });
+  require(currentBoundary, "native minimization boundary reads stale positions or forces");
+  require(parts.getInitArgs()[3] == segmented->getArguments()[segmented->getNumArguments() - 2],
+      "native minimization parts ignore the incoming step size");
+  metadata.entry = "native_invalid_parts_minimization";
+  auto rejectConfig = [&](const MinimizationEntryIRConfig &invalid, StringRef message) {
+    auto rejected = buildMinimizationEntry(builder, metadata, descend, invalid);
+    require(!rejected, "native minimization parts accepted invalid mode configuration");
+    reject(rejected.takeError(), message);
+    require(!module.lookupSymbol<func::FuncOp>(metadata.entry),
+        "invalid native minimization parts retained an entry");
+  };
+  auto invalid = config;
+  invalid.energyPeriod = 1;
+  rejectConfig(invalid, "native minimization parts require a zero energy period");
+  invalid = config;
+  invalid.framePeriod = 1;
+  rejectConfig(invalid, "native minimization parts require a zero frame period");
+  invalid = config;
+  invalid.checkpointPeriod = 1;
+  rejectConfig(invalid, "native minimization parts require a zero checkpoint period");
+  invalid = config;
+  invalid.partCounts = 1;
+  rejectConfig(invalid, "native minimization part counts require start and step slots");
+  invalid = config;
+  invalid.stops = true;
+  rejectConfig(invalid, "native minimization parts require host convergence checks");
+  config.segments = false;
   metadata.entry = "native_missing_hosted_minimization";
   config.needsHostedEvaluation = true;
   auto omitted = buildMinimizationEntry(builder, metadata, descend, config);

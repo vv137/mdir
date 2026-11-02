@@ -1,5 +1,7 @@
 // Shared runtime ABI declarations for native and transitional entries.
 #include "EntryRuntimeIR.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 using namespace mdir::driver::builder;
@@ -104,4 +106,13 @@ void mdir::driver::builder::emitRuntimeDeclarations(mlir::OpBuilder &builder,
     inputs.push_back(ids);
     declare("mdrtWriteCheckpoint", inputs, {}, true);
   }
+}
+
+void mdir::driver::builder::buildPartBoundary(mlir::OpBuilder &builder,
+    mlir::Value positions, mlir::Value velocities, mlir::Value forces,
+    mlir::Value identities, mlir::Value invalid, mlir::Value counts) {
+  mdir::mdrt::HostCallOp::create(builder, builder.getUnknownLoc(), mlir::TypeRange{},
+      mlir::FlatSymbolRefAttr::get(builder.getContext(), "mdrtPartBoundary"),
+      mlir::ValueRange{positions, velocities, forces, identities, invalid, counts},
+      mlir::ValueRange{}, builder.getUnitAttr());
 }

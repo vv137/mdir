@@ -7,11 +7,13 @@
 #include <optional>
 namespace mdir::driver::builder {
 struct MinimizationEntryIRConfig {
+  bool segments = false;
+  int64_t partCounts = 9;
   bool timed = false, stepMemory = false, restart = false, stops = true;
-  bool topology = false, checkpoints = false, changesCell = false, scalesEveryStep = false;
+  bool topology = false, changesCell = false, scalesEveryStep = false;
   unsigned cellEdges = 3, storedTerms = 0;
   bool needsPostEvaluation = false, needsHostedEvaluation = false;
-  int64_t steps = 1, energyPeriod = 1, framePeriod = 0;
+  int64_t steps = 1, energyPeriod = 1, framePeriod = 0, checkpointPeriod = 0;
   double firstSize = 0.0, cap = 0.0;
   std::optional<std::array<unsigned, 3>> referenceEdges;
   std::vector<DescentSiteIR> sites;
