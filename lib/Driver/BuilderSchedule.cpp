@@ -1422,10 +1422,10 @@ llvm::Error Builder::emitEntry() {
     return llvm::Error::success();
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
-      control.getCouplingPeriod() == 0 && !control.barostat &&
-      levels.back().name == "step" && levels.size() <= 4 &&
+      (control.getCouplingPeriod() == 0 || !control.thermostat) && !control.barostat &&
+      levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
-        return level.name == "segment" || level.name == "frame" || level.name == "energy";
+        return level.name == "segment" || level.name == "frame" || level.name == "energy" || level.name == "couple";
       });
   if (nativeSteps) {
     mlir::OpBuilder ir(&termIR.getContext());
@@ -1452,6 +1452,7 @@ llvm::Error Builder::emitEntry() {
     mdir::dyn::ProgramOp energy;
     config.framesAtEnergies = framesAtEnergies;
     for (const auto &level : levels) {
+      if (level.name == "couple") config.couplingIntervals = level.count;
       if (level.name == "segment") config.checkpointIntervals = level.count;
       if (level.name == "frame") config.frameIntervals = level.count;
       if (level.name == "energy") {

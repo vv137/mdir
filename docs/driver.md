@@ -1584,6 +1584,10 @@ Construction coverage derives segmented counts and stop behavior from
 `compiler::getSegmentsControl()` and rejects incompatible periods.
 Dynamics programs of parts and the remaining coupling scopes are still in progress.
 
+Native fixed-cell step entries also construct COM-only coupling periods, using
+actual carried state and the existing typed COM/bath core. Energy intervals retain
+their final plain-step loop and report pressure before removing COM motion.
+
 ## 3. Decided
 
 | # | Question | Decision |

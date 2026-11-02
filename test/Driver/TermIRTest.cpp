@@ -444,6 +444,68 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkNativeCenterStepEntry() {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  auto energy = buildScalarPotential(builder, "energy",
+      {vec, mdir::md::CellType::get(&context)},
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native COM potential did not construct");
+  auto step = buildNativeStep(builder, {"step"}, {}, false, false);
+  auto reporting = buildNativeStep(builder, {"step_energy", true, true}, {}, false, false);
+  require(bool(step) && bool(reporting), "native COM programs did not construct");
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = runtime.bath = true;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  mdir::driver::Control control;
+  control.numSteps = 12;
+  control.energyPeriod = 6;
+  control.comPeriod = 3;
+  SimpleStepEntryIRConfig config{control.getCouplingPeriod() - 1,
+      control.numSteps / control.getEnergyLoopPeriod()};
+  config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
+  metadata.entry = "native_center_steps";
+  auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+  require(bool(entry), "native COM entry did not construct");
+  auto energies = *entry->getOps<scf::ForOp>().begin();
+  auto childLoops = energies.getBody()->getOps<scf::ForOp>();
+  auto it = childLoops.begin();
+  auto couples = *it++;
+  auto finalPlain = *it;
+  require(llvm::equal(finalPlain.getInitArgs(), couples.getResults()),
+      "native COM final period starts from stale coupled state");
+  auto closing = *couples.getBody()->getOps<mdir::dyn::StepOp>().begin();
+  auto yielded = cast<scf::YieldOp>(couples.getBody()->getTerminator());
+  auto coupledVelocity = yielded.getOperand(1).getDefiningOp<mdir::md::MapParticlesOp>();
+  require(coupledVelocity && coupledVelocity.getOperand(0) == closing.getResult(1),
+      "native COM removal does not consume the closing step velocity");
+  metadata.entry = "native_center_without_rows";
+  config.energyIntervals.reset();
+  config.couplingIntervals = control.numSteps / control.getCouplingPeriod();
+  auto bare = buildSimpleStepEntry(builder, metadata, *step, {}, config);
+  require(bool(bare), "native COM entry without rows did not construct");
+  metadata.entry = "native_center_zero_period_loop";
+  control.comPeriod = control.energyPeriod;
+  config.plainSteps = control.getCouplingPeriod() - 1;
+  config.energyIntervals = control.numSteps / control.getEnergyLoopPeriod();
+  config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
+  auto zero = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+  require(bool(zero), "native COM entry with one period per row did not construct");
+  require(succeeded(verify(module)), "native COM entry module did not verify");
+}
+
 static void checkNativeMinimizationEntry() {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -1373,6 +1435,7 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  checkNativeCenterStepEntry();
   checkNativeMinimizationEntry();
   checkNativeConstraintStepEntry();
   checkNativeSiteStepEntry();

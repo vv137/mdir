@@ -77,7 +77,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       memref::StoreOp::create(at, loc, arguments.start, stepMemory, zero);
       stepOne = arith::ConstantIntOp::create(at, loc, 1, 64);
     }
-    enum class Kind { Segment, Frame, Energy, Step };
+    enum class Kind { Segment, Frame, Energy, Couple, Step };
     SmallVector<Kind> kinds;
     SmallVector<int64_t> counts;
     if (config.checkpointIntervals) {
@@ -92,6 +92,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       kinds.push_back(Kind::Energy);
       counts.push_back(*config.energyIntervals);
     }
+    if (config.couplingIntervals) {
+      kinds.push_back(Kind::Couple);
+      counts.push_back(*config.couplingIntervals);
+    }
     kinds.push_back(Kind::Step);
     counts.push_back(config.plainSteps);
     SmallVector<Value> extents, periods(kinds.size());
@@ -100,7 +104,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     for (size_t level = kinds.size(); level-- != 0;) {
       periods[level] = arith::ConstantIndexOp::create(at, loc, taken);
       taken *= counts[level];
-      if (level && kinds[level - 1] == Kind::Energy) ++taken;
+      if (level && kinds[level - 1] == Kind::Energy)
+        taken += config.couplingIntervals ? config.plainSteps + 1 : 1;
+      else if (level && kinds[level - 1] == Kind::Couple) ++taken;
     }
     SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
     for (unsigned slot : tiltSlots) edges.push_back(arguments.startValues[slot]);
@@ -109,11 +115,14 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto physical = buildEntryFields(at, program, arguments, true, givenForces);
     SmallVector<Value> originalRelations;
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
+    Value inputMasses = physical.masses;
     auto originalParameters = buildEntryPotentialFields(physical);
     physical.positions = buildEntrySites(at,
         {physical.positions, cell, originalParameters, time}, config.sites);
     physical = buildEntryReorder(at, program, std::move(physical), cell, givenForces);
     auto fields = buildEntryPotentialFields(physical);
+    CouplingMassIR coupling;
+    if (config.couplingIntervals) coupling = buildCouplingMass(at, inputMasses);
     PotentialStateIR state{physical.positions, cell, fields, time};
     EntryCompletionIR evaluated{{}, {}};
     if (!config.restart || config.recomputeForces) {
@@ -157,7 +166,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         trace = buildSum3(at, molecular);
         auto centers = buildGroupKinetic(at,
             {physical.positions, physical.velocities, energy.forces, cell, physical.masses,
-             arguments.interval, {}, groups});
+             arguments.interval, coupling.totalMass, groups});
         pressureKinetic = buildSum3(at, centers.half);
       }
       func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
@@ -206,7 +215,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     };
     SmallVector<LoopIterationIR> iterations;
     auto number = [&](OpBuilder &body, unsigned level, Value index) {
-      return buildStepNumber(body, iterations, index, {}, periods[level], one, arguments.start);
+      bool split = kinds[level] == Kind::Couple && level && kinds[level - 1] == Kind::Energy;
+      ArrayRef<LoopIterationIR> loops(iterations);
+      return buildStepNumber(body, split ? loops.drop_back() : loops, index,
+          split ? periods[level - 1] : Value{}, periods[level], one, arguments.start);
     };
     auto writeFrame = [&](OpBuilder &body, Value completed, const EntryFieldsIR &point) {
       mdir::mdrt::HostCallOp::create(body, loc, TypeRange{},
@@ -217,7 +229,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     level = [&](OpBuilder &body, unsigned atLevel, EntryFieldsIR initial) -> llvm::Expected<scf::ForOp> {
       bool reorders = kinds[atLevel] == Kind::Segment && program.reorders;
       StringRef scope = kinds[atLevel] == Kind::Segment ? "checkpoint segments" : kinds[atLevel] == Kind::Frame ? "frame intervals" :
-          kinds[atLevel] == Kind::Energy ? "energy intervals" : "plain steps";
+          kinds[atLevel] == Kind::Energy ? "energy intervals" : kinds[atLevel] == Kind::Couple ? "COM periods" : "plain steps";
       return buildEntryLoop(body, scope, zero, extents[atLevel], one, pack(initial, reorders),
           [&](OpBuilder &inside, Value index, ValueRange current) -> llvm::Expected<SmallVector<Value>> {
         iterations.push_back({index, extents[atLevel]});
@@ -244,6 +256,29 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           writeFrame(inside, completed, point);
           return SmallVector<Value>(before->getResults());
         }
+        auto removeCenter = [&](const EntryFieldsIR &current) {
+          auto center = buildCenterMotion(inside,
+              {current.velocities, current.masses, coupling.totalMass, coupling.half});
+          auto result = current;
+          result.velocities = buildCoupledVelocities(inside, current.velocities,
+              center.velocity, {}, {}, center.energy);
+          return result;
+        };
+        if (kinds[atLevel] == Kind::Couple) {
+          auto next = call(inside, step, point);
+          number(inside, atLevel, index);
+          return pack(removeCenter(bind(point, next.getResults(), false)), false);
+        }
+        if (config.couplingIntervals) {
+          auto last = buildEntryLoop(inside, "last COM period plain steps", zero, extents.back(), one,
+              pack(point, false),
+              [&](OpBuilder &at, Value, ValueRange carried) -> llvm::Expected<SmallVector<Value>> {
+            auto actual = bind(point, carried, false);
+            return SmallVector<Value>(call(at, step, actual).getResults());
+          });
+          if (!last) return last.takeError();
+          point = bind(point, last->getResults(), false);
+        }
         auto next = call(inside, energyStep, point);
         Value full = next.getResult(config.leapfrog ? 6 : 1);
         Value kinetic = buildKineticEnergy(inside, full, point.masses);
@@ -268,7 +303,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           auto groups = buildEntryGroups(parameters, config.constraints);
           auto centers = buildGroupKinetic(inside,
               {next.getResult(0), full, next.getResult(2), cell, point.masses,
-               arguments.interval, {}, groups});
+               arguments.interval, coupling.totalMass, groups});
           pressureKinetic = buildSum3(inside, centers.half);
         }
         Value completed = number(inside, atLevel, index);
@@ -290,8 +325,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
               FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),
               ValueRange{completed, next.getResult(0), point.identities}, ValueRange{}, UnitAttr{});
-        if (config.framesAtEnergies) writeFrame(inside, completed, bind(point, next.getResults(), false));
-        return SmallVector<Value>(next.getResults().take_front(3));
+        auto final = bind(point, next.getResults(), false);
+        if (config.couplingIntervals) final = removeCenter(final);
+        if (config.framesAtEnergies) writeFrame(inside, completed, final);
+        return pack(final, false);
       });
     };
     auto loop = level(at, 0, physical);
