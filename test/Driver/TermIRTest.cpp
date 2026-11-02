@@ -18,6 +18,8 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/System.h"
+#include <cmath>
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -443,6 +445,101 @@ static void checkNativeBarePotentialBody() {
 
 }
 
+
+static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com) {
+  TermIRPlan plan;
+  auto &context = plan.getContext();
+  auto module = plan.getModule();
+  OpBuilder builder(&context);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+  mdir::driver::Program metadata{};
+  metadata.entry = "native_thermal_steps";
+  metadata.state = metadata.force = metadata.mass = metadata.parameter = mdir::driver::Element::F64;
+  if (constrained) {
+    mdir::md::TupleSetOp::create(builder, loc, "bonds", "atoms", 2,
+        mdir::md::Orientation::Unordered, true);
+    metadata.tupleSets.emplace_back();
+    auto &set = metadata.tupleSets.back();
+    set.name = "bonds";
+    set.arity = 2;
+    set.fields = {{"length", {}, false}};
+  }
+  RuntimeDeclarationConfig runtime{};
+  runtime.state64 = runtime.force64 = runtime.rescales = runtime.bath = true;
+  runtime.noseHoover = nose;
+  runtime.constraintStops = constrained;
+  emitRuntimeDeclarations(builder, runtime, false);
+  emitRuntimeDeclarations(builder, runtime, true);
+  auto parameters = buildParameterTypes(context, metadata);
+  auto vec = mdir::md::FieldType::get(&context,
+      FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+  SmallVector<Type> inputs{vec, mdir::md::CellType::get(&context)};
+  llvm::append_range(inputs, parameters);
+  auto energy = buildScalarPotential(builder, "energy", inputs,
+      [](OpBuilder &at, ValueRange) -> Value {
+        return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.125));
+      });
+  require(bool(energy), "native thermal potential did not construct");
+  std::vector<DescentConstraintGroupIR> groups;
+  if (constrained) groups.push_back({0, 2, {1}, {{0, 1, 0}},
+      {false, false, 1.0e-8, 1.0e-12}, false, false});
+  bool measured = measuresHalfSteps(constrained, false);
+  auto step = buildNativeStep(builder, {"step"}, parameters, leapfrog, false,
+      {}, false, false, {}, {}, groups);
+  auto reporting = buildNativeStep(builder, {"step_energy", true, true, false, measured},
+      parameters, leapfrog, false, {}, false, false, {}, {}, groups);
+  require(bool(step) && bool(reporting), "native thermal programs did not construct");
+  mdir::driver::Control control;
+  control.numSteps = 8;
+  control.energyPeriod = 4;
+  control.thermostat = true;
+  control.thermostatMethod = nose ? mdir::driver::ThermostatMethod::NoseHoover
+      : mdir::driver::ThermostatMethod::VRescale;
+  control.thermostatPeriod = 2;
+  control.comPeriod = com ? control.thermostatPeriod : 0;
+  SimpleStepEntryIRConfig config{control.getCouplingPeriod() - 1,
+      control.numSteps / control.getEnergyLoopPeriod()};
+  config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
+  config.leapfrog = leapfrog;
+  config.removesMotion = control.comPeriod > 0;
+  config.rescales = control.thermostat && !control.isLangevin();
+  config.noseHoover = control.isNoseHoover();
+  config.bathParameters = control.thermostat;
+  config.seed = static_cast<int64_t>(control.seed);
+  config.freedom = 3.0;
+  config.targetKinetic = 0.5 * config.freedom * mdir::driver::units::boltzmann * control.temperature;
+  config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
+  if (constrained) {
+    config.constraints = {{0, 2, {1}, false}};
+    auto coupling = buildNativeStep(builder, {"step_thermostat", false, false, false, measured},
+        parameters, leapfrog, false, {}, false, false, {}, {}, groups);
+    require(bool(coupling), "native thermal measured step did not construct");
+    config.couplingStep = *coupling;
+    auto invalid = config;
+    invalid.couplingStep = {};
+    auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
+    require(!missing, "native thermal entry accepted a missing measured program");
+    reject(missing.takeError(), "native step entry thermostat results do not match its integrator");
+  }
+  auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
+  if (!entry) {
+    llvm::errs() << "native thermal entry: " << llvm::toString(entry.takeError()) << "\n";
+    std::exit(1);
+  }
+  auto loop = *entry->getOps<scf::ForOp>().begin();
+  unsigned factors = 0;
+  entry->walk([&](func::CallOp call) {
+    if (call.getCallee() != (nose ? "mdrtNoseHooverFactor" : "mdrtBussiFactor")) return;
+    ++factors;
+    Value completed = call.getOperand(nose ? 0 : 1);
+    require(completed.getDefiningOp<arith::AddIOp>() && loop->isProperAncestor(completed.getDefiningOp()),
+        "native thermal factor uses a stale closing step");
+  });
+  require(factors == 2, "native thermal entry lost coupling or closing-row factors");
+  require(succeeded(verify(module)), "native thermal module did not verify");
+}
 
 static void checkNativeCenterStepEntry() {
   TermIRPlan plan;
@@ -1435,6 +1532,10 @@ static void checkNativeFrameEntry() {
 }
 
 int main(int argc, char **argv) {
+  for (bool leapfrog : {false, true})
+    for (bool constrained : {false, true})
+      for (bool nose : {false, true})
+        for (bool com : {false, true}) checkNativeThermalStepEntry(leapfrog, constrained, nose, com);
   checkNativeCenterStepEntry();
   checkNativeMinimizationEntry();
   checkNativeConstraintStepEntry();

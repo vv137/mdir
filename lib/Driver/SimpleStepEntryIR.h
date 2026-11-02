@@ -33,6 +33,10 @@ struct SimpleStepEntryIRConfig {
   bool restart = false, recomputeForces = false;
   bool needsHostedEvaluation = false;
   std::optional<int64_t> couplingIntervals;
+  bool removesMotion = true, rescales = false, noseHoover = false, bathParameters = false;
+  int64_t seed = 0;
+  double freedom = 0.0, targetKinetic = 0.0, decay = 0.0;
+  mdir::dyn::ProgramOp couplingStep;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

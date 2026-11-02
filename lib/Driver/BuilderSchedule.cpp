@@ -1422,7 +1422,7 @@ llvm::Error Builder::emitEntry() {
     return llvm::Error::success();
   }
   bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
-      (control.getCouplingPeriod() == 0 || !control.thermostat) && !control.barostat &&
+      !control.barostat &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" || level.name == "couple";
@@ -1438,6 +1438,16 @@ llvm::Error Builder::emitEntry() {
     emitRuntimeDeclarations(ir, declarations, true);
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
     SimpleStepEntryIRConfig config{levels.back().count};
+    config.removesMotion = control.comPeriod > 0;
+    config.rescales = rescalesVelocities();
+    config.noseHoover = control.isNoseHoover();
+    config.bathParameters = bool(control.thermostat);
+    config.seed = static_cast<int64_t>(control.seed);
+    config.freedom = system.getDegreesOfFreedom();
+    config.targetKinetic = 0.5 * config.freedom * units::boltzmann * control.temperature;
+    config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
+    if (measuresCoupling())
+      config.couplingStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_thermostat");
     config.periodic = control.periodic;
     config.restart = isRestart();
     config.recomputeForces = recomputes();

@@ -344,3 +344,9 @@ Dynamics programs of parts and the remaining coupling scopes are still in progre
 Native fixed-cell step entries also construct COM-only coupling periods, using
 actual carried state and the existing typed COM/bath core. Energy intervals retain
 their final plain-step loop and report pressure before removing COM motion.
+
+Fixed-cell thermostat entries construct the existing Bussi and Nose–Hoover
+coupling core with owned seed, freedom, target and decay parameters. Constrained
+coupling steps retain measured half-step kinetic energy and leapfrog's reporting
+velocity; energy rows retain their pre-coupling report and optimal-temperature
+correction order. Barostat entries and dynamics programs of parts remain pending.

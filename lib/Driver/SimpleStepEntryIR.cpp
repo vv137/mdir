@@ -46,6 +46,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         "native step entry cannot combine Brownian and leapfrog");
   bool constrained = !config.constraints.empty();
   bool measured = measuresHalfSteps(constrained, config.brownian);
+  auto couplingProgram = config.couplingStep;
+  if (config.couplingIntervals && config.rescales && !config.bathParameters)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step entry thermostat requires bath parameters");
+  bool measuredCoupling = measured && config.rescales && config.couplingIntervals.has_value();
+  if (measuredCoupling && (!couplingProgram ||
+      couplingProgram.getFunctionType().getResults().size() != 4 + unsigned(config.leapfrog)))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step entry thermostat results do not match its integrator");
   bool solvent = measured && llvm::any_of(config.constraints, [](const auto &group) { return group.water; });
   bool needsCounter = config.timed || config.stepMemory || constrained;
   unsigned measuredSlot = 5 + unsigned(!config.brownian) + unsigned(config.leapfrog);
@@ -122,7 +131,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     physical = buildEntryReorder(at, program, std::move(physical), cell, givenForces);
     auto fields = buildEntryPotentialFields(physical);
     CouplingMassIR coupling;
-    if (config.couplingIntervals) coupling = buildCouplingMass(at, inputMasses);
+    Value seed, freedom, target, decay;
+    if (config.couplingIntervals) {
+      coupling = buildCouplingMass(at, inputMasses);
+      if (config.bathParameters) {
+        seed = arith::ConstantIntOp::create(at, loc, config.seed, 64);
+        freedom = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(config.freedom));
+        target = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(config.targetKinetic));
+        decay = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(config.decay));
+      }
+    }
+    Value pressureMass = config.removesMotion ? coupling.totalMass : Value{};
     PotentialStateIR state{physical.positions, cell, fields, time};
     EntryCompletionIR evaluated{{}, {}};
     if (!config.restart || config.recomputeForces) {
@@ -166,7 +185,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         trace = buildSum3(at, molecular);
         auto centers = buildGroupKinetic(at,
             {physical.positions, physical.velocities, energy.forces, cell, physical.masses,
-             arguments.interval, coupling.totalMass, groups});
+             arguments.interval, pressureMass, groups});
         pressureKinetic = buildSum3(at, centers.half);
       }
       func::CallOp::create(at, loc, "mdrtWriteEnergies", TypeRange{},
@@ -256,18 +275,53 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           writeFrame(inside, completed, point);
           return SmallVector<Value>(before->getResults());
         }
-        auto removeCenter = [&](const EntryFieldsIR &current) {
-          auto center = buildCenterMotion(inside,
-              {current.velocities, current.masses, coupling.totalMass, coupling.half});
+        auto optimalEnergy = [&](Value kinetic, Value excess) -> Value {
+          Value weight = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(2.0 / 3.0));
+          Value change = arith::MulFOp::create(inside, loc, weight, excess);
+          return arith::AddFOp::create(inside, loc, kinetic, change);
+        };
+        auto couple = [&](const EntryFieldsIR &current, Value completed, Value optimal) {
+          CenterMotionInputs motion;
+          if (config.removesMotion)
+            motion = {current.velocities, current.masses, coupling.totalMass, coupling.half};
+          auto center = buildCenterMotion(inside, motion);
+          Value bath = center.energy, factor;
+          if (config.rescales) {
+            Value kinetic = buildKineticEnergy(inside, current.velocities, current.masses);
+            auto thermal = buildThermostat(inside,
+                {kinetic, config.removesMotion ? center.energy : Value{}, optimal, completed,
+                 seed, target, freedom, decay}, config.noseHoover);
+            bath = thermal.heat;
+            factor = thermal.factor;
+          }
           auto result = current;
           result.velocities = buildCoupledVelocities(inside, current.velocities,
-              center.velocity, {}, {}, center.energy);
+              center.velocity, factor, {}, bath);
           return result;
         };
         if (kinds[atLevel] == Kind::Couple) {
-          auto next = call(inside, step, point);
-          number(inside, atLevel, index);
-          return pack(removeCenter(bind(point, next.getResults(), false)), false);
+          auto next = call(inside, measuredCoupling ? couplingProgram : step, point);
+          Value completed = number(inside, atLevel, index);
+          Value full = next.getResult(1), optimal;
+          if (config.leapfrog && config.rescales) {
+            if (measuredCoupling) full = next.getResult(3);
+            else {
+              Value half = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.5));
+              Value interval = arith::MulFOp::create(inside, loc, half, arguments.interval);
+              full = buildKick(inside, next.getResult(1), next.getResult(2), point.masses, interval);
+            }
+          }
+          if (config.rescales && !config.brownian) {
+            Value excess;
+            if (measuredCoupling) {
+              Value current = buildKineticVector(inside, full, point.masses);
+              excess = arith::SubFOp::create(inside, loc, next.getResult(3 + unsigned(config.leapfrog)), current);
+            } else excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
+            Value kinetic = buildKineticEnergy(inside, full, point.masses);
+            Value scalarExcess = buildSum3(inside, excess);
+            optimal = optimalEnergy(kinetic, scalarExcess);
+          }
+          return pack(couple(bind(point, next.getResults(), false), completed, optimal), false);
         }
         if (config.couplingIntervals) {
           auto last = buildEntryLoop(inside, "last COM period plain steps", zero, extents.back(), one,
@@ -303,7 +357,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           auto groups = buildEntryGroups(parameters, config.constraints);
           auto centers = buildGroupKinetic(inside,
               {next.getResult(0), full, next.getResult(2), cell, point.masses,
-               arguments.interval, coupling.totalMass, groups});
+               arguments.interval, pressureMass, groups});
           pressureKinetic = buildSum3(inside, centers.half);
         }
         Value completed = number(inside, atLevel, index);
@@ -326,7 +380,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
               FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),
               ValueRange{completed, next.getResult(0), point.identities}, ValueRange{}, UnitAttr{});
         auto final = bind(point, next.getResults(), false);
-        if (config.couplingIntervals) final = removeCenter(final);
+        if (config.couplingIntervals) {
+          Value optimal;
+          if (config.rescales && !config.brownian) optimal = optimalEnergy(kinetic, correction);
+          final = couple(final, completed, optimal);
+        }
         if (config.framesAtEnergies) writeFrame(inside, completed, final);
         return pack(final, false);
       });
