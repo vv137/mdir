@@ -25,57 +25,6 @@ unsigned Builder::getNumPotentialArguments() const {
   return count + (control.usesTime ? 1 : 0);
 }
 
-std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
-  // The terms in the order of their first column; Control has checked the
-  // names and the constants.
-  std::vector<ObservedTerm> terms;
-  if (control.observables.empty() || !system.topology)
-    return terms;
-  for (auto [column, observable] : llvm::enumerate(control.observables)) {
-    auto it = llvm::find_if(terms, [&](const ObservedTerm &term) {
-      return term.name == observable.term;
-    });
-    if (it == terms.end()) {
-      ObservedTerm term;
-      term.name = observable.term;
-      for (const TermBuilder *builder : getTermBuilders()) {
-        auto reference = builder->findObservedTerm(*this, term.name);
-        if (reference.kind) {
-          term.kind = reference.kind;
-          term.index = reference.index;
-          term.potential = reference.potential;
-        }
-      }
-      terms.push_back(std::move(term));
-      it = std::prev(terms.end());
-    }
-    int place = -1;
-    if (!observable.constant.empty()) {
-      place = static_cast<int>(it->constants.size());
-      it->constants.push_back(observable.constant);
-    }
-    it->columns.push_back({place, column});
-  }
-  return terms;
-}
-
-llvm::Error Builder::emitObservedPotentials() {
-  // Each term alone, with its observed constants as arguments, whose
-  // derivatives the differentiation of parameters gives as it gives
-  // dH/dλ (D161): exactly 0 where the energy provably does not depend on
-  // them, an error where a dependence has no rule.
-  for (auto [k, term] : llvm::enumerate(getObservedTerms())) {
-    observedTerm = term.name;
-    observedConstants = term.constants;
-    if (llvm::Error error = emitTopologyPotential("observe" + std::to_string(k), term.potential.terms,
-                          term.potential.tupleTerm, term.potential.pairTerm,
-                          term.potential.externalTerm)) return error;
-    observedTerm.clear();
-    observedConstants.clear();
-  }
-  return llvm::Error::success();
-}
-
 llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
@@ -190,12 +139,7 @@ llvm::Error Builder::emitTopologyPotential(StringRef name, unsigned terms,
       return total;
     });
     if (!builtPotential) return builtPotential.takeError();
-    auto potential = *builtPotential;
-    emitIRFragment("", {}, {}, {}, {},
-        [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
-          potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
-          return {};
-        });
+
     return llvm::Error::success();
 
 }
@@ -240,12 +184,7 @@ llvm::Error Builder::emitPotential() {
     return total;
   });
   if (!builtPotential) return builtPotential.takeError();
-  auto potential = *builtPotential;
-  emitIRFragment("", {}, {}, {}, {},
-      [potential](mlir::OpBuilder &where, mlir::ValueRange) -> TermIRValues {
-        potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
-        return {};
-      });
+
   return llvm::Error::success();
 }
 
@@ -270,10 +209,9 @@ void Builder::emitSitePotentials() {
                            ? mdir::md::Orientation::Unordered
                            : set.reversible ? mdir::md::Orientation::Reversal
                                             : mdir::md::Orientation::Ordered;
-    emitIRFragment(
-        "", {}, {}, {}, {},
-        [symbol, setName, arity, orientation, amber](mlir::OpBuilder &builder,
-                                                     mlir::ValueRange) -> TermIRValues {
+    {
+          mlir::OpBuilder builder(&termIR.getContext());
+          builder.setInsertionPointToEnd(termIR.getModule().getBody());
           using namespace mlir;
           auto ctx = builder.getContext();
           auto loc = builder.getUnknownLoc();
@@ -320,27 +258,57 @@ void Builder::emitSitePotentials() {
             mdir::md::YieldOp::create(builder, loc, ValueRange{work});
           }
           mdir::md::ReturnOp::create(builder, loc, ValueRange{sum.getResult()});
-          return {};
-        });
+    }
   }
 }
 
-std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
-    StringRef cell, StringRef prefix, StringRef f, StringRef fResult,
-    StringRef u, StringRef uResult, StringRef w, StringRef tag) {
-  TermEvaluation point{indent, x, cell, prefix, f, fResult, u, uResult, w, tag};
-  auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
-                       llvm::ArrayRef<StringRef> resultTypes,
-                       llvm::ArrayRef<StringRef> operands,
-                       llvm::ArrayRef<StringRef> operandTypes,
-                       TermIRRecipe recipe) {
-    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
-                   std::move(recipe));
-  };
-  std::string virial = w.str();
-  for (const TermBuilder *builder : getTermBuilders())
-    if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
-      if (role->applies(*this))
-        virial = role->emit(*this, emitIR, point);
-  return virial;
+std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
+  // The terms in the order of their first column; Control has checked the
+  // names and the constants.
+  std::vector<ObservedTerm> terms;
+  if (control.observables.empty() || !system.topology)
+    return terms;
+  for (auto [column, observable] : llvm::enumerate(control.observables)) {
+    auto it = llvm::find_if(terms, [&](const ObservedTerm &term) {
+      return term.name == observable.term;
+    });
+    if (it == terms.end()) {
+      ObservedTerm term;
+      term.name = observable.term;
+      for (const TermBuilder *builder : getTermBuilders()) {
+        auto reference = builder->findObservedTerm(*this, term.name);
+        if (reference.kind) {
+          term.kind = reference.kind;
+          term.index = reference.index;
+          term.potential = reference.potential;
+        }
+      }
+      terms.push_back(std::move(term));
+      it = std::prev(terms.end());
+    }
+    int place = -1;
+    if (!observable.constant.empty()) {
+      place = static_cast<int>(it->constants.size());
+      it->constants.push_back(observable.constant);
+    }
+    it->columns.push_back({place, column});
+  }
+  return terms;
+}
+
+llvm::Error Builder::emitObservedPotentials() {
+  // Each term alone, with its observed constants as arguments, whose
+  // derivatives the differentiation of parameters gives as it gives
+  // dH/dλ (D161): exactly 0 where the energy provably does not depend on
+  // them, an error where a dependence has no rule.
+  for (auto [k, term] : llvm::enumerate(getObservedTerms())) {
+    observedTerm = term.name;
+    observedConstants = term.constants;
+    if (llvm::Error error = emitTopologyPotential("observe" + std::to_string(k), term.potential.terms,
+                          term.potential.tupleTerm, term.potential.pairTerm,
+                          term.potential.externalTerm)) return error;
+    observedTerm.clear();
+    observedConstants.clear();
+  }
+  return llvm::Error::success();
 }

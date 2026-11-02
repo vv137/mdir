@@ -141,36 +141,12 @@ public:
   bool hasCoordinateOutput(const TermInputs &context) const override {
     return !getColumns(context).empty();
   }
-  void emitAuxiliaryPotentials(TermEmission &context) const override;
+  void buildAuxiliaryPotentials(const TermInputs &context, mlir::OpBuilder &builder) const override;
   void buildOutput(const TermInputs &, mlir::OpBuilder &, const TermNativeOutput &) const override;
-  void emitOutput(TermEmission &context, const TermOutput &point) const override {
-    if (getColumns(context).empty())
-      return;
-    std::string time = point.time.str();
-    if (point.deriveTime) {
-      // Preserve the coordinates at the end of the step and its time (D145).
-      time = ("%pull_time" + point.loopSuffix).str();
-      if (context.getControl().usesTime)
-        context.emitIRFragment(
-            point.indent, {time}, {"f64"}, {point.step, "%dt"}, {"i64", "f64"},
-            [](mlir::OpBuilder &builder,
-               mlir::ValueRange values) -> TermIRValues {
-              auto loc = builder.getUnknownLoc();
-              mlir::Value steps = mlir::arith::SIToFPOp::create(
-                  builder, loc, builder.getF64Type(), values[0]);
-              return {
-                  mlir::arith::MulFOp::create(builder, loc, steps, values[1])};
-            });
-    }
-    emitPullOutput(context, point.indent, point.x, point.cell, point.prefix,
-                   point.step, time);
-  }
 
 private:
   static std::vector<std::pair<size_t, std::string>> getColumns(const TermInputs &);
-  static void emitPullOutput(TermEmission &, StringRef indent, StringRef x,
-                            StringRef cell, StringRef prefix, StringRef step,
-                            StringRef time);
+
 };
 } // namespace mdir::driver::builder
 
@@ -197,15 +173,18 @@ PullTermBuilder::getColumns(const TermInputs &context) {
   return columns;
 }
 
-void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
+void PullTermBuilder::buildAuxiliaryPotentials(const TermInputs &context, mlir::OpBuilder &builder) const {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   auto columns = getColumns(context);
   if (columns.empty())
     return;
   // The shared energy potential supplies the exact common argument types.
-  // A recipe borrows those types only when it constructs the auxiliary IR.
-  const size_t timeSlot = control.usesTime ? context.getNumPotentialArguments() - 1 : 0;
+  // Auxiliary IR borrows those types from the owned module.
+  auto module = mlir::cast<mlir::ModuleOp>(builder.getInsertionBlock()->getParentOp());
+  auto energy = module.lookupSymbol<mdir::md::PotentialOp>("energy");
+  assert(energy && "missing shared energy potential");
+  const size_t timeSlot = control.usesTime ? energy.getFunctionType().getNumInputs() - 1 : 0;
   auto tableArgument = [&](StringRef name) -> size_t {
     auto tables = context.getParameterTables();
     auto found = llvm::find_if(tables, [&](const auto &table) { return table.name == name; });
@@ -250,9 +229,7 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
     }
     for (const auto &name : inputs.tables)
       config.tableBindings.emplace_back(name, tableArgument(name));
-    context.emitIRFragment(
-        "", {}, {}, {}, {},
-        [config](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+    {
           using namespace mlir;
           auto module =
               cast<ModuleOp>(builder.getInsertionBlock()->getParentOp());
@@ -297,8 +274,7 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
                                                    config.termName);
             mdir::md::ReturnOp::create(builder, loc, ValueRange{result});
           }
-          return {};
-        });
+    }
   }
 }
 
@@ -315,69 +291,4 @@ void PullTermBuilder::buildOutput(const TermInputs &context, mlir::OpBuilder &bu
     inputs.push_back(std::move(input));
   }
   buildPullOutput(builder, point.physical, point.step, inputs);
-}
-
-void PullTermBuilder::emitPullOutput(TermEmission &context, StringRef indent,
-    StringRef x, StringRef cell, StringRef prefix, StringRef step, StringRef time) {
-  if (getColumns(context).empty()) return;
-  std::string relations = ("%r" + prefix.drop_front(2)).str();
-  std::vector<std::string> commonNames = {x.str(), cell.str()};
-  std::vector<std::string> commonTypes = {"!vec", "!md.cell"};
-  auto common = [&](std::string name, std::string type) {
-    commonNames.push_back(std::move(name));
-    commonTypes.push_back(std::move(type));
-  };
-  for (const auto &field : context.getFields())
-    common((prefix + field.name).str(), field.isInteger ? "!ids" : "!real");
-  for (const auto &table : context.getTables())
-    common("%t_" + table.name, table.getType().str());
-  for (const auto &set : context.getTupleSets()) {
-    common(relations + set.name, "!rel_" + set.name);
-    for (const auto &field : set.fields)
-      common("%f_" + set.name + "_" + field.name, "!of_" + set.name);
-  }
-  if (context.getControl().usesTime)
-    common(time.str(), "f64");
-
-  unsigned base = context.getNumPotentialArguments();
-  assert(commonNames.size() == base && "pull potential argument count mismatch");
-  std::vector<PullOutputSlots> layout;
-  for (auto [index, term] : llvm::enumerate(context.getTopology().tupleTerms)) {
-    if (!term.isCentroid()) continue;
-    std::string name = "cg_" + term.name;
-    unsigned offset = context.getFields().size() + context.getTables().size();
-    const Program::TupleSet *selected = nullptr;
-    for (const auto &set : context.getTupleSets()) {
-      if (set.name == name) { selected = &set; break; }
-      offset += 1 + set.fields.size();
-    }
-    assert(selected && "pull relation must exist");
-    PullOutputSlots slots{index, term.centers.size(), term.arity, offset, {}};
-    for (size_t field = 0; field + 1 < 2 * term.centers.size(); ++field) {
-      std::string parameter = "w" + std::to_string(field);
-      auto found = llvm::find_if(selected->fields,
-          [&](const auto &candidate) { return candidate.name == parameter; });
-      assert(found != selected->fields.end() && "pull weight must exist");
-      slots.weights.push_back(offset + 1 + std::distance(selected->fields.begin(), found));
-    }
-    layout.push_back(std::move(slots));
-  }
-  common(step.str(), "i64");
-  llvm::SmallVector<StringRef> names, types;
-  for (const auto &name : commonNames) names.push_back(name);
-  for (const auto &type : commonTypes) types.push_back(type);
-  context.emitIRFragment(indent, {}, {}, names, types,
-      [layout = std::move(layout), base, timed = context.getControl().usesTime](
-          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        PotentialStateIR state{values[0], values[1], values.slice(2, base - 2 - unsigned(timed)),
-            timed ? values[base - 1] : mlir::Value{}};
-        std::vector<PullOutputTermIR> inputs;
-        for (const auto &slots : layout) {
-          PullOutputTermIR term{slots.index, slots.groups, slots.arity, state.fields[slots.relation], {}};
-          for (unsigned slot : slots.weights) term.weights.push_back(state.fields[slot]);
-          inputs.push_back(std::move(term));
-        }
-        buildPullOutput(builder, state, values[base], inputs);
-        return {};
-      });
 }

@@ -13,109 +13,6 @@ using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
 namespace influence = mdir::influence;
 
-
-
-void Builder::emitReorder(StringRef indent, StringRef from,
-                          StringRef stateTo, StringRef otherTo,
-                          bool withForces, StringRef velocities,
-                          StringRef forcesTo) {
-  std::vector<std::string> inputs = {("%x" + from).str(), ("%v" + from).str(),
-      ("%m" + from).str(), ("%id" + from).str(), cellName};
-  std::vector<std::string> types = {"!vec", "!vec", "!real", "!ids", "!md.cell"};
-  if (withForces) {
-    inputs.push_back(("%f" + from).str());
-    types.push_back("!vec");
-  }
-  std::vector<std::string> outputs = {("%x" + stateTo).str(), velocities.str()};
-  std::vector<std::string> outTypes = {"!vec", "!vec"};
-  if (withForces) {
-    outputs.push_back(forcesTo.empty() ? ("%f" + stateTo).str() : forcesTo.str());
-    outTypes.push_back("!vec");
-  }
-  outputs.push_back(("%m" + otherTo).str());
-  outTypes.push_back("!real");
-  std::vector<unsigned> inputSlots;
-  std::vector<std::optional<unsigned>> regenerated;
-  for (auto [index, field] : llvm::enumerate(program.fields)) {
-    outputs.push_back(("%p" + otherTo + "_" + field.name).str());
-    outTypes.push_back(getFieldType(field).str());
-    if (field.name == "pme_listed" || field.name == "ljpme_listed") {
-      StringRef source = field.name == "pme_listed" ? "q" : "ljpme_c";
-      auto found = llvm::find_if(program.fields, [&](const auto &candidate) {
-        return candidate.name == source;
-      });
-      unsigned slot = std::distance(program.fields.begin(), found);
-      assert(slot < index && "derived list must follow its source field");
-      regenerated.push_back(slot);
-      inputSlots.push_back(0);
-    } else {
-      regenerated.push_back(std::nullopt);
-      inputSlots.push_back(inputs.size());
-      inputs.push_back(("%p" + from + "_" + field.name).str());
-      types.push_back(getFieldType(field).str());
-    }
-  }
-  outputs.push_back(("%id" + otherTo).str());
-  outTypes.push_back("!ids");
-  size_t relationBase = inputs.size();
-  ReorderIRConfig config{program.orderWidth, {}};
-  for (auto [index, set] : llvm::enumerate(program.tupleSets)) {
-    inputs.push_back("%ro_" + set.name);
-    types.push_back("!rel_" + set.name);
-    outputs.push_back(("%r" + otherTo + "_" + set.name).str());
-    outTypes.push_back("!rel_" + set.name);
-    if (set.name == "anchors")
-      config.anchorRelation = index;
-  }
-  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
-      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
-      resultTypes(outTypes.begin(), outTypes.end());
-  emitIRFragment(
-      indent, out, resultTypes, in, inTypes,
-      [config, withForces, inputSlots = std::move(inputSlots),
-       regenerated = std::move(regenerated), relationBase](
-          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        std::vector<ReorderFieldIR> fields;
-        for (size_t k = 0; k != inputSlots.size(); ++k)
-          fields.push_back({regenerated[k] ? mlir::Value{} : values[inputSlots[k]], regenerated[k]});
-        ReorderIRInputs input{values[0], values[1], withForces ? values[5] : mlir::Value{},
-            values[2], values[3], values[4], fields, values.drop_front(relationBase)};
-        auto result = buildReorder(builder, input, config);
-        TermIRValues outputs{result.positions, result.velocities};
-        if (withForces)
-          outputs.push_back(result.forces);
-        outputs.push_back(result.masses);
-        llvm::append_range(outputs, result.fields);
-        outputs.push_back(result.ids);
-        llvm::append_range(outputs, result.relations);
-        return outputs;
-      });
-}
-
-void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
-                           const llvm::Twine &prefix) {
-  if (program.tupleSets.empty())
-    return;
-  std::vector<std::string> inputs{ids.str()}, types{"!ids"}, outputs, outTypes;
-  for (const auto &set : program.tupleSets) {
-    inputs.push_back("%ro_" + set.name);
-    types.push_back("!rel_" + set.name);
-    outputs.push_back((prefix + set.name).str());
-    outTypes.push_back("!rel_" + set.name);
-  }
-  llvm::SmallVector<StringRef> in(inputs.begin(), inputs.end()),
-      inTypes(types.begin(), types.end()), out(outputs.begin(), outputs.end()),
-      resultTypes(outTypes.begin(), outTypes.end());
-  emitIRFragment(
-      indent, out, resultTypes, in, inTypes,
-      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        TermIRValues results;
-        for (mlir::Value relation : values.drop_front())
-          results.push_back(buildRenumber(builder, relation, values[0]));
-        return results;
-      });
-}
-
 std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
   std::vector<const Program::TupleSet *> groups = getShakeSets();
   for (const Program::TupleSet &set : program.tupleSets)
@@ -334,17 +231,6 @@ llvm::Error Builder::build() {
     program.tables.push_back(std::move(table));
   }
 
-  os << "!vec   = !md.field<@atoms, 3 x f64>\n"
-     << "!real  = !md.field<@atoms, f64>\n"
-     << "!ids   = !md.field<@atoms, i32>\n"
-     << "!table = !md.table<2, f64, symmetric>\n"
-     << "!grid = !md.table<2, f64>\n"
-     << "!pairs = !md.relation<@atoms, 2, unordered>\n";
-  for (const Program::TupleSet &set : program.tupleSets) {
-    os << "!rel_" << set.name << " = !md.relation<@atoms, " << set.arity
-       << ", " << set.getOrientation() << ", @" << set.name << ">\n"
-       << "!of_" << set.name << " = !md.field<@" << set.name << ", f64>\n";
-  }
   mlir::OpBuilder declarationBuilder(&termIR.getContext());
   declarationBuilder.setInsertionPointToEnd(termIR.getModule().getBody());
   auto declarationLoc = declarationBuilder.getUnknownLoc();
@@ -380,19 +266,10 @@ llvm::Error Builder::build() {
         declarationBuilder, declarationLoc, "constraints", "atoms",
         declarationBuilder.getArrayAttr(sets));
   }
-  os << "\n";
   mark.next("rebuild.build.text");
-  auto prepareIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
-                          llvm::ArrayRef<StringRef> resultTypes,
-                          llvm::ArrayRef<StringRef> operands,
-                          llvm::ArrayRef<StringRef> operandTypes,
-                          TermIRRecipe recipe) {
-    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
-                   std::move(recipe));
-  };
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermPreparation *role = builder->getRoles().preparation)
-      if (llvm::Error error = role->prepare(*this, termIR.getContext(), prepareIR))
+      if (llvm::Error error = role->prepare(*this, declarationBuilder))
         return error;
   if (system.topology) {
     if (llvm::Error error = emitTopologyPotential("energy", AllTerms)) return error;
@@ -435,13 +312,11 @@ llvm::Error Builder::build() {
   shiftsAtCutoff = false;
   for (const TermBuilder *term : getTermBuilders())
     if (const auto *role = term->getRoles().coordinateOutput)
-      role->emitAuxiliaryPotentials(*this);
+      role->buildAuxiliaryPotentials(*this, declarationBuilder);
   emitSitePotentials();
   if (llvm::Error error = emitPrograms())
     return error;
   if (llvm::Error error = emitEntry()) return error;
-  if (!frameLoopError.empty())
-    return makeError(frameLoopError);
   return llvm::Error::success();
 }
 

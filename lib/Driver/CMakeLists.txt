@@ -39,7 +39,6 @@ add_mlir_library(MDIRDriver
   Builder.cpp
   BuilderConstraints.cpp
   BuilderDynamics.cpp
-  BuilderOutput.cpp
   BuilderParameters.cpp
   BuilderPotential.cpp
   BuilderSchedule.cpp

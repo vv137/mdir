@@ -169,46 +169,13 @@ public:
             config.energy ? llvm::SmallVector<mlir::Value>{result[1]}
                           : llvm::SmallVector<mlir::Value>{}};
   }
-  void emitForceCorrection(TermEmission &context,
-                           const TermCorrection &point) const override {
-    if (!hasForceCorrection(context))
-      return;
-    emitCorrection(context, point.scale, point.indent, point.x, point.prefix,
-                   point.f, point.fResult, point.u, point.uResult, point.w,
-                   point.wResult);
-    // The initial term report consumes this correction's energy. A hosted
-    // evaluation uses a different result name; force-only frame requests do
-    // not replace the energy that the report needs. This adapter is per build.
-    if (!point.uResult.empty())
-      storedEnergy = (point.uResult + "_r").str();
-  }
+
   unsigned getStoredTermCount(const TermInputs &context) const override {
     return hasForceCorrection(context) ? 1 : 0;
   }
-  void emitStoredTerms(TermEmission &context, StringRef type,
-                       int &index) const override {
-    if (!hasForceCorrection(context))
-      return;
-    if (storedEnergy.empty())
-      llvm::report_fatal_error("the builder has no recorded restraint energy");
-    int column = index++;
-    context.emitIRFragment(
-        "  ", {}, {}, {storedEnergy, "%terms"}, {"f64", type},
-        [column](mlir::OpBuilder &builder,
-                 mlir::ValueRange values) -> TermIRValues {
-          auto loc = builder.getUnknownLoc();
-          mlir::Value place =
-              mlir::arith::ConstantIndexOp::create(builder, loc, column);
-          mlir::memref::StoreOp::create(builder, loc, values[0], values[1],
-                                        mlir::ValueRange{place});
-          return {};
-        });
-  }
+
 private:
-  mutable std::string storedEnergy;
-  static void emitCorrection(TermEmission &, StringRef scaleName, StringRef indent,
-      StringRef x, StringRef prefix, StringRef f, StringRef fResult,
-      StringRef u, StringRef uResult, StringRef w, StringRef wResult);
+
 };
 } // namespace mdir::driver::builder
 
@@ -269,62 +236,4 @@ void RestraintTermBuilder::collectParameters(TermParameters &context) const {
     }
   }
 
-}
-
-void RestraintTermBuilder::emitCorrection(TermEmission &context,
-                             StringRef scaleName, StringRef indent, StringRef x,
-                             StringRef prefix, StringRef f,
-                             StringRef fResult, StringRef u,
-                             StringRef uResult, StringRef w,
-                             StringRef wResult) {
-  RestraintIRConfig config;
-  config.barostat = bool(context.getControl().barostat);
-  config.energy = !u.empty();
-  config.virial = !w.empty();
-  std::vector<std::string> names = {x.str(), f.str()}, types = {"!vec", "!vec"};
-  auto operand = [&](std::string name, std::string type) {
-    size_t slot = names.size();
-    names.push_back(std::move(name));
-    types.push_back(std::move(type));
-    return slot;
-  };
-  for (StringRef name : {"rest_k", "rest_x", "rest_y", "rest_z"})
-    operand((prefix + name).str(), "!real");
-  config.fields = 4;
-  if (config.barostat) {
-    for (StringRef name : {"rest_cx", "rest_cy", "rest_cz"})
-      operand((prefix + name).str(), "!real");
-    config.fields = 7;
-    config.scaleSlot = operand(scaleName.str(), "vector<3xf64>");
-  }
-  if (config.energy)
-    config.energySlot = operand(u.str(), "f64");
-  if (config.virial)
-    config.virialSlot = operand(w.str(), "vector<9xf64>");
-  std::vector<std::string> results = {fResult.str()}, resultTypes = {"!vec"};
-  if (config.energy) {
-    results.push_back((uResult + "_r").str());
-    results.push_back(uResult.str());
-    resultTypes.push_back("f64");
-    resultTypes.push_back("f64");
-  }
-  if (config.virial) {
-    results.push_back(wResult.str());
-    resultTypes.push_back("vector<9xf64>");
-  }
-  llvm::SmallVector<StringRef> in, inTypes, out, outTypes;
-  for (const auto &s : names)
-    in.push_back(s);
-  for (const auto &s : types)
-    inTypes.push_back(s);
-  for (const auto &s : results)
-    out.push_back(s);
-  for (const auto &s : resultTypes)
-    outTypes.push_back(s);
-  context.emitIRFragment(
-      indent, out, outTypes, in, inTypes,
-      [config](mlir::OpBuilder &builder,
-               mlir::ValueRange values) -> TermIRValues {
-        return buildRestraintCorrection(builder, values, config);
-      });
 }

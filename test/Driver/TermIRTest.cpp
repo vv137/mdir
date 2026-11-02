@@ -1,4 +1,4 @@
-// Internal term connections must disappear before ordinary verification.
+// Native construction retains ownership and actual SSA operands through printing.
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
 #include "../../lib/Driver/SimpleStepEntryIR.h"
@@ -22,6 +22,7 @@
 #include <cmath>
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -55,16 +56,6 @@ static void reject(llvm::Error error, llvm::StringRef message) {
   require(bool(error), "invalid term connection was accepted");
   require(llvm::toString(std::move(error)) == message,
           "wrong term connection diagnostic");
-}
-
-static TermIRValues scalar(OpBuilder &builder, ValueRange) {
-  return {arith::ConstantFloatOp::create(builder, builder.getUnknownLoc(),
-                                         builder.getF64Type(),
-                                         llvm::APFloat(1.0))};
-}
-
-static void registerRecipe(TermIRPlan &plan, TermIRRecipe recipe = scalar) {
-  plan.emit(llvm::nulls(), "", {"%result"}, {"f64"}, {}, {}, std::move(recipe));
 }
 
 static void checkModelInput(llvm::StringRef source, bool hasLiteral = false) {
@@ -121,90 +112,76 @@ static void checkModelInput(llvm::StringRef source, bool hasLiteral = false) {
 // A consumer may use only exported fragment values. In particular, virial
 // reporting borrows the original three extracts, never re-reads the vector.
 static void checkDiagonalExports() {
-  for (bool exportScalars : {false, true}) {
-    TermIRPlan plan;
-    mdir::driver::Program program;
-    llvm::raw_string_ostream stream(program.module);
-    stream << "module { func.func private @report(f64, f64, f64) "
-              "func.func @entry(%w: vector<9xf64>) -> vector<3xf64> { ";
-    llvm::SmallVector<llvm::StringRef> names{"%diagonal"};
-    llvm::SmallVector<llvm::StringRef> types{"vector<3xf64>"};
-    if (exportScalars) {
-      names.append({"%xx", "%yy", "%zz"});
-      types.append({"f64", "f64", "f64"});
-    }
-    std::array<Value, 3> scalars;
-    plan.emit(stream, "", names, types, {"%w"}, {"vector<9xf64>"},
-              [exportScalars, &scalars](OpBuilder &builder, ValueRange values) {
-                auto result = buildVirialDiagonal(builder, values[0]);
-                scalars = {result.xx, result.yy, result.zz};
-                if (exportScalars)
-                  return TermIRValues{result.vector, result.xx, result.yy, result.zz};
-                return TermIRValues{result.vector};
-              });
-    stream << "func.call @report(%xx, %yy, %zz) : (f64, f64, f64) -> () "
-              "return %diagonal : vector<3xf64> } }";
-    stream.flush();
-    if (!exportScalars) {
-      reject(finishTermIRProgram(program, plan),
-             "the builder produced invalid assembly");
-      continue;
-    }
-    require(!finishTermIRProgram(program, plan),
-            "explicit diagonal exports failed construction");
-    require(succeeded(verify(plan.getModule())), "diagonal consumer did not verify");
-    unsigned extracts = 0, calls = 0;
-    plan.getModule().walk([&](vector::ExtractOp) { ++extracts; });
-    plan.getModule().walk([&](func::CallOp call) {
-      ++calls;
-      for (unsigned i = 0; i != 3; ++i)
-        require(call.getOperand(i) == scalars[i],
-                "virial consumer did not receive the exported scalar");
-    });
-    require(extracts == 3 && calls == 1,
-            "diagonal exports duplicated extracts or lost the consumer");
-  }
+  TermIRPlan plan;
+  OpBuilder builder(&plan.getContext());
+  auto module = plan.getModule();
+  builder.setInsertionPointToEnd(module.getBody());
+  auto loc = builder.getUnknownLoc();
+  auto f64 = builder.getF64Type();
+  auto report = func::FuncOp::create(builder, loc, "report",
+      builder.getFunctionType({f64, f64, f64}, {}));
+  report.setPrivate();
+  auto entry = func::FuncOp::create(builder, loc, "entry",
+      builder.getFunctionType({VectorType::get({9}, f64)}, {VectorType::get({3}, f64)}));
+  builder.setInsertionPointToEnd(entry.addEntryBlock());
+  auto diagonal = buildVirialDiagonal(builder, entry.getArgument(0));
+  SmallVector<Value> scalars{diagonal.xx, diagonal.yy, diagonal.zz};
+  auto call = func::CallOp::create(builder, loc, "report", TypeRange{}, scalars);
+  func::ReturnOp::create(builder, loc, diagonal.vector);
+  mdir::driver::Program program;
+  require(!serializeNativeProgram(program, plan), "diagonal exports failed construction");
+  require(succeeded(verify(module)), "diagonal consumer did not verify");
+  unsigned extracts = 0;
+  module.walk([&](vector::ExtractOp) { ++extracts; });
+  for (unsigned index = 0; index != 3; ++index)
+    require(call.getOperand(index) == scalars[index],
+            "virial consumer did not receive the actual scalar");
+  require(extracts == 3, "diagonal consumer duplicated extracts");
 }
 
-// Native recipes carry no printed evaluate token. Conversely, an attribute
-// containing that token cannot stand in for an actual evaluation.
+// An attribute containing an evaluate token cannot replace an operation.
 static void checkFrameEvaluations() {
   for (bool evaluates : {false, true}) {
     TermIRPlan plan;
-    mdir::driver::Program program;
-    llvm::raw_string_ostream stream(program.module);
-    stream << "module { md.potential @energy(%x: !md.field<@atoms, 3 x f64>, "
-              "%cell: !md.cell) -> f64 { %zero = arith.constant 0.0 : f64 "
-              "md.return %zero : f64 } "
-              "func.func @entry(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) { "
-              "%c0 = arith.constant 0 : index %c1 = arith.constant 1 : index "
-              "scf.for %i = %c0 to %c1 step %c1 { "
-              "%note = arith.constant {note = \"md.evaluate \"} 0.0 : f64 ";
+    auto &context = plan.getContext();
+    OpBuilder builder(&context);
+    auto module = plan.getModule();
+    builder.setInsertionPointToEnd(module.getBody());
+    auto loc = builder.getUnknownLoc();
+    mdir::md::ParticleSetOp::create(builder, loc, "atoms");
+    auto field = mdir::md::FieldType::get(&context,
+        FlatSymbolRefAttr::get(&context, "atoms"), 3, builder.getF64Type());
+    SmallVector<Type> inputs{field, mdir::md::CellType::get(&context)};
+    auto energy = buildScalarPotential(builder, "energy", inputs,
+        [](OpBuilder &at, ValueRange) -> Value {
+          return arith::ConstantOp::create(at, at.getUnknownLoc(), at.getF64FloatAttr(0.0));
+        });
+    require(bool(energy), "frame evaluation potential failed construction");
+    auto entry = func::FuncOp::create(builder, loc, "entry", builder.getFunctionType(inputs, {}));
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    auto loop = scf::ForOp::create(builder, loc, zero, one, one);
+    {
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(loop.getBody());
+      auto note = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+      note->setAttr("note", builder.getStringAttr("md.evaluate "));
+      if (evaluates)
+        mdir::md::EvaluateOp::create(builder, loc, TypeRange{builder.getF64Type()},
+            FlatSymbolRefAttr::get(&context, "energy"), entry.getArguments(),
+            builder.getDenseI32ArrayAttr({int32_t(mdir::md::Request::Energy)}),
+            builder.getDenseI64ArrayAttr({-1}));
+    }
+    func::ReturnOp::create(builder, loc);
+    auto error = checkFrameEvaluation(*loop.getOperation());
     if (evaluates)
-      plan.emit(stream, "", {"%u"}, {"f64"}, {"%x", "%cell"},
-                {"!md.field<@atoms, 3 x f64>", "!md.cell"},
-                [](OpBuilder &builder, ValueRange values) -> TermIRValues {
-                  return {mdir::md::EvaluateOp::create(
-                      builder, builder.getUnknownLoc(), TypeRange{builder.getF64Type()},
-                      FlatSymbolRefAttr::get(builder.getContext(), "energy"), values,
-                      builder.getDenseI32ArrayAttr({int32_t(mdir::md::Request::Energy)}),
-                      builder.getDenseI64ArrayAttr({-1})).getResult(0)};
-                });
-    plan.emit(stream, "", {}, {}, {}, {},
-              [](OpBuilder &builder, ValueRange) -> llvm::Expected<TermIRValues> {
-                if (llvm::Error error = checkFrameEvaluation(
-                        *builder.getInsertionBlock()->getParentOp()))
-                  return std::move(error);
-                return TermIRValues{};
-              });
-    stream << "} return } }";
-    stream.flush();
-    if (evaluates)
-      require(!finishTermIRProgram(program, plan), "native frame evaluation was not recognized");
+      require(!error, "native frame evaluation was not recognized");
     else
-      reject(finishTermIRProgram(program, plan),
+      reject(std::move(error),
              "the program of frames: the start of this program evaluates "
              "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+    require(succeeded(verify(module)), "frame evaluation fixture did not verify");
   }
 }
 
@@ -258,16 +235,7 @@ static void checkNativeDescentBody() {
   auto native = buildNativeDescent(builder, parameters, 4.0, false, {group}, {site});
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
-  llvm::raw_string_ostream stream(program.module);
-  stream << "module { ";
-  plan.emit(stream, "", {}, {}, {}, {},
-      [native](OpBuilder &where, ValueRange) -> TermIRValues {
-        native->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
-        return {};
-      });
-  stream << "}";
-  stream.flush();
-  require(!finishTermIRProgram(program, plan), "owned native descent failed its module boundary");
+  require(!serializeNativeProgram(program, plan), "owned native descent failed its module boundary");
   require(module.lookupSymbol<mdir::dyn::ProgramOp>("descend") == native,
           "native function was reparsed or cloned");
   require(native.getBody().front().getArgument(0) == original,
@@ -362,16 +330,7 @@ static void checkNativeVerletBodies() {
   auto native = *constructed;
   Value original = native.getBody().front().getArgument(0);
   program.fields.clear(); program.tables.clear(); program.tupleSets.clear();
-  llvm::raw_string_ostream stream(program.module);
-  stream << "module { ";
-  plan.emit(stream, "", {}, {}, {}, {},
-      [native](OpBuilder &where, ValueRange) -> TermIRValues {
-        native->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
-        return {};
-      });
-  stream << "}";
-  stream.flush();
-  require(!finishTermIRProgram(program, plan), std::string("owned native Verlet failed its module boundary: ") + combination);
+  require(!serializeNativeProgram(program, plan), std::string("owned native Verlet failed its module boundary: ") + combination);
   require(module.lookupSymbol<mdir::dyn::ProgramOp>(name) == native,
           std::string("native function was reparsed or cloned: ") + combination);
   require(native.getBody().front().getArgument(0) == original,
@@ -422,16 +381,7 @@ static void checkNativeBarePotentialBody() {
   Value original = potential.getBody().front().getArgument(0);
   constant = -1.0;
   metadata.fields.clear();
-  llvm::raw_string_ostream stream(metadata.module);
-  stream << "module { ";
-  plan.emit(stream, "", {}, {}, {}, {},
-      [potential](OpBuilder &where, ValueRange) -> TermIRValues {
-        potential->moveBefore(where.getInsertionBlock(), where.getInsertionPoint());
-        return {};
-      });
-  stream << "}";
-  stream.flush();
-  require(!finishTermIRProgram(metadata, plan), "owned native potential failed its boundary");
+  require(!serializeNativeProgram(metadata, plan), "owned native potential failed its boundary");
   require(module.lookupSymbol<mdir::md::PotentialOp>("energy") == potential,
           "native potential was reparsed or cloned");
   require(potential.getBody().front().getArgument(0) == original,
@@ -1908,197 +1858,6 @@ int main(int argc, char **argv) {
     require(!malformed, "malformed generic model input was accepted");
     llvm::consumeError(malformed.takeError());
   }
-  DialectRegistry registry;
-  mdir::insertProgramDialects(registry);
-  MLIRContext context(registry, MLIRContext::Threading::DISABLED);
-  context.loadAllAvailableDialects();
-  ScopedDiagnosticHandler quiet(&context,
-                                [](Diagnostic &) { return success(); });
-  auto parse = [&](const llvm::Twine &source) {
-    auto module = parseSourceString<ModuleOp>(
-        source.str(), ParserConfig(&context, /*verifyAfterParse=*/false));
-    require(bool(module), "term connection test did not parse");
-    return module;
-  };
-  constexpr llvm::StringLiteral connection =
-      "module { %x = builtin.unrealized_conversion_cast to f64 "
-      "{mdir.term_ir = 0 : i64} }";
-
-  {
-    TermIRPlan plan;
-    std::string source;
-    llvm::raw_string_ostream stream(source);
-    plan.emit(stream, "", {}, {}, {}, {},
-              [](OpBuilder &, ValueRange) { return TermIRValues{}; });
-    stream.flush();
-    auto module = parse("module { " + source + " }");
-    require(!plan.materialize(*module), "zero-result connection was rejected");
-    require(module->getBody()->empty(), "zero-result connection survived");
-    require(succeeded(verify(*module)), "zero-result module did not verify");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan, [](OpBuilder &, ValueRange) -> llvm::Expected<TermIRValues> {
-      return llvm::createStringError(llvm::inconvertibleErrorCode(), "input clone failed");
-    });
-    auto module = parse(connection);
-    reject(plan.materialize(*module), "input clone failed");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan);
-    auto module = parse("module {}");
-    reject(plan.materialize(*module),
-           "a term IR recipe has no assembly connection");
-  }
-  {
-    TermIRPlan plan;
-    std::string source;
-    llvm::raw_string_ostream stream(source);
-    plan.emit(stream, "", {}, {}, {"%input"}, {"f64"},
-              [](OpBuilder &builder, ValueRange values) -> TermIRValues {
-                require(values.size() == 1 &&
-                            values[0].getType() == builder.getF64Type(),
-                        "zero-result connection lost its operand");
-                return {};
-              });
-    stream.flush();
-    auto module =
-        parse("module { %input = arith.constant 1.0 : f64 " + source + " }");
-    require(!plan.materialize(*module),
-            "zero-result operand connection was rejected");
-    require(module->getBody()->getOperations().size() == 1,
-            "zero-result operand connection survived");
-    require(succeeded(verify(*module)),
-            "zero-result operand module did not verify");
-  }
-  for (llvm::StringRef attribute : {"0 : i64", "-1 : i64", "\"bad\""}) {
-    TermIRPlan plan;
-    auto module = parse("module { %x = builtin.unrealized_conversion_cast "
-                        "to f64 {mdir.term_ir = " +
-                        attribute + "} }");
-    reject(plan.materialize(*module), "invalid internal term IR connection");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan);
-    auto module =
-        parse("module { %x = builtin.unrealized_conversion_cast to f64 "
-              "{mdir.term_ir = 0 : i64} "
-              "%y = builtin.unrealized_conversion_cast to f64 "
-              "{mdir.term_ir = 0 : i64} }");
-    reject(plan.materialize(*module), "invalid internal term IR connection");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan,
-                   [](OpBuilder &, ValueRange) { return TermIRValues{}; });
-    auto module = parse(connection);
-    reject(plan.materialize(*module),
-           "term IR result count does not match its connection");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan, [](OpBuilder &builder, ValueRange) -> TermIRValues {
-      return {arith::ConstantIntOp::create(builder, builder.getUnknownLoc(), 1,
-                                           64)};
-    });
-    auto module = parse(connection);
-    reject(plan.materialize(*module),
-           "term IR result type does not match its connection");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan, [](OpBuilder &builder, ValueRange values) {
-      auto result = scalar(builder, values);
-      result.front().getDefiningOp()->setAttr("mdir.term_ir",
-                                              builder.getI64IntegerAttr(0));
-      return result;
-    });
-    auto module = parse(connection);
-    reject(plan.materialize(*module),
-           "internal term IR connection survived materialization");
-  }
-  {
-    // Even an identity cast could otherwise disappear in reconciliation.
-    TermIRPlan plan;
-    auto module =
-        parse("module { %x = arith.constant 1.0 : f64 "
-              "%y = builtin.unrealized_conversion_cast %x : f64 to f64 "
-              "{mdir.term_ir = 0 : i64} }");
-    reject(plan.materialize(*module), "invalid internal term IR connection");
-  }
-  {
-    TermIRPlan plan;
-    registerRecipe(plan);
-    auto module = parse(connection);
-    require(!plan.materialize(*module), "valid term connection was rejected");
-    require(plan.empty(), "materialized plan retained recipes");
-    require(succeeded(verify(*module)), "materialized module did not verify");
-    module->walk([](Operation *op) {
-      require(!op->hasAttr("mdir.term_ir"), "materialized marker survived");
-    });
-  }
-  {
-    // Invalid builder assembly fails at its producer, before a consumer sees
-    // it.
-    TermIRPlan plan;
-    registerRecipe(plan);
-    mdir::driver::Program program;
-    program.module = "module { %x = builtin.unrealized_conversion_cast to f64 "
-                     "{mdir.term_ir = 0 : i64} "
-                     "%y = arith.addf %missing, %x : f64 }";
-    auto original = program.module;
-    reject(finishTermIRProgram(program, plan),
-           "the builder produced invalid assembly");
-    require(program.module == original, "invalid assembly was changed");
-    require(!parseSourceString<ModuleOp>(program.module, &context),
-            "invalid assembly became a valid consumer input");
-  }
-  {
-    TermIRPlan empty;
-    mdir::driver::Program program;
-    program.module = "module { %bad = arith.addf %missing, %missing : f64 }";
-    auto original = program.module;
-    reject(finishTermIRProgram(program, empty),
-           "the builder produced invalid assembly");
-    require(program.module == original,
-            "invalid assembly without recipes was changed");
-  }
-  {
-    // Exported staged functions must not trigger the legacy raw-text fallback.
-    constexpr llvm::StringLiteral helper =
-        "func.func private @tensor_helper() -> tensor<1xf64> { "
-        "%c = arith.constant 0.0 : f64 "
-        "%t = tensor.from_elements %c : tensor<1xf64> "
-        "return %t : tensor<1xf64> }";
-    mdir::driver::Program canonical;
-    canonical.module = ("module { " + helper + " }").str();
-    auto original = canonical.module;
-    mdir::driver::printParsedModule(canonical);
-    require(canonical.module != original,
-            "valid tensor input skipped canonical printing");
-    require(bool(parseSourceString<ModuleOp>(canonical.module, &context)),
-            "canonical tensor program did not verify");
-    TermIRPlan empty;
-    mdir::driver::Program plain;
-    plain.module = ("module { " + helper + " }").str();
-    require(!finishTermIRProgram(plain, empty),
-            "valid tensor input without recipes failed construction");
-    require(bool(parseSourceString<ModuleOp>(plain.module, &context)),
-            "tensor program without recipes did not verify");
-    TermIRPlan plan;
-    registerRecipe(plan);
-    mdir::driver::Program program;
-    program.module = ("module { " + helper +
-                      " %x = builtin.unrealized_conversion_cast to f64 "
-                      "{mdir.term_ir = 0 : i64} }")
-                         .str();
-    require(!finishTermIRProgram(program, plan),
-            "valid staged tensor input failed construction");
-    require(bool(parseSourceString<ModuleOp>(program.module, &context)),
-            "materialized staged tensor program did not verify");
-  }
   {
     TermIRPlan plan;
     auto native = plan.getModule();
@@ -2109,17 +1868,25 @@ int main(int argc, char **argv) {
     auto atoms = mdir::md::ParticleSetOp::create(
         builder, builder.getUnknownLoc(), "atoms");
     Operation *original = atoms.getOperation();
+    auto entry = func::FuncOp::create(builder, builder.getUnknownLoc(), "entry",
+        builder.getFunctionType({}, {builder.getF64Type()}));
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    Value energy = arith::ConstantOp::create(builder, builder.getUnknownLoc(),
+        builder.getF64FloatAttr(1.0));
+    auto result = func::ReturnOp::create(builder, builder.getUnknownLoc(), energy);
     mdir::driver::Program program;
-    program.module = "func.func @entry() { return }";
-    require(!finishTermIRProgram(program, plan),
-            "native program declarations did not join remaining assembly");
-    require(plan.getModule() == native && &native.getBody()->front() == original,
-            "native declarations were serialized and reparsed");
+    // Existing serialized content is output storage, never construction input.
+    program.module = "this is not assembly";
+    require(!serializeNativeProgram(program, plan),
+            "native program did not serialize");
+    require(plan.getModule() == native && &native.getBody()->front() == original &&
+                result.getOperand(0) == energy,
+            "native ownership or SSA identity changed at serialization");
     require(native.getBody()->getOperations().size() == 2 &&
                 succeeded(verify(native)),
             "native program lost declaration order or validity");
     require(bool(parseSourceString<ModuleOp>(program.module, &plan.getContext())),
             "completed native program did not print valid IR");
   }
-  llvm::outs() << "term IR connection checks passed\n";
+  llvm::outs() << "native term IR construction checks passed\n";
 }

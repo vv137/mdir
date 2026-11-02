@@ -112,8 +112,7 @@ public:
   int topologyRank() const override { return 5; }
   llvm::Error validate(const TermInputs &context) const override;
   llvm::Error prepare(const TermInputs &context,
-                      mlir::MLIRContext &irContext,
-                      TermIRWriter emitIR) const override;
+                      mlir::OpBuilder &builder) const override;
   bool applies(const TermInputs &context) const override {
     return !context.getControl().models.empty();
   }
@@ -140,8 +139,7 @@ public:
     return {result[0], config.energy ? result[1] : mlir::Value{},
             config.virial ? result[config.energy ? 2 : 1] : mlir::Value{}};
   }
-  std::string emit(const TermInputs &context, TermIRWriter emitIR,
-                   const TermEvaluation &point) const override;
+
   void collectParameters(TermParameters &context) const override {
     const Control &control = context.getControl();
     const Topology &topology = context.getTopology();
@@ -175,7 +173,7 @@ public:
   }
 
 private:
-  void emitDeclarations(const TermInputs &, TermIRWriter) const override;
+
   void buildDeclarations(const TermInputs &, mlir::OpBuilder &) const override;
 };
 } // namespace mdir::driver::builder
@@ -237,8 +235,7 @@ llvm::Error ModelTermBuilder::validate(const TermInputs &context) const {
 }
 
 llvm::Error ModelTermBuilder::prepare(const TermInputs &context,
-                                      mlir::MLIRContext &irContext,
-                                      TermIRWriter emitIR) const {
+                                      mlir::OpBuilder &builder) const {
   state->potentials.clear();
   for (const Control::ModelTerm &term : context.getControl().stagedModels) {
     auto buffer = llvm::MemoryBuffer::getFile(term.path);
@@ -246,78 +243,15 @@ llvm::Error ModelTermBuilder::prepare(const TermInputs &context,
       return makeError("cannot read the model in stages '" + term.name +
                        "' from '" + term.path +
                        "': " + buffer.getError().message());
-    auto model = StagedModelIR::parse(irContext, (*buffer)->getBuffer(),
+    auto model = StagedModelIR::parse(*builder.getContext(), (*buffer)->getBuffer(),
                                       term.path, term.name);
     if (!model)
       return model.takeError();
-    emitIR("", {}, {}, {}, {},
-           [input = *model](mlir::OpBuilder &builder, mlir::ValueRange)
-               -> llvm::Expected<TermIRValues> {
-             if (auto error = input->cloneDeclarations(builder))
-               return std::move(error);
-             return TermIRValues{};
-           });
+    if (auto error = (*model)->cloneDeclarations(builder))
+      return error;
     state->potentials.push_back(std::move(*model));
   }
   return llvm::Error::success();
-}
-
-std::string ModelTermBuilder::emit(const TermInputs &context,
-                                   TermIRWriter emitIR,
-                                   const TermEvaluation &point) const {
-  const Control &control = context.getControl();
-  HostedModelIRConfig config;
-  config.edges = state->edges;
-  config.energy = !point.u.empty();
-  config.virial = !point.w.empty();
-  config.stateBits = context.getStateElement() == Element::F64 ? 64 : 32;
-  config.forceBits = context.getForceElement() == Element::F64 ? 64 : 32;
-  config.count = control.models.size();
-  config.cutoffs = state->cutoffs;
-  std::vector<std::string> names = {point.cell.str(), point.x.str(),
-                                    (point.prefix + "model_z").str(),
-                                    point.f.str()};
-  std::vector<std::string> types = {"!md.cell", "!vec", "!ids", "!vec"};
-  auto operand = [&](std::string name, std::string type) {
-    size_t slot = names.size();
-    names.push_back(std::move(name));
-    types.push_back(std::move(type));
-    return slot;
-  };
-  if (config.energy)
-    config.energySlot = operand(point.u.str(), "f64");
-  if (config.virial)
-    config.virialSlot = operand(point.w.str(), "vector<9xf64>");
-  std::string virial = point.w.str();
-  if (config.virial && config.count)
-    virial =
-        "%mws_m" + point.tag.str() + "_" + std::to_string(config.count - 1);
-  std::vector<std::string> results = {point.fResult.str()},
-                           resultTypes = {"!vec"};
-  if (config.energy) {
-    results.push_back(point.uResult.str());
-    resultTypes.push_back("f64");
-  }
-  if (config.virial) {
-    results.push_back(virial);
-    resultTypes.push_back("vector<9xf64>");
-  }
-  llvm::SmallVector<StringRef> in, inTypes, out, outTypes;
-  for (const auto &s : names)
-    in.push_back(s);
-  for (const auto &s : types)
-    inTypes.push_back(s);
-  for (const auto &s : results)
-    out.push_back(s);
-  for (const auto &s : resultTypes)
-    outTypes.push_back(s);
-  emitIR(
-      point.indent, out, outTypes, in, inTypes,
-      [config](mlir::OpBuilder &builder,
-               mlir::ValueRange values) -> TermIRValues {
-        return buildHostedModelEvaluation(builder, values, config);
-      });
-  return virial;
 }
 
 namespace {
@@ -369,20 +303,4 @@ void ModelTermBuilder::buildDeclarations(const TermInputs &context, mlir::OpBuil
   if (context.getControl().models.empty()) return;
   buildModelDeclarations(builder, state->edges, context.getStateElement() == Element::F64,
       context.getForceElement() == Element::F64);
-}
-
-void ModelTermBuilder::emitDeclarations(const TermInputs &context,
-                                        TermIRWriter emitIR) const {
-  if (context.getControl().models.empty())
-    return;
-  bool edges = state->edges;
-  bool state64 = context.getStateElement() == Element::F64;
-  bool force64 = context.getForceElement() == Element::F64;
-  emitIR(
-      "", {}, {}, {}, {},
-      [edges, state64, force64](mlir::OpBuilder &builder,
-                                mlir::ValueRange) -> TermIRValues {
-        buildModelDeclarations(builder, edges, state64, force64);
-        return {};
-      });
 }

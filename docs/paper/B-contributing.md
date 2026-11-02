@@ -68,18 +68,13 @@ wrote at fixed paths failed after 99 runs of the suite in one build tree
 | `examples/` | Tutorials, each the stages of the standard pipeline as control files (minimization, equilibration at constant volume, at constant pressure with restraints, production): tri-alanine and ubiquitin in OPC, and a POPC bilayer in TIP3P; and argon, a Lennard-Jones fluid run from its IR |
 | `scripts/validation`, `scripts/benchmarks`, `scripts/render` | The comparisons with other programs (Section 9), the measurements of Section 10, and movies of trajectories |
 
-**A new term of the potential** is a function of the builder
-(`lib/Driver/BuilderPotential.cpp`) that writes an `md.potential` term over a
-relation, with its parameters as fields of the tuple set; its forces and
-virial follow by differentiation. If the term is a pair term with an
-exchange contract, it runs over groups on a device with no further work.
-The migrated kinds instead implement `TermBuilder` in a translation unit
-of their own and are listed explicitly in `lib/Driver/TermBuilders.cpp`
-(D359). External terms are the first: their fields, potentials,
-energy-output names, and observable lookup live in `TermExternal.cpp`.
-Their entry buffers still follow the shared field list. Every migration
-keeps the printed module and lowered program byte-identical to main over
-the builder-equivalence corpus; other kinds follow in separate PRs.
+**A new term of the potential** implements `TermBuilder` in its own translation
+unit and has an explicit factory in `lib/Driver/TermBuilders.cpp`. It builds
+native operations in the shared potential over a relation, with parameters as
+tuple fields; forces and virial follow by differentiation. Keep contribution
+and parameter ranks explicit, and check printed module/lowered equivalence.
+See [driver Section 2.12](../driver.md#212-the-files-of-the-builder) for the hook
+inventory and bounded typed interfaces.
 
 **A new pass** has its description and options in
 `include/mdir/Dialect/MDExec/Transforms/Passes.td`, its code in
@@ -148,10 +143,10 @@ and within-selection LJ/Coulomb contributions and mesh/correction preparation.
 
 Each build owns the adapter instances returned by the explicit factory list
 (D362). The list retains static-link reachability. Adapters
-borrow physical inputs, named parameter collections, streams, and shared
-emission services; none receives the complete builder/program or scheduling
+borrow physical inputs, named parameter collections and typed construction
+services; none receives the complete builder/program or scheduling
 state. Born radii stay private to the combined Born/surface adapter. Imported
-model bodies, result names, and cutoff metadata stay private to the model
+model bodies, typed results, and cutoff metadata stay private to the model
 adapter. The nonbonded role receives an explicit projection of mesh and
 correction data, excluding entry and scheduling state.
 
@@ -172,237 +167,71 @@ printed module/lowered corpus and combined-kind order matrix with one fixed
 archived PR base; the final head also compares five checkpoints bitwise and
 runs two full-suite shards.
 
-Step 4 (#708, D363) converts all term emitters and shared
-expression scalars. A term fragment borrows typed operands and an `OpBuilder` insertion
-point, with construction state owned by its build. Its operations enter the
-same shared potential and loop bodies before printing/lowering, preserving
-inlining and fusion without an opaque/public call boundary or SSA-name hints.
-The emitter conversions are complete. The following stage removes the
-remaining generated-text boundary and keeps parsing at user input boundaries.
+Step 4 (#708, D363) converted term bodies and shared expression scalars to
+typed IR. Step 5 removes the remaining generated assembly and its transitional
+connections.
 
-A new dialect in a generated program belongs in `insertProgramDialects`, with
-its library in `lib/Dialect/Program/CMakeLists.txt`. Keep construction and
-lowering on that shared set; see [driver Section 2.12](../driver.md#212-the-files-of-the-builder).
+Stage C (#718, D[builder-native-program]) constructs the complete program in
+one owned native module. `TermIRPlan` owns its context and module; adapters and
+parsed model input share that context and remain alive for the full build.
+Factories insert declarations, potentials, dynamics programs and entry functions
+directly in their original order. `serializeNativeProgram` prints the completed
+module once for the existing `Program.module` consumer handoff. Construction
+never parses generated operation or type syntax, serializes temporary
+connections, rewrites SSA tokens, or repairs loop operands after construction.
+The default printer supplies SSA names without builder name hints.
 
-Stage C (#718, D[builder-native-program]) owns the native module and parses
-staged-model input in its build context, cloning declarations and value
-dependencies. Remaining native program construction is in progress under
-the ownership contract recorded there.
+Only user-written custom expressions and staged `ModelTerm` input are parsed
+at their boundaries. `StagedModelIR` checks signatures, region shape, block
+arguments and returns before typed access, then clones declarations and bodies
+with `IRMapping`. Owned buffers preserve resource lifetimes. User string
+attributes and diagnostic locations are retained, and duplicate declarations
+are not silently renamed. Consumer parsing for display, verification and
+lowering remains at its existing boundary. Construction and consumers share
+`insertProgramDialects`, including tensor/linalg stage dialects.
 
-Native minimization bodies now include constrained trials and virtual-site
-placement and force spreading through semantic parameter slots and actual block
-arguments. Shared construction preserves kernel and operation order. Restraint
-corrections and hosted evaluations borrow actual physical values synchronously
-through narrow roles. Their native kernels are shared with the remaining
-emitters; the complete minimization body is native. Other scopes remain in progress.
+All term kinds are native: externals, pulls, restraints, Born with surface,
+custom tuples/centroids/compound terms, custom pairs, triplets, staged/opaque
+models, every bonded family, and nonbonded LJ/Coulomb including reciprocal,
+excluded and within-selection contributions. Shared potential sites, explicit
+contribution ranks, field/potential/output order, inlining and fusion remain
+unchanged. Narrow hooks receive actual typed operands and return actual typed
+results; adapters do not retain names of intermediate SSA values.
 
-All dynamics programs construct complete native signatures and bodies. Semantic
-constraint groups preserve position correction, velocity projection, failure
-reporting, molecular pressure, constraint virial and future half-step kinetic
-measurements, including geodesic Langevin and within-drift Trotter scaling.
-Borrowed physical values and owned scalar configuration retain the prior kernel
-and accumulation order. Entry/schedule scopes remain in progress.
+Native entry factories cover minimization, dynamics, frames and programs of
+parts, including orthorhombic/triclinic cells, supported integrators, virtual
+sites, SETTLE/SHAKE, restraint and hosted-model completion, timed terms,
+checkpoint restart, observables, free energy, gradients and pull output.
+`EntryLoopIR` carries actual block arguments and yielded values; the host
+boundary remains in place and loads the original part counts. Minimization
+retains accepted/rejected controller state and first-call projection. Frame
+checks inspect actual evaluation operations and operand provenance.
 
-Half-step eligibility is shared by the owner, construction tests and native
-function builder. A checked return boundary reports the physical combination
-when the signature and returned state disagree, before ordinary verification.
+COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
+Trotter work modes share typed physical cores. Multistep Trotter periods retain
+both closing steps. Leapfrog coupling uses full-time velocities and restores
+the stored half step. Period-one Trotter keeps nine pressure-state values and
+separate fresh, stored-state and missing-state restart paths. Missing-state
+initialization retains atomic kinetic energy without COM removal; fresh
+initialization retains group kinetic energy. Existing unsupported period-one
+programs of parts retain their diagnostic.
 
-Bare pair and triplet contributions borrow actual fields and tables through
-typed hooks. Their complete scalar potential is native, with module-owned
-operations and block arguments independent of transient construction metadata.
-Topology potential and entry/schedule scopes remain in progress.
+Exact trial virtual-site placement and force spreading deliberately retain the
+archived entry cell (#722); trial energy evaluation and other gathers retain
+their original cells. Plain energy rows construct no unused virial diagonal;
+construction tests check their result-producing operations directly, without a
+cleanup pass. Native tests also check operation identity, actual arguments,
+serialization ownership and staged-input boundaries.
 
-Built-in bonded term potentials construct native signatures and bodies
-from actual tuple relations and parameter fields. Shared kernels and explicit
-emission ranks preserve the original arithmetic and accumulation order.
+Static checkpoint restart controls for programs of parts are rejected before
+IR construction (ruling 10, #721):
+`a program of segments takes restart state through its activation, not a static restart control`.
+This is the sole approved diagnostic change: eight exact old/new output pairs
+are checked separately, with no exception matching the original corpus or
+matrix. Continuation through activation between parts is unchanged.
 
-External potentials bind semantic expression variables directly to actual
-fields, tables, time, lambda and observed arguments. Their native signature
-and body retain frame scaling, argument order and the shared expression kernel.
-
-Generalized Born and surface potentials construct native bodies together.
-Computed Born radii remain private to the adapter; radii, energy and surface
-contributions retain their original construction and accumulation order.
-
-Special 1–4 pair potentials use native tuple relations and fields, including
-charge-gradient products and the original LJ/Coulomb accumulation order.
-
-Custom tuple and centroid potentials also construct native bodies. Shared
-centroid geometry and expression kernels retain coordinate, parameter and
-observed-binding precedence; gradient seeds are actual boundary arguments.
-
-Custom pair potentials use the same native topology boundary and shared
-expression kernel, retaining grouped masks, lookup and constant binding order,
-tunable arguments and the selected truncation. The owner constructs their
-shared neighborhood before ranked contributions.
-
-Staged-model contributions clone their checked input body directly into the
-native topology potential using actual positions, cell and atomic-number values.
-Native potential construction propagates errors and discards incomplete bodies;
-construction coverage verifies that failure boundary explicitly.
-
-Primary, excluded, within-selection and reciprocal nonbonded contributions
-now construct native bodies through the same topology hook. Their seven shared
-kernels retain soft-core, PME/prolate, LJPME, reaction-field and tunable-seed
-order. Boundary flags are supplied at the current potential; parameter-field
-metadata is read-only and computed reciprocal outputs retain their original order.
-
-All topology potential signatures and bodies now construct native operations,
-including empty selections. The obsolete assembly fallback, named contribution
-callbacks and signature/value formatters are removed. Pull auxiliary potentials
-resolve time and tables through semantic metadata slots instead of generated
-SSA spellings. Entry/schedule assembly remains for the next construction phase.
-
-Native frame entries cover Verlet, leapfrog, Langevin and
-Brownian integrators in orthorhombic or triclinic cells,
-including time-dependent terms, topology energy columns and virtual-site
-placement/spreading, constrained-frame start traces and restraint corrections,
-with free-energy and observable output through shared typed output kernels.
-Observable and gradient tunables resolve semantic entry-value slots; gradient
-seed fields and derivative argument order retain their metadata layout. Header
-mass/thermostat preparation and initial half-step velocities retain their order.
-Barostat/reference-scale setup and initial Trotter state also construct native
-operations. A completed-loop provenance check rejects captured entry positions,
-cell expressions and box-memory aliases while allowing header initialization.
-Pull output consumes actual relation and tuple-field bindings through its narrow
-native output role; both entry paths share the coordinate/force output core.
-The obsolete centroid SSA-name formatter is removed. Hosted runtime declarations
-also share a native construction core across both declaration phases; hosted
-evaluation and other entry scopes remain in the other entry path.
-Restraint energy columns receive actual stored contribution values from the adapter.
-`EntryBoundaryIR.cpp` owns its physical buffer arguments and read-only metadata;
-`EntryFieldsIR.cpp` imports semantic fields and `EntryLoopIR.cpp` constructs
-actual SCF regions with checked yield counts, types and insertion scopes.
-`SimpleFrameEntryIR.cpp` preserves boundary/reorder/request/output order and
-checks actual frame evaluations and frame-input provenance.
-`EntryRuntimeIR.cpp` shares the original runtime declarations across both paths.
-Other entry families and their final assembly join remain in progress.
-
-A fixed-cell orthorhombic/triclinic dynamics entry across integrators
-with plain steps, energy, trajectory and checkpoint intervals, constructs
-its complete body in `SimpleStepEntryIR.cpp`: initial imports and reordering,
-energy/pressure rows, actual loop-carried state, fresh neighbor boundary and
-finish. Energy intervals use the inner loop results for their closing energy
-step, retain completed-step arithmetic and check nonperiodic spread. Nested
-trajectory intervals and frames written at energy boundaries preserve output
-order and the outer fresh boundary. Checkpoint segments carry reordered masses,
-particle parameters and identities with the physical state, regenerate relations
-from the original imports, and retain checkpoint output and segment boundaries.
-Topology entries retain their initial term-energy and virial output before
-kinetic and pressure output. The coordinate-output callback follows the initial
-energy row and every closing energy row, using the same typed pull core as the
-frame and remaining writer paths. A required coordinate-output role without its
-callback is a named construction error. Post-evaluation shares the frame family's
-typed completion callback; its corrected physical values and stored term energies
-feed the initial output in their existing order. Missing post-evaluation callbacks
-or inconsistent stored-term counts produce named construction errors. Hosted
-completion follows post-evaluation in the same typed role order as native step
-programs; its energy and forces feed the initial row and loop state. A required
-hosted role without a completion callback is a named construction error. The
-existing hosted-frame restrictions remain unchanged. `EntryOutputIR.cpp` shares owned
-free-energy, observable and gradient configuration with the frame family. It
-preserves initial-only gradient output, free-energy/observable row order and
-separate closing-row time conversions for each active output.
-Timed terms retain the initial simulation time, shared step-counter memory and
-per-call load/increment/store order; active coordinate output derives its time
-from the completed row step. Triclinic tilt operands bind the actual entry
-start values by their semantic names; a missing tilt is a named construction
-error. Langevin and Brownian calls retain their counter and current identities.
-Leapfrog retains the initial backward half-step and uses the closing program's
-current-time velocity for reporting; Brownian retains zero kinetic correction
-and atomic virial pressure. A mismatched integrator result layout is a named
-construction error. `EntryEvaluationIR.cpp` shares initial virtual-site placement
-before reordering and force/virial spreading before post-evaluation completion
-with the frame family. Both use actual relation and parameter values from their
-respective physical state. Constraints retain initial zero kinetic correction,
-molecular group pressure, Brownian's projected-force initial trace, measured
-closing half-step correction and solvent reporting. `EntryConstraintIR.cpp`
-shares the frame family's projected-force trace; reported result counts use the
-same `measuresHalfSteps()` predicate as the step programs. Restart entries
-import and reorder checkpoint forces or evaluate them anew when recomputation
-is requested, without repeating initial output or leapfrog's backward half-step.
-A restart without force state or recomputation is a named construction error. It shares semantic
-field flattening and reordering with the
-frame family through `EntryFieldsIR.cpp`. Other schedule families remain in
-progress.
-
-The shared `buildPartBoundary()` helper preserves in-place resorting for dynamics
-and minimization; construction coverage requires `in_place` only on that call.
-
-Standalone minimization entries use `MinimizationEntryIR.cpp`: initial constraint
-projection, the existing native descent program, accept/reject maps, nested
-controller state, convergence rows, frames and final checkpoints are constructed
-directly. Restart projection and initial term-report behavior are retained.
-Minimization parts retain first-call projection and term output, the incoming
-step size, host boundary checks and counts, and actual carried controller state.
-Segments require zero energy, frame and checkpoint periods, with convergence
-checked by the host; standalone entries require positive step and energy counts.
-Construction coverage derives segmented counts and stop behavior from
-`compiler::getSegmentsControl()` and rejects incompatible periods.
-Dynamics programs of parts and the remaining coupling scopes are still in progress.
-
-Native fixed-cell step entries also construct COM-only coupling periods, using
-actual carried state and the existing typed COM/bath core. Energy intervals retain
-their final plain-step loop and report pressure before removing COM motion.
-
-Fixed-cell thermostat entries construct the existing Bussi and Nose–Hoover
-coupling core with owned seed, freedom, target and decay parameters. Constrained
-coupling steps retain measured half-step kinetic energy and leapfrog's reporting
-velocity; energy rows retain their pre-coupling report and optimal-temperature
-correction order. Barostat entries and dynamics programs of parts remain pending.
-
-Uncoupled fixed-cell dynamics parts construct the first-call force/velocity
-branch, finite-state boundary, host count loads, plain/tail/energy loops and
-conditional frames natively. Leapfrog distinguishes the first call from a
-reevaluation call. Plain closing rows retain their distinct solvent/observable
-output order; coupled parts and barostat schedules remain pending.
-
-Fixed-cell coupled dynamics parts also construct both coupling nests and the
-last reporting period from host counts. They share the standalone coupling core,
-including measured half steps and optimal-temperature order; partial plain rows
-retain their separate output contract. Static restart controls and barostat
-schedules remain on the remaining entry path.
-
-Standalone isotropic `FIRST_ORDER` barostat schedules for Verlet and leapfrog
-construct their persistent box, current cell/reference scale, strain, work,
-rigid-center scaling and coupling directly. Each loop reloads the current cell
-before and after its children. Leapfrog couples current-time velocities and
-restores the stored half step afterwards. Exact/Trotter work and barostat parts
-remain on the remaining entry path.
-
-Standalone `EXACT` barostat schedules also construct isotropic, semi-isotropic
-and anisotropic strain, scaled-site placement and the new-cell energy/force
-reevaluation natively. The work retains the constant-energy 1/V contribution,
-current-step time and completed force state. Trial virtual-site placement and
-force spreading retain the entry cell of the archived producer (#722); trial
-energy evaluation and all other gathers keep their existing cells. Trotter work and barostat parts
-remain on the remaining entry path.
-
-
-Programs of dynamics parts also construct FIRST_ORDER and EXACT barostat
-coupling natively. Both host-count nests reload the live cell and reference
-scale at their existing loop boundaries; tail/plain rows retain their distinct
-cell and output scope. Closing rows couple full-time leapfrog velocities and
-restore the stored half step. Exact reevaluations return the carried force state.
-Trotter schedules remain on the remaining entry path.
-
-
-Standalone TROTTER and TROTTER_FIRST_ORDER schedules with a coupling period
-of two or more construct their pressure step, strain and scaled closing step
-natively. The shared thermal core retains the first/mean-virial work order,
-measured constrained half steps, leapfrog reporting state and new-cell row
-outputs. Period-one pressure state and Trotter parts remain pending.
-
-
-Multi-step Trotter programs of parts share the same native pressure/scaling
-core across both host-count nests and the reporting close. Their periods count
-both closing steps; plain rows retain their unscaled energy path and direct
-unused-result construction check. Period-one pressure state remains pending.
-
-
-Period-one Trotter schedules construct the nine-value pressure memory and its
-fresh-start, checkpoint-state and missing-state restart initialization directly.
-Each scaling loads the existing state in order, then stores the post-thermostat
-group kinetic state before counting mean-virial work. Force import/recomputation
-and leapfrog restart reconstruction retain their separate base paths. Programs
-of segments still reject period-one scaling with the existing diagnostic.
+Every implementation tree compares printed module/lowered outputs against one
+archived base, including the combined CPU/GPU, mixed/double order matrix.
+Final validation additionally requires five bitwise checkpoint comparisons and
+two clean D309 shards. No numerical method, control key, precision mode, file
+format or overwrite behavior changes.

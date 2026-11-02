@@ -112,9 +112,12 @@ order stay explicit.
 Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
-Stage C (#718, D[builder-native-program]) owns the native module and
-staged-model input boundary, complete dynamics/minimization and every term-potential family. The orthorhombic/triclinic frame entry family across integrators and barostats, including virtual sites, constraints, restraint corrections and observable/free-energy/gradient and pull output, and a fixed-cell orthorhombic/triclinic dynamics step/energy/trajectory/checkpoint entry across integrators, including hosted completion, checkpoint restart, timed terms, virtual sites, constraints, restraint corrections and free-energy/observable/gradient output are native; standalone minimization and its programs of parts, and fixed-cell COM/thermostat coupling and fixed-cell dynamics parts plus first-order/exact barostat schedules and parts and multi-step Trotter schedules and parts plus period-one Trotter pressure state and restart are also native; other entry/schedule scopes
-and final assembly cleanup remain in progress.
+Stage C (#718, D[builder-native-program]) constructs complete programs in one
+owned native module, including every term, dynamics/minimization, frames,
+restart, coupling and programs of parts. Temporary assembly joins and carry
+fixups are removed. Only custom expressions and staged model input are parsed
+at their boundaries; the final module is serialized once for consumers. Final
+checkpoint and D309 validation gate readiness.
 
 ### 2.2 The dialects
 
