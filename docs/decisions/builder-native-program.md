@@ -430,3 +430,11 @@ Multi-step Trotter programs of parts share the same native pressure/scaling
 core across both host-count nests and the reporting close. Their periods count
 both closing steps; plain rows retain their unscaled energy path and direct
 unused-result construction check. Period-one pressure state remains pending.
+
+
+Period-one Trotter schedules construct the nine-value pressure memory and its
+fresh-start, checkpoint-state and missing-state restart initialization directly.
+Each scaling loads the existing state in order, then stores the post-thermostat
+group kinetic state before counting mean-virial work. Force import/recomputation
+and leapfrog restart reconstruction retain their separate base paths. Programs
+of segments still reject period-one scaling with the existing diagnostic.

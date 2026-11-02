@@ -28,6 +28,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "mlir/Parser/Parser.h"
 #include <cstdlib>
@@ -471,7 +472,7 @@ static void checkStaticRestartControl() {
   }
 }
 
-static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false, bool exact = false, bool trotter = false, bool firstOrderWork = false) {
+static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false, bool exact = false, bool trotter = false, bool firstOrderWork = false, bool everyStep = false) {
   TermIRPlan plan;
   auto &context = plan.getContext();
   auto module = plan.getModule();
@@ -497,6 +498,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   runtime.state64 = runtime.force64 = runtime.rescales = runtime.bath = true;
   runtime.noseHoover = nose;
   runtime.barostat = barostat;
+  runtime.barostatState = everyStep;
   runtime.constraintStops = constrained;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
@@ -527,14 +529,14 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   control.thermostat = true;
   control.thermostatMethod = nose ? mdir::driver::ThermostatMethod::NoseHoover
       : mdir::driver::ThermostatMethod::VRescale;
-  control.thermostatPeriod = 2;
+  control.thermostatPeriod = everyStep ? 1 : 2;
   control.comPeriod = com ? control.thermostatPeriod : 0;
   control.barostat = barostat;
   control.barostatPeriod = control.thermostatPeriod;
   control.barostatWork = trotter ? (firstOrderWork ? mdir::driver::BarostatWork::TrotterFirstOrder : mdir::driver::BarostatWork::Trotter) : exact ? mdir::driver::BarostatWork::Exact : mdir::driver::BarostatWork::FirstOrder;
   control.anisotropic = (exact || trotter) && constrained;
   control.semiIsotropic = (exact || trotter) && !constrained && !com;
-  SimpleStepEntryIRConfig config{control.getCouplingPeriod() - (trotter ? 2 : 1),
+  SimpleStepEntryIRConfig config{control.getCouplingPeriod() - (trotter && !everyStep ? 2 : 1),
       control.numSteps / control.getEnergyLoopPeriod()};
   config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
   config.leapfrog = control.integrator == mdir::driver::Integrator::Leapfrog;
@@ -551,7 +553,8 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     config.barostat = true;
     config.exactBarostat = exact;
     config.trotter = trotter;
-    config.countsAfterScaling = trotter && !firstOrderWork;
+    config.countsAfterScaling = trotter && (!firstOrderWork || everyStep);
+    config.everyStep = everyStep;
     config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
         : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
     if (exact) config.barostatEnergyConstant = 4;
@@ -567,23 +570,32 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
         control.surfaceTension * control.surfaces * mdir::driver::units::dynePerCmToBarNm};
   }
   if (constrained || barostat) {
-    auto coupling = buildNativeStep(builder, {"step_thermostat", barostat && !trotter, barostat && (!trotter || !firstOrderWork), trotter, measured},
+    auto coupling = buildNativeStep(builder, {"step_thermostat", barostat && !trotter, barostat && (!trotter || !firstOrderWork || everyStep), trotter, measured},
         parameters, leapfrog, false, {}, barostat, false, {}, {}, groups);
     require(bool(coupling), "native thermal measured step did not construct");
     config.couplingStep = *coupling;
     if (trotter) {
-      auto pressure = buildNativeStep(builder, {"step_virial", false, true},
-          parameters, leapfrog, false, {}, true, false, {}, {}, groups);
       auto scaled = buildNativeStep(builder, {"step_trotter_energy", true, true, true, measured},
           parameters, leapfrog, false, {}, true, false, {}, {}, groups);
-      require(bool(pressure) && bool(scaled), "native Trotter programs did not construct");
-      config.pressureStep = *pressure;
+      require(bool(scaled), "native Trotter scaled program did not construct");
       config.scaledEnergyStep = *scaled;
-      auto invalid = config;
-      invalid.pressureStep = {};
-      auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
-      require(!missing, "native Trotter accepted a missing pressure step");
-      reject(missing.takeError(), "native Trotter entry requires pressure and scaled energy programs");
+      if (!everyStep) {
+        auto pressure = buildNativeStep(builder, {"step_virial", false, true},
+            parameters, leapfrog, false, {}, true, false, {}, {}, groups);
+        require(bool(pressure), "native Trotter pressure program did not construct");
+        config.pressureStep = *pressure;
+        auto invalid = config;
+        invalid.pressureStep = {};
+        auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
+        require(!missing, "native Trotter accepted a missing pressure step");
+        reject(missing.takeError(), "native Trotter entry requires pressure and scaled energy programs");
+      } else {
+        auto invalid = config;
+        invalid.countsAfterScaling = false;
+        auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
+        require(!missing, "native period-one Trotter accepted incomplete pressure state");
+        reject(missing.takeError(), "native period-one Trotter requires pressure state after scaling");
+      }
     }
     auto invalid = config;
     invalid.couplingStep = {};
@@ -638,6 +650,41 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       require(loop->isProperAncestor(cell), "native first-order cell load escaped its schedule");
     });
   }
+  if (everyStep) {
+    auto checkState = [&](func::FuncOp function, unsigned evaluations) {
+      unsigned sets = 0;
+      function.walk([&](func::CallOp call) { sets += call.getCallee() == "mdrtSetBarostatState"; });
+      unsigned rootEvaluations = llvm::range_size(function.getOps<mdir::md::EvaluateOp>());
+      require(sets == 3, "native period-one entry lost initial or closing pressure state");
+      require(rootEvaluations == evaluations, "native period-one entry evaluated the wrong restart state");
+    };
+    checkState(*entry, 1);
+    const auto initialValues = metadata.startValues;
+    for (bool stored : {false, true})
+      for (bool recompute : {false, true}) {
+        metadata.startValues = initialValues;
+        auto restartConfig = config;
+        restartConfig.restart = true;
+        restartConfig.recomputeForces = recompute;
+        metadata.takesForces = !recompute;
+        if (stored) {
+          std::array<unsigned, 9> slots;
+          for (unsigned slot = 0; slot != 9; ++slot) {
+            slots[slot] = metadata.startValues.size();
+            metadata.startValues.push_back({"bstate" + std::to_string(slot), 0.0});
+          }
+          restartConfig.barostatState = slots;
+        }
+        metadata.entry = "native_period_one_restart_" + std::to_string(stored) + std::to_string(recompute);
+        auto restarted = buildSimpleStepEntry(builder, metadata, *step, *reporting, restartConfig);
+        if (!restarted) {
+          llvm::errs() << metadata.entry << ": " << llvm::toString(restarted.takeError()) << "\n";
+          std::exit(1);
+        }
+        checkState(*restarted, unsigned(recompute) + unsigned(!stored));
+      }
+    metadata.startValues = initialValues;
+  } else {
   auto production = mdir::compiler::getSegmentsControl(control);
   require(production.energyPeriod == 0 && production.framePeriod == 0 &&
           production.checkpointPeriod == 0 && production.numSteps == production.getCouplingPeriod(),
@@ -725,6 +772,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     });
     require(pressureCalls == 3 && scaledCalls == 3,
         "native Trotter parts lost an outer, inner or reporting pressure/scaling pair");
+  }
   }
   require(succeeded(verify(module)), "native thermal module did not verify");
 }
@@ -1794,6 +1842,8 @@ int main(int argc, char **argv) {
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, true);
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, false, true);
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, false, true, true);
+          checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, false, true, false, true);
+          checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, false, true, true, true);
         }
   checkStaticRestartControl();
   checkNativeCenterStepEntry();

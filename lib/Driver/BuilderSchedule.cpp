@@ -1424,7 +1424,7 @@ llvm::Error Builder::emitEntry() {
   bool nativeSteps = !control.frames && !control.minimize &&
       (!control.segments || !isRestart()) &&
       (!control.barostat || (!control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact ||
-          (usesTrotter() && !scalesEveryStep())))) &&
+          usesTrotter()))) &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" ||
@@ -1455,6 +1455,18 @@ llvm::Error Builder::emitEntry() {
     config.exactBarostat = control.barostatWork == BarostatWork::Exact;
     config.trotter = usesTrotter();
     config.countsAfterScaling = countsAfterScaling();
+    config.everyStep = scalesEveryStep();
+    if (config.everyStep && isRestart() && system.barostatState.size() == 9) {
+      std::array<unsigned, 9> slots;
+      for (unsigned slot = 0; slot != 9; ++slot) {
+        auto found = llvm::find_if(program.startValues, [&](const auto &value) {
+          return value.name == "bstate" + std::to_string(slot);
+        });
+        assert(found != program.startValues.end() && "barostat state role must exist");
+        slots[slot] = std::distance(program.startValues.begin(), found);
+      }
+      config.barostatState = slots;
+    }
     config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
         : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
     if (config.barostat) {
