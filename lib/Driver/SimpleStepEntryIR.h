@@ -41,9 +41,10 @@ struct SimpleStepEntryIRConfig {
   mdir::dyn::ProgramOp couplingStep;
   bool segments = false;
   int64_t partCounts = 9;
-  bool firstOrderBarostat = false;
+  bool barostat = false, exactBarostat = false;
+  StrainCoupling strainCoupling = StrainCoupling::Isotropic;
   std::optional<BarostatParameters> barostatParameters;
-  std::optional<unsigned> barostatConstant;
+  std::optional<unsigned> barostatConstant, barostatEnergyConstant;
   std::optional<std::array<unsigned, 3>> referenceEdges;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(

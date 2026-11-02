@@ -463,7 +463,7 @@ static void checkStaticRestartControl() {
   }
 }
 
-static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false) {
+static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false, bool exact = false) {
   TermIRPlan plan;
   auto &context = plan.getContext();
   auto module = plan.getModule();
@@ -484,7 +484,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     set.fields = {{"length", {}, false}};
   }
   if (barostat) metadata.startValues = {{"baro_constant", 0.0},
-      {"rest_edge0", 1.0}, {"rest_edge1", 1.0}, {"rest_edge2", 1.0}};
+      {"rest_edge0", 1.0}, {"rest_edge1", 1.0}, {"rest_edge2", 1.0}, {"baro_energy_constant", 0.0}};
   RuntimeDeclarationConfig runtime{};
   runtime.state64 = runtime.force64 = runtime.rescales = runtime.bath = true;
   runtime.noseHoover = nose;
@@ -523,7 +523,9 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   control.comPeriod = com ? control.thermostatPeriod : 0;
   control.barostat = barostat;
   control.barostatPeriod = control.thermostatPeriod;
-  control.barostatWork = mdir::driver::BarostatWork::FirstOrder;
+  control.barostatWork = exact ? mdir::driver::BarostatWork::Exact : mdir::driver::BarostatWork::FirstOrder;
+  control.anisotropic = exact && constrained;
+  control.semiIsotropic = exact && !constrained && !com;
   SimpleStepEntryIRConfig config{control.getCouplingPeriod() - 1,
       control.numSteps / control.getEnergyLoopPeriod()};
   config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
@@ -538,7 +540,11 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
   if (constrained) config.constraints = {{0, 2, {1}, false}};
   if (barostat) {
-    config.firstOrderBarostat = true;
+    config.barostat = true;
+    config.exactBarostat = exact;
+    config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
+        : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
+    if (exact) config.barostatEnergyConstant = 4;
     config.barostatConstant = 0;
     config.referenceEdges = std::array<unsigned, 3>{1, 2, 3};
     double bar = 1.01325;
@@ -566,7 +572,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     missing.barostatConstant.reset();
     auto failed = buildSimpleStepEntry(builder, metadata, *step, *reporting, missing);
     require(!failed, "native first-order barostat accepted a missing constant role");
-    reject(failed.takeError(), "native first-order barostat requires standalone coupling parameters");
+    reject(failed.takeError(), "native barostat requires standalone coupling parameters");
   }
   auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
   if (!entry) {
@@ -586,9 +592,18 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   if (barostat) {
     unsigned strainCalls = 0;
     entry->walk([&](func::CallOp call) {
-      if (call.getCallee() == "mdrtBarostatStrain") ++strainCalls;
+      if (call.getCallee() == "mdrtBarostatStrain" || call.getCallee() == "mdrtBarostatStrainAxis" ||
+          call.getCallee() == "mdrtBarostatStrainArea" || call.getCallee() == "mdrtBarostatStrainHeight") ++strainCalls;
     });
-    require(strainCalls == 2, "native first-order barostat lost a coupling strain");
+    unsigned perStrain = control.anisotropic ? 3 : control.semiIsotropic ? 2 : 1;
+    require(strainCalls == 2 * perStrain, "native barostat lost a coupling strain");
+    if (exact) {
+      unsigned reevaluations = 0;
+      loop.walk([&](mdir::md::EvaluateOp operation) {
+        if (operation.getNumResults() == 2) ++reevaluations;
+      });
+      require(reevaluations == 2, "native exact barostat lost a scaled-position evaluation");
+    }
     entry->walk([&](mdir::dyn::StepOp call) {
       auto cell = call.getOperand(4).getDefiningOp<mdir::md::OrthorhombicCellOp>();
       require(cell && cell.getOperand(0).getDefiningOp<memref::LoadOp>(),
@@ -1709,6 +1724,7 @@ int main(int argc, char **argv) {
         for (bool com : {false, true}) {
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com);
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true);
+          checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true, true);
         }
   checkStaticRestartControl();
   checkNativeCenterStepEntry();

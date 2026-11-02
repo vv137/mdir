@@ -401,3 +401,11 @@ exact diagnostic equivalence. The comparison records each affected case, target,
 kind, stage and form with the complete old and new diagnostics, and accepts only
 those exact pairs. Runtime continuation through activation between parts is
 unchanged. Static restart support is tracked separately in #721.
+
+Standalone `EXACT` barostat schedules also construct isotropic, semi-isotropic
+and anisotropic strain, scaled-site placement and the new-cell energy/force
+reevaluation natively. The work retains the constant-energy 1/V contribution,
+current-step time and completed force state. Trial virtual-site placement and
+force spreading retain the entry cell of the archived producer (#722); trial
+energy evaluation and all other gathers keep their existing cells. Trotter work and barostat parts
+remain on the remaining entry path.

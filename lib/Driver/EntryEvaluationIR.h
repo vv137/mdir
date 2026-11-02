@@ -15,6 +15,6 @@ EntryCompletionIR buildEntryEvaluation(mlir::OpBuilder &, const PotentialStateIR
     EnergyRequests, llvm::ArrayRef<DescentSiteIR>,
     llvm::function_ref<EntryCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,
                                         EnergyResults, mlir::Value scale)> complete = {},
-    mlir::Value scale = {});
+    mlir::Value scale = {}, mlir::Value siteCell = {});
 }
 #endif

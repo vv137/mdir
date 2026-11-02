@@ -1423,7 +1423,7 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize &&
       (!control.segments || !isRestart()) &&
-      (!control.barostat || (!control.segments && !control.isBrownian() && control.barostatWork == BarostatWork::FirstOrder)) &&
+      (!control.barostat || (!control.segments && !control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact))) &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" ||
@@ -1450,8 +1450,11 @@ llvm::Error Builder::emitEntry() {
     config.freedom = system.getDegreesOfFreedom();
     config.targetKinetic = 0.5 * config.freedom * units::boltzmann * control.temperature;
     config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
-    config.firstOrderBarostat = control.barostat && control.barostatWork == BarostatWork::FirstOrder;
-    if (config.firstOrderBarostat) {
+    config.barostat = bool(control.barostat);
+    config.exactBarostat = control.barostatWork == BarostatWork::Exact;
+    config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
+        : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
+    if (config.barostat) {
       double bar = 1.01325;
       config.barostatParameters = BarostatParameters{
           {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
@@ -1464,6 +1467,12 @@ llvm::Error Builder::emitEntry() {
           [](const auto &value) { return value.name == "baro_constant"; });
       assert(constant != program.startValues.end() && "barostat constant must exist");
       config.barostatConstant = std::distance(program.startValues.begin(), constant);
+      if (config.exactBarostat) {
+        auto energy = llvm::find_if(program.startValues,
+            [](const auto &value) { return value.name == "baro_energy_constant"; });
+        assert(energy != program.startValues.end() && "barostat energy constant must exist");
+        config.barostatEnergyConstant = std::distance(program.startValues.begin(), energy);
+      }
       config.couplingStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>(
           hasConstraints() ? "step_coupling" : "step_energy");
       if (scalesReference()) {

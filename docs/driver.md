@@ -1613,6 +1613,14 @@ before and after its children. Leapfrog couples current-time velocities and
 restores the stored half step afterwards. Exact/Trotter work and barostat parts
 remain on the remaining entry path.
 
+Standalone `EXACT` barostat schedules also construct isotropic, semi-isotropic
+and anisotropic strain, scaled-site placement and the new-cell energy/force
+reevaluation natively. The work retains the constant-energy 1/V contribution,
+current-step time and completed force state. Trial virtual-site placement and
+force spreading retain the entry cell of the archived producer (#722); trial
+energy evaluation and all other gathers keep their existing cells. Trotter work and barostat parts
+remain on the remaining entry path.
+
 ## 3. Decided
 
 | # | Question | Decision |
