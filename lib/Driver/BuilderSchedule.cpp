@@ -1421,11 +1421,13 @@ llvm::Error Builder::emitEntry() {
         });
     return llvm::Error::success();
   }
-  bool nativeSteps = !control.frames && !control.minimize && !control.segments &&
+  bool nativeSteps = !control.frames && !control.minimize &&
+      (!control.segments || (!isRestart() && control.getCouplingPeriod() == 0)) &&
       !control.barostat &&
       levels.back().name == "step" && levels.size() <= 5 &&
-      llvm::all_of(llvm::drop_end(levels), [](const auto &level) {
-        return level.name == "segment" || level.name == "frame" || level.name == "energy" || level.name == "couple";
+      llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
+        return level.name == "segment" || level.name == "frame" || level.name == "energy" ||
+            level.name == "couple" || (control.segments && level.name == "step");
       });
   if (nativeSteps) {
     mlir::OpBuilder ir(&termIR.getContext());
@@ -1438,6 +1440,8 @@ llvm::Error Builder::emitEntry() {
     emitRuntimeDeclarations(ir, declarations, true);
     auto step = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step");
     SimpleStepEntryIRConfig config{levels.back().count};
+    config.segments = control.segments;
+    config.partCounts = getPartCountsSize();
     config.removesMotion = control.comPeriod > 0;
     config.rescales = rescalesVelocities();
     config.noseHoover = control.isNoseHoover();
@@ -1469,6 +1473,10 @@ llvm::Error Builder::emitEntry() {
         config.energyIntervals = level.count;
         energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
       }
+    }
+    if (config.segments) {
+      config.energyIntervals.reset();
+      energy = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_energy");
     }
     configureOutputs(config.output, !isRestart());
     configureSites(config.sites);

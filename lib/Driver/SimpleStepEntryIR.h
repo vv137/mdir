@@ -37,6 +37,8 @@ struct SimpleStepEntryIRConfig {
   int64_t seed = 0;
   double freedom = 0.0, targetKinetic = 0.0, decay = 0.0;
   mdir::dyn::ProgramOp couplingStep;
+  bool segments = false;
+  int64_t partCounts = 9;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

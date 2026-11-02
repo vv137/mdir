@@ -350,3 +350,9 @@ coupling core with owned seed, freedom, target and decay parameters. Constrained
 coupling steps retain measured half-step kinetic energy and leapfrog's reporting
 velocity; energy rows retain their pre-coupling report and optimal-temperature
 correction order. Barostat entries and dynamics programs of parts remain pending.
+
+Uncoupled fixed-cell dynamics parts construct the first-call force/velocity
+branch, finite-state boundary, host count loads, plain/tail/energy loops and
+conditional frames natively. Leapfrog distinguishes the first call from a
+reevaluation call. Plain closing rows retain their distinct solvent/observable
+output order; coupled parts and barostat schedules remain pending.

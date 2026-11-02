@@ -2,6 +2,8 @@
 #include "SimpleStepEntryIR.h"
 #include "EntryFieldsIR.h"
 #include "EntryLoopIR.h"
+#include "EntryRuntimeIR.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "ReorderIR.h"
 #include "DynamicsIR.h"
 #include "BarostatIR.h"
@@ -35,7 +37,14 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.needsHostedEvaluation && !complete)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry requires the hosted-evaluation role");
-  if (!step || (config.energyIntervals && !energyStep))
+  if (config.segments && (config.partCounts != 9 || config.restart || config.couplingIntervals ||
+      config.energyIntervals || config.frameIntervals || config.checkpointIntervals))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step parts require host counts and a fixed uncoupled schedule");
+  if (config.segments && !program.takesForces)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step parts require incoming force state");
+  if (!step || ((config.energyIntervals || config.segments) && !energyStep))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "a generated step has no program definition");
   if (config.restart && !program.takesForces && !config.recomputeForces)
@@ -60,7 +69,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   unsigned measuredSlot = 5 + unsigned(!config.brownian) + unsigned(config.leapfrog);
   unsigned reported = measuredSlot + unsigned(measured) + unsigned(solvent);
   if (step.getFunctionType().getResults().size() != 3 ||
-      (config.energyIntervals && energyStep.getFunctionType().getResults().size() != reported))
+      ((config.energyIntervals || config.segments) && energyStep.getFunctionType().getResults().size() != reported))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry dynamics results do not match its integrator (brownian=%d, leapfrog=%d, constrained=%d)",
         config.brownian, config.leapfrog, constrained);
@@ -74,11 +83,16 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             "native step entry is missing cell start value '%s'", name.str().c_str());
       tiltSlots.push_back(std::distance(program.startValues.begin(), found));
     }
-  return buildEntryFunction(builder, program, {},
+  return buildEntryFunction(builder, program, {false, config.segments},
       [&](OpBuilder &at, const EntryArgumentsIR &arguments) -> llvm::Error {
     auto loc = at.getUnknownLoc();
     Value zero = arith::ConstantIndexOp::create(at, loc, 0);
     Value one = arith::ConstantIndexOp::create(at, loc, 1);
+    Value firstCall;
+    if (config.segments) {
+      Value none = arith::ConstantIntOp::create(at, loc, 0, 64);
+      firstCall = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, arguments.firstCall, none);
+    }
     Value time, stepMemory, stepOne;
     if (config.timed) time = buildSimulationTime(at, arguments.start, arguments.interval);
     if (needsCounter) {
@@ -89,6 +103,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     enum class Kind { Segment, Frame, Energy, Couple, Step };
     SmallVector<Kind> kinds;
     SmallVector<int64_t> counts;
+    SmallVector<Value> extents, periods;
+    if (!config.segments) {
     if (config.checkpointIntervals) {
       kinds.push_back(Kind::Segment);
       counts.push_back(*config.checkpointIntervals);
@@ -107,7 +123,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     }
     kinds.push_back(Kind::Step);
     counts.push_back(config.plainSteps);
-    SmallVector<Value> extents, periods(kinds.size());
+    periods.resize(kinds.size());
     for (int64_t count : counts) extents.push_back(arith::ConstantIndexOp::create(at, loc, count));
     int64_t taken = 1;
     for (size_t level = kinds.size(); level-- != 0;) {
@@ -117,10 +133,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         taken += config.couplingIntervals ? config.plainSteps + 1 : 1;
       else if (level && kinds[level - 1] == Kind::Couple) ++taken;
     }
+    }
     SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
     for (unsigned slot : tiltSlots) edges.push_back(arguments.startValues[slot]);
     Value cell = buildCell(at, edges);
-    bool givenForces = config.restart && program.takesForces;
+    bool givenForces = (config.restart || config.segments) && program.takesForces;
     auto physical = buildEntryFields(at, program, arguments, true, givenForces);
     SmallVector<Value> originalRelations;
     for (const auto &tuple : physical.tuples) originalRelations.push_back(tuple.members);
@@ -142,6 +159,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       }
     }
     Value pressureMass = config.removesMotion ? coupling.totalMass : Value{};
+    auto initialize = [&](OpBuilder &at, EntryFieldsIR physical) -> llvm::Expected<EntryFieldsIR> {
     PotentialStateIR state{physical.positions, cell, fields, time};
     EntryCompletionIR evaluated{{}, {}};
     if (!config.restart || config.recomputeForces) {
@@ -198,7 +216,36 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     if (config.leapfrog && !config.restart) {
       Value back = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(-0.5));
       Value interval = arith::MulFOp::create(at, loc, back, arguments.interval);
+      if (config.segments) {
+        Value none = arith::ConstantOp::create(at, loc, at.getF64FloatAttr(0.0));
+        Value first = arith::ConstantIntOp::create(at, loc, 1, 64);
+        Value begins = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, arguments.firstCall, first);
+        interval = arith::SelectOp::create(at, loc, begins, interval, none);
+      }
       physical.velocities = buildKick(at, physical.velocities, physical.forces, physical.masses, interval);
+    }
+    return physical;
+    };
+    if (config.segments) {
+      Value trips = arith::SelectOp::create(at, loc, firstCall, one, zero);
+      auto initial = buildEntryLoop(at, "step initial state", zero, trips, one,
+          ValueRange{physical.forces, physical.velocities},
+          [&](OpBuilder &body, Value, ValueRange current) -> llvm::Expected<SmallVector<Value>> {
+        auto actual = physical;
+        actual.forces = current[0];
+        actual.velocities = current[1];
+        auto result = initialize(body, actual);
+        if (!result) return result.takeError();
+        return SmallVector<Value>{result->forces, result->velocities};
+      });
+      if (!initial) return initial.takeError();
+      (*initial)->setAttr("mdrt.segment", at.getUnitAttr());
+      physical.forces = initial->getResult(0);
+      physical.velocities = initial->getResult(1);
+    } else {
+      auto initial = initialize(at, physical);
+      if (!initial) return initial.takeError();
+      physical = std::move(*initial);
     }
     auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
@@ -232,6 +279,161 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       }
       return values;
     };
+    struct ReportIR { Value kinetic, correction, step; };
+    auto report = [&](OpBuilder &inside, const EntryFieldsIR &point, mdir::dyn::StepOp next,
+        llvm::function_ref<Value()> makeStep, bool plainRow) -> ReportIR {
+        if (plainRow && solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
+        Value full = next.getResult(config.leapfrog ? 6 : 1);
+        Value kinetic = buildKineticEnergy(inside, full, point.masses);
+        Value correction, trace, pressureKinetic;
+        if (measured) {
+          Value current = buildKineticVector(inside, full, point.masses);
+          Value excess = arith::SubFOp::create(inside, loc, next.getResult(measuredSlot), current);
+          correction = buildSum3(inside, excess);
+        } else if (config.brownian)
+          correction = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.0));
+        else {
+          Value excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
+          correction = buildSum3(inside, excess);
+        }
+        if (!plainRow && solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
+        if (config.brownian) {
+          trace = buildVirialTrace(inside, next.getResult(4));
+          pressureKinetic = arith::AddFOp::create(inside, loc, kinetic, correction);
+        } else {
+          trace = buildSum3(inside, next.getResult(5));
+          auto parameters = buildEntryPotentialFields(point);
+          auto groups = buildEntryGroups(parameters, config.constraints);
+          auto centers = buildGroupKinetic(inside,
+              {next.getResult(0), full, next.getResult(2), cell, point.masses,
+               arguments.interval, pressureMass, groups});
+          pressureKinetic = buildSum3(inside, centers.half);
+        }
+        Value completed = makeStep();
+        func::CallOp::create(inside, loc, "mdrtWriteEnergies", TypeRange{},
+            ValueRange{completed, next.getResult(3), kinetic, correction, trace, pressureKinetic});
+        if (!plainRow && coordinateOutput) {
+          auto fields = buildEntryPotentialFields(point);
+          Value time;
+          if (config.timed && config.needsCoordinateOutput)
+            time = buildSimulationTime(inside, completed, arguments.interval);
+          coordinateOutput(inside, {next.getResult(0), cell, fields, time}, completed);
+        }
+        auto outputFields = buildEntryPotentialFields(point);
+        PotentialStateIR outputState{next.getResult(0), cell, outputFields, {}};
+        auto output = config.output;
+        if (plainRow) output.freeEnergy.reset();
+        buildEntryOutputs(inside,
+            {outputState, completed, point.identities, arguments.interval, zero, one,
+             arguments.startValues, false, config.timed}, output);
+        if (!config.periodic && (plainRow || config.segments || !config.framesAtEnergies))
+          mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
+              FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),
+              ValueRange{completed, next.getResult(0), point.identities}, ValueRange{}, UnitAttr{});
+      return {kinetic, correction, completed};
+    };
+    if (config.segments) {
+      auto frameIfDue = [&](OpBuilder &body, Value period, Value completed,
+                            const EntryFieldsIR &point) -> llvm::Error {
+        Value none = arith::ConstantIntOp::create(body, loc, 0, 64);
+        Value single = arith::ConstantIntOp::create(body, loc, 1, 64);
+        Value hasPeriod = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::sgt, period, none);
+        Value safe = arith::SelectOp::create(body, loc, hasPeriod, period, single);
+        Value remainder = arith::RemSIOp::create(body, loc, completed, safe);
+        Value exact = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq, remainder, none);
+        Value due = arith::AndIOp::create(body, loc, hasPeriod, exact);
+        Value wide = arith::ExtUIOp::create(body, loc, body.getI64Type(), due);
+        Value trips = arith::IndexCastOp::create(body, loc, body.getIndexType(), wide);
+        auto write = buildEntryLoop(body, "part frame", zero, trips, one, {},
+            [&](OpBuilder &at, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          mdir::mdrt::HostCallOp::create(at, loc, TypeRange{},
+              FlatSymbolRefAttr::get(at.getContext(), "mdrtWriteFrame"),
+              ValueRange{completed, point.positions, point.identities}, ValueRange{}, UnitAttr{});
+          return SmallVector<Value>{};
+        });
+        if (!write) return write.takeError();
+        return llvm::Error::success();
+      };
+      Value memory = memref::AllocaOp::create(at, loc, MemRefType::get({config.partCounts}, at.getI64Type()));
+      Value end = arith::ConstantIndexOp::create(at, loc, INT64_MAX);
+      auto parts = buildEntryLoop(at, "step parts", zero, end, one, pack(physical, false),
+          [&](OpBuilder &part, Value, ValueRange current) -> llvm::Expected<SmallVector<Value>> {
+        auto point = bind(physical, current, false);
+        auto vec = VectorType::get({3}, part.getF64Type());
+        auto finite = mdir::md::SumParticlesOp::create(part, loc, vec,
+            ValueRange{point.positions, point.velocities, point.forces});
+        {
+          OpBuilder::InsertionGuard guard(part);
+          auto args = part.createBlock(&finite.getKernel(), {}, {vec, vec, vec}, {loc, loc, loc})->getArguments();
+          Value yes = arith::ConstantOp::create(part, loc, DenseElementsAttr::get(vec, 1.0));
+          Value no = arith::ConstantOp::create(part, loc, DenseElementsAttr::get(vec, 0.0));
+          SmallVector<Value> bad;
+          for (Value field : args) {
+            Value difference = arith::SubFOp::create(part, loc, field, field);
+            Value good = arith::CmpFOp::create(part, loc, arith::CmpFPredicate::ORD, difference, difference);
+            bad.push_back(arith::SelectOp::create(part, loc, good, no, yes));
+          }
+          Value first = arith::AddFOp::create(part, loc, bad[0], bad[1]);
+          Value all = arith::AddFOp::create(part, loc, first, bad[2]);
+          mdir::md::YieldOp::create(part, loc, ValueRange{all});
+        }
+        Value invalid = buildSum3(part, finite.getResult());
+        buildPartBoundary(part, point.positions, point.velocities, point.forces, point.identities, invalid, memory);
+        SmallVector<Value> counts;
+        for (int64_t index = 0; index != config.partCounts; ++index) {
+          Value slot = arith::ConstantIndexOp::create(part, loc, index);
+          counts.push_back(memref::LoadOp::create(part, loc, memory, slot));
+        }
+        auto cast = [&](unsigned slot) -> Value {
+          return arith::IndexCastOp::create(part, loc, part.getIndexType(), counts[slot]);
+        };
+        Value n0 = cast(1), n1 = cast(5), n2 = cast(6), tailCount = cast(3), plainCount = cast(4);
+        Value per0 = arith::ConstantIndexOp::create(part, loc, 1);
+        arith::ConstantIndexOp::create(part, loc, 1);
+        Value per1 = arith::AddIOp::create(part, loc, n2, one);
+        auto plain = [&](OpBuilder &body, Value upper, const EntryFieldsIR &start)
+            -> llvm::Expected<scf::ForOp> {
+          return buildEntryLoop(body, "part plain steps", zero, upper, one, pack(start, false),
+              [&](OpBuilder &at, Value, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+            return SmallVector<Value>(call(at, step, bind(start, state, false)).getResults());
+          });
+        };
+        auto first = plain(part, n0, point);
+        if (!first) return first.takeError();
+        auto tail = plain(part, tailCount, bind(point, first->getResults(), false));
+        if (!tail) return tail.takeError();
+        Value plainStep = buildSegmentStep(part, n0, per0, tailCount, one, counts[0]);
+        auto closing = buildEntryLoop(part, "part plain energy", zero, plainCount, one, tail->getResults(),
+            [&](OpBuilder &body, Value, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+          auto actual = bind(point, state, false);
+          auto next = call(body, energyStep, actual);
+          report(body, actual, next, [&] { return plainStep; }, true);
+          auto completed = bind(actual, next.getResults(), false);
+          if (auto error = frameIfDue(body, counts[8], plainStep, completed)) return std::move(error);
+          return pack(completed, false);
+        });
+        if (!closing) return closing.takeError();
+        Value start = buildSegmentStep(part, n0, per0, tailCount, plainCount, counts[0]);
+        auto energies = buildEntryLoop(part, "part energy intervals", zero, n1, one, closing->getResults(),
+            [&](OpBuilder &body, Value index, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+          auto actual = bind(point, state, false);
+          auto before = plain(body, n2, actual);
+          if (!before) return before.takeError();
+          actual = bind(actual, before->getResults(), false);
+          auto next = call(body, energyStep, actual);
+          auto row = report(body, actual, next, [&] {
+            return buildStepNumber(body, {{index, {}}}, index, {}, per1, one, start);
+          }, false);
+          auto completed = bind(actual, next.getResults(), false);
+          if (auto error = frameIfDue(body, counts[8], row.step, completed)) return std::move(error);
+          return pack(completed, false);
+        });
+        if (!energies) return energies.takeError();
+        return SmallVector<Value>(energies->getResults());
+      });
+      if (!parts) return parts.takeError();
+      return llvm::Error::success();
+    }
     SmallVector<LoopIterationIR> iterations;
     auto number = [&](OpBuilder &body, unsigned level, Value index) {
       bool split = kinds[level] == Kind::Couple && level && kinds[level - 1] == Kind::Energy;
@@ -334,51 +536,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           point = bind(point, last->getResults(), false);
         }
         auto next = call(inside, energyStep, point);
-        Value full = next.getResult(config.leapfrog ? 6 : 1);
-        Value kinetic = buildKineticEnergy(inside, full, point.masses);
-        Value correction, trace, pressureKinetic;
-        if (measured) {
-          Value current = buildKineticVector(inside, full, point.masses);
-          Value excess = arith::SubFOp::create(inside, loc, next.getResult(measuredSlot), current);
-          correction = buildSum3(inside, excess);
-        } else if (config.brownian)
-          correction = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.0));
-        else {
-          Value excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
-          correction = buildSum3(inside, excess);
-        }
-        if (solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
-        if (config.brownian) {
-          trace = buildVirialTrace(inside, next.getResult(4));
-          pressureKinetic = arith::AddFOp::create(inside, loc, kinetic, correction);
-        } else {
-          trace = buildSum3(inside, next.getResult(5));
-          auto parameters = buildEntryPotentialFields(point);
-          auto groups = buildEntryGroups(parameters, config.constraints);
-          auto centers = buildGroupKinetic(inside,
-              {next.getResult(0), full, next.getResult(2), cell, point.masses,
-               arguments.interval, pressureMass, groups});
-          pressureKinetic = buildSum3(inside, centers.half);
-        }
-        Value completed = number(inside, atLevel, index);
-        func::CallOp::create(inside, loc, "mdrtWriteEnergies", TypeRange{},
-            ValueRange{completed, next.getResult(3), kinetic, correction, trace, pressureKinetic});
-        if (coordinateOutput) {
-          auto fields = buildEntryPotentialFields(point);
-          Value time;
-          if (config.timed && config.needsCoordinateOutput)
-            time = buildSimulationTime(inside, completed, arguments.interval);
-          coordinateOutput(inside, {next.getResult(0), cell, fields, time}, completed);
-        }
-        auto outputFields = buildEntryPotentialFields(point);
-        PotentialStateIR outputState{next.getResult(0), cell, outputFields, {}};
-        buildEntryOutputs(inside,
-            {outputState, completed, point.identities, arguments.interval, zero, one,
-             arguments.startValues, false, config.timed}, config.output);
-        if (!config.periodic && !config.framesAtEnergies)
-          mdir::mdrt::HostCallOp::create(inside, loc, TypeRange{},
-              FlatSymbolRefAttr::get(inside.getContext(), "mdrtCheckSpread"),
-              ValueRange{completed, next.getResult(0), point.identities}, ValueRange{}, UnitAttr{});
+        auto row = report(inside, point, next, [&] { return number(inside, atLevel, index); }, false);
+        Value kinetic = row.kinetic, correction = row.correction, completed = row.step;
         auto final = bind(point, next.getResults(), false);
         if (config.couplingIntervals) {
           Value optimal;

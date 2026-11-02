@@ -795,6 +795,13 @@ static void checkNativeConstraintStepEntry() {
   runtime.writesForces = metadata.writesForces;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
+  auto positions = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
+  auto ids = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type());
+  auto boundary = func::FuncOp::create(builder, loc, "mdrtPartBoundary",
+      builder.getFunctionType({positions, positions, positions, ids, builder.getF64Type(),
+          MemRefType::get({9}, builder.getI64Type())}, {}));
+  boundary.setPrivate();
+  boundary->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   for (unsigned motion : {0u, 1u, 2u}) {
     for (bool leapfrog : {false, true}) {
       if (motion == 2 && leapfrog) continue;
@@ -839,6 +846,56 @@ static void checkNativeConstraintStepEntry() {
         require(correction && cast<FloatAttr>(correction.getValue()).getValueAsDouble() == 0.0,
             "native constrained entry estimated an unmeasured initial kinetic correction");
       }
+      mdir::driver::Control control;
+      control.integrator = noise.brownian ? mdir::driver::Integrator::Brownian
+          : leapfrog ? mdir::driver::Integrator::Leapfrog : mdir::driver::Integrator::VelocityVerlet;
+      control.thermostat = noise.active && !noise.brownian;
+      control.thermostatMethod = mdir::driver::ThermostatMethod::Langevin;
+      auto production = mdir::compiler::getSegmentsControl(control);
+      auto partsConfig = config;
+      partsConfig.segments = production.segments;
+      partsConfig.plainSteps = production.numSteps;
+      partsConfig.energyIntervals.reset();
+      partsConfig.checkpointIntervals.reset();
+      require(production.energyPeriod == 0 && production.framePeriod == 0 &&
+              production.checkpointPeriod == 0 && production.getCouplingPeriod() == 0,
+          "native step parts fixture differs from production control");
+      metadata.entry = "native_constraint_parts_" + suffix;
+      auto segmented = buildSimpleStepEntry(builder, metadata, *step, *reporting, partsConfig);
+      if (!segmented) {
+        llvm::errs() << "native constrained parts " << suffix << ": "
+                     << llvm::toString(segmented.takeError()) << "\n";
+        std::exit(1);
+      }
+      auto loops = segmented->getOps<scf::ForOp>();
+      auto it = loops.begin();
+      auto initial = *it++;
+      auto parts = *it;
+      require(initial->hasAttr("mdrt.segment") && initial.getNumRegionIterArgs() == 2 &&
+              parts.getNumRegionIterArgs() == 3,
+          "native step parts lost the first-call or part state branch");
+      bool actualBoundary = false;
+      for (auto call : parts.getBody()->getOps<mdir::mdrt::HostCallOp>())
+        if (call.getCalleeAttr().getValue() == "mdrtPartBoundary") {
+          require(call.getInPlace() && llvm::equal(call.getOperands().take_front(3), parts.getRegionIterArgs()),
+              "native step part boundary lost actual carried state or in-place resorting");
+          actualBoundary = true;
+        }
+      require(actualBoundary, "native step parts have no physical boundary");
+      if (leapfrog) {
+        bool beginsOnly = false;
+        initial.walk([&](arith::CmpIOp test) {
+          if (test.getPredicate() == arith::CmpIPredicate::eq &&
+              test.getLhs() == segmented->getArguments().back()) beginsOnly = true;
+        });
+        require(beginsOnly, "native step parts repeat the backward kick on reevaluation");
+      }
+      metadata.entry = "native_invalid_parts_" + suffix;
+      auto invalid = partsConfig;
+      invalid.partCounts = 8;
+      auto omitted = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
+      require(!omitted, "native step parts accepted an invalid host count layout");
+      reject(omitted.takeError(), "native step parts require host counts and a fixed uncoupled schedule");
     }
   }
   require(succeeded(verify(module)), "native constrained-entry module did not verify");
