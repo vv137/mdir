@@ -1677,6 +1677,12 @@ natively. The shared thermal core retains the first/mean-virial work order,
 measured constrained half steps, leapfrog reporting state and new-cell row
 outputs. Period-one pressure state and Trotter parts remain pending.
 
+
+Multi-step Trotter programs of parts share the same native pressure/scaling
+core across both host-count nests and the reporting close. Their periods count
+both closing steps; plain rows retain their unscaled energy path and direct
+unused-result construction check. Period-one pressure state remains pending.
+
 ### Expression parameter names (D188)
 
 The control reader rejects term parameters that collide with names supplied

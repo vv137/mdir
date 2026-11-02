@@ -86,11 +86,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry dynamics results do not match its integrator (brownian=%d, leapfrog=%d, constrained=%d)",
         config.brownian, config.leapfrog, constrained);
-  if (config.trotter && (config.segments || !config.pressureStep || !config.scaledEnergyStep ||
+  if (config.trotter && (!config.pressureStep || !config.scaledEnergyStep ||
       pressureProgram.getFunctionType().getResults().size() != 5 + unsigned(config.leapfrog) ||
       scaledEnergyProgram.getFunctionType().getResults().size() != reported + 1))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
-        "native Trotter entry requires standalone pressure and scaled energy programs");
+        "native Trotter entry requires pressure and scaled energy programs");
   SmallVector<unsigned> tiltSlots;
   if (config.triclinic)
     for (StringRef name : {"tilt_bx", "tilt_cx", "tilt_cy"}) {
@@ -646,7 +646,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           tailCount = cast(3);
           plainCount = cast(4);
           arith::ConstantIndexOp::create(part, loc, 1);
-          Value last = arith::ConstantIndexOp::create(part, loc, 1);
+          Value last = arith::ConstantIndexOp::create(part, loc, config.trotter ? 2 : 1);
           per0 = arith::AddIOp::create(part, loc, inner, last);
           arith::ConstantIndexOp::create(part, loc, 1);
           perCouple = arith::AddIOp::create(part, loc, energyInner, last);
@@ -738,10 +738,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           auto before = plain(body, energyInner, actual, false);
           if (!before) return before.takeError();
           actual = bind(actual, before->getResults(), false);
-          auto next = call(body, energyStep, actual);
-          auto row = report(body, actual, next, [&] {
+          auto makeStep = [&] {
             return buildStepNumber(body, {{index, {}}}, index, {}, perEnergy, one, start);
-          }, false);
+          };
+          std::optional<TrotterIR> scaled;
+          mdir::dyn::StepOp next;
+          if (config.trotter) {
+            scaled = trotterSteps(body, actual, true, makeStep);
+            next = scaled->step;
+          } else next = call(body, energyStep, actual);
+          auto row = report(body, actual, next,
+              [&] { return scaled ? scaled->completed : makeStep(); },
+              false, bool(scaled), scaled ? scaled->cell : Value{});
           auto completed = bind(actual, next.getResults(), false);
           if (config.couplingIntervals) {
             Value optimal;
@@ -750,7 +758,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             if (config.barostat && config.leapfrog) completed.velocities = next.getResult(6);
             completed = couple(body, completed, row.step, optimal,
                 config.barostat ? next.getResult(3) : Value{}, row.diagonal,
-                config.barostat ? next.getResult(5) : Value{});
+                config.barostat ? next.getResult(5) : Value{}, scaled ? &*scaled : nullptr);
             if (config.barostat && config.leapfrog)
               completed.velocities = buildKick(body, completed.velocities, completed.forces, completed.masses, halfBack);
           }

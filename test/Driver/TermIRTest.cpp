@@ -583,7 +583,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       invalid.pressureStep = {};
       auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
       require(!missing, "native Trotter accepted a missing pressure step");
-      reject(missing.takeError(), "native Trotter entry requires standalone pressure and scaled energy programs");
+      reject(missing.takeError(), "native Trotter entry requires pressure and scaled energy programs");
     }
     auto invalid = config;
     invalid.couplingStep = {};
@@ -638,7 +638,6 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       require(loop->isProperAncestor(cell), "native first-order cell load escaped its schedule");
     });
   }
-  if (!trotter) {
   auto production = mdir::compiler::getSegmentsControl(control);
   require(production.energyPeriod == 0 && production.framePeriod == 0 &&
           production.checkpointPeriod == 0 && production.numSteps == production.getCouplingPeriod(),
@@ -710,10 +709,22 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     require(!exact || reevaluations == 3, "native exact parts lost a scaled evaluation");
     partLoop.walk([&](mdir::dyn::StepOp call) {
       auto cell = call.getOperand(4).getDefiningOp<mdir::md::OrthorhombicCellOp>();
-      require(cell && cell.getOperand(0).getDefiningOp<memref::LoadOp>() && partLoop->isProperAncestor(cell),
-          "native barostat parts use a cell outside their physical part");
+      bool scaled = trotter && (call.getCalleeAttr().getValue() == "step_thermostat" ||
+          call.getCalleeAttr().getValue() == "step_trotter_energy");
+      require(cell && (scaled ? bool(cell.getOperand(0).getDefiningOp<arith::MulFOp>())
+                              : bool(cell.getOperand(0).getDefiningOp<memref::LoadOp>())) &&
+          partLoop->isProperAncestor(cell), "native barostat parts lost their live or scaled cell");
     });
   }
+  if (trotter) {
+    unsigned pressureCalls = 0, scaledCalls = 0;
+    partLoop.walk([&](mdir::dyn::StepOp call) {
+      auto name = call.getCalleeAttr().getValue();
+      pressureCalls += name == "step_virial";
+      scaledCalls += name == "step_thermostat" || name == "step_trotter_energy";
+    });
+    require(pressureCalls == 3 && scaledCalls == 3,
+        "native Trotter parts lost an outer, inner or reporting pressure/scaling pair");
   }
   require(succeeded(verify(module)), "native thermal module did not verify");
 }
