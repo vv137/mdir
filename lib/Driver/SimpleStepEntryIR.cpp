@@ -37,10 +37,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.needsHostedEvaluation && !complete)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry requires the hosted-evaluation role");
-  if (config.segments && (config.partCounts != 9 || config.restart || config.couplingIntervals ||
-      config.energyIntervals || config.frameIntervals || config.checkpointIntervals))
+  if (config.segments && config.partCounts != 9)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
-        "native step parts require host counts and a fixed uncoupled schedule");
+        "native step parts require nine host count slots");
+  if (config.segments && config.restart)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step parts do not take static restart control");
+  if (config.segments && (config.energyIntervals || config.frameIntervals || config.checkpointIntervals))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native step parts require zero output periods");
   if (config.segments && !program.takesForces)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step parts require incoming force state");
@@ -332,6 +337,55 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
               ValueRange{completed, next.getResult(0), point.identities}, ValueRange{}, UnitAttr{});
       return {kinetic, correction, completed};
     };
+    auto optimalEnergy = [&](OpBuilder &inside, Value kinetic, Value excess) -> Value {
+      Value weight = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(2.0 / 3.0));
+      Value change = arith::MulFOp::create(inside, loc, weight, excess);
+      return arith::AddFOp::create(inside, loc, kinetic, change);
+    };
+    auto couple = [&](OpBuilder &inside, const EntryFieldsIR &current, Value completed, Value optimal) {
+      CenterMotionInputs motion;
+      if (config.removesMotion)
+        motion = {current.velocities, current.masses, coupling.totalMass, coupling.half};
+      auto center = buildCenterMotion(inside, motion);
+      Value bath = center.energy, factor;
+      if (config.rescales) {
+        Value kinetic = buildKineticEnergy(inside, current.velocities, current.masses);
+        auto thermal = buildThermostat(inside,
+            {kinetic, config.removesMotion ? center.energy : Value{}, optimal, completed,
+             seed, target, freedom, decay}, config.noseHoover);
+        bath = thermal.heat;
+        factor = thermal.factor;
+      }
+      auto result = current;
+      result.velocities = buildCoupledVelocities(inside, current.velocities,
+          center.velocity, factor, {}, bath);
+      return result;
+    };
+    auto closeCoupling = [&](OpBuilder &inside, const EntryFieldsIR &point,
+        llvm::function_ref<Value()> makeStep) -> EntryFieldsIR {
+          auto next = call(inside, measuredCoupling ? couplingProgram : step, point);
+          Value completed = makeStep();
+          Value full = next.getResult(1), optimal;
+          if (config.leapfrog && config.rescales) {
+            if (measuredCoupling) full = next.getResult(3);
+            else {
+              Value half = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.5));
+              Value interval = arith::MulFOp::create(inside, loc, half, arguments.interval);
+              full = buildKick(inside, next.getResult(1), next.getResult(2), point.masses, interval);
+            }
+          }
+          if (config.rescales && !config.brownian) {
+            Value excess;
+            if (measuredCoupling) {
+              Value current = buildKineticVector(inside, full, point.masses);
+              excess = arith::SubFOp::create(inside, loc, next.getResult(3 + unsigned(config.leapfrog)), current);
+            } else excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
+            Value kinetic = buildKineticEnergy(inside, full, point.masses);
+            Value scalarExcess = buildSum3(inside, excess);
+            optimal = optimalEnergy(inside, kinetic, scalarExcess);
+          }
+          return couple(inside, bind(point, next.getResults(), false), completed, optimal);
+    };
     if (config.segments) {
       auto frameIfDue = [&](OpBuilder &body, Value period, Value completed,
                             const EntryFieldsIR &point) -> llvm::Error {
@@ -387,10 +441,31 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         auto cast = [&](unsigned slot) -> Value {
           return arith::IndexCastOp::create(part, loc, part.getIndexType(), counts[slot]);
         };
-        Value n0 = cast(1), n1 = cast(5), n2 = cast(6), tailCount = cast(3), plainCount = cast(4);
-        Value per0 = arith::ConstantIndexOp::create(part, loc, 1);
-        arith::ConstantIndexOp::create(part, loc, 1);
-        Value per1 = arith::AddIOp::create(part, loc, n2, one);
+        Value n0 = cast(1), inner, energyCount, energyCouples, energyInner, tailCount, plainCount;
+        Value per0, perEnergy, perCouple;
+        if (config.couplingIntervals) {
+          inner = cast(2);
+          energyCount = cast(5);
+          energyCouples = cast(7);
+          energyInner = cast(6);
+          tailCount = cast(3);
+          plainCount = cast(4);
+          arith::ConstantIndexOp::create(part, loc, 1);
+          Value last = arith::ConstantIndexOp::create(part, loc, 1);
+          per0 = arith::AddIOp::create(part, loc, inner, last);
+          arith::ConstantIndexOp::create(part, loc, 1);
+          perCouple = arith::AddIOp::create(part, loc, energyInner, last);
+          Value periods = arith::AddIOp::create(part, loc, energyCouples, one);
+          perEnergy = arith::MulIOp::create(part, loc, periods, perCouple);
+        } else {
+          energyCount = cast(5);
+          energyInner = cast(6);
+          tailCount = cast(3);
+          plainCount = cast(4);
+          per0 = arith::ConstantIndexOp::create(part, loc, 1);
+          arith::ConstantIndexOp::create(part, loc, 1);
+          perEnergy = arith::AddIOp::create(part, loc, energyInner, one);
+        }
         auto plain = [&](OpBuilder &body, Value upper, const EntryFieldsIR &start)
             -> llvm::Expected<scf::ForOp> {
           return buildEntryLoop(body, "part plain steps", zero, upper, one, pack(start, false),
@@ -398,7 +473,20 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             return SmallVector<Value>(call(at, step, bind(start, state, false)).getResults());
           });
         };
-        auto first = plain(part, n0, point);
+        auto first = [&]() -> llvm::Expected<scf::ForOp> {
+          if (!config.couplingIntervals) return plain(part, n0, point);
+          return buildEntryLoop(part, "part coupling periods", zero, n0, one, pack(point, false),
+              [&](OpBuilder &body, Value index, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+            auto actual = bind(point, state, false);
+            auto before = plain(body, inner, actual);
+            if (!before) return before.takeError();
+            actual = bind(actual, before->getResults(), false);
+            auto coupled = closeCoupling(body, actual, [&] {
+              return buildStepNumber(body, {{index, {}}}, index, {}, per0, one, counts[0]);
+            });
+            return pack(coupled, false);
+          });
+        }();
         if (!first) return first.takeError();
         auto tail = plain(part, tailCount, bind(point, first->getResults(), false));
         if (!tail) return tail.takeError();
@@ -414,17 +502,39 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         });
         if (!closing) return closing.takeError();
         Value start = buildSegmentStep(part, n0, per0, tailCount, plainCount, counts[0]);
-        auto energies = buildEntryLoop(part, "part energy intervals", zero, n1, one, closing->getResults(),
+        auto energies = buildEntryLoop(part, "part energy intervals", zero, energyCount, one, closing->getResults(),
             [&](OpBuilder &body, Value index, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
           auto actual = bind(point, state, false);
-          auto before = plain(body, n2, actual);
+          if (config.couplingIntervals) {
+            auto periods = buildEntryLoop(body, "part closing coupling periods", zero, energyCouples, one,
+                pack(actual, false),
+                [&](OpBuilder &period, Value within, ValueRange values) -> llvm::Expected<SmallVector<Value>> {
+              auto current = bind(actual, values, false);
+              auto before = plain(period, energyInner, current);
+              if (!before) return before.takeError();
+              current = bind(current, before->getResults(), false);
+              auto coupled = closeCoupling(period, current, [&] {
+                return buildStepNumber(period, {{index, {}}}, within, perEnergy, perCouple, one, start);
+              });
+              return pack(coupled, false);
+            });
+            if (!periods) return periods.takeError();
+            actual = bind(actual, periods->getResults(), false);
+          }
+          auto before = plain(body, energyInner, actual);
           if (!before) return before.takeError();
           actual = bind(actual, before->getResults(), false);
           auto next = call(body, energyStep, actual);
           auto row = report(body, actual, next, [&] {
-            return buildStepNumber(body, {{index, {}}}, index, {}, per1, one, start);
+            return buildStepNumber(body, {{index, {}}}, index, {}, perEnergy, one, start);
           }, false);
           auto completed = bind(actual, next.getResults(), false);
+          if (config.couplingIntervals) {
+            Value optimal;
+            if (config.rescales && !config.brownian)
+              optimal = optimalEnergy(body, row.kinetic, row.correction);
+            completed = couple(body, completed, row.step, optimal);
+          }
           if (auto error = frameIfDue(body, counts[8], row.step, completed)) return std::move(error);
           return pack(completed, false);
         });
@@ -477,54 +587,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           writeFrame(inside, completed, point);
           return SmallVector<Value>(before->getResults());
         }
-        auto optimalEnergy = [&](Value kinetic, Value excess) -> Value {
-          Value weight = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(2.0 / 3.0));
-          Value change = arith::MulFOp::create(inside, loc, weight, excess);
-          return arith::AddFOp::create(inside, loc, kinetic, change);
-        };
-        auto couple = [&](const EntryFieldsIR &current, Value completed, Value optimal) {
-          CenterMotionInputs motion;
-          if (config.removesMotion)
-            motion = {current.velocities, current.masses, coupling.totalMass, coupling.half};
-          auto center = buildCenterMotion(inside, motion);
-          Value bath = center.energy, factor;
-          if (config.rescales) {
-            Value kinetic = buildKineticEnergy(inside, current.velocities, current.masses);
-            auto thermal = buildThermostat(inside,
-                {kinetic, config.removesMotion ? center.energy : Value{}, optimal, completed,
-                 seed, target, freedom, decay}, config.noseHoover);
-            bath = thermal.heat;
-            factor = thermal.factor;
-          }
-          auto result = current;
-          result.velocities = buildCoupledVelocities(inside, current.velocities,
-              center.velocity, factor, {}, bath);
-          return result;
-        };
-        if (kinds[atLevel] == Kind::Couple) {
-          auto next = call(inside, measuredCoupling ? couplingProgram : step, point);
-          Value completed = number(inside, atLevel, index);
-          Value full = next.getResult(1), optimal;
-          if (config.leapfrog && config.rescales) {
-            if (measuredCoupling) full = next.getResult(3);
-            else {
-              Value half = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.5));
-              Value interval = arith::MulFOp::create(inside, loc, half, arguments.interval);
-              full = buildKick(inside, next.getResult(1), next.getResult(2), point.masses, interval);
-            }
-          }
-          if (config.rescales && !config.brownian) {
-            Value excess;
-            if (measuredCoupling) {
-              Value current = buildKineticVector(inside, full, point.masses);
-              excess = arith::SubFOp::create(inside, loc, next.getResult(3 + unsigned(config.leapfrog)), current);
-            } else excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
-            Value kinetic = buildKineticEnergy(inside, full, point.masses);
-            Value scalarExcess = buildSum3(inside, excess);
-            optimal = optimalEnergy(kinetic, scalarExcess);
-          }
-          return pack(couple(bind(point, next.getResults(), false), completed, optimal), false);
-        }
+        if (kinds[atLevel] == Kind::Couple)
+          return pack(closeCoupling(inside, point, [&] { return number(inside, atLevel, index); }), false);
         if (config.couplingIntervals) {
           auto last = buildEntryLoop(inside, "last COM period plain steps", zero, extents.back(), one,
               pack(point, false),
@@ -541,8 +605,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         auto final = bind(point, next.getResults(), false);
         if (config.couplingIntervals) {
           Value optimal;
-          if (config.rescales && !config.brownian) optimal = optimalEnergy(kinetic, correction);
-          final = couple(final, completed, optimal);
+          if (config.rescales && !config.brownian) optimal = optimalEnergy(inside, kinetic, correction);
+          final = couple(inside, final, completed, optimal);
         }
         if (config.framesAtEnergies) writeFrame(inside, completed, final);
         return pack(final, false);

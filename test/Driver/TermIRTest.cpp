@@ -538,6 +538,52 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
         "native thermal factor uses a stale closing step");
   });
   require(factors == 2, "native thermal entry lost coupling or closing-row factors");
+  auto production = mdir::compiler::getSegmentsControl(control);
+  require(production.energyPeriod == 0 && production.framePeriod == 0 &&
+          production.checkpointPeriod == 0 && production.numSteps == production.getCouplingPeriod(),
+      "native coupled parts fixture differs from production control");
+  auto partsConfig = config;
+  partsConfig.segments = production.segments;
+  partsConfig.energyIntervals.reset();
+  // Builder's appended closing nest has one energy interval, zero complete
+  // coupling periods and zero plain steps. Its actual bounds come from the host.
+  partsConfig.couplingIntervals = 0;
+  partsConfig.plainSteps = 0;
+  metadata.takesForces = true;
+  metadata.entry = "native_thermal_parts";
+  auto positions = MemRefType::get({ShapedType::kDynamic, 3}, builder.getF64Type());
+  auto ids = MemRefType::get({ShapedType::kDynamic}, builder.getI32Type());
+  auto boundary = func::FuncOp::create(builder, loc, "mdrtPartBoundary",
+      builder.getFunctionType({positions, positions, positions, ids, builder.getF64Type(),
+          MemRefType::get({9}, builder.getI64Type())}, {}));
+  boundary.setPrivate();
+  boundary->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto segmented = buildSimpleStepEntry(builder, metadata, *step, *reporting, partsConfig);
+  if (!segmented) {
+    llvm::errs() << "native thermal parts: " << llvm::toString(segmented.takeError()) << "\n";
+    std::exit(1);
+  }
+  unsigned partFactors = 0;
+  scf::ForOp partLoop;
+  for (auto candidate : segmented->getOps<scf::ForOp>())
+    if (candidate.getNumRegionIterArgs() == 3) partLoop = candidate;
+  require(bool(partLoop), "native thermal parts have no carried-state loop");
+  partLoop.walk([&](func::CallOp call) {
+    if (call.getCallee() != (nose ? "mdrtNoseHooverFactor" : "mdrtBussiFactor")) return;
+    ++partFactors;
+    auto completed = call.getOperand(nose ? 0 : 1).getDefiningOp<arith::AddIOp>();
+    require(completed && partLoop->isProperAncestor(completed),
+        "native thermal parts use a stale closing step");
+  });
+  require(partFactors == 3, "native thermal parts lost an outer, inner or reporting coupling");
+  bool actualBoundary = false;
+  for (auto call : partLoop.getBody()->getOps<mdir::mdrt::HostCallOp>())
+    if (call.getCalleeAttr().getValue() == "mdrtPartBoundary") {
+      require(call.getInPlace() && llvm::equal(call.getOperands().take_front(3), partLoop.getRegionIterArgs()),
+          "native thermal part boundary lost actual state or in-place resorting");
+      actualBoundary = true;
+    }
+  require(actualBoundary, "native thermal parts have no physical boundary");
   require(succeeded(verify(module)), "native thermal module did not verify");
 }
 
@@ -895,7 +941,7 @@ static void checkNativeConstraintStepEntry() {
       invalid.partCounts = 8;
       auto omitted = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
       require(!omitted, "native step parts accepted an invalid host count layout");
-      reject(omitted.takeError(), "native step parts require host counts and a fixed uncoupled schedule");
+      reject(omitted.takeError(), "native step parts require nine host count slots");
     }
   }
   require(succeeded(verify(module)), "native constrained-entry module did not verify");

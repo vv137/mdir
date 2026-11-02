@@ -377,3 +377,9 @@ branch, finite-state boundary, host count loads, plain/tail/energy loops and
 conditional frames natively. Leapfrog distinguishes the first call from a
 reevaluation call. Plain closing rows retain their distinct solvent/observable
 output order; coupled parts and barostat schedules remain pending.
+
+Fixed-cell coupled dynamics parts also construct both coupling nests and the
+last reporting period from host counts. They share the standalone coupling core,
+including measured half steps and optimal-temperature order; partial plain rows
+retain their separate output contract. Static restart controls and barostat
+schedules remain on the remaining entry path.

@@ -1422,7 +1422,7 @@ llvm::Error Builder::emitEntry() {
     return llvm::Error::success();
   }
   bool nativeSteps = !control.frames && !control.minimize &&
-      (!control.segments || (!isRestart() && control.getCouplingPeriod() == 0)) &&
+      (!control.segments || !isRestart()) &&
       !control.barostat &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
