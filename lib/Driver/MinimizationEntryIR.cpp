@@ -23,6 +23,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildMinimizationEntry(
     OpBuilder &builder, const Program &program, mdir::dyn::ProgramOp descend,
     const MinimizationEntryIRConfig &config,
     llvm::function_ref<EntryCompletionIR(OpBuilder &, const PotentialStateIR &, EnergyResults, Value)> complete) {
+  if (config.segments && config.restart)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), segmentsStaticRestartError);
   if (config.segments && config.partCounts < 2)
     return llvm::createStringError(llvm::inconvertibleErrorCode(), "native minimization part counts require start and step slots");
   if (!descend)

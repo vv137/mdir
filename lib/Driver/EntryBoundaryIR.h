@@ -5,8 +5,12 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/Error.h"
-namespace mdir::driver { struct Program; }
+namespace mdir::driver { struct Program; struct Control; }
 namespace mdir::driver::builder {
+inline constexpr char segmentsStaticRestartError[] =
+    "a program of segments takes restart state through its activation, not a static restart control";
+llvm::Error checkEntryControl(const Control &);
+
 struct EntryTupleBuffersIR {
   mlir::Value members;
   llvm::SmallVector<mlir::Value> fields;

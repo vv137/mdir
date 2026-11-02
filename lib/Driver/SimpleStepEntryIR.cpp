@@ -29,6 +29,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     mdir::dyn::ProgramOp energyStep, const SimpleStepEntryIRConfig &config,
     llvm::function_ref<EntryCompletionIR(OpBuilder &, const PotentialStateIR &, EnergyResults, Value)> complete,
     llvm::function_ref<void(OpBuilder &, const PotentialStateIR &, Value)> coordinateOutput) {
+  if (config.segments && config.restart)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), segmentsStaticRestartError);
   if (config.needsCoordinateOutput && !coordinateOutput)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry requires the coordinate-output role");
@@ -41,9 +43,6 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.segments && config.partCounts != 9)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step parts require nine host count slots");
-  if (config.segments && config.restart)
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-        "native step parts do not take static restart control");
   if (config.segments && (config.energyIntervals || config.frameIntervals || config.checkpointIntervals))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step parts require zero output periods");

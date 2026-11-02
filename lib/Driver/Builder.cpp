@@ -2,6 +2,7 @@
 // points of mdir/Driver/Builder.h (docs/driver.md, Section 2.12).
 
 #include "BuilderImpl.h"
+#include "EntryBoundaryIR.h"
 #include "ReorderIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/IR/Builders.h"
@@ -530,6 +531,7 @@ void mdir::driver::keepDependentTerms(Control &control, const System &system) {
 llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
                                                    const System &system,
                                                    const BuildKept *kept) {
+  if (llvm::Error error = checkEntryControl(control)) return std::move(error);
   Program program;
   Builder builder(control, system, program);
   builder.kept = kept;
@@ -542,6 +544,7 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
 
 llvm::Expected<std::shared_ptr<BuildKept>>
 mdir::driver::buildArrays(const Control &control, const System &system) {
+  if (llvm::Error error = checkEntryControl(control)) return std::move(error);
   auto arrays = std::make_shared<BuildKept>();
   Program program;
   Builder builder(control, system, program);

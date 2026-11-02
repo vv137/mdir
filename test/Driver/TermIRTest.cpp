@@ -446,6 +446,23 @@ static void checkNativeBarePotentialBody() {
 }
 
 
+static void checkStaticRestartControl() {
+  for (bool minimize : {false, true}) {
+    mdir::driver::Control control;
+    control.segments = true;
+    control.minimize = minimize;
+    control.restartInput = "checkpoint.h5";
+    auto refused = checkEntryControl(control);
+    require(bool(refused), "static restart control reached native construction");
+    reject(std::move(refused), segmentsStaticRestartError);
+    control.segments = false;
+    require(!checkEntryControl(control), "ordinary restart was refused by the segment guard");
+    control.segments = true;
+    control.restartInput.clear();
+    require(!checkEntryControl(control), "activation continuation was refused by the static guard");
+  }
+}
+
 static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false) {
   TermIRPlan plan;
   auto &context = plan.getContext();
@@ -812,6 +829,9 @@ static void checkNativeMinimizationEntry() {
         "invalid native minimization parts retained an entry");
   };
   auto invalid = config;
+  invalid.restart = true;
+  rejectConfig(invalid, segmentsStaticRestartError);
+  invalid = config;
   invalid.energyPeriod = 1;
   rejectConfig(invalid, "native minimization parts require a zero energy period");
   invalid = config;
@@ -980,6 +1000,11 @@ static void checkNativeConstraintStepEntry() {
         require(beginsOnly, "native step parts repeat the backward kick on reevaluation");
       }
       metadata.entry = "native_invalid_parts_" + suffix;
+      auto staticRestart = partsConfig;
+      staticRestart.restart = true;
+      auto staticError = buildSimpleStepEntry(builder, metadata, *step, *reporting, staticRestart);
+      require(!staticError, "native parts accepted static restart control");
+      reject(staticError.takeError(), segmentsStaticRestartError);
       auto invalid = partsConfig;
       invalid.partCounts = 8;
       auto omitted = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
@@ -1685,6 +1710,7 @@ int main(int argc, char **argv) {
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com);
           checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true);
         }
+  checkStaticRestartControl();
   checkNativeCenterStepEntry();
   checkNativeMinimizationEntry();
   checkNativeConstraintStepEntry();

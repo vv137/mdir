@@ -66,10 +66,16 @@ with the same error in both builds is identical too, and is counted as such. The
 report names cases by their place in the corpus, never by a path of the
 machine. The exit status is 0 when every case is identical, 1 when one
 differs, and 2 for an error of the script.
+
+--expected-errors FILE accepts only the complete old/new failed-output pairs
+approved by ruling 10 (#721), keyed by case, target/kind, stage and form. Every
+entry must be observed. Approved diagnostic changes are reported separately
+from identical cases; successful outputs and all unlisted errors stay exact.
 """
 import argparse
 import difflib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -81,6 +87,58 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MARKER = re.compile(r"^(?:#|//)--- (\S+)\s*$")
 HASHES_HEADER = "# builder-equivalence hashes 2"
+
+
+MESSAGE = ("mdir: a program of segments takes restart state through its activation, "
+           "not a static restart control\n")
+
+
+class ExpectedErrors:
+    def __init__(self, path=None):
+        self.entries = {}
+        self.used = set()
+        if path is None:
+            return
+        with open(path) as file:
+            manifest = json.load(file)
+        if set(manifest) != {"version", "issue", "entries"} or manifest["version"] != 1 or manifest["issue"] != 721:
+            raise ValueError("expected-error manifest must describe ruling 10 / #721")
+        for entry in manifest["entries"]:
+            if set(entry) != {"case", "target", "stage", "form", "old", "new"}:
+                raise ValueError("invalid expected-error entry")
+            key = tuple(entry[k] for k in ("case", "target", "stage", "form"))
+            if key in self.entries or key[1] not in ("cpu segments", "gpu segments") or key[2] not in ("module", "lowered") or key[3] != "printed":
+                raise ValueError("duplicate or unsupported expected-error key")
+            values = []
+            for name in ("old", "new"):
+                value = entry[name]
+                if set(value) != {"status", "stdout", "stderr"} or type(value["status"]) is not int or value["status"] != 1 or value["stdout"] != "":
+                    raise ValueError("only failed emits with empty stdout may be excepted")
+                values.append((1, b"", value["stderr"].encode()))
+            old, new = values
+            if b"operand #0 does not dominate this use" not in old[2] or new[2] != MESSAGE.encode():
+                raise ValueError("unapproved diagnostic exception")
+            self.entries[key] = (old, new)
+
+    def accept(self, key, old, new, hashes=False):
+        expected = self.entries.get(key)
+        if expected is None:
+            return False
+        before, after = expected
+        if hashes:
+            before = (str(before[0]), hashlib.sha256(before[1]).hexdigest(),
+                      hashlib.sha256(before[2]).hexdigest())
+        if old != before or new != after:
+            return False
+        self.used.add(key)
+        print(f"EXPECTED-DIAGNOSTIC: {key[0]} [{key[1]}] {key[2]} {key[3]}")
+        return True
+
+    def complete(self):
+        unused = self.entries.keys() - self.used
+        for key in sorted(unused):
+            print("UNUSED-EXPECTED-DIAGNOSTIC: " + repr(key))
+        return not unused
 
 
 def program(path):
@@ -375,17 +433,22 @@ def digest(entry):
     return (str(status), hashlib.sha256(out).hexdigest(), hashlib.sha256(err).hexdigest())
 
 
-def summary(cases, rows):
+def summary(cases, rows, expected=None):
     """rows: (case, target, stage, form, same, failed)."""
     keys = {(case, target) for case, target, *_ in rows}
-    different = {(case, target) for case, target, _, _, same, _ in rows if not same}
+    changed = {(case, target) for case, target, _, _, same, _ in rows if not same}
+    accepted = expected.used if expected else set()
+    different = {(case, target) for case, target, stage, form, same, _ in rows
+                 if not same and (case, target, stage, form) not in accepted}
     failed = {(case, target) for case, target, _, _, same, failed in rows if same and failed}
     stages = sorted({(stage, form) for _, _, stage, form, _, _ in rows})
     print(f"control files: {len(cases)}")
     print(f"cases (control file, target, and kind): {len(keys)}")
     print("compared: " + ", ".join(f"{stage} {form}" for stage, form in stages))
-    print(f"identical: {len(keys) - len(different)}"
-          f" (of which stop with the same error in both: {len(failed - different)})")
+    print(f"identical: {len(keys) - len(changed)}"
+          f" (of which stop with the same error in both: {len(failed - changed)})")
+    if accepted:
+        print(f"expected diagnostic changes: {len({key[:2] for key in accepted})} cases / {len(accepted)} outputs")
     print(f"different: {len(different)}")
     return 1 if different else 0
 
@@ -426,7 +489,14 @@ def main():
     parser.add_argument("--diff-lines", type=int, default=20)
     parser.add_argument("--show-errors", action="store_true",
                         help="name each case that stops with an error, and its first line")
+    parser.add_argument("--expected-errors", help="exact approved diagnostic manifest (#721)")
     args = parser.parse_args()
+    if args.expected_errors and args.command == "record":
+        parser.error("--expected-errors is only for compare or verify")
+    try:
+        expected = ExpectedErrors(args.expected_errors)
+    except (ValueError, OSError, TypeError, KeyError) as error:
+        parser.error(str(error))
 
     count = 2 if args.command == "compare" else 1
     if len(args.programs) != count:
@@ -491,7 +561,7 @@ def main():
         for (_, case, target), (old, new) in zip(work, results):
             for key in sorted(new):
                 same = old[key] == new[key]
-                if not same:
+                if not same and not expected.accept((case.name, target, *key), old[key], new[key]):
                     show_difference(case.name, target, *key, old[key], new[key], args.diff_lines)
                 rows.append((case.name, target, *key, same, new[key][0] != 0))
     else:
@@ -507,13 +577,15 @@ def main():
             for key in sorted(new):
                 old = recorded.get((case.name, target, *key))
                 same = old == digest(new[key])
-                if not same:
+                if not same and not expected.accept((case.name, target, *key), old, new[key], hashes=True):
                     print(f"DIFFERENT: {case.name} [{target}] {key[0]} {key[1]}"
                           + (": not recorded" if old is None else
                              f": status {old[0]} -> {new[key][0]}" if old[0] != str(new[key][0])
                              else ": the output differs from the recorded hash"))
                 rows.append((case.name, target, *key, same, new[key][0] != 0))
-    return summary(cases, rows)
+    complete = expected.complete()
+    result = summary(cases, rows, expected)
+    return result if complete else 1
 
 
 if __name__ == "__main__":

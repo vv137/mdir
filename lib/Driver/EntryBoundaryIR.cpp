@@ -1,11 +1,18 @@
 // Entry signatures retain the host's buffer and scalar order.
 #include "EntryBoundaryIR.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Driver/Control.h"
 #include "mlir/IR/Builders.h"
 #include <cassert>
 using namespace mlir;
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+llvm::Error mdir::driver::builder::checkEntryControl(const Control &control) {
+  if (control.segments && !control.restartInput.empty())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), segmentsStaticRestartError);
+  return llvm::Error::success();
+}
 
 llvm::Expected<func::FuncOp> mdir::driver::builder::buildEntryFunction(
     OpBuilder &builder, const Program &program, const EntryBoundaryConfigIR &config,
