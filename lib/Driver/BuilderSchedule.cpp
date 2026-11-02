@@ -1423,7 +1423,8 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize &&
       (!control.segments || !isRestart()) &&
-      (!control.barostat || (!control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact))) &&
+      (!control.barostat || (!control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact ||
+          (!control.segments && usesTrotter() && !scalesEveryStep())))) &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" ||
@@ -1452,6 +1453,8 @@ llvm::Error Builder::emitEntry() {
     config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
     config.barostat = bool(control.barostat);
     config.exactBarostat = control.barostatWork == BarostatWork::Exact;
+    config.trotter = usesTrotter();
+    config.countsAfterScaling = countsAfterScaling();
     config.strainCoupling = control.anisotropic ? StrainCoupling::Anisotropic
         : control.semiIsotropic ? StrainCoupling::SemiIsotropic : StrainCoupling::Isotropic;
     if (config.barostat) {
@@ -1474,7 +1477,11 @@ llvm::Error Builder::emitEntry() {
         config.barostatEnergyConstant = std::distance(program.startValues.begin(), energy);
       }
       config.couplingStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>(
-          hasConstraints() ? "step_coupling" : "step_energy");
+          config.trotter ? "step_trotter" : hasConstraints() ? "step_coupling" : "step_energy");
+      if (config.trotter) {
+        config.pressureStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_virial");
+        config.scaledEnergyStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_trotter_energy");
+      }
       if (scalesReference()) {
         std::array<unsigned, 3> slots;
         for (unsigned axis = 0; axis != 3; ++axis) {

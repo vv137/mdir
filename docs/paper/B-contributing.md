@@ -385,3 +385,10 @@ scale at their existing loop boundaries; tail/plain rows retain their distinct
 cell and output scope. Closing rows couple full-time leapfrog velocities and
 restore the stored half step. Exact reevaluations return the carried force state.
 Trotter schedules remain on the remaining entry path.
+
+
+Standalone TROTTER and TROTTER_FIRST_ORDER schedules with a coupling period
+of two or more construct their pressure step, strain and scaled closing step
+natively. The shared thermal core retains the first/mean-virial work order,
+measured constrained half steps, leapfrog reporting state and new-cell row
+outputs. Period-one pressure state and Trotter parts remain pending.

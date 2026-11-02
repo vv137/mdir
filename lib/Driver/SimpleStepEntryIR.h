@@ -42,6 +42,8 @@ struct SimpleStepEntryIRConfig {
   bool segments = false;
   int64_t partCounts = 9;
   bool barostat = false, exactBarostat = false;
+  bool trotter = false, countsAfterScaling = false;
+  mdir::dyn::ProgramOp pressureStep, scaledEnergyStep;
   StrainCoupling strainCoupling = StrainCoupling::Isotropic;
   std::optional<BarostatParameters> barostatParameters;
   std::optional<unsigned> barostatConstant, barostatEnergyConstant;

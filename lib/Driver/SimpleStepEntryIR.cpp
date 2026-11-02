@@ -61,6 +61,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   bool constrained = !config.constraints.empty();
   bool measured = measuresHalfSteps(constrained, config.brownian);
   auto couplingProgram = config.couplingStep;
+  auto pressureProgram = config.pressureStep, scaledEnergyProgram = config.scaledEnergyStep;
   if (config.couplingIntervals && config.rescales && !config.bathParameters)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry thermostat requires bath parameters");
@@ -70,7 +71,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native barostat requires coupling parameters");
   bool measuredCoupling = measured && config.rescales && config.couplingIntervals.has_value();
-  unsigned couplingResults = (config.barostat ? 6 : 3) +
+  unsigned couplingResults = (config.trotter ? 4 + 2 * unsigned(config.countsAfterScaling) : config.barostat ? 6 : 3) +
       unsigned(config.leapfrog && (config.barostat || measuredCoupling)) + unsigned(measuredCoupling);
   if ((measuredCoupling || config.barostat) && (!couplingProgram ||
       couplingProgram.getFunctionType().getResults().size() != couplingResults))
@@ -85,6 +86,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry dynamics results do not match its integrator (brownian=%d, leapfrog=%d, constrained=%d)",
         config.brownian, config.leapfrog, constrained);
+  if (config.trotter && (config.segments || !config.pressureStep || !config.scaledEnergyStep ||
+      pressureProgram.getFunctionType().getResults().size() != 5 + unsigned(config.leapfrog) ||
+      scaledEnergyProgram.getFunctionType().getResults().size() != reported + 1))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "native Trotter entry requires standalone pressure and scaled energy programs");
   SmallVector<unsigned> tiltSlots;
   if (config.triclinic)
     for (StringRef name : {"tilt_bx", "tilt_cx", "tilt_cy"}) {
@@ -138,12 +144,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     periods.resize(kinds.size());
     for (int64_t count : counts) extents.push_back(arith::ConstantIndexOp::create(at, loc, count));
     int64_t taken = 1;
+    int64_t closingSteps = config.trotter ? 2 : 1;
     for (size_t level = kinds.size(); level-- != 0;) {
       periods[level] = arith::ConstantIndexOp::create(at, loc, taken);
       taken *= counts[level];
       if (level && kinds[level - 1] == Kind::Energy)
-        taken += config.couplingIntervals ? config.plainSteps + 1 : 1;
-      else if (level && kinds[level - 1] == Kind::Couple) ++taken;
+        taken += config.couplingIntervals ? config.plainSteps + closingSteps : 1;
+      else if (level && kinds[level - 1] == Kind::Couple) taken += closingSteps;
     }
     }
     SmallVector<Value> edges{arguments.lengthX, arguments.lengthY, arguments.lengthZ};
@@ -288,8 +295,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       if (!initial) return initial.takeError();
       physical = std::move(*initial);
     }
-    auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point) {
+    auto call = [&](OpBuilder &body, mdir::dyn::ProgramOp callee, const EntryFieldsIR &point, Value mu = {}) {
       SmallVector<Value> inputs{point.positions, point.velocities, point.forces, point.masses, cell, arguments.interval};
+      if (mu) inputs.push_back(mu);
       if (scale) inputs.push_back(scale);
       llvm::append_range(inputs, buildEntryPotentialFields(point));
       if (needsCounter) {
@@ -323,14 +331,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     };
     struct ReportIR { Value kinetic, correction, step, diagonal; };
     auto report = [&](OpBuilder &inside, const EntryFieldsIR &point, mdir::dyn::StepOp next,
-        llvm::function_ref<Value()> makeStep, bool plainRow) -> ReportIR {
-        if (plainRow && solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
+        llvm::function_ref<Value()> makeStep, bool plainRow, bool scaledRow = false, Value outputCell = {}) -> ReportIR {
+        unsigned rowMeasuredSlot = measuredSlot + unsigned(scaledRow);
+        if (plainRow && solvent) buildWriteSolvent(inside, next.getResult(rowMeasuredSlot + 1));
         Value full = next.getResult(config.leapfrog ? 6 : 1);
         Value kinetic = buildKineticEnergy(inside, full, point.masses);
         Value correction, trace, pressureKinetic;
         if (measured) {
           Value current = buildKineticVector(inside, full, point.masses);
-          Value excess = arith::SubFOp::create(inside, loc, next.getResult(measuredSlot), current);
+          Value excess = arith::SubFOp::create(inside, loc, next.getResult(rowMeasuredSlot), current);
           correction = buildSum3(inside, excess);
         } else if (config.brownian)
           correction = arith::ConstantOp::create(inside, loc, inside.getF64FloatAttr(0.0));
@@ -338,7 +347,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           Value excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
           correction = buildSum3(inside, excess);
         }
-        if (!plainRow && solvent) buildWriteSolvent(inside, next.getResult(measuredSlot + 1));
+        if (!plainRow && solvent) buildWriteSolvent(inside, next.getResult(rowMeasuredSlot + 1));
         if (config.brownian) {
           trace = buildVirialTrace(inside, next.getResult(4));
           pressureKinetic = arith::AddFOp::create(inside, loc, kinetic, correction);
@@ -361,10 +370,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           Value time;
           if (config.timed && config.needsCoordinateOutput)
             time = buildSimulationTime(inside, completed, arguments.interval);
-          coordinateOutput(inside, {next.getResult(0), cell, fields, time}, completed);
+          coordinateOutput(inside, {next.getResult(0), outputCell ? outputCell : cell, fields, time}, completed);
         }
         auto outputFields = buildEntryPotentialFields(point);
-        PotentialStateIR outputState{next.getResult(0), cell, outputFields, {}};
+        PotentialStateIR outputState{next.getResult(0), outputCell ? outputCell : cell, outputFields, {}};
         auto output = config.output;
         if (plainRow) output.freeEnergy.reset();
         buildEntryOutputs(inside,
@@ -381,7 +390,53 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       Value change = arith::MulFOp::create(inside, loc, weight, excess);
       return arith::AddFOp::create(inside, loc, kinetic, change);
     };
-    auto couple = [&](OpBuilder &inside, const EntryFieldsIR &current, Value completed, Value optimal, Value energy = {}, Value diagonal = {}, Value groups = {}) {
+    struct TrotterIR {
+      mdir::dyn::StepOp step;
+      Value completed, cell, workBefore, volume, kineticHalf, groupsAfter;
+      StrainIRResult strain;
+    };
+    auto trotterSteps = [&](OpBuilder &inside, const EntryFieldsIR &point, bool energy,
+        llvm::function_ref<Value()> makeStep) -> TrotterIR {
+      auto pressure = call(inside, config.pressureStep, point);
+      buildVirialDiagonal(inside, pressure.getResult(3));
+      Value completed = makeStep();
+      auto parameters = buildEntryPotentialFields(point);
+      auto rigid = buildEntryGroups(parameters, config.constraints);
+      Value full = pressure.getResult(config.leapfrog ? 5 : 1);
+      auto centers = buildGroupKinetic(inside,
+          {pressure.getResult(0), full, pressure.getResult(2), cell, point.masses,
+           arguments.interval, pressureMass, rigid});
+      std::array<Value, 3> beta{barostat.compressibility, {}, {}};
+      Value half, tension;
+      if (config.strainCoupling == StrainCoupling::Anisotropic) beta = barostat.axisCompressibility;
+      else if (config.strainCoupling == StrainCoupling::SemiIsotropic) {
+        beta[2] = barostat.zCompressibility;
+        half = coupling.half;
+        tension = barostat.tension;
+      }
+      auto strain = buildBarostatStrain(inside,
+          {centers.half, pressure.getResult(4), boxMemory, edgeIndices,
+           arguments.startValues[*config.barostatConstant], barostat.third, barostat.bar,
+           barostat.unitVector, seed, completed, barostat.pressure, barostat.thermal,
+           barostat.rate, beta, half, tension}, config.strainCoupling);
+      Value work = arith::AddFOp::create(inside, loc, pressure.getResult(4), strain.constantDiagonal);
+      Value xy = arith::MulFOp::create(inside, loc, strain.edges[0], strain.edges[1]);
+      Value volume = arith::MulFOp::create(inside, loc, xy, strain.edges[2]);
+      Value nextCell = buildCell(inside, strain.edges);
+      Value nextScale;
+      if (reference) nextScale = buildReferenceScale(inside, strain.edges, reference);
+      Value outsideCell = cell, outsideScale = scale;
+      auto restore = llvm::make_scope_exit([&] { cell = outsideCell; scale = outsideScale; });
+      cell = nextCell;
+      scale = nextScale;
+      auto next = call(inside, energy ? config.scaledEnergyStep : couplingProgram,
+          bind(point, pressure.getResults(), false), strain.scale);
+      bool virial = energy || config.countsAfterScaling;
+      unsigned halfSlot = 3 + unsigned(energy) + 2 * unsigned(virial) + unsigned(config.leapfrog);
+      return {next, completed, nextCell, work, volume, next.getResult(halfSlot),
+          virial ? next.getResult(4 + unsigned(energy)) : Value{}, strain};
+    };
+    auto couple = [&](OpBuilder &inside, const EntryFieldsIR &current, Value completed, Value optimal, Value energy = {}, Value diagonal = {}, Value groups = {}, const TrotterIR *trotter = nullptr) {
       CenterMotionInputs motion;
       if (config.removesMotion)
         motion = {current.velocities, current.masses, coupling.totalMass, coupling.half};
@@ -404,7 +459,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
       }
       auto result = current;
       Value inverse;
-      if (config.barostat) {
+      if (config.barostat && trotter) {
+        if (config.rescales) buildScaleKinetic(inside, squared, axes);
+        Value work;
+        if (config.countsAfterScaling)
+          work = buildMeanVirialWork(inside,
+              {arguments.startValues[*config.barostatConstant], trotter->volume, barostat.third,
+               trotter->groupsAfter, trotter->workBefore, barostat.halfVector, trotter->strain.logScale});
+        else work = buildVirialWork(inside, trotter->workBefore, trotter->strain.logScale);
+        bath = buildTrotterBath(inside, trotter->strain.inverse, barostat.unitVector,
+            trotter->kineticHalf, work, bath);
+      } else if (config.barostat) {
         auto parameters = buildEntryPotentialFields(current);
         auto rigid = buildEntryGroups(parameters, config.constraints);
         auto centers = buildGroupKinetic(inside,
@@ -461,6 +526,29 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     };
     auto closeCoupling = [&](OpBuilder &inside, const EntryFieldsIR &point,
         llvm::function_ref<Value()> makeStep) -> EntryFieldsIR {
+          if (config.trotter) {
+            auto scaled = trotterSteps(inside, point, false, makeStep);
+            auto next = scaled.step;
+            if (config.countsAfterScaling) buildVirialDiagonal(inside, next.getResult(3));
+            unsigned fullSlot = 3 + 2 * unsigned(config.countsAfterScaling);
+            Value full = next.getResult(config.leapfrog ? fullSlot : 1), optimal;
+            if (config.rescales) {
+              Value excess;
+              if (measuredCoupling) {
+                Value current = buildKineticVector(inside, full, point.masses);
+                excess = arith::SubFOp::create(inside, loc,
+                    next.getResult(fullSlot + unsigned(config.leapfrog) + 1), current);
+              } else excess = buildKineticExcess(inside, next.getResult(2), point.masses, arguments.interval);
+              Value kinetic = buildKineticEnergy(inside, full, point.masses);
+              optimal = optimalEnergy(inside, kinetic, buildSum3(inside, excess));
+            }
+            auto actual = bind(point, next.getResults(), false);
+            if (config.leapfrog) actual.velocities = full;
+            auto result = couple(inside, actual, scaled.completed, optimal, {}, {}, {}, &scaled);
+            if (config.leapfrog)
+              result.velocities = buildKick(inside, result.velocities, result.forces, result.masses, halfBack);
+            return result;
+          }
           auto next = call(inside, (measuredCoupling || config.barostat) ? couplingProgram : step, point);
           Value diagonal;
           if (config.barostat) diagonal = buildVirialDiagonal(inside, next.getResult(4)).vector;
@@ -734,8 +822,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           if (!last) return last.takeError();
           point = bind(point, last->getResults(), false);
         }
-        auto next = call(inside, energyStep, point);
-        auto row = report(inside, point, next, [&] { return number(inside, atLevel, index); }, false);
+        std::optional<TrotterIR> scaled;
+        mdir::dyn::StepOp next;
+        if (config.trotter) {
+          scaled = trotterSteps(inside, point, true, [&] { return number(inside, atLevel, index); });
+          next = scaled->step;
+        } else next = call(inside, energyStep, point);
+        auto row = report(inside, point, next,
+            [&] { return scaled ? scaled->completed : number(inside, atLevel, index); },
+            false, bool(scaled), scaled ? scaled->cell : Value{});
         Value kinetic = row.kinetic, correction = row.correction, completed = row.step;
         auto final = bind(point, next.getResults(), false);
         if (config.couplingIntervals) {
@@ -743,7 +838,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           if (config.rescales && !config.brownian) optimal = optimalEnergy(inside, kinetic, correction);
           if (config.barostat && config.leapfrog) final.velocities = next.getResult(6);
           final = couple(inside, final, completed, optimal, next.getResult(3), row.diagonal,
-              config.barostat ? next.getResult(5) : Value{});
+              config.barostat ? next.getResult(5) : Value{}, scaled ? &*scaled : nullptr);
           if (config.barostat && config.leapfrog)
             final.velocities = buildKick(inside, final.velocities, final.forces, final.masses, halfBack);
         }
