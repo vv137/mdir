@@ -2,6 +2,8 @@
 #ifndef MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #define MDIR_LIB_DRIVER_SIMPLESTEPENTRYIR_H
 #include "EntryBoundaryIR.h"
+#include "BarostatIR.h"
+#include <array>
 #include "EntryConstraintIR.h"
 #include "EntryEvaluationIR.h"
 #include "PotentialIR.h"
@@ -39,6 +41,10 @@ struct SimpleStepEntryIRConfig {
   mdir::dyn::ProgramOp couplingStep;
   bool segments = false;
   int64_t partCounts = 9;
+  bool firstOrderBarostat = false;
+  std::optional<BarostatParameters> barostatParameters;
+  std::optional<unsigned> barostatConstant;
+  std::optional<std::array<unsigned, 3>> referenceEdges;
 };
 llvm::Expected<mlir::func::FuncOp> buildSimpleStepEntry(
     mlir::OpBuilder &, const Program &, mdir::dyn::ProgramOp step, mdir::dyn::ProgramOp energy,

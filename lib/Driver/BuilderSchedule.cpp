@@ -1423,7 +1423,7 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize &&
       (!control.segments || !isRestart()) &&
-      !control.barostat &&
+      (!control.barostat || (!control.segments && !control.isBrownian() && control.barostatWork == BarostatWork::FirstOrder)) &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" ||
@@ -1450,7 +1450,34 @@ llvm::Error Builder::emitEntry() {
     config.freedom = system.getDegreesOfFreedom();
     config.targetKinetic = 0.5 * config.freedom * units::boltzmann * control.temperature;
     config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
-    if (measuresCoupling())
+    config.firstOrderBarostat = control.barostat && control.barostatWork == BarostatWork::FirstOrder;
+    if (config.firstOrderBarostat) {
+      double bar = 1.01325;
+      config.barostatParameters = BarostatParameters{
+          {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
+           control.compressibilities[2] / bar},
+          control.pressure * bar, control.compressibility / bar,
+          static_cast<double>(control.barostatPeriod) * control.timestep / control.tauP,
+          units::boltzmann * control.temperature, control.compressibilityZ / bar,
+          control.surfaceTension * control.surfaces * units::dynePerCmToBarNm};
+      auto constant = llvm::find_if(program.startValues,
+          [](const auto &value) { return value.name == "baro_constant"; });
+      assert(constant != program.startValues.end() && "barostat constant must exist");
+      config.barostatConstant = std::distance(program.startValues.begin(), constant);
+      config.couplingStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>(
+          hasConstraints() ? "step_coupling" : "step_energy");
+      if (scalesReference()) {
+        std::array<unsigned, 3> slots;
+        for (unsigned axis = 0; axis != 3; ++axis) {
+          auto found = llvm::find_if(program.startValues, [&](const auto &value) {
+            return value.name == "rest_edge" + std::to_string(axis);
+          });
+          assert(found != program.startValues.end() && "reference edge must exist");
+          slots[axis] = std::distance(program.startValues.begin(), found);
+        }
+        config.referenceEdges = slots;
+      }
+    } else if (measuresCoupling())
       config.couplingStep = termIR.getModule().lookupSymbol<mdir::dyn::ProgramOp>("step_thermostat");
     config.periodic = control.periodic;
     config.restart = isRestart();

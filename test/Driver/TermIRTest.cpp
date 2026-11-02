@@ -446,7 +446,7 @@ static void checkNativeBarePotentialBody() {
 }
 
 
-static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com) {
+static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool nose, bool com, bool barostat = false) {
   TermIRPlan plan;
   auto &context = plan.getContext();
   auto module = plan.getModule();
@@ -466,9 +466,12 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     set.arity = 2;
     set.fields = {{"length", {}, false}};
   }
+  if (barostat) metadata.startValues = {{"baro_constant", 0.0},
+      {"rest_edge0", 1.0}, {"rest_edge1", 1.0}, {"rest_edge2", 1.0}};
   RuntimeDeclarationConfig runtime{};
   runtime.state64 = runtime.force64 = runtime.rescales = runtime.bath = true;
   runtime.noseHoover = nose;
+  runtime.barostat = barostat;
   runtime.constraintStops = constrained;
   emitRuntimeDeclarations(builder, runtime, false);
   emitRuntimeDeclarations(builder, runtime, true);
@@ -487,11 +490,13 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       {false, false, 1.0e-8, 1.0e-12}, false, false});
   bool measured = measuresHalfSteps(constrained, false);
   auto step = buildNativeStep(builder, {"step"}, parameters, leapfrog, false,
-      {}, false, false, {}, {}, groups);
+      {}, barostat, false, {}, {}, groups);
   auto reporting = buildNativeStep(builder, {"step_energy", true, true, false, measured},
-      parameters, leapfrog, false, {}, false, false, {}, {}, groups);
+      parameters, leapfrog, false, {}, barostat, false, {}, {}, groups);
   require(bool(step) && bool(reporting), "native thermal programs did not construct");
   mdir::driver::Control control;
+  control.precision = mdir::driver::Precision::Double;
+  control.integrator = leapfrog ? mdir::driver::Integrator::Leapfrog : mdir::driver::Integrator::VelocityVerlet;
   control.numSteps = 8;
   control.energyPeriod = 4;
   control.thermostat = true;
@@ -499,10 +504,13 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       : mdir::driver::ThermostatMethod::VRescale;
   control.thermostatPeriod = 2;
   control.comPeriod = com ? control.thermostatPeriod : 0;
+  control.barostat = barostat;
+  control.barostatPeriod = control.thermostatPeriod;
+  control.barostatWork = mdir::driver::BarostatWork::FirstOrder;
   SimpleStepEntryIRConfig config{control.getCouplingPeriod() - 1,
       control.numSteps / control.getEnergyLoopPeriod()};
   config.couplingIntervals = control.getEnergyLoopPeriod() / control.getCouplingPeriod() - 1;
-  config.leapfrog = leapfrog;
+  config.leapfrog = control.integrator == mdir::driver::Integrator::Leapfrog;
   config.removesMotion = control.comPeriod > 0;
   config.rescales = control.thermostat && !control.isLangevin();
   config.noseHoover = control.isNoseHoover();
@@ -511,10 +519,23 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
   config.freedom = 3.0;
   config.targetKinetic = 0.5 * config.freedom * mdir::driver::units::boltzmann * control.temperature;
   config.decay = std::exp(-static_cast<double>(control.getCouplingPeriod()) * control.timestep / control.tauT);
-  if (constrained) {
-    config.constraints = {{0, 2, {1}, false}};
-    auto coupling = buildNativeStep(builder, {"step_thermostat", false, false, false, measured},
-        parameters, leapfrog, false, {}, false, false, {}, {}, groups);
+  if (constrained) config.constraints = {{0, 2, {1}, false}};
+  if (barostat) {
+    config.firstOrderBarostat = true;
+    config.barostatConstant = 0;
+    config.referenceEdges = std::array<unsigned, 3>{1, 2, 3};
+    double bar = 1.01325;
+    config.barostatParameters = BarostatParameters{
+        {control.compressibilities[0] / bar, control.compressibilities[1] / bar,
+         control.compressibilities[2] / bar},
+        control.pressure * bar, control.compressibility / bar,
+        static_cast<double>(control.barostatPeriod) * control.timestep / control.tauP,
+        mdir::driver::units::boltzmann * control.temperature, control.compressibilityZ / bar,
+        control.surfaceTension * control.surfaces * mdir::driver::units::dynePerCmToBarNm};
+  }
+  if (constrained || barostat) {
+    auto coupling = buildNativeStep(builder, {"step_thermostat", barostat, barostat, false, measured},
+        parameters, leapfrog, false, {}, barostat, false, {}, {}, groups);
     require(bool(coupling), "native thermal measured step did not construct");
     config.couplingStep = *coupling;
     auto invalid = config;
@@ -522,6 +543,13 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     auto missing = buildSimpleStepEntry(builder, metadata, *step, *reporting, invalid);
     require(!missing, "native thermal entry accepted a missing measured program");
     reject(missing.takeError(), "native step entry thermostat results do not match its integrator");
+  }
+  if (barostat) {
+    auto missing = config;
+    missing.barostatConstant.reset();
+    auto failed = buildSimpleStepEntry(builder, metadata, *step, *reporting, missing);
+    require(!failed, "native first-order barostat accepted a missing constant role");
+    reject(failed.takeError(), "native first-order barostat requires standalone coupling parameters");
   }
   auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
   if (!entry) {
@@ -538,6 +566,20 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
         "native thermal factor uses a stale closing step");
   });
   require(factors == 2, "native thermal entry lost coupling or closing-row factors");
+  if (barostat) {
+    unsigned strainCalls = 0;
+    entry->walk([&](func::CallOp call) {
+      if (call.getCallee() == "mdrtBarostatStrain") ++strainCalls;
+    });
+    require(strainCalls == 2, "native first-order barostat lost a coupling strain");
+    entry->walk([&](mdir::dyn::StepOp call) {
+      auto cell = call.getOperand(4).getDefiningOp<mdir::md::OrthorhombicCellOp>();
+      require(cell && cell.getOperand(0).getDefiningOp<memref::LoadOp>(),
+          "native first-order barostat uses the entry cell after coupling");
+      require(loop->isProperAncestor(cell), "native first-order cell load escaped its schedule");
+    });
+  }
+  if (!barostat) {
   auto production = mdir::compiler::getSegmentsControl(control);
   require(production.energyPeriod == 0 && production.framePeriod == 0 &&
           production.checkpointPeriod == 0 && production.numSteps == production.getCouplingPeriod(),
@@ -584,6 +626,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       actualBoundary = true;
     }
   require(actualBoundary, "native thermal parts have no physical boundary");
+  }
   require(succeeded(verify(module)), "native thermal module did not verify");
 }
 
@@ -1638,7 +1681,10 @@ int main(int argc, char **argv) {
   for (bool leapfrog : {false, true})
     for (bool constrained : {false, true})
       for (bool nose : {false, true})
-        for (bool com : {false, true}) checkNativeThermalStepEntry(leapfrog, constrained, nose, com);
+        for (bool com : {false, true}) {
+          checkNativeThermalStepEntry(leapfrog, constrained, nose, com);
+          checkNativeThermalStepEntry(leapfrog, constrained, nose, com, true);
+        }
   checkNativeCenterStepEntry();
   checkNativeMinimizationEntry();
   checkNativeConstraintStepEntry();

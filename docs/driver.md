@@ -1606,6 +1606,13 @@ including measured half steps and optimal-temperature order; partial plain rows
 retain their separate output contract. Static restart controls and barostat
 schedules remain on the remaining entry path.
 
+Standalone isotropic `FIRST_ORDER` barostat schedules for Verlet and leapfrog
+construct their persistent box, current cell/reference scale, strain, work,
+rigid-center scaling and coupling directly. Each loop reloads the current cell
+before and after its children. Leapfrog couples current-time velocities and
+restores the stored half step afterwards. Exact/Trotter work and barostat parts
+remain on the remaining entry path.
+
 ## 3. Decided
 
 | # | Question | Decision |
