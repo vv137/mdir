@@ -42,6 +42,14 @@ static void require(bool condition, llvm::StringRef message) {
   }
 }
 
+static void requireUsedBlockResults(Block &block) {
+  for (Operation &operation : block)
+    if (operation.getNumResults() && operation.use_empty()) {
+      llvm::errs() << "unused native entry row operation: " << operation << "\n";
+      require(false, "native entry row produced an unused operation");
+    }
+}
+
 static void reject(llvm::Error error, llvm::StringRef message) {
   require(bool(error), "invalid term connection was accepted");
   require(llvm::toString(std::move(error)) == message,
@@ -572,7 +580,7 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
     missing.barostatConstant.reset();
     auto failed = buildSimpleStepEntry(builder, metadata, *step, *reporting, missing);
     require(!failed, "native first-order barostat accepted a missing constant role");
-    reject(failed.takeError(), "native barostat requires standalone coupling parameters");
+    reject(failed.takeError(), "native barostat requires coupling parameters");
   }
   auto entry = buildSimpleStepEntry(builder, metadata, *step, *reporting, config);
   if (!entry) {
@@ -611,7 +619,6 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       require(loop->isProperAncestor(cell), "native first-order cell load escaped its schedule");
     });
   }
-  if (!barostat) {
   auto production = mdir::compiler::getSegmentsControl(control);
   require(production.energyPeriod == 0 && production.framePeriod == 0 &&
           production.checkpointPeriod == 0 && production.numSteps == production.getCouplingPeriod(),
@@ -658,6 +665,34 @@ static void checkNativeThermalStepEntry(bool leapfrog, bool constrained, bool no
       actualBoundary = true;
     }
   require(actualBoundary, "native thermal parts have no physical boundary");
+  unsigned checkedPlainRows = 0;
+  partLoop.walk([&](scf::ForOp row) {
+    auto cast = row.getUpperBound().getDefiningOp<arith::IndexCastOp>();
+    if (!cast) return;
+    auto load = cast->getOperand(0).getDefiningOp<memref::LoadOp>();
+    if (!load || load.getIndices().size() != 1) return;
+    auto slot = load.getIndices()[0].getDefiningOp<arith::ConstantIndexOp>();
+    // Host count slot 4 selects the plain energy row, without coupling.
+    if (!slot || slot.value() != 4) return;
+    requireUsedBlockResults(*row.getBody());
+    ++checkedPlainRows;
+  });
+  require(checkedPlainRows == 1, "native parts did not check their plain row results");
+  if (barostat) {
+    unsigned strains = 0, reevaluations = 0;
+    partLoop.walk([&](func::CallOp call) {
+      if (call.getCallee() == "mdrtBarostatStrain" || call.getCallee() == "mdrtBarostatStrainAxis" ||
+          call.getCallee() == "mdrtBarostatStrainArea" || call.getCallee() == "mdrtBarostatStrainHeight") ++strains;
+    });
+    partLoop.walk([&](mdir::md::EvaluateOp op) { if (op.getNumResults() == 2) ++reevaluations; });
+    unsigned perStrain = control.anisotropic ? 3 : control.semiIsotropic ? 2 : 1;
+    require(strains == 3 * perStrain, "native barostat parts lost a closing strain");
+    require(!exact || reevaluations == 3, "native exact parts lost a scaled evaluation");
+    partLoop.walk([&](mdir::dyn::StepOp call) {
+      auto cell = call.getOperand(4).getDefiningOp<mdir::md::OrthorhombicCellOp>();
+      require(cell && cell.getOperand(0).getDefiningOp<memref::LoadOp>() && partLoop->isProperAncestor(cell),
+          "native barostat parts use a cell outside their physical part");
+    });
   }
   require(succeeded(verify(module)), "native thermal module did not verify");
 }

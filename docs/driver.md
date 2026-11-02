@@ -1662,6 +1662,14 @@ kind, stage and form with the complete old and new diagnostics, and accepts only
 those exact pairs. Runtime continuation through activation between parts is
 unchanged. Static restart support is tracked separately in #721.
 
+
+Programs of dynamics parts also construct FIRST_ORDER and EXACT barostat
+coupling natively. Both host-count nests reload the live cell and reference
+scale at their existing loop boundaries; tail/plain rows retain their distinct
+cell and output scope. Closing rows couple full-time leapfrog velocities and
+restore the stored half step. Exact reevaluations return the carried force state.
+Trotter schedules remain on the remaining entry path.
+
 ### Expression parameter names (D188)
 
 The control reader rejects term parameters that collide with names supplied

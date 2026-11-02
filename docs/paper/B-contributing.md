@@ -377,3 +377,11 @@ current-step time and completed force state. Trial virtual-site placement and
 force spreading retain the entry cell of the archived producer (#722); trial
 energy evaluation and all other gathers keep their existing cells. Trotter work and barostat parts
 remain on the remaining entry path.
+
+
+Programs of dynamics parts also construct FIRST_ORDER and EXACT barostat
+coupling natively. Both host-count nests reload the live cell and reference
+scale at their existing loop boundaries; tail/plain rows retain their distinct
+cell and output scope. Closing rows couple full-time leapfrog velocities and
+restore the stored half step. Exact reevaluations return the carried force state.
+Trotter schedules remain on the remaining entry path.

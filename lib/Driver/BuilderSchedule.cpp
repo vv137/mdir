@@ -1423,7 +1423,7 @@ llvm::Error Builder::emitEntry() {
   }
   bool nativeSteps = !control.frames && !control.minimize &&
       (!control.segments || !isRestart()) &&
-      (!control.barostat || (!control.segments && !control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact))) &&
+      (!control.barostat || (!control.isBrownian() && (control.barostatWork == BarostatWork::FirstOrder || control.barostatWork == BarostatWork::Exact))) &&
       levels.back().name == "step" && levels.size() <= 5 &&
       llvm::all_of(llvm::drop_end(levels), [&](const auto &level) {
         return level.name == "segment" || level.name == "frame" || level.name == "energy" ||

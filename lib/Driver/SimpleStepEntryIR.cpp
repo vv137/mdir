@@ -64,11 +64,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
   if (config.couplingIntervals && config.rescales && !config.bathParameters)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "native step entry thermostat requires bath parameters");
-  if (config.barostat && (config.segments || !config.couplingIntervals ||
+  if (config.barostat && (!config.couplingIntervals ||
       !config.barostatParameters || !config.barostatConstant || !config.bathParameters ||
       (config.exactBarostat && !config.barostatEnergyConstant)))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
-        "native barostat requires standalone coupling parameters");
+        "native barostat requires coupling parameters");
   bool measuredCoupling = measured && config.rescales && config.couplingIntervals.has_value();
   unsigned couplingResults = (config.barostat ? 6 : 3) +
       unsigned(config.leapfrog && (config.barostat || measuredCoupling)) + unsigned(measuredCoupling);
@@ -352,7 +352,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           pressureKinetic = buildSum3(inside, centers.half);
         }
         Value diagonal;
-        if (config.barostat) diagonal = buildVirialDiagonal(inside, next.getResult(4)).vector;
+        if (config.barostat && !plainRow) diagonal = buildVirialDiagonal(inside, next.getResult(4)).vector;
         Value completed = makeStep();
         func::CallOp::create(inside, loc, "mdrtWriteEnergies", TypeRange{},
             ValueRange{completed, next.getResult(3), kinetic, correction, trace, pressureKinetic});
@@ -573,10 +573,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           arith::ConstantIndexOp::create(part, loc, 1);
           perEnergy = arith::AddIOp::create(part, loc, energyInner, one);
         }
-        auto plain = [&](OpBuilder &body, Value upper, const EntryFieldsIR &start)
+        auto plain = [&](OpBuilder &body, Value upper, const EntryFieldsIR &start, bool reload = true)
             -> llvm::Expected<scf::ForOp> {
           return buildEntryLoop(body, "part plain steps", zero, upper, one, pack(start, false),
               [&](OpBuilder &at, Value, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+            Value outsideCell = cell, outsideScale = scale;
+            auto restore = llvm::make_scope_exit([&] { cell = outsideCell; scale = outsideScale; });
+            if (config.barostat && reload) readCell(at);
             return SmallVector<Value>(call(at, step, bind(start, state, false)).getResults());
           });
         };
@@ -584,10 +587,14 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           if (!config.couplingIntervals) return plain(part, n0, point);
           return buildEntryLoop(part, "part coupling periods", zero, n0, one, pack(point, false),
               [&](OpBuilder &body, Value index, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+            Value outsideCell = cell, outsideScale = scale;
+            auto restore = llvm::make_scope_exit([&] { cell = outsideCell; scale = outsideScale; });
+            if (config.barostat) readCell(body);
             auto actual = bind(point, state, false);
             auto before = plain(body, inner, actual);
             if (!before) return before.takeError();
             actual = bind(actual, before->getResults(), false);
+            if (config.barostat) readCell(body);
             auto coupled = closeCoupling(body, actual, [&] {
               return buildStepNumber(body, {{index, {}}}, index, {}, per0, one, counts[0]);
             });
@@ -595,7 +602,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           });
         }();
         if (!first) return first.takeError();
-        auto tail = plain(part, tailCount, bind(point, first->getResults(), false));
+        Value outsideCell = cell, outsideScale = scale;
+        if (config.barostat) readCell(part);
+        auto tail = plain(part, tailCount, bind(point, first->getResults(), false), false);
         if (!tail) return tail.takeError();
         Value plainStep = buildSegmentStep(part, n0, per0, tailCount, one, counts[0]);
         auto closing = buildEntryLoop(part, "part plain energy", zero, plainCount, one, tail->getResults(),
@@ -608,18 +617,27 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           return pack(completed, false);
         });
         if (!closing) return closing.takeError();
+        cell = outsideCell;
+        scale = outsideScale;
         Value start = buildSegmentStep(part, n0, per0, tailCount, plainCount, counts[0]);
         auto energies = buildEntryLoop(part, "part energy intervals", zero, energyCount, one, closing->getResults(),
             [&](OpBuilder &body, Value index, ValueRange state) -> llvm::Expected<SmallVector<Value>> {
+          Value outsideCell = cell, outsideScale = scale;
+          auto restore = llvm::make_scope_exit([&] { cell = outsideCell; scale = outsideScale; });
+          if (config.barostat) readCell(body);
           auto actual = bind(point, state, false);
           if (config.couplingIntervals) {
             auto periods = buildEntryLoop(body, "part closing coupling periods", zero, energyCouples, one,
                 pack(actual, false),
                 [&](OpBuilder &period, Value within, ValueRange values) -> llvm::Expected<SmallVector<Value>> {
+              Value outsideCell = cell, outsideScale = scale;
+              auto restore = llvm::make_scope_exit([&] { cell = outsideCell; scale = outsideScale; });
+              if (config.barostat) readCell(period);
               auto current = bind(actual, values, false);
               auto before = plain(period, energyInner, current);
               if (!before) return before.takeError();
               current = bind(current, before->getResults(), false);
+              if (config.barostat) readCell(period);
               auto coupled = closeCoupling(period, current, [&] {
                 return buildStepNumber(period, {{index, {}}}, within, perEnergy, perCouple, one, start);
               });
@@ -628,7 +646,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             if (!periods) return periods.takeError();
             actual = bind(actual, periods->getResults(), false);
           }
-          auto before = plain(body, energyInner, actual);
+          if (config.barostat) readCell(body);
+          auto before = plain(body, energyInner, actual, false);
           if (!before) return before.takeError();
           actual = bind(actual, before->getResults(), false);
           auto next = call(body, energyStep, actual);
@@ -640,7 +659,12 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             Value optimal;
             if (config.rescales && !config.brownian)
               optimal = optimalEnergy(body, row.kinetic, row.correction);
-            completed = couple(body, completed, row.step, optimal);
+            if (config.barostat && config.leapfrog) completed.velocities = next.getResult(6);
+            completed = couple(body, completed, row.step, optimal,
+                config.barostat ? next.getResult(3) : Value{}, row.diagonal,
+                config.barostat ? next.getResult(5) : Value{});
+            if (config.barostat && config.leapfrog)
+              completed.velocities = buildKick(body, completed.velocities, completed.forces, completed.masses, halfBack);
           }
           if (auto error = frameIfDue(body, counts[8], row.step, completed)) return std::move(error);
           return pack(completed, false);
