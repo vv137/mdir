@@ -1,0 +1,77 @@
+# The count of the duplicate costly ops in fused kernels (#681,
+# scripts/builder-equivalence/duplicate_ops.py). A module written by hand
+# holds one kernel with one duplicate of each kind, a second loop over the
+# same pairs with another cutoff, and two loops over tuples of different
+# incidences; the script counts each. The module is only text for the
+# script, which reads the printed form: it names values it does not define
+# and is never given to mdir-opt. Then the argon example is measured
+# through `mdir emit` and mdir-opt at both cuts, on the CPU in double
+# precision. emit uses no device.
+# RUN: rm -rf %t && split-file %s %t
+# RUN: %python %S/../../scripts/builder-equivalence/duplicate_ops.py count --kernels \
+# RUN:   %t/kernels.mlir | FileCheck %s --check-prefix=COUNT
+# RUN: %python %S/../../scripts/builder-equivalence/duplicate_ops.py corpus mdir \
+# RUN:   --printer mdir-opt --root %S/../.. --only examples --match argon \
+# RUN:   --targets cpu --precisions double | FileCheck %s --check-prefix=ARGON
+# RUN: %python %S/../../scripts/builder-equivalence/duplicate_ops.py corpus mdir \
+# RUN:   --printer mdir-opt --root %S/../.. --only examples --match argon \
+# RUN:   --targets cpu --precisions double --cut cse | FileCheck %s --check-prefix=ARGON
+
+# COUNT: kernels.mlir: kernels pair=2 tuple=2; costly exp=2 erfc=2 sqrt=2 div=5 table=3 powi=2; duplicates same=1 sqrt=1 exp=1 divisor=1 constant=1 powers=1 index=1; unfused pair:cutoff=1 tuple:structure=1
+# COUNT-NEXT: pair_for pairs cutoff 1 x1 depth=2 ops=21: exp=2 erfc=2 sqrt=1 div=4 table=3 powi=2; duplicates same=1 sqrt=1 exp=1 divisor=1 constant=1 powers=1 index=1
+# COUNT-NEXT: pair_for pairs cutoff 2 x1 depth=2 ops=2: div=1
+# COUNT-NEXT: tuple_for @bonds x1 depth=2 ops=2: sqrt=1
+# COUNT-NEXT: tuple_for @angles x1 depth=2 ops=1: none
+
+# ARGON: examples/argon/argon.toml CPU double: kernels pair={{[1-9][0-9]*}} tuple=0; costly {{.*}}; duplicates {{.*}}; unfused {{.*}}
+# ARGON: 1 cases measured, 0 stopped with an error
+
+#--- kernels.mlir
+module {
+  func.func @f(%n: i32, %p: i32, %c: i32, %t: i32, %u: i32) {
+    %one = arith.constant 1.000000e+00 : f32
+    %m1 = arith.constant -1.000000e+00 : f32
+    %two = arith.constant 2.000000e+00 : f32
+    %0 = md_exec.pair_for %n, %p, %c cutoff(1.000000e+00) policy(unique, atomic)  {
+    ^bb0(%r2: f32, %i: index, %b: i1):
+      %1 = math.sqrt %r2 : f32
+      %2 = arith.divf %one, %1 : f32
+      %3 = arith.divf %two, %r2 : f32
+      %4 = arith.divf %1, %r2 : f32
+      %5 = arith.divf %1, %two : f32
+      %6 = arith.mulf %r2, %m1 : f32
+      %7 = math.exp %r2 : f32
+      %8 = math.exp %6 : f32
+      %9 = math.fpowi %3, %i6 : f32, i32
+      %10 = math.fpowi %3, %i3 : f32, i32
+      %11 = scf.if %b -> (f32) {
+        %12 = math.erfc %r2 : f32
+        scf.yield %12 : f32
+      } else {
+        %13 = math.erfc %r2 : f32
+        scf.yield %13 : f32
+      }
+      %14 = memref.get_global @md_radial_table : memref<8x4xf32>
+      %15 = vector.load %14[%i, %c0] : memref<8x4xf32>, vector<4xf32>
+      %16 = memref.get_global @md_radial_1_table : memref<8x4xf32>
+      %17 = vector.load %16[%i, %c0] : memref<8x4xf32>, vector<4xf32>
+      %18 = md.lookup %table[%i, %i] : !md.table<2, vector<2xf64>, symmetric>, index, index -> vector<2xf32>
+      md_exec.yield %2 : f32
+    } : i32 -> f32
+    %20 = md_exec.pair_for %n, %p, %c cutoff(2.000000e+00) policy(unique, atomic)  {
+    ^bb0(%r2: f32):
+      %21 = arith.divf %one, %r2 : f32
+      md_exec.yield %21 : f32
+    } : i32 -> f32
+    %30 = md_exec.tuple_for %t, %p, %c coordinates(displacement(0, 1)) arity(2)  {
+    ^bb0(%r: f32):
+      %31 = math.sqrt %r : f32
+      md_exec.yield %31 : f32
+    } : !mdrt.incidence<@atoms, 2, @bonds>, i32 -> f32
+    %40 = md_exec.tuple_for %u, %p, %c coordinates(displacement(0, 1)) arity(2)  {
+    ^bb0(%r: f32):
+      md_exec.yield %r : f32
+    } : !mdrt.incidence<@atoms, 2, @angles>, i32 -> f32
+    return
+  }
+}

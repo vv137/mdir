@@ -131,3 +131,23 @@ in both precisions and targets, including run and segmented forms.
 
 Special 1-4 cases exercise the squared-distance switch beside the other bonded families
 in both precisions and targets, including run and segmented forms.
+
+`duplicate_ops.py corpus MDIR [--only KINDS] [--cut cse|md-exec]` measures
+the costly ops that the fused kernels still compute twice after
+`md-exec-fuse-loops`, `md-exec-accumulate-destinations`, and `cse` (#681).
+For each case of the corpus above (and the kind `ml`, the frozen model in
+stages of the tests beside the peptide's classical terms), in both targets
+and both precisions, it lowers the module that `mdir emit` prints with the
+passes of the case's own pipeline up to the cut: after the second `cse`
+of the md_exec stage, or (the default) at the end of that stage, after the
+precision, the approximations, and the radial tables. In each kernel of a
+loop over pairs or tuples it counts `exp`, `erfc`, `sqrt`, `rsqrt`,
+divisions, `powf`, integer powers, and table lookups, and the duplicates
+among them that a cheap rewrite would share: the same op on the same
+operands, `sqrt` beside `rsqrt` or a division by it, `exp(a)` beside
+`exp(-a)` or `exp(a + b)`, divisions by one value or by a constant, powers
+of one base, and loads of several radial tables at one index. It gives,
+for each loop of one block left apart from the loops before it, the
+condition of the fusion it fails. `duplicate_ops.py count FILE.mlir` counts
+a module already lowered. The script emits programs and runs no model or
+device; it changes no pass.
