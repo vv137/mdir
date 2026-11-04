@@ -4,6 +4,11 @@
 The reference for a staged PR is built once from a git archive of its base;
 each implementation commit is compared with that same reference.
 
+Each control file is read once, before either build runs, and both builds
+emit from that text; a rewrite of the file during the check is therefore not
+a difference (#631, `test/Lit/builder-equivalence.test`). The inputs it names
+are linked into the scratch directory, not copied, and must stay unchanged.
+
 Before comparison, every successfully parsed module and successful lowered emission is rejected if
 it contains a `mdir.term_ir` attribute. Two outputs with equally surviving
 internal connections therefore cannot pass the equivalence gate together.
