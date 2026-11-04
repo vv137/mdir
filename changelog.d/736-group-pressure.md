@@ -1,0 +1,3 @@
+### Changed
+
+- **Since 0.2.0 the log's `VIRIAL` and `PRESSURE` are those of the groups that the barostat scales, and the barostat takes this pressure too** ([docs/driver.md](docs/driver.md)): `VIRIAL` is $\mathrm{tr}\,\mathsf W_g$, the virial of the rigid groups by their centers, without the forces of the constraints, and `PRESSURE` takes the kinetic energy of the centers at the half steps, $(\Delta t^2/8)\sum_g\lVert\mathbf F_g\rVert^2/M_g$ included at step 0. With rigid waters `VIRIAL` therefore reads higher than in 0.1.0 by about $3N_wk_BT$ (12,700 kcal/mol for 7,108 waters at 300 K) for the same mean pressure; 0.2.0 shipped this without an entry (D264, #268, #736).
