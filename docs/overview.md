@@ -112,7 +112,7 @@ order stay explicit.
 Stage B (#708, D363) constructs term bodies with typed IR at
 the same shared/inlined/fused sites; see
 [driver Section 2.12](driver.md#212-the-files-of-the-builder).
-Stage C (#718, D[builder-native-program]) constructs complete programs in one
+Stage C (#718, D365) constructs complete programs in one
 owned native module, including every term, dynamics/minimization, frames,
 restart, coupling and programs of parts. Temporary assembly joins and carry
 fixups are removed. Only custom expressions and staged model input are parsed

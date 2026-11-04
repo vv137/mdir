@@ -2,7 +2,7 @@
 
 - Construct complete programs with owned native IR, parsing text only for
   user-written custom expressions and `ModelTerm` input at their boundaries
-  (D[builder-native-program], #718, #568).
+  (D365, #718, #568).
 
 
 Ruling 10 deliberately changes the diagnostic for a static restart control on a

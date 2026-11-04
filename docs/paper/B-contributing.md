@@ -171,7 +171,7 @@ Step 4 (#708, D363) converted term bodies and shared expression scalars to
 typed IR. Step 5 removes the remaining generated assembly and its transitional
 connections.
 
-Stage C (#718, D[builder-native-program]) constructs the complete program in
+Stage C (#718, D365) constructs the complete program in
 one owned native module. `TermIRPlan` owns its context and module; adapters and
 parsed model input share that context and remain alive for the full build.
 Factories insert declarations, potentials, dynamics programs and entry functions

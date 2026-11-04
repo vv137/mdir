@@ -660,6 +660,7 @@ specification follow those made with it.
 | [D362](decisions/D362.md) | The explicit registry supplies owned term adapters for each build, with specialized behavior exposed through role interfaces that borrow only the capabilities they need. | 2026-10-28 |
 | [D363](decisions/D363.md) | Term fragments are constructed with `OpBuilder` at the same shared potential insertion sites, with typed operands and owned per-build construction state. | 2026-10-29 |
 | [D364](decisions/D364.md) | On a device, the second buffer of each global sum in `scratch`, which takes the partial sums of the parts of the reduction, has 1024 rows (`md_exec::maxReductionParts`) and is allocated once in the body of the function and shared by the sums of the function by type (as many of a type as one op has sums of it), instead of a row a particle from the pool of its region. | 2026-11-01 |
+| [D365](decisions/D365.md) | The builder constructs a program from owned native IR; only user input is parsed at its boundary. | 2026-11-04 |
 <!-- end decisions-table -->
 
 
