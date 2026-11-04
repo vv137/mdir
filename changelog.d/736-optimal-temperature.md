@@ -1,0 +1,3 @@
+### Changed
+
+- **Since 0.2.0 stochastic velocity rescaling (`V-RESCALE`) and the Nosé–Hoover chain hold the optimal temperature, $N_fk_BT_\text{opt} = \tfrac43K_\text{half} + \tfrac23K$, not the kinetic energy $K$ of the velocities they scale** ([docs/decisions/D263.md](docs/decisions/D263.md)). With constraints, runs therefore sit closer to the target temperature: with rigid water at 2 fs, +0.3 to +0.5 K above it instead of +1.7 to +1.8 K. The trajectories of these thermostats change. For the Nosé–Hoover chain the log's conserved energy now counts the change of $K$ that the scaling makes, as it already did for `V-RESCALE`. 0.2.0 shipped this without an entry (D263, #268, #736).
