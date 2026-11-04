@@ -396,8 +396,8 @@ JAC NVE and NPT, again in five rounds on another node, gave 1.001 and
 0.999.
 
 **The loops over groups (D291).** The table at the $i$ and $j$
-ends of the loops over groups was measured on an RTX 4090 at 450 W
-(ada-003), in one job, with the variants alternated. The ratio is the
+ends of the loops over groups was measured on an RTX 4090 at 450 W,
+in one job, with the variants alternated. The ratio is the
 time of a step or of an evaluation with the table, divided by the time
 with the atomics; above 1 is slower.
 
@@ -522,9 +522,9 @@ The settings:
 - the six variants rotated over 5 rounds, the first round dropped;
 - one frozen binary, with only the variable differing;
 - one job on one node for each device, on 2026-10-18:
-  - an RTX 4090 at 450 W (ada-003): 72 MB of L2, at most 49.5 MB set
+  - an RTX 4090 at 450 W: 72 MB of L2, at most 49.5 MB set
     aside, a window of at most 128 MB;
-  - an RTX PRO 6000 Blackwell Max-Q at 300 W (ada-004): 128 MB of L2, at
+  - an RTX PRO 6000 Blackwell Max-Q at 300 W: 128 MB of L2, at
     most 80 MB set aside, a window of at most 128 MB.
 
 The tables give the time of a step with the window divided by the time
@@ -747,7 +747,7 @@ The step was timed against `main` on an RTX 4090 (Section 4.6).
 
 None is expected, since the programs are the same. The Amber suite was run
 with the binaries of `main` (a6fef8b9) and of the branch alternated in one
-job on an RTX 4090 at 450 W (ada-001), three rounds. The table gives the
+job on an RTX 4090 at 450 W, three rounds. The table gives the
 median ns/day of the second half of each run, and the ratio of the time
 of a step to that of `main`:
 
@@ -1141,7 +1141,7 @@ programs as executed are the criterion of D285, D291, and D296.
 None is expected, since the programs are the same. The Amber suite was
 run with the binaries of `main` (0a336ff9) and of the branch before the
 rebase (965573ba, whose programs were those of that `main`) alternated in one job
-on an RTX 4090 at 450 W (ada-002, `--idle`), three rounds. The table gives
+on an RTX 4090 at 450 W (`--idle`), three rounds. The table gives
 the median ns/day of the second half of each run, and the ratio of the
 time of a step to that of `main`:
 

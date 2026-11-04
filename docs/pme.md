@@ -464,7 +464,7 @@ order 4 `global` and `main` took the same time, within 0.6% on the RTX
 In each table the rows from the first of JAC on are those of grids below
 500,000 points or in f64, which the default does not tile.
 
-*RTX 4090 (ada-002 at order 4, ada-001 otherwise), µs:*
+*RTX 4090 (two devices of one model: one at order 4, the other otherwise), µs:*
 
 | System | Spreading | Step without | Step with tiles | Ratio | Spreading without | Spreading with tiles |
 |---|---|---:|---:|---:|---:|---:|
@@ -501,7 +501,7 @@ In each table the rows from the first of JAC on are those of grids below
 | Factor IX NVE, double | order 4 | 7731.6 | 7836.8 | 1.014 | 81.5 | 128.2 |
 | Cellulose NVE, double | order 4 | 35265.3 | 36000.0 | 1.021 | 307.7 | 501.0 |
 
-*RTX PRO 6000 (ada-004; the step there varied by up to 4% from round to
+*RTX PRO 6000 (the step there varied by up to 4% from round to
 round, with another job of this measurement on the node, so the
 spreading is the firmer number), µs:*
 
