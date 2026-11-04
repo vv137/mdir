@@ -238,7 +238,7 @@ pairs and of loops over tuples that are not disjoint, the terms of the
 potential, and to nothing else. The integrators and the constraints keep
 their arithmetic. Section 7.3 explains why the scope matters.
 
-**Shared divisions in f64** (D[shared-divisions]). Under `fast_math`
+**Shared divisions in f64** (D366). Under `fast_math`
 the f64 kernels of loops over pairs take one rewrite that changes their
 rounding. Every division by a value $y$ becomes a product by its
 reciprocal, which the divisions by $y$ share, and on a device a division by $\sqrt{x}$ becomes a product by

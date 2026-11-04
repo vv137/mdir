@@ -15,7 +15,7 @@ internal connections therefore cannot pass the equivalence gate together.
 Native connection tests also cover missing, duplicate, malformed, count/type
 mismatch, and surviving markers at the materialization boundary.
 
-For #739 (D[template-ir-check]), `--precisions single,mixed,double` emits
+For #739 (D367), `--precisions single,mixed,double` emits
 each case in each precision and `--env NAME=VALUE[,NAME=VALUE]` adds a
 variant with those variables; `--instances` counts, with `--stages
 lowered`, the lowered cases that hold each instance of the templates of the

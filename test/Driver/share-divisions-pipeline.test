@@ -1,4 +1,4 @@
-# Where md-exec-share-divisions stands in the pipeline (D[shared-divisions],
+# Where md-exec-share-divisions stands in the pipeline (D366,
 # #731): under fast_math, with rsqrt for a GPU and without it for the host,
 # and absent with fast_math = false. The ablation of the decision, the
 # pipeline without the pass through MDIR_PIPELINE, leaves the divisions of

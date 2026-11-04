@@ -1068,7 +1068,7 @@ them:
   kind is left out.
 - `cases`: the control files and Python scripts of
   `scripts/builder-equivalence/cases`, written for the instances of the
-  templates of the lowering that no other file reaches (D[template-ir-check],
+  templates of the lowering that no other file reaches (D367,
   #739): the neighbor matrix and particle mesh Ewald in single precision
   (`single-pme.toml`), the tiles of edge 4 and 16 of the spreading (D282;
   `pme-tiles4.toml`, `pme-tiles16.toml`), and the potential of PME at the
@@ -1104,7 +1104,7 @@ runs on a GPU, with `target = "CPU"`) is a case that stops with an error.
 `--precisions single,mixed,double` (none by default) makes each case one
 in each precision given, set in `[execution]` as the target is, and each
 `--env NAME=VALUE[,NAME=VALUE]` one more case with those variables, beside
-the case without them (D[template-ir-check]). A case is named by its target,
+the case without them (D367). A case is named by its target,
 its kind, its precision, and its variables, for example `gpu segments mixed
 env:MDIR_PME_SPREAD=tiles4`; without the two options the names are those of
 before, so a file of hashes recorded earlier still applies.

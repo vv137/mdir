@@ -216,7 +216,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // The divisions of the f64 pair kernels by one value share one
   // reciprocal, and on a device a division by sqrt(x) is a product by
   // rsqrt(x), which the host would compute as 1 / sqrt(x)
-  // (D[shared-divisions]): the types are fixed and cse has run.
+  // (D366): the types are fixed and cse has run.
   if (control.fastMath)
     os << "md-exec-share-divisions"
        << (control.target == Target::GPU ? "{rsqrt=true}" : "") << ",";

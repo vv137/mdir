@@ -661,6 +661,8 @@ specification follow those made with it.
 | [D363](decisions/D363.md) | Term fragments are constructed with `OpBuilder` at the same shared potential insertion sites, with typed operands and owned per-build construction state. | 2026-10-29 |
 | [D364](decisions/D364.md) | On a device, the second buffer of each global sum in `scratch`, which takes the partial sums of the parts of the reduction, has 1024 rows (`md_exec::maxReductionParts`) and is allocated once in the body of the function and shared by the sums of the function by type (as many of a type as one op has sums of it), instead of a row a particle from the pool of its region. | 2026-11-01 |
 | [D365](decisions/D365.md) | The builder constructs a program from owned native IR; only user input is parsed at its boundary. | 2026-11-04 |
+| [D366](decisions/D366.md) | Under `fast_math`, the f64 divisions of a kernel of a loop over pairs by one value share one reciprocal, and on a device a division by `math.sqrt(x)` is a product by `math.rsqrt(x)` (`md-exec-share-divisions`). | 2026-11-04 |
+| [D367](decisions/D367.md) | The equivalence check of the builder also compares the instances of the templates of the lowering: in every precision mode, under environment variables that select a strategy, with cases of its own for what nothing else reaches, and with a count of the cases of each instance. | 2026-11-04 |
 <!-- end decisions-table -->
 
 

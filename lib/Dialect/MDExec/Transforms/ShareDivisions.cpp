@@ -1,5 +1,5 @@
 // Divisions shared in the f64 kernels of loops over pairs, under fast_math
-// (D[shared-divisions], #731).
+// (D366, #731).
 //
 // See the description of the pass in Passes.td.
 

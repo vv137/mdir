@@ -675,7 +675,7 @@ def ShareDivisions
     The control keyword `fast_math` runs the pass, after
     `md-exec-assign-precision` (and `md-exec-approximate`) and before
     `md-exec-assign-algebra`, where the types are fixed and `cse` has made
-    each value one SSA value (D[shared-divisions], #731). In each block of
+    each value one SSA value (D366, #731). In each block of
     the kernel of an `md_exec.pair_for`, the scalar `arith.divf` in f64:
 
     - With `rsqrt`, a division by `math.sqrt(x)` becomes a product by
