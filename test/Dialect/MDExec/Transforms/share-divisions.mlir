@@ -157,16 +157,20 @@ func.func @root(%x: !vec, %cell: !md.cell) -> !vec {
   return %f : !vec
 }
 
-// Where the preconditions fail the divisions stay: a lone division by a
-// value that is not a root, vector divisions, a kernel in f32, and a
-// kernel of a loop over tuples, each with a root and a shared divisor.
+// A lone division becomes a product by the reciprocal too, so that its
+// rounding does not depend on how many divisions share the divisor. Where
+// the preconditions fail the divisions stay: vector divisions, a kernel in
+// f32, and a kernel of a loop over tuples, each with a root and a shared
+// divisor.
 //
 // CHECK-LABEL: func.func @kept(
 // CHECK:         md_exec.pair_for
-// CHECK:           arith.divf %{{.+}}, %{{.+}} : f64
+// CHECK:           %[[Y:.+]] = arith.addf
+// CHECK-NEXT:      %[[ONE:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:      %[[INV:.+]] = arith.divf %[[ONE]], %[[Y]] : f64
+// CHECK-NEXT:      arith.mulf %{{.+}}, %[[INV]] : f64
 // CHECK:           arith.divf %{{.+}}, %{{.+}} : vector<3xf64>
 // CHECK:           arith.divf %{{.+}}, %{{.+}} : vector<3xf64>
-// CHECK-NOT:       arith.constant 1.000000e+00 : f64
 // CHECK:           md_exec.yield
 // CHECK:         md_exec.pair_for
 // CHECK-COUNT-3:   arith.divf %{{.+}}, %{{.+}} : f32

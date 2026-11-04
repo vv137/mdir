@@ -682,17 +682,22 @@ def ShareDivisions
       `math.rsqrt(x)`, one for all the divisions by that root, after it;
       `1 / sqrt(x)` becomes the `rsqrt` itself, and a root that nothing
       else takes is removed.
-    - Two or more divisions by any other SSA value `y` share one
-      reciprocal: `1 / y` once, after the definition of `y` (at the start
-      of the block when `y` is defined outside it, as `r2` is), and `a / y`
-      becomes `a · (1/y)`; a division `1 / y` becomes the reciprocal
-      itself. Without `rsqrt` a root is such a value.
+    - A division by any other SSA value `y` becomes a product by one
+      reciprocal of `y` that all the divisions by `y` share: `1 / y` once,
+      after the definition of `y` (at the start of the block when `y` is
+      defined outside it, as `r2` is), and `a / y` becomes `a · (1/y)`; a
+      division `1 / y` becomes the reciprocal itself. Without `rsqrt` a
+      root is such a value.
 
-    A lone division by a value that is not a root is left as it is. The
-    kernels of `md_exec.tuple_for` and of `md_exec.particle_for`, f32
-    kernels, and vector divisions are left as they are: an f32 kernel under
-    `fast_math` takes approximate divisions already (D90), and the other
-    kernels have not been measured.
+    Every such division is rewritten, a lone one too: the rounding of a
+    quotient then follows from its formula alone, not from how many other
+    divisions by its divisor the kernel has. A step that writes energies,
+    whose kernels divide more, so gives the forces of a step that does not
+    (#97), and a run in parts those of a run in one piece. The kernels of
+    `md_exec.tuple_for` and of `md_exec.particle_for`, f32 kernels, and
+    vector divisions are left as they are: an f32 kernel under `fast_math`
+    takes approximate divisions already (D90), and the other kernels have
+    not been measured.
 
     The pipeline sets `rsqrt` for a device and not for the host. On a
     device `math.rsqrt` in f64 lowers to libdevice's `__nv_rsqrt`, PTX's
@@ -700,7 +705,8 @@ def ShareDivisions
     refinement: measured on an RTX 5090 (sm_120), within 0.51 ulp of
     1/√x, against 1.5 ulp for `1 / sqrt(x)`, and `a · rsqrt(x)` within
     1.48 ulp of a/√x, as `a / sqrt(x)` is. On the host `math.rsqrt` lowers
-    to `1 / sqrt(x)`, which saves nothing.
+    to `1 / sqrt(x)`, the reciprocal of the root that the divisions share
+    without `rsqrt` anyway.
 
     Rounding. `a · (1/y)` rounds twice, so it is within 2u + u² of a/y
     (u = 2^-53), against u for `a / y`. Neither overflows nor underflows

@@ -17,13 +17,21 @@ the default, with `rsqrt=true` for a GPU. In each block of the kernel of an
 - with `rsqrt`, a division by `math.sqrt(x)` becomes a product by
   `math.rsqrt(x)`, one per root, placed after it; `1 / sqrt(x)` becomes the
   `rsqrt` itself, and a root that nothing else uses is removed;
-- two or more divisions by any other SSA value `y` share one reciprocal
-  `1 / y`, placed after the definition of `y` (at the start of the block
+- a division by any other SSA value `y` becomes a product by one
+  reciprocal `1 / y` that all the divisions by `y` share, placed after the definition of `y` (at the start of the block
   when `y` is an argument of the block, as `r2` is); `a / y` becomes
   `a · (1/y)`, and a division `1 / y` becomes the reciprocal. Without
   `rsqrt` a root is such a value.
 
-A lone division by a value that is not a root stays. The kernels of
+Every such division is rewritten, a lone one too, so that the rounding of
+a quotient follows from its formula alone and not from how many other
+divisions by its divisor the kernel has. A first version shared a
+reciprocal only among two or more divisions; the suite then found that a
+step that writes energies, whose kernels divide more (the energy beside
+the force), no longer gave the forces of a step that does not
+(`energy-interval.test`, `leapfrog-energy-step.test`), nor a run in parts
+those of a run in one piece (the Python checkpoint and thermostat tests),
+in double on the CPU: the invariant of #97. The kernels of
 `md_exec.tuple_for` and `md_exec.particle_for` stay as they are (not
 measured; the integrators and constraints keep their arithmetic, as for
 D112), as do vector divisions and f32 kernels: under `fast_math` an f32
@@ -47,9 +55,9 @@ Ewald and Lennard-Jones), the divisions `1/r2` and `q/sqrt(r2)` become
   although PTX calls it approximate. `__nv_rsqrtf` is `rsqrt.approx.f32`
   (`.ftz` under `__CUDA_FTZ`).
 - On the host (MathToLLVM, which the CPU pipeline runs before MathToLibm)
-  to `1 / sqrt(x)`, two correctly rounded operations: nothing is saved, and
-  a lone `a / sqrt(x)` would round once more. The host therefore shares a
-  root like any other divisor.
+  to `1 / sqrt(x)`, two correctly rounded operations, which is the
+  reciprocal of the root that the divisions share without `rsqrt`. The
+  host therefore takes a root as any other divisor.
 
 The error against a reference in long double, in ulp of the result, over
 $2^{24}$ arguments of each set: "wide", mantissas uniform and exponents

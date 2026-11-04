@@ -240,11 +240,14 @@ their arithmetic. Section 7.3 explains why the scope matters.
 
 **Shared divisions in f64** (D[shared-divisions]). Under `fast_math`
 the f64 kernels of loops over pairs take one rewrite that changes their
-rounding. Two or more divisions by one value $y$ share its reciprocal, and
-on a device a division by $\sqrt{x}$ becomes a product by
+rounding. Every division by a value $y$ becomes a product by its
+reciprocal, which the divisions by $y$ share, and on a device a division by $\sqrt{x}$ becomes a product by
 $\mathrm{rsqrt}(x)$; in the pair kernel of the direct sum of Ewald with
 Lennard-Jones this replaces the division $q/\sqrt{r^2}$ and keeps
-$1/r^2$. With $\mathrm{fl}(z) = z(1 + \delta)$, $\lvert\delta\rvert \le
+$1/r^2$. A lone division is rewritten too: the rounding of a quotient
+then follows from its formula, not from how many divisions the kernel has
+(Section 7.1), so a step that writes energies, whose kernels divide more,
+gives the forces of one that does not. With $\mathrm{fl}(z) = z(1 + \delta)$, $\lvert\delta\rvert \le
 \mathsf u$, for each correctly rounded operation, a quotient as written is
 $\mathrm{fl}(a/y) = (a/y)(1 + \delta_1)$, and the shared form is
 

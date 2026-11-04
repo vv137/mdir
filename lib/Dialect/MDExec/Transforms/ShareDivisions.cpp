@@ -86,10 +86,12 @@ void Sharer::run() {
   SmallVector<math::SqrtOp> roots;
   for (auto &[divisor, list] : divisions) {
     // A division by sqrt(x) becomes a product by rsqrt(x), with `rsqrt`;
-    // any other divisor is shared when two or more divisions take it.
+    // a division by any other value, a product by its reciprocal. Every
+    // division is rewritten, however many take its divisor: the rounding
+    // of a quotient then follows from its formula alone, not from what else
+    // the kernel computes, so a step that writes energies, whose kernels
+    // divide more, gives the forces of a step that does not (#97).
     auto root = divisor.getDefiningOp<math::SqrtOp>();
-    if (!(root && rsqrt) && list.size() < 2)
-      continue;
     if (root && rsqrt)
       roots.push_back(root);
     for (arith::DivFOp division : list) {
