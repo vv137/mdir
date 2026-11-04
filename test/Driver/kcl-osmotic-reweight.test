@@ -1,0 +1,26 @@
+# The mechanics of the reweighting of examples/kcl-osmotic (#140) on a
+# mixture of 40 A and 40 B of charges +1 and -1 with PME: the K-Cl
+# correction of the example, x12 c12/r^12 - x6 c6/r^6 over the A-B pairs, is
+# linear in x12 and x6, so the two columns of `observe` give
+# U(sigma') - U(sigma_hat) of every row exactly. Checked against the energy
+# of a state of [free_energy] at sigma1 = sigma0 + 0.02 A at every row,
+# against the reweighted mean and N_eff/N that those energies give, and
+# against two single points of the last frame, in double precision. The
+# Lennard-Jones is shifted (POTENTIAL_SHIFT): under "NONE", as the example
+# runs, the columns and the energies of the states are those of the shifted
+# potential that the truncated forces sample (D210), while the total of the
+# log is that of the truncated one, so a single point compared through the
+# log needs the shift.
+#
+# REQUIRES: python-api, hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 40 40 30 3.4 0.24 1.0
+# RUN: %mdir_python %S/Inputs/kcl_osmotic_reweight.py write %t %S/../../examples/kcl-osmotic
+# RUN: cd %t && mdir run run.toml > run.log
+# RUN: %mdir_python %S/Inputs/kcl_osmotic_reweight.py frame %t %S/../../examples/kcl-osmotic
+# RUN: cd %t && mdir run point-hat.toml > point-hat.log && mdir run point-new.toml > point-new.log
+# RUN: %mdir_python %S/Inputs/kcl_osmotic_reweight.py check %t %S/../../examples/kcl-osmotic | FileCheck %s
+
+# CHECK: columns: ok
+# CHECK: reweighting: ok
+# CHECK: single points: ok
