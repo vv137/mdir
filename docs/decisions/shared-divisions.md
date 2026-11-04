@@ -103,8 +103,8 @@ RMS of the forces.
 |---|---|---|---|---|
 | CPU, double | 2.2e-10 | 1.7e-15 | identical (the CPU is deterministic) | equal |
 | CPU, mixed | 0 (bitwise identical) | 0 | identical | equal |
-| GPU, double | 1.9e-11 | 4.6e-16 | 4.1e-16 | equal |
-| GPU, mixed | 6.6e-3 | 2.3e-7 | 2.4e-7 | reciprocal sum 2e-5 kcal/mol apart, as between two runs of `main` (4e-5) |
+| GPU, double | 1.0e-11 | 4.1e-16 | 3.3e-16 | equal |
+| GPU, mixed | 0.16 | 1.3e-6 | 1.3e-6 | reciprocal sum 3.4e-5 kcal/mol apart, as between two runs of `main` (4.2e-5) |
 
 For scale, mixed against double on the GPU differs by an RMS ratio of
 2.0e-5. In double the difference is at the level of rounding and, on the
@@ -131,11 +131,13 @@ the compile cache off; the rate over steps 3000 to 5000.
 
 | Mode | `main`, run 1 | `main`, run 2 | This decision, run 1 | This decision, run 2 |
 |---|---|---|---|---|
-| double | 1.700 ms/step, 101.6 ns/day | 1.700 ms/step, 101.6 ns/day | 1.543 ms/step, 112.0 ns/day | 1.543 ms/step, 112.0 ns/day |
-| mixed | 0.099 ms/step, 1749.6 ns/day | 0.099 ms/step, 1753.8 ns/day | 0.099 ms/step, 1749.2 ns/day | 0.099 ms/step, 1753.8 ns/day |
+| double | 1.701 ms/step, 101.6 ns/day | 1.701 ms/step, 101.6 ns/day | 1.542 ms/step, 112.1 ns/day | 1.542 ms/step, 112.1 ns/day |
+| mixed | 0.098 ms/step, 1755.1 ns/day | 0.098 ms/step, 1757.9 ns/day | 0.099 ms/step, 1749.6 ns/day | 0.098 ms/step, 1757.8 ns/day |
 
-In double the step is 9.2% shorter (1.700 to 1.543 ms); the mixed mode is
-unchanged. The RTX 5090 executes f64 at a small fraction of its f32 rate,
+In double the step is 9.3% shorter (1.701 to 1.542 ms); the mixed mode is
+unchanged. On the CPU (JAC double, 8 threads, 300 steps, alternated twice
+on a shared machine) a step took 78.4 and 77.7 ms with `main` and 77.6 and
+77.2 ms with this decision, the same within the noise. The RTX 5090 executes f64 at a small fraction of its f32 rate,
 so its double step is bound by f64 arithmetic: the gain overstates what a
 device with full-rate f64 would see, which has not been measured.
 
