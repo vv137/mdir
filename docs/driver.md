@@ -1066,6 +1066,20 @@ them:
 - `bench`: the control files of the systems of the prepared Amber suite,
   one level under `MDIR_BENCH_DIR` (or `--bench`). Without either, this
   kind is left out.
+- `cases`: the control files and Python scripts of
+  `scripts/builder-equivalence/cases`, written for the instances of the
+  templates of the lowering that no other file reaches (D[template-ir-check],
+  #739): the neighbor matrix and particle mesh Ewald in single precision
+  (`single-pme.toml`), the tiles of edge 4 and 16 of the spreading (D282;
+  `pme-tiles4.toml`, `pme-tiles16.toml`), and the potential of PME at the
+  particles, which only the derivative in the charges of a Python program
+  asks for (`pme-potential.py`). A control file may name environment
+  variables for its emits on lines `# check.py env: NAME=VALUE`, as the
+  two of the tiles name `MDIR_PME_SPREAD`. A script is run with the
+  interpreter of `--python` and the Python package of the build on
+  `PYTHONPATH`, as `SCRIPT TARGET PRECISION STAGE`, and prints the module
+  (`Program.ir`) or the lowered program (`Program.lowered_ir`); it has the
+  program of a run alone.
 - `--control FILE` adds a control file of one's own.
 
 **The cases.** Each control file is a case for each target of `--targets`
@@ -1086,6 +1100,14 @@ not copied: they must stay unchanged while the check runs.
 compiled, and the GPU target changes only the text. A target that the
 control file does not allow (a model or a neighbor structure that only
 runs on a GPU, with `target = "CPU"`) is a case that stops with an error.
+
+`--precisions single,mixed,double` (none by default) makes each case one
+in each precision given, set in `[execution]` as the target is, and each
+`--env NAME=VALUE[,NAME=VALUE]` one more case with those variables, beside
+the case without them (D[template-ir-check]). A case is named by its target,
+its kind, its precision, and its variables, for example `gpu segments mixed
+env:MDIR_PME_SPREAD=tiles4`; without the two options the names are those of
+before, so a file of hashes recorded earlier still applies.
 
 **What is compared.** The exit status, the standard output, and the
 standard error of each case count; the path of the scratch directory is
@@ -1128,6 +1150,18 @@ builder's own locations, which diagnostics name, and is corrected here.
 That needs the CUDA toolkit but no device. MLIR's printer prints it, so it
 has the one form `printed`, compared whatever `--forms` says (before step
 2 of #568, `--forms printed` left it out).
+
+`--instances`, with the lowered stage, counts for each target the lowered
+cases of the last build whose program holds each instance of the templates
+of the lowering (`lib/Runtime/Templates`), by the names of their functions:
+the neighbor matrix in f64 or f32, particle mesh Ewald by its types and
+order (`pme p64c32f32o4`), and its variants that are added only where a sum
+asks for them (`pme triclinic`, `pme prolate`, `pme listed`,
+`pme potential`, `pme tiles 8`). It is the gate of #739, which moves the
+instantiation of the templates from text into IR: each step names the
+cases of each instance that it compares, not only their total. On a GPU
+target the lowered program holds the PTX of its kernels, without line
+information, so the comparison covers the PTX.
 
 **What each stage keeps.** Step 1 of #568, which adds the check, keeps
 both forms, and the lowered program as well. A stage that builds ops with

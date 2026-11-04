@@ -15,6 +15,17 @@ internal connections therefore cannot pass the equivalence gate together.
 Native connection tests also cover missing, duplicate, malformed, count/type
 mismatch, and surviving markers at the materialization boundary.
 
+For #739 (D[template-ir-check]), `--precisions single,mixed,double` emits
+each case in each precision and `--env NAME=VALUE[,NAME=VALUE]` adds a
+variant with those variables; `--instances` counts, with `--stages
+lowered`, the lowered cases that hold each instance of the templates of the
+lowering. The corpus kind `cases` (`cases/`) holds the control files and
+the Python script for the instances that nothing else reaches: single
+precision, the tiles of edge 4 and 16 (named by `# check.py env:` lines),
+and the potential of PME at the particles (`pme-potential.py`, run with
+`--python` and the Python package of each build). See docs/driver.md,
+Section 2.11.
+
 `order.py BASE_MDIR COMMIT_MDIR --printer MDIR_OPT --scratch OWN_DIRECTORY`
 compares combined terms in CPU/GPU, double/mixed, run/segment forms. It
 covers tuple/centroid, pair, Born/surface, restraint, external, and triplet

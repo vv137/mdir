@@ -1,0 +1,9 @@
+# D[template-ir-check]
+
+Recorded at its merge.
+
+**The equivalence check of the builder also compares the instances of the templates of the lowering: in every precision mode, under environment variables that select a strategy, with cases of its own for what nothing else reaches, and with a count of the cases of each instance.** The gate of #739 is that each of its steps keeps the lowered program the same, PTX included, while the instantiation of `lib/Runtime/Templates` moves from text substitution into IR (ruling 19). The audit of #739 found that the corpus of `scripts/builder-equivalence/check.py` reached no instance in single precision: neither the neighbor matrix in f32 nor PME in `p32c32f32`. It also reached no tiles of edge 4 or 16, and no PME potential at the particles. The equivalence of those would therefore have been shown by no case.
+
+`check.py` takes `--precisions` (each case in each precision, set in `[execution]`), `--env` (one more variant of each case with a set of variables), and `--instances` (with the lowered stage: for each target, the lowered cases whose program holds each instance, read from the names of the functions). The corpus kind `cases`, `scripts/builder-equivalence/cases`, has the control files and the Python script for the missing instances. A control file names the variables of its emits on lines `# check.py env: NAME=VALUE`. A Python case is run with the build's Python package. Without the new options, the labels of the cases are those of before, so earlier files of hashes still apply.
+
+The alternative, a tool of its own for the templates, would have repeated the corpus, the mirroring of inputs, the comparison, and the hashes of `check.py`. No compiler, runtime, or template code changes. See [driver.md, Section 2.11](../driver.md#211-the-equivalence-check-of-the-builder).

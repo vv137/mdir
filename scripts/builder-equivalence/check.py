@@ -26,7 +26,19 @@ The corpus (all by default; --only takes one or more of the kinds):
   bench     the control files (*.toml) of the systems of the prepared Amber
             suite: the directories of MDIR_BENCH_DIR (or --bench) one level
             down; without either, this kind is left out
+  cases     the control files (*.toml) and Python scripts (*.py) of
+            scripts/builder-equivalence/cases, written for what no other
+            file reaches (#739): the instances of the templates of the
+            lowering in single precision, the tiles of edge 4 and 16 of
+            PME, and the potential of PME at the particles
 --control FILE adds a control file of its own (the corpus "extra").
+
+A control file may name environment variables for its emits, one a line:
+`# check.py env: NAME=VALUE`. A case written in Python is run with the
+interpreter of --python (by default this one) and the Python package of the
+build (<tree>/python) on PYTHONPATH, as `SCRIPT TARGET PRECISION STAGE`
+(PRECISION is DEFAULT without --precisions); it prints the module or the
+lowered program, and has the program of a run alone.
 
 Each control file is a case for each target of --targets (cpu and gpu by
 default): a copy of the file with `target` set in [execution]. `mdir emit`
@@ -35,7 +47,13 @@ for each kind of program of --kinds as well: `run`, the program of the
 run, and `segments`, the program of segments that a Python simulation of
 the same model runs (`mdir emit --segments`, which builds the branches of
 the start and the loop over the parts). Both by default; a build of
-before `--segments` takes `--kinds run`. A case runs in a
+before `--segments` takes `--kinds run`. --precisions (none by default) makes each one
+a case in each precision given, set in [execution] as the target is, and
+each --env NAME=VALUE[,NAME=VALUE] one more case with those variables, beside
+the case without them (#739). The label of a case in the report and in a
+file of hashes is its target, kind, precision, and variables, for example
+"gpu segments mixed env:MDIR_PME_SPREAD=tiles4"; without the two options it
+is the label of before. A case runs in a
 scratch directory that mirrors the directories above the control file with
 links, so that the paths of its inputs (relative to the control file or to
 the directory it runs in) resolve as they would beside it. The outputs of a
@@ -56,6 +74,12 @@ program after the passes, as `mdir emit --stage=lowered` prints it, with
 the kernels of a GPU target (no device is used, but the CUDA toolkit is).
 MLIR's printer already prints it, so it has one form, "printed", which is
 compared whatever --forms says.
+--instances, with the lowered stage, counts for each target the lowered
+cases (of the last build) whose program holds each instance of the
+templates of the lowering (lib/Runtime/Templates), by the names of their
+functions: the neighbor matrix in f64 or f32, particle mesh Ewald by its
+types and order (p64c32f32o4), and its variants (triclinic, prolate,
+listed, potential, tiles of an edge).
 
 A case is identical when the status, the output, and the error output are
 the same in every form. Failed printed-form diagnostics ignore only generated
