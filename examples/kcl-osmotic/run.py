@@ -12,10 +12,12 @@ script: 1-min.toml (once, copied to every replica), 2-nvt.toml and
 3-npt.toml with the replica's seeds, then 4-md.toml at sigma'. The walls,
 the slab, and the area of a replica are those of the cell its stage 3 ends
 with (cell.txt). `fit` samples at sigma0, then moves sigma' to the root of
-f = <Pi> - Pi_exp reweighted from the rows of the last runs, at most to
+f = <Pi> - Pi_exp reweighted from the rows of the last runs (or, without
+a root there, by the Newton step of the covariance gradient), at most to
 the edge of the region where N_eff/N >= 0.5, samples again there, each
 replica from its last state, and stops when |f| of a fresh set of runs is
-below its standard error, or after --updates updates.
+below its standard error, or after --updates updates. Run again, it skips
+the sets of runs that are complete.
 
 Options common to all: --mdir (the binary, `mdir` on PATH by default),
 --cpu (the CPU target, with --threads), --parallel (runs at once, the
@@ -56,7 +58,7 @@ def common(args, stage, cell=None, sigma=osmotic.SIG0):
     x12, x6 = osmotic.x_of(sigma)
     dyn = stage != "min"
     return dict(
-        X12=repr(x12), X6=repr(x6), SIGMA=f"{sigma:.5f}",
+        X12=repr(float(x12)), X6=repr(float(x6)), SIGMA=f"{sigma:.5f}",
         SCALING="NONE" if stage == "md" else "CELL",
         ZLO=f"{lz / 4:.6f}", ZHI=f"{3 * lz / 4:.6f}", ZC=f"{lz / 2:.6f}",
         OBSERVE_NBFIX='observe    = ["x12", "x6"]' if dyn else "",
@@ -142,9 +144,12 @@ def analyze(args, name=None, sigma=None):
 
 def fit(args):
     record = pathlib.Path(args.system) / "fit.json"
-    history, sigma, name, start = [], osmotic.SIG0, "s0", "npt"
+    history, sigma, name, start = [], float(osmotic.SIG0), "s0", "npt"
     for update in range(args.updates + 1):
-        sample(args, name, sigma, start)
+        if all((r / f"{name}.h5").exists() for r in replicas(args)):
+            print(f"== {name}: complete, not run again")     # a fit run again resumes
+        else:
+            sample(args, name, sigma, start)
         result = analyze(args, name, sigma)
         history.append(dict(name=name, sigma=sigma, **result))
         record.write_text(json.dumps(history, indent=1))
@@ -154,7 +159,7 @@ def fit(args):
         if update == args.updates:
             print("== no more updates")
             break
-        sigma, start, name = result["next"], name, f"u{update + 1}"
+        sigma, start, name = float(result["next"]), name, f"u{update + 1}"
     print(f"   history in {record}")
 
 
@@ -177,6 +182,7 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--parallel", type=int, default=0)
     args = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)   # progress shows in a log as it happens
     dict(equilibrate=equilibrate, sample=sample, analyze=analyze, fit=fit)[args.command](args)
 
 

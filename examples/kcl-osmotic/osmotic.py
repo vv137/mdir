@@ -164,12 +164,23 @@ def gradients(reps, sigma_hat):
 
 
 def root(d, f):
-    """The root of f(d) by linear interpolation, or extrapolated from the end nearest to zero."""
+    """The first sign change of f(d) by linear interpolation, or None."""
     for i in range(len(d) - 1):
         if f[i] == 0 or f[i] * f[i + 1] < 0:
             return d[i] - f[i] * (d[i + 1] - d[i]) / (f[i + 1] - f[i])
-    j = int(np.argmin(np.abs(f))); k = j + 1 if j + 1 < len(d) else j - 1
-    return d[j] - f[j] * (d[k] - d[j]) / (f[k] - f[j])
+    return None
+
+
+def step_of(reps, sigma_hat, ds, neff_min):
+    """The root of the reweighted f in the trust region (N_eff/N >= neff_min)
+    if there is one, else the Newton step -f/(df/dsigma') of the covariance
+    gradient, which the caller limits to the trust region."""
+    f = np.array([np.mean(at(reps, sigma_hat, sigma_hat + d)["f"]) for d in ds])
+    r = root(ds, f)
+    if r is not None:
+        return r, True
+    fhat = np.mean([r_["pi"].mean() - float(pi_exp(r_["c"].mean())) for r_ in reps])
+    return -fhat / np.mean(gradients(reps, sigma_hat)["oeff"]), False
 
 
 def inefficiency(xs, dt_ps=0.2):
@@ -213,19 +224,18 @@ def analyze(runs, sigma_hat, drop_ps=500.0, grid=(-0.02, 0.02, 41), neff_min=0.5
     for d, ne, fm, fs in rows:
         if abs(round(d / 0.005) * 0.005 - d) < 1e-9:
             out(f"             {d:+.3f}     {ne:.3f}    {fm:+.2f} +- {fs:.2f}")
-    trust = [r for r in rows if r[1] >= neff_min]
-    lo, hi = trust[0][0], trust[-1][0]
-    usable = np.array([r[1] >= 0.05 for r in rows])
-    dd = ds[usable]
-    full = root(dd, np.array([r[2] for r in rows])[usable])
-    jk = np.array([root(dd, np.array([np.mean(at([q for j, q in enumerate(reps) if j != k], sigma_hat, sigma_hat + d)["f"])
-                                       for d in dd])) for k in range(n)])
+    trust = np.array([d for d, ne, _, _ in rows if ne >= neff_min])
+    lo, hi = float(trust.min()), float(trust.max())
+    full, inside = step_of(reps, sigma_hat, trust, neff_min)
+    jk = np.array([step_of([q for j, q in enumerate(reps) if j != k], sigma_hat, trust, neff_min)[0] for k in range(n)])
     jse = math.sqrt((n - 1) / n * np.sum((jk - jk.mean()) ** 2))
     step = min(max(full, lo), hi)
+    how = "reweighted root of f" if inside else "Newton step from the covariance gradient (no root in the trust region)"
     out(f"  trust region (N_eff/N >= {neff_min}): d sigma' in [{lo:+.4f}, {hi:+.4f}] A")
-    out(f"  root of f: sigma' = {sigma_hat + full:.5f} A (d {full:+.4f}, jackknife SE {jse:.4f} A)")
-    out(f"  next sigma' (the root, or the edge of the trust region): {sigma_hat + step:.5f} A")
-    return dict(f=float(f.mean()), f_se=float(se(f)), root=sigma_hat + full, root_se=jse, next=sigma_hat + step)
+    out(f"  {how}: sigma' = {sigma_hat + full:.5f} A (d {full:+.4f}, jackknife SE {jse:.4f} A)")
+    out(f"  next sigma' (limited to the trust region): {sigma_hat + step:.5f} A")
+    return dict(f=float(f.mean()), f_se=float(se(f)), root=float(sigma_hat + full), root_se=float(jse),
+                next=float(sigma_hat + step))
 
 
 def main():
