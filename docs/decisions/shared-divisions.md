@@ -83,15 +83,58 @@ four times and reaches 2.8 ulp.
 
 ## Accuracy against the current program
 
-To follow in #734.
+JAC (23,558 atoms, PME, the input of the Amber suite's JAC NVE), one step
+of 2 fs, the forces of the checkpoint after it and the terms and the
+virial at the start as the log prints them (to 10⁻⁶ kcal/mol), this
+decision against `main` built the same way; on the GPU (RTX 5090) the
+scale of two runs of `main` outside the deterministic mode is given
+beside it. RMS ratio: the RMS of the difference of the forces over the
+RMS of the forces.
+
+| Target, mode | Forces, max difference (kJ/mol/nm) | RMS ratio | Two runs of `main` (RMS ratio) | Terms and virial at the start |
+|---|---|---|---|---|
+| CPU, double | 2.2e-10 | 1.7e-15 | identical (the CPU is deterministic) | equal |
+| CPU, mixed | 0 (bitwise identical) | 0 | identical | equal |
+| GPU, double | 1.9e-11 | 4.6e-16 | 4.1e-16 | equal |
+| GPU, mixed | 6.6e-3 | 2.3e-7 | 2.4e-7 | reciprocal sum 2e-5 kcal/mol apart, as between two runs of `main` (4e-5) |
+
+For scale, mixed against double on the GPU differs by an RMS ratio of
+2.0e-5. In double the difference is at the level of rounding and, on the
+GPU, of the same size as the difference between two runs of `main`; the
+mixed mode is unchanged, which the deterministic runs below show to the
+bit.
 
 ## Determinism
 
-To follow in #734.
+JAC on the GPU (RTX 5090) in the deterministic mode, 500 steps, two runs
+of this decision each in double and mixed: `mdir checkpoint A B` reports
+identical states in both modes. CPU, double, 8 threads, 100 steps, two
+runs: identical. Against `main`, the deterministic mixed run is
+identical; the deterministic double run has the same terms, virial, and
+energies at step 0 and differs afterwards (by 4e-6 nm in the positions
+at step 500, the divergence of two trajectories that start one rounding
+apart).
 
 ## Timing
 
-To follow in #734.
+JAC NVE, 5000 steps, one RTX 5090 with no other process on the device,
+`main` and this decision built the same way, alternated twice in one job,
+the compile cache off; the rate over steps 3000 to 5000.
+
+| Mode | `main`, run 1 | `main`, run 2 | This decision, run 1 | This decision, run 2 |
+|---|---|---|---|---|
+| double | 1.700 ms/step, 101.6 ns/day | 1.700 ms/step, 101.6 ns/day | 1.543 ms/step, 112.0 ns/day | 1.543 ms/step, 112.0 ns/day |
+| mixed | 0.099 ms/step, 1749.6 ns/day | 0.099 ms/step, 1753.8 ns/day | 0.099 ms/step, 1749.2 ns/day | 0.099 ms/step, 1753.8 ns/day |
+
+In double the step is 9.2% shorter (1.700 to 1.543 ms); the mixed mode is
+unchanged. The RTX 5090 executes f64 at a small fraction of its f32 rate,
+so its double step is bound by f64 arithmetic: the gain overstates what a
+device with full-rate f64 would see, which has not been measured.
+
+The variant with `sqrt(r2) · (1/r2)` instead of `rsqrt(r2)` (above) took
+1.503 ms/step in the same kind of job (11.6% shorter), at 2.8 ulp instead
+of 1.5 for the quotient; it is not taken, as #731 asks for `rsqrt` where
+it is accurate.
 
 ## Bits
 
@@ -128,3 +171,6 @@ an ablation takes one of two routes:
 - A device with full-rate f64: the RTX 5090 executes f64 at a small
   fraction of its f32 rate, so its double step is bound by f64 arithmetic
   and the gain there overstates the gain on such a device.
+- The accuracy of the device's f64 `rsqrt` was measured on sm_120 alone;
+  it rests on how ptxas expands `rsqrt.approx.f64`, and other
+  architectures (sm_89) have not been measured yet.
