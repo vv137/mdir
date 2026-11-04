@@ -11,7 +11,8 @@ inline units::Unit unitOf(const std::string &parameter, const std::string &term)
   if (!term.empty()) return units::none;
   if (parameter == "charge") return units::charge;
   if (parameter == "sigma" || parameter == "sigma_pair") return units::nm;
-  if (parameter == "epsilon" || parameter == "epsilon_pair") return units::energy;
+  if (parameter == "epsilon" || parameter == "epsilon_pair" ||
+      parameter == "dihedral_k") return units::energy;
   return units::none;
 }
 inline py::array_t<int64_t> indices(const std::vector<int64_t> &values) {
@@ -48,7 +49,9 @@ inline void bindTunable(py::module_ &m) {
       t.parameter = std::move(parameter);
       t.term = term.value_or("");
       std::string where = "Tunable('" + t.name + "')";
-      if (!map.is_none()) t.map = integers(map, where + ".map");
+      t.mapProvided = !map.is_none();
+      t.valuesProvided = !values.is_none();
+      if (t.mapProvided) t.map = integers(map, where + ".map");
       if (!values.is_none())
         t.values = host::doubles(values, where + ".values", {}, {}, unitOf(t.parameter, t.term));
       if (mixing) {

@@ -1,0 +1,7 @@
+# REQUIRES: python-api, hdf5
+# Updated signed coefficients and gradients survive a continuation; maps are structural.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_dihedral_tunables.py checkpoint %t/double CPU Double | FileCheck %s --check-prefix=DOUBLE
+# RUN: %mdir_python %S/Inputs/python_dihedral_tunables.py checkpoint %t/mixed CPU Mixed | FileCheck %s --check-prefix=MIXED
+# DOUBLE: dihedral checkpoint CPU Double: updated coefficients and gradients continue bitwise; changed map refused
+# MIXED: dihedral checkpoint CPU Mixed: updated coefficients and gradients continue bitwise; changed map refused

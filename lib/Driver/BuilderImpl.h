@@ -82,8 +82,8 @@ struct mdir::driver::BuildKept {
   /// which, from 0 to `count` - 1, and the fields of the parameter are
   /// `first` and those after it.
   struct TupleGradient {
-    unsigned tunable = 0, term = 0;
-    std::string parameter;
+    unsigned tunable = 0;
+    std::string tupleSet, parameter;
     unsigned place = 0, count = 0, first = 0;
   };
   std::vector<TupleGradient> tupleGradients;
@@ -968,6 +968,14 @@ private:
   /// energies, which have their period (Control::getEnergyLoopPeriod).
   bool framesAtEnergies = false;
 };
+
+/// The common D230 tuple-seed layout, borrowed by custom and bonded terms.
+void collectTupleGradient(TermParameters &context, Program::TupleSet &set,
+                          unsigned tunable, StringRef parameter);
+mlir::Value buildTupleGradientParameter(
+    mlir::OpBuilder &builder, mlir::Value parameter, mlir::Value selector,
+    mlir::ValueRange gathered, unsigned arity,
+    const BuildKept::TupleGradient &gradient);
 
 } // namespace builder
 } // namespace driver

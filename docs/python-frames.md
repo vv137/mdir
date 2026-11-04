@@ -1104,10 +1104,12 @@ tunable that is not `"zero"` enters it.
 |---|---|---|
 | A constant of a pair term | that pair term, over its groups, with its tail and the estimate of its shift at the volume of the frame (`"pair:<name>"`) | |
 | A parameter of a tuple term | that tuple term (`"tuple:<name>"`) | |
+| `dihedral_k` | built-in periodic dihedrals (`"dihedrals"`), D[dihedral-tunables] | the existing relation retains fixed proper and improper rows; their contributions cancel in parameter differences |
 | $\sigma$, $\epsilon$ per type, or by pairs of types | the Lennard-Jones of all pairs within the cutoff, the correction for the dispersion and the estimate of its shift (`"lennard_jones"`) | the kernel runs over the neighbor structure of all particles; the pairs of other types are computed and cancel. A restriction to the particles of the types concerned would be a relation of its own, a later step |
 | Charges | the direct sum, the excluded pairs, the 1-4 pairs, the reciprocal sum, the self term and the background; a pair term that reads `q1` or `q2` (`"coulomb"`) | the reciprocal sum is one quadratic form of all the charges, $\tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$: the part of the water with itself cannot be left out of a mesh, even where only the charges of a solute are tunable |
 
-Left out: the bonds, angles, dihedrals, impropers, Urey-Bradley terms, and
+Left out: the bonds, angles, periodic dihedrals without `dihedral_k`,
+harmonic impropers, Urey-Bradley terms, and
 CMAPs of the topology, the Lennard-Jones of the 1-4 pairs (which do not
 follow the tunable table, D213), the terms of the positions (no tunable
 enters one), every pair or tuple term without a tunable, the Lennard-Jones

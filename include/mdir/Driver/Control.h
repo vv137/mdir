@@ -220,7 +220,8 @@ struct Control {
     SigmaPair,
     EpsilonPair,
     PairConstant,
-    TupleParameter
+    TupleParameter,
+    DihedralK
   };
   struct TunableDeclaration {
     std::string name;

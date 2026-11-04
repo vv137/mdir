@@ -104,17 +104,9 @@ static mlir::Value buildTupleContribution(mlir::OpBuilder &builder, mlir::ValueR
         args[parameterStart + (parameter - config.parameters.begin())];
     Value selector =
         args[parameterStart + config.parameters.size() + k];
-    Value zero = constant(0.0);
-    for (unsigned c = 0; c != gradient.count; ++c) {
-      Value number = constant(static_cast<double>(c));
-      Value equal = arith::CmpFOp::create(
-          builder, loc, arith::CmpFPredicate::OEQ, selector, number);
-      Value derivative =
-          args[gatherStart + c * config.arity + gradient.place];
-      Value selected = arith::SelectOp::create(builder, loc, equal,
-                                               derivative, zero);
-      value = arith::AddFOp::create(builder, loc, value, selected);
-    }
+    value = buildTupleGradientParameter(builder, value, selector,
+        args.slice(gatherStart, gradient.count * config.arity), config.arity,
+        gradient);
     bindings[gradient.parameter] = value;
     gatherStart += gradient.count * config.arity;
   }
@@ -290,44 +282,8 @@ void TupleTermBuilder::collectTupleSets(TermParameters &context) const {
             Expression::parse(term.expression, control.functions));
         if (!llvm::is_contained(expression.getNames(), declaration.parameter))
           continue;
-        size_t tuples = term.particles.size() / term.arity;
-        unsigned place = 0, count = 0;
-        std::vector<double> colors;
-        for (unsigned candidate = 0; candidate != term.arity; ++candidate) {
-          std::map<unsigned, unsigned> seen;
-          std::vector<double> numbers;
-          unsigned most = 0;
-          for (size_t t = 0; t != tuples; ++t) {
-            unsigned number = seen[term.particles[t * term.arity + candidate]]++;
-            numbers.push_back(number);
-            most = std::max(most, number + 1);
-          }
-          if (candidate == 0 || most < count) {
-            place = candidate;
-            count = most;
-            colors = std::move(numbers);
-          }
-        }
-        TupleGradient gradient;
-        gradient.tunable = static_cast<unsigned>(k);
-        gradient.term = declaration.termIndex;
-        gradient.parameter = declaration.parameter;
-        gradient.place = place;
-        gradient.count = count;
-        gradient.first = static_cast<unsigned>(context.getGradientFields().size());
-        for (unsigned c = 0; c != count; ++c) {
-          Program::GradientField field;
-          field.tunable = gradient.tunable;
-          for (size_t t = 0; t != tuples; ++t)
-            if (colors[t] == c)
-              field.sites.push_back(
-                  {static_cast<uint32_t>(t),
-                   term.particles[t * term.arity + place]});
-          context.getGradientFields().push_back(std::move(field));
-        }
-        size_t field = addField(set, "tgc_" + declaration.parameter);
-        set.fields[field].values = std::move(colors);
-        context.getMutableTupleGradients().push_back(std::move(gradient));
+        collectTupleGradient(context, set, static_cast<unsigned>(k),
+                             declaration.parameter);
       }
   }
 
@@ -408,7 +364,7 @@ llvm::Error TupleTermBuilder::buildTopologyPotential(const TermInputs &context,
     }
     if (context.hasGradientArguments())
       for (const TupleGradient &gradient : context.getTupleGradients())
-        if (gradient.term == index)
+        if (gradient.tupleSet == set)
           config.gradients.push_back(gradient);
 
     TermIRValues values{state.relation(set), state.physical.positions, state.physical.cell};

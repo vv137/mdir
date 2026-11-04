@@ -1299,7 +1299,7 @@ No generic behavioral hook has only one implementer.
 | Generic hook or metadata query | Implementers |
 |---|---|
 | `getRoles` | Every adapter; role bindings are explicit metadata |
-| `getPotentialMask` | Shared static metadata for bonded families, Born/surface, and externals; specialized dependent/alchemical selection in tuples, custom pairs, 1–4 pairs, nonbonded |
+| `getPotentialMask` | Shared static metadata for the other bonded families, Born/surface, and externals; specialized dependent/alchemical selection in dihedrals, tuples, custom pairs, 1–4 pairs, nonbonded |
 | `parameterRank` | Nonbonded, model, Born/surface, restraints, custom pairs; others use stable rank 0 |
 | `potentialRank` | Tuples, custom pairs, Born/surface, triplets; others use stable rank 0 |
 | `topologyRank` | Nonbonded, all seven bonded adapters, tuples, models; early adapters use rank 0 |
@@ -1310,8 +1310,8 @@ No generic behavioral hook has only one implementer.
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
-| `refillArrays` | Custom tuples, custom pairs, 1–4 pairs, nonbonded |
-| `collectTunableOutcome` | Custom tuples, custom pairs |
+| `refillArrays` | Dihedrals, custom tuples, custom pairs, 1–4 pairs, nonbonded |
+| `collectTunableOutcome` | Dihedrals, custom tuples, custom pairs |
 | `collectDispersionConstants`, `collectGradientShiftConstants` | Custom pairs, nonbonded; primary terms precede custom terms |
 | `rejectsTunables` | Pulls, nonbonded; the existing diagnostic is unchanged |
 | `needsPairNeighborhood` | Custom pairs, nonbonded |
@@ -1335,6 +1335,16 @@ unused generic entry hook is removed. Long-range dispersion and gradient
 shift corrections are shared by custom pairs and built-in nonbonded terms.
 Correction sites compose typed results explicitly. Restraint energy is carried
 as an actual value from the correction to the stored-column report.
+
+The dihedral adapter also owns built-in proper-dihedral coefficient tunables
+(D[dihedral-tunables], part of #730). It shares the typed tuple-gradient seed
+layout with custom tuples; the descriptors identify their tuple set rather
+than assuming that every gradient belongs to a custom term. Parameter updates
+refill `dihedrals.k` through the same adapter without changing its relation,
+`k`/`n`/`phase` field order, or 1–4 data. The Python-only declaration and its
+full topology-row map are specified in
+[python-tunable.md](python-tunable.md#built-in-proper-dihedral-coefficients);
+there is no control-file key.
 
 No control key, support restriction, precision, numerical method, diagnostic,
 or output format changes. Each kind commit compares printed module/lowered

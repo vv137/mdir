@@ -388,9 +388,10 @@ struct Program {
 /// sigma or epsilon is tunable; the electrostatics, whole, if the charges
 /// are; the pair terms of which a tunable constant is read by the
 /// expression, or which read the charges when these are tunable; and the
-/// tuple terms of which a tunable parameter is read.
+/// tuple terms of which a tunable parameter is read, and built-in periodic
+/// dihedrals when their proper coefficients are tunable.
 struct DependentTerms {
-  bool lennardJones = false, coulomb = false;
+  bool lennardJones = false, coulomb = false, dihedrals = false;
   std::vector<unsigned> pairs, tuples;
   bool hasPair(unsigned index) const {
     return std::find(pairs.begin(), pairs.end(), index) != pairs.end();
@@ -399,7 +400,7 @@ struct DependentTerms {
     return std::find(tuples.begin(), tuples.end(), index) != tuples.end();
   }
   /// Their names, for the plan of a program: "lennard_jones", "coulomb",
-  /// "pair:<name>", "tuple:<name>".
+  /// "dihedrals", "pair:<name>", "tuple:<name>".
   std::vector<std::string> names;
 };
 DependentTerms getDependentTerms(const Control &control, const System &system);

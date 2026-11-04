@@ -1,0 +1,7 @@
+# REQUIRES: python-api, hdf5, cuda
+# Updated signed coefficients and gradients survive a GPU continuation.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_dihedral_tunables.py checkpoint %t/double GPU Double | FileCheck %s --check-prefix=DOUBLE
+# RUN: %mdir_python %S/Inputs/python_dihedral_tunables.py checkpoint %t/mixed GPU Mixed | FileCheck %s --check-prefix=MIXED
+# DOUBLE: dihedral checkpoint GPU Double: updated coefficients and gradients continue bitwise; changed map refused
+# MIXED: dihedral checkpoint GPU Mixed: updated coefficients and gradients continue bitwise; changed map refused

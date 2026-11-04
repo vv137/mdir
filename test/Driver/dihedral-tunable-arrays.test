@@ -1,0 +1,3 @@
+# D[dihedral-tunables]: a real topology with proper/improper and 1-4 rows.
+# RUN: mdir-dihedral-tunables-test %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd | FileCheck %s
+# CHECK: dihedral arrays: 1-4 parameters/scales, exclusions, row identity and fixed fields unchanged; exactly one coefficient array rebuilt
