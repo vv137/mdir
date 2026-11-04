@@ -667,6 +667,64 @@ def Approximate
                            "::mlir::math::MathDialect"];
 }
 
+def ShareDivisions
+    : Pass<"md-exec-share-divisions", "::mlir::ModuleOp"> {
+  let summary = "Shares the divisions of the f64 kernels of loops over pairs "
+                "(fast_math)";
+  let description = [{
+    The control keyword `fast_math` runs the pass, after
+    `md-exec-assign-precision` (and `md-exec-approximate`) and before
+    `md-exec-assign-algebra`, where the types are fixed and `cse` has made
+    each value one SSA value (D[shared-divisions], #731). In each block of
+    the kernel of an `md_exec.pair_for`, the scalar `arith.divf` in f64:
+
+    - Divisions by one SSA value `y`, two or more, share one reciprocal:
+      `1 / y` once, after the definition of `y` (at the start of the block
+      when `y` is defined outside it), and `a / y` becomes `a · (1/y)`; a
+      division `1 / y` becomes the reciprocal itself.
+    - A division by `math.sqrt(x)` in a block that also divides by `x`
+      becomes a product by `sqrt(x) · (1/x)`, once, with the reciprocal of
+      `x` shared by both.
+
+    A lone division by a value whose radicand is not divided by is left
+    as it is. The kernels of `md_exec.tuple_for` and of `md_exec.particle_for`,
+    f32 kernels, and vector divisions are left as they are: an f32 kernel
+    under `fast_math` takes approximate divisions already (D90), and the
+    other kernels have not been measured.
+
+    Rounding. `1/y` and `a/y` are correctly rounded; `a · (1/y)` rounds
+    twice, within 1.5 ulp of `a/y` instead of 0.5. `a · (sqrt(x) · (1/x))`
+    rounds four times, within 2.5 ulp of the exact quotient. Neither
+    overflows nor underflows where `a/y` does not as long as `1/y` is a
+    normal number, which holds for the squared distances of a pair kernel,
+    r² in (0, r_c²]. The rewrite is made once, at compilation, so a
+    program gives the same bits from run to run, and the deterministic
+    mode (D84) keeps it; its bits differ from those of the kernel as
+    written.
+
+    `math.rsqrt` is not used: on a device it lowers to libdevice's
+    `__nv_rsqrt`, which is `rsqrt.approx.f64`, far from 1 ulp in f64;
+    on the host it is `1 / sqrt(x)`, which the shared reciprocal already
+    is (D[shared-divisions]).
+
+    ```mlir
+    %inv = arith.divf %one, %r2 : f64
+    %r = math.sqrt %r2 : f64
+    %t = arith.divf %a, %r : f64
+    ```
+
+    ```mlir
+    %one = arith.constant 1.0 : f64
+    %inv = arith.divf %one, %r2 : f64
+    %r = math.sqrt %r2 : f64
+    %root = arith.mulf %r, %inv : f64      // 1 / sqrt(r2)
+    %t = arith.mulf %a, %root : f64
+    ```
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect"];
+}
+
 def AssignPrecision
     : Pass<"md-exec-assign-precision", "::mlir::ModuleOp"> {
   let summary = "Assigns floating-point types to fields and kernels";
