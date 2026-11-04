@@ -1,0 +1,186 @@
+# D[shared-divisions]
+
+Recorded at its merge.
+
+**Under `fast_math`, the f64 divisions of a kernel of a loop over pairs by one value share one reciprocal, and on a device a division by `math.sqrt(x)` is a product by `math.rsqrt(x)` (`md-exec-share-divisions`).** Issue #731, from the measurement of #681 and #723; the maintainer ruled on 2026-11-04 that the shared divisions go in.
+
+## The rewrite
+
+`md-exec-share-divisions` (`lib/Dialect/MDExec/Transforms/ShareDivisions.cpp`)
+runs where the experiment of #723 acted: after `md-exec-assign-precision`
+(and `md-exec-approximate`), when the types are fixed and `cse` has made
+each value one SSA value, and right before `md-exec-assign-algebra`. The
+pipeline (`lib/Compiler/Compile.cpp`) includes it when `fast_math` is set,
+the default, with `rsqrt=true` for a GPU. In each block of the kernel of an
+`md_exec.pair_for`, for the scalar `arith.divf` in f64:
+
+- with `rsqrt`, a division by `math.sqrt(x)` becomes a product by
+  `math.rsqrt(x)`, one per root, placed after it; `1 / sqrt(x)` becomes the
+  `rsqrt` itself, and a root that nothing else uses is removed;
+- a division by any other SSA value `y` becomes a product by one
+  reciprocal `1 / y` that all the divisions by `y` share, placed after the definition of `y` (at the start of the block
+  when `y` is an argument of the block, as `r2` is); `a / y` becomes
+  `a · (1/y)`, and a division `1 / y` becomes the reciprocal. Without
+  `rsqrt` a root is such a value.
+
+Every such division is rewritten, a lone one too, so that the rounding of
+a quotient follows from its formula alone and not from how many other
+divisions by its divisor the kernel has. A first version shared a
+reciprocal only among two or more divisions; the suite then found that a
+step that writes energies, whose kernels divide more (the energy beside
+the force), no longer gave the forces of a step that does not
+(`energy-interval.test`, `leapfrog-energy-step.test`), nor a run in parts
+those of a run in one piece (the Python checkpoint and thermostat tests),
+in double on the CPU: the invariant of #97. The kernels of
+`md_exec.tuple_for` and `md_exec.particle_for` stay as they are (not
+measured; the integrators and constraints keep their arithmetic, as for
+D112), as do vector divisions and f32 kernels: under `fast_math` an f32
+kernel takes approximate divisions already (D90), and the f32 pair kernel
+of JAC has one division, `1/r2`, with nothing to share. The mixed and
+single modes therefore do not change.
+
+In the fused pair kernel of JAC in double precision (the direct sum of
+Ewald and Lennard-Jones), the divisions `1/r2` and `q/sqrt(r2)` become
+`1/r2` and `q · rsqrt(r2)`.
+
+## Why `rsqrt` on a device only
+
+`math.rsqrt` lowers by target:
+
+- On a device (MLIR's MathToNVVM patterns, through `convert-gpu-to-nvvm`)
+  to libdevice's `__nv_rsqrt` and `__nv_rsqrtf`. In the libdevice of
+  CUDA 13.2, `__nv_rsqrt` is one call of `llvm.nvvm.rsqrt.approx.d`, PTX's
+  `rsqrt.approx.f64`; ptxas expands it into `MUFU.RSQ64H` and a refinement
+  in f64 (seen in the SASS for sm_120), so it is close to correctly rounded
+  although PTX calls it approximate. `__nv_rsqrtf` is `rsqrt.approx.f32`
+  (`.ftz` under `__CUDA_FTZ`).
+- On the host (MathToLLVM, which the CPU pipeline runs before MathToLibm)
+  to `1 / sqrt(x)`, two correctly rounded operations, which is the
+  reciprocal of the root that the divisions share without `rsqrt`. The
+  host therefore takes a root as any other divisor.
+
+The error against a reference in long double, in ulp of the result, over
+$2^{24}$ arguments of each set: "wide", mantissas uniform and exponents
+uniform in $[-30, 30]$; "pair", $r^2$ log-uniform in $[10^{-3}, 1]$ nm²;
+$a$ uniform in $[-50, 50]$. Device: RTX 5090 (sm_120), CUDA 13.2,
+`-prec-div=true -prec-sqrt=true -ftz=false`; host: x86-64, IEEE `sqrt` and
+division. Maximum (mean):
+
+| Quantity | f64 wide | f64 pair | f32 wide | f32 pair |
+|---|---|---|---|---|
+| device `rsqrt(y)` (libdevice) | 0.507 (0.250) | 0.508 (0.250) | 1.511 (0.320) | 1.514 (0.325) |
+| device `1/sqrt(y)` | 1.491 (0.351) | 1.495 (0.357) | 1.490 (0.352) | 1.490 (0.358) |
+| device `a · rsqrt(y)` | 1.473 (0.349) | 1.471 (0.346) | 2.398 (0.410) | 2.452 (0.410) |
+| device `a / sqrt(y)` (as written) | 1.470 (0.342) | 1.478 (0.345) | 1.473 (0.342) | 1.474 (0.345) |
+| host `1/sqrt(y)` (= host `rsqrt`) | 1.491 (0.351) | 1.495 (0.357) | 1.490 (0.352) | 1.490 (0.358) |
+| host `a · (1/sqrt(y))` | 1.924 (0.426) | 1.943 (0.426) | 1.945 (0.426) | 1.927 (0.426) |
+| host `a / sqrt(y)` (as written) | 1.470 (0.342) | 1.478 (0.345) | 1.473 (0.342) | 1.474 (0.345) |
+| `sqrt(y) · (1/y)` | 1.962 (0.427) | 1.962 (0.429) | 1.942 (0.427) | 1.950 (0.429) |
+| `a · (sqrt(y) · (1/y))` | 2.758 (0.495) | 2.680 (0.490) | 2.785 (0.495) | 2.744 (0.490) |
+
+In f64 on the device, `a · rsqrt(y)` is as accurate as `a / sqrt(y)`
+(1.47 ulp at most, both); on the host `a · (1/sqrt(y))` would be 1.9 ulp
+for no gain. In f32 the device's `rsqrt` adds an ulp to the quotient, and
+f32 kernels are left out. A shared reciprocal, `a · (1/y)`, rounds twice:
+within $2\mathsf u + \mathsf u^2$ of $a/y$ against $\mathsf u$ for the
+quotient as written ($\mathsf u = 2^{-53}$; white paper, Section 7.2).
+
+`sqrt(y) · (1/y)`, which needs no `rsqrt` when the kernel divides by `y`
+too, was tried as well: it leaves the same single division, but it rounds
+four times and reaches 2.8 ulp.
+
+## Accuracy against the current program
+
+JAC (23,558 atoms, PME, the input of the Amber suite's JAC NVE), one step
+of 2 fs, the forces of the checkpoint after it and the terms and the
+virial at the start as the log prints them (to 10⁻⁶ kcal/mol), this
+decision against `main` built the same way; on the GPU (RTX 5090) the
+scale of two runs of `main` outside the deterministic mode is given
+beside it. RMS ratio: the RMS of the difference of the forces over the
+RMS of the forces.
+
+| Target, mode | Forces, max difference (kJ/mol/nm) | RMS ratio | Two runs of `main` (RMS ratio) | Terms and virial at the start |
+|---|---|---|---|---|
+| CPU, double | 2.2e-10 | 1.7e-15 | identical (the CPU is deterministic) | equal |
+| CPU, mixed | 0 (bitwise identical) | 0 | identical | equal |
+| GPU, double | 1.0e-11 | 4.1e-16 | 3.3e-16 | equal |
+| GPU, mixed | 0.16 | 1.3e-6 | 1.3e-6 | reciprocal sum 3.4e-5 kcal/mol apart, as between two runs of `main` (4.2e-5) |
+
+For scale, mixed against double on the GPU differs by an RMS ratio of
+2.0e-5. In double the difference is at the level of rounding and, on the
+GPU, of the same size as the difference between two runs of `main`; the
+mixed mode is unchanged, which the deterministic runs below show to the
+bit.
+
+## Determinism
+
+JAC on the GPU (RTX 5090) in the deterministic mode, 500 steps, two runs
+of this decision each in double and mixed: `mdir checkpoint A B` reports
+identical states in both modes. CPU, double, 8 threads, 100 steps, two
+runs: identical. Against `main`, the deterministic mixed run is
+identical; the deterministic double run has the same terms, virial, and
+energies at step 0 and differs afterwards (by 4e-6 nm in the positions
+at step 500, the divergence of two trajectories that start one rounding
+apart).
+
+## Timing
+
+JAC NVE, 5000 steps, one RTX 5090 with no other process on the device,
+`main` and this decision built the same way, alternated twice in one job,
+the compile cache off; the rate over steps 3000 to 5000.
+
+| Mode | `main`, run 1 | `main`, run 2 | This decision, run 1 | This decision, run 2 |
+|---|---|---|---|---|
+| double | 1.701 ms/step, 101.6 ns/day | 1.701 ms/step, 101.6 ns/day | 1.542 ms/step, 112.1 ns/day | 1.542 ms/step, 112.1 ns/day |
+| mixed | 0.098 ms/step, 1755.1 ns/day | 0.098 ms/step, 1757.9 ns/day | 0.099 ms/step, 1749.6 ns/day | 0.098 ms/step, 1757.8 ns/day |
+
+In double the step is 9.3% shorter (1.701 to 1.542 ms); the mixed mode is
+unchanged. On the CPU (JAC double, 8 threads, 300 steps, alternated twice
+on a shared machine) a step took 78.4 and 77.7 ms with `main` and 77.6 and
+77.2 ms with this decision, the same within the noise. The RTX 5090 executes f64 at a small fraction of its f32 rate,
+so its double step is bound by f64 arithmetic: the gain overstates what a
+device with full-rate f64 would see, which has not been measured.
+
+The variant with `sqrt(r2) · (1/r2)` instead of `rsqrt(r2)` (above) took
+1.503 ms/step in the same kind of job (11.6% shorter), at 2.8 ulp instead
+of 1.5 for the quotient; it is not taken, as #731 asks for `rsqrt` where
+it is accurate.
+
+## Bits
+
+The bits of every double run with `fast_math` change against the program
+before this decision, on the CPU and on a GPU, in the default and the
+deterministic modes; the mixed and single modes are unchanged. The rewrite
+is fixed at compilation, so a deterministic run gives the same bits from
+run to run.
+
+## Ablation
+
+No control key of its own: the maintainer ruled on #734 (2026-11-04) that
+the existing handles are enough. The pass is one entry of the pipeline, and
+an ablation takes one of two routes:
+
+- `fast_math = false` in `[execution]` leaves it out, together with the
+  other rewrites of `fast_math` (`md-exec-simplify-distance`,
+  `md-exec-approximate`, `md-exec-expand-radial`, contraction);
+- to leave out this pass alone, print the pipeline of the run, remove the
+  pass, and give the result through `MDIR_PIPELINE`
+  ([environment.md](../environment.md)), which reproduces the program
+  before this decision:
+
+  ```sh
+  mdir emit run.toml --stage=pipeline \
+    | sed -E 's/md-exec-share-divisions(\{[^}]*\})?,//' > pipeline
+  MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml
+  ```
+
+## Left open
+
+- Tuple kernels: the kernel of the excluded pairs of JAC divides four times
+  by one root; not measured (#731 asks for pair kernels first).
+- A device with full-rate f64: the RTX 5090 executes f64 at a small
+  fraction of its f32 rate, so its double step is bound by f64 arithmetic
+  and the gain there overstates the gain on such a device.
+- The accuracy of the device's f64 `rsqrt` was measured on sm_120 alone;
+  it rests on how ptxas expands `rsqrt.approx.f64`, and other
+  architectures (sm_89) have not been measured yet.

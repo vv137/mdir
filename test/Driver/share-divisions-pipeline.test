@@ -1,0 +1,65 @@
+# Where md-exec-share-divisions stands in the pipeline (D[shared-divisions],
+# #731): under fast_math, with rsqrt for a GPU and without it for the host,
+# and absent with fast_math = false. The ablation of the decision, the
+# pipeline without the pass through MDIR_PIPELINE, leaves the divisions of
+# the f64 pair kernels as written: the division by the root stays, and no
+# rsqrt appears, where the full pipeline has one. Lowering for a GPU to the
+# md_exec stage needs no device. The dipeptide in water with PME, double.
+#
+# REQUIRES: cuda-toolkit
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' \
+# RUN:   | sed 's|ROOT|%S/Inputs/dipeptide|' > %t/gpu.toml
+# RUN: sed 's|"GPU"|"CPU"|' %t/gpu.toml > %t/cpu.toml
+# RUN: sed 's|^precision|fast_math = false\nprecision|' %t/gpu.toml > %t/exact.toml
+# RUN: mdir emit %t/gpu.toml --stage=pipeline | FileCheck %s --check-prefix=GPU
+# RUN: mdir emit %t/cpu.toml --stage=pipeline | FileCheck %s --check-prefix=CPU
+# RUN: mdir emit %t/exact.toml --stage=pipeline | FileCheck %s --check-prefix=EXACT
+#
+# The full pipeline, and the pipeline without the pass, to the end of the
+# md_exec stage.
+# RUN: mdir emit %t/gpu.toml --stage=pipeline \
+# RUN:   | sed 's|,md-exec-assign-algebra,.*|,md-exec-assign-algebra|' > %t/full
+# RUN: sed -E 's/md-exec-share-divisions(\{[^}]*\})?,//' %t/full > %t/stripped
+# RUN: sh -c 'MDIR_PIPELINE="$(cat %t/full)" mdir emit %t/gpu.toml --stage=lowered' \
+# RUN:   | FileCheck %s --check-prefix=FULL
+# RUN: sh -c 'MDIR_PIPELINE="$(cat %t/stripped)" mdir emit %t/gpu.toml --stage=lowered' \
+# RUN:   | FileCheck %s --check-prefix=STRIPPED
+
+# GPU: md-exec-share-divisions{rsqrt=true},md-exec-assign-algebra
+# CPU: md-exec-share-divisions,md-exec-assign-algebra
+# CPU-NOT: rsqrt
+# EXACT-NOT: md-exec-share-divisions
+
+# FULL: md_exec.pair_for
+# FULL: math.rsqrt %{{.+}} : f64
+
+# STRIPPED-NOT: math.rsqrt
+# STRIPPED: md_exec.pair_for
+# STRIPPED: %[[R:.+]] = math.sqrt %{{.+}} : f64
+# STRIPPED: arith.divf %{{.+}}, %[[R]] : f64
+# STRIPPED-NOT: math.rsqrt
+
+#--- run.toml
+[input]
+topology    = "ROOT/dipeptide.prmtop"
+coordinates = "ROOT/dipeptide.inpcrd"
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+[pme]
+grid = [32, 32, 32]
+[dynamics]
+time_step = 0.002
+steps     = 10
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "GPU"
+precision = "DOUBLE"
+#--- end

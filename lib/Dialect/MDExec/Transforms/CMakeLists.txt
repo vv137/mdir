@@ -15,6 +15,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   NarrowSums.cpp
   RebuildAtInterval.cpp
   ReuseNeighbors.cpp
+  ShareDivisions.cpp
   SimplifyDistance.cpp
 
   ADDITIONAL_HEADER_DIRS

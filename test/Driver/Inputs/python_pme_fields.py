@@ -107,6 +107,13 @@ def refusals():
     print("pme fields refusals passed")
 
 
+def positions_after(program, steps):
+    """The positions of a simulation of `program` after `steps` steps."""
+    simulation = mdir.Simulation(program)
+    simulation.run(steps)
+    return np.asarray(simulation.state().positions)
+
+
 def run():
     # The run without the settings, which each of them must change.
     plain = mdir.Simulation(model({}))
@@ -167,6 +174,12 @@ deterministic = true
         end = simulation.state()
         changed = max(abs(potential - plain_potential),
                       float(np.abs(np.asarray(end.positions) - plain_end).max()))
+        if changed == 0.0:
+            # A setting that changes the rounding of a few constraints, such
+            # as the analytic bonds, may leave 20 steps to the bit by
+            # chance (#731): 200 steps decide.
+            changed = float(np.abs(positions_after(program, 10 * STEPS)
+                                   - positions_after(model({}), 10 * STEPS)).max())
         assert changed > 0.0, f"{name} leaves the run as it was"
         for field in FIELDS:
             mine, theirs = getattr(end, field), getattr(reference, field)

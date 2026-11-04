@@ -238,6 +238,41 @@ pairs and of loops over tuples that are not disjoint, the terms of the
 potential, and to nothing else. The integrators and the constraints keep
 their arithmetic. Section 7.3 explains why the scope matters.
 
+**Shared divisions in f64** (D[shared-divisions]). Under `fast_math`
+the f64 kernels of loops over pairs take one rewrite that changes their
+rounding. Every division by a value $y$ becomes a product by its
+reciprocal, which the divisions by $y$ share, and on a device a division by $\sqrt{x}$ becomes a product by
+$\mathrm{rsqrt}(x)$; in the pair kernel of the direct sum of Ewald with
+Lennard-Jones this replaces the division $q/\sqrt{r^2}$ and keeps
+$1/r^2$. A lone division is rewritten too: the rounding of a quotient
+then follows from its formula, not from how many divisions the kernel has
+(Section 7.1), so a step that writes energies, whose kernels divide more,
+gives the forces of one that does not. With $\mathrm{fl}(z) = z(1 + \delta)$, $\lvert\delta\rvert \le
+\mathsf u$, for each correctly rounded operation, a quotient as written is
+$\mathrm{fl}(a/y) = (a/y)(1 + \delta_1)$, and the shared form is
+
+$$
+\mathrm{fl}\bigl(a\cdot\mathrm{fl}(1/y)\bigr) = \frac{a}{y}(1 + \delta_1)(1 + \delta_2),
+\qquad \Bigl\lvert \frac{\mathrm{fl}(a\cdot\mathrm{fl}(1/y))}{a/y} - 1 \Bigr\rvert \le 2\mathsf u + \mathsf u^2 ,
+$$
+
+against $\mathsf u$. A quotient by a root as written,
+$\mathrm{fl}(a/\mathrm{fl}(\sqrt x)) = (a/\sqrt{x})(1+\delta_2)/(1+\delta_1)$,
+is within $(1+\mathsf u)/(1-\mathsf u) - 1 \approx 2\mathsf u$ of
+$a/\sqrt{x}$. The f64 $\mathrm{rsqrt}$ of a device, `rsqrt.approx.f64`,
+which ptxas expands into an estimate and its refinement, is not correctly
+rounded; on an RTX 5090 (sm_120) it was
+within 0.51 ulp of $1/\sqrt{x}$ for $3.4\times10^{7}$ arguments, that is
+$\mathrm{rsqrt}(x) = (1/\sqrt{x})(1+\varepsilon)$ with $\lvert\varepsilon\rvert
+\le 1.02\,\mathsf u$, so $\mathrm{fl}(a\cdot\mathrm{rsqrt}(x))$ is within
+about $2.02\,\mathsf u$ of $a/\sqrt{x}$, the bound of the quotient as
+written; measured, both are within 1.48 ulp. On the host
+$\mathrm{rsqrt}(x)$ would be $\mathrm{fl}(1/\mathrm{fl}(\sqrt x))$, which
+saves nothing, and a root is a divisor like any other there. With $\mathsf u
+= 2^{-53}$ these are far below the other errors of a step. The products
+neither overflow nor underflow where the quotients do not, as long as $1/y$
+is a normal number, which holds for $r^2 \in (0, r_c^2]$.
+
 ## 7.3 A drift of the energy, and its removal
 
 **Observation.** Over 2 ns of JAC at constant energy (23,558 atoms, 2 fs,
