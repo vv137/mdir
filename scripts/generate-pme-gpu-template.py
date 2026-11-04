@@ -227,7 +227,7 @@ def particle_prologue(body, slopes):
 %i2 = arith.constant 2 : index
 // The order of the splines, a constant of the instance, so that the loops
 // over it unroll and the splines are held in registers.
-%order = arith.constant PME_ORDER : index
+%order = func.call @mdir.template.order.index() : () -> index
 %wx = memref.alloca() : memref<8x!pme_real>
 %wy = memref.alloca() : memref<8x!pme_real>
 %wz = memref.alloca() : memref<8x!pme_real>""")
@@ -316,13 +316,13 @@ def spread(fixed=True, listed=False):
     # once, as those of GROMACS do.
     if listed:
         body("""\
-%lanes = arith.constant PME_ORDER : index
+%lanes = func.call @mdir.template.order.index() : () -> index
 %slot = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index""")
         listed_prologue(body, "%slot")
     else:
         body("""\
-%lanes = arith.constant PME_ORDER : index
+%lanes = func.call @mdir.template.order.index() : () -> index
 %i = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index""")
     sx, sy, sz = particle_prologue(body, slopes=False)
@@ -336,11 +336,11 @@ def spread(fixed=True, listed=False):
         atomic_line = ("      // An addition without a result: the instance chooses its op,\n"
                        "      // since the NVPTX backend of LLVM expands atomicrmw fadd of f32\n"
                        "      // into a loop of compare-and-swap.\n"
-                       "      PME_ATOMIC_ADD %pointer, %value")
+                       "      func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()")
     body(f"""\
 {"%scale = arith.constant 1099511627776.0 : !pme_real" if fixed else "%scale = arith.constant 1.0 : !pme_real"}
 %qscaled = arith.mulf %qi, %scale : !pme_real
-%eight = arith.constant {8 if fixed else "PME_REAL_BYTES"} : i64
+%eight = {"arith.constant 8 : i64" if fixed else "func.call @mdir.template.real_bytes.i64() : () -> i64"}
 %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x{"i64" if fixed else "!pme_real"}, 1> -> index
 // The grid is a buffer of its own, with no offset.
 %gridbase = arith.index_cast %gridindex : index to i64
@@ -416,7 +416,7 @@ func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?x{grid_type}, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
 {launch(zero.text(), "%points")}{launch(body.text(), "%spread")}  return
 }}
@@ -1280,7 +1280,7 @@ def weights_kernels(listed=False):
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
-%order = arith.constant PME_ORDER : index""")
+%order = func.call @mdir.template.order.index() : () -> index""")
     places = [(f"%{t}p", length) for t, length in zip("xyz", ("%ilx", "%ily", "%ilz"))]
     if TILTED:
         for axis, t in enumerate("xyz"):
@@ -1421,7 +1421,7 @@ memref.store %{t}start_r, %weights[%{t}sat] : memref<?x!pme_real, 1>""")
 %iny = arith.remui %g2, %t4 : i32
 %iny4 = arith.muli %iny, %t4 : i32
 %inxy = arith.addi %iny4, %inx : i32
-%bytes = arith.constant PME_REAL_BYTES : i64
+%bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
 %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
 %bbase = arith.index_cast %bindex : index to i64
 %h0 = arith.constant 0 : index
@@ -1443,7 +1443,7 @@ scf.for %h = %h0 to %h2 step %h1 {
   %address = arith.addi %bbase, %offset : i64
   %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
   %value = arith.mulf %qxy, %wz : !pme_real
-  PME_ATOMIC_ADD %pointer, %value
+  func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
 }""")
     if listed:
         close_listed(a)
@@ -1472,7 +1472,7 @@ scf.for %h = %h0 to %h2 step %h1 {
     %by1 = arith.remui %bxy, %b2 : index
     %slab0 = arith.muli %bxy, %k3 : index
     %zero_r = arith.constant 0.0 : !pme_real
-    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
     %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
     %bbase = arith.index_cast %bindex : index to i64
     scf.for %j = %c0 to %c4 step %c1 {
@@ -1490,7 +1490,7 @@ scf.for %h = %h0 to %h2 step %h1 {
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %value = llvm.load %pointer {mdir.template.real_alignment} : !llvm.ptr<1> -> !pme_real
         %t17 = arith.muli %zz, %c17 : index
         %tat = arith.addi %t17, %inxy : index
         memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
@@ -1514,7 +1514,7 @@ scf.for %h = %h0 to %h2 step %h1 {
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {mdir.template.real_alignment} : !pme_real, !llvm.ptr<1>
       }
     }
     // Each warp writes a row of the brick, its lanes the 32 values along
@@ -1842,8 +1842,8 @@ func.func private @{name}{edge}({args}
     %cthreads2 = arith.constant {2 * threads} : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_{edge} : i32
-    %volume = arith.constant PME_TILE_POINTS_{edge} : index
+    %side32 = func.call @mdir.template.tile_side_{edge}.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_{edge}.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -1877,8 +1877,8 @@ func.func private @{name}{edge}({args}
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -1901,7 +1901,7 @@ func.func private @{name}{edge}({args}
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {{
@@ -1979,7 +1979,7 @@ func.func private @{name}{edge}({args}
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_{edge} %tile[%tat], %value
+                func.call @mdir.template.shared_add_{edge}(%tile, %tat, %value) : ({shared}, index, !pme_real) -> ()
               }}
             }}
           }}
@@ -2022,7 +2022,7 @@ def grid_add():
 %offset = arith.muli %at, %bytes : i64
 %address = arith.addi %gbase, %offset : i64
 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-PME_ATOMIC_ADD %pointer, %value
+func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
 """
 
 
@@ -2049,7 +2049,7 @@ def gaussian_lane_weight():
     spread_float."""
     b = Body("          ")
     b("""\
-%order = arith.constant PME_ORDER : index
+%order = func.call @mdir.template.order.index() : () -> index
 %c4o = arith.constant 4 : index
 %closed = arith.cmpi eq, %order, %c4o : index
 %splines = memref.alloca() : memref<8x!pme_real>""")
@@ -2124,7 +2124,7 @@ memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
 # particles (D262); `%warp_listed` is that of the
 # first thread of its warp (gather_launch).
 LISTED_PRE = """\
-%lanes = arith.constant PME_LANES : index
+%lanes = func.call @mdir.template.lanes.index() : () -> index
 %slot = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index
 %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -2152,7 +2152,7 @@ def gather(potential=False, listed=False):
         pre(LISTED_PRE)
     body("""\
 {}""".format(LISTED_PROLOGUE if listed else """\
-%lanes = arith.constant PME_LANES : index
+%lanes = func.call @mdir.template.lanes.index() : () -> index
 %i = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index"""))
     sx, sy, sz = particle_prologue(body, slopes=True)
@@ -2258,7 +2258,7 @@ func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
 {gather_launch(body.text(), potential, listed, pre.text() if listed else "")}  return
@@ -2278,7 +2278,7 @@ def gather_weights(listed=False):
     if listed:
         pre(LISTED_PRE)
     body((LISTED_PROLOGUE if listed else """\
-%lanes = arith.constant PME_LANES : index
+%lanes = func.call @mdir.template.lanes.index() : () -> index
 %i = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index""") + """
 %i0 = arith.constant 0 : index
@@ -2388,7 +2388,7 @@ func.func private @mdrt_gpu_pme_gather_weights{tag}(%x: memref<?x3x!pme_pos, 1>,
   %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
   %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
 {gather_launch(body.text(), listed=listed, pre_text=pre.text() if listed else "")}  return
@@ -2507,7 +2507,7 @@ def gather_launch(body_text, potential=False, listed=False, pre_text=""):
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
@@ -2687,6 +2687,29 @@ def p3m():
     return text
 
 
+
+TEMPLATE_CALL = re.compile(r"func\.call (@mdir\.template\.[A-Za-z0-9_.]+)\(([^)]*)\) : \(([^)]*)\) -> (\(\)|\S+)")
+
+
+def declare_template_calls(text):
+    """The declarations of the parameters of the instance that `text` calls,
+    `@mdir.template.*` (D[template-ir-pme-scalars], #739): the order of the
+    splines, the lanes of a particle, the bytes of `!pme_real`, the sides
+    and the points of the tiles of an edge, and the atomic additions to
+    global and to shared memory. The compiler replaces each call where it
+    stands (resolveTemplateParameters) and removes the declarations."""
+    signatures = {}
+    for name, _, arguments, result in TEMPLATE_CALL.findall(text):
+        signature = f"({arguments})" + ("" if result == "()" else f" -> {result}")
+        if signatures.setdefault(name, signature) != signature:
+            raise SystemExit(f"{name} is called with two signatures")
+    if not signatures:
+        return ""
+    return ("\n// The parameters of the instance, which the compiler resolves.\n" +
+            "".join(f"func.func private {name}{signature}\n"
+                    for name, signature in sorted(signatures.items())))
+
+
 def main():
     # The templates of the repository, or with a directory as the argument
     # the same files there, which generated-templates.test compares with
@@ -2695,12 +2718,14 @@ def main():
     templates = (sys.argv[1] if len(sys.argv) > 1 else
                  os.path.join(here, "..", "lib", "Runtime", "Templates"))
     with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
-        file.write(HEADER + GATHER_DECLARATIONS + spread() + spread(fixed=False) + weights_kernels() + real() +
-                   tables() + convolve() + scale() + dispersion() + gather() +
-                   gather_weights() + gather(potential=True) +
-                   listed_kernels(weights_kernels(listed=True)) + tiles_kernels() + p3m())
+        text = (HEADER + GATHER_DECLARATIONS + spread() + spread(fixed=False) + weights_kernels() + real() +
+                tables() + convolve() + scale() + dispersion() + gather() +
+                gather_weights() + gather(potential=True) +
+                listed_kernels(weights_kernels(listed=True)) + tiles_kernels() + p3m())
+        file.write(text + declare_template_calls(text))
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
-        file.write(triclinic())
+        text = triclinic()
+        file.write(text + declare_template_calls(text))
 
 
 if __name__ == "__main__":

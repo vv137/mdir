@@ -125,7 +125,7 @@ func.func private @mdrt_gpu_pme_prolate_coefficients(%moduli: memref<?x?xf64, 1>
     %i3 = arith.constant 3 : index
     %i4 = arith.constant 4 : index
     %i256 = arith.constant 256 : index
-    %points = arith.constant PME_ORDER : index
+    %points = func.call @mdir.template.order.index() : () -> index
     %df = memref.load %moduli[%i4, %i0] : memref<?x?xf64, 1>
     %nf = memref.load %moduli[%i4, %i2] : memref<?x?xf64, 1>
     %scale = memref.load %moduli[%i4, %i3] : memref<?x?xf64, 1>
@@ -248,7 +248,7 @@ func.func private @mdrt_gpu_pme_prolate_places{suffix}(%x: memref<?x3x!pme_pos, 
     %i = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : i32
+      %points = func.call @mdir.template.order.i32() : () -> i32
       %two32 = arith.constant 2 : i32
       %one32 = arith.constant 1 : i32
       %half_points = arith.divui %points, %two32 : i32
@@ -319,7 +319,7 @@ def clenshaw(prefix, base, t, out):
 def warp_weights(slopes):
     """The weight (and slope) of point %j along axis %axis of particle %i,
     in lanes 0 .. 3P − 1 of its warp; 0 elsewhere."""
-    text = '''      %points = arith.constant PME_ORDER : index
+    text = '''      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -498,13 +498,13 @@ def spread(fixed, listed=False):
 ''' + starts() + '''      %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %thirty_two = arith.constant 32 : i32
       %zero32 = arith.constant 0 : i32
       %width = arith.constant 32 : i32
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %passes_n3 = arith.muli %passes_n2, %passes_n : index
       %c31p = arith.constant 31 : index
@@ -521,7 +521,7 @@ def spread(fixed, listed=False):
         inner += '''      %b2t = arith.index_cast %b2 : index to i32
       %four32 = arith.constant 4 : i32
       %sixteen = arith.constant 16 : i32
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
       %bbase = arith.index_cast %bindex : index to i64
 '''
@@ -581,7 +581,7 @@ def spread(fixed, listed=False):
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
         %value = arith.addf %contribution, %zero_w : !pme_real
-        PME_ATOMIC_ADD %pointer, %value
+        func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
 '''
     inner += '''        }
       }
@@ -629,7 +629,7 @@ def gather(potential, triclinic=False, listed=False):
     inner += '''      %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -646,7 +646,7 @@ def gather(potential, triclinic=False, listed=False):
         if not potential:
             inner += f'''      %dz{c}, %vdz{c} = gpu.shuffle idx %wslope, %czl{c}, %width : !pme_real
 '''
-    inner += '''      %passes_n = arith.constant PME_ORDER : index
+    inner += '''      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -928,7 +928,7 @@ def tiles():
     lane = '''          %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
           %one = arith.constant 1 : index
-          %points = arith.constant PME_ORDER : index
+          %points = func.call @mdir.template.order.index() : () -> index
           %k12t = arith.addi %k1, %k2 : index
           %k123t = arith.addi %k12t, %k3 : index
           %pe = arith.muli %k123t, %three_i : index
@@ -988,7 +988,7 @@ def main():
     out += tiles()
     out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')
     out = out.replace('@mdrt_gpu_pme_blocks_triclinic(', '@mdrt_gpu_pme_prolate_blocks(')
-    sys.stdout.write(out)
+    sys.stdout.write(out + GAUSSIAN.declare_template_calls(out))
 
 
 main()

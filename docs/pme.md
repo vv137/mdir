@@ -363,6 +363,14 @@ takes a thread for each particle and point along z (the least power of 2
 not below the order, those beyond it adding zeros), and adds their sums
 with shuffles: 127 µs on Cellulose, from 339 with a thread a particle.
 
+The order of the splines is a constant of the kernels of an instance. The
+template calls `@mdir.template.order` for it, as it calls the other
+parameters of the instance (`lanes`, the threads of a particle in the
+gather; `real_bytes`; the sides and the points of the tiles, Section 3.3;
+and the atomic additions to the grid and to a tile). After the parse,
+`resolveTemplateParameters` replaces each call where it stands with the
+constant or the ops that the instance takes (D[template-ir-pme-scalars],
+#739).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and

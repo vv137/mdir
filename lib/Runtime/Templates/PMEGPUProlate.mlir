@@ -48,7 +48,7 @@ func.func private @mdrt_gpu_pme_prolate_coefficients(%moduli: memref<?x?xf64, 1>
     %i3 = arith.constant 3 : index
     %i4 = arith.constant 4 : index
     %i256 = arith.constant 256 : index
-    %points = arith.constant PME_ORDER : index
+    %points = func.call @mdir.template.order.index() : () -> index
     %df = memref.load %moduli[%i4, %i0] : memref<?x?xf64, 1>
     %nf = memref.load %moduli[%i4, %i2] : memref<?x?xf64, 1>
     %scale = memref.load %moduli[%i4, %i3] : memref<?x?xf64, 1>
@@ -127,7 +127,7 @@ func.func private @mdrt_gpu_pme_prolate_places(%x: memref<?x3x!pme_pos, 1>, %box
     %i = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : i32
+      %points = func.call @mdir.template.order.i32() : () -> i32
       %two32 = arith.constant 2 : i32
       %one32 = arith.constant 1 : i32
       %half_points = arith.divui %points, %two32 : i32
@@ -289,7 +289,7 @@ func.func private @mdrt_gpu_pme_prolate_places_triclinic(%x: memref<?x3x!pme_pos
     %i = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : i32
+      %points = func.call @mdir.template.order.i32() : () -> i32
       %two32 = arith.constant 2 : i32
       %one32 = arith.constant 1 : i32
       %half_points = arith.divui %points, %two32 : i32
@@ -443,7 +443,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -514,13 +514,13 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %thirty_two = arith.constant 32 : i32
       %zero32 = arith.constant 0 : i32
       %width = arith.constant 32 : i32
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %passes_n3 = arith.muli %passes_n2, %passes_n : index
       %c31p = arith.constant 31 : index
@@ -529,7 +529,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
       %b2t = arith.index_cast %b2 : index to i32
       %four32 = arith.constant 4 : i32
       %sixteen = arith.constant 16 : i32
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
       %bbase = arith.index_cast %bindex : index to i64
       scf.for %pass = %c0w to %passes step %one {
@@ -580,7 +580,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
         %value = arith.addf %contribution, %zero_w : !pme_real
-        PME_ATOMIC_ADD %pointer, %value
+        func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
     }
@@ -602,7 +602,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
     %by1 = arith.remui %bxy, %b2 : index
     %slab0 = arith.muli %bxy, %k3 : index
     %zero_r = arith.constant 0.0 : !pme_real
-    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
     %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
     %bbase = arith.index_cast %bindex : index to i64
     scf.for %j = %c0 to %c4 step %c1 {
@@ -620,7 +620,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %value = llvm.load %pointer {mdir.template.real_alignment} : !llvm.ptr<1> -> !pme_real
         %t17 = arith.muli %zz, %c17 : index
         %tat = arith.addi %t17, %inxy : index
         memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
@@ -644,7 +644,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks(%q: memref<?x!pme_chg, 1>,
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {mdir.template.real_alignment} : !pme_real, !llvm.ptr<1>
       }
     }
     // Each warp writes a row of the brick, its lanes the 32 values along
@@ -726,7 +726,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_fixed(%q: memref<?x!pme_chg, 1>, 
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -797,13 +797,13 @@ func.func private @mdrt_gpu_pme_prolate_spread_fixed(%q: memref<?x!pme_chg, 1>, 
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %thirty_two = arith.constant 32 : i32
       %zero32 = arith.constant 0 : i32
       %width = arith.constant 32 : i32
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %passes_n3 = arith.muli %passes_n2, %passes_n : index
       %c31p = arith.constant 31 : index
@@ -912,7 +912,7 @@ func.func private @mdrt_gpu_pme_prolate_gather(%q: memref<?x!pme_chg, 1>, %place
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -1000,7 +1000,7 @@ func.func private @mdrt_gpu_pme_prolate_gather(%q: memref<?x!pme_chg, 1>, %place
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -1039,7 +1039,7 @@ func.func private @mdrt_gpu_pme_prolate_gather(%q: memref<?x!pme_chg, 1>, %place
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
       %dz7, %vdz7 = gpu.shuffle idx %wslope, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -1265,7 +1265,7 @@ func.func private @mdrt_gpu_pme_prolate_potential(%q: memref<?x!pme_chg, 1>, %pl
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -1331,7 +1331,7 @@ func.func private @mdrt_gpu_pme_prolate_potential(%q: memref<?x!pme_chg, 1>, %pl
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -1362,7 +1362,7 @@ func.func private @mdrt_gpu_pme_prolate_potential(%q: memref<?x!pme_chg, 1>, %pl
       %cz7 = arith.constant 7 : i32
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -1544,7 +1544,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_triclinic(%q: memref<?x!pme_chg, 
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -1632,7 +1632,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_triclinic(%q: memref<?x!pme_chg, 
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -1671,7 +1671,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_triclinic(%q: memref<?x!pme_chg, 
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
       %dz7, %vdz7 = gpu.shuffle idx %wslope, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -1934,7 +1934,7 @@ func.func private @mdrt_gpu_pme_prolate_potential_triclinic(%q: memref<?x!pme_ch
     // The whole warp is inside or outside: the shuffles take all its lanes.
     %inside = arith.cmpi ult, %i, %n_all : index
     scf.if %inside {
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -2000,7 +2000,7 @@ func.func private @mdrt_gpu_pme_prolate_potential_triclinic(%q: memref<?x!pme_ch
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -2031,7 +2031,7 @@ func.func private @mdrt_gpu_pme_prolate_potential_triclinic(%q: memref<?x!pme_ch
       %cz7 = arith.constant 7 : i32
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -3513,7 +3513,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       scf.if %is_listed {
       %i = arith.index_cast %listed : i32 to index
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -3584,13 +3584,13 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %thirty_two = arith.constant 32 : i32
       %zero32 = arith.constant 0 : i32
       %width = arith.constant 32 : i32
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %passes_n3 = arith.muli %passes_n2, %passes_n : index
       %c31p = arith.constant 31 : index
@@ -3599,7 +3599,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
       %b2t = arith.index_cast %b2 : index to i32
       %four32 = arith.constant 4 : i32
       %sixteen = arith.constant 16 : i32
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
       %bbase = arith.index_cast %bindex : index to i64
       scf.for %pass = %c0w to %passes step %one {
@@ -3650,7 +3650,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
         %value = arith.addf %contribution, %zero_w : !pme_real
-        PME_ATOMIC_ADD %pointer, %value
+        func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
       }
@@ -3673,7 +3673,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
     %by1 = arith.remui %bxy, %b2 : index
     %slab0 = arith.muli %bxy, %k3 : index
     %zero_r = arith.constant 0.0 : !pme_real
-    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
     %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
     %bbase = arith.index_cast %bindex : index to i64
     scf.for %j = %c0 to %c4 step %c1 {
@@ -3691,7 +3691,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %value = llvm.load %pointer {mdir.template.real_alignment} : !llvm.ptr<1> -> !pme_real
         %t17 = arith.muli %zz, %c17 : index
         %tat = arith.addi %t17, %inxy : index
         memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
@@ -3715,7 +3715,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {mdir.template.real_alignment} : !pme_real, !llvm.ptr<1>
       }
     }
     // Each warp writes a row of the brick, its lanes the 32 values along
@@ -3802,7 +3802,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_fixed_listed(%q: memref<?x!pme_ch
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       scf.if %is_listed {
       %i = arith.index_cast %listed : i32 to index
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -3873,13 +3873,13 @@ func.func private @mdrt_gpu_pme_prolate_spread_fixed_listed(%q: memref<?x!pme_ch
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %thirty_two = arith.constant 32 : i32
       %zero32 = arith.constant 0 : i32
       %width = arith.constant 32 : i32
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %passes_n3 = arith.muli %passes_n2, %passes_n : index
       %c31p = arith.constant 31 : index
@@ -3994,7 +3994,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>,
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       scf.if %is_listed {
       %i = arith.index_cast %listed : i32 to index
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -4082,7 +4082,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>,
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -4121,7 +4121,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>,
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
       %dz7, %vdz7 = gpu.shuffle idx %wslope, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -4391,7 +4391,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pm
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       scf.if %is_listed {
       %i = arith.index_cast %listed : i32 to index
-      %points = arith.constant PME_ORDER : index
+      %points = func.call @mdir.template.order.index() : () -> index
       %one = arith.constant 1 : index
       %lane_i = arith.index_cast %lane : i32 to index
       %three_p = arith.constant 3 : index
@@ -4479,7 +4479,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pm
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
-      %pt = arith.constant PME_ORDER : i32
+      %pt = func.call @mdir.template.order.i32() : () -> i32
       %ppt = arith.muli %pt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
       %thirty_two = arith.constant 32 : i32
@@ -4518,7 +4518,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pm
       %czl7 = arith.addi %pt2, %cz7 : i32
       %wz7, %vwz7 = gpu.shuffle idx %wvalue, %czl7, %width : !pme_real
       %dz7, %vdz7 = gpu.shuffle idx %wslope, %czl7, %width : !pme_real
-      %passes_n = arith.constant PME_ORDER : index
+      %passes_n = func.call @mdir.template.order.index() : () -> index
       %passes_n2 = arith.muli %passes_n, %passes_n : index
       %c31p = arith.constant 31 : index
       %passes_u = arith.addi %passes_n2, %c31p : index
@@ -4765,8 +4765,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
     %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_4 : i32
-    %volume = arith.constant PME_TILE_POINTS_4 : index
+    %side32 = func.call @mdir.template.tile_side_4.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_4.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -4800,8 +4800,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -4824,7 +4824,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -4867,7 +4867,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
           %one = arith.constant 1 : index
-          %points = arith.constant PME_ORDER : index
+          %points = func.call @mdir.template.order.index() : () -> index
           %k12t = arith.addi %k1, %k2 : index
           %k123t = arith.addi %k12t, %k3 : index
           %pe = arith.muli %k123t, %three_i : index
@@ -4959,7 +4959,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -4969,7 +4969,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_4 %tile[%tat], %value
+                func.call @mdir.template.shared_add_4(%tile, %tat, %value) : (memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -5009,7 +5009,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -5059,8 +5059,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
     %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_8 : i32
-    %volume = arith.constant PME_TILE_POINTS_8 : index
+    %side32 = func.call @mdir.template.tile_side_8.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_8.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -5094,8 +5094,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -5118,7 +5118,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -5161,7 +5161,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
           %one = arith.constant 1 : index
-          %points = arith.constant PME_ORDER : index
+          %points = func.call @mdir.template.order.index() : () -> index
           %k12t = arith.addi %k1, %k2 : index
           %k123t = arith.addi %k12t, %k3 : index
           %pe = arith.muli %k123t, %three_i : index
@@ -5253,7 +5253,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -5263,7 +5263,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_8 %tile[%tat], %value
+                func.call @mdir.template.shared_add_8(%tile, %tat, %value) : (memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -5303,7 +5303,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -5353,8 +5353,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
     %cthreads2 = arith.constant 1024 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_16 : i32
-    %volume = arith.constant PME_TILE_POINTS_16 : index
+    %side32 = func.call @mdir.template.tile_side_16.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_16.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -5388,8 +5388,8 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -5412,7 +5412,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -5455,7 +5455,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
           %one = arith.constant 1 : index
-          %points = arith.constant PME_ORDER : index
+          %points = func.call @mdir.template.order.index() : () -> index
           %k12t = arith.addi %k1, %k2 : index
           %k123t = arith.addi %k12t, %k3 : index
           %pe = arith.muli %k123t, %three_i : index
@@ -5547,7 +5547,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -5557,7 +5557,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_16 %tile[%tat], %value
+                func.call @mdir.template.shared_add_16(%tile, %tat, %value) : (memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -5597,7 +5597,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -5606,3 +5606,18 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
   }
   return
 }
+
+// The parameters of the instance, which the compiler resolves.
+func.func private @mdir.template.global_add(!llvm.ptr<1>, !pme_real)
+func.func private @mdir.template.order.i32() -> i32
+func.func private @mdir.template.order.index() -> index
+func.func private @mdir.template.real_bytes.i64() -> i64
+func.func private @mdir.template.shared_add_16(memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.shared_add_4(memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.shared_add_8(memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.tile_points_16.index() -> index
+func.func private @mdir.template.tile_points_4.index() -> index
+func.func private @mdir.template.tile_points_8.index() -> index
+func.func private @mdir.template.tile_side_16.i32() -> i32
+func.func private @mdir.template.tile_side_4.i32() -> i32
+func.func private @mdir.template.tile_side_8.i32() -> i32
