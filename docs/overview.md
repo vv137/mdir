@@ -116,8 +116,10 @@ Stage C (#718, D365) constructs complete programs in one
 owned native module, including every term, dynamics/minimization, frames,
 restart, coupling and programs of parts. Temporary assembly joins and carry
 fixups are removed. Only custom expressions and staged model input are parsed
-at their boundaries; the final module is serialized once for consumers. Final
-checkpoint and D309 validation gate readiness.
+at their boundaries; the final module is serialized once for consumers.
+The corpus, order matrix and five bitwise checkpoints passed for #719; both
+D309 shards and the model-term tier passed on its merged head. This completes
+the builder conversion of #568.
 
 ### 2.2 The dialects
 
