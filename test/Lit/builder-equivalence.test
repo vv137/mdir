@@ -9,6 +9,10 @@
 # one changes the cutoff, which both forms see. A file of hashes recorded
 # with the build is checked again with the build and with the second
 # wrapper. emit uses no device.
+# A control file read from the disk is read once, before either build runs
+# (#631): the first build is a wrapper that rewrites the cutoff of the file
+# before it emits, and the second build still takes the text of before, so
+# the case is identical. The file is the control of argon.test, divided out.
 # The test of the corpus is written from argon.test.in, whose markers and
 # RUN line are disguised, since split-file and lit would take them here.
 # RUN: mdir-term-ir-test %S/../Driver/Inputs/model-stages/painn-scalar-export.mlir
@@ -28,6 +32,13 @@
 # RUN: env MDIR_REAL=mdir not %python %S/../../scripts/builder-equivalence/check.py compare \
 # RUN:   mdir %t/cutoff --root %t/root --only tests --printer mdir-opt --forms printed \
 # RUN:   | FileCheck %s --check-prefix=CUTOFF
+# RUN: split-file %t/root/test/Driver/argon.test %t/extra && cp %t/root/test/Driver/argon.pdb %t/extra
+# RUN: chmod +x %t/rewrite
+# RUN: env MDIR_REAL=mdir MDIR_REWRITE=%t/extra/argon.toml %python \
+# RUN:   %S/../../scripts/builder-equivalence/check.py compare %t/rewrite mdir --jobs 1 \
+# RUN:   --only extra --control %t/extra/argon.toml --printer mdir-opt \
+# RUN:   | FileCheck %s --check-prefix=SNAPSHOT
+# RUN: grep -q '^cutoff = 9.0$' %t/extra/argon.toml
 # RUN: %python %S/../../scripts/builder-equivalence/check.py record mdir \
 # RUN:   --root %t/root --only tests --printer mdir-opt --output %t/hashes.tsv
 # RUN: %python %S/../../scripts/builder-equivalence/check.py verify mdir \
@@ -61,6 +72,13 @@
 # CUTOFF-NEXT: +{{.*}}cutoff(9.000000e-01){{.*}}
 # CUTOFF: DIFFERENT: test/Driver/argon.test:argon.toml [gpu] module printed
 # CUTOFF: different: 4
+
+# SNAPSHOT-NOT: DIFFERENT
+# SNAPSHOT: control files: 1
+# SNAPSHOT-NEXT: cases (control file, target, and kind): 4
+# SNAPSHOT-NEXT: compared: module printed, module raw
+# SNAPSHOT-NEXT: identical: 4 (of which stop with the same error in both: 0)
+# SNAPSHOT-NEXT: different: 0
 
 # VERIFY: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed: the output differs from the recorded hash
 # VERIFY-NEXT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw: the output differs from the recorded hash
@@ -112,6 +130,15 @@ done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=T
 sys.stderr.buffer.write(done.stderr)
 sys.stdout.buffer.write(done.stdout + (b"// a comment\n" if done.returncode == 0 else b""))
 sys.exit(done.returncode)
+#--- rewrite
+#!/usr/bin/env python3
+import os, re, subprocess, sys
+path = os.environ["MDIR_REWRITE"]
+with open(path) as file:
+    text = file.read()
+with open(path, "w") as file:
+    file.write(re.sub(r"(?m)^cutoff\s*=\s*8\.5$", "cutoff = 9.0", text))
+sys.exit(subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]]).returncode)
 #--- cutoff
 #!/usr/bin/env python3
 import os, subprocess, sys

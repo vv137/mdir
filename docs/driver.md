@@ -1077,6 +1077,11 @@ start and the loop over the parts (both by default; `--kinds run` for a
 build of before the option). A case runs in a scratch directory that mirrors the
 directories above the control file with links, so a relative input
 resolves as it would beside the file. No case writes into the corpus.
+Each control file is read once, before either build runs, and both builds
+emit from that text, so a rewrite of the file during the check (another
+run in the prepared Amber suite writes its control files) does not show
+as a difference (#631). The inputs that the control file names are linked,
+not copied: they must stay unchanged while the check runs.
 `mdir emit` uses no device: the module is printed before anything is
 compiled, and the GPU target changes only the text. A target that the
 control file does not allow (a model or a neighbor structure that only
