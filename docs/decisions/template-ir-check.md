@@ -7,3 +7,12 @@ Recorded at its merge.
 `check.py` takes `--precisions` (each case in each precision, set in `[execution]`), `--env` (one more variant of each case with a set of variables), and `--instances` (with the lowered stage: for each target, the lowered cases whose program holds each instance, read from the names of the functions). The corpus kind `cases`, `scripts/builder-equivalence/cases`, has the control files and the Python script for the missing instances. A control file names the variables of its emits on lines `# check.py env: NAME=VALUE`. A Python case is run with the build's Python package. Without the new options, the labels of the cases are those of before, so earlier files of hashes still apply.
 
 The alternative, a tool of its own for the templates, would have repeated the corpus, the mirroring of inputs, the comparison, and the hashes of `check.py`. No compiler, runtime, or template code changes. See [driver.md, Section 2.11](../driver.md#211-the-equivalence-check-of-the-builder).
+
+At main 0a201302, the corpus had 257 control files: 13 of `examples`, 190 of `tests`, 50 of `bench`, and 4 of `cases`. Over the CPU and GPU targets, the programs of the run and of segments, and the three precisions, that is 3,078 cases (a Python case has the program of a run alone). A build of the branch checked against the hashes recorded with a build of main found all 3,078 identical in the printed module and the lowered program. 1,810 cases emit a module and 1,724 lower; the others stop with the same error in both builds. Every instance of the audit of #739 is reached by at least one lowered case:
+- the neighbor matrix in f32: 287 cases on the CPU and 229 on the GPU;
+- PME `p32c32f32` (orders 4, 6, 8): 169 cases on the CPU and 111 on the GPU;
+- the tiles of edges 4, 8 and 16: 6, 36 and 4 cases;
+- the PME potential: 2 cases on each target;
+- triclinic PME on the GPU: 78 cases;
+- prolate: 36 cases;
+- listed: 207 cases on the CPU and 205 on the GPU.
