@@ -24,34 +24,27 @@ namespace md_exec {
 #include "mdir/Dialect/MDExec/Transforms/Passes.h.inc"
 
 namespace {
-/// Whether `value` is the constant 1.
-bool isOne(Value value) { return matchPattern(value, m_OneFloat()); }
-
 /// The rewrite of the divisions of one block.
 class Sharer {
 public:
-  explicit Sharer(Block &block) : block(block) {}
+  Sharer(Block &block, bool rsqrt) : block(block), rsqrt(rsqrt) {}
 
   void run();
 
 private:
-  /// The point right after the definition of `value`, or the start of the
-  /// block if it is defined outside the block's ops.
+  /// A builder at the point right after the definition of `value`, or at
+  /// the start of the block if it is defined outside the block's ops.
   OpBuilder getBuilderAfter(Value value);
 
-  /// The reciprocal of `divisor`, created once.
-  Value getReciprocal(Value divisor);
-
-  /// 1 / sqrt(x) as sqrt(x) times the reciprocal of `x`, created once.
-  Value getInverseRoot(math::SqrtOp root);
-
-  /// The fastmath flags that every division by `divisor` has.
-  arith::FastMathFlags getCommonFlags(Value divisor);
+  /// The factor that replaces a division by `divisor`: 1/divisor, or
+  /// rsqrt(x) for divisor = sqrt(x), created once.
+  Value getFactor(Value divisor);
 
   Block &block;
+  bool rsqrt;
   /// The divisions of the block by each divisor, in the order of the block.
   llvm::MapVector<Value, SmallVector<arith::DivFOp>> divisions;
-  DenseMap<Value, Value> reciprocals, inverseRoots;
+  DenseMap<Value, Value> factors;
 };
 
 OpBuilder Sharer::getBuilderAfter(Value value) {
@@ -64,42 +57,24 @@ OpBuilder Sharer::getBuilderAfter(Value value) {
   return builder;
 }
 
-arith::FastMathFlags Sharer::getCommonFlags(Value divisor) {
+Value Sharer::getFactor(Value divisor) {
+  Value &factor = factors[divisor];
+  if (factor)
+    return factor;
+  // The fastmath flags that every division by `divisor` has.
   auto flags = arith::FastMathFlags::fast;
-  auto found = divisions.find(divisor);
-  if (found != divisions.end())
-    for (arith::DivFOp division : found->second)
-      flags = flags & division.getFastmath();
-  return found == divisions.end() ? arith::FastMathFlags::none : flags;
-}
-
-Value Sharer::getReciprocal(Value divisor) {
-  Value &reciprocal = reciprocals[divisor];
-  if (reciprocal)
-    return reciprocal;
+  for (arith::DivFOp division : divisions.lookup(divisor))
+    flags = flags & division.getFastmath();
   OpBuilder builder = getBuilderAfter(divisor);
   Location loc = divisor.getLoc();
+  if (auto root = divisor.getDefiningOp<math::SqrtOp>(); root && rsqrt) {
+    factor = math::RsqrtOp::create(builder, loc, root.getOperand(), flags);
+    return factor;
+  }
   Value one = arith::ConstantOp::create(
       builder, loc, builder.getFloatAttr(divisor.getType(), 1.0));
-  reciprocal = arith::DivFOp::create(builder, loc, one, divisor,
-                                     getCommonFlags(divisor));
-  return reciprocal;
-}
-
-Value Sharer::getInverseRoot(math::SqrtOp root) {
-  Value &inverse = inverseRoots[root.getResult()];
-  if (inverse)
-    return inverse;
-  Value reciprocal = getReciprocal(root.getOperand());
-  // After the root and after the reciprocal: the reciprocal follows the
-  // radicand, which precedes the root, unless the root is outside the block.
-  OpBuilder builder = getBuilderAfter(root.getResult());
-  if (root->getBlock() != &block)
-    builder.setInsertionPointAfter(reciprocal.getDefiningOp());
-  inverse = arith::MulFOp::create(builder, root.getLoc(), root.getResult(),
-                                  reciprocal,
-                                  getCommonFlags(root.getResult()));
-  return inverse;
+  factor = arith::DivFOp::create(builder, loc, one, divisor, flags);
+  return factor;
 }
 
 void Sharer::run() {
@@ -108,56 +83,45 @@ void Sharer::run() {
         division && division.getType().isF64())
       divisions[division.getRhs()].push_back(division);
 
-  // Which divisions take which factor, decided before anything is created,
-  // so that the decision does not depend on what the rewrite adds.
-  SmallVector<std::pair<arith::DivFOp, Value>> rewrites;
+  SmallVector<math::SqrtOp> roots;
   for (auto &[divisor, list] : divisions) {
-    // A division by sqrt(x) in a block that also divides by x: 1/sqrt(x) is
-    // sqrt(x) · (1/x), with the reciprocal of x shared.
+    // A division by sqrt(x) becomes a product by rsqrt(x), with `rsqrt`;
+    // any other divisor is shared when two or more divisions take it.
     auto root = divisor.getDefiningOp<math::SqrtOp>();
-    if (root && divisions.count(root.getOperand())) {
-      for (arith::DivFOp division : list)
-        rewrites.push_back({division, root.getResult()});
+    if (!(root && rsqrt) && list.size() < 2)
       continue;
+    if (root && rsqrt)
+      roots.push_back(root);
+    for (arith::DivFOp division : list) {
+      Value factor = getFactor(divisor);
+      Value result = factor;
+      if (!matchPattern(division.getLhs(), m_OneFloat())) {
+        OpBuilder builder(division);
+        result = arith::MulFOp::create(builder, division.getLoc(),
+                                       division.getLhs(), factor,
+                                       division.getFastmath());
+      }
+      division.getResult().replaceAllUsesWith(result);
+      division.erase();
     }
-    bool shared = list.size() > 1;
-    // The divisor is the radicand of a root that another division divides
-    // by: its reciprocal serves both.
-    for (auto &[other, unused] : divisions)
-      if (auto otherRoot = other.getDefiningOp<math::SqrtOp>())
-        shared |= otherRoot.getOperand() == divisor;
-    if (!shared)
-      continue;
-    for (arith::DivFOp division : list)
-      rewrites.push_back({division, divisor});
   }
-
-  for (auto [division, divisor] : rewrites) {
-    auto root = divisor.getDefiningOp<math::SqrtOp>();
-    Value factor = root && divisions.count(root.getOperand())
-                       ? getInverseRoot(root)
-                       : getReciprocal(divisor);
-    Value result = factor;
-    if (!isOne(division.getLhs())) {
-      OpBuilder builder(division);
-      result = arith::MulFOp::create(builder, division.getLoc(),
-                                     division.getLhs(), factor,
-                                     division.getFastmath());
-    }
-    division.getResult().replaceAllUsesWith(result);
-    division.erase();
-  }
+  // A root that only the divisions took.
+  for (math::SqrtOp root : roots)
+    if (root->getBlock() == &block && root->use_empty())
+      root.erase();
 }
 
 class ShareDivisions : public impl::ShareDivisionsBase<ShareDivisions> {
 public:
+  using impl::ShareDivisionsBase<ShareDivisions>::ShareDivisionsBase;
+
   void runOnOperation() final {
     SmallVector<Block *> blocks;
     getOperation()->walk([&](PairForOp loop) {
       loop.getRegion().walk([&](Block *block) { blocks.push_back(block); });
     });
     for (Block *block : blocks)
-      Sharer(*block).run();
+      Sharer(*block, rsqrt).run();
   }
 };
 } // namespace

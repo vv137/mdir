@@ -678,49 +678,58 @@ def ShareDivisions
     each value one SSA value (D[shared-divisions], #731). In each block of
     the kernel of an `md_exec.pair_for`, the scalar `arith.divf` in f64:
 
-    - Divisions by one SSA value `y`, two or more, share one reciprocal:
-      `1 / y` once, after the definition of `y` (at the start of the block
-      when `y` is defined outside it), and `a / y` becomes `a · (1/y)`; a
-      division `1 / y` becomes the reciprocal itself.
-    - A division by `math.sqrt(x)` in a block that also divides by `x`
-      becomes a product by `sqrt(x) · (1/x)`, once, with the reciprocal of
-      `x` shared by both.
+    - With `rsqrt`, a division by `math.sqrt(x)` becomes a product by
+      `math.rsqrt(x)`, one for all the divisions by that root, after it;
+      `1 / sqrt(x)` becomes the `rsqrt` itself, and a root that nothing
+      else takes is removed.
+    - Two or more divisions by any other SSA value `y` share one
+      reciprocal: `1 / y` once, after the definition of `y` (at the start
+      of the block when `y` is defined outside it, as `r2` is), and `a / y`
+      becomes `a · (1/y)`; a division `1 / y` becomes the reciprocal
+      itself. Without `rsqrt` a root is such a value.
 
-    A lone division by a value whose radicand is not divided by is left
-    as it is. The kernels of `md_exec.tuple_for` and of `md_exec.particle_for`,
-    f32 kernels, and vector divisions are left as they are: an f32 kernel
-    under `fast_math` takes approximate divisions already (D90), and the
-    other kernels have not been measured.
+    A lone division by a value that is not a root is left as it is. The
+    kernels of `md_exec.tuple_for` and of `md_exec.particle_for`, f32
+    kernels, and vector divisions are left as they are: an f32 kernel under
+    `fast_math` takes approximate divisions already (D90), and the other
+    kernels have not been measured.
 
-    Rounding. `1/y` and `a/y` are correctly rounded; `a · (1/y)` rounds
-    twice, within 1.5 ulp of `a/y` instead of 0.5. `a · (sqrt(x) · (1/x))`
-    rounds four times, within 2.5 ulp of the exact quotient. Neither
-    overflows nor underflows where `a/y` does not as long as `1/y` is a
-    normal number, which holds for the squared distances of a pair kernel,
-    r² in (0, r_c²]. The rewrite is made once, at compilation, so a
-    program gives the same bits from run to run, and the deterministic
-    mode (D84) keeps it; its bits differ from those of the kernel as
-    written.
+    The pipeline sets `rsqrt` for a device and not for the host. On a
+    device `math.rsqrt` in f64 lowers to libdevice's `__nv_rsqrt`, PTX's
+    `rsqrt.approx.f64`, which ptxas expands into an estimate and its
+    refinement: measured on an RTX 5090 (sm_120), within 0.51 ulp of
+    1/√x, against 1.5 ulp for `1 / sqrt(x)`, and `a · rsqrt(x)` within
+    1.48 ulp of a/√x, as `a / sqrt(x)` is. On the host `math.rsqrt` lowers
+    to `1 / sqrt(x)`, which saves nothing.
 
-    `math.rsqrt` is not used: on a device it lowers to libdevice's
-    `__nv_rsqrt`, which is `rsqrt.approx.f64`, far from 1 ulp in f64;
-    on the host it is `1 / sqrt(x)`, which the shared reciprocal already
-    is (D[shared-divisions]).
+    Rounding. `a · (1/y)` rounds twice, so it is within 2u + u² of a/y
+    (u = 2^-53), against u for `a / y`. Neither overflows nor underflows
+    where `a / y` does not as long as `1/y` is a normal number, which holds
+    for the squared distances of a pair kernel, r² in (0, r_c²]. The
+    rewrite is made once, at compilation, so a program gives the same bits
+    from run to run, and the deterministic mode (D84) keeps it; its bits
+    differ from those of the kernel as written.
 
     ```mlir
     %inv = arith.divf %one, %r2 : f64
     %r = math.sqrt %r2 : f64
     %t = arith.divf %a, %r : f64
+    %u = arith.divf %b, %r2 : f64
     ```
 
     ```mlir
     %one = arith.constant 1.0 : f64
-    %inv = arith.divf %one, %r2 : f64
+    %inv = arith.divf %one, %r2 : f64     // at the start of the block
     %r = math.sqrt %r2 : f64
-    %root = arith.mulf %r, %inv : f64      // 1 / sqrt(r2)
+    %root = math.rsqrt %r2 : f64          // with rsqrt
     %t = arith.mulf %a, %root : f64
+    %u = arith.mulf %b, %inv : f64
     ```
   }];
+  let options = [
+    Option<"rsqrt", "rsqrt", "bool", /*default=*/"false",
+           "Divide by a root as a product by math.rsqrt">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect"];
 }

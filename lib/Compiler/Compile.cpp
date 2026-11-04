@@ -214,10 +214,12 @@ std::string mdir::compiler::getPipeline(const Control &control,
   if (control.fastMath)
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
   // The divisions of the f64 pair kernels by one value share one
-  // reciprocal, and a division by sqrt(x) beside one by x takes it too
+  // reciprocal, and on a device a division by sqrt(x) is a product by
+  // rsqrt(x), which the host would compute as 1 / sqrt(x)
   // (D[shared-divisions]): the types are fixed and cse has run.
   if (control.fastMath)
-    os << "md-exec-share-divisions,";
+    os << "md-exec-share-divisions"
+       << (control.target == Target::GPU ? "{rsqrt=true}" : "") << ",";
   // The algebra of every sum, from the mode (D301): in the
   // deterministic mode a floating-point sum is `fixed_order`, otherwise
   // `any_order`. The strategies and the lowerings read it, not the mode.
