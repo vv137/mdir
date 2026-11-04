@@ -469,7 +469,7 @@ with atomics: the trajectories part as two runs with atomics do.
 alternated twice in one job, before the bound of 100,000 tuples; µs a step
 of the tuple kernel from Nsight Systems, and ms a step):
 
-| System | RTX 4090 (ada-003): atomics | Block sums | Step | RTX PRO 6000 (ada-004): atomics | Block sums | Step |
+| System | RTX 4090: atomics | Block sums | Step | RTX PRO 6000: atomics | Block sums | Step |
 |---|---:|---:|---|---:|---:|---|
 | JAC NVE | 12.1 | 13.2 | 0.14 → 0.14 | 6.8 | 6.8 (atomics, below the bound) | 0.12 → 0.12 |
 | Factor IX NVE | 24.8 | 16.4 | 0.34 → 0.34 | 17.0 | 12.3 | 0.25 → 0.25 |
@@ -481,7 +481,7 @@ settings of the suite with a dual list of groups, skins 3 and 0.6 Å; `main`
 and this decision alternated system by system in one job, three rounds,
 the median in ns/day):
 
-| System | RTX 4090 (ada-003): `main` | This decision | Ratio | RTX PRO 6000 (ada-004): `main` | This decision | Ratio |
+| System | RTX 4090: `main` | This decision | Ratio | RTX PRO 6000: `main` | This decision | Ratio |
 |---|---:|---:|---:|---:|---:|---:|
 | JAC NVE | 1311.8 | 1311.8 | 1.000 | 1506.8 | 1509.4 | 1.002 |
 | JAC NVE 4 fs | 2451.1 | 2449.7 | 0.999 | 2822.3 | 2822.2 | 1.000 |
