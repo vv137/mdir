@@ -217,7 +217,7 @@ class Case:
 
 def corpus(args, scratch):
     cases = []
-    kinds = set(args.only or ["examples", "tests", "bench", "extra"])
+    kinds = set(args.only or ["examples", "tests", "bench", "cases", "extra"])
     if "examples" in kinds:
         top = os.path.join(args.root, "examples")
         for directory, _, files in sorted(os.walk(top)):
@@ -251,6 +251,15 @@ def corpus(args, scratch):
             for file in sorted(os.listdir(directory)):
                 if file.endswith(".toml") and os.path.isfile(os.path.join(directory, file)):
                     cases.append(Case(f"bench/{system}/{file}", top, f"{system}/{file}"))
+    if "cases" in kinds:
+        # The control files and Python scripts written for the corpus
+        # (#739), for what no other file of it reaches.
+        directory = os.path.join(args.root, "scripts", "builder-equivalence", "cases")
+        if os.path.isdir(directory):
+            for file in sorted(os.listdir(directory)):
+                if file.endswith((".toml", ".py")):
+                    relative = os.path.join("scripts", "builder-equivalence", "cases", file)
+                    cases.append(Case(f"cases/{file}", args.root, relative))
     if "extra" in kinds:
         for path in args.control or []:
             path = os.path.abspath(path)
@@ -259,12 +268,12 @@ def corpus(args, scratch):
     return cases
 
 
-def with_target(text, target):
-    """The control file with `target` of [execution] set."""
+def with_execution(text, key, value):
+    """The control file with `key = value` set in [execution]."""
     lines = text.splitlines(keepends=True)
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
-    setting = f'target = "{target.upper()}"\n'
+    setting = f"{key} = {value}\n"
     header = next((i for i, line in enumerate(lines)
                    if re.match(r"^\s*\[execution\]\s*(#.*)?$", line)), None)
     if header is None:
@@ -272,11 +281,16 @@ def with_target(text, target):
     end = next((i for i in range(header + 1, len(lines))
                 if re.match(r"^\s*\[", lines[i])), len(lines))
     for i in range(header + 1, end):
-        if re.match(r"^\s*target\s*=", lines[i]):
+        if re.match(rf"^\s*{key}\s*=", lines[i]):
             lines[i] = setting
             return "".join(lines)
     lines.insert(header + 1, setting)
     return "".join(lines)
+
+
+def with_target(text, target):
+    """The control file with `target` of [execution] set."""
+    return with_execution(text, "target", f'"{target.upper()}"')
 
 
 def mirror(case, place):
@@ -329,10 +343,10 @@ def source_text(case):
     return case.text
 
 
-def run(command, cwd, hide, input=None):
+def run(command, cwd, hide, input=None, env=None):
     try:
         done = subprocess.run(command, cwd=cwd, input=input, capture_output=True,
-                              timeout=1800)
+                              timeout=1800, env=env)
         status, out, err = done.returncode, done.stdout, done.stderr
     except subprocess.TimeoutExpired:
         status, out, err = "timeout", b"", b""
@@ -393,22 +407,81 @@ def require_materialized(output):
         raise RuntimeError("internal term IR connection survived emission")
 
 
-def outputs(mdir, printer, case, target, stages, forms, scratch, index):
-    """The outputs of one build for one case and target:
+class Variant:
+    """What a case is emitted for: a target, a kind of program, and, when
+    asked for, a precision (--precisions) and a set of environment
+    variables (--env). Its label names it in the report and in a file of
+    hashes; without a precision or an environment it is the label of
+    before, "cpu" or "gpu segments", so that older files of hashes still
+    apply."""
+
+    def __init__(self, target, kind="run", precision=None, env=()):
+        self.target, self.kind, self.precision, self.env = target, kind, precision, tuple(env)
+
+    def label(self):
+        words = [self.target]
+        if self.kind != "run":
+            words.append(self.kind)
+        if self.precision:
+            words.append(self.precision)
+        if self.env:
+            words.append("env:" + ",".join(f"{name}={value}" for name, value in self.env))
+        return " ".join(words)
+
+
+def case_env(text):
+    """The environment that a control file of the corpus asks for, on lines
+    `# check.py env: NAME=VALUE` (scripts/builder-equivalence/cases)."""
+    env = []
+    for match in re.finditer(r"(?m)^#\s*check\.py env:\s*(\S+)\s*$", text):
+        name, _, value = match.group(1).partition("=")
+        env.append((name, value))
+    return env
+
+
+def python_dir(mdir):
+    """The Python package of the build of an mdir program: <tree>/python."""
+    return os.path.join(os.path.dirname(os.path.dirname(mdir)), "python")
+
+
+def outputs(mdir, printer, case, variant, stages, forms, scratch, index, python=None):
+    """The outputs of one build for one case and variant:
     {(stage, form): (status, out, err)}."""
-    target, _, kind = target.partition(" ")
-    place = os.path.join(scratch, f"{index}-{target}{kind}-{hashlib.sha1(mdir.encode()).hexdigest()[:8]}")
+    target, kind = variant.target, variant.kind
+    place = os.path.join(scratch, f"{index}-{hashlib.sha1((variant.label() + mdir).encode()).hexdigest()[:12]}")
     directory, hide = mirror(case, place)
-    stem = os.path.splitext(os.path.basename(case.relative))[0]
-    control = f"{stem}.equivalence-{target}.toml"
-    with open(os.path.join(directory, control), "w", encoding="utf-8",
-              errors="surrogateescape") as file:
-        file.write(with_target(source_text(case), target))
-    segments = ["--segments"] if kind == "segments" else []
+    env = dict(os.environ)
+    env.update(case_env(source_text(case)))
+    env.update(variant.env)
+    if case.relative.endswith(".py"):
+        # A case written in Python (scripts/builder-equivalence/cases): the
+        # script builds a program with the Python package of the build and
+        # prints its module or its lowered program.
+        env["PYTHONPATH"] = os.pathsep.join(
+            [python_dir(mdir)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+        script = os.path.basename(case.relative)
+
+        def emit(stage):
+            return run([python or sys.executable, script, target.upper(),
+                        (variant.precision or "default").upper(), stage],
+                       directory, hide, env=env)
+    else:
+        stem = os.path.splitext(os.path.basename(case.relative))[0]
+        control = f"{stem}.equivalence-{target}.toml"
+        text = with_target(source_text(case), target)
+        if variant.precision:
+            text = with_execution(text, "precision", f'"{variant.precision.upper()}"')
+        with open(os.path.join(directory, control), "w", encoding="utf-8",
+                  errors="surrogateescape") as file:
+            file.write(text)
+        segments = ["--segments"] if kind == "segments" else []
+
+        def emit(stage):
+            return run([mdir, "emit", f"--stage={stage}", *segments, control],
+                       directory, hide, env=env)
     result = {}
     for stage in stages:
-        status, out, err = run([mdir, "emit", f"--stage={stage}", *segments, control],
-                               directory, hide)
+        status, out, err = emit(stage)
         if stage == "lowered":
             if status == 0:
                 require_materialized(out)
@@ -433,6 +506,56 @@ def digest(entry):
     return (str(status), hashlib.sha256(out).hexdigest(), hashlib.sha256(err).hexdigest())
 
 
+TEMPLATE_NAME = re.compile(rb"@(mdrt[._][A-Za-z0-9_.]*)")
+PME_SUFFIX = re.compile(r"_(p(?:32|64)c(?:32|64)f(?:32|64)o[0-9]+)(?:_|$)")
+
+
+def instances(text):
+    """The instances of the templates of the lowering
+    (lib/Runtime/Templates) that a lowered program holds, by the names of
+    their functions: the neighbor matrix in f64 or f32, particle mesh Ewald
+    by its types and order, and its variants that are added only where a
+    sum asks for them."""
+    keys = set()
+    for name in {m.decode() for m in TEMPLATE_NAME.findall(text)}:
+        if re.match(r"mdrt(\.|_gpu_)build_neighbors_matrix", name):
+            keys.add("matrix " + ("f32" if re.search(r"_f32(_|$)", name) else "f64"))
+        elif name.startswith("mdrt_gpu_build_neighbors_groups"):
+            keys.add("groups triclinic" if "_triclinic" in name else "groups")
+        if "pme" not in name:
+            continue
+        suffix = PME_SUFFIX.search(name)
+        if suffix:
+            keys.add("pme " + suffix.group(1))
+        if name.startswith("mdrt_gpu_pme") and "_triclinic_p" in name:
+            keys.add("pme triclinic")
+        if name.startswith("mdrt_gpu_pme_prolate"):
+            keys.add("pme prolate")
+        if "_listed_p" in name:
+            keys.add("pme listed")
+        if "pme_potential" in name:
+            keys.add("pme potential")
+        tiles = re.search(r"_spread_tiles([0-9]+)_", name)
+        if tiles:
+            keys.add(f"pme tiles {tiles.group(1)}")
+    return keys
+
+
+def report_instances(work, results):
+    """For each target and instance, the cases (of the last build) whose
+    lowered program holds it."""
+    counts = {}
+    for (_, case, variant), result in zip(work, results):
+        status, out, _ = result[-1].get(("lowered", "printed"), (1, b"", b""))
+        if status != 0:
+            continue
+        for key in instances(out):
+            counts[(variant.target, key)] = counts.get((variant.target, key), 0) + 1
+    print("instances (lowered cases that hold each):")
+    for (target, key), count in sorted(counts.items()):
+        print(f"  {target} {key}: {count}")
+
+
 def summary(cases, rows, expected=None):
     """rows: (case, target, stage, form, same, failed)."""
     keys = {(case, target) for case, target, *_ in rows}
@@ -443,7 +566,7 @@ def summary(cases, rows, expected=None):
     failed = {(case, target) for case, target, _, _, same, failed in rows if same and failed}
     stages = sorted({(stage, form) for _, _, stage, form, _, _ in rows})
     print(f"control files: {len(cases)}")
-    print(f"cases (control file, target, and kind): {len(keys)}")
+    print(f"cases (control file and variant): {len(keys)}")
     print("compared: " + ", ".join(f"{stage} {form}" for stage, form in stages))
     print(f"identical: {len(keys) - len(changed)}"
           f" (of which stop with the same error in both: {len(failed - changed)})")
@@ -474,13 +597,20 @@ def main():
     parser.add_argument("programs", nargs="+", help="OLD NEW, or MDIR")
     parser.add_argument("--output", help="record: the file of the hashes")
     parser.add_argument("--hashes", help="verify: the file of the hashes")
-    parser.add_argument("--only", nargs="+", choices=["examples", "tests", "bench", "extra"])
+    parser.add_argument("--only", nargs="+", choices=["examples", "tests", "bench", "cases", "extra"])
     parser.add_argument("--bench", help="the prepared Amber suite (MDIR_BENCH_DIR)")
     parser.add_argument("--control", action="append", help="a control file of its own")
     parser.add_argument("--root", default=ROOT, help="the repository (this one)")
     parser.add_argument("--targets", default="cpu,gpu")
     parser.add_argument("--kinds", default="run,segments",
                         help="the programs: of the run, and of segments (mdir emit --segments)")
+    parser.add_argument("--precisions", default="",
+                        help="single, mixed, double: each case in each, set in [execution]")
+    parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE[,NAME=VALUE]",
+                        help="a set of environment variables: each case with it as well")
+    parser.add_argument("--python", help="the interpreter of the cases written in Python")
+    parser.add_argument("--instances", action="store_true",
+                        help="count the cases whose lowered program holds each template instance")
     parser.add_argument("--stages", default="module")
     parser.add_argument("--forms", default="raw,printed")
     parser.add_argument("--printer", help="mdir-opt for the printed form")
@@ -506,6 +636,17 @@ def main():
     kinds = [k for k in args.kinds.split(",") if k]
     stages = [s for s in args.stages.split(",") if s]
     forms = [f for f in args.forms.split(",") if f]
+    precisions = [p for p in args.precisions.split(",") if p]
+    if set(precisions) - {"single", "mixed", "double"}:
+        parser.error("--precisions takes some of double, mixed, single")
+    environments = [()]
+    for value in args.env:
+        pairs = [pair for pair in value.split(",") if pair]
+        if not pairs or any("=" not in pair or not pair.split("=", 1)[0] for pair in pairs):
+            parser.error(f"--env takes NAME=VALUE[,NAME=VALUE], not '{value}'")
+        environments.append(tuple(tuple(pair.split("=", 1)) for pair in pairs))
+    if args.instances and "lowered" not in stages:
+        parser.error("--instances needs the lowered stage (--stages lowered)")
     for value, allowed in ((targets, {"cpu", "gpu"}), (kinds, {"run", "segments"}),
                            (stages, {"module", "lowered"}),
                            (forms, {"raw", "printed"})):
@@ -528,37 +669,44 @@ def main():
             source_text(case)
         if not cases:
             sys.exit("check.py: the corpus is empty")
-        # A case of the program of segments is named "<target> segments".
-        work = [(i, case, target + ("" if kind == "run" else " " + kind))
-                for i, case in enumerate(cases) for target in targets for kind in kinds]
+        # A case of the program of segments is named "<target> segments";
+        # a precision and a set of variables add to the name (Variant). A
+        # case written in Python has the program of a run alone.
+        work = [(i, case, Variant(target, kind, precision, env))
+                for i, case in enumerate(cases) for target in targets for kind in kinds
+                for precision in (precisions or [None]) for env in environments
+                if not (kind == "segments" and case.relative.endswith(".py"))]
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             results = list(pool.map(
                 lambda item: [outputs(mdir, printer, item[1], item[2], stages, forms,
-                                      scratch, item[0]) for mdir in programs], work))
+                                      scratch, item[0], args.python) for mdir in programs], work))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
     if args.show_errors:
-        for (_, case, target), result in zip(work, results):
+        for (_, case, variant), result in zip(work, results):
             for (stage, form), (status, _, err) in sorted(result[-1].items()):
                 if status != 0 and (form == forms[0] or stage == "lowered"):
                     first = err.decode(errors="replace").strip().splitlines()[:1]
-                    print(f"ERROR: {case.name} [{target}] {stage}: {first[0] if first else status}")
+                    print(f"ERROR: {case.name} [{variant.label()}] {stage}: {first[0] if first else status}")
 
     if args.command == "record":
         with open(args.output, "w") as file:
             file.write(HASHES_HEADER + "\n")
             file.write("# case\ttarget\tstage\tform\tstatus\toutput\terror output\n")
-            for (_, case, target), (result,) in zip(work, results):
+            for (_, case, variant), (result,) in zip(work, results):
                 for (stage, form), entry in sorted(result.items()):
-                    file.write("\t".join([case.name, target, stage, form, *digest(entry)]) + "\n")
+                    file.write("\t".join([case.name, variant.label(), stage, form, *digest(entry)]) + "\n")
         print(f"recorded {sum(len(r[0]) for r in results)} outputs of "
               f"{len(work)} cases ({len(cases)} control files)")
+        if args.instances:
+            report_instances(work, results)
         return 0
 
     rows = []
     if args.command == "compare":
-        for (_, case, target), (old, new) in zip(work, results):
+        for (_, case, variant), (old, new) in zip(work, results):
+            target = variant.label()
             for key in sorted(new):
                 same = old[key] == new[key]
                 if not same and not expected.accept((case.name, target, *key), old[key], new[key]):
@@ -573,7 +721,8 @@ def main():
                 if not line.startswith("#"):
                     name, target, stage, form, *entry = line.rstrip("\n").split("\t")
                     recorded[(name, target, stage, form)] = tuple(entry)
-        for (_, case, target), (new,) in zip(work, results):
+        for (_, case, variant), (new,) in zip(work, results):
+            target = variant.label()
             for key in sorted(new):
                 old = recorded.get((case.name, target, *key))
                 same = old == digest(new[key])
@@ -585,6 +734,8 @@ def main():
                 rows.append((case.name, target, *key, same, new[key][0] != 0))
     complete = expected.complete()
     result = summary(cases, rows, expected)
+    if args.instances:
+        report_instances(work, results)
     return result if complete else 1
 
 
