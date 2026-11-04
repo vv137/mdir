@@ -47,11 +47,35 @@
 # RUN: env MDIR_REAL=mdir not %python %S/../../scripts/builder-equivalence/check.py verify \
 # RUN:   %t/cutoff --root %t/root --only tests --printer mdir-opt --hashes %t/hashes.tsv \
 # RUN:   | FileCheck %s --check-prefix=VERIFY
+# The axes of #739. --precisions emits each case in each precision, set in
+# [execution], and --instances counts the lowered cases whose program holds
+# each instance of the templates of the lowering: argon in double precision
+# takes the neighbor matrix in f64, and in single precision the one in f32.
+# RUN: %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
+# RUN:   --root %t/root --only tests --targets cpu --kinds run --stages lowered \
+# RUN:   --precisions single,double --instances | FileCheck %s --check-prefix=PRECISIONS
+# A case written for the corpus (scripts/builder-equivalence/cases, the kind
+# "cases"): a Python script, run with the interpreter of --python and the
+# Python package of the build on PYTHONPATH, which takes the target, the
+# precision, and the stage. The variables of --env, and those that the file
+# names on a line "# check.py env:", reach it; each --env is one more
+# variant, beside the case without it. The script stops with an error that
+# names what it was given, which --show-errors prints.
+# RUN: mkdir -p %t/root/scripts/builder-equivalence/cases
+# RUN: cp %t/case.py %t/root/scripts/builder-equivalence/cases
+# RUN: %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
+# RUN:   --root %t/root --only cases --targets gpu --forms raw --python %python \
+# RUN:   --precisions mixed --env CHECK_PY_VALUE=7 --show-errors \
+# RUN:   | FileCheck %s --check-prefix=CASES
+# RUN: not %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
+# RUN:   --root %t/root --only cases --env NOVALUE 2>&1 | FileCheck %s --check-prefix=BAD-ENV
+# RUN: not %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
+# RUN:   --root %t/root --only cases --instances 2>&1 | FileCheck %s --check-prefix=BAD-INSTANCES
 
 # Two control files: one that builds, and one that stops with an error (an
 # unknown key), whose message is compared as well.
 # SAME: control files: 2
-# SAME-NEXT: cases (control file, target, and kind): 8
+# SAME-NEXT: cases (control file and variant): 8
 # SAME-NEXT: compared: module printed, module raw
 # SAME-NEXT: identical: 8 (of which stop with the same error in both: 4)
 # SAME-NEXT: different: 0
@@ -75,7 +99,7 @@
 
 # SNAPSHOT-NOT: DIFFERENT
 # SNAPSHOT: control files: 1
-# SNAPSHOT-NEXT: cases (control file, target, and kind): 4
+# SNAPSHOT-NEXT: cases (control file and variant): 4
 # SNAPSHOT-NEXT: compared: module printed, module raw
 # SNAPSHOT-NEXT: identical: 4 (of which stop with the same error in both: 0)
 # SNAPSHOT-NEXT: different: 0
@@ -83,6 +107,28 @@
 # VERIFY: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed: the output differs from the recorded hash
 # VERIFY-NEXT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw: the output differs from the recorded hash
 # VERIFY: different: 4
+
+# argon.toml in two precisions; broken.toml stops with an error in both.
+# PRECISIONS: cases (control file and variant): 4
+# PRECISIONS-NEXT: compared: lowered printed
+# PRECISIONS-NEXT: identical: 4 (of which stop with the same error in both: 2)
+# PRECISIONS-NEXT: different: 0
+# PRECISIONS-NEXT: instances (lowered cases that hold each):
+# PRECISIONS-NEXT:   cpu matrix f32: 1
+# PRECISIONS-NEXT:   cpu matrix f64: 1
+
+# A Python case has the program of a run alone: one target, one precision,
+# and two sets of variables (none, and that of --env), so two variants.
+# CASES: ERROR: cases/case.py [gpu mixed] module: case GPU MIXED module file=3 value=- package=python
+# CASES-NEXT: ERROR: cases/case.py [gpu mixed env:CHECK_PY_VALUE=7] module: case GPU MIXED module file=3 value=7 package=python
+# CASES-NEXT: control files: 1
+# CASES-NEXT: cases (control file and variant): 2
+# CASES-NEXT: compared: module raw
+# CASES-NEXT: identical: 2 (of which stop with the same error in both: 2)
+# CASES-NEXT: different: 0
+
+# BAD-ENV: --env takes NAME=VALUE[,NAME=VALUE], not 'NOVALUE'
+# BAD-INSTANCES: --instances needs the lowered stage (--stages lowered)
 
 #--- argon.test.in
 # R-U-N: cp %S/argon.pdb %t
@@ -146,6 +192,15 @@ done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=T
 sys.stderr.buffer.write(done.stderr)
 sys.stdout.buffer.write(done.stdout.replace(b"cutoff(0.85000000000000008)", b"cutoff(9.0e-01)"))
 sys.exit(done.returncode)
+
+#--- case.py
+# check.py env: CHECK_PY_FILE=3
+import os
+import sys
+package = os.path.basename(os.environ["PYTHONPATH"].split(os.pathsep)[0])
+sys.stderr.write(f"case {' '.join(sys.argv[1:])} file={os.environ.get('CHECK_PY_FILE', '-')} "
+                 f"value={os.environ.get('CHECK_PY_VALUE', '-')} package={package}\n")
+sys.exit(1)
 
 #--- diagnostics.py
 import importlib.util

@@ -1,0 +1,31 @@
+# A case of the corpus of check.py (#739): the instances of the templates
+# for single precision, which no other control file of the corpus reaches:
+# the neighbor matrix in f32 and particle mesh Ewald with positions,
+# charges, and forces in f32 (p32c32f32), on both targets.
+[input]
+topology    = "../../../test/Driver/Inputs/dipeptide/dipeptide.prmtop"
+coordinates = "../../../test/Driver/Inputs/dipeptide/dipeptide.inpcrd"
+
+[energy]
+cutoff             = 8.0
+pairlist_distance  = 9.0
+electrostatics     = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+precision          = "SINGLE"
+neighbor_structure = "MATRIX"

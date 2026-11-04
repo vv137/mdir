@@ -1,0 +1,32 @@
+# check.py env: MDIR_PME_SPREAD=tiles16
+# A case of the corpus of check.py (#739): the spreading of particle
+# mesh Ewald on a device through tiles of edge 16 (D282), which no other
+# control file of the corpus reaches; the environment line above sets
+# the edge for both builds.
+[input]
+topology    = "../../../test/Driver/Inputs/dipeptide/dipeptide.prmtop"
+coordinates = "../../../test/Driver/Inputs/dipeptide/dipeptide.inpcrd"
+
+[energy]
+cutoff             = 8.0
+pairlist_distance  = 9.0
+electrostatics     = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+precision          = "MIXED"
+neighbor_structure = "MATRIX"
