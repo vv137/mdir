@@ -58,8 +58,8 @@ the slab and the walls.
 **The update.** From the rows of the last runs at $\hat\sigma$, `osmotic.py`:
 
 1. reweights $f$ to a grid of σ';
-2. finds the root;
-3. limits the step to the region where the pooled $N_\text{eff}/N$ (Kish) stays at or above 0.5.
+2. finds the root within the region where the pooled $N_\text{eff}/N$ (Kish) stays at or above 0.5, or, when $f$ has no root there (short runs leave it noisy), takes the Newton step $-f/(\partial f/\partial\sigma')$ of the covariance gradient;
+3. limits the step to that region.
 
 The next runs sample there, each replica from its last state. The loop
 stops when $\lvert f\rvert$ of a fresh set of runs is below its standard
@@ -106,14 +106,23 @@ Details:
 
 - `mdir` is taken from `PATH`, or from `--mdir` or `MDIR`.
 - The scripts need NumPy, and `build.py` needs `tleap`.
-- `run.py` runs the replicas at once (`--parallel` sets how many), each in `<system>/rep<i>`, and keeps the history of a fit in `<system>/fit.json`.
+- `run.py` runs the replicas at once (`--parallel` sets how many), each in `<system>/rep<i>`, and keeps the history of a fit in `<system>/fit.json`. A fit run again skips the sets of runs that are complete.
 - `osmotic.py SIGMA_HAT <system>/rep*/NAME` analyzes any set of runs directly.
 
 **Run lengths.** By default each production run is 2.5 ns, with the first
 0.5 ns dropped, so 8 replicas give 16 ns per point. On an RTX 5090 a set of
 8 runs at once advances at about 1,160 ns/day in all, so a point takes
 about 25 minutes and the equilibration about 30. At 16 ns per point the
-standard error of $f$ is about 2 bar at 2 m.
+standard error of $f$ is about 2 bar at 2 m. A run of the example at its defaults at about 2 m
+(`build.py`, `equilibrate`, `fit`) on an RTX 5090 took 70 minutes:
+
+| Point | $f$ |
+|---|---|
+| σ₀ | −4.1 ± 2.4 bar |
+| σ₀ + 0.007 Å (one update, at the edge of the trust region) | +1.4 ± 2.7 bar |
+
+It stopped at σ₀ + 0.007 Å, the point the study reached with five times
+the sampling.
 
 The published numbers (#140, Step 3) came from longer runs:
 
