@@ -481,6 +481,12 @@ compiled softmax rounds differently).
 
 ### Use: a K-Cl NBFIX fitted to the osmotic pressure (#140)
 
+The study itself ran from the control file with the columns of a potential
+linear in its parameters ([above](#without-frames-a-potential-linear-in-its-tunables);
+[examples/kcl-osmotic](../examples/kcl-osmotic/README.md)). The same fit in
+Python, with frames and the evaluator, which a parameter that is not linear
+needs:
+
 ```python
 system.tunables = [mdir.Tunable("sig", "sig", term="nbfix"), mdir.Tunable("eps", "eps", term="nbfix")]
 system.tunable_gradient = True
@@ -1818,6 +1824,20 @@ correction for the dispersion, 150 frames, $\sigma'$ moved by 0.002 nm
 | The weights, in $1/K$ | the same | 4.5e-13 | 1.9e-5 | 2.0e-5 | |
 | The reweighted average, relative | the same | 8.3e-16 | 3.8e-7 | 4.1e-7 | 1e-9, 1e-3 |
 | Its derivative in $c_{12}$ and $c_6$, relative | the same, from the rows of the Jacobian | 1.6e-14 | 3.4e-6 | 3.7e-6 | 1e-9, 5e-3 |
+
+**From the control file.** [examples/kcl-osmotic](../examples/kcl-osmotic/README.md)
+(#140) fits the K–Cl $\sigma'$ this way with `mdir run`: the correction is
+written as `x12*c12/r^12 - x6*c6/r^6` with `observe = ["x12", "x6"]`, the
+fitted $\sigma'$ moves along $x_{12} = (\sigma'/\sigma_0)^{12} - 1$,
+$x_6 = (\sigma'/\sigma_0)^6 - 1$, and every update, its $N_\text{eff}$, and
+the gradient come from the file of the columns. `kcl-osmotic-reweight.test`
+checks the identity on 40 + 40 ions with PME in CPU double: over 201 rows
+the two columns give the energy of a state of `[free_energy]` at
+$\sigma_0 + 0.02$ Å within $5.2\times10^{-7}$ kcal/mol (the printed
+digits), the reweighted mean and $N_\text{eff}/N$ of the example's
+`osmotic.py` agree with those of the energies of the states, and two single
+points of the last frame differ by what the columns give, to the printed
+digits.
 
 ### Maintainer rulings (dependent terms)
 
