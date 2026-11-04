@@ -42,7 +42,7 @@ target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
 
 add_llvm_executable(mdir-term-ir-test Driver/TermIRTest.cpp)
 llvm_update_compile_flags(mdir-term-ir-test)
-target_link_libraries(mdir-term-ir-test PRIVATE MDIRDriver MLIRParser)
+target_link_libraries(mdir-term-ir-test PRIVATE MDIRDriver MDIRCompiler MLIRParser)
 
 add_llvm_executable(mdir-prolate-test Driver/ProlateTest.cpp)
 llvm_update_compile_flags(mdir-prolate-test)

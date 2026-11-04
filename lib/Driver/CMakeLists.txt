@@ -39,7 +39,6 @@ add_mlir_library(MDIRDriver
   Builder.cpp
   BuilderConstraints.cpp
   BuilderDynamics.cpp
-  BuilderOutput.cpp
   BuilderParameters.cpp
   BuilderPotential.cpp
   BuilderSchedule.cpp
@@ -62,6 +61,29 @@ add_mlir_library(MDIRDriver
   TermLennardJones.cpp
   TermNonbonded.cpp
   TermModel.cpp
+  StagedModelIR.cpp
+  SiteIR.cpp
+  SiteSpreadIR.cpp
+  ConstraintIR.cpp
+  CouplingIR.cpp
+  NoiseIR.cpp
+  KineticIR.cpp
+  OutputIR.cpp
+  PotentialIR.cpp
+  ScheduleIR.cpp
+  EntryBoundaryIR.cpp
+  EntryFieldsIR.cpp
+  EntryConstraintIR.cpp
+  EntryEvaluationIR.cpp
+  EntryLoopIR.cpp
+  EntryRuntimeIR.cpp
+  EntryOutputIR.cpp
+  SimpleFrameEntryIR.cpp
+  SimpleStepEntryIR.cpp
+  MinimizationEntryIR.cpp
+  BarostatIR.cpp
+  DynamicsIR.cpp
+  ReorderIR.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

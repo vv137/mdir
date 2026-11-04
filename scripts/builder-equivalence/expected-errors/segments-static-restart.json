@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "issue": 721,
+  "entries": [
+    {
+      "case": "extra/segments-static-restart-double.toml",
+      "target": "cpu segments",
+      "stage": "lowered",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\nmdir: the program of the run does not parse; this is a defect of mdir. Please report it with the directory that `mdir bug-report segments-static-restart-double.equivalence-cpu.toml` writes\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-double.toml",
+      "target": "cpu segments",
+      "stage": "module",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\n<generated>: note: see current operation: \"scf.yield\"(%21#0, %arg60) : (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) -> ()\n<generated>: note: operand defined here (op in a parent region)\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-double.toml",
+      "target": "gpu segments",
+      "stage": "lowered",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\nmdir: the program of the run does not parse; this is a defect of mdir. Please report it with the directory that `mdir bug-report segments-static-restart-double.equivalence-gpu.toml` writes\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-double.toml",
+      "target": "gpu segments",
+      "stage": "module",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\n<generated>: note: see current operation: \"scf.yield\"(%21#0, %arg60) : (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) -> ()\n<generated>: note: operand defined here (op in a parent region)\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-mixed.toml",
+      "target": "cpu segments",
+      "stage": "lowered",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\nmdir: the program of the run does not parse; this is a defect of mdir. Please report it with the directory that `mdir bug-report segments-static-restart-mixed.equivalence-cpu.toml` writes\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-mixed.toml",
+      "target": "cpu segments",
+      "stage": "module",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\n<generated>: note: see current operation: \"scf.yield\"(%21#0, %arg60) : (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) -> ()\n<generated>: note: operand defined here (op in a parent region)\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-mixed.toml",
+      "target": "gpu segments",
+      "stage": "lowered",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\nmdir: the program of the run does not parse; this is a defect of mdir. Please report it with the directory that `mdir bug-report segments-static-restart-mixed.equivalence-gpu.toml` writes\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    },
+    {
+      "case": "extra/segments-static-restart-mixed.toml",
+      "target": "gpu segments",
+      "stage": "module",
+      "form": "printed",
+      "old": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "<generated>: error: operand #0 does not dominate this use\n<generated>: note: see current operation: \"scf.yield\"(%21#0, %arg60) : (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) -> ()\n<generated>: note: operand defined here (op in a parent region)\n"
+      },
+      "new": {
+        "status": 1,
+        "stdout": "",
+        "stderr": "mdir: a program of segments takes restart state through its activation, not a static restart control\n"
+      }
+    }
+  ]
+}

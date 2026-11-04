@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/builder_expected_errors.py %S/../../scripts/builder-equivalence/check.py | FileCheck %s
+# CHECK: exact diagnostic exception checks passed

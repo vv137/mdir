@@ -1,0 +1,10 @@
+# REQUIRES: hdf5
+# A static restart control on segments is a named construction error (#721).
+# Runtime continuation between parts is covered by python-segments-*.test.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/segments_static_restart.py %S/mixture.toml %t mdir
+# RUN: not mdir emit --segments --stage=module %t/segments-static-restart-double.toml 2>&1 | FileCheck %s
+# RUN: not mdir emit --segments --stage=lowered %t/segments-static-restart-double.toml 2>&1 | FileCheck %s
+# RUN: not mdir emit --segments --stage=module %t/segments-static-restart-mixed.toml 2>&1 | FileCheck %s
+# RUN: not mdir emit --segments --stage=lowered %t/segments-static-restart-mixed.toml 2>&1 | FileCheck %s
+# CHECK: mdir: a program of segments takes restart state through its activation, not a static restart control

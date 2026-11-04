@@ -1027,15 +1027,12 @@ for the dispersion are conventions of MDIR ([nonbonded.md](nonbonded.md), Sectio
 
 ### 2.11 The equivalence check of the builder
 
-The builder joins its remaining MLIR assembly with typed term fragments
-(Section 2.12). Since step 2 of #568, the program keeps the module as MLIR's
-printer prints it, including operation locations. `buildProgram` finishes
-the build-owned construction through `ProgramModule.cpp`: it parses the
-remaining assembly and materializes the typed fragments in their original
-regions before printing. `mdir emit --stage=module` and Python's `Program.ir`
-print it for reading (`printModuleForReading`); before step 2, they printed
-the builder's text itself. #568 moves the builder to IR built with
-`OpBuilder`, in stages, and no stage may change the generated program.
+The builder constructs the complete program as owned native IR (Section 2.12).
+`buildProgram` finishes that construction through `ProgramModule.cpp`, printing
+once for the serialized `Program.module` consumer handoff, including operation
+locations. `mdir emit --stage=module` and Python's `Program.ir` print it for
+reading (`printModuleForReading`). #568 moves construction to `OpBuilder` in
+stages, and no stage may change the generated program.
 `scripts/builder-equivalence/check.py` shows this for two builds of the
 driver, over a fixed corpus. It is the gate of every later stage of #568.
 
@@ -1136,20 +1133,10 @@ but must keep the printed form and the lowered program identical. It runs
 file of hashes depends on the corpus: record it and verify against it on
 one machine, with one `MDIR_BENCH_DIR`.
 
-**What step 2 has moved from text to IR so far.**
-- The emitters write `func.call`; no text replaces `call` by it when a
-  chunk moves into a loop.
-- The loops of a program of segments that carry values into code written
-  outside them: the branches of the start (`Builder::emitStartBranch`) and
-  the loop over the parts (`Builder::emitPartLoop`). The builder writes
-  the code as it is, inside a loop marked `mdir.carries`, and once the
-  module is parsed, the uses of the values that the loop carries become
-  its arguments (`carryLoopValues`, `ProgramModule.cpp`); in the loop over
-  the parts, a cast marked `mdir.part_start` makes the uses of `%start`
-  those of the step that the part begins after. Before, the builder
-  renamed them in its text (`%x0` to `%x0_a` and `%x0$part`, the values of
-  the start to `_s`, `%start` to `%start$part`) with `renameValue`, which
-  is gone.
+**Native loop construction.** Earlier stages removed textual SSA renaming;
+Stage C removes their temporary carry markers as well. `EntryLoopIR` binds
+loop block arguments and yielded values directly. Calls are native `func.call`
+operations, and a program of parts uses its actual part-start operand.
 
 On main at 98e41261, a separate build of main's sources compared with a
 second build on the CPU of the login node, with the Amber suite prepared,
@@ -1198,10 +1185,10 @@ each responsibility:
 | `Builder.cpp` | `build`, the order of the parts, and the entry points of `mdir/Driver/Builder.h` |
 | `BuilderParameters.cpp` | The fields, tables, and constants of the program: the topology, the dispersion and its tails, PME, LJPME, the prolate splitting, the meshes, the tunable gradients |
 | `BuilderPotential.cpp` | `md.potential @energy` and the other potentials: the terms of pairs, of tuples, and of the topology, the Born and external terms, the centroids, the pulls, the observables, the staged models, the restraints |
-| `BuilderDynamics.cpp` | The programs of a step (`emitPrograms`), the kinetic energies, the noise, the couplings and the barostat, and the minimization |
-| `BuilderConstraints.cpp` | SETTLE, SHAKE and RATTLE, the virtual sites, and the tests and stops of the constraints |
+| `BuilderDynamics.cpp` | Native step and descent programs; typed physical kernels are shared through `DynamicsIR`, `CouplingIR`, `NoiseIR`, `KineticIR` and `BarostatIR` |
+| `BuilderConstraints.cpp` | The site-spread selection; `ConstraintIR`, `SiteIR` and `SiteSpreadIR` construct constraints, stops and site operations |
 | `BuilderSchedule.cpp` | `@mdir_run`: the levels of the loops, the branches of the start, the parts of a program of segments, and the frames |
-| `BuilderOutput.cpp` | The outputs of the pulls, the free energy, the observables, the tunable gradients, and the solvent |
+| `OutputIR.cpp`, `EntryOutputIR.cpp` | Typed term, free-energy, observable, gradient and solvent outputs; coordinate adapters build pull output |
 
 The program that the builder writes does not change: the printed module
 and the lowered program of the corpus of Section 2.11 are those of
@@ -1223,7 +1210,7 @@ triplets, staged/opaque models, bonds, angles, dihedrals, Urey–Bradley,
 harmonic impropers, special 1–4 pairs, CMAP, and nonbonded terms.
 `TermBorn.cpp` keeps the computed Born radii private because the surface
 energy consumes them. `TermModel.cpp` privately retains imported bodies,
-result names, cutoffs, and pair-list mode for one build. The bonded families
+typed input modules, cutoffs, and pair-list mode for one build. The bonded families
 have one registry entry and one source file each. `TermNonbonded.cpp` owns
 primary, excluded, reciprocal, and within-selection LJ/Coulomb emission,
 PME/prolate/LJPME preparation, constant corrections, and their tunable rules.
@@ -1232,16 +1219,15 @@ Ordinary and special 1–4 LJ pairs share the unchanged scalar emitter in
 
 Read-only hooks take `TermInputs`: physical inputs, bounded derived layout
 facts, and deterministic names. `TermParameters` adds named parameter
-collections and scalar update services; `TermEmission` adds the output stream
-and named shared emitters. An adapter never receives `Builder&`, the complete
+collections and scalar update services. Native hooks borrow typed operands
+and an `OpBuilder` insertion point. An adapter never receives `Builder&`, the complete
 mutable program, or friendship. Narrow roles hold operations needed by only
 one kind. The nonbonded role borrows `TermNonbondedData`, an explicit reference
 projection of mesh/correction values and term data collections. It exposes no
 entry, scheduling, run-state, or complete-program access. Its private per-build
 binding supplies those same values to the shared long-range correction hooks.
 
-`TermPotentialAddition` adds a named contribution or an explicitly named SSA
-result. `ObservedSelection` carries the complete potential selection from its
+Potential accumulation takes the actual typed energy result. `ObservedSelection` carries the complete potential selection from its
 adapter, without a central dispatch on observed-term kind. `TermDefinition`
 records supply both independent potential declarations and energy-output
 columns, retaining all 14 built-in columns, including empty ones. Stored
@@ -1280,7 +1266,8 @@ No generic behavioral hook has only one implementer.
 | `topologyRank` | Nonbonded, all seven bonded adapters, tuples, models; early adapters use rank 0 |
 | `getTupleRank` | Explicit metadata in the bonded/nonbonded adapters; custom tuples use rank 0 |
 | `getPairExclusion` | Nonbonded relation-name metadata; consumed by the shared neighborhood emitter |
-| `collectBareParameters`, `emitBareContributions` | Custom pairs, triplets |
+| `collectBareParameters`, `buildBareContributions` | Custom pairs, triplets |
+| `buildTopologyPotential` (native typed body) | Harmonic bonds/angles, Urey-Bradley, harmonic impropers, periodic dihedrals, CMAP, externals, Born/surface, 1–4 pairs, custom tuples/centroids, custom pairs, staged models, nonbonded |
 | `collectParameters` | Externals, restraints, Born/surface, custom pairs, models, nonbonded |
 | `collectTopologyTables` | Custom pairs, nonbonded |
 | `collectTupleSets` | Custom tuples, all seven bonded adapters, nonbonded |
@@ -1289,18 +1276,17 @@ No generic behavioral hook has only one implementer.
 | `collectDispersionConstants`, `collectGradientShiftConstants` | Custom pairs, nonbonded; primary terms precede custom terms |
 | `rejectsTunables` | Pulls, nonbonded; the existing diagnostic is unchanged |
 | `needsPairNeighborhood` | Custom pairs, nonbonded |
-| `emitTopologyPotential` | Externals, Born/surface, custom tuples, custom pairs, models, all seven bonded adapters; nonbonded uses its narrow role at rank 1 |
 | `appendTermDefinitions` | Externals, Born/surface, custom tuples, custom pairs, all seven bonded adapters, nonbonded |
 | `findObservedTerm`, `getObservedValue` | Externals, custom tuples, custom pairs |
 
 | Narrow role and its complete hooks | Implementer |
 |---|---|
-| `TermPreparation`: `validate`, `prepare` | Models; read-only inputs and a stream |
-| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names and a synchronous `TermIRWriter` |
-| `TermPostEvaluation`: `hasForceCorrection`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; borrowed correction names and the stored-column destination |
-| `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
+| `TermPreparation`: `validate`, `prepare` | Models; read-only inputs and native declaration insertion |
+| `TermHostEvaluation`: `applies`, `build`, `buildDeclarations` | Opaque models; actual physical values and native runtime declarations |
+| `TermPostEvaluation`: `hasForceCorrection`, `build`, `getStoredTermCount` | Restraints; actual physical values and correction energy results |
+| `TermCoordinateOutput`: `hasCoordinateOutput`, `buildAuxiliaryPotentials`, `buildOutput` | Pulls; native auxiliary potentials, actual physical values and shared centroid geometry |
 | `TermScalarParameters`: `collectBareConstants`, `collectObservedConstants`, `appendInitialConstants` | Custom pairs; named scalar collections and a bounded start-value appender |
-| `TermNonbonded`: `collect`, `collectGradientFields`, `collectGradients`, `emit` | Nonbonded; projected mesh/correction data and the shared parameter/emission capabilities |
+| `TermNonbonded`: `collect`, `collectGradientFields`, `collectGradients` | Nonbonded; projected mesh/correction data and shared parameter capabilities; emission uses the generic native topology hook |
 
 The audit folds separate tuple/table refill hooks into `refillArrays` and
 read-only/mutable tunable classification into `collectTunableOutcome`.
@@ -1308,8 +1294,8 @@ Duplicate declaration/name hooks become `appendTermDefinitions`. One-kind
 restraint, pull, and scalar operations are narrowed into their roles; the
 unused generic entry hook is removed. Long-range dispersion and gradient
 shift corrections are shared by custom pairs and built-in nonbonded terms.
-Adding a new writer at a correction site requires explicitly composing its
-SSA outputs, rather than reusing another adapter's names. The restraint adapter owns its recorded correction energy for one program build; force-only hooks retain it, and the stored-column hook diagnoses a missing energy before emitting a store.
+Correction sites compose typed results explicitly. Restraint energy is carried
+as an actual value from the correction to the stored-column report.
 
 No control key, support restriction, precision, numerical method, diagnostic,
 or output format changes. Each kind commit compares printed module/lowered
@@ -1318,39 +1304,74 @@ archived PR base. The completed PR head additionally requires five bitwise
 checkpoints and two D309 suite shards. Typed construction follows the same
 ordering and validation contract.
 
-Stage B (#708, D363) constructs built-in term bodies and
-custom-expression scalar kernels as typed fragments. `lib/Driver/TermIR.h`
-declares the recipes and `lib/Driver/TermIR.cpp` manages their submission.
-A fragment borrows typed operands and an `OpBuilder` insertion point, returns
-typed results, and owns its per-build construction captures. Borrowed
-hook-local references never escape. Custom-expression diagnostic locations
-remain independent of SSA naming.
+Stage B (#708, D363) converted term bodies and custom-expression scalar
+kernels to typed construction. Stage C removes its transitional recipe/assembly
+connection and completes the native ownership boundary.
 
-`finishTermIRProgram` in `lib/Driver/ProgramModule.cpp` materializes the
-fragments in their original shared potential and loop regions before printing
-and lowering. Contribution order, inlining, and fusion are preserved, with
-no new call boundary or SSA-name hint. Materialization rejects missing,
-repeated, or invalid connections, result count/type mismatches, and surviving
-`mdir.term_ir` attributes before cast reconciliation. Native negative tests
-and the corpus's marker guard cover these checks. The decision records the
-[emitter construction invariants](decisions/D363.md#emitter-construction-invariants).
+Stage C (#718, D[builder-native-program]) constructs the complete program in
+one owned native module. `TermIRPlan` owns its context and module; adapters and
+parsed model input share that context and remain alive for the full build.
+Factories insert declarations, potentials, dynamics programs and entry functions
+directly in their original order. `serializeNativeProgram` prints the completed
+module once for the existing `Program.module` consumer handoff. Construction
+never parses generated operation or type syntax, serializes temporary
+connections, rewrites SSA tokens, or repairs loop operands after construction.
+The default printer supplies SSA names without builder name hints.
 
-Construction parsing and canonical printing use `insertProgramDialects` in
-`lib/Dialect/Program/ProgramDialects.cpp`, shared with lowering. This includes
-tensor/linalg stage functions and lowering-only dialects without a second
-driver list or a driver/compiler dependency cycle. A construction parse
-failure is the internal error `the builder produced invalid assembly`, even
-without recipes; raw generated text never passes to a reading printer or
-downstream consumer. This amends D352's silent fallback, which hid #706 and
-#714.
+Only user-written custom expressions and staged `ModelTerm` input are parsed
+at their boundaries. `StagedModelIR` checks signatures, region shape, block
+arguments and returns before typed access, then clones declarations and bodies
+with `IRMapping`. Owned buffers preserve resource lifetimes. User string
+attributes and diagnostic locations are retained, and duplicate declarations
+are not silently renamed. Consumer parsing for display, verification and
+lowering remains at its existing boundary. Construction and consumers share
+`insertProgramDialects`, including tensor/linalg stage dialects.
 
-A new term emitter builds a typed fragment at its existing insertion site
-and preserves its explicit contribution order. A new dialect belongs in
-`insertProgramDialects`, with its library in
-`lib/Dialect/Program/CMakeLists.txt`, so construction and lowering accept the
-same program. Step 5 removes the remaining generated-text assembly and
-leaves parsed text only for user expressions and `ModelTerm` at their input
-boundaries.
+All term kinds are native: externals, pulls, restraints, Born with surface,
+custom tuples/centroids/compound terms, custom pairs, triplets, staged/opaque
+models, every bonded family, and nonbonded LJ/Coulomb including reciprocal,
+excluded and within-selection contributions. Shared potential sites, explicit
+contribution ranks, field/potential/output order, inlining and fusion remain
+unchanged. Narrow hooks receive actual typed operands and return actual typed
+results; adapters do not retain names of intermediate SSA values.
+
+Native entry factories cover minimization, dynamics, frames and programs of
+parts, including orthorhombic/triclinic cells, supported integrators, virtual
+sites, SETTLE/SHAKE, restraint and hosted-model completion, timed terms,
+checkpoint restart, observables, free energy, gradients and pull output.
+`EntryLoopIR` carries actual block arguments and yielded values; the host
+boundary remains in place and loads the original part counts. Minimization
+retains accepted/rejected controller state and first-call projection. Frame
+checks inspect actual evaluation operations and operand provenance.
+
+COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
+Trotter work modes share typed physical cores. Multistep Trotter periods retain
+both closing steps. Leapfrog coupling uses full-time velocities and restores
+the stored half step. Period-one Trotter keeps nine pressure-state values and
+separate fresh, stored-state and missing-state restart paths. Missing-state
+initialization retains atomic kinetic energy without COM removal; fresh
+initialization retains group kinetic energy. Existing unsupported period-one
+programs of parts retain their diagnostic.
+
+Exact trial virtual-site placement and force spreading deliberately retain the
+archived entry cell (#722); trial energy evaluation and other gathers retain
+their original cells. Plain energy rows construct no unused virial diagonal;
+construction tests check their result-producing operations directly, without a
+cleanup pass. Native tests also check operation identity, actual arguments,
+serialization ownership and staged-input boundaries.
+
+Static checkpoint restart controls for programs of parts are rejected before
+IR construction (ruling 10, #721):
+`a program of segments takes restart state through its activation, not a static restart control`.
+This is the sole approved diagnostic change: eight exact old/new output pairs
+are checked separately, with no exception matching the original corpus or
+matrix. Continuation through activation between parts is unchanged.
+
+Every implementation tree compares printed module/lowered outputs against one
+archived base, including the combined CPU/GPU, mixed/double order matrix.
+Final validation additionally requires five bitwise checkpoint comparisons and
+two clean D309 shards. No numerical method, control key, precision mode, file
+format or overwrite behavior changes.
 
 ## 3. Decided
 
@@ -1381,6 +1402,7 @@ boundaries.
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in H5MD, without loss | Implemented (D239) |
 | Velocities in the trajectory, `dcdvelfile` | Not in the trajectory of `mdir run`; `H5MDReporter(velocities=True)` of a Python simulation writes them (D239) |
+
 
 ### Expression parameter names (D188)
 
