@@ -6,6 +6,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 
 #include <functional>
@@ -365,10 +366,14 @@ mlir::Value emitBuildTriplets(mlir::OpBuilder &builder, mlir::Location loc,
 /// Frees `buffer`, a buffer of the host, where the block of `op` ends.
 void freeAtEndOfBlock(mlir::Operation *op, mlir::Value buffer);
 
-/// The text of the templates `text` for positions of the type `real`. The
-/// templates are written for `f64`; the functions of the instance for `f32`
-/// have names that end in `_f32`.
-std::string instantiateTemplates(llvm::StringRef text, mlir::Type real);
+/// Instantiates the parsed templates `templates`, written for `f64`, for
+/// positions of the type `real`, in place (D[template-ir], #739): for f32,
+/// every f64 of their types and attributes becomes f32, a truncation that
+/// becomes one from f32 to f32 a cast of the bits, and the functions that
+/// they define take names that end in `_f32`; declarations keep theirs.
+/// For f64 they stay as they are.
+mlir::LogicalResult instantiateTemplates(mlir::ModuleOp templates,
+                                         mlir::Type real);
 std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 
 /// The templates of particle mesh Ewald for positions, charges, and forces

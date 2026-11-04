@@ -5009,10 +5009,15 @@ LogicalResult Lowering::addTemplates(Type real) {
 
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiateTemplates(neighborsMatrixGPUTemplate, real), config);
+      neighborsMatrixGPUTemplate, config);
   if (!templates)
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
+  // The template is written for f64; its instance for `real` is made in IR
+  // (D[template-ir], #739), before the calls of the device primitives are
+  // expanded, which keep their names.
+  if (failed(instantiateTemplates(*templates, real)))
+    return failure();
   // The template's calls of the device primitives (CompactionEmitter.h).
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();
