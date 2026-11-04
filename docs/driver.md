@@ -532,7 +532,7 @@ loops that compute the energy and the forces.
 ### 2.5 What the driver builds
 
 `mdir emit control.toml` prints the module that the driver builds, as
-MLIR's printer prints it once the builder's text is parsed (#568: the SSA
+MLIR's printer prints the builder's owned native module (D365: the SSA
 names, the numbers, and the layout are the printer's, and the text holds
 no comments and no type aliases of the builder; the locations that the
 builder gives, the terms of custom expressions, stand after their ops as
@@ -1372,6 +1372,14 @@ archived base, including the combined CPU/GPU, mixed/double order matrix.
 Final validation additionally requires five bitwise checkpoint comparisons and
 two clean D309 shards. No numerical method, control key, precision mode, file
 format or overwrite behavior changes.
+
+The conversion of #568 is complete: #719 passed the corpus, order matrix,
+static-restart and period-one supplements, and five bitwise checkpoints.
+Both D309 shards and the model-term tier passed on its merged head; D365
+records the counts. Named physical metadata conventions and serialized-display
+policy remain unchanged. Adopting higher-level coupling ops remains #541;
+bonded-term tunables (#730) and the Python term front end (#725) are separate
+follow-ups.
 
 ## 3. Decided
 

@@ -168,8 +168,10 @@ archived PR base; the final head also compares five checkpoints bitwise and
 runs two full-suite shards.
 
 Step 4 (#708, D363) converted term bodies and shared expression scalars to
-typed IR. Step 5 removes the remaining generated assembly and its transitional
-connections.
+typed IR. Stage C (#719, D365) removed the remaining generated assembly and its
+transitional connections, completing #568. The corpus, order matrix and five
+bitwise checkpoints passed; both D309 shards and the model-term tier passed on
+the merged head. The validation counts are recorded in D365.
 
 Stage C (#718, D365) constructs the complete program in
 one owned native module. `TermIRPlan` owns its context and module; adapters and
