@@ -14,6 +14,9 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AttrTypeSubElements.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/StringExtras.h"
 
@@ -2673,30 +2676,88 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
   return instance;
 }
 
-std::string kernels::instantiateTemplates(StringRef text, Type real) {
+LogicalResult kernels::instantiateTemplates(ModuleOp templates, Type real) {
   if (real.isF64())
-    return text.str();
+    return success();
+  if (!real.isF32())
+    return templates.emitError()
+           << "the templates are instantiated for f64 or f32, not " << real;
+  MLIRContext *context = templates.getContext();
+  Type wide = Float64Type::get(context);
+  const llvm::fltSemantics &narrow = cast<FloatType>(real).getFloatSemantics();
 
-  // The functions of the templates have names that begin with `mdrt`. A
-  // conversion from f64 to f32 becomes one from f32 to f32, which is a
-  // cast of the bits.
-  std::string instance;
-  StringRef prefix = "@mdrt";
-  while (!text.empty()) {
-    if (text.consume_front("f64")) {
-      instance += "f32";
-    } else if (text.consume_front("arith.truncf")) {
-      instance += "arith.bitcast";
-    } else if (text.consume_front(prefix)) {
-      StringRef name = text.take_while([](char c) {
-        return llvm::isAlnum(c) || c == '_' || c == '.';
+  // Every f64 of the template becomes f32, in the types of values,
+  // arguments, results, and attributes (the shapes of memrefs and vectors
+  // included), and every constant of f64 the constant of f32 that it rounds
+  // to. The parser reads a literal of f32 as a double and rounds it to f32
+  // in the same way, so the instance is what the text of the template with
+  // f32 in place of f64 parses to (D[template-ir], #739).
+  AttrTypeReplacer replacer;
+  replacer.addReplacement([&](FloatType type) -> std::optional<Type> {
+    if (type == wide)
+      return real;
+    return std::nullopt;
+  });
+  replacer.addReplacement(
+      [&](FloatAttr attribute)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        if (attribute.getType() != wide)
+          return std::nullopt;
+        APFloat value = attribute.getValue();
+        bool losesInfo = false;
+        (void)value.convert(narrow, APFloat::rmNearestTiesToEven, &losesInfo);
+        return std::make_pair(FloatAttr::get(real, value), WalkResult::skip());
       });
-      text = text.drop_front(name.size());
-      instance += getInstanceName((prefix + name).str(), real);
-    } else {
-      instance += text.front();
-      text = text.drop_front();
-    }
+  replacer.addReplacement(
+      [&](DenseFPElementsAttr attribute)
+          -> std::optional<std::pair<Attribute, WalkResult>> {
+        if (attribute.getElementType() != wide)
+          return std::nullopt;
+        Attribute values = attribute.mapValues(real, [&](const APFloat &v) {
+          APFloat value = v;
+          bool losesInfo = false;
+          (void)value.convert(narrow, APFloat::rmNearestTiesToEven,
+                              &losesInfo);
+          return value.bitcastToAPInt();
+        });
+        return std::make_pair(values, WalkResult::skip());
+      });
+  replacer.recursivelyReplaceElementsIn(templates, /*replaceAttrs=*/true,
+                                        /*replaceLocs=*/false,
+                                        /*replaceTypes=*/true);
+
+  // A conversion from f64 to f32 is now one from f32 to f32, which is a
+  // cast of the bits.
+  SmallVector<arith::TruncFOp> truncations;
+  templates.walk([&](arith::TruncFOp op) {
+    if (op.getIn().getType() == op.getType())
+      truncations.push_back(op);
+  });
+  for (arith::TruncFOp op : truncations) {
+    OpBuilder builder(op);
+    Value cast = arith::BitcastOp::create(builder, op.getLoc(), op.getType(),
+                                          op.getIn());
+    op.replaceAllUsesWith(cast);
+    op.erase();
   }
-  return instance;
+
+  // The functions that the templates define take the names of the
+  // instance; declarations, such as those of the device primitives
+  // (`@mdir.primitive.*`, which expandPrimitiveCalls resolves by name),
+  // keep theirs.
+  SmallVector<Operation *> defined;
+  for (Operation &op : templates.getOps()) {
+    auto symbol = dyn_cast<SymbolOpInterface>(&op);
+    if (symbol && op.getNumRegions() != 0 && !op.getRegion(0).empty())
+      defined.push_back(&op);
+  }
+  for (Operation *op : defined) {
+    StringAttr name = SymbolTable::getSymbolName(op);
+    auto instance =
+        StringAttr::get(context, getInstanceName(name.getValue(), real));
+    if (failed(SymbolTable::replaceAllSymbolUses(op, instance, templates)))
+      return op->emitError() << "cannot rename the uses of " << name;
+    SymbolTable::setSymbolName(op, instance);
+  }
+  return success();
 }

@@ -588,9 +588,13 @@ LogicalResult Lowering::addTemplates(Type real, bool centers) {
 
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiateTemplates(neighborsMatrixTemplate, real), config);
+      neighborsMatrixTemplate, config);
   if (!templates)
     return module.emitError() << "cannot parse the neighbor build template";
+  // The template is written for f64; its instance for `real` is made in IR
+  // (D[template-ir], #739).
+  if (failed(instantiateTemplates(*templates, real)))
+    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
     bool isCenters =

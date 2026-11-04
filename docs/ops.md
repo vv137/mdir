@@ -1037,8 +1037,22 @@ requires of every floating-point sum, where the verifier refuses
 
 A neighbor structure is built and tested in the type of the positions. The
 template of Section 8.2 is written for `f64`; for positions of `f32` the
-compiler adds an instance in which the type is replaced, under names that
-end in `_f32`.
+compiler adds an instance under names that end in `_f32`. The instance is
+made in IR from the parsed template (`instantiateTemplates`,
+D[template-ir], #739):
+- every `f64` of its types and attributes becomes `f32`, the shapes of
+  memrefs and vectors and the types of functions included;
+- every constant of `f64` becomes the constant of `f32` that it rounds to
+  (to nearest, ties to even). The parser rounds a literal of `f32` the
+  same way, through a double, so the instance is the one that the text of
+  before, with `f32` written for `f64`, gave. A bound beyond the range of
+  `f32`, such as the `1.0e100` of a position far off the cell, is
+  therefore $+\infty$ there (#740);
+- a truncation from `f64` to `f32`, now from `f32` to `f32`, becomes a
+  cast of the bits;
+- the functions that the template defines take the names of the instance.
+  Declarations keep theirs, such as those of the device primitives, which
+  `expandPrimitiveCalls` then resolves.
 
 ### 7.7 Agreement with the reference
 
