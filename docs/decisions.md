@@ -663,6 +663,7 @@ specification follow those made with it.
 | [D365](decisions/D365.md) | The builder constructs a program from owned native IR; only user input is parsed at its boundary. | 2026-11-04 |
 | [D366](decisions/D366.md) | Under `fast_math`, the f64 divisions of a kernel of a loop over pairs by one value share one reciprocal, and on a device a division by `math.sqrt(x)` is a product by `math.rsqrt(x)` (`md-exec-share-divisions`). | 2026-11-04 |
 | [D367](decisions/D367.md) | The equivalence check of the builder also compares the instances of the templates of the lowering: in every precision mode, under environment variables that select a strategy, with cases of its own for what nothing else reaches, and with a count of the cases of each instance. | 2026-11-04 |
+| [D368](decisions/D368.md) | The instance in f32 of the templates of the neighbor matrix is made in IR from the parsed f64 template, not by substituting text before the parse. | 2026-11-04 |
 <!-- end decisions-table -->
 
 

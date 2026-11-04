@@ -1,6 +1,6 @@
 // The instance for positions in f32 of the template that builds a neighbor
 // matrix on a device (NeighborsMatrixGPU.mlir), made in IR from the template
-// written for f64 (D[template-ir], #739). The functions that the template
+// written for f64 (D368, #739). The functions that the template
 // defines take the names of the instance; the declarations of the device
 // primitives keep theirs, so that expandPrimitiveCalls resolves every call
 // of them and removes the declarations: no `mdir.primitive` is left.

@@ -2691,7 +2691,7 @@ LogicalResult kernels::instantiateTemplates(ModuleOp templates, Type real) {
   // included), and every constant of f64 the constant of f32 that it rounds
   // to. The parser reads a literal of f32 as a double and rounds it to f32
   // in the same way, so the instance is what the text of the template with
-  // f32 in place of f64 parses to (D[template-ir], #739).
+  // f32 in place of f64 parses to (D368, #739).
   AttrTypeReplacer replacer;
   replacer.addReplacement([&](FloatType type) -> std::optional<Type> {
     if (type == wide)

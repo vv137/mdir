@@ -367,7 +367,7 @@ mlir::Value emitBuildTriplets(mlir::OpBuilder &builder, mlir::Location loc,
 void freeAtEndOfBlock(mlir::Operation *op, mlir::Value buffer);
 
 /// Instantiates the parsed templates `templates`, written for `f64`, for
-/// positions of the type `real`, in place (D[template-ir], #739): for f32,
+/// positions of the type `real`, in place (D368, #739): for f32,
 /// every f64 of their types and attributes becomes f32, a truncation that
 /// becomes one from f32 to f32 a cast of the bits, and the functions that
 /// they define take names that end in `_f32`; declarations keep theirs.

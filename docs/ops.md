@@ -1039,7 +1039,7 @@ A neighbor structure is built and tested in the type of the positions. The
 template of Section 8.2 is written for `f64`; for positions of `f32` the
 compiler adds an instance under names that end in `_f32`. The instance is
 made in IR from the parsed template (`instantiateTemplates`,
-D[template-ir], #739):
+D368, #739):
 - every `f64` of its types and attributes becomes `f32`, the shapes of
   memrefs and vectors and the types of functions included;
 - every constant of `f64` becomes the constant of `f32` that it rounds to

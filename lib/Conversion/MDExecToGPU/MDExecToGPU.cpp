@@ -5014,7 +5014,7 @@ LogicalResult Lowering::addTemplates(Type real) {
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
   // The template is written for f64; its instance for `real` is made in IR
-  // (D[template-ir], #739), before the calls of the device primitives are
+  // (D368, #739), before the calls of the device primitives are
   // expanded, which keep their names.
   if (failed(instantiateTemplates(*templates, real)))
     return failure();
