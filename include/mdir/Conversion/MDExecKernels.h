@@ -389,7 +389,7 @@ std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
                                     mlir::Type charge, mlir::Type force,
                                     int64_t order);
 /// Resolves, in `root`, the parameters of the instance that the templates of
-/// particle mesh Ewald on a device call (D[template-ir-pme-scalars], #739):
+/// particle mesh Ewald on a device call (D369, #739):
 /// `@mdir.template.order`, `lanes`, `real_bytes`, `tile_side_E`, and
 /// `tile_points_E` become constants; `@mdir.template.global_add` and
 /// `shared_add_E` the atomic additions of a value of `real`, the type of the

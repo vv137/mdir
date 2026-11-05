@@ -2623,7 +2623,7 @@ LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,
   // The calls `@mdir.template.NAME.TYPE()` and `@mdir.template.NAME(...)`
   // of the templates of particle mesh Ewald on a device, each replaced
   // where it stands by what the instance takes for it
-  // (D[template-ir-pme-scalars], #739). Every call is checked before any is
+  // (D369, #739). Every call is checked before any is
   // replaced, so that a module with an error is left as it was.
   constexpr StringLiteral prefix = "mdir.template.";
   MLIRContext *context = root->getContext();

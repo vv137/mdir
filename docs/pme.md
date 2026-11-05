@@ -369,7 +369,7 @@ parameters of the instance (`lanes`, the threads of a particle in the
 gather; `real_bytes`; the sides and the points of the tiles, Section 3.3;
 and the atomic additions to the grid and to a tile). After the parse,
 `resolveTemplateParameters` replaces each call where it stands with the
-constant or the ops that the instance takes (D[template-ir-pme-scalars],
+constant or the ops that the instance takes (D369,
 #739).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values

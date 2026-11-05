@@ -1,6 +1,6 @@
 // The parameters of the instance that the templates of particle mesh Ewald
 // on a device call, `@mdir.template.*`, resolved in IR
-// (D[template-ir-pme-scalars], #739): for forces in f32 and the order 4,
+// (D369, #739): for forces in f32 and the order 4,
 // the tiles of edge 8 have sides of 8 + 4 - 1 = 11 points and 1331 in all,
 // a value is added to a tile by an atomic of the block and to the grid by
 // PTX's reduction of the device, and a load of the grid takes the

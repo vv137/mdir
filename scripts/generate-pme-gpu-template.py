@@ -2693,7 +2693,7 @@ TEMPLATE_CALL = re.compile(r"func\.call (@mdir\.template\.[A-Za-z0-9_.]+)\(([^)]
 
 def declare_template_calls(text):
     """The declarations of the parameters of the instance that `text` calls,
-    `@mdir.template.*` (D[template-ir-pme-scalars], #739): the order of the
+    `@mdir.template.*` (D369, #739): the order of the
     splines, the lanes of a particle, the bytes of `!pme_real`, the sides
     and the points of the tiles of an edge, and the atomic additions to
     global and to shared memory. The compiler replaces each call where it

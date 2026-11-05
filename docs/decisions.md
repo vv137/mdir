@@ -664,6 +664,7 @@ specification follow those made with it.
 | [D366](decisions/D366.md) | Under `fast_math`, the f64 divisions of a kernel of a loop over pairs by one value share one reciprocal, and on a device a division by `math.sqrt(x)` is a product by `math.rsqrt(x)` (`md-exec-share-divisions`). | 2026-11-04 |
 | [D367](decisions/D367.md) | The equivalence check of the builder also compares the instances of the templates of the lowering: in every precision mode, under environment variables that select a strategy, with cases of its own for what nothing else reaches, and with a count of the cases of each instance. | 2026-11-04 |
 | [D368](decisions/D368.md) | The instance in f32 of the templates of the neighbor matrix is made in IR from the parsed f64 template, not by substituting text before the parse. | 2026-11-04 |
+| [D369](decisions/D369.md) | The scalar and expansion parameters of the PME templates on a device are calls of declared functions, `@mdir.template.*`, that the compiler resolves in IR after the parse, not placeholders substituted in text. | 2026-11-05 |
 <!-- end decisions-table -->
 
 
