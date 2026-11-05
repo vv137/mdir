@@ -191,9 +191,11 @@ JAC on one RTX 4090, 5.5 and 5.6 steps, what the kernels of a frame cost.
 Remaining: the derivative of the virial and of observed terms in the
 parameters, which a fit to the pressure needs; and the parts of the JAX
 adapter after the first. The first part
-(D371) runs on the CPU, on the loop of frames above;
-its device target, a batch boundary on the device, and a second pass for
-a Jacobian above its bound follow.
+(D371) runs on the CPU, on the loop of frames above, and its device
+target (D[frame-evaluator-jax-cuda]) on the same loop, through copies in
+host memory that it waits for on XLA's stream; a batch boundary on the
+device, which removes those copies, and a second pass for a Jacobian
+above its bound follow.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
 one GPU first. A message-passing potential is not local: its layer $k$ forms

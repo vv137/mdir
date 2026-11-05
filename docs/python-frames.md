@@ -315,8 +315,9 @@ state in float64 with its velocities and forces.
 
 ### The JAX adapter
 
-D371, the design and Ruling 20 on #138. This is the
-first part: the CPU, on the existing loop of frames.
+D371, the design and Ruling 20 on #138: the CPU, on the existing loop of
+frames; and D[frame-evaluator-jax-cuda], the target `"CUDA"`, which
+takes arrays on a CUDA device through the same loop.
 
 ```python
 import jax
@@ -415,6 +416,40 @@ program are serialized. The headers of the XLA FFI are vendored in
 `third_party/xla_ffi` (jaxlib 0.11.2, FFI API 0.4), and the handler
 checks the version that XLA gives it at every stage.
 
+**On a CUDA device** (D[frame-evaluator-jax-cuda]). Where MDIR is built
+with CUDA, `mdir_frames` has a handler for the platform `"CUDA"` too, and
+`mdir.jax` registers it when JAX has a CUDA backend in the process
+(`_core._xla_ffi_platforms()` names the platforms of the build). The
+function then takes arrays on the device under every transformation above,
+and returns its outputs there. A program compiled for the GPU or for the
+CPU may be called on either platform. Until the boundary of a batch is on
+the device (PR 1 of #138), the handler runs the loop of the CPU handler
+(the same function) on copies of XLA's buffers in host memory. On XLA's
+stream, it copies θ, the positions, and the cells to the host, and waits
+for them. It then evaluates the frames, a program of the GPU on its
+runtime's own stream, and copies the outputs that were asked to XLA's
+buffers, waiting for them too. The work of XLA before and after the call
+is therefore ordered with it, through these two waits on the host, and a
+JAX op may consume the energies with no `block_until_ready` in between.
+The host transfers of a call of $K$ frames of $N$ particles with $M$
+entries in θ:
+
+| Transfer | By | Bytes |
+|---|---|---|
+| θ, the positions, the cells: device to host | the handler | $8M$, $24KN$, $48K$ |
+| the positions of each frame: host to device, into the buffer of the boundary | `evaluateFrame` (a program of the GPU) | $24N$ a frame |
+| what is asked of each frame (the energy, $\mathbf G$, the strain, the row): device to host | `evaluateFrame` (a program of the GPU) | a frame's outputs |
+| the energies, $\mathbf G$, $\partial U/\partial\mathsf h$, the rows that were asked: host to device | the handler | the outputs of the call |
+
+With the boundary of a batch on the device, the program reads and writes
+XLA's buffers on XLA's stream instead; the primitive, the attributes of a
+call, and the API do not change. MDIR's runtime uses one device of the
+process (`MDRT_DEVICE`, else the first visible one). A call of a program
+of the GPU with arrays on another device is refused, naming both devices,
+when the call runs: XLA gives the device of a call to the handler's
+`execute` stage, not to `instantiate`. The extension links no CUDA
+library; the handler takes `libcuda.so.1` as the process has loaded it.
+
 **Errors that depend on data**, such as a position that is not finite, or a
 cell that is not reduced or is below twice the cutoff, are found when the
 frame is evaluated. The handler returns a failed precondition naming the
@@ -425,22 +460,29 @@ the call runs as it is made, as an eager call on the CPU may. A frame that
 fails ends the activation, as for `FrameEvaluator.evaluate`, and the next
 call gives what it gave before, to the bit.
 
-**Limits of this part:**
-- It runs on the CPU (`"cpu"`), on the loop of frames of
-  `FrameEvaluator.evaluate`. The positions of a frame are copied into the
-  buffer of the boundary, within host memory.
+**Limits of these parts:**
+- They run on the loop of frames of `FrameEvaluator.evaluate`. The
+  positions of a frame are copied into the buffer of the boundary. On a
+  CUDA device, the inputs and outputs of a call pass through host memory,
+  with the transfers above.
 - The cells of a call are read on the host.
-- Each call waits for its frames, and an error names the frame.
-- The device target, the boundary of a batch on the device, the second
-  pass above `jacobian_bytes`, `aux` (the virial and the observed columns),
-  and a helper for JAX-MD are later parts of #138.
+- Each call waits for its frames, and an error names the frame. On a CUDA
+  device, the call waits on the host for XLA's stream before and after its
+  frames.
+- The boundary of a batch on the device, the second pass above
+  `jacobian_bytes`, `aux` (the virial and the observed columns), and a
+  helper for JAX-MD are later parts of #138.
 - A script that runs JAX on a GPU in the same process as an MDIR
   simulation on the GPU should disable XLA's preallocation
   (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, or
   `XLA_PYTHON_CLIENT_MEM_FRACTION`): XLA takes most of the device memory
   by default, and MDIR's runtime allocates its own.
-- `JAX_PLATFORMS=cpu` keeps a JAX with a CUDA plugin on the CPU, where the
-  target is registered.
+- A build of MDIR without CUDA has no handler for `"CUDA"`: a call on a
+  CUDA device raises `UnsupportedError` when it is lowered, and
+  `JAX_PLATFORMS=cpu` keeps a JAX with a CUDA plugin on the CPU.
+- A call of a program of the GPU on another device than its runtime's is
+  refused; data parallelism over several devices is left for later (#138,
+  design part 3, Sharding).
 
 **Validation.** The tests are `python-frames-jax.test` and
 `python-frames-jax-torch.test`, with JAX 0.11.2 on the CPU, in `double` and
