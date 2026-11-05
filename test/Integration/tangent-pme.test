@@ -1,0 +1,51 @@
+# The tangent of a reciprocal sum in the positions and its derivative in a
+# number that the charges depend on, q = q0 + lambda w, by two reciprocal
+# sums with their forces (D[force-matching-pme], #726), on the CPU.
+# Inputs/tangent_pme.py writes the program and its oracle, the Ewald sum
+# of the reciprocal space in NumPy in closed form (checked there against
+# central differences). Each check prints the relative error against it,
+# then 1 if within the tolerance that the script is given.
+#
+# REQUIRES: python-api
+#
+# Double precision, against the Ewald sum: the energy, the tangent, its
+# derivative in lambda, dE/dlambda, the derivative of the tangent of a
+# potential with a pair term besides (the same), and the tangent against
+# -sum t . F of the same call.
+#
+# RUN: %mdir_python %S/Inputs/tangent_pme.py 2e-8 %t.double.mlir
+# RUN: mdir-opt %t.double.mlir %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm --convert-ub-to-llvm --reconcile-unrealized-casts \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# Mixed precision, against the same sum.
+#
+# RUN: %mdir_python %S/Inputs/tangent_pme.py 1e-5 %t.mixed.mlir
+# RUN: mdir-opt %t.mixed.mlir %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm --convert-ub-to-llvm --reconcile-unrealized-casts \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# Central differences along the tangent, by md-check-derivatives: the
+# tangent against those of the energy, its derivative in lambda against
+# those of derivative(lambda), at the step 1e-4 (the energy of the mesh
+# carries a rounding of about 1e-10 of itself, which a smaller step
+# amplifies). It aborts with a message on a value outside the tolerance.
+#
+# RUN: %mdir_python %S/Inputs/tangent_pme.py 2e-8 %t.fd.mlir fd
+# RUN: mdir-opt %t.fd.mlir --md-check-derivatives="step=1e-4 atol=1e-9 rtol=1e-6" \
+# RUN:     %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm --convert-ub-to-llvm --reconcile-unrealized-casts \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s --check-prefix=FD
+
+# CHECK-COUNT-6: {{^}}{{[0-9.e+-]+}}{{$}}{{[[:space:]]+}}1{{$}}
+# FD-COUNT-5: {{^}}{{[0-9.e+-]+}}{{$}}{{[[:space:]]+}}1{{$}}
