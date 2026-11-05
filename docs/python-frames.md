@@ -417,9 +417,13 @@ checks the version that XLA gives it at every stage.
 
 **Errors that depend on data**, such as a position that is not finite, or a
 cell that is not reduced or is below twice the cutoff, are found when the
-frame is evaluated. They are raised by JAX as `jax.errors.JaxRuntimeError`,
-naming the frame of the call and the reason. A frame that fails ends the
-activation, as for `FrameEvaluator.evaluate`.
+frame is evaluated. The handler returns a failed precondition naming the
+frame of the call and the reason. JAX raises it as
+`jax.errors.JaxRuntimeError` where the result is awaited
+(`block_until_ready`, or a read of the value), and as `ValueError` where
+the call runs as it is made, as an eager call on the CPU may. A frame that
+fails ends the activation, as for `FrameEvaluator.evaluate`, and the next
+call gives what it gave before, to the bit.
 
 **Limits of this part:**
 - It runs on the CPU (`"cpu"`), on the loop of frames of
@@ -438,9 +442,36 @@ activation, as for `FrameEvaluator.evaluate`.
 - `JAX_PLATFORMS=cpu` keeps a JAX with a CUDA plugin on the CPU, where the
   target is registered.
 
-**Validation** (`python-frames-jax.test`, `python-frames-jax-torch.test`,
-CPU, `double` and `mixed`, the dipeptide in water with PME):
-<!-- numbers follow with the gate -->
+**Validation.** The tests are `python-frames-jax.test` and
+`python-frames-jax-torch.test`, with JAX 0.11.2 on the CPU, in `double` and
+in `mixed` with `deterministic`. They use three frames of the dipeptide in
+water with PME, $M = 23$ entries in two tunables ($\sigma$ of OW-OW and
+the charges of the 22 atoms of the solute), and flexible water in a sheared
+rhombic dodecahedron for the cell `(3, 3)`.
+
+| Oracle | Result |
+|---|---|
+| `FrameEvaluator.evaluate` on the same program: the energies, $\partial U/\partial\mathbf x$ (`vmap` of `grad`), the Jacobian in the tunables (`jacrev` of the batched energy) | equal to the bit, double and mixed |
+| `vmap` and `jit(vmap)` against a loop of single frames, and `jit` against eager: the gradients in `params`, the positions, and the cell of each frame; nested `vmap`, frames on the second axis, one cell for every frame | equal to the bit |
+| central differences in double, extrapolated by Ridders' method from a first step chosen from the second derivative (the length over which the gradient changes by itself, from a central difference of the exact gradient): `params['sigma']`, `params['q']`, six directions of the positions, the three edges, the six numbers of a triclinic cell | largest relative error $3.6\times10^{-13}$, $7.4\times10^{-11}$, $5.9\times10^{-8}$, $3.1\times10^{-7}$, $5.9\times10^{-8}$; tolerance $10^{-6}$ |
+| `jax.test_util.check_grads(order=1, modes=("fwd", "rev"))` in `params`, the positions, the edges, and the lower triangle of a `(3, 3)` cell | passed: rtol $10^{-6}$, and atol $10^{-6}$ of the gradient's norm times that of the random direction |
+| `mdir.torch.evaluate` on the same programs and frames (another interpreter): the energies, the gradient in the positions and in the edges under a cotangent of weights, the VJP under a cotangent of ones, a triclinic cell's energy, its gradient in the diagonal and the tilts, and in `params` | equal to the bit, double and mixed |
+| the same, the VJP under a cotangent of weights | $1.2\times10^{-15}$ (double) and $3.9\times10^{-16}$ (mixed) relative: PyTorch sums the three frames as a product of a vector with a matrix, XLA as the transpose of each frame's contraction |
+| the refusal matrix, the errors of data, the dtype table | every row raises; after an error the function gives the same energy, to the bit; float32 positions give the f32 forces of the program, to the bit |
+
+The central differences are taken of the program with
+`System.pme_tolerance = 1e-10`. With it the force of the direct sum, shifted
+to zero energy at the cutoff, jumps by $10^{-10}$ of its size when a pair
+crosses the cutoff, where it jumps by $10^{-5}$ by default. The energy is
+then continuously differentiable to the accuracy of a difference: at the
+default tolerance, a step of the cell at fixed positions carries pairs
+across the cutoff, and the edges err by $10^{-5}$ (as
+[above](#through-mdirtorchevaluate)). The steps that the tableau took are
+$1.7\times10^{-4}$ to $3.2\times10^{-3}$ nm in the positions and the cell,
+$2.1\times10^{-4}$ nm in $\sigma$, and 1.2 e in the charges. The
+differences in the cell are those of `cell` at fixed Cartesian positions.
+For a `(3, 3)` cell, only the lower triangle is varied, which the primal
+takes.
 
 ## Order and identity
 
@@ -1952,7 +1983,8 @@ first.
 | 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
 | 3 (done, D252, #313) | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138) and of the whole potential with OpenMM; autograd in the positions and the cell through `mdir.torch.evaluate`; one argument `gradients=` |
 | 3b | the metatomic shape of #138 (a list of systems in, outputs out) |
-| Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
+| The JAX adapter, part 1 (done, D[frame-evaluator-jax], #138) | `mdir.jax.energy_fn` and `mdir.jax.params` on the CPU, on the loop of D251 ([The JAX adapter](#the-jax-adapter)) |
+| Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the rest of the JAX adapter (M2b-2: the batch boundary on the device, the CUDA target, the second pass, `aux`, `mdir.jax.jax_md`); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
 
 ## Maintainer rulings
 

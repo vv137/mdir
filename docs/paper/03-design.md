@@ -1468,6 +1468,34 @@ needs for its gradient in $\boldsymbol\theta$, is not computed, and each
 product is an operation whose own derivative is an error, so that the
 missing term is never taken for zero.
 
+*The JAX adapter* (D[frame-evaluator-jax], `docs/python-frames.md`) gives
+the energy of a frame as a pure function of $(\boldsymbol\theta,
+\mathbf x, H)$ and states its derivative in forward mode, as a rule for
+the tangent:
+
+$$
+\dot U = \sum_i\frac{\partial U}{\partial\mathbf x_i}\cdot\dot{\mathbf x}_i
++ \sum_{ka}\frac{\partial U}{\partial H_{ka}}\bigg\rvert_{\mathbf x}\dot H_{ka}
++ \frac{\partial U}{\partial\boldsymbol\theta}\cdot\dot{\boldsymbol\theta}.
+$$
+
+The rule is linear in the tangents, and reverse mode is its transpose.
+Its coefficients, the gradient in the positions, the one in the cell
+above, and the row of the Jacobian, are all outputs of one operation of
+the evaluator, the evaluation of the frame, whose own tangent is refused.
+Any second derivative differentiates $\dot U$ again in one of
+$\boldsymbol\theta$, $\mathbf x$, or $H$. That needs the tangent of a
+coefficient, so it reaches the refusal: no second derivative can treat a
+coefficient as a constant and return a zero. A coefficient formed outside
+that operation from the inputs would escape this. Each gradient is
+evaluated only where its tangent is not identically zero. Stated in
+forward mode, the mixed derivative of the forces in $\boldsymbol\theta$
+that force matching needs is a tangent rule for the evaluation itself,
+added without changing the function. The gradient in the cell is formed
+for each frame by one routine, which the PyTorch adapter uses as well, so
+the two adapters, a batch of frames and each frame alone, and a compiled
+call and an uncompiled one give the same numbers to the bit.
+
 *What is not differentiated.* The first term of the gradient,
 $\langle\partial O/\partial\boldsymbol\theta\rangle$, is not zero for
 an observable that reads the parameters at fixed positions: the virial,

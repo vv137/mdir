@@ -24,7 +24,7 @@ each term a contraction of an output of `mdir_frames` with a tangent, left out w
 
 **Limits of v1, recorded as Ruling 20 asks:**
 - on the CPU, the positions of a frame are copied into the buffer of the boundary, as `FrameEvaluator.evaluate` copies them;
-- the handler waits for each call and raises an error that names the frame (Q5), as `jax.errors.JaxRuntimeError`;
+- the handler waits for each call and returns an error that names the frame (Q5), a failed precondition, which JAX raises as `jax.errors.JaxRuntimeError` where the result is awaited and as `ValueError` where the call runs as it is made;
 - under one process with a GPU, XLA's preallocation is disabled by `XLA_PYTHON_CLIENT_PREALLOCATE=false` (Q6).
 
 The cells of a call are read on the host (Q2), which is no transfer on the CPU.
