@@ -194,7 +194,7 @@ adapter after the first. The first part
 (D371) runs on the CPU, on the loop of frames above, and its device
 target (D373) on the same loop, through copies in
 host memory that it waits for on XLA's stream. Its second pass for the
-derivative in the parameters (D[frame-evaluator-jax-second-pass]) keeps
+derivative in the parameters (D375) keeps
 no Jacobian, and adds the rows on the host. A batch boundary on the
 device, which removes those copies and moves that sum to the device,
 follows.

@@ -463,7 +463,7 @@ another. With the flag it equals the sum in order. The outputs of
 `mdir_frames` themselves do not depend on it.
 
 **The derivative in `params`: the rows kept, or a second pass**
-(D[frame-evaluator-jax-second-pass]). `jacobian` chooses, for the function,
+(D375). `jacobian` chooses, for the function,
 how the derivative in $\boldsymbol\theta$ is formed.
 
 - **`"keep"`** (the default): the evaluation of the frames gives the

@@ -670,6 +670,7 @@ specification follow those made with it.
 | [D372](decisions/D372.md) | The force constants of built-in proper periodic dihedrals are tunable runtime values, with explicit topology-row maps, updates without recompilation, and derivatives through the existing native tuple IR. | 2026-11-05 |
 | [D373](decisions/D373.md) | `mdir_frames` has a handler for the platform `"CUDA"`. Until the boundary of a batch is on the device (PR 1 of #138), it stages a call through the host on XLA's stream. | 2026-11-05 |
 | [D374](decisions/D374.md) | The PME templates take the types of an instance from a header of alias definitions above their unchanged text, and the names of the instance in IR through the symbol table; no template of the lowering is instantiated by rewriting its text any more. | 2026-11-05 |
+| [D375](decisions/D375.md) | The derivative of `mdir.jax.energy_fn` in `params` has a second pass for a Jacobian above `jacobian_bytes`: two primitives, `mdir_frames_theta_tangent` and `mdir_frames_vjp`, whose handlers evaluate the frames and contract the row of each frame with the tangent or the cotangent as it is formed, with no Jacobian kept. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

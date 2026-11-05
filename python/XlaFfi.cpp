@@ -192,7 +192,7 @@ void cellGradient(const double *x, const Force *g, size_t particles,
 
 /// A contraction of the rows of the Jacobian in the tunables that a call
 /// forms as each frame gives its row, without keeping them
-/// (D[frame-evaluator-jax-second-pass]): with P tangents (P, M), the
+/// (D375): with P tangents (P, M), the
 /// products (K, P) of the rows with them (`mdir_frames_theta_tangent`); with
 /// P cotangents (P, K), the sums (P, M) of the rows weighted by them over
 /// the frames, in the order of the frames (`mdir_frames_vjp`).
@@ -404,7 +404,7 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
 }
 
 /// The handlers of `mdir_frames_theta_tangent` and `mdir_frames_vjp` on the
-/// CPU: the second pass of D[frame-evaluator-jax-second-pass].
+/// CPU: the second pass of D375.
 ffi::Error executeContraction(Contraction::Kind kind, FrameState *state,
                               ffi::Buffer<ffi::F64> theta, ffi::Buffer<ffi::F64> positions,
                               ffi::Buffer<ffi::F64> cells, ffi::Buffer<ffi::F64> in,

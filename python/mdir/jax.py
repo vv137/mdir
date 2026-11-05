@@ -117,7 +117,7 @@ def _impl_of(primitive):
 
 _frames_p.def_impl(_impl_of(_frames_p))
 
-# The second pass (D[frame-evaluator-jax-second-pass]): the frames are
+# The second pass (D375): the frames are
 # evaluated again, and the row of each frame is contracted as it is formed,
 # with no Jacobian kept. `mdir_frames_theta_tangent` takes P tangents (P, M)
 # of theta and gives the products (K, P) of the rows with them;
@@ -446,7 +446,7 @@ def energy_fn(program, *, jacobian="keep", jacobian_bytes=1 << 28):
                 "in the positions is given")
         # The rows of the Jacobian are kept where the Jacobian of the frame
         # fits jacobian_bytes, and otherwise the tangent in params is the
-        # second pass, linear in the tangent (D[frame-evaluator-jax-second-pass]).
+        # second pass, linear in the tangent (D375).
         second = wants_theta and p.second_pass()
         if wants_theta and not second:
             _check_rows(1, sum(p.sizes), p.jacobian_bytes)

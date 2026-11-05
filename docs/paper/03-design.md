@@ -1504,7 +1504,7 @@ the order of its stream.
 
 The last term of the rule is a product with the rows
 $\partial U(S_n)/\partial\boldsymbol\theta$ of the $N_S$ frames of a call. It
-needs them in one of two forms (D[frame-evaluator-jax-second-pass]).
+needs them in one of two forms (D375).
 Kept, they are $N_S\dim\boldsymbol\theta$ numbers that the evaluation of
 the frames gives with the energies. Reverse mode then forms
 $\sum_n g_n\,\partial U(S_n)/\partial\boldsymbol\theta$ from them with

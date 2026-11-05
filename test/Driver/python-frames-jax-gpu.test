@@ -6,7 +6,7 @@
 # everything of python-frames-jax.test; the handler of CUDA against that of
 # the CPU, to the bit; the order of the calls on XLA's stream against
 # synchronized calls; a call on another device refused; mixed against
-# double; the second pass (D[frame-evaluator-jax-second-pass]). XLA's preallocation is off, as for any script that runs an MDIR
+# double; the second pass (D375). XLA's preallocation is off, as for any script that runs an MDIR
 # simulation on the GPU beside JAX, and XLA's deterministic ops are on: a
 # reduction of XLA on a GPU, such as a sum over the frames, has one order
 # only with them (D373).

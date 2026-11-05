@@ -37,7 +37,7 @@ Scenarios:
              and not, through mdir.jax on the device, at the tolerances of
              the evaluator in mixed precision
   sanitize   (GPU) a few calls of each kind, for compute-sanitizer
-  second     the second pass (jacobian="recompute", D[frame-evaluator-jax-second-pass])
+  second     the second pass (jacobian="recompute", D375)
              against the kept Jacobian on the same frames: the VJP and the
              JVP in params under every transformation, to 1e-12 relative;
              the evaluations of the frames of each; in double precision,
