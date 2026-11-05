@@ -313,6 +313,135 @@ positions. The frames are kept as float32 positions and the cell, not as
 whole states: 21,403 atoms take 0.26 MB per frame so, against 1.5 MB for a
 state in float64 with its velocities and forces.
 
+### The JAX adapter
+
+D[frame-evaluator-jax], the design and Ruling 20 on #138. This is the
+first part: the CPU, on the existing loop of frames.
+
+```python
+import jax
+jax.config.update("jax_enable_x64", True)      # required
+import mdir, mdir.jax                          # imports jax; `import mdir` does not
+
+energy_fn = mdir.jax.energy_fn(program)        # pure: (params, positions, cell=None) -> f64, kJ/mol
+params = mdir.jax.params(program)              # {"sig": f64[M], ...}: every tunable, the program's values
+u = jax.jit(energy_fn)(params, x, cell)
+forces = -jax.grad(energy_fn, argnums=1)(params, x, cell)
+u, (g_params, g_x) = jax.value_and_grad(energy_fn, argnums=(0, 1))(params, x, cell)
+energies = jax.jit(jax.vmap(energy_fn, in_axes=(None, 0, 0)))(params, frames, cells)   # one call
+```
+
+`mdir.jax.energy_fn(program, *, jacobian_bytes=2**28)` takes the programs
+that `FrameEvaluator` takes and makes a `FrameEvaluator` of its own, which
+nothing else sees. Every tunable is an entry of `params`, and none keeps a
+hidden value. The function of one frame:
+
+| Argument | Shape, type | Meaning |
+|---|---|---|
+| `params` | a dict of the name of every tunable of `program.plan["tunables"]` to a float64 array `(M,)` | the values $\boldsymbol\theta$, in MD units; `mdir.jax.params(program)` gives the program's. A missing or extra name, a wrong shape, or another type is `InputError` at trace time |
+| `positions` | `(N, 3)`, float64, or float32 where the program's forces are float32 | nm, in the order of the input |
+| `cell` | `(3,)` or `(3, 3)` float64, or `None` | the three edges of an orthorhombic cell, or the cell vectors in rows, lower triangular (D238); `None`: the cell of the program's initial state, as `cells=None` of `FrameEvaluator.evaluate`, and the only form for a program without a periodic cell |
+
+It returns $U_{\boldsymbol\theta}(\mathbf x, \mathsf h)$, the energy of
+`FrameEnergies.energy`, a float64 scalar. There is no separate API for the
+forces or for a fused value and gradient. The forward asks the evaluator
+only for what the tangents need, from their symbolic zeros: the gradient in
+the positions where they are differentiated, and the gradient in the cell
+where it is. The rows of the Jacobian are asked where `params` is
+differentiated. A call that differentiates nothing evaluates the energies
+alone.
+
+**Transformations.**
+
+| Transformation | |
+|---|---|
+| `jax.jit`, `jax.eval_shape` | yes; one custom call per call of the function, or per batch |
+| `jax.grad`, `value_and_grad`, `vjp`, `jacrev`, `jax.jvp`, `jacfwd`, `linearize`, first order, in `params`, `positions`, and `cell` | yes |
+| `jax.vmap` over positions and cells, nested too | yes; the frames of the batch in one call |
+| `jax.vmap` with `params` mapped | refused, `NotImplementedError` |
+| every second derivative (`jax.hessian`, `jacfwd(grad)`, `jvp(grad)`, `grad` of a function of `grad`, `jacrev(jacrev)`, `jacfwd(jacfwd)`), under `jit` too | refused at trace time, `UnsupportedError`; it is not zero |
+| a derivative in the cell of a program with restraints to reference positions | refused, `UnsupportedError`, as `"strain"` is (D252) |
+| a derivative in `params` whose Jacobian, $8KM$ bytes for the $K$ frames of a call, passes `jacobian_bytes` | refused, `UnsupportedError`; the second pass is a later part of #138 |
+| `jax_enable_x64` off | refused, `InputError`: the tunables, the cell, and the energy are float64 |
+
+**Types.** `params` and `cell` are float64 in every mode. In `double`, and
+in `mixed` with `deterministic` (forces in f64), the positions are
+float64, and float32 positions are refused at trace time. Their
+gradient would otherwise be rounded from f64. In `mixed`, float64
+positions take the f32 forces widened to f64, exactly. Float32 positions
+are widened exactly to the f64 that the evaluator takes, and their
+gradient is the f32 forces of the program, as `"positions"` is (G4). The
+energy, the gradient in the cell, and the derivative in the tunables are
+f64 in every mode.
+
+**The gradient in the cell** is
+$\mathsf h^{-\mathsf T}(\mathsf S - \sum_i\mathbf G_i\otimes\mathbf
+x_i)^{\mathsf T}$, as for `mdir.torch.evaluate`
+([above](#through-mdirtorchevaluate)), formed by the same function of the
+extension. For a `(3, 3)` cell it has all nine entries: those above the
+diagonal are the derivative of $U$ as a function of three free cell
+vectors, by the same formula, although the primal takes lower-triangular
+cells alone. For the `(3,)` form it is the diagonal, the gradient in the
+three edges.
+
+**How it is built.** The function is a `jax.custom_jvp` with
+`symbolic_zeros=True`. Its tangent is
+$\dot U = \sum_i\mathbf G_i\cdot\dot{\mathbf x}_i +
+\sum_{ab}(\partial U/\partial h_{ab})\,\dot h_{ab} +
+(\partial U/\partial\boldsymbol\theta)\cdot\dot{\boldsymbol\theta}$. Each
+term is a contraction of an output of one primitive, `mdir_frames`, with a
+tangent, and reverse mode is its transpose. The primitive
+(`jax.extend.core.Primitive`) takes θ `(M,)`, the positions `(K, N, 3)`,
+and the cells `(K, 6)` ($a_x, b_y, c_z, b_x, c_x, c_y$, or `(K, 0)`
+without a cell). It returns the energies, $\mathbf G$ in the type of the
+forces, $\partial U/\partial\mathsf h$ `(K, 3, 3)`, and the rows
+$\partial U_k/\partial\boldsymbol\theta$ `(K, M)`; an output that is not
+asked has no rows, and XLA allocates nothing for it. The primitive's JVP
+rule raises. Every factor of a tangent is an output of the primitive, so
+every second derivative reaches that rule. Its batching rule folds the
+mapped axes of the positions and the cells into the axis of the frames
+and binds once. It is lowered with `jax.ffi.ffi_lowering` to the typed
+FFI target `mdir_frames` of the extension (`python/XlaFfi.cpp`), whose
+static attributes are the key of the program in the process and its
+fingerprint. The handler's `instantiate` stage, run once per executable,
+resolves the key and checks the fingerprint, and keeps the evaluator's
+simulation in the FFI state of the executable. A key of another process,
+from a persistent compilation cache, therefore fails there. The `execute`
+stage updates the tunables whose bits differ from those it last ran at
+(D213; this ends the activation, D251). It then evaluates the frames one
+after the other through `evaluateFrame` and writes into XLA's buffers.
+The handler never touches Python; calls of several executables on one
+program are serialized. The headers of the XLA FFI are vendored in
+`third_party/xla_ffi` (jaxlib 0.11.2, FFI API 0.4), and the handler
+checks the version that XLA gives it at every stage.
+
+**Errors that depend on data**, such as a position that is not finite, or a
+cell that is not reduced or is below twice the cutoff, are found when the
+frame is evaluated. They are raised by JAX as `jax.errors.JaxRuntimeError`,
+naming the frame of the call and the reason. A frame that fails ends the
+activation, as for `FrameEvaluator.evaluate`.
+
+**Limits of this part:**
+- It runs on the CPU (`"cpu"`), on the loop of frames of
+  `FrameEvaluator.evaluate`. The positions of a frame are copied into the
+  buffer of the boundary, within host memory.
+- The cells of a call are read on the host.
+- Each call waits for its frames, and an error names the frame.
+- The device target, the boundary of a batch on the device, the second
+  pass above `jacobian_bytes`, `aux` (the virial and the observed columns),
+  and a helper for JAX-MD are later parts of #138.
+- A script that runs JAX on a GPU in the same process as an MDIR
+  simulation on the GPU should disable XLA's preallocation
+  (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, or
+  `XLA_PYTHON_CLIENT_MEM_FRACTION`): XLA takes most of the device memory
+  by default, and MDIR's runtime allocates its own.
+- `JAX_PLATFORMS=cpu` keeps a JAX with a CUDA plugin on the CPU, where the
+  target is registered.
+
+**Validation** (`python-frames-jax.test`, `python-frames-jax-torch.test`,
+CPU, `double` and `mixed`, the dipeptide in water with PME):
+<!-- numbers follow with the gate -->
+
 ## Order and identity
 
 - **The order of the input, at every boundary and inside.** Frames come
@@ -1484,7 +1613,16 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
   the chain rule on the deformation above, and uses $\mathsf S$ only on
   and above the diagonal. The two terms nearly cancel (636 kJ/mol/nm of
   14,000 kJ/mol on the dipeptide), so the sum over the particles is
-  formed on the host in f64 in every mode. A gradient has the shape, the
+  formed on the host in f64 in every mode, in the order of the input, and
+  $\mathsf h^{\mathsf T}$, upper triangular, is solved by back
+  substitution. The function of the extension that does it,
+  `_core._frame_cell_gradient`, is the one the handler of `mdir.jax` uses
+  ([below](#the-jax-adapter)), so the two adapters give the same bits.
+  It replaced a NumPy formula (a BLAS product and `np.linalg.solve`),
+  whose rounding differs: by at most $5.4\times10^{-14}$ of the largest
+  entry of a frame on the frames of the tests, and by up to
+  $3.3\times10^{-12}$ of the smallest entries
+  (D[frame-evaluator-jax]). A gradient has the shape, the
   type, and the device of the tensor it is of; one cell given for every
   frame takes the sum over the frames. The gradient in the cell is not
   $\mathsf S$: the strain moves the positions with the cell, and is the

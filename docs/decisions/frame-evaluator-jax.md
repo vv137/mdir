@@ -1,0 +1,30 @@
+# D[frame-evaluator-jax]
+
+Recorded at its merge.
+
+**The frame evaluator is a pure function of JAX, `mdir.jax.energy_fn(program)(params, positions, cell)`, a `jax.custom_jvp` built on one primitive, `mdir_frames`, lowered through `jax.ffi` to a typed FFI handler of the extension.** This is PR 2 of the design on #138, as Ruling 20 accepted it: the adapter on the CPU, on the existing loop of `evaluateFrame` (D251). The batch boundary on the device (PR 1), the `"CUDA"` target (PR 3), the second pass above `jacobian_bytes` (PR 4), `aux` (PR 5), and `mdir.jax.jax_md` (PR 6) follow. See [python-frames.md, The JAX adapter](../python-frames.md#the-jax-adapter).
+
+**The function.** `energy_fn(program, *, jacobian_bytes=2**28)` makes a private `FrameEvaluator` of the program, which nothing else sees: every tunable is an entry of `params`, and none keeps a hidden value. `params(program)` gives the program's values as the pytree, a dict of every tunable name to a float64 array `(M,)`; a missing or extra name, a wrong shape, or another type is `InputError` at trace time (Q10). `positions` are `(N, 3)` in nm, in the order of the input. `cell` is the three edges `(3,)` or the cell vectors in rows `(3, 3)`, lower triangular. `jax_enable_x64` must be on (Q8).
+
+**The transformations.** The public function is a `custom_jvp` with `symbolic_zeros=True`, not a `custom_vjp`, so that forward mode works and #726 can add the JVP of the gradient without a new public function (Q1). Its tangent is
+
+$$
+\dot U = \sum_i \mathbf G_i\cdot\dot{\mathbf x}_i + \sum_{ab}\frac{\partial U}{\partial h_{ab}}\dot h_{ab} + \frac{\partial U}{\partial\boldsymbol\theta}\cdot\dot{\boldsymbol\theta},
+$$
+
+each term a contraction of an output of `mdir_frames` with a tangent, left out where the tangent is a symbolic zero. The forward asks the handler only for what a tangent needs, so a call that differentiates nothing evaluates the energies alone. Reverse mode is the transpose of these contractions. The JVP rule of `mdir_frames` raises `UnsupportedError`. Every factor of a tangent is an output of the primitive, so every second derivative (`jax.hessian`, `jacfwd(grad)`, `jvp(grad)`, `grad` of a function of `grad`, `jacrev(jacrev)`, `jacfwd(jacfwd)`) reaches that rule at trace time and raises; none gives a zero. The batching rule folds the mapped axes of the positions and the cells into the axis of the frames and binds once. A mapped `params` is refused with `NotImplementedError` (Q4).
+
+**The handler.** `python/XlaFfi.cpp` registers `mdir_frames` for the platform `"cpu"` with two stages. `instantiate`, once per executable, resolves the key of the program in a registry of the process. It checks the program's fingerprint (SHA-256 of the fingerprint of its model and execution, D172, the declarations of its tunables, the number of particles, the type of the forces, and whether the cell is periodic), and keeps the simulation in the FFI state of the executable. `execute` updates the tunables whose bits differ from those it last ran at (D213), then evaluates the frames one after the other in the program's activation, writing into XLA's buffers. The registry is in C++, because XLA calls the handler from its own threads without the GIL. A mutex of the program serializes calls from several executables. The handler checks the version of the FFI that XLA gives it (the same major and at least the minor of the headers) at every stage. The headers are vendored in `third_party/xla_ffi` from jaxlib 0.11.2, FFI API 0.4, and 0.11.2 is the lowest supported JAX (Q9).
+
+**The gradient in the cell is formed by the handler, and the PyTorch adapter uses the same function.** The design formed $\partial U/\partial\mathsf h = \mathsf h^{-\mathsf T}(\mathsf S - \sum_i \mathbf G_i\otimes\mathbf x_i)^{\mathsf T}$ (D252) from $\mathbf G$ and $\mathsf S$ in `jnp`. Instead the handler forms it for each frame, in f64, summing over the particles in the order of the input and solving by back substitution, and returns it as an output of `mdir_frames`. The arithmetic of a frame then does not depend on the batch or on the compilation, so `vmap` against a loop and `jit` against eager agree to the bit. At the maintainer's ruling on this PR, `mdir.torch` forms its cell gradient with the same function (`_core._frame_cell_gradient`) instead of NumPy, so the two adapters agree to the bit by construction. Before, a BLAS product for the moment and `np.linalg.solve` rounded differently; the sum cancels, and the two differed by up to $9\times10^{-14}$ relative on the dipeptide. On the frames of the tests, `mdir.torch`'s cell gradient changes by at most $5.4\times10^{-14}$ of the largest entry of a frame. For the smallest entries, the change is up to $3.3\times10^{-12}$ of the entry itself.
+
+**`cell=None`** gives the cell of the program's initial state, as `FrameEvaluator.evaluate` takes `cells=None`. It is the only form for a program without a periodic cell. The maintainer accepted it on this PR; the design did not have it.
+
+**The Jacobian in the tunables** is kept when $8KM$ bytes, for the $K$ frames of one call, is at most `jacobian_bytes`. It is checked where $K$ is known: in the JVP rule for one frame, and in the batching rule for a batch. Above the bound, a derivative in `params` raises `UnsupportedError` until PR 4 brings the second pass. Under `vmap`, the JVP rule sees the frames of one example, not of the call. How the second pass is chosen under `vmap` is therefore left to PR 4's design.
+
+**Limits of v1, recorded as Ruling 20 asks:**
+- on the CPU, the positions of a frame are copied into the buffer of the boundary, as `FrameEvaluator.evaluate` copies them;
+- the handler waits for each call and raises an error that names the frame (Q5), as `jax.errors.JaxRuntimeError`;
+- under one process with a GPU, XLA's preallocation is disabled by `XLA_PYTHON_CLIENT_PREALLOCATE=false` (Q6).
+
+The cells of a call are read on the host (Q2), which is no transfer on the CPU.
