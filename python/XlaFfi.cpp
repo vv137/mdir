@@ -426,11 +426,9 @@ public:
   /// Refuses a stream on another device than `ordinal`, after `enter`.
   ffi::Error checkDevice(int ordinal) {
     CUdevice wanted = 0, found = 0;
-    if (ffi::Error error = check(driver.device(&wanted, ordinal), "cuDeviceGet"); error.failure())
-      return error;
     if (ffi::Error error = check(driver.contextDevice(&found), "cuCtxGetDevice"); error.failure())
       return error;
-    if (found == wanted)
+    if (driver.device(&wanted, ordinal) == CUDA_SUCCESS && found == wanted)
       return ffi::Error::Success();
     return invalid("the call is on device " + std::to_string(found) +
                    ", and the program runs on device " + std::to_string(ordinal) +
