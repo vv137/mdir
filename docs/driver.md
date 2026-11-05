@@ -1393,6 +1393,14 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
+D[frame-product-field] reserves `Control::frameProduct` and the frame
+gradient output's product configuration for #726. The default is off. The
+configuration names request element 2 for the energy cotangent and returned
+buffer 1 for the position-gradient cotangent; the frame boundary will supply
+the latter rather than a topology field. This is configuration for the later
+separate product entry, not an implementation of that entry. Ordinary frames
+programs retain their fields, arguments and operations byte for byte.
+
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
 both closing steps. Leapfrog coupling uses full-time velocities and restores

@@ -212,6 +212,13 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
+The frame product configuration (D[frame-product-field], #726 PR 0) is
+internal and off by default. It reserves the energy-cotangent request slot
+and the position-gradient-cotangent buffer returned by the frame boundary.
+The buffer belongs to each frame, not to the topology parameters. The
+separate product entry and its derivative construction follow in later
+parts of #726; ordinary generated programs remain byte-identical.
+
 Built-in proper-dihedral coefficient tunables (D372, #730)
 remain in the dihedral adapter and share the native tuple-gradient seed
 construction with custom tuples. Each Fourier row retains its identity and

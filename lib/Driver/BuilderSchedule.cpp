@@ -173,6 +173,11 @@ llvm::Error Builder::emitEntry() {
     }
     if (program.tunableGradient && initial) {
       auto &gradient = config.gradient.emplace();
+      if (control.frames && control.frameProduct)
+        // Requests 0/1 select forces/virial; result 0 holds positions.
+        // The product entry takes g in request 2 and returns G's cotangent
+        // as buffer 1, without adding a topology field.
+        gradient.product = EntryGradientProductIR{2, 1};
       auto startSlot = [&](StringRef name) -> unsigned {
         auto found = llvm::find_if(program.startValues,
             [&](const auto &value) { return value.name == name; });
