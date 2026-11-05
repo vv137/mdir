@@ -143,3 +143,42 @@ md.function @requests(%x: !vec, %cell: !md.cell, %c: f64, %t: !vec)
       : (!vec, !md.cell, f64, !vec) -> f64
   md.return %p, %z : f64, f64
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!bonds = !md.relation<@atoms, 2, unordered, @bonds>
+!of_bond = !md.field<@bonds, f64>
+md.particle_set @atoms
+md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
+
+// The tangent at the members comes after the other gathered fields and
+// before the fields of the tuples; the derivative of Φ in the charges is a
+// gather over the same tuples, with the coordinates and the fields of Φ.
+//
+// CHECK-LABEL: md.function @bond.tangent.derivative5(
+// CHECK: md.gather_tuples %{{.*}}, %{{.*}}, %{{.*}} coordinates(distance(0, 1), displacement(0, 1)) gather(%{{.*}}, %{{.*}} : !md.field<@atoms, f64>, !md.field<@atoms, 3 x f64>) tuple(%{{.*}}, %{{.*}} : !md.field<@bonds, f64>, !md.field<@bonds, f64>)
+// CHECK: ^bb0(%{{[^:]*}}: f64, %{{[^:]*}}: vector<3xf64>, %{{[^:]*}}: f64, %{{[^:]*}}: f64, %{{[^:]*}}: vector<3xf64>, %{{[^:]*}}: vector<3xf64>, %{{[^:]*}}: f64, %{{[^:]*}}: f64):
+md.potential @bond(%x: !vec, %cell: !md.cell, %bonds: !bonds, %k: !of_bond,
+                   %r0: !of_bond, %q: !real) -> f64 {
+  %u = md.sum_tuples %bonds, %x, %cell coordinates(distance(0, 1))
+         gather(%q : !real) tuple(%k, %r0 : !of_bond, !of_bond) {
+  ^bb0(%r: f64, %qa: f64, %qb: f64, %k_t: f64, %r0_t: f64):
+    %dr = arith.subf %r, %r0_t : f64
+    %dr2 = arith.mulf %dr, %dr : f64
+    %e0 = arith.mulf %k_t, %dr2 : f64
+    %e = arith.mulf %e0, %qa : f64
+    md.yield %e : f64
+  } : !bonds, !vec -> f64
+  md.return %u : f64
+}
+
+md.function @requests(%x: !vec, %cell: !md.cell, %bonds: !bonds,
+                      %k: !of_bond, %r0: !of_bond, %q: !real, %t: !vec)
+    -> !real {
+  %g = md.evaluate @bond(%x, %cell, %bonds, %k, %r0, %q, %t)
+      request [tangent_derivative(5)]
+      : (!vec, !md.cell, !bonds, !of_bond, !of_bond, !real, !vec) -> !real
+  md.return %g : !real
+}
