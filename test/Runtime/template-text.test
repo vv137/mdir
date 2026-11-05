@@ -1,0 +1,20 @@
+# The templates of the lowering (lib/Runtime/Templates) are instantiated in
+# IR, not by substituting their text (#739: D368, D369, D370, and
+# D[template-ir-pme-header]). Their text holds no placeholder `PME_...` and
+# defines none of the aliases of the types of an instance, which the header
+# of getPMETemplateHeader alone defines above it, and the compiler has no
+# function that rewrites the text of a template: the text is parsed as it
+# is, below that header, and every instance is made from the parsed IR.
+#
+# RUN: not grep -n 'PME_' %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PME.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
+# RUN: not grep -n '^!pme_' %S/../../lib/Runtime/Templates/PME.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
+# RUN: not grep -rnE 'instantiatePMETemplates|std::string instantiateTemplates|std::string kernels::instantiate' \
+# RUN:     %S/../../lib %S/../../include

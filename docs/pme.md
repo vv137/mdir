@@ -374,7 +374,16 @@ constant or the ops that the instance takes (D369,
 charges, the forces, and f64 is an `mdrt.template_convert`
 ([mdrt.md](dialects/mdrt.md)), which `resolveTemplateConversions` makes
 an extension, a truncation, or, between two of the same type, a cast of
-the bits (D370); on the host as well (`PME.mlir`).
+the bits (D370); on the host as well (`PME.mlir`). The text of a
+template defines none of the types of an instance: `getPMETemplateHeader`
+writes the aliases `!pme_pos`, `!pme_chg`, `!pme_frc`, `!pme_real`, and,
+on a device, `!pme_tile_E`, the tile of $(E+P-1)^3$ points in the memory of
+the block, in a header above the text, which is parsed as it is. The
+functions that the template defines then take the suffix of the instance,
+through the symbol table, and a transform of the host
+(`@mdir.template.fft.NAME`) that of the runtime for the type of the forces
+(`instantiatePMESymbols`, D[template-ir-pme-header]). No instance is made by
+rewriting the text (`test/Runtime/template-text.test`).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and

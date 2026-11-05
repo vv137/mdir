@@ -5131,14 +5131,20 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
   ParserConfig config(context);
+  // The template takes the aliases of the types of the instance from a
+  // header above its text, and its names in IR (D[template-ir-pme-header],
+  // #739).
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiatePMETemplates(tilted ? pmeGPUTriclinicTemplate
-                                     : pmeGPUTemplate,
-                              position, charge, force, order),
+      kernels::getPMETemplateHeader(position, charge, force, order,
+                                    /*tiles=*/true) +
+          (tilted ? pmeGPUTriclinicTemplate : pmeGPUTemplate),
       config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald for devices";
+  if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
+                                            force, order)))
+    return failure();
   // The parameters of the instance: the order, the constants of the
   // tiles, and the atomic additions (D369, #739).
   if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
@@ -5220,12 +5226,16 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiatePMETemplates(pmeGPUProlateTemplate, position, charge, force,
-                              order),
+      kernels::getPMETemplateHeader(position, charge, force, order,
+                                    /*tiles=*/true) +
+          pmeGPUProlateTemplate,
       config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template of the prolate kernel for devices";
+  if (failed(kernels::instantiatePMESymbols(*templates, position, charge,
+                                            force, order)))
+    return failure();
   // The parameters of the instance: the order, the constants of the
   // tiles, and the atomic additions (D369, #739).
   if (failed(kernels::resolveTemplateParameters(*templates, force, order)))

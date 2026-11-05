@@ -74,7 +74,7 @@ INVERSE = '''  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
 HEADER = '''// The reciprocal sum of particle mesh Ewald with the prolate kernel on a
 // device, "Ewald summation with prolates" [Liang2026] (D266):
 // the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points along each edge
-// (PME_ORDER), whose weights and slopes are Chebyshev series in the
+// (the order of the instance), whose weights and slopes are Chebyshev series in the
 // fraction of the place, and the influence function χ̂(2π r_c |m|) / m²
 // times 1/φ̂₁² along each edge (Builder::collectProlate).
 //
@@ -87,10 +87,11 @@ HEADER = '''// The reciprocal sum of particle mesh Ewald with the prolate kernel
 // pe + 3 + 2n + k P + j, its slope D P later; prolate_coefficients writes
 // them from the table of the op at each sum, in !pme_real.
 
-!pme_pos = f64
-!pme_chg = f64
-!pme_frc = f64
-!pme_real = f64
+// The aliases !pme_pos, !pme_chg, and !pme_frc (the types that the
+// positions, the charges, and the forces are stored in), !pme_real (the
+// type of the forces), and !pme_tile_E (a tile of the spreading of bins of
+// E points, D282) are defined by the instance, in a header above this text
+// (getPMETemplateHeader, D[template-ir-pme-header], #739).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index

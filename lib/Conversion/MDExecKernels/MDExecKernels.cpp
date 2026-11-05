@@ -2548,50 +2548,71 @@ std::string kernels::getPMEInstanceName(StringRef name, Type position,
   return (name + getPMESuffix(position, charge, force, order)).str();
 }
 
-std::string kernels::instantiatePMETemplates(StringRef text, Type position,
-                                             Type charge, Type force,
-                                             int64_t order) {
-  auto spell = [](Type type) { return type.isF64() ? "f64" : "f32"; };
-  std::string suffix = getPMESuffix(position, charge, force, order);
-  std::string instance;
-  while (!text.empty()) {
-    if (text.consume_front("!pme_pos = f64")) {
-      instance += "!pme_pos = " + std::string(spell(position));
-    } else if (text.consume_front("!pme_chg = f64")) {
-      instance += "!pme_chg = " + std::string(spell(charge));
-    } else if (text.consume_front("!pme_frc = f64")) {
-      instance += "!pme_frc = " + std::string(spell(force));
-    } else if (text.consume_front("!pme_real = f64")) {
-      instance += "!pme_real = " + std::string(spell(force));
-    } else if (text.consume_front("PME_TILE_POINTS_")) {
-      // The points of a tile of the spreading of bins of E points (D282),
-      // (E + P - 1)^3, in the shapes of the tiles; the constants of the
-      // tiles are parameters resolved in IR (resolveTemplateParameters).
-      StringRef digits = text.take_while(llvm::isDigit);
-      text = text.drop_front(digits.size());
-      int64_t edge = 0;
-      (void)digits.getAsInteger(10, edge);
+std::string kernels::getPMETemplateHeader(Type position, Type charge,
+                                          Type force, int64_t order,
+                                          bool tiles) {
+  // The aliases of the types of the instance, which the text of a template
+  // of particle mesh Ewald uses and does not define
+  // (D[template-ir-pme-header], #739): the types that the positions, the
+  // charges, and the forces are stored in; the type of the forces, in which
+  // the splines, the grid, and its transform are; and, on a device, a tile
+  // of the spreading of bins of E points (D282), of (E + P - 1)^3 points in
+  // the memory of the block.
+  auto spell = [](Type type) {
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    type.print(os);
+    return text;
+  };
+  std::string header = "!pme_pos = " + spell(position) + "\n" +
+                       "!pme_chg = " + spell(charge) + "\n" +
+                       "!pme_frc = " + spell(force) + "\n" +
+                       "!pme_real = " + spell(force) + "\n";
+  if (tiles)
+    for (int64_t edge : {4, 8, 16}) {
       int64_t length = edge + order - 1;
-      instance += std::to_string(length * length * length);
-    } else if (text.consume_front("PME_FFT")) {
-      // The transforms of the runtime of the host for a grid in
-      // `!pme_real` (runtime/mdrt_fft.c).
-      instance += force.isF64() ? "mdrtFFT64" : "mdrtFFT32";
-    } else if (text.consume_front("@mdrt")) {
-      // The functions of the template, `@mdrt.` or `@mdrt_`; the functions
-      // of the runtime, such as `@mdrtCudaFFTForward3D`, keep their names.
-      StringRef name = text.take_while([](char c) {
-        return llvm::isAlnum(c) || c == '_' || c == '.';
-      });
-      text = text.drop_front(name.size());
-      bool local = name.starts_with(".") || name.starts_with("_");
-      instance += "@mdrt" + name.str() + (local ? suffix : "");
-    } else {
-      instance += text.front();
-      text = text.drop_front();
+      header += "!pme_tile_" + std::to_string(edge) + " = memref<" +
+                std::to_string(length * length * length) +
+                "x!pme_real, #gpu.address_space<workgroup>>\n";
     }
+  return header;
+}
+
+LogicalResult kernels::instantiatePMESymbols(ModuleOp templates,
+                                             Type position, Type charge,
+                                             Type force, int64_t order) {
+  // The functions that the template defines take the suffix of the
+  // instance; declarations, those of the runtime (`@mdrtFFTPrepare`) and
+  // of the device primitives and the parameters of the instance among them,
+  // keep their names. A transform of the host, `@mdir.template.fft.NAME`,
+  // becomes that of the runtime for a grid in the type of the forces,
+  // `@mdrtFFT64NAME` or `@mdrtFFT32NAME` (runtime/mdrt_fft.c)
+  // (D[template-ir-pme-header], #739).
+  MLIRContext *context = templates.getContext();
+  std::string suffix = getPMESuffix(position, charge, force, order);
+  constexpr StringLiteral fft = "mdir.template.fft.";
+  SmallVector<std::pair<Operation *, std::string>> renamed;
+  for (Operation &op : templates.getOps()) {
+    if (!isa<SymbolOpInterface>(&op))
+      continue;
+    StringRef name = SymbolTable::getSymbolName(&op).getValue();
+    bool defined = op.getNumRegions() != 0 && !op.getRegion(0).empty();
+    if (defined)
+      renamed.push_back({&op, (name + suffix).str()});
+    else if (name.starts_with(fft))
+      renamed.push_back(
+          {&op, ((force.isF64() ? "mdrtFFT64" : "mdrtFFT32") +
+                 name.drop_front(fft.size()))
+                    .str()});
   }
-  return instance;
+  for (auto &[op, instance] : renamed) {
+    auto name = StringAttr::get(context, instance);
+    if (failed(SymbolTable::replaceAllSymbolUses(op, name, templates)))
+      return op->emitError() << "cannot rename the uses of "
+                             << SymbolTable::getSymbolName(op);
+    SymbolTable::setSymbolName(op, name);
+  }
+  return success();
 }
 
 LogicalResult kernels::resolveTemplateConversions(Operation *root) {

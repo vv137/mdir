@@ -624,12 +624,19 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       (!listed || has("mdrt.pme_spread_listed")))
     return success();
   ParserConfig config(context);
+  // The template takes the aliases of the types of the instance from a
+  // header above its text, and its names in IR (D[template-ir-pme-header],
+  // #739).
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiatePMETemplates(pmeTemplate, position, charge, force,
-                              order), config);
+      getPMETemplateHeader(position, charge, force, order, /*tiles=*/false) +
+          pmeTemplate,
+      config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  if (failed(instantiatePMESymbols(*templates, position, charge, force,
+                                   order)))
+    return failure();
   // The conversions between the types of the instance and f64
   // (D370, #739).
   if (failed(resolveTemplateConversions(*templates)))
