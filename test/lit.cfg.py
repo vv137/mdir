@@ -127,6 +127,14 @@ if config.mdir_python:
         if subprocess.run([torch_python, "-c", "import torchpme"],
                           capture_output=True).returncode == 0:
             config.available_features.add("torchpme")
+    # JAX, for its adapter of the frame evaluator (D[frame-evaluator-jax]):
+    # the interpreter of the tests if it imports jax, or one that lit is
+    # given with -Djax_python=<interpreter>, which must import the module
+    # of this build (the same Python version).
+    jax_python = lit_config.params.get("jax_python", config.mdir_python_executable)
+    if subprocess.run([jax_python, "-c", "import jax"], capture_output=True).returncode == 0:
+        config.available_features.add("jax")
+        config.substitutions.append(("%jax_python", jax_python))
 
 # Checkpoints need HDF5.
 if config.mdir_hdf5:
