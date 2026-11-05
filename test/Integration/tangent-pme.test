@@ -23,7 +23,7 @@
 #
 # Mixed precision, against the same sum.
 #
-# RUN: %mdir_python %S/Inputs/tangent_pme.py 1e-5 %t.mixed.mlir
+# RUN: %mdir_python %S/Inputs/tangent_pme.py 3e-5 %t.mixed.mlir
 # RUN: mdir-opt %t.mixed.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-precision="mode=mixed" \

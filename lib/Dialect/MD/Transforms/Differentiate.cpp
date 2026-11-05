@@ -2374,7 +2374,9 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
       auto reciprocal = sum.getGathered()[0].getDefiningOp<ReciprocalOp>();
       if (!reciprocal || sum.getGathered().size() != 2)
         return op->emitError() << "expected the tangent of a reciprocal sum";
-      for (Value operand : SmallVector<Value, 2>{reciprocal.getPositions(), sum.getGathered()[1]}) {
+      SmallVector<Value, 2> fixed{reciprocal.getPositions(),
+                                  sum.getGathered()[1]};
+      for (Value operand : fixed) {
         Verdict verdict = classify(operand);
         if (verdict.dependence != Dependence::Inactive)
           return refuse(operand, verdict);
