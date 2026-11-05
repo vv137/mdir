@@ -17,6 +17,8 @@ struct FrameThermostatIR {
   double freedom, target, decay;
 };
 struct SimpleFrameEntryIRConfig {
+  // Reserved for the device-resident batch entry of #138 PR 1.
+  bool deviceBatch = false;
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
   bool stepMemory = false, leapfrog = false, brownian = false, coupled = false;

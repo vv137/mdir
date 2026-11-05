@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+D[frame-batch-field] reserves an internal mode for the device batch frame
+entry. No control-file key sets it. The host form remains the default, with
+no change of a file format, checkpoint or overwrite behavior.
+
 D357 rejects compiler IR whose neighbor coverage cannot be
 proved across a boundary. It changes no control key, neighbor strategy,
 default, format, checkpoint, or overwrite behavior.

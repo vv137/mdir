@@ -284,6 +284,7 @@ llvm::Error Builder::emitEntry() {
         role->buildDeclarations(*this, ir);
     emitRuntimeDeclarations(ir, declarations, true);
     SimpleFrameEntryIRConfig config;
+    config.deviceBatch = control.frameMode == Control::FrameMode::DeviceBatch;
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
     config.timed = control.usesTime;

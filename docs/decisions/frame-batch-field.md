@@ -1,0 +1,30 @@
+# D[frame-batch-field]
+
+Recorded 2026-11-05.
+
+Part of #138 PR 1, following Ruling 20 and D371/D373.
+
+**The builder carries the internal choice of frame entry form to its native
+entry configuration.** `Control::FrameMode` has `Host` and `DeviceBatch`
+forms; `Control::frameMode` defaults to `Host`. Inside the existing
+`Control::frames` path, `BuilderSchedule.cpp` sets
+`SimpleFrameEntryIRConfig::deviceBatch` from that mode. The configuration
+flag also defaults to false.
+
+The existing `Control::frames` boolean remains the selector for a frames
+program. Keeping it separate from its entry form preserves the existing
+`Simulation.cpp` caller; #138 PR 1 will select the new mode there when the
+device-resident batch entry exists. No control-file key or Python API
+exposes either internal choice.
+
+This change adds the field and plumbing only. It implements no batch
+boundary, device chain rule, stream handling or transfer optimization.
+Those are #138 PR 1's runtime and entry work. D373's host staging remains
+in place, and the new configuration has no IR consumer yet. Every existing
+program therefore keeps the same fields, arguments and operations.
+
+The disabled default is gated by the CPU/GPU, Single/Mixed/Double corpus
+of printed module and lowered programs against an independently archived
+base, the combined-kind order matrix, five bitwise checkpoints, and both
+D309 suite shards on RTX 5090. No control key, default, file format,
+checkpoint or overwrite behavior changes.
