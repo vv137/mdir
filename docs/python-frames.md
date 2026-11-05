@@ -332,7 +332,8 @@ u, (g_params, g_x) = jax.value_and_grad(energy_fn, argnums=(0, 1))(params, x, ce
 energies = jax.jit(jax.vmap(energy_fn, in_axes=(None, 0, 0)))(params, frames, cells)   # one call
 ```
 
-`mdir.jax.energy_fn(program, *, jacobian_bytes=2**28)` takes the programs
+`mdir.jax.energy_fn(program, *, jacobian="keep", jacobian_bytes=2**28)`
+takes the programs
 that `FrameEvaluator` takes and makes a `FrameEvaluator` of its own, which
 nothing else sees. Every tunable is an entry of `params`, and none keeps a
 hidden value. The function of one frame:
@@ -362,7 +363,7 @@ alone.
 | `jax.vmap` with `params` mapped | refused, `NotImplementedError` |
 | every second derivative (`jax.hessian`, `jacfwd(grad)`, `jvp(grad)`, `grad` of a function of `grad`, `jacrev(jacrev)`, `jacfwd(jacfwd)`), under `jit` too | refused at trace time, `UnsupportedError`; it is not zero |
 | a derivative in the cell of a program with restraints to reference positions | refused, `UnsupportedError`, as `"strain"` is (D252) |
-| a derivative in `params` whose Jacobian, $8KM$ bytes for the $K$ frames of a call, passes `jacobian_bytes` | refused, `UnsupportedError`; the second pass is a later part of #138 |
+| with `jacobian="keep"`, a derivative in `params` whose Jacobian, $8KM$ bytes for the $K$ frames of a call, passes `jacobian_bytes` | refused, `UnsupportedError`, naming `jacobian="recompute"` |
 | `jax_enable_x64` off | refused, `InputError`: the tunables, the cell, and the energy are float64 |
 
 **Types.** `params` and `cell` are float64 in every mode. In `double`, and
@@ -461,6 +462,44 @@ differed by $5.8	imes10^{-11}$ (absolute) in one process and agreed in
 another. With the flag it equals the sum in order. The outputs of
 `mdir_frames` themselves do not depend on it.
 
+**The derivative in `params`: the rows kept, or a second pass**
+(D[frame-evaluator-jax-second-pass]). `jacobian` chooses, for the function,
+how the derivative in $\boldsymbol\theta$ is formed.
+
+- **`"keep"`** (the default): the evaluation of the frames gives the
+  rows $\partial U_k/\partial\boldsymbol\theta$ with the energies. They
+  are a residual of the linearization, and a tangent or a cotangent is a
+  product with them. $8KM$ bytes for the $K$ frames of a call, checked
+  against `jacobian_bytes` for one frame and for the frames of a `vmap`;
+  above it the derivative raises, naming the two ways out below.
+- **`"recompute"`**: no rows are kept. The tangent in $\boldsymbol\theta$
+  is a primitive linear in its tangent, `mdir_frames_theta_tangent`, whose
+  transpose is `mdir_frames_vjp`. Their handlers evaluate the frames
+  again, each frame's row contracted with the $P$ tangents
+  (giving $(K, P)$) or weighted by the $P$ cotangents and summed over the
+  frames (giving $(P, M)$) as it is formed, in f64 in the order of the
+  frames. The memory of the derivative is $O(K + M)$. θ travels with the
+  call, so the second pass evaluates at the θ of the first; there is no
+  refusal for values changed in between, as `FrameEnergies.vjp` has.
+
+The choice is a property of the function, not of a call: the JVP rule
+sees one frame, and the frames of a call are formed by the batching rule
+from what it asked for. Its cost, measured on 4 frames:
+
+| Transformation in `params` | Frames evaluated, `"keep"` | `"recompute"` |
+|---|---|---|
+| `grad` | 4 | 4: the energies of the first pass are not used, and XLA removes its call |
+| `value_and_grad` | 4 | 8 |
+
+Where the result is a row per frame anyway (`jax.vmap` of `jax.grad`, or
+the tangents of each example), the batching rules of `"recompute"`
+evaluate the rows with the frames in one call and contract each example's
+own: they are the size of the result. `jacfwd` and `jacrev` contract their
+$M$ tangents or $K$ cotangents in one call. A batch can also be taken in
+chunks with `jax.lax.map(jax.checkpoint(...), batch_size=C)`, with
+`"keep"`: JAX then evaluates each chunk again in the backward, with the
+rows of one chunk at a time, $8CM$ bytes.
+
 **Errors that depend on data**, such as a position that is not finite, or a
 cell that is not reduced or is below twice the cutoff, are found when the
 frame is evaluated. The handler returns a failed precondition naming the
@@ -480,9 +519,10 @@ call gives what it gave before, to the bit.
 - Each call waits for its frames, and an error names the frame. On a CUDA
   device, the call waits on the host for XLA's stream before and after its
   frames.
-- The boundary of a batch on the device, the second pass above
-  `jacobian_bytes`, `aux` (the virial and the observed columns), and a
-  helper for JAX-MD are later parts of #138.
+- The boundary of a batch on the device, `aux` (the virial and the
+  observed columns), and a helper for JAX-MD are later parts of #138. The
+  second pass accumulates its contractions on the host, as the rows reach
+  it; on the device it comes with the boundary of a batch.
 - A script that runs JAX on a GPU in the same process as an MDIR
   simulation on the GPU should disable XLA's preallocation
   (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, or
@@ -543,7 +583,38 @@ the table above holds on the device, in double and mixed:
 | mixed against double, 5 frames, deterministic and not: the energy; $\mathbf G$ and the gradient in the edges, of the largest entry of the frame; $\partial U/\partialoldsymbol	heta$, of the largest entry | at most $3.1	imes10^{-3}$ kJ/mol; $2.6	imes10^{-5}$ and $1.7	imes10^{-5}$; $2.3	imes10^{-7}$. Tolerances $5	imes10^{-3}$ kJ/mol, $10^{-4}$, $10^{-6}$: those of the evaluator in mixed precision |
 | a program in mixed precision without the deterministic mode, whose forces on a GPU are summed in an order that changes from one evaluation to the next ($1.4	imes10^{-7}$ of the largest entry): float32 and float64 positions against the evaluator | the types of the table; $1.8	imes10^{-7}$ of the largest entry and 0 kJ/mol, tolerances $10^{-5}$ and $5	imes10^{-3}$ kJ/mol (to the bit on the CPU) |
 | a call of a program of the GPU on another device than its runtime's | refused, naming both. Tested with one device by naming another in `MDRT_DEVICE` after the runtime began; a second device was not available |
-| compute-sanitizer memcheck: energies, gradients, new values of `params`, a frame that fails | 0 errors |
+| compute-sanitizer memcheck: energies, gradients, new values of `params`, the second pass, a frame that fails | 0 errors |
+
+**The second pass** (`jacobian="recompute"`, the scenario `second` of the
+same tests, on the CPU and the RTX 5090, double and mixed, four frames of
+the dipeptide, $M = 23$). It is compared with `jacobian="keep"` on the same
+frames, relative to the largest entry, tolerance $10^{-12}$:
+
+| Transformation in `params` | CPU double | CPU mixed | GPU double | GPU mixed |
+|---|---|---|---|---|
+| `grad` of a weighted sum over a `vmap`, eager and under `jit`; `value_and_grad` in the three arguments | 2.1e-19 | at most 2.1e-19 | 0 | 0 |
+| `jvp` and `jax.linearize` of the batch | 6.2e-16 | at most 6.2e-16 | 0 | 0 |
+| `jacfwd`, `jacrev`, `vmap` of `grad`, one frame eager and under `jit`, `jvp` of one frame | 0 | 0 | 0 | 0 |
+
+The differences on the CPU are those of the order of a sum: the handler
+adds the rows in the order of the frames, XLA in its own. On the GPU the
+tests run with XLA's deterministic ops (above).
+
+Central differences of the energy in `params` through the second pass,
+in double precision, as above:
+
+| Parameter | CPU | GPU | Tolerance |
+|---|---|---|---|
+| `params['sigma']` | 2.5e-12 | 1.3e-13 | 1e-6 |
+| `params['q']` | 6.3e-12 | 2.5e-11 | 1e-6 |
+
+`jax.test_util.check_grads` in `params` (forward and reverse) passes on
+both. The frames evaluated for a derivative in `params` are counted in the
+compiled function, with the result of the table above. Refused, as for
+`"keep"`: an unknown `jacobian` (`InputError` when the function is made),
+every second derivative through the new primitives, and `vmap` over
+`params`. Above `jacobian_bytes`, `"keep"` raises naming `"recompute"`,
+which the bound does not limit.
 
 ## Order and identity
 

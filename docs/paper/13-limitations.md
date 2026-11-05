@@ -193,9 +193,11 @@ parameters, which a fit to the pressure needs; and the parts of the JAX
 adapter after the first. The first part
 (D371) runs on the CPU, on the loop of frames above, and its device
 target (D373) on the same loop, through copies in
-host memory that it waits for on XLA's stream; a batch boundary on the
-device, which removes those copies, and a second pass for a Jacobian
-above its bound follow.
+host memory that it waits for on XLA's stream. Its second pass for the
+derivative in the parameters (D[frame-evaluator-jax-second-pass]) keeps
+no Jacobian, and adds the rows on the host. A batch boundary on the
+device, which removes those copies and moves that sum to the device,
+follows.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
 one GPU first. A message-passing potential is not local: its layer $k$ forms

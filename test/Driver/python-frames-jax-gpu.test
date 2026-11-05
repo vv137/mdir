@@ -6,7 +6,7 @@
 # everything of python-frames-jax.test; the handler of CUDA against that of
 # the CPU, to the bit; the order of the calls on XLA's stream against
 # synchronized calls; a call on another device refused; mixed against
-# double. XLA's preallocation is off, as for any script that runs an MDIR
+# double; the second pass (D[frame-evaluator-jax-second-pass]). XLA's preallocation is off, as for any script that runs an MDIR
 # simulation on the GPU beside JAX, and XLA's deterministic ops are on: a
 # reduction of XLA on a GPU, such as a sum over the frames, has one order
 # only with them (D373).
@@ -17,6 +17,8 @@
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide device Double GPU | FileCheck %s --check-prefixes=DEVICE -DMODE="GPU Double"
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide device Mixed GPU | FileCheck %s --check-prefixes=DEVICE -DMODE="GPU Mixed"
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide precisions Mixed GPU | FileCheck %s --check-prefixes=PRECISIONS -DMODE="GPU Mixed"
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide second Double GPU | FileCheck %s --check-prefixes=SECOND,SECOND-FD -DMODE="GPU Double"
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide second Mixed GPU | FileCheck %s --check-prefixes=SECOND -DMODE="GPU Mixed"
 # GATE: [[MODE]]: the energies, the gradient in the positions, and the Jacobian in the tunables against FrameEvaluator.evaluate, to the bit: True
 # GATE: [[MODE]]: one frame, eager and under jit, to the bit: True
 # GATE: [[MODE]]: the energy's gradients in params, the positions, and the cell of each frame, vmap and jit(vmap) against a loop, jit against eager, to the bit: True
@@ -48,3 +50,19 @@
 # PRECISIONS: [[MODE]]: mixed, deterministic against double, 5 frames: the energy
 # PRECISIONS: [[MODE]]: mixed against double, 5 frames: the energy
 # PRECISIONS: jax passed
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, grad of a weighted sum over a vmap:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, the same under jit:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, value_and_grad in params, the positions, and the cell:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, jvp in params of the batch:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, jax.linearize in params, applied:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, jacfwd in params:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, jacrev in params:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, vmap of grad:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, grad of one frame, eager and under jit:
+# SECOND: [[MODE]]: the second pass against the kept Jacobian, jvp of one frame under jit:
+# SECOND: [[MODE]]: the frames evaluated for a derivative in params of 4 frames, with the Jacobian kept and with the second pass: grad 4 and 4, value_and_grad 4 and 8
+# SECOND: [[MODE]]: refused: an unknown jacobian, every second derivative through the second pass, vmap over params; above jacobian_bytes, jacobian='keep' names the second pass, which jacobian_bytes does not bound: True
+# SECOND-FD: [[MODE]]: the second pass, central differences in params['sigma']: relative error
+# SECOND-FD: [[MODE]]: the second pass, central differences in params['q']: relative error
+# SECOND-FD: [[MODE]]: the second pass, jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) in params, step 1e-07: passed
+# SECOND: jax passed

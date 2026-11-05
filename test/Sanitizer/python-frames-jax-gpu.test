@@ -10,6 +10,6 @@
 # RUN:   %S/../Driver/Inputs/python_frames_jax.py %S/../Driver/Inputs/dipeptide sanitize Double GPU 2>&1 \
 # RUN:   | FileCheck %s
 
-# CHECK: GPU Double: sanitize: energies, gradients, the program's cell, new values of params, a frame that fails, and the same energies after it: True
+# CHECK: GPU Double: sanitize: energies, gradients, the program's cell, new values of params, the second pass, a frame that fails, and the same energies after it: True
 # CHECK: jax passed
 # CHECK: ERROR SUMMARY: 0 errors
