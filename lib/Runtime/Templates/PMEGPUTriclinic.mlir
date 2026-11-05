@@ -59,12 +59,12 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -108,10 +108,10 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -127,7 +127,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -230,7 +230,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -333,7 +333,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -521,12 +521,12 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -570,10 +570,10 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -589,7 +589,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -692,7 +692,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -795,7 +795,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -999,12 +999,12 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -1023,13 +1023,13 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %order = func.call @mdir.template.order.index() : () -> index
       %xc = arith.constant 0 : index
       %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
-      %xp = PME_EXTEND_POS %xs : !pme_pos to f64
+      %xp = mdrt.template_convert %xs : !pme_pos to f64
       %yc = arith.constant 1 : index
       %ys = memref.load %x[%i, %yc] : memref<?x3x!pme_pos, 1>
-      %yp = PME_EXTEND_POS %ys : !pme_pos to f64
+      %yp = mdrt.template_convert %ys : !pme_pos to f64
       %zc = arith.constant 2 : index
       %zs = memref.load %x[%i, %zc] : memref<?x3x!pme_pos, 1>
-      %zp = PME_EXTEND_POS %zs : !pme_pos to f64
+      %zp = mdrt.template_convert %zs : !pme_pos to f64
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zp, %h22 : f64
       %fr_y1 = arith.mulf %yp, %h11 : f64
@@ -1045,7 +1045,7 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -1078,7 +1078,7 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -1111,7 +1111,7 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -1177,12 +1177,12 @@ func.func private @mdrt_gpu_pme_tables_triclinic(%moduli: memref<?x?xf64, 1>, %t
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -1236,9 +1236,9 @@ func.func private @mdrt_gpu_pme_tables_triclinic(%moduli: memref<?x?xf64, 1>, %t
       %at0 = arith.addi %tstart, %k : index
       %at1 = arith.addi %at0, %kk : index
       %at2 = arith.addi %at1, %kk : index
-      %mr = PME_F64_TO_REAL %m : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
-      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      %mr = mdrt.template_convert %m : f64 to !pme_real
+      %m2r = mdrt.template_convert %m2 : f64 to !pme_real
+      %fr = mdrt.template_convert %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
       memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>
@@ -1288,12 +1288,12 @@ func.func private @mdrt_gpu_pme_convolve_triclinic(%c: memref<?x!pme_real, 1>, %
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -1301,15 +1301,15 @@ func.func private @mdrt_gpu_pme_convolve_triclinic(%c: memref<?x!pme_real, 1>, %
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
   %count = arith.muli %k1, %k2 : index
   %ty0 = arith.muli %k1, %c3t : index
   %k2_3 = arith.muli %k2, %c3t : index
@@ -1454,25 +1454,25 @@ func.func private @mdrt_gpu_pme_convolve_triclinic(%c: memref<?x!pme_real, 1>, %
     %lead = arith.cmpi eq, %tx, %cc0 : index
     %r0 = gpu.all_reduce add %e uniform {
     } : (!pme_real) -> !pme_real
-    %r0w = PME_REAL_TO_F64 %r0 : !pme_real to f64
+    %r0w = mdrt.template_convert %r0 : !pme_real to f64
     %r1 = gpu.all_reduce add %v00 uniform {
     } : (!pme_real) -> !pme_real
-    %r1w = PME_REAL_TO_F64 %r1 : !pme_real to f64
+    %r1w = mdrt.template_convert %r1 : !pme_real to f64
     %r2 = gpu.all_reduce add %v01 uniform {
     } : (!pme_real) -> !pme_real
-    %r2w = PME_REAL_TO_F64 %r2 : !pme_real to f64
+    %r2w = mdrt.template_convert %r2 : !pme_real to f64
     %r3 = gpu.all_reduce add %v02 uniform {
     } : (!pme_real) -> !pme_real
-    %r3w = PME_REAL_TO_F64 %r3 : !pme_real to f64
+    %r3w = mdrt.template_convert %r3 : !pme_real to f64
     %r4 = gpu.all_reduce add %v11 uniform {
     } : (!pme_real) -> !pme_real
-    %r4w = PME_REAL_TO_F64 %r4 : !pme_real to f64
+    %r4w = mdrt.template_convert %r4 : !pme_real to f64
     %r5 = gpu.all_reduce add %v12 uniform {
     } : (!pme_real) -> !pme_real
-    %r5w = PME_REAL_TO_F64 %r5 : !pme_real to f64
+    %r5w = mdrt.template_convert %r5 : !pme_real to f64
     %r6 = gpu.all_reduce add %v22 uniform {
     } : (!pme_real) -> !pme_real
-    %r6w = PME_REAL_TO_F64 %r6 : !pme_real to f64
+    %r6w = mdrt.template_convert %r6 : !pme_real to f64
     scf.if %lead {
       %oc0 = arith.constant 0 : index
       %o0 = arith.addi %out, %oc0 : index
@@ -1625,12 +1625,12 @@ func.func private @mdrt_gpu_pme_scale_triclinic(%c: memref<?x!pme_real, 1>, %tab
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -1638,8 +1638,8 @@ func.func private @mdrt_gpu_pme_scale_triclinic(%c: memref<?x!pme_real, 1>, %tab
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %c3t = arith.constant 3 : index
   %ty0 = arith.muli %k1, %c3t : index
@@ -1654,9 +1654,9 @@ func.func private @mdrt_gpu_pme_scale_triclinic(%c: memref<?x!pme_real, 1>, %tab
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
@@ -1765,12 +1765,12 @@ func.func private @mdrt_gpu_pme_tables_dispersion_triclinic(%moduli: memref<?x?x
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -1790,12 +1790,12 @@ func.func private @mdrt_gpu_pme_tables_dispersion_triclinic(%moduli: memref<?x?x
   %pdc = arith.mulf %pd0, %coulomb : f64
   %prefactor = arith.negf %pdc : f64
   %pib = arith.divf %pi, %beta : f64
-  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %pibr = mdrt.template_convert %pib : f64 to !pme_real
   %sqrtpi = arith.constant 1.7724538509055159 : f64
-  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %sqrtpir = mdrt.template_convert %sqrtpi : f64 to !pme_real
   %six = arith.constant 6.0 : f64
   %sixgauss = arith.mulf %six, %gauss : f64
-  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+  %sixgaussr = mdrt.template_convert %sixgauss : f64 to !pme_real
   %k12a = arith.addi %k1, %k2 : index
   %entries = arith.addi %k12a, %k3 : index
   %blocks_entries = func.call @mdrt_gpu_pme_blocks_triclinic(%entries) : (index) -> index
@@ -1838,9 +1838,9 @@ func.func private @mdrt_gpu_pme_tables_dispersion_triclinic(%moduli: memref<?x?x
       %at0 = arith.addi %tstart, %k : index
       %at1 = arith.addi %at0, %kk : index
       %at2 = arith.addi %at1, %kk : index
-      %mr = PME_F64_TO_REAL %m : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
-      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      %mr = mdrt.template_convert %m : f64 to !pme_real
+      %m2r = mdrt.template_convert %m2 : f64 to !pme_real
+      %fr = mdrt.template_convert %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
       memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>
@@ -1890,12 +1890,12 @@ func.func private @mdrt_gpu_pme_convolve_dispersion_triclinic(%c: memref<?x!pme_
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -1911,21 +1911,21 @@ func.func private @mdrt_gpu_pme_convolve_dispersion_triclinic(%c: memref<?x!pme_
   %pdc = arith.mulf %pd0, %coulomb : f64
   %prefactor = arith.negf %pdc : f64
   %pib = arith.divf %pi, %beta : f64
-  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %pibr = mdrt.template_convert %pib : f64 to !pme_real
   %sqrtpi = arith.constant 1.7724538509055159 : f64
-  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %sqrtpir = mdrt.template_convert %sqrtpi : f64 to !pme_real
   %six = arith.constant 6.0 : f64
   %sixgauss = arith.mulf %six, %gauss : f64
-  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %sixgaussr = mdrt.template_convert %sixgauss : f64 to !pme_real
+  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
   %count = arith.muli %k1, %k2 : index
   %ty0 = arith.muli %k1, %c3t : index
   %k2_3 = arith.muli %k2, %c3t : index
@@ -2077,25 +2077,25 @@ func.func private @mdrt_gpu_pme_convolve_dispersion_triclinic(%c: memref<?x!pme_
     %lead = arith.cmpi eq, %tx, %cc0 : index
     %r0 = gpu.all_reduce add %e uniform {
     } : (!pme_real) -> !pme_real
-    %r0w = PME_REAL_TO_F64 %r0 : !pme_real to f64
+    %r0w = mdrt.template_convert %r0 : !pme_real to f64
     %r1 = gpu.all_reduce add %v00 uniform {
     } : (!pme_real) -> !pme_real
-    %r1w = PME_REAL_TO_F64 %r1 : !pme_real to f64
+    %r1w = mdrt.template_convert %r1 : !pme_real to f64
     %r2 = gpu.all_reduce add %v01 uniform {
     } : (!pme_real) -> !pme_real
-    %r2w = PME_REAL_TO_F64 %r2 : !pme_real to f64
+    %r2w = mdrt.template_convert %r2 : !pme_real to f64
     %r3 = gpu.all_reduce add %v02 uniform {
     } : (!pme_real) -> !pme_real
-    %r3w = PME_REAL_TO_F64 %r3 : !pme_real to f64
+    %r3w = mdrt.template_convert %r3 : !pme_real to f64
     %r4 = gpu.all_reduce add %v11 uniform {
     } : (!pme_real) -> !pme_real
-    %r4w = PME_REAL_TO_F64 %r4 : !pme_real to f64
+    %r4w = mdrt.template_convert %r4 : !pme_real to f64
     %r5 = gpu.all_reduce add %v12 uniform {
     } : (!pme_real) -> !pme_real
-    %r5w = PME_REAL_TO_F64 %r5 : !pme_real to f64
+    %r5w = mdrt.template_convert %r5 : !pme_real to f64
     %r6 = gpu.all_reduce add %v22 uniform {
     } : (!pme_real) -> !pme_real
-    %r6w = PME_REAL_TO_F64 %r6 : !pme_real to f64
+    %r6w = mdrt.template_convert %r6 : !pme_real to f64
     scf.if %lead {
       %oc0 = arith.constant 0 : index
       %o0 = arith.addi %out, %oc0 : index
@@ -2248,12 +2248,12 @@ func.func private @mdrt_gpu_pme_scale_dispersion_triclinic(%c: memref<?x!pme_rea
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -2269,14 +2269,14 @@ func.func private @mdrt_gpu_pme_scale_dispersion_triclinic(%c: memref<?x!pme_rea
   %pdc = arith.mulf %pd0, %coulomb : f64
   %prefactor = arith.negf %pdc : f64
   %pib = arith.divf %pi, %beta : f64
-  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %pibr = mdrt.template_convert %pib : f64 to !pme_real
   %sqrtpi = arith.constant 1.7724538509055159 : f64
-  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %sqrtpir = mdrt.template_convert %sqrtpi : f64 to !pme_real
   %six = arith.constant 6.0 : f64
   %sixgauss = arith.mulf %six, %gauss : f64
-  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %sixgaussr = mdrt.template_convert %sixgauss : f64 to !pme_real
+  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %c3t = arith.constant 3 : index
   %ty0 = arith.muli %k1, %c3t : index
@@ -2291,9 +2291,9 @@ func.func private @mdrt_gpu_pme_scale_dispersion_triclinic(%c: memref<?x!pme_rea
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
@@ -2416,12 +2416,12 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
@@ -2431,12 +2431,12 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -2476,10 +2476,10 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -2495,7 +2495,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -2608,7 +2608,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -2721,7 +2721,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -2937,9 +2937,9 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
         %fx64 = arith.mulf %mq, %fxh : !pme_real
         %fy64 = arith.mulf %mq, %fyh : !pme_real
         %fz64 = arith.mulf %mq, %fzh : !pme_real
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fx64 : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fy64 : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
@@ -2981,12 +2981,12 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
@@ -2996,12 +2996,12 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
@@ -3032,7 +3032,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
       %dy = memref.alloca() : memref<8x!pme_real>
       %dz = memref.alloca() : memref<8x!pme_real>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %xsc = arith.constant 0 : index
       %xsn = arith.muli %count, %xsc : index
       %xsat = arith.addi %xsn, %i : index
@@ -3441,9 +3441,9 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
         %fx64 = arith.mulf %mq, %fxh : !pme_real
         %fy64 = arith.mulf %mq, %fyh : !pme_real
         %fz64 = arith.mulf %mq, %fzh : !pme_real
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fx64 : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fy64 : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
@@ -3488,12 +3488,12 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
@@ -3503,12 +3503,12 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -3548,10 +3548,10 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -3567,7 +3567,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -3680,7 +3680,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -3793,7 +3793,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -3993,7 +3993,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %first = arith.cmpi eq, %j3, %c0 : index
       %stores = arith.andi %inside, %first : i1
       scf.if %stores {
-        %pots = PME_REAL_TO_FRC %allx : !pme_real to !pme_frc
+        %pots = mdrt.template_convert %allx : !pme_real to !pme_frc
         memref.store %pots, %f[%i] : memref<?x!pme_frc, 1>
       }
     gpu.terminator
@@ -4033,12 +4033,12 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -4087,10 +4087,10 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -4106,7 +4106,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4209,7 +4209,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4312,7 +4312,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4503,12 +4503,12 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -4557,10 +4557,10 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -4576,7 +4576,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4679,7 +4679,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4782,7 +4782,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -4984,12 +4984,12 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
@@ -4999,12 +4999,12 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -5062,10 +5062,10 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %xi = mdrt.template_convert %xs : !pme_pos to f64
+      %yi = mdrt.template_convert %ys : !pme_pos to f64
+      %zi = mdrt.template_convert %zs : !pme_pos to f64
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %fr_one = arith.constant 1.0 : f64
       %fr_z = arith.mulf %zi, %h22 : f64
       %fr_y1 = arith.mulf %yi, %h11 : f64
@@ -5081,7 +5081,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i32
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
+      %px_fracr = mdrt.template_convert %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
       %px_fu0 = math.floor %px_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -5194,7 +5194,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i32
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
+      %py_fracr = mdrt.template_convert %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
       %py_fu0 = math.floor %py_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -5307,7 +5307,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i32
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
+      %pz_fracr = mdrt.template_convert %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
       %pz_fu0 = math.floor %pz_u : !pme_real
       // A coordinate that is not a number takes the point 0, so that the
@@ -5524,9 +5524,9 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
         %fx64 = arith.mulf %mq, %fxh : !pme_real
         %fy64 = arith.mulf %mq, %fyh : !pme_real
         %fz64 = arith.mulf %mq, %fzh : !pme_real
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fx64 : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fy64 : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
@@ -5586,12 +5586,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
   %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
@@ -5601,12 +5601,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
@@ -5655,7 +5655,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
       %dy = memref.alloca() : memref<8x!pme_real>
       %dz = memref.alloca() : memref<8x!pme_real>
       %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %xsc = arith.constant 0 : index
       %xsn = arith.muli %count, %xsc : index
       %xsat = arith.addi %xsn, %i : index
@@ -6065,9 +6065,9 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
         %fx64 = arith.mulf %mq, %fxh : !pme_real
         %fy64 = arith.mulf %mq, %fyh : !pme_real
         %fz64 = arith.mulf %mq, %fzh : !pme_real
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fx64 : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fy64 : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>

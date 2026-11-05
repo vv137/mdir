@@ -5143,6 +5143,8 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // tiles, and the atomic additions (D369, #739).
   if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
     return failure();
+  if (failed(kernels::resolveTemplateConversions(*templates)))
+    return failure();
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
@@ -5227,6 +5229,8 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   // The parameters of the instance: the order, the constants of the
   // tiles, and the atomic additions (D369, #739).
   if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
+    return failure();
+  if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();

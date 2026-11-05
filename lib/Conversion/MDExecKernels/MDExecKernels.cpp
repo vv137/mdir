@@ -6,6 +6,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -2551,17 +2552,6 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
                                              Type charge, Type force,
                                              int64_t order) {
   auto spell = [](Type type) { return type.isF64() ? "f64" : "f32"; };
-  // The conversion from and to f64 of a type that is f64 is a cast of the
-  // bits, which changes nothing.
-  auto extend = [](Type type) {
-    return type.isF64() ? "arith.bitcast" : "arith.extf";
-  };
-  // The conversion between two of f32 and f64.
-  auto convert = [](Type from, Type to) -> const char * {
-    if (from == to)
-      return "arith.bitcast";
-    return from.isF64() ? "arith.truncf" : "arith.extf";
-  };
   std::string suffix = getPMESuffix(position, charge, force, order);
   std::string instance;
   while (!text.empty()) {
@@ -2571,20 +2561,8 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       instance += "!pme_chg = " + std::string(spell(charge));
     } else if (text.consume_front("!pme_frc = f64")) {
       instance += "!pme_frc = " + std::string(spell(force));
-    } else if (text.consume_front("PME_EXTEND_POS")) {
-      instance += extend(position);
-    } else if (text.consume_front("PME_EXTEND_CHG")) {
-      instance += extend(charge);
-    } else if (text.consume_front("PME_NARROW_FRC")) {
-      instance += force.isF64() ? "arith.bitcast" : "arith.truncf";
     } else if (text.consume_front("!pme_real = f64")) {
       instance += "!pme_real = " + std::string(spell(force));
-    } else if (text.consume_front("PME_CHG_TO_REAL")) {
-      instance += convert(charge, force);
-    } else if (text.consume_front("PME_F64_TO_REAL")) {
-      instance += convert(Float64Type::get(force.getContext()), force);
-    } else if (text.consume_front("PME_REAL_TO_F64")) {
-      instance += convert(force, Float64Type::get(force.getContext()));
     } else if (text.consume_front("PME_TILE_POINTS_")) {
       // The points of a tile of the spreading of bins of E points (D282),
       // (E + P - 1)^3, in the shapes of the tiles; the constants of the
@@ -2599,8 +2577,6 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       // The transforms of the runtime of the host for a grid in
       // `!pme_real` (runtime/mdrt_fft.c).
       instance += force.isF64() ? "mdrtFFT64" : "mdrtFFT32";
-    } else if (text.consume_front("PME_REAL_TO_FRC")) {
-      instance += "arith.bitcast";
     } else if (text.consume_front("@mdrt")) {
       // The functions of the template, `@mdrt.` or `@mdrt_`; the functions
       // of the runtime, such as `@mdrtCudaFFTForward3D`, keep their names.
@@ -2616,6 +2592,41 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
     }
   }
   return instance;
+}
+
+LogicalResult kernels::resolveTemplateConversions(Operation *root) {
+  // Each `mdrt.template_convert` of a template becomes the conversion that
+  // the types of its instance need (D[template-ir-pme-convert], #739): a
+  // cast of the bits between two of the same type, which changes nothing,
+  // and otherwise an extension or a truncation. Every op is checked before
+  // any is replaced, so that a module with an error is left as it was.
+  SmallVector<mdrt::TemplateConvertOp> conversions;
+  root->walk([&](mdrt::TemplateConvertOp op) { conversions.push_back(op); });
+  for (mdrt::TemplateConvertOp op : conversions) {
+    Type from = getElementTypeOrSelf(op.getIn().getType());
+    Type to = getElementTypeOrSelf(op.getOut().getType());
+    if (from != to &&
+        from.getIntOrFloatBitWidth() == to.getIntOrFloatBitWidth())
+      return op.emitOpError() << "converts between " << from << " and " << to
+                              << ", which are of the same width";
+  }
+  for (mdrt::TemplateConvertOp op : conversions) {
+    OpBuilder builder(op);
+    Value in = op.getIn();
+    Type type = op.getOut().getType();
+    unsigned from = getElementTypeOrSelf(in.getType()).getIntOrFloatBitWidth();
+    unsigned to = getElementTypeOrSelf(type).getIntOrFloatBitWidth();
+    Value out;
+    if (in.getType() == type)
+      out = arith::BitcastOp::create(builder, op.getLoc(), type, in);
+    else if (to > from)
+      out = arith::ExtFOp::create(builder, op.getLoc(), type, in);
+    else
+      out = arith::TruncFOp::create(builder, op.getLoc(), type, in);
+    op.getOut().replaceAllUsesWith(out);
+    op.erase();
+  }
+  return success();
 }
 
 LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,

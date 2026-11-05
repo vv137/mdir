@@ -8,9 +8,10 @@
 // This is a template. The compiler adds it to a module that has a
 // reciprocal sum, where it is specialized like any other code. `!pme_pos`,
 // `!pme_chg`, and `!pme_frc` are the types that the positions, the charges,
-// and the forces are stored in; the instance replaces them, and the ops
-// PME_EXTEND_POS, PME_EXTEND_CHG, and PME_NARROW_FRC with the conversions
-// between them and f64. `!pme_real` is the type of the forces, as in the
+// and the forces are stored in; the instance replaces them, and each
+// `mdrt.template_convert` between them and f64 with the conversion that
+// their types need (D[template-ir-pme-convert]). `!pme_real` is the type
+// of the forces, as in the
 // template for devices (PMEGPU.mlir): the weights of the B-splines, the
 // grid and its transform, the factors of the influence function, the
 // product, and the sums of the gathering are in it, so in f32 in the mixed
@@ -109,7 +110,7 @@ func.func private @mdrt.pme_bspline(%w: f64, %n: index, %values: memref<8x!pme_r
     func.call @mdrt.pme_window(%w, %n, %values, %slopes, %moduli)
         : (f64, index, memref<8x!pme_real>, memref<8x!pme_real>, memref<?x?xf64>) -> ()
   } else {
-    %wr = PME_F64_TO_REAL %w : f64 to !pme_real
+    %wr = mdrt.template_convert %w : f64 to !pme_real
     func.call @mdrt.pme_spline(%wr, %n, %values, %slopes)
         : (!pme_real, index, memref<8x!pme_real>, memref<8x!pme_real>) -> ()
   }
@@ -144,8 +145,8 @@ func.func private @mdrt.pme_window(%w: f64, %n: index, %values: memref<8x!pme_re
         : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
     %sl = func.call @mdrt.pme_clenshaw(%moduli, %c3, %sd, %d, %t2, %t)
         : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
-    %vr = PME_F64_TO_REAL %v : f64 to !pme_real
-    %slr = PME_F64_TO_REAL %sl : f64 to !pme_real
+    %vr = mdrt.template_convert %v : f64 to !pme_real
+    %slr = mdrt.template_convert %sl : f64 to !pme_real
     memref.store %vr, %values[%j] : memref<8x!pme_real>
     memref.store %slr, %slopes[%j] : memref<8x!pme_real>
   }
@@ -380,10 +381,10 @@ func.func private @mdrt.pme_spread_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!p
   %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
   %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
   %qs = memref.load %q[%i] : memref<?x!pme_chg>
-  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-  %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+  %xi = mdrt.template_convert %xs : !pme_pos to f64
+  %yi = mdrt.template_convert %ys : !pme_pos to f64
+  %zi = mdrt.template_convert %zs : !pme_pos to f64
+  %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
   %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
@@ -418,10 +419,10 @@ func.func private @mdrt.pme_spread_one_triclinic(%x: memref<?x3x!pme_pos>, %q: m
   %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
   %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
   %qs = memref.load %q[%i] : memref<?x!pme_chg>
-  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-  %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+  %xi = mdrt.template_convert %xs : !pme_pos to f64
+  %yi = mdrt.template_convert %ys : !pme_pos to f64
+  %zi = mdrt.template_convert %zs : !pme_pos to f64
+  %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
   // s = x H⁻¹.
   %s3 = arith.mulf %zi, %h22 : f64
   %s2y = arith.mulf %yi, %h11 : f64
@@ -706,8 +707,8 @@ func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!
         %at3a = arith.muli %point, %two : index
         %at3 = arith.addi %extra, %at3a : index
         %at4 = arith.addi %at3, %c1 : index
-        %gmr = PME_F64_TO_REAL %gm : f64 to !pme_real
-        %gqr = PME_F64_TO_REAL %gq : f64 to !pme_real
+        %gmr = mdrt.template_convert %gm : f64 to !pme_real
+        %gqr = mdrt.template_convert %gq : f64 to !pme_real
         memref.store %gmr, %tables[%at3] : memref<?x!pme_real>
         memref.store %gqr, %tables[%at4] : memref<?x!pme_real>
         scf.yield %sm, %sq, %f0 : f64, f64, f64
@@ -725,9 +726,9 @@ func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!
       %at0 = arith.muli %point, %c3 : index
       %at1 = arith.addi %at0, %c1 : index
       %at2 = arith.addi %at0, %c2 : index
-      %mr = PME_F64_TO_REAL %v0 : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %v1 : f64 to !pme_real
-      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      %mr = mdrt.template_convert %v0 : f64 to !pme_real
+      %m2r = mdrt.template_convert %v1 : f64 to !pme_real
+      %fr = mdrt.template_convert %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real>
       memref.store %fr, %tables[%at2] : memref<?x!pme_real>
@@ -996,7 +997,7 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
   %volume = arith.mulf %lxy, %lz : f64
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
   %rows = memref.dim %moduli, %c0 : memref<?x?xf64>
   %prolate = arith.cmpi eq, %rows, %c5 : index
   %other = arith.ori %dispersion, %prolate : i1
@@ -1067,9 +1068,9 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
       %bcd, %fd, %vdd = func.call @mdrt.pme_influence(%m1d, %m2d, %m3d, %mods, %moduli, %volume,
                                                        %beta, %coulomb, %dispersion)
           : (f64, f64, f64, f64, memref<?x?xf64>, f64, f64, f64, i1) -> (f64, f64, f64)
-      %bcr = PME_F64_TO_REAL %bcd : f64 to !pme_real
-      %fr = PME_F64_TO_REAL %fd : f64 to !pme_real
-      %vdr = PME_F64_TO_REAL %vdd : f64 to !pme_real
+      %bcr = mdrt.template_convert %bcd : f64 to !pme_real
+      %fr = mdrt.template_convert %fd : f64 to !pme_real
+      %vdr = mdrt.template_convert %vdd : f64 to !pme_real
       scf.yield %bcr, %fr, %vdr : !pme_real, !pme_real, !pme_real
     }
     %base2 = arith.addi %base, %z : index
@@ -1136,8 +1137,8 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
     memref.store %imb, %c[%im_at] : memref<?x!pme_real>
     scf.yield %en, %wn : !pme_real, vector<9x!pme_real>
   }
-  %e64 = PME_REAL_TO_F64 %e : !pme_real to f64
-  %w64 = PME_REAL_TO_F64 %w : vector<9x!pme_real> to vector<9xf64>
+  %e64 = mdrt.template_convert %e : !pme_real to f64
+  %w64 = mdrt.template_convert %w : vector<9x!pme_real> to vector<9xf64>
   return %e64, %w64 : f64, vector<9xf64>
 }
 
@@ -1178,8 +1179,8 @@ func.func private @mdrt.pme_convolve_row_triclinic(%c: memref<?x!pme_real>, %tab
   %m2 = arith.addf %i1_h10, %i2_h11 : f64
   %i2_h21 = arith.mulf %i2, %h21 : f64
   %i12_z = arith.addf %i1_h20, %i2_h21 : f64
-  %m1r = PME_F64_TO_REAL %m1 : f64 to !pme_real
-  %m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
+  %m1r = mdrt.template_convert %m1 : f64 to !pme_real
+  %m2r = mdrt.template_convert %m2 : f64 to !pme_real
   %mod1 = memref.load %moduli[%c0, %a] : memref<?x?xf64>
   %mod2 = memref.load %moduli[%c1, %b] : memref<?x?xf64>
   %mod12 = arith.mulf %mod1, %mod2 : f64
@@ -1190,15 +1191,15 @@ func.func private @mdrt.pme_convolve_row_triclinic(%c: memref<?x!pme_real>, %tab
     %zf = arith.sitofp %zi : i64 to f64
     %i3_h22 = arith.mulf %zf, %h22 : f64
     %m3 = arith.addf %i12_z, %i3_h22 : f64
-    %m3r = PME_F64_TO_REAL %m3 : f64 to !pme_real
+    %m3r = mdrt.template_convert %m3 : f64 to !pme_real
     %mod3 = memref.load %moduli[%c2, %z] : memref<?x?xf64>
     %mods = arith.mulf %mod12, %mod3 : f64
     %bcd, %fd, %vdd = func.call @mdrt.pme_influence(%m1, %m2, %m3, %mods, %moduli, %volume,
                                                      %beta, %coulomb, %dispersion)
         : (f64, f64, f64, f64, memref<?x?xf64>, f64, f64, f64, i1) -> (f64, f64, f64)
-    %bc = PME_F64_TO_REAL %bcd : f64 to !pme_real
-    %factor = PME_F64_TO_REAL %fd : f64 to !pme_real
-    %vd = PME_F64_TO_REAL %vdd : f64 to !pme_real
+    %bc = mdrt.template_convert %bcd : f64 to !pme_real
+    %factor = mdrt.template_convert %fd : f64 to !pme_real
+    %vd = mdrt.template_convert %vdd : f64 to !pme_real
     %base2 = arith.addi %base, %z : index
     %re_at = arith.muli %base2, %c2 : index
     %im_at = arith.addi %re_at, %c1 : index
@@ -1225,8 +1226,8 @@ func.func private @mdrt.pme_convolve_row_triclinic(%c: memref<?x!pme_real>, %tab
     memref.store %imb, %c[%im_at] : memref<?x!pme_real>
     scf.yield %en, %wn : !pme_real, vector<9x!pme_real>
   }
-  %e64 = PME_REAL_TO_F64 %e : !pme_real to f64
-  %w64 = PME_REAL_TO_F64 %w : vector<9x!pme_real> to vector<9xf64>
+  %e64 = mdrt.template_convert %e : !pme_real to f64
+  %w64 = mdrt.template_convert %w : vector<9x!pme_real> to vector<9xf64>
   return %e64, %w64 : f64, vector<9xf64>
 }
 
@@ -1413,9 +1414,9 @@ func.func private @mdrt.pme_gather_sums(%phi: memref<?x!pme_real>,
     }
     scf.yield %bx, %by, %bz : !pme_real, !pme_real, !pme_real
   }
-  %gx64 = PME_REAL_TO_F64 %gx : !pme_real to f64
-  %gy64 = PME_REAL_TO_F64 %gy : !pme_real to f64
-  %gz64 = PME_REAL_TO_F64 %gz : !pme_real to f64
+  %gx64 = mdrt.template_convert %gx : !pme_real to f64
+  %gy64 = mdrt.template_convert %gy : !pme_real to f64
+  %gz64 = mdrt.template_convert %gz : !pme_real to f64
   return %gx64, %gy64, %gz64 : f64, f64, f64
 }
 
@@ -1466,7 +1467,7 @@ func.func private @mdrt.pme_potential_sum(%phi: memref<?x!pme_real>,
     }
     scf.yield %b : !pme_real
   }
-  %g64 = PME_REAL_TO_F64 %g : !pme_real to f64
+  %g64 = mdrt.template_convert %g : !pme_real to f64
   return %g64 : f64
 }
 
@@ -1503,10 +1504,10 @@ func.func private @mdrt.pme_gather_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!p
   %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
   %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
   %qs = memref.load %q[%i] : memref<?x!pme_chg>
-  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-  %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+  %xi = mdrt.template_convert %xs : !pme_pos to f64
+  %yi = mdrt.template_convert %ys : !pme_pos to f64
+  %zi = mdrt.template_convert %zs : !pme_pos to f64
+  %qi = mdrt.template_convert %qs : !pme_chg to f64
   %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
@@ -1525,9 +1526,9 @@ func.func private @mdrt.pme_gather_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!p
   %fx64 = arith.mulf %sxq, %gx : f64
   %fy64 = arith.mulf %syq, %gy : f64
   %fz64 = arith.mulf %szq, %gz : f64
-  %fxs = PME_NARROW_FRC %fx64 : f64 to !pme_frc
-  %fys = PME_NARROW_FRC %fy64 : f64 to !pme_frc
-  %fzs = PME_NARROW_FRC %fz64 : f64 to !pme_frc
+  %fxs = mdrt.template_convert %fx64 : f64 to !pme_frc
+  %fys = mdrt.template_convert %fy64 : f64 to !pme_frc
+  %fzs = mdrt.template_convert %fz64 : f64 to !pme_frc
   memref.store %fxs, %f[%i, %c0] : memref<?x3x!pme_frc>
   memref.store %fys, %f[%i, %c1] : memref<?x3x!pme_frc>
   memref.store %fzs, %f[%i, %c2] : memref<?x3x!pme_frc>
@@ -1575,9 +1576,9 @@ func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?
   %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
   %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
   %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
-  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+  %xi = mdrt.template_convert %xs : !pme_pos to f64
+  %yi = mdrt.template_convert %ys : !pme_pos to f64
+  %zi = mdrt.template_convert %zs : !pme_pos to f64
   %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
   %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
@@ -1587,7 +1588,7 @@ func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?
   %g = func.call @mdrt.pme_potential_sum(%phi, %sx, %sy, %sz, %wx, %wy, %wz, %k1, %k2, %k3, %n)
       : (memref<?x!pme_real>, index, index, index, memref<8x!pme_real>, memref<8x!pme_real>,
          memref<8x!pme_real>, index, index, index, index) -> f64
-  %stored = PME_NARROW_FRC %g : f64 to !pme_frc
+  %stored = mdrt.template_convert %g : f64 to !pme_frc
   memref.store %stored, %f[%i] : memref<?x!pme_frc>
   return
 }
@@ -1627,9 +1628,9 @@ func.func private @mdrt.pme_splines_triclinic(%x: memref<?x3x!pme_pos>, %box: ve
   %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
   %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
   %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
-  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
-  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
-  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+  %xi = mdrt.template_convert %xs : !pme_pos to f64
+  %yi = mdrt.template_convert %ys : !pme_pos to f64
+  %zi = mdrt.template_convert %zs : !pme_pos to f64
   // s = x H⁻¹.
   %s3 = arith.mulf %zi, %h22 : f64
   %s2y = arith.mulf %yi, %h11 : f64
@@ -1672,7 +1673,7 @@ func.func private @mdrt.pme_gather_one_triclinic(%x: memref<?x3x!pme_pos>, %q: m
   %dy = memref.alloca() : memref<8x!pme_real>
   %dz = memref.alloca() : memref<8x!pme_real>
   %qs = memref.load %q[%i] : memref<?x!pme_chg>
-  %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+  %qi = mdrt.template_convert %qs : !pme_chg to f64
   %sx, %sy, %sz = func.call @mdrt.pme_splines_triclinic(%x, %box, %k1, %k2, %k3, %n, %i, %moduli,
                                                         %wx, %wy, %wz, %dx, %dy, %dz)
       : (memref<?x3x!pme_pos>, vector<6xf64>, index, index, index, index, index, memref<?x?xf64>,
@@ -1700,9 +1701,9 @@ func.func private @mdrt.pme_gather_one_triclinic(%x: memref<?x3x!pme_pos>, %q: m
   %fx64 = arith.mulf %mq, %gx_lab : f64
   %fy64 = arith.mulf %mq, %gy_lab : f64
   %fz64 = arith.mulf %mq, %gz_lab : f64
-  %fxs = PME_NARROW_FRC %fx64 : f64 to !pme_frc
-  %fys = PME_NARROW_FRC %fy64 : f64 to !pme_frc
-  %fzs = PME_NARROW_FRC %fz64 : f64 to !pme_frc
+  %fxs = mdrt.template_convert %fx64 : f64 to !pme_frc
+  %fys = mdrt.template_convert %fy64 : f64 to !pme_frc
+  %fzs = mdrt.template_convert %fz64 : f64 to !pme_frc
   memref.store %fxs, %f[%i, %c0] : memref<?x3x!pme_frc>
   memref.store %fys, %f[%i, %c1] : memref<?x3x!pme_frc>
   memref.store %fzs, %f[%i, %c2] : memref<?x3x!pme_frc>
@@ -1746,7 +1747,7 @@ func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q
   %g = func.call @mdrt.pme_potential_sum(%phi, %sx, %sy, %sz, %wx, %wy, %wz, %k1, %k2, %k3, %n)
       : (memref<?x!pme_real>, index, index, index, memref<8x!pme_real>, memref<8x!pme_real>,
          memref<8x!pme_real>, index, index, index, index) -> f64
-  %stored = PME_NARROW_FRC %g : f64 to !pme_frc
+  %stored = mdrt.template_convert %g : f64 to !pme_frc
   memref.store %stored, %f[%i] : memref<?x!pme_frc>
   return
 }
@@ -1819,7 +1820,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
   %c3 = arith.constant 3 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   %zero = arith.constant 0.0 : f64
-  %none = PME_NARROW_FRC %zero : f64 to !pme_frc
+  %none = mdrt.template_convert %zero : f64 to !pme_frc
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
     scf.for %c = %c0 to %c3 step %c1 {
       memref.store %none, %f[%i, %c] : memref<?x3x!pme_frc>
@@ -1872,7 +1873,7 @@ func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
   %c3 = arith.constant 3 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   %zero = arith.constant 0.0 : f64
-  %none = PME_NARROW_FRC %zero : f64 to !pme_frc
+  %none = mdrt.template_convert %zero : f64 to !pme_frc
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
     scf.for %c = %c0 to %c3 step %c1 {
       memref.store %none, %f[%i, %c] : memref<?x3x!pme_frc>

@@ -354,3 +354,14 @@ void HostCallOp::getEffects(
       effects.emplace_back(MemoryEffects::Write::get(), &operand);
     }
 }
+
+LogicalResult TemplateConvertOp::verify() {
+  auto inVector = dyn_cast<VectorType>(getIn().getType());
+  auto outVector = dyn_cast<VectorType>(getOut().getType());
+  if (static_cast<bool>(inVector) != static_cast<bool>(outVector) ||
+      (inVector && inVector.getShape() != outVector.getShape()))
+    return emitOpError() << "converts " << getIn().getType() << " to "
+                         << getOut().getType()
+                         << ", which are not of the same shape";
+  return success();
+}
