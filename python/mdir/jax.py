@@ -54,20 +54,29 @@ _REGISTERING = threading.Lock()
 
 def _register():
     """Registers the type of the state of an executable and the handlers of
-    the targets with XLA, for the CPU, once, when the first function is
-    made. XLA checks the version of the FFI of the handlers when they are
+    the targets with XLA, once, when the first function is made: for the
+    CPU, and for CUDA where MDIR was built with CUDA and JAX has a CUDA
+    device. XLA checks the version of the FFI of the handlers when they are
     registered, and the handlers check it again at each instantiation
-    (`python/XlaFfi.cpp`). The client of the CPU is made first: XLA takes a
-    type only once it is, and refuses a handler whose state has a type that
-    it does not know."""
+    (`python/XlaFfi.cpp`). The client of a platform is made first: XLA takes
+    a type only once it is, and refuses a handler whose state has a type
+    that it does not know."""
     with _REGISTERING:
         if _REGISTERED:
             return
-        jax.devices("cpu")
-        for name, registration in _core._xla_ffi_types().items():
-            jax.ffi.register_ffi_type(name, registration, platform="cpu")
-        for name, handlers in _core._xla_ffi_targets().items():
-            jax.ffi.register_ffi_target(name, handlers, platform="cpu", api_version=1)
+        platforms = ["cpu"]
+        if "CUDA" in _core._xla_ffi_platforms():
+            try:
+                jax.devices("cuda")
+                platforms.append("CUDA")
+            except RuntimeError:
+                pass  # no CUDA backend in this process (JAX_PLATFORMS=cpu)
+        for platform in platforms:
+            jax.devices(platform.lower())
+            for name, registration in _core._xla_ffi_types(platform).items():
+                jax.ffi.register_ffi_type(name, registration, platform=platform)
+            for name, handlers in _core._xla_ffi_targets(platform).items():
+                jax.ffi.register_ffi_target(name, handlers, platform=platform, api_version=1)
         _REGISTERED.append(True)
 
 _SECOND = ("a second derivative of the energy of the frames is not implemented: the "
@@ -117,6 +126,17 @@ def _lowering(ctx, theta, positions, cells, *, program, fingerprint, **_):
 
 
 mlir.register_lowering(_frames_p, _lowering, platform="cpu")
+
+
+def _lowering_cuda(ctx, *args, **params):
+    if "CUDA" not in _core._xla_ffi_platforms():
+        raise _core.UnsupportedError(
+            "mdir.jax: this build of MDIR has no handler for CUDA (it was built without CUDA); "
+            "place the arrays of the call on the CPU, or run JAX with JAX_PLATFORMS=cpu")
+    return _lowering(ctx, *args, **params)
+
+
+mlir.register_lowering(_frames_p, _lowering_cuda, platform="cuda")
 
 
 def _refuse_jvp(primals, tangents, **params):

@@ -10,12 +10,26 @@
 // `instantiate`, once per executable, resolves the key of the program and
 // keeps the simulation in the state of the executable; `execute` runs the
 // frames. It never touches Python: XLA calls it from its own threads.
+//
+// The handler of the platform "CUDA" (built where MDIR is built with CUDA,
+// MDIR_XLA_FFI_CUDA) runs the same loop on buffers of the host: it copies
+// the values of the tunables, the positions, and the cells of the call from
+// XLA's buffers on the device on XLA's stream, waits for them, evaluates
+// the frames, and copies the outputs back on that stream, waiting for them
+// too. The work of XLA before the call and after it is therefore ordered
+// with it, through the waits on the host (D[frame-evaluator-jax-cuda]). The
+// boundary of a batch on the device (PR 1 of #138) replaces these copies.
 #include "XlaFfi.h"
 
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
 #include <pybind11/numpy.h>
+
+#ifdef MDIR_XLA_FFI_CUDA
+#include <cuda.h>
+#include "llvm/Support/DynamicLibrary.h"
+#endif
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
@@ -40,6 +54,9 @@ struct Entry {
   std::string fingerprint;
   size_t particles = 0, entries = 0;
   bool periodic = false, forcesDouble = true;
+  /// Whether the program runs on the GPU (`Execution.target`), whose
+  /// device a call on the platform "CUDA" must be on.
+  bool onDevice = false;
   std::vector<std::string> names;
   std::vector<size_t> sizes;
   /// The values of the tunables that the simulation is at, flattened in
@@ -61,6 +78,19 @@ struct FrameState {
 };
 ffi::TypeId FrameState::id = {};
 XLA_FFI_TypeInfo frameStateInfo = ffi::MakeTypeInfo<FrameState>();
+
+#ifdef MDIR_XLA_FFI_CUDA
+/// The same for an executable of the platform "CUDA". The plugin of CUDA
+/// keeps a registry of types of its own, which writes the identifier it
+/// gives a type into its `TypeId`; a type of its own here keeps that of
+/// the CPU as the CPU's registry gave it.
+struct CudaFrameState {
+  static ffi::TypeId id;
+  std::shared_ptr<Entry> entry;
+};
+ffi::TypeId CudaFrameState::id = {};
+XLA_FFI_TypeInfo cudaFrameStateInfo = ffi::MakeTypeInfo<CudaFrameState>();
+#endif
 
 /// The text of a program that its key is checked against: everything that
 /// defined its model and its execution (the fingerprint of a checkpoint,
@@ -92,8 +122,8 @@ ffi::Error failed(std::string message) {
   return ffi::Error(ffi::ErrorCode::kFailedPrecondition, "mdir_frames: " + std::move(message));
 }
 
-ffi::ErrorOr<std::unique_ptr<FrameState>> instantiate(int64_t program,
-                                                      std::string_view fingerprint) {
+/// The program of the key `program`, if its fingerprint is `fingerprint`.
+ffi::ErrorOr<std::shared_ptr<Entry>> resolve(int64_t program, std::string_view fingerprint) {
   std::shared_ptr<Entry> entry;
   {
     std::lock_guard<std::mutex> lock(registryMutex);
@@ -111,8 +141,16 @@ ffi::ErrorOr<std::unique_ptr<FrameState>> instantiate(int64_t program,
         "the key " + std::to_string(program) + " names another program in "
         "this process than the one this call was compiled for (a "
         "compilation of another process, from a persistent cache?)"));
+  return entry;
+}
+
+ffi::ErrorOr<std::unique_ptr<FrameState>> instantiate(int64_t program,
+                                                      std::string_view fingerprint) {
+  auto entry = resolve(program, fingerprint);
+  if (entry.has_error())
+    return ffi::Unexpected(entry.error());
   auto state = std::make_unique<FrameState>();
-  state->entry = std::move(entry);
+  state->entry = std::move(*entry);
   return state;
 }
 
@@ -152,50 +190,69 @@ void cellGradient(const double *x, const Force *g, size_t particles,
   }
 }
 
-ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
-                   ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
-                   ffi::ResultBuffer<ffi::F64> energies, ffi::Result<ffi::AnyBuffer> gradient,
-                   ffi::ResultBuffer<ffi::F64> cellGradients,
-                   ffi::ResultBuffer<ffi::F64> rows) {
-  if (!state || !state->entry)
-    return invalid("the call has no program; this is a defect of mdir");
-  Entry &entry = *state->entry;
+/// What a call asks of its frames, from the shapes of its buffers.
+struct Call {
+  size_t frames = 0;
+  bool wantsForces = false, wantsCell = false, wantsRows = false;
+};
+
+/// Checks the shapes and types of the buffers of a call against its
+/// program. Only the metadata of the buffers is read, which is on the host
+/// on every platform.
+ffi::ErrorOr<Call> checkCall(const Entry &entry, const ffi::Buffer<ffi::F64> &theta,
+                             const ffi::Buffer<ffi::F64> &positions,
+                             const ffi::Buffer<ffi::F64> &cells,
+                             const ffi::ResultBuffer<ffi::F64> &energies,
+                             const ffi::Result<ffi::AnyBuffer> &gradient,
+                             const ffi::ResultBuffer<ffi::F64> &cellGradients,
+                             const ffi::ResultBuffer<ffi::F64> &rows) {
   auto dims = positions.dimensions();
   if (dims.size() != 3 || static_cast<size_t>(dims[1]) != entry.particles || dims[2] != 3)
-    return invalid("expected positions of shape (K, " + std::to_string(entry.particles) +
-                   ", 3)");
-  const size_t frames = dims[0], n = entry.particles;
+    return ffi::Unexpected(invalid("expected positions of shape (K, " +
+                                   std::to_string(entry.particles) + ", 3)"));
+  Call call;
+  call.frames = dims[0];
+  const size_t frames = call.frames;
   if (theta.element_count() != entry.entries)
-    return invalid("expected " + std::to_string(entry.entries) + " values of the tunables");
+    return ffi::Unexpected(
+        invalid("expected " + std::to_string(entry.entries) + " values of the tunables"));
   auto cellDims = cells.dimensions();
   if (cellDims.size() != 2 || static_cast<size_t>(cellDims[0]) != frames ||
       cellDims[1] != (entry.periodic ? 6 : 0))
-    return invalid("expected cells of shape (K, " + std::string(entry.periodic ? "6" : "0") +
-                   ")");
+    return ffi::Unexpected(invalid("expected cells of shape (K, " +
+                                   std::string(entry.periodic ? "6" : "0") + ")"));
   // What is asked is what has rows: an output of shape (0, ...) is not.
   auto asked = [&](auto dimensions) {
     return dimensions.size() != 0 && static_cast<size_t>(dimensions[0]) == frames &&
            frames != 0;
   };
-  bool wantsForces = asked(gradient->dimensions());
-  bool wantsCell = asked(cellGradients->dimensions());
-  bool wantsRows = asked(rows->dimensions());
+  call.wantsForces = asked(gradient->dimensions());
+  call.wantsCell = asked(cellGradients->dimensions());
+  call.wantsRows = asked(rows->dimensions());
   if (energies->element_count() != frames)
-    return invalid("expected energies of shape (K,)");
+    return ffi::Unexpected(invalid("expected energies of shape (K,)"));
   ffi::DataType forceType = entry.forcesDouble ? ffi::DataType::F64 : ffi::DataType::F32;
-  if (wantsForces && gradient->element_type() != forceType)
-    return invalid("the gradient in the positions is in the type of the forces of the "
-                   "program");
-  if (wantsRows && rows->element_count() != frames * entry.entries)
-    return invalid("expected rows of shape (K, M)");
-  if (wantsCell && !entry.periodic)
-    return invalid("the program has no periodic cell");
+  if (call.wantsForces && gradient->element_type() != forceType)
+    return ffi::Unexpected(invalid("the gradient in the positions is in the type of the "
+                                   "forces of the program"));
+  if (call.wantsRows && rows->element_count() != frames * entry.entries)
+    return ffi::Unexpected(invalid("expected rows of shape (K, M)"));
+  if (call.wantsCell && !entry.periodic)
+    return ffi::Unexpected(invalid("the program has no periodic cell"));
+  return call;
+}
 
+/// Evaluates the frames of a call from buffers of the host into buffers of
+/// the host: the handler of the CPU on XLA's buffers, that of CUDA on its
+/// copies of them. An output that is not asked is null.
+ffi::Error evaluateCall(Entry &entry, const Call &call, const double *values, const double *x,
+                        const double *c, double *out, char *g, double *cellOut,
+                        double *rowsOut) {
+  const size_t frames = call.frames, n = entry.particles;
   std::lock_guard<std::mutex> lock(entry.mutex);
   compiler::Simulation &simulation = *entry.simulation;
   // The values of the call: the tunables whose bits differ are updated
   // (D213), which ends the activation (D251).
-  const double *values = theta.typed_data();
   if (std::memcmp(values, entry.theta.data(), entry.entries * sizeof(double)) != 0) {
     std::vector<std::pair<std::string, std::vector<double>>> changes;
     size_t at = 0;
@@ -209,35 +266,33 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
       return failed("the values of the tunables: " + llvm::toString(std::move(error)));
     std::memcpy(entry.theta.data(), values, entry.entries * sizeof(double));
   }
-  const double *x = positions.typed_data();
-  const double *c = cells.typed_data();
   size_t width = entry.forcesDouble ? sizeof(double) : sizeof(float);
   // The gradient in the positions where the cell asks for it and the
   // positions do not.
-  std::vector<char> scratch(wantsCell && !wantsForces ? 3 * n * width : 0);
-  char *g = wantsForces ? static_cast<char *>(gradient->untyped_data()) : nullptr;
-  double *out = energies->typed_data();
+  std::vector<char> scratch(call.wantsCell && !call.wantsForces ? 3 * n * width : 0);
+  if (!call.wantsForces)
+    g = nullptr;
   for (size_t k = 0; k != frames; ++k) {
     std::optional<std::array<double, 6>> cell;
     if (entry.periodic)
       cell = std::array<double, 6>{c[6 * k], c[6 * k + 1], c[6 * k + 2],
                                    c[6 * k + 3], c[6 * k + 4], c[6 * k + 5]};
     char *frameGradient = g ? g + 3 * n * width * k : scratch.empty() ? nullptr : scratch.data();
-    auto result = simulation.evaluateFrame(x + 3 * n * k, cell, wantsRows, frameGradient,
-                                           wantsCell);
+    auto result = simulation.evaluateFrame(x + 3 * n * k, cell, call.wantsRows, frameGradient,
+                                           call.wantsCell);
     if (!result)
       return failed("frame " + std::to_string(k) + " of the call: " +
                      llvm::toString(result.takeError()));
     out[k] = result->energy;
-    if (wantsRows) {
-      double *row = rows->typed_data() + k * entry.entries;
+    if (call.wantsRows) {
+      double *row = rowsOut + k * entry.entries;
       for (const auto &part : result->gradient) {
         std::copy(part.begin(), part.end(), row);
         row += part.size();
       }
     }
-    if (wantsCell) {
-      double *target = cellGradients->typed_data() + 9 * k;
+    if (call.wantsCell) {
+      double *target = cellOut + 9 * k;
       if (entry.forcesDouble)
         cellGradient(x + 3 * n * k, reinterpret_cast<const double *>(frameGradient), n,
                      result->strain, *cell, target);
@@ -248,6 +303,220 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
   }
   return ffi::Error::Success();
 }
+
+ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
+                   ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                   ffi::ResultBuffer<ffi::F64> energies, ffi::Result<ffi::AnyBuffer> gradient,
+                   ffi::ResultBuffer<ffi::F64> cellGradients,
+                   ffi::ResultBuffer<ffi::F64> rows) {
+  if (!state || !state->entry)
+    return invalid("the call has no program; this is a defect of mdir");
+  Entry &entry = *state->entry;
+  auto call = checkCall(entry, theta, positions, cells, energies, gradient, cellGradients, rows);
+  if (call.has_error())
+    return call.error();
+  return evaluateCall(entry, *call, theta.typed_data(), positions.typed_data(),
+                      cells.typed_data(), energies->typed_data(),
+                      static_cast<char *>(gradient->untyped_data()),
+                      cellGradients->typed_data(), rows->typed_data());
+}
+
+#ifdef MDIR_XLA_FFI_CUDA
+/// The functions of the driver of CUDA that the handler of CUDA calls,
+/// from libcuda.so.1 as the process has loaded it (XLA has), resolved once:
+/// the extension does not link the driver, so that it imports on a machine
+/// without one (as lib/Compiler/Skins.cpp reaches it).
+struct Driver {
+  decltype(&::cuMemcpyDtoHAsync) copyToHost = nullptr;
+  decltype(&::cuMemcpyHtoDAsync) copyToDevice = nullptr;
+  decltype(&::cuStreamSynchronize) synchronize = nullptr;
+  decltype(&::cuStreamGetCtx) streamContext = nullptr;
+  decltype(&::cuCtxGetCurrent) getCurrent = nullptr;
+  decltype(&::cuCtxSetCurrent) setCurrent = nullptr;
+  decltype(&::cuCtxGetDevice) contextDevice = nullptr;
+  decltype(&::cuDeviceGet) device = nullptr;
+  decltype(&::cuGetErrorString) errorString = nullptr;
+  std::string missing;
+};
+
+const Driver &getDriver() {
+  static const Driver driver = [] {
+    Driver d;
+    auto library = llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
+    if (!library.isValid()) {
+      d.missing = "libcuda.so.1";
+      return d;
+    }
+    auto find = [&](auto &slot, const char *name) {
+      slot = reinterpret_cast<std::remove_reference_t<decltype(slot)>>(
+          library.getAddressOfSymbol(name));
+      if (!slot && d.missing.empty())
+        d.missing = name;
+    };
+    find(d.copyToHost, "cuMemcpyDtoHAsync_v2");
+    find(d.copyToDevice, "cuMemcpyHtoDAsync_v2");
+    find(d.synchronize, "cuStreamSynchronize");
+    find(d.streamContext, "cuStreamGetCtx");
+    find(d.getCurrent, "cuCtxGetCurrent");
+    find(d.setCurrent, "cuCtxSetCurrent");
+    find(d.contextDevice, "cuCtxGetDevice");
+    find(d.device, "cuDeviceGet");
+    find(d.errorString, "cuGetErrorString");
+    return d;
+  }();
+  return driver;
+}
+
+/// The device that the runtime of MDIR runs a program of the GPU on: the
+/// visible one that MDRT_DEVICE names, else the first (runtime/mdrt_cuda.c).
+int runtimeDevice() {
+  if (const char *chosen = std::getenv("MDRT_DEVICE"); chosen && *chosen)
+    return static_cast<int>(std::strtol(chosen, nullptr, 10));
+  return 0;
+}
+
+ffi::ErrorOr<std::unique_ptr<CudaFrameState>> instantiateCuda(int64_t program,
+                                                              std::string_view fingerprint) {
+  const Driver &driver = getDriver();
+  if (!driver.missing.empty())
+    return ffi::Unexpected(invalid("the driver of CUDA does not give " + driver.missing));
+  auto entry = resolve(program, fingerprint);
+  if (entry.has_error())
+    return ffi::Unexpected(entry.error());
+  auto state = std::make_unique<CudaFrameState>();
+  state->entry = std::move(*entry);
+  return state;
+}
+
+/// Copies of a call between XLA's buffers on the device and buffers of the
+/// host, on XLA's stream, in the context of that stream.
+class Staging {
+public:
+  Staging(const Driver &driver, CUstream stream) : driver(driver), stream(stream) {}
+  ~Staging() {
+    if (saved)
+      driver.setCurrent(previous);
+  }
+  /// Makes the context of the stream current, keeping the one before.
+  ffi::Error enter() {
+    if (!saved) {
+      if (ffi::Error error = check(driver.getCurrent(&previous), "cuCtxGetCurrent");
+          error.failure())
+        return error;
+      saved = true;
+      if (ffi::Error error = check(driver.streamContext(stream, &context), "cuStreamGetCtx");
+          error.failure())
+        return error;
+    }
+    return check(driver.setCurrent(context), "cuCtxSetCurrent");
+  }
+  ffi::Error toHost(void *host, const void *device, size_t bytes) {
+    if (!bytes)
+      return ffi::Error::Success();
+    return check(driver.copyToHost(host, reinterpret_cast<CUdeviceptr>(device), bytes, stream),
+                 "cuMemcpyDtoHAsync");
+  }
+  ffi::Error toDevice(void *device, const void *host, size_t bytes) {
+    if (!bytes)
+      return ffi::Error::Success();
+    return check(driver.copyToDevice(reinterpret_cast<CUdeviceptr>(device), host, bytes, stream),
+                 "cuMemcpyHtoDAsync");
+  }
+  ffi::Error wait() { return check(driver.synchronize(stream), "cuStreamSynchronize"); }
+  /// Refuses a stream on another device than `ordinal`, after `enter`.
+  ffi::Error checkDevice(int ordinal) {
+    CUdevice wanted = 0, found = 0;
+    if (ffi::Error error = check(driver.device(&wanted, ordinal), "cuDeviceGet"); error.failure())
+      return error;
+    if (ffi::Error error = check(driver.contextDevice(&found), "cuCtxGetDevice"); error.failure())
+      return error;
+    if (found == wanted)
+      return ffi::Error::Success();
+    return invalid("the call is on device " + std::to_string(found) +
+                   ", and the program runs on device " + std::to_string(ordinal) +
+                   " (MDRT_DEVICE, else the first visible device): place the arrays of the "
+                   "call on that device");
+  }
+
+private:
+  ffi::Error check(CUresult result, const char *what) {
+    if (result == CUDA_SUCCESS)
+      return ffi::Error::Success();
+    const char *text = nullptr;
+    driver.errorString(result, &text);
+    return ffi::Error(ffi::ErrorCode::kInternal, std::string("mdir_frames: ") + what + ": " +
+                                                     (text ? text : "an error of CUDA"));
+  }
+  const Driver &driver;
+  CUstream stream;
+  CUcontext previous = nullptr, context = nullptr;
+  bool saved = false;
+};
+
+/// The handler of the platform "CUDA": the buffers of XLA are on the
+/// device. The inputs are copied to the host on XLA's stream after the work
+/// of XLA that wrote them, and waited for; the frames are evaluated as on
+/// the CPU (a program of the GPU on its own stream, which `evaluateFrame`
+/// waits for); and the outputs are copied to XLA's buffers on XLA's stream,
+/// and waited for, before the work of XLA that reads them. With the boundary
+/// of a batch on the device (PR 1 of #138), the program will read and write
+/// XLA's buffers on XLA's stream instead.
+ffi::Error executeCuda(CUstream stream, CudaFrameState *state, ffi::Buffer<ffi::F64> theta,
+                       ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                       ffi::ResultBuffer<ffi::F64> energies,
+                       ffi::Result<ffi::AnyBuffer> gradient,
+                       ffi::ResultBuffer<ffi::F64> cellGradients,
+                       ffi::ResultBuffer<ffi::F64> rows) {
+  if (!state || !state->entry)
+    return invalid("the call has no program; this is a defect of mdir");
+  Entry &entry = *state->entry;
+  auto checked = checkCall(entry, theta, positions, cells, energies, gradient, cellGradients,
+                           rows);
+  if (checked.has_error())
+    return checked.error();
+  const Call &call = *checked;
+  const size_t frames = call.frames, n = entry.particles;
+  size_t width = entry.forcesDouble ? sizeof(double) : sizeof(float);
+  std::vector<double> values(entry.entries), x(3 * n * frames),
+      c(frames * (entry.periodic ? 6 : 0)), out(frames),
+      cellOut(call.wantsCell ? 9 * frames : 0), rowsOut(call.wantsRows ? frames * entry.entries : 0);
+  std::vector<char> g(call.wantsForces ? 3 * n * frames * width : 0);
+  Staging staging(getDriver(), stream);
+  // Each step runs once the one before it succeeded. MDIR's runtime runs
+  // on one device of the process (#138, design part 3, Sharding): a call of
+  // a program of the GPU on another is refused before anything runs. XLA
+  // gives the device of a call to `execute`, not to `instantiate`.
+  ffi::Error error = staging.enter();
+  if (error.success() && entry.onDevice)
+    error = staging.checkDevice(runtimeDevice());
+  if (error.success())
+    error = staging.toHost(values.data(), theta.typed_data(), values.size() * sizeof(double));
+  if (error.success())
+    error = staging.toHost(x.data(), positions.typed_data(), x.size() * sizeof(double));
+  if (error.success())
+    error = staging.toHost(c.data(), cells.typed_data(), c.size() * sizeof(double));
+  if (error.success())
+    error = staging.wait();
+  if (error.success())
+    error = evaluateCall(entry, call, values.data(), x.data(), c.data(), out.data(), g.data(),
+                         cellOut.data(), rowsOut.data());
+  // The runtime of a program of the GPU makes its own context current.
+  if (error.success())
+    error = staging.enter();
+  if (error.success())
+    error = staging.toDevice(energies->typed_data(), out.data(), out.size() * sizeof(double));
+  if (error.success())
+    error = staging.toDevice(gradient->untyped_data(), g.data(), g.size());
+  if (error.success())
+    error = staging.toDevice(cellGradients->typed_data(), cellOut.data(),
+                             cellOut.size() * sizeof(double));
+  if (error.success())
+    error = staging.toDevice(rows->typed_data(), rowsOut.data(), rowsOut.size() * sizeof(double));
+  if (error.success())
+    error = staging.wait();
+  return error;
+}
+#endif
 
 /// Refuses an XLA whose FFI is not the one of the headers that MDIR was
 /// built with (`third_party/xla_ffi`): the same major version and at
@@ -300,6 +569,37 @@ XLA_FFI_Error *mdirFramesExecute(XLA_FFI_CallFrame *frame) {
   return framesExecute(frame);
 }
 
+#ifdef MDIR_XLA_FFI_CUDA
+XLA_FFI_DEFINE_HANDLER(framesInstantiateCuda, instantiateCuda,
+                       ffi::Ffi::BindInstantiate()
+                           .Attr<int64_t>("program")
+                           .Attr<std::string_view>("fingerprint"));
+
+XLA_FFI_DEFINE_HANDLER(framesExecuteCuda, executeCuda,
+                       ffi::Ffi::Bind()
+                           .Ctx<ffi::PlatformStream<CUstream>>()
+                           .Ctx<ffi::State<CudaFrameState>>()
+                           .Arg<ffi::Buffer<ffi::F64>>()
+                           .Arg<ffi::Buffer<ffi::F64>>()
+                           .Arg<ffi::Buffer<ffi::F64>>()
+                           .Ret<ffi::Buffer<ffi::F64>>()
+                           .Ret<ffi::AnyBuffer>()
+                           .Ret<ffi::Buffer<ffi::F64>>()
+                           .Ret<ffi::Buffer<ffi::F64>>());
+
+XLA_FFI_Error *mdirFramesInstantiateCuda(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return framesInstantiateCuda(frame);
+}
+
+XLA_FFI_Error *mdirFramesExecuteCuda(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return framesExecuteCuda(frame);
+}
+#endif
+
 py::capsule capsule(void *pointer) { return py::capsule(pointer); }
 } // namespace
 
@@ -311,6 +611,7 @@ registerProgram(std::shared_ptr<compiler::Simulation> simulation,
   entry->particles = simulation->getParticleCount();
   entry->forcesDouble = simulation->keepsForcesInDouble();
   entry->periodic = prepared.control.periodic;
+  entry->onDevice = prepared.control.target == driver::Target::GPU;
   const model::TunableSet &set = simulation->getTunables();
   for (size_t k = 0; k != set.tunables.size(); ++k) {
     entry->names.push_back(set.tunables[k].name);
@@ -329,21 +630,50 @@ registerProgram(std::shared_ptr<compiler::Simulation> simulation,
 void addBindings(py::module_ &m) {
   // The handlers of the targets, by stage, as `jax.ffi.register_ffi_target`
   // takes them.
-  m.def("_xla_ffi_targets", []() {
+  // `platform` is "cpu", or "CUDA" where MDIR was built with CUDA
+  // (`_xla_ffi_platforms`).
+  m.def("_xla_ffi_targets", [](const std::string &platform) {
     py::dict targets, frames;
-    frames["instantiate"] = capsule(reinterpret_cast<void *>(&mdirFramesInstantiate));
-    frames["execute"] = capsule(reinterpret_cast<void *>(&mdirFramesExecute));
+    if (platform == "cpu") {
+      frames["instantiate"] = capsule(reinterpret_cast<void *>(&mdirFramesInstantiate));
+      frames["execute"] = capsule(reinterpret_cast<void *>(&mdirFramesExecute));
+#ifdef MDIR_XLA_FFI_CUDA
+    } else if (platform == "CUDA") {
+      frames["instantiate"] = capsule(reinterpret_cast<void *>(&mdirFramesInstantiateCuda));
+      frames["execute"] = capsule(reinterpret_cast<void *>(&mdirFramesExecuteCuda));
+#endif
+    } else {
+      throw py::value_error("_xla_ffi_targets: no handlers for the platform " + platform);
+    }
     targets["mdir_frames"] = frames;
     return targets;
-  });
+  }, py::arg("platform") = "cpu");
   // The type of the state of an executable, which is registered before the
-  // handlers (`jax.ffi.register_ffi_type`).
-  m.def("_xla_ffi_types", []() {
+  // handlers (`jax.ffi.register_ffi_type`), for each platform.
+  m.def("_xla_ffi_types", [](const std::string &platform) {
     py::dict types, state;
-    state["type_id"] = capsule(&FrameState::id);
-    state["type_info"] = capsule(&frameStateInfo);
+    if (platform == "cpu") {
+      state["type_id"] = capsule(&FrameState::id);
+      state["type_info"] = capsule(&frameStateInfo);
+#ifdef MDIR_XLA_FFI_CUDA
+    } else if (platform == "CUDA") {
+      state["type_id"] = capsule(&CudaFrameState::id);
+      state["type_info"] = capsule(&cudaFrameStateInfo);
+#endif
+    } else {
+      throw py::value_error("_xla_ffi_types: no handlers for the platform " + platform);
+    }
     types["mdir_frames_state"] = state;
     return types;
+  }, py::arg("platform") = "cpu");
+  // The platforms that the extension has handlers for.
+  m.def("_xla_ffi_platforms", []() {
+    py::list platforms;
+    platforms.append("cpu");
+#ifdef MDIR_XLA_FFI_CUDA
+    platforms.append("CUDA");
+#endif
+    return platforms;
   });
   // The gradient in the cell vectors of `cellGradient`, for the PyTorch
   // adapter, so that both adapters form it with the same arithmetic:

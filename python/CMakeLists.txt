@@ -23,6 +23,14 @@ pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp XlaFfi.cpp)
 # that MDIR builds without JAX (third_party/xla_ffi, D371).
 target_include_directories(mdir_python SYSTEM PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/xla_ffi)
+# The handler of the platform "CUDA" where MDIR is built with CUDA
+# (D[frame-evaluator-jax-cuda]): it takes the header of the driver alone and
+# finds libcuda.so.1 at run time, so the extension links no CUDA library.
+if(TARGET mdrt_cuda)
+  find_package(CUDAToolkit REQUIRED)
+  target_compile_definitions(mdir_python PRIVATE MDIR_XLA_FFI_CUDA=1)
+  target_include_directories(mdir_python SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+endif()
 set_target_properties(mdir_python PROPERTIES OUTPUT_NAME _core
   LIBRARY_OUTPUT_DIRECTORY ${MDIR_PYTHON_PACKAGE_DIR})
 target_compile_options(mdir_python PRIVATE -fexceptions)
