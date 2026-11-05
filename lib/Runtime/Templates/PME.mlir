@@ -38,7 +38,7 @@
 // The aliases !pme_pos, !pme_chg, and !pme_frc (the types that the
 // positions, the charges, and the forces are stored in) and !pme_real (the
 // type of the forces) are defined by the instance, in a header above this
-// text (getPMETemplateHeader, D[template-ir-pme-header], #739).
+// text (getPMETemplateHeader, D374, #739).
 
 // The transforms of the runtime (runtime/mdrt_fft.c), for a grid in
 // !pme_real: the instance names @mdir.template.fft.NAME as the transform of

@@ -669,6 +669,7 @@ specification follow those made with it.
 | [D371](decisions/D371.md) | The frame evaluator is a pure function of JAX, `mdir.jax.energy_fn(program)(params, positions, cell)`, a `jax.custom_jvp` built on one primitive, `mdir_frames`, lowered through `jax.ffi` to a typed FFI handler of the extension. | 2026-11-05 |
 | [D372](decisions/D372.md) | The force constants of built-in proper periodic dihedrals are tunable runtime values, with explicit topology-row maps, updates without recompilation, and derivatives through the existing native tuple IR. | 2026-11-05 |
 | [D373](decisions/D373.md) | `mdir_frames` has a handler for the platform `"CUDA"`. Until the boundary of a batch is on the device (PR 1 of #138), it stages a call through the host on XLA's stream. | 2026-11-05 |
+| [D374](decisions/D374.md) | The PME templates take the types of an instance from a header of alias definitions above their unchanged text, and the names of the instance in IR through the symbol table; no template of the lowering is instantiated by rewriting its text any more. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

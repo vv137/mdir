@@ -2553,7 +2553,7 @@ std::string kernels::getPMETemplateHeader(Type position, Type charge,
                                           bool tiles) {
   // The aliases of the types of the instance, which the text of a template
   // of particle mesh Ewald uses and does not define
-  // (D[template-ir-pme-header], #739): the types that the positions, the
+  // (D374, #739): the types that the positions, the
   // charges, and the forces are stored in; the type of the forces, in which
   // the splines, the grid, and its transform are; and, on a device, a tile
   // of the spreading of bins of E points (D282), of (E + P - 1)^3 points in
@@ -2587,7 +2587,7 @@ LogicalResult kernels::instantiatePMESymbols(ModuleOp templates,
   // keep their names. A transform of the host, `@mdir.template.fft.NAME`,
   // becomes that of the runtime for a grid in the type of the forces,
   // `@mdrtFFT64NAME` or `@mdrtFFT32NAME` (runtime/mdrt_fft.c)
-  // (D[template-ir-pme-header], #739).
+  // (D374, #739).
   MLIRContext *context = templates.getContext();
   std::string suffix = getPMESuffix(position, charge, force, order);
   constexpr StringLiteral fft = "mdir.template.fft.";

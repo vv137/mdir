@@ -381,7 +381,7 @@ std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 /// `force` and splines of the order `order`: the aliases `!pme_pos`,
 /// `!pme_chg`, `!pme_frc`, and `!pme_real` (the type of the forces), and,
 /// with `tiles`, `!pme_tile_E`, a tile of the spreading of bins of E points
-/// in the memory of the block (D[template-ir-pme-header], #739). The
+/// in the memory of the block (D374, #739). The
 /// template is parsed with this header above its text.
 std::string getPMETemplateHeader(mlir::Type position, mlir::Type charge,
                                  mlir::Type force, int64_t order,

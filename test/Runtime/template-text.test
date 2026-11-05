@@ -1,6 +1,6 @@
 # The templates of the lowering (lib/Runtime/Templates) are instantiated in
 # IR, not by substituting their text (#739: D368, D369, D370, and
-# D[template-ir-pme-header]). Their text holds no placeholder `PME_...` and
+# D374). Their text holds no placeholder `PME_...` and
 # defines none of the aliases of the types of an instance, which the header
 # of getPMETemplateHeader alone defines above it, and the compiler has no
 # function that rewrites the text of a template: the text is parsed as it

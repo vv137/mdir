@@ -18,7 +18,7 @@
 // positions, the charges, and the forces are stored in), !pme_real (the
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
-// (getPMETemplateHeader, D[template-ir-pme-header], #739).
+// (getPMETemplateHeader, D374, #739).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index

@@ -382,7 +382,7 @@ the block, in a header above the text, which is parsed as it is. The
 functions that the template defines then take the suffix of the instance,
 through the symbol table, and a transform of the host
 (`@mdir.template.fft.NAME`) that of the runtime for the type of the forces
-(`instantiatePMESymbols`, D[template-ir-pme-header]). No instance is made by
+(`instantiatePMESymbols`, D374). No instance is made by
 rewriting the text (`test/Runtime/template-text.test`).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values

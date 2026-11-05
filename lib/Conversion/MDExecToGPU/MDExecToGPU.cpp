@@ -5132,7 +5132,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return success();
   ParserConfig config(context);
   // The template takes the aliases of the types of the instance from a
-  // header above its text, and its names in IR (D[template-ir-pme-header],
+  // header above its text, and its names in IR (D374,
   // #739).
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
       kernels::getPMETemplateHeader(position, charge, force, order,
