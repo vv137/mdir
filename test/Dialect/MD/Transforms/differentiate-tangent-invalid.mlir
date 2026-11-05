@@ -1,17 +1,18 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
-// What the tangent in the positions does not take yet (D376),
-// each refused by name, never a zero.
+// What the tangent in the positions does not take yet (D376,
+// D[force-matching-pme]), each refused by name, never a zero.
 
 !vec = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>
 !grid = !md.table<2, f64>
 md.particle_set @atoms
 
-// The reciprocal sum of a mesh: a later part of #726.
+// The derivative of the tangent of a reciprocal sum in the charge of each
+// particle: the per-particle form, not formed (D[force-matching-pme]).
 md.potential @mesh(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
     -> f64 {
-  // expected-error@+1 {{cannot form the tangent in the positions of a reciprocal sum yet}}
+  // expected-error@+1 {{the derivative of the tangent of a reciprocal sum in the value of each particle of argument 2 of 'mesh.tangent' is not formed}}
   %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
       grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
       : !vec, !real, !grid -> f64, !vec, vector<9xf64>

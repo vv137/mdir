@@ -24,6 +24,13 @@ using namespace mlir;
 using namespace mdir::md;
 namespace md_dist = mdir::md_dist;
 
+/// Marks the sum over particles that is the tangent of a reciprocal sum in
+/// the positions, −Σ_i t_i · F_i, within md-differentiate, whose
+/// derivative in a number is formed from two reciprocal sums
+/// (D[force-matching-pme]). The pass removes it before it ends.
+static constexpr llvm::StringLiteral kReciprocalTangent =
+    "md.reciprocal_tangent";
+
 namespace {
 
 /// Builds the function that computes requested quantities from a potential.
@@ -2357,6 +2364,40 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     if (!op)
       return refuse(value, verdict);
 
+    // The tangent of a reciprocal sum in the positions, −Σ_i t_i · F_i(c),
+    // is a quadratic form of the charges as the energy is, so that its
+    // derivative is Δᵀ Ȧ c = (Φ(c + Δ) − Φ(c − Δ)) / 2 with Δ = ∂c/∂θ:
+    // two reciprocal sums with their forces, the rule of D161 applied to
+    // the tangent (D[force-matching-pme]).
+    if (op->hasAttr(kReciprocalTangent)) {
+      auto sum = cast<SumParticlesOp>(op);
+      auto reciprocal = sum.getGathered()[0].getDefiningOp<ReciprocalOp>();
+      if (!reciprocal || sum.getGathered().size() != 2)
+        return op->emitError() << "expected the tangent of a reciprocal sum";
+      SmallVector<Value, 2> fixed{reciprocal.getPositions(),
+                                  sum.getGathered()[1]};
+      for (Value operand : fixed) {
+        Verdict verdict = classify(operand);
+        if (verdict.dependence != Dependence::Inactive)
+          return refuse(operand, verdict);
+      }
+      Value tangents[2];
+      for (int k = 0; k != 2; ++k) {
+        Value charges;
+        if (failed(shiftField(reciprocal.getCharges(), k == 0 ? 1.0 : -1.0,
+                              charges)))
+          return failure();
+        auto copy = cast<ReciprocalOp>(builder.clone(*reciprocal));
+        copy.getChargesMutable().assign(charges);
+        auto term = cast<SumParticlesOp>(builder.clone(*sum));
+        term->setOperand(0, copy.getForces());
+        tangents[k] = term.getResult();
+      }
+      ScalarEmitter emit(builder, loc);
+      tangent = emit.scale(0.5, emit.sub(tangents[0], tangents[1]));
+      return success();
+    }
+
     if (auto reciprocal = dyn_cast<ReciprocalOp>(op)) {
       if (value != reciprocal.getEnergy())
         return op->emitError() << "cannot differentiate the forces or the "
@@ -2519,6 +2560,18 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     // place of the one of the potential, which yields the same energy,
     // forces, and virial.
     if (auto reciprocal = dyn_cast<ReciprocalOp>(user)) {
+      // The tangent of the sum in the positions reads its forces; their
+      // derivative in the charge of each particle needs the potential of
+      // a second density, which no lowering forms yet: not zero, refused.
+      for (Operation *reader : reciprocal.getForces().getUsers())
+        if (reader->hasAttr(kReciprocalTangent))
+          return reader->emitError()
+                 << "the derivative of the tangent of a reciprocal sum in "
+                    "the value of each particle of "
+                 << describe()
+                 << " is not formed (D[force-matching-pme]); a number on "
+                    "which the charges depend takes it from two reciprocal "
+                    "sums";
       if (reciprocal.getCharges() != parameter ||
           reciprocal.getPositions() == parameter)
         return user->emitError()
@@ -2763,6 +2816,10 @@ private:
   LogicalResult pairTangent(SumRelationOp op, Value &tangent);
   LogicalResult tupleTangent(SumTuplesOp op, Value &tangent);
   LogicalResult particleTangent(SumParticlesOp op, Value &tangent);
+  /// The tangent of the energy of a reciprocal sum, −Σ_i t_i · F_i from
+  /// the forces that the op yields (D[force-matching-pme]).
+  LogicalResult reciprocalTangent(ReciprocalOp op, Value value,
+                                  Value &tangent);
 
   PotentialOp potential;
   StringRef name;
@@ -2788,16 +2845,11 @@ LogicalResult TangentBuilder::checkUses() {
   for (OpOperand &use : positions.getUses()) {
     Operation *user = use.getOwner();
     unsigned index = use.getOperandNumber();
-    if (isa<ReciprocalOp>(user))
-      return user->emitError()
-             << "cannot form the tangent in the positions of a reciprocal "
-                "sum yet (D376): the charges with a mesh come "
-                "in a later part of #726";
     if (isa<GatherRelationOp, GatherTuplesOp, MapParticlesOp>(user))
       return user->emitError()
              << "cannot form the tangent in the positions of a field "
                 "computed from them (D376)";
-    bool known = (isa<NeighborhoodOp>(user) && index == 0) ||
+    bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp>(user) && index == 1) ||
                  isa<SumParticlesOp>(user);
     if (!known)
@@ -2955,6 +3007,41 @@ LogicalResult TangentBuilder::particleTangent(SumParticlesOp sum,
   return success();
 }
 
+LogicalResult TangentBuilder::reciprocalTangent(ReciprocalOp reciprocal,
+                                                Value value, Value &tangent) {
+  tangent = Value();
+  if (value != reciprocal.getEnergy())
+    return reciprocal.emitOpError()
+           << "the tangent in the positions of the forces, the virial, or "
+              "the potential of a reciprocal sum is not formed; that of its "
+              "energy is";
+  ActivityAnalysis activity(positions);
+  if (activity.classify(reciprocal.getCharges()).dependence !=
+      Activity::Inactive)
+    return reciprocal.emitOpError()
+           << "cannot form the tangent of a reciprocal sum whose charges "
+              "depend on the positions";
+  // The energy is a quadratic form of the charges, E = ½ qᵀ A(x) q, and
+  // its tangent Σ_i t_i · ∂E/∂x_i = −Σ_i t_i · F_i is one too, whose
+  // derivative in the charges is the rule of the sum below.
+  OperationState state(reciprocal.getLoc(), SumParticlesOp::getOperationName());
+  state.addOperands({reciprocal.getForces(), tangentField});
+  state.addAttribute(kReciprocalTangent, builder.getUnitAttr());
+  state.addRegion();
+  state.addTypes(builder.getF64Type());
+  Operation *op = builder.create(state);
+  Block *block = new Block();
+  op->getRegion(0).push_back(block);
+  Type type = cast<FieldType>(tangentField.getType()).getKernelValueType();
+  Value force = block->addArgument(type, loc);
+  Value ti = block->addArgument(type, loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarEmitter emit(kernel, loc);
+  YieldOp::create(kernel, loc, ValueRange{emit.neg(emitDot(emit, force, ti))});
+  tangent = op->getResult(0);
+  return success();
+}
+
 PotentialOp TangentBuilder::build(Operation *after) {
   if (potential.isExternal()) {
     potential.emitOpError() << "cannot form the tangent of a declaration";
@@ -3030,6 +3117,8 @@ PotentialOp TangentBuilder::build(Operation *after) {
         return tupleTangent(sum, tangent);
       if (auto sum = dyn_cast<SumParticlesOp>(op))
         return particleTangent(sum, tangent);
+      if (auto reciprocal = dyn_cast<ReciprocalOp>(op))
+        return reciprocalTangent(reciprocal, value, tangent);
     }
     Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc()
                   : op                     ? op->getLoc()
@@ -3331,6 +3420,8 @@ public:
     // from them, which hold copies of their bodies.
     for (PotentialOp tangent : tangents)
       tangent.erase();
+    // The mark of the tangent of a reciprocal sum is internal to the pass.
+    module->walk([](Operation *op) { op->removeAttr(kReciprocalTangent); });
   }
 
 private:
