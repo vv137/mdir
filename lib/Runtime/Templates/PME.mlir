@@ -39,6 +39,11 @@
 // positions, the charges, and the forces are stored in) and !pme_real (the
 // type of the forces) are defined by the instance, in a header above this
 // text (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231)
+// or with a list of the particles (D262) needs carries the attribute
+// mdir.template.potential or mdir.template.listed; the compiler adds it
+// only to a module that has such a sum (D[template-ir-select]).
 
 // The transforms of the runtime (runtime/mdrt_fft.c), for a grid in
 // !pme_real: the instance names @mdir.template.fft.NAME as the transform of
@@ -1426,7 +1431,7 @@ func.func private @mdrt.pme_potential_sum(%phi: memref<?x!pme_real>,
                                           %placex: index, %placey: index, %placez: index,
                                           %wx: memref<8x!pme_real>, %wy: memref<8x!pme_real>,
                                           %wz: memref<8x!pme_real>,
-                                          %k1: index, %k2: index, %k3: index, %n: index) -> f64 {
+                                          %k1: index, %k2: index, %k3: index, %n: index) -> f64 attributes {mdir.template.potential} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   // The first points within the grid, so that a point needs one
@@ -1561,7 +1566,7 @@ func.func private @mdrt.pme_gather(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_c
 func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?x!pme_real>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
+                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) attributes {mdir.template.potential} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -1598,7 +1603,7 @@ func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?
 func.func private @mdrt.pme_potential(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?x!pme_real>, %box: vector<3xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) {
+                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) attributes {mdir.template.potential} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
@@ -1733,7 +1738,7 @@ func.func private @mdrt.pme_gather_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
 func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?x!pme_real>, %box: vector<6xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
+                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) attributes {mdir.template.potential} {
   %wx = memref.alloca() : memref<8x!pme_real>
   %wy = memref.alloca() : memref<8x!pme_real>
   %wz = memref.alloca() : memref<8x!pme_real>
@@ -1757,7 +1762,7 @@ func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q
 func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?x!pme_real>, %box: vector<6xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) {
+                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) attributes {mdir.template.potential} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
@@ -1772,7 +1777,7 @@ func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: me
 
 // The number of the listed particles of `list` (D262):
 // its entries before the first negative one.
-func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
+func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %none = arith.constant 0 : i32
@@ -1793,7 +1798,7 @@ func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
 func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<3xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   func.call @mdrt.pme_zero(%grid) : (memref<?xi64>) -> ()
@@ -1815,7 +1820,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
                                    %list: memref<?xi32>,
                                    %phi: memref<?x!pme_real>, %box: vector<3xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -1846,7 +1851,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
 func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<6xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   func.call @mdrt.pme_zero(%grid) : (memref<?xi64>) -> ()
@@ -1868,7 +1873,7 @@ func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
                                    %list: memref<?xi32>,
                                    %phi: memref<?x!pme_real>, %box: vector<6xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index

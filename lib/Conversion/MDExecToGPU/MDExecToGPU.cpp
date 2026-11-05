@@ -5185,21 +5185,10 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    bool isPotential =
-        function && function.getSymName().contains("pme_potential");
-    bool isListed = function && function.getSymName().contains("_listed");
-    // The binning and the tiles of the edge that the sum takes, alone.
-    bool isTiles = function &&
-                   (function.getSymName().starts_with("mdrt_gpu_pme_bin") ||
-                    function.getSymName().contains("_spread_tiles"));
-    bool ownEdge = false;
-    if (isTiles && tiles) {
-      StringRef name = function.getSymName();
-      ownEdge = name.contains("mdrt_gpu_pme_bin" + edge + "_") ||
-                name.contains("mdrt_gpu_pme_spread_tiles" + edge + "_");
-    }
-    if ((isPotential && !potential) || (isListed && !listed) ||
-        (isTiles && !ownEdge) ||
+    // By the attributes of the function (D[template-ir-select]): the
+    // binning and the tiles of the edge that the sum takes, alone.
+    bool wanted = kernels::keepTemplateFunction(&op, potential, listed, tiles);
+    if (!wanted ||
         (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
       continue;
@@ -5268,13 +5257,11 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   // for them, as addPMETemplates.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    bool isListed = function && function.getSymName().contains("_listed");
-    // The tiles of the edge that the sum takes, alone.
-    bool isTiles =
-        function && function.getSymName().contains("_spread_tiles");
-    bool ownEdge = isTiles && tiles &&
-                   function.getSymName().contains("_spread_tiles" + edge + "_");
-    if ((isListed && !listed) || (isTiles && !ownEdge) ||
+    // By the attributes of the function (D[template-ir-select]); the
+    // prolate template marks no function of the potential.
+    bool wanted = kernels::keepTemplateFunction(&op, /*potential=*/true,
+                                                listed, tiles);
+    if (!wanted ||
         (function &&
          SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();

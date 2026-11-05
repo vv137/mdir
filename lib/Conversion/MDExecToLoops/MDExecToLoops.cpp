@@ -665,10 +665,9 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    bool isPotential =
-        function && function.getSymName().contains("pme_potential");
-    bool isListed = function && function.getSymName().contains("_listed");
-    if ((isPotential && !potential) || (isListed && !listed) ||
+    // By the attributes of the function (D[template-ir-select]).
+    bool wanted = keepTemplateFunction(&op, potential, listed, /*tiles=*/0);
+    if (!wanted ||
         (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
       continue;

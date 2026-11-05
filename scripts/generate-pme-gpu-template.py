@@ -64,6 +64,12 @@ HEADER = """\
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
 // (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231),
+// with a list of the particles (D262), or with tiles of an edge (D282)
+// needs carries mdir.template.potential, mdir.template.listed, or
+// mdir.template.tile_edge; the compiler adds it only to a module that has
+// such a sum (D[template-ir-select]).
 
 func.func private @mdrt_gpu_pme_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -2574,6 +2580,12 @@ HEADER_TRICLINIC = """\
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
 // (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231),
+// with a list of the particles (D262), or with tiles of an edge (D282)
+// needs carries mdir.template.potential, mdir.template.listed, or
+// mdir.template.tile_edge; the compiler adds it only to a module that has
+// such a sum (D[template-ir-select]).
 
 func.func private @mdrt_gpu_pme_blocks_triclinic(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -2713,6 +2725,53 @@ def declare_template_calls(text):
                     for name, signature in sorted(signatures.items())))
 
 
+
+def template_marks(name):
+    """What a function of a template is for, by the name that this script
+    gives it: the attributes that the compiler reads to keep or drop it for
+    a sum (D[template-ir-select], #739). `mdir.template.potential`, the
+    potential at the particles (D231); `mdir.template.listed`, a list of the
+    particles (D262); `mdir.template.tile_edge`, the spreading through tiles
+    of that edge, its binning included (D282)."""
+    marks = []
+    if "pme_potential" in name:
+        marks.append("mdir.template.potential")
+    if "_listed" in name:
+        marks.append("mdir.template.listed")
+    edge = (re.match(r"mdrt_gpu_pme_bin([0-9]+)", name) or
+            re.search(r"_spread_tiles([0-9]+)", name))
+    if edge:
+        marks.append(f"mdir.template.tile_edge = {edge.group(1)} : i64")
+    return marks
+
+
+def mark_template_functions(text):
+    """`text` with the attributes of template_marks on the functions that it
+    defines, by their names in `text`; marks that a function brought from
+    another template (generate-pme-prolate-gpu-template.py takes some from
+    PMEGPU.mlir) are written anew for the name it has here."""
+    text = re.sub(r"attributes \{mdir\.template\.[^}]*\} ", "", text)
+    out, at = [], 0
+    for match in re.finditer(r"func\.func private @([A-Za-z0-9_.]+)\(", text):
+        marks = template_marks(match.group(1))
+        if not marks:
+            continue
+        # The end of the arguments, then the brace that opens the body,
+        # after the results if any.
+        i, depth = match.end(), 1
+        while depth:
+            depth += {"(": 1, ")": -1}.get(text[i], 0)
+            i += 1
+        brace = text.index("{", i)
+        if not re.fullmatch(r"\s*(->[^{]*)?", text[i:brace]):
+            raise SystemExit(f"cannot mark {match.group(1)}: {text[i:brace]!r}")
+        out.append(text[at:brace])
+        out.append("attributes {" + ", ".join(marks) + "} ")
+        at = brace
+    out.append(text[at:])
+    return "".join(out)
+
+
 def main():
     # The templates of the repository, or with a directory as the argument
     # the same files there, which generated-templates.test compares with
@@ -2725,10 +2784,10 @@ def main():
                 tables() + convolve() + scale() + dispersion() + gather() +
                 gather_weights() + gather(potential=True) +
                 listed_kernels(weights_kernels(listed=True)) + tiles_kernels() + p3m())
-        file.write(text + declare_template_calls(text))
+        file.write(mark_template_functions(text) + declare_template_calls(text))
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         text = triclinic()
-        file.write(text + declare_template_calls(text))
+        file.write(mark_template_functions(text) + declare_template_calls(text))
 
 
 if __name__ == "__main__":

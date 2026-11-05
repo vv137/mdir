@@ -386,6 +386,15 @@ std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 std::string getPMETemplateHeader(mlir::Type position, mlir::Type charge,
                                  mlir::Type force, int64_t order,
                                  bool tiles);
+/// Whether a sum keeps the function `op` of a template of particle mesh
+/// Ewald, by the attributes that state what it is for
+/// (D[template-ir-select], #739): `mdir.template.potential` only where the
+/// sum asks for the potential at the particles, `mdir.template.listed` only
+/// where it has a list of the particles, and `mdir.template.tile_edge = E`
+/// only where it spreads through tiles of the edge E (`tiles`, 0 for
+/// none). Removes those attributes from `op`.
+bool keepTemplateFunction(mlir::Operation *op, bool potential, bool listed,
+                          int64_t tiles);
 /// Names the functions of the parsed templates `templates` of particle mesh
 /// Ewald for an instance: those that they define take the suffix of
 /// `getPMESuffix`, through the symbol table, and the transforms of the host,

@@ -2578,6 +2578,30 @@ std::string kernels::getPMETemplateHeader(Type position, Type charge,
   return header;
 }
 
+bool kernels::keepTemplateFunction(Operation *op, bool potential,
+                                   bool listed, int64_t tiles) {
+  // What a function of a template is for, as its attributes state
+  // (D[template-ir-select], #739): the potential at the particles (D231),
+  // a list of the particles (D262), or the spreading through tiles of an
+  // edge, its binning included (D282). The attributes are removed from a
+  // function that is kept, so that the module holds no trace of them.
+  auto potentialMark = StringAttr::get(op->getContext(),
+                                       "mdir.template.potential");
+  auto listedMark = StringAttr::get(op->getContext(), "mdir.template.listed");
+  auto edgeMark = StringAttr::get(op->getContext(), "mdir.template.tile_edge");
+  bool keep = true;
+  if (op->hasAttr(potentialMark) && !potential)
+    keep = false;
+  if (op->hasAttr(listedMark) && !listed)
+    keep = false;
+  if (auto edge = op->getAttrOfType<IntegerAttr>(edgeMark))
+    keep = keep && tiles && edge.getInt() == tiles;
+  op->removeAttr(potentialMark);
+  op->removeAttr(listedMark);
+  op->removeAttr(edgeMark);
+  return keep;
+}
+
 LogicalResult kernels::instantiatePMESymbols(ModuleOp templates,
                                              Type position, Type charge,
                                              Type force, int64_t order) {

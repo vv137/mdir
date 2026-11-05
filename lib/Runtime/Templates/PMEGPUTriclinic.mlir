@@ -17,6 +17,12 @@
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
 // (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231),
+// with a list of the particles (D262), or with tiles of an edge (D282)
+// needs carries mdir.template.potential, mdir.template.listed, or
+// mdir.template.tile_edge; the compiler adds it only to a module that has
+// such a sum (D[template-ir-select]).
 
 func.func private @mdrt_gpu_pme_blocks_triclinic(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -3463,7 +3469,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
 func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %phi: memref<?x!pme_real, 1>, %box: vector<6xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x!pme_frc, 1>) {
+                                       %f: memref<?x!pme_frc, 1>) attributes {mdir.template.potential} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -4008,7 +4014,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
 // then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<6xf64>, %grid: memref<?xi64, 1>,
-                                       %k1: index, %k2: index, %k3: index, %n: index) {
+                                       %k1: index, %k2: index, %k3: index, %n: index) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -4478,7 +4484,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
 // then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<6xf64>, %grid: memref<?x!pme_real, 1>,
-                                       %k1: index, %k2: index, %k3: index, %n: index) {
+                                       %k1: index, %k2: index, %k3: index, %n: index) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -4959,7 +4965,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
                                        %list: memref<?xi32, 1>,
                                        %phi: memref<?x!pme_real, 1>, %box: vector<6xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x3x!pme_frc, 1>) {
+                                       %f: memref<?x3x!pme_frc, 1>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -5561,7 +5567,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
                                                %phi: memref<?x!pme_real, 1>, %box: vector<6xf64>,
                                                %weights: memref<?x!pme_real, 1>,
                                                %k1: index, %k2: index, %k3: index,
-                                               %f: memref<?x3x!pme_frc, 1>) {
+                                               %f: memref<?x3x!pme_frc, 1>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
