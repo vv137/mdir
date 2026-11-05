@@ -1393,13 +1393,6 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
-D[frame-batch-field] reserves the internal `Control::frameMode` choice
-(`Host` by default, or `DeviceBatch`) and plumbs it into
-`SimpleFrameEntryIRConfig::deviceBatch` inside the frames path. It does not
-change `Control::frames` or its existing caller. The separate device batch
-entry and its caller are #138 PR 1's subsequent work; existing generated
-programs remain byte-identical.
-
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
 both closing steps. Leapfrog coupling uses full-time velocities and restores
@@ -1408,6 +1401,13 @@ separate fresh, stored-state and missing-state restart paths. Missing-state
 initialization retains atomic kinetic energy without COM removal; fresh
 initialization retains group kinetic energy. Existing unsupported period-one
 programs of parts retain their diagnostic.
+
+D[frame-batch-field] reserves the internal `Control::frameMode` choice
+(`Host` by default, or `DeviceBatch`) and plumbs it into
+`SimpleFrameEntryIRConfig::deviceBatch` inside the frames path. It does not
+change `Control::frames` or its existing caller. The separate device batch
+entry and its caller are #138 PR 1's subsequent work; existing generated
+programs remain byte-identical.
 
 Exact trial virtual-site placement and force spreading deliberately retain the
 archived entry cell (#722); trial energy evaluation and other gathers retain

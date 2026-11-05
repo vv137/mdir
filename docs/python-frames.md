@@ -1,10 +1,5 @@
 # The frame evaluator (D240)
 
-D[frame-batch-field] reserves the builder's internal device batch entry
-configuration for #138 PR 1. The host form remains the default; this adds
-no Python API, implements no device batch boundary and removes none of
-D373's host staging. The entry and caller that use the mode follow in PR 1.
-
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
 ([Maintainer rulings](#maintainer-rulings)), and the frames of every call
@@ -319,6 +314,11 @@ whole states: 21,403 atoms take 0.26 MB per frame so, against 1.5 MB for a
 state in float64 with its velocities and forces.
 
 ### The JAX adapter
+
+D[frame-batch-field] reserves the builder's internal device batch entry
+configuration for #138 PR 1. The host form remains the default; this adds
+no Python API, implements no device batch boundary and removes none of
+D373's host staging. The entry and caller that use the mode follow in PR 1.
 
 D371, the design and Ruling 20 on #138: the CPU, on the existing loop of
 frames; and D373, the target `"CUDA"`, which

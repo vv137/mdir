@@ -209,18 +209,18 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
-The device batch frame configuration (D[frame-batch-field], #138 PR 1)
-keeps the host form as the default. An internal mode supplies the native
-entry's `deviceBatch` flag without changing the existing frames selector or
-caller. This reserves plumbing only; the device batch entry, chain rule and
-stream handling follow separately. Existing programs remain byte-identical.
-
 Built-in proper-dihedral coefficient tunables (D372, #730)
 remain in the dihedral adapter and share the native tuple-gradient seed
 construction with custom tuples. Each Fourier row retains its identity and
 order; explicit maps tie coefficient values and accumulate their derivatives.
 The Python reference and decision state the complete site order, units and
 update contract. Untuned construction keeps the same operations and fields.
+
+The device batch frame configuration (D[frame-batch-field], #138 PR 1)
+keeps the host form as the default. An internal mode supplies the native
+entry's `deviceBatch` flag without changing the existing frames selector or
+caller. This reserves plumbing only; the device batch entry, chain rule and
+stream handling follow separately. Existing programs remain byte-identical.
 
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
