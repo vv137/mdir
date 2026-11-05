@@ -23,6 +23,13 @@ test`), and a change to the neighbor structures, the kernels, or the
 schedule also passes the short runs of the Amber suite
 (`MDIR_BENCH_DIR=<dir> lit test/Scale`).
 
+Before every push, `scripts/check-before-push.sh` runs the checks that CI
+runs first (links, decisions, changelog fragments, the list of expected
+unsupported tests, the release path) in seconds. Enable it as a hook, once
+per clone, with `git config core.hooksPath scripts/hooks`; `git push
+--no-verify` skips it for one push (#764,
+[docs/workflow.md](docs/workflow.md#continuous-integration)).
+
 ## What a change carries
 
 - **A test** of what it changes, at the level where it changes it: the IR

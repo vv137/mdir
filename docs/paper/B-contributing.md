@@ -131,7 +131,10 @@ user-visible design is decided, so that the design can be redirected
 early. Its decision carries a label until the merge gives it a number in
 the order of the merges. A reviewer runs the full suite on a GPU and
 reports the result on the pull request before the maintainer approves the
-merge.
+merge. Before a push, `scripts/check-before-push.sh` runs the cheap checks
+of continuous integration (links, decision numbers, changelog fragments, the
+release path) on the local files, and `git config core.hooksPath
+scripts/hooks` makes git run it as a pre-push hook.
 
 D359's explicit term registry and the bounded interfaces of D361 now cover
 all kinds of #683: externals, pulls, restraints, generalized Born together

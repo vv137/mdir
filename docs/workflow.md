@@ -232,7 +232,18 @@ the cluster.
   to `main`, in seconds and without a build: the links, the decision numbers
   and their table, the changelog fragments, the list of the expected
   unsupported tests (`python3 test/mdir_lit.py`), and the release path
-  (`scripts/release/check-path.sh`).
+  (`scripts/release/check-path.sh`). The job runs one script,
+  `scripts/check-before-push.sh`, which holds the list; a contributor runs
+  the same checks before every push (below), so that the two cannot drift.
+- **Before a push** (#764): `scripts/check-before-push.sh` runs the checks
+  above in the worktree, all of them even if one fails, with a line for
+  each, in seconds and without a build, a network, or a GPU. The hook
+  `scripts/hooks/pre-push` runs it and refuses the push when a check
+  fails. Enable it once per clone with
+  `git config core.hooksPath scripts/hooks` (a relative path: every git
+  worktree of the clone then runs its own copy and checks its own files).
+  The checks read the files of the worktree, not the commits, so commit
+  first. `git push --no-verify` skips the hook for one push.
 - **Build** (`ci.yml`, job `build`), on a pull request that is ready for
   review and on `main`, not on a draft: MDIR built with Python in the image
   `ghcr.io/vv137/mdir-ci`, and its tests on the CPU (`lit`, no GPU: the
