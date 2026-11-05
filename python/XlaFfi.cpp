@@ -190,11 +190,75 @@ void cellGradient(const double *x, const Force *g, size_t particles,
   }
 }
 
+/// A contraction of the rows of the Jacobian in the tunables that a call
+/// forms as each frame gives its row, without keeping them
+/// (D[frame-evaluator-jax-second-pass]): with P tangents (P, M), the
+/// products (K, P) of the rows with them (`mdir_frames_theta_tangent`); with
+/// P cotangents (P, K), the sums (P, M) of the rows weighted by them over
+/// the frames, in the order of the frames (`mdir_frames_vjp`).
+struct Contraction {
+  enum Kind { None, Tangent, Cotangent } kind = None;
+  size_t count = 0;
+  const double *in = nullptr;
+  double *out = nullptr;
+};
+
 /// What a call asks of its frames, from the shapes of its buffers.
 struct Call {
   size_t frames = 0;
   bool wantsForces = false, wantsCell = false, wantsRows = false;
+  Contraction contraction;
 };
+
+/// Checks the positions, the values, and the cells of a call against its
+/// program, and returns the number of its frames.
+ffi::ErrorOr<size_t> checkFrames(const Entry &entry, const ffi::Buffer<ffi::F64> &theta,
+                                 const ffi::Buffer<ffi::F64> &positions,
+                                 const ffi::Buffer<ffi::F64> &cells) {
+  auto dims = positions.dimensions();
+  if (dims.size() != 3 || static_cast<size_t>(dims[1]) != entry.particles || dims[2] != 3)
+    return ffi::Unexpected(invalid("expected positions of shape (K, " +
+                                   std::to_string(entry.particles) + ", 3)"));
+  const size_t frames = dims[0];
+  if (theta.element_count() != entry.entries)
+    return ffi::Unexpected(
+        invalid("expected " + std::to_string(entry.entries) + " values of the tunables"));
+  auto cellDims = cells.dimensions();
+  if (cellDims.size() != 2 || static_cast<size_t>(cellDims[0]) != frames ||
+      cellDims[1] != (entry.periodic ? 6 : 0))
+    return ffi::Unexpected(invalid("expected cells of shape (K, " +
+                                   std::string(entry.periodic ? "6" : "0") + ")"));
+  return frames;
+}
+
+/// Checks the buffers of a contraction: tangents (P, M) giving (K, P), or
+/// cotangents (P, K) giving (P, M). The pointers are set by the handler.
+ffi::ErrorOr<Call> checkContraction(const Entry &entry, Contraction::Kind kind,
+                                    const ffi::Buffer<ffi::F64> &theta,
+                                    const ffi::Buffer<ffi::F64> &positions,
+                                    const ffi::Buffer<ffi::F64> &cells,
+                                    const ffi::Buffer<ffi::F64> &in,
+                                    const ffi::ResultBuffer<ffi::F64> &out) {
+  auto frames = checkFrames(entry, theta, positions, cells);
+  if (frames.has_error())
+    return ffi::Unexpected(frames.error());
+  Call call;
+  call.frames = *frames;
+  call.contraction.kind = kind;
+  auto dims = in.dimensions();
+  size_t inner = kind == Contraction::Tangent ? entry.entries : call.frames;
+  if (dims.size() != 2 || static_cast<size_t>(dims[1]) != inner)
+    return ffi::Unexpected(invalid(kind == Contraction::Tangent
+                                       ? "expected tangents of shape (P, M)"
+                                       : "expected cotangents of shape (P, K)"));
+  call.contraction.count = dims[0];
+  size_t outer = kind == Contraction::Tangent ? call.frames : entry.entries;
+  if (out->element_count() != call.contraction.count * outer)
+    return ffi::Unexpected(invalid(kind == Contraction::Tangent
+                                       ? "expected products of shape (K, P)"
+                                       : "expected sums of shape (P, M)"));
+  return call;
+}
 
 /// Checks the shapes and types of the buffers of a call against its
 /// program. Only the metadata of the buffers is read, which is on the host
@@ -206,21 +270,12 @@ ffi::ErrorOr<Call> checkCall(const Entry &entry, const ffi::Buffer<ffi::F64> &th
                              const ffi::Result<ffi::AnyBuffer> &gradient,
                              const ffi::ResultBuffer<ffi::F64> &cellGradients,
                              const ffi::ResultBuffer<ffi::F64> &rows) {
-  auto dims = positions.dimensions();
-  if (dims.size() != 3 || static_cast<size_t>(dims[1]) != entry.particles || dims[2] != 3)
-    return ffi::Unexpected(invalid("expected positions of shape (K, " +
-                                   std::to_string(entry.particles) + ", 3)"));
+  auto counted = checkFrames(entry, theta, positions, cells);
+  if (counted.has_error())
+    return ffi::Unexpected(counted.error());
   Call call;
-  call.frames = dims[0];
+  call.frames = *counted;
   const size_t frames = call.frames;
-  if (theta.element_count() != entry.entries)
-    return ffi::Unexpected(
-        invalid("expected " + std::to_string(entry.entries) + " values of the tunables"));
-  auto cellDims = cells.dimensions();
-  if (cellDims.size() != 2 || static_cast<size_t>(cellDims[0]) != frames ||
-      cellDims[1] != (entry.periodic ? 6 : 0))
-    return ffi::Unexpected(invalid("expected cells of shape (K, " +
-                                   std::string(entry.periodic ? "6" : "0") + ")"));
   // What is asked is what has rows: an output of shape (0, ...) is not.
   auto asked = [&](auto dimensions) {
     return dimensions.size() != 0 && static_cast<size_t>(dimensions[0]) == frames &&
@@ -244,7 +299,9 @@ ffi::ErrorOr<Call> checkCall(const Entry &entry, const ffi::Buffer<ffi::F64> &th
 
 /// Evaluates the frames of a call from buffers of the host into buffers of
 /// the host: the handler of the CPU on XLA's buffers, that of CUDA on its
-/// copies of them. An output that is not asked is null.
+/// copies of them. An output that is not asked is null; the energies `out`
+/// are written in every call. The contraction of the call, if any, takes
+/// the row of each frame as it is formed.
 ffi::Error evaluateCall(Entry &entry, const Call &call, const double *values, const double *x,
                         const double *c, double *out, char *g, double *cellOut,
                         double *rowsOut) {
@@ -272,25 +329,50 @@ ffi::Error evaluateCall(Entry &entry, const Call &call, const double *values, co
   std::vector<char> scratch(call.wantsCell && !call.wantsForces ? 3 * n * width : 0);
   if (!call.wantsForces)
     g = nullptr;
+  const Contraction &contraction = call.contraction;
+  const bool contracts = contraction.kind != Contraction::None;
+  const size_t m = entry.entries, p = contraction.count;
+  std::vector<double> row(contracts ? m : 0);
+  if (contraction.kind == Contraction::Cotangent)
+    std::fill(contraction.out, contraction.out + p * m, 0.0);
   for (size_t k = 0; k != frames; ++k) {
     std::optional<std::array<double, 6>> cell;
     if (entry.periodic)
       cell = std::array<double, 6>{c[6 * k], c[6 * k + 1], c[6 * k + 2],
                                    c[6 * k + 3], c[6 * k + 4], c[6 * k + 5]};
     char *frameGradient = g ? g + 3 * n * width * k : scratch.empty() ? nullptr : scratch.data();
-    auto result = simulation.evaluateFrame(x + 3 * n * k, cell, call.wantsRows, frameGradient,
-                                           call.wantsCell);
+    auto result = simulation.evaluateFrame(x + 3 * n * k, cell, call.wantsRows || contracts,
+                                           frameGradient, call.wantsCell);
     if (!result)
       return failed("frame " + std::to_string(k) + " of the call: " +
                      llvm::toString(result.takeError()));
     out[k] = result->energy;
-    if (call.wantsRows) {
-      double *row = rowsOut + k * entry.entries;
+    if (call.wantsRows || contracts) {
+      double *target = call.wantsRows ? rowsOut + k * m : row.data();
       for (const auto &part : result->gradient) {
-        std::copy(part.begin(), part.end(), row);
-        row += part.size();
+        std::copy(part.begin(), part.end(), target);
+        target += part.size();
       }
+      if (call.wantsRows && contracts)
+        std::copy(rowsOut + k * m, rowsOut + (k + 1) * m, row.begin());
     }
+    // In f64, the entries of a row in the order of the plan, and the frames
+    // in the order of the call.
+    if (contraction.kind == Contraction::Tangent)
+      for (size_t q = 0; q != p; ++q) {
+        const double *t = contraction.in + q * m;
+        double sum = 0.0;
+        for (size_t j = 0; j != m; ++j)
+          sum += row[j] * t[j];
+        contraction.out[k * p + q] = sum;
+      }
+    else if (contraction.kind == Contraction::Cotangent)
+      for (size_t q = 0; q != p; ++q) {
+        double weight = contraction.in[q * frames + k];
+        double *target = contraction.out + q * m;
+        for (size_t j = 0; j != m; ++j)
+          target[j] += weight * row[j];
+      }
     if (call.wantsCell) {
       double *target = cellOut + 9 * k;
       if (entry.forcesDouble)
@@ -319,6 +401,38 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
                       cells.typed_data(), energies->typed_data(),
                       static_cast<char *>(gradient->untyped_data()),
                       cellGradients->typed_data(), rows->typed_data());
+}
+
+/// The handlers of `mdir_frames_theta_tangent` and `mdir_frames_vjp` on the
+/// CPU: the second pass of D[frame-evaluator-jax-second-pass].
+ffi::Error executeContraction(Contraction::Kind kind, FrameState *state,
+                              ffi::Buffer<ffi::F64> theta, ffi::Buffer<ffi::F64> positions,
+                              ffi::Buffer<ffi::F64> cells, ffi::Buffer<ffi::F64> in,
+                              ffi::ResultBuffer<ffi::F64> out) {
+  if (!state || !state->entry)
+    return invalid("the call has no program; this is a defect of mdir");
+  Entry &entry = *state->entry;
+  auto call = checkContraction(entry, kind, theta, positions, cells, in, out);
+  if (call.has_error())
+    return call.error();
+  call->contraction.in = in.typed_data();
+  call->contraction.out = out->typed_data();
+  std::vector<double> energies(call->frames);
+  return evaluateCall(entry, *call, theta.typed_data(), positions.typed_data(),
+                      cells.typed_data(), energies.data(), nullptr, nullptr, nullptr);
+}
+
+ffi::Error executeTangent(FrameState *state, ffi::Buffer<ffi::F64> theta,
+                          ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                          ffi::Buffer<ffi::F64> tangents, ffi::ResultBuffer<ffi::F64> out) {
+  return executeContraction(Contraction::Tangent, state, theta, positions, cells, tangents, out);
+}
+
+ffi::Error executeVjp(FrameState *state, ffi::Buffer<ffi::F64> theta,
+                      ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                      ffi::Buffer<ffi::F64> cotangents, ffi::ResultBuffer<ffi::F64> out) {
+  return executeContraction(Contraction::Cotangent, state, theta, positions, cells, cotangents,
+                            out);
 }
 
 #ifdef MDIR_XLA_FFI_CUDA
@@ -514,6 +628,68 @@ ffi::Error executeCuda(CUstream stream, CudaFrameState *state, ffi::Buffer<ffi::
     error = staging.wait();
   return error;
 }
+
+/// The second pass on the platform "CUDA", staged through the host as
+/// `executeCuda` is: θ, the positions, the cells, and the tangents or the
+/// cotangents to the host; the frames, each row contracted as it is
+/// formed; the products or the sums back to XLA's buffer.
+ffi::Error executeContractionCuda(Contraction::Kind kind, CUstream stream,
+                                  CudaFrameState *state, ffi::Buffer<ffi::F64> theta,
+                                  ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                                  ffi::Buffer<ffi::F64> in, ffi::ResultBuffer<ffi::F64> out) {
+  if (!state || !state->entry)
+    return invalid("the call has no program; this is a defect of mdir");
+  Entry &entry = *state->entry;
+  auto checked = checkContraction(entry, kind, theta, positions, cells, in, out);
+  if (checked.has_error())
+    return checked.error();
+  Call call = *checked;
+  const size_t frames = call.frames, n = entry.particles;
+  std::vector<double> values(entry.entries), x(3 * n * frames),
+      c(frames * (entry.periodic ? 6 : 0)), energies(frames), given(in.element_count()),
+      result(out->element_count());
+  call.contraction.in = given.data();
+  call.contraction.out = result.data();
+  Staging staging(getDriver(), stream);
+  ffi::Error error = staging.enter();
+  if (error.success() && entry.onDevice)
+    error = staging.checkDevice(runtimeDevice());
+  if (error.success())
+    error = staging.toHost(values.data(), theta.typed_data(), values.size() * sizeof(double));
+  if (error.success())
+    error = staging.toHost(x.data(), positions.typed_data(), x.size() * sizeof(double));
+  if (error.success())
+    error = staging.toHost(c.data(), cells.typed_data(), c.size() * sizeof(double));
+  if (error.success())
+    error = staging.toHost(given.data(), in.typed_data(), given.size() * sizeof(double));
+  if (error.success())
+    error = staging.wait();
+  if (error.success())
+    error = evaluateCall(entry, call, values.data(), x.data(), c.data(), energies.data(),
+                         nullptr, nullptr, nullptr);
+  if (error.success())
+    error = staging.enter();
+  if (error.success())
+    error = staging.toDevice(out->typed_data(), result.data(), result.size() * sizeof(double));
+  if (error.success())
+    error = staging.wait();
+  return error;
+}
+
+ffi::Error executeTangentCuda(CUstream stream, CudaFrameState *state,
+                              ffi::Buffer<ffi::F64> theta, ffi::Buffer<ffi::F64> positions,
+                              ffi::Buffer<ffi::F64> cells, ffi::Buffer<ffi::F64> tangents,
+                              ffi::ResultBuffer<ffi::F64> out) {
+  return executeContractionCuda(Contraction::Tangent, stream, state, theta, positions, cells,
+                                tangents, out);
+}
+
+ffi::Error executeVjpCuda(CUstream stream, CudaFrameState *state, ffi::Buffer<ffi::F64> theta,
+                          ffi::Buffer<ffi::F64> positions, ffi::Buffer<ffi::F64> cells,
+                          ffi::Buffer<ffi::F64> cotangents, ffi::ResultBuffer<ffi::F64> out) {
+  return executeContractionCuda(Contraction::Cotangent, stream, state, theta, positions, cells,
+                                cotangents, out);
+}
 #endif
 
 /// Refuses an XLA whose FFI is not the one of the headers that MDIR was
@@ -555,6 +731,30 @@ XLA_FFI_DEFINE_HANDLER(framesExecute, execute,
                            .Ret<ffi::Buffer<ffi::F64>>()
                            .Ret<ffi::Buffer<ffi::F64>>());
 
+#define MDIR_CONTRACTION_BINDING()                                                          \
+  ffi::Ffi::Bind()                                                                         \
+      .Ctx<ffi::State<FrameState>>()                                                       \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Ret<ffi::Buffer<ffi::F64>>()
+
+XLA_FFI_DEFINE_HANDLER(tangentExecute, executeTangent, MDIR_CONTRACTION_BINDING());
+XLA_FFI_DEFINE_HANDLER(vjpExecute, executeVjp, MDIR_CONTRACTION_BINDING());
+
+XLA_FFI_Error *mdirTangentExecute(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return tangentExecute(frame);
+}
+
+XLA_FFI_Error *mdirVjpExecute(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return vjpExecute(frame);
+}
+
 XLA_FFI_Error *mdirFramesInstantiate(XLA_FFI_CallFrame *frame) {
   if (XLA_FFI_Error *error = checkVersion(frame))
     return error;
@@ -584,6 +784,31 @@ XLA_FFI_DEFINE_HANDLER(framesExecuteCuda, executeCuda,
                            .Ret<ffi::AnyBuffer>()
                            .Ret<ffi::Buffer<ffi::F64>>()
                            .Ret<ffi::Buffer<ffi::F64>>());
+
+#define MDIR_CONTRACTION_BINDING_CUDA()                                                     \
+  ffi::Ffi::Bind()                                                                         \
+      .Ctx<ffi::PlatformStream<CUstream>>()                                                \
+      .Ctx<ffi::State<CudaFrameState>>()                                                   \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Arg<ffi::Buffer<ffi::F64>>()                                                        \
+      .Ret<ffi::Buffer<ffi::F64>>()
+
+XLA_FFI_DEFINE_HANDLER(tangentExecuteCuda, executeTangentCuda, MDIR_CONTRACTION_BINDING_CUDA());
+XLA_FFI_DEFINE_HANDLER(vjpExecuteCuda, executeVjpCuda, MDIR_CONTRACTION_BINDING_CUDA());
+
+XLA_FFI_Error *mdirTangentExecuteCuda(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return tangentExecuteCuda(frame);
+}
+
+XLA_FFI_Error *mdirVjpExecuteCuda(XLA_FFI_CallFrame *frame) {
+  if (XLA_FFI_Error *error = checkVersion(frame))
+    return error;
+  return vjpExecuteCuda(frame);
+}
 
 XLA_FFI_Error *mdirFramesInstantiateCuda(XLA_FFI_CallFrame *frame) {
   if (XLA_FFI_Error *error = checkVersion(frame))
@@ -630,20 +855,36 @@ void addBindings(py::module_ &m) {
   // takes them.
   // `platform` is "cpu", or "CUDA" where MDIR was built with CUDA
   // (`_xla_ffi_platforms`).
+  // The three targets share the stage `instantiate`, which resolves the
+  // program of a call.
   m.def("_xla_ffi_targets", [](const std::string &platform) {
-    py::dict targets, frames;
+    py::dict targets, frames, tangent, vjp;
+    auto add = [&](void *instantiate, void *execute, void *tangentExecute, void *vjpExecute) {
+      frames["instantiate"] = capsule(instantiate);
+      tangent["instantiate"] = capsule(instantiate);
+      vjp["instantiate"] = capsule(instantiate);
+      frames["execute"] = capsule(execute);
+      tangent["execute"] = capsule(tangentExecute);
+      vjp["execute"] = capsule(vjpExecute);
+    };
     if (platform == "cpu") {
-      frames["instantiate"] = capsule(reinterpret_cast<void *>(&mdirFramesInstantiate));
-      frames["execute"] = capsule(reinterpret_cast<void *>(&mdirFramesExecute));
+      add(reinterpret_cast<void *>(&mdirFramesInstantiate),
+          reinterpret_cast<void *>(&mdirFramesExecute),
+          reinterpret_cast<void *>(&mdirTangentExecute),
+          reinterpret_cast<void *>(&mdirVjpExecute));
 #ifdef MDIR_XLA_FFI_CUDA
     } else if (platform == "CUDA") {
-      frames["instantiate"] = capsule(reinterpret_cast<void *>(&mdirFramesInstantiateCuda));
-      frames["execute"] = capsule(reinterpret_cast<void *>(&mdirFramesExecuteCuda));
+      add(reinterpret_cast<void *>(&mdirFramesInstantiateCuda),
+          reinterpret_cast<void *>(&mdirFramesExecuteCuda),
+          reinterpret_cast<void *>(&mdirTangentExecuteCuda),
+          reinterpret_cast<void *>(&mdirVjpExecuteCuda));
 #endif
     } else {
       throw py::value_error("_xla_ffi_targets: no handlers for the platform " + platform);
     }
     targets["mdir_frames"] = frames;
+    targets["mdir_frames_theta_tangent"] = tangent;
+    targets["mdir_frames_vjp"] = vjp;
     return targets;
   }, py::arg("platform") = "cpu");
   // The type of the state of an executable, which is registered before the
