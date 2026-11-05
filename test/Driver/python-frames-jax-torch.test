@@ -8,10 +8,10 @@
 # interpreter with JAX gives the same numbers, to the bit. The two adapters
 # form the gradient in the cell with one function of the extension.
 # RUN: rm -rf %t && mkdir -p %t
-# RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Double %t/double.npz | FileCheck %s --check-prefix=DUMP -DMODE="CPU Double"
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Double %t/double.npz | FileCheck %s -DMODE="CPU Double"
-# RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Mixed %t/mixed.npz | FileCheck %s --check-prefix=DUMP -DMODE="CPU Mixed"
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Mixed %t/mixed.npz | FileCheck %s -DMODE="CPU Mixed"
+# RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Double CPU %t/double.npz | FileCheck %s --check-prefix=DUMP -DMODE="CPU Double"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Double CPU %t/double.npz | FileCheck %s -DMODE="CPU Double"
+# RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Mixed CPU %t/mixed.npz | FileCheck %s --check-prefix=DUMP -DMODE="CPU Mixed"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Mixed CPU %t/mixed.npz | FileCheck %s -DMODE="CPU Mixed"
 # DUMP: [[MODE]]: mdir.torch.evaluate written
 # DUMP: torch passed
 # CHECK: [[MODE]]: against mdir.torch.evaluate, the energies, to the bit: True
