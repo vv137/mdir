@@ -19,6 +19,12 @@
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
 // (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231),
+// with a list of the particles (D262), or with tiles of an edge (D282)
+// needs carries mdir.template.potential, mdir.template.listed, or
+// mdir.template.tile_edge; the compiler adds it only to a module that has
+// such a sum (D[template-ir-select]).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -3473,7 +3479,7 @@ func.func private @mdrt_gpu_pme_prolate_scale_triclinic(%c: memref<?x!pme_real, 
   return
 }
 
-func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %bricks: memref<?x!pme_real, 1>, %real: memref<?x!pme_real, 1>, %k1: index, %k2: index, %k3: index) {
+func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %bricks: memref<?x!pme_real, 1>, %real: memref<?x!pme_real, 1>, %k1: index, %k2: index, %k3: index) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -3754,7 +3760,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_bricks_listed(%q: memref<?x!pme_c
   return
 }
 
-func.func private @mdrt_gpu_pme_prolate_spread_fixed_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %grid: memref<?xi64, 1>, %k1: index, %k2: index, %k3: index) {
+func.func private @mdrt_gpu_pme_prolate_spread_fixed_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %grid: memref<?xi64, 1>, %k1: index, %k2: index, %k3: index) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -3944,7 +3950,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_fixed_listed(%q: memref<?x!pme_ch
   return
 }
 
-func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>, %k1: index, %k2: index, %k3: index, %f: memref<?x3x!pme_frc, 1>) {
+func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>, %k1: index, %k2: index, %k3: index, %f: memref<?x3x!pme_frc, 1>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -4316,7 +4322,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed(%q: memref<?x!pme_chg, 1>,
   return
 }
 
-func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %phi: memref<?x!pme_real, 1>, %box: vector<6xf64>, %k1: index, %k2: index, %k3: index, %f: memref<?x3x!pme_frc, 1>) {
+func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, %phi: memref<?x!pme_real, 1>, %box: vector<6xf64>, %k1: index, %k2: index, %k3: index, %f: memref<?x3x!pme_frc, 1>) attributes {mdir.template.listed} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -4730,7 +4736,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pm
 // the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
-                                      %k1: index, %k2: index, %k3: index) {
+                                      %k1: index, %k2: index, %k3: index) attributes {mdir.template.tile_edge = 4 : i64} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -5024,7 +5030,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
 // the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
-                                      %k1: index, %k2: index, %k3: index) {
+                                      %k1: index, %k2: index, %k3: index) attributes {mdir.template.tile_edge = 8 : i64} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -5318,7 +5324,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
 // the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
-                                      %k1: index, %k2: index, %k3: index) {
+                                      %k1: index, %k2: index, %k3: index) attributes {mdir.template.tile_edge = 16 : i64} {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index

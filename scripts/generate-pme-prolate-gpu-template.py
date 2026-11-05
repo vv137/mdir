@@ -92,6 +92,12 @@ HEADER = '''// The reciprocal sum of particle mesh Ewald with the prolate kernel
 // type of the forces), and !pme_tile_E (a tile of the spreading of bins of
 // E points, D282) are defined by the instance, in a header above this text
 // (getPMETemplateHeader, D374, #739).
+//
+// A function that only a sum with the potential at the particles (D231),
+// with a list of the particles (D262), or with tiles of an edge (D282)
+// needs carries mdir.template.potential, mdir.template.listed, or
+// mdir.template.tile_edge; the compiler adds it only to a module that has
+// such a sum (D[template-ir-select]).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -989,7 +995,7 @@ def main():
     out += tiles()
     out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')
     out = out.replace('@mdrt_gpu_pme_blocks_triclinic(', '@mdrt_gpu_pme_prolate_blocks(')
-    sys.stdout.write(out + GAUSSIAN.declare_template_calls(out))
+    sys.stdout.write(GAUSSIAN.mark_template_functions(out) + GAUSSIAN.declare_template_calls(out))
 
 
 main()

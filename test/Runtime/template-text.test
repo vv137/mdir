@@ -5,6 +5,9 @@
 # of getPMETemplateHeader alone defines above it, and the compiler has no
 # function that rewrites the text of a template: the text is parsed as it
 # is, below that header, and every instance is made from the parsed IR.
+# A sum keeps the functions of a template by the attributes that state
+# what each is for (D[template-ir-select]), not by substrings of their
+# names: the lowerings test no part of the name of a template function.
 #
 # RUN: not grep -n 'PME_' %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \
 # RUN:     %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir \
@@ -18,3 +21,17 @@
 # RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
 # RUN: not grep -rnE 'instantiatePMETemplates|std::string instantiateTemplates|std::string kernels::instantiate' \
 # RUN:     %S/../../lib %S/../../include
+# RUN: not grep -nE 'getSymName\(\)\.(contains|starts_with|ends_with)' \
+# RUN:     %S/../../lib/Conversion/MDExecToLoops/MDExecToLoops.cpp \
+# RUN:     %S/../../lib/Conversion/MDExecToGPU/MDExecToGPU.cpp
+# RUN: grep -c 'attributes {mdir.template' %S/../../lib/Runtime/Templates/PME.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPU.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir \
+# RUN:     %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir | FileCheck %s
+# The functions of the potential and of a list on the host; of the
+# potential, of a list, and of the tiles of each edge and their binning on
+# a device.
+# CHECK: PME.mlir:10
+# CHECK: PMEGPU.mlir:15
+# CHECK: PMEGPUTriclinic.mlir:5
+# CHECK: PMEGPUProlate.mlir:7

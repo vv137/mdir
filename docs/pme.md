@@ -383,7 +383,13 @@ functions that the template defines then take the suffix of the instance,
 through the symbol table, and a transform of the host
 (`@mdir.template.fft.NAME`) that of the runtime for the type of the forces
 (`instantiatePMESymbols`, D374). No instance is made by
-rewriting the text (`test/Runtime/template-text.test`).
+rewriting the text (`test/Runtime/template-text.test`). A function
+that only some sums need states what it is for: `mdir.template.potential`
+(the potential at the particles), `mdir.template.listed` (a list of the
+particles, Section 3.1), or `mdir.template.tile_edge = E` (the tiles of an
+edge and their binning, Section 3.3). The lowering keeps such a function
+only for a sum that needs it, and removes the attribute
+(`keepTemplateFunction`, D[template-ir-select]).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and
