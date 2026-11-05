@@ -24,7 +24,7 @@
 // with a list of the particles (D262), or with tiles of an edge (D282)
 // needs carries mdir.template.potential, mdir.template.listed, or
 // mdir.template.tile_edge; the compiler adds it only to a module that has
-// such a sum (D[template-ir-select]).
+// such a sum (D377).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index

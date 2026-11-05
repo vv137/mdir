@@ -27,7 +27,7 @@ namespace md_dist = mdir::md_dist;
 /// Marks the sum over particles that is the tangent of a reciprocal sum in
 /// the positions, −Σ_i t_i · F_i, within md-differentiate, whose
 /// derivative in a number is formed from two reciprocal sums
-/// (D[force-matching-pme]). The pass removes it before it ends.
+/// (D379). The pass removes it before it ends.
 static constexpr llvm::StringLiteral kReciprocalTangent =
     "md.reciprocal_tangent";
 
@@ -2368,7 +2368,7 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     // is a quadratic form of the charges as the energy is, so that its
     // derivative is Δᵀ Ȧ c = (Φ(c + Δ) − Φ(c − Δ)) / 2 with Δ = ∂c/∂θ:
     // two reciprocal sums with their forces, the rule of D161 applied to
-    // the tangent (D[force-matching-pme]).
+    // the tangent (D379).
     if (op->hasAttr(kReciprocalTangent)) {
       auto sum = cast<SumParticlesOp>(op);
       auto reciprocal = sum.getGathered()[0].getDefiningOp<ReciprocalOp>();
@@ -2569,7 +2569,7 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
                  << "the derivative of the tangent of a reciprocal sum in "
                     "the value of each particle of "
                  << describe()
-                 << " is not formed (D[force-matching-pme]); a number on "
+                 << " is not formed (D379); a number on "
                     "which the charges depend takes it from two reciprocal "
                     "sums";
       if (reciprocal.getCharges() != parameter ||
@@ -2817,7 +2817,7 @@ private:
   LogicalResult tupleTangent(SumTuplesOp op, Value &tangent);
   LogicalResult particleTangent(SumParticlesOp op, Value &tangent);
   /// The tangent of the energy of a reciprocal sum, −Σ_i t_i · F_i from
-  /// the forces that the op yields (D[force-matching-pme]).
+  /// the forces that the op yields (D379).
   LogicalResult reciprocalTangent(ReciprocalOp op, Value value,
                                   Value &tangent);
 

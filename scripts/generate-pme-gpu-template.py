@@ -69,7 +69,7 @@ HEADER = """\
 // with a list of the particles (D262), or with tiles of an edge (D282)
 // needs carries mdir.template.potential, mdir.template.listed, or
 // mdir.template.tile_edge; the compiler adds it only to a module that has
-// such a sum (D[template-ir-select]).
+// such a sum (D377).
 
 func.func private @mdrt_gpu_pme_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -2585,7 +2585,7 @@ HEADER_TRICLINIC = """\
 // with a list of the particles (D262), or with tiles of an edge (D282)
 // needs carries mdir.template.potential, mdir.template.listed, or
 // mdir.template.tile_edge; the compiler adds it only to a module that has
-// such a sum (D[template-ir-select]).
+// such a sum (D377).
 
 func.func private @mdrt_gpu_pme_blocks_triclinic(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -2729,7 +2729,7 @@ def declare_template_calls(text):
 def template_marks(name):
     """What a function of a template is for, by the name that this script
     gives it: the attributes that the compiler reads to keep or drop it for
-    a sum (D[template-ir-select], #739). `mdir.template.potential`, the
+    a sum (D377, #739). `mdir.template.potential`, the
     potential at the particles (D231); `mdir.template.listed`, a list of the
     particles (D262); `mdir.template.tile_edge`, the spreading through tiles
     of that edge, its binning included (D282)."""

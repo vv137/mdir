@@ -6,7 +6,7 @@
 # function that rewrites the text of a template: the text is parsed as it
 # is, below that header, and every instance is made from the parsed IR.
 # A sum keeps the functions of a template by the attributes that state
-# what each is for (D[template-ir-select]), not by substrings of their
+# what each is for (D377), not by substrings of their
 # names: the lowerings test no part of the name of a template function.
 #
 # RUN: not grep -n 'PME_' %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir \

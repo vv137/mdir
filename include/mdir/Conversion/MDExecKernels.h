@@ -388,7 +388,7 @@ std::string getPMETemplateHeader(mlir::Type position, mlir::Type charge,
                                  bool tiles);
 /// Whether a sum keeps the function `op` of a template of particle mesh
 /// Ewald, by the attributes that state what it is for
-/// (D[template-ir-select], #739): `mdir.template.potential` only where the
+/// (D377, #739): `mdir.template.potential` only where the
 /// sum asks for the potential at the particles, `mdir.template.listed` only
 /// where it has a list of the particles, and `mdir.template.tile_edge = E`
 /// only where it spreads through tiles of the edge E (`tiles`, 0 for

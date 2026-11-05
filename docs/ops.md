@@ -627,7 +627,7 @@ expanded first:
 | `md.sum_relation`, a kernel $u(r)$ | the same relation; the kernel gathers $\mathbf t$ at both ends and yields $u'(r)\,\mathbf d_{ij}\cdot(\mathbf t_i-\mathbf t_j)/r$, invariant under exchange as $u$ is (`exchange(symmetric, derived)`) |
 | `md.sum_tuples` | the same tuples; the kernel gathers $\mathbf t$ at each member and yields $\sum_k(\partial u/\partial c_k)\,\dot c_k$ over its coordinates: $\dot{\mathbf d} = \mathbf t_a-\mathbf t_b$ for a displacement $\mathbf d = \mathbf x_a-\mathbf x_b$, and $\dot c = \sum_m\partial c/\partial\mathbf x_m\cdot\mathbf t_m$ for a distance, an angle, its cosine, or a dihedral, from the gradient of the coordinate in the displacements that the op receives |
 | `md.sum_particles` that gathers the positions | the derivative of its kernel along $\mathbf t_i$ |
-| `md.reciprocal`, its energy (D[force-matching-pme]) | $-\sum_i\mathbf t_i\cdot\mathbf F_i$, a sum over particles of the forces that the op yields and of $\mathbf t$ |
+| `md.reciprocal`, its energy (D379) | $-\sum_i\mathbf t_i\cdot\mathbf F_i$, a sum over particles of the forces that the op yields and of $\mathbf t$ |
 | a value that does not depend on the positions, by the proof of activity (Section 5.3.1) | none: such a term is absent from $\Phi$, and its derivative there is not formed |
 
 The tangent of a reciprocal sum, $\Phi_\mathrm{rec} = \sum_i\mathbf t_i\cdot\partial E/\partial\mathbf x_i$

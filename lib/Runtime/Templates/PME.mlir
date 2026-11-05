@@ -43,7 +43,7 @@
 // A function that only a sum with the potential at the particles (D231)
 // or with a list of the particles (D262) needs carries the attribute
 // mdir.template.potential or mdir.template.listed; the compiler adds it
-// only to a module that has such a sum (D[template-ir-select]).
+// only to a module that has such a sum (D377).
 
 // The transforms of the runtime (runtime/mdrt_fft.c), for a grid in
 // !pme_real: the instance names @mdir.template.fft.NAME as the transform of

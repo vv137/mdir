@@ -1,5 +1,5 @@
 """The tangent of a reciprocal sum in the positions and its derivative in a
-number that the charges depend on (D[force-matching-pme], #726).
+number that the charges depend on (D379, #726).
 
 Writes an MLIR file whose `main` evaluates, by md.reciprocal (smooth
 particle mesh Ewald), the energy E, the forces, the tangent

@@ -389,7 +389,7 @@ that only some sums need states what it is for: `mdir.template.potential`
 particles, Section 3.1), or `mdir.template.tile_edge = E` (the tiles of an
 edge and their binning, Section 3.3). The lowering keeps such a function
 only for a sum that needs it, and removes the attribute
-(`keepTemplateFunction`, D[template-ir-select]).
+(`keepTemplateFunction`, D377).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and

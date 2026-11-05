@@ -12,7 +12,7 @@ D359 moves external-term emission into an internal adapter.
 It adds no key and changes no default, format, checkpoint, or overwrite
 behavior; `[[energy.external]]` keeps its existing meaning.
 
-D[frame-batch-field] reserves an internal mode for the device batch frame
+D378 reserves an internal mode for the device batch frame
 entry. No control-file key sets it. The host form remains the default, with
 no change of a file format, checkpoint or overwrite behavior.
 

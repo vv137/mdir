@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
 // What the tangent in the positions does not take yet (D376,
-// D[force-matching-pme]), each refused by name, never a zero.
+// D379), each refused by name, never a zero.
 
 !vec = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>
@@ -9,7 +9,7 @@
 md.particle_set @atoms
 
 // The derivative of the tangent of a reciprocal sum in the charge of each
-// particle: the per-particle form, not formed (D[force-matching-pme]).
+// particle: the per-particle form, not formed (D379).
 md.potential @mesh(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
     -> f64 {
   // expected-error@+1 {{the derivative of the tangent of a reciprocal sum in the value of each particle of argument 2 of 'mesh.tangent' is not formed}}

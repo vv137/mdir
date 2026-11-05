@@ -193,7 +193,7 @@ md.particle_set @atoms
 // The tangent of a reciprocal sum is −Σ_i t_i · F_i from the forces that
 // it yields; its derivative in a number that the charges depend on is
 // (Φ(q + Δ) − Φ(q − Δ)) / 2 with Δ = ∂q/∂λ, from two more reciprocal sums
-// at the shifted charges (D[force-matching-pme]); the mark of the pass is
+// at the shifted charges (D379); the mark of the pass is
 // gone from the result.
 //
 // CHECK-LABEL: md.function @mesh.tangent.energy_derivative4(

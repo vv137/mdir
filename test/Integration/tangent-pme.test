@@ -1,6 +1,6 @@
 # The tangent of a reciprocal sum in the positions and its derivative in a
 # number that the charges depend on, q = q0 + lambda w, by two reciprocal
-# sums with their forces (D[force-matching-pme], #726), on the CPU.
+# sums with their forces (D379, #726), on the CPU.
 # Inputs/tangent_pme.py writes the program and its oracle, the Ewald sum
 # of the reciprocal space in NumPy in closed form (checked there against
 # central differences). Each check prints the relative error against it,

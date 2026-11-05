@@ -5185,7 +5185,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D[template-ir-select]): the
+    // By the attributes of the function (D377): the
     // binning and the tiles of the edge that the sum takes, alone.
     bool wanted = kernels::keepTemplateFunction(&op, potential, listed, tiles);
     if (!wanted ||
@@ -5257,7 +5257,7 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   // for them, as addPMETemplates.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
-    // By the attributes of the function (D[template-ir-select]); the
+    // By the attributes of the function (D377); the
     // prolate template marks no function of the potential.
     bool wanted = kernels::keepTemplateFunction(&op, /*potential=*/true,
                                                 listed, tiles);

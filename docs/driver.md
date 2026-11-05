@@ -1402,7 +1402,7 @@ initialization retains atomic kinetic energy without COM removal; fresh
 initialization retains group kinetic energy. Existing unsupported period-one
 programs of parts retain their diagnostic.
 
-D[frame-batch-field] reserves the internal `Control::frameMode` choice
+D378 reserves the internal `Control::frameMode` choice
 (`Host` by default, or `DeviceBatch`) and plumbs it into
 `SimpleFrameEntryIRConfig::deviceBatch` inside the frames path. It does not
 change `Control::frames` or its existing caller. The separate device batch
