@@ -40,6 +40,10 @@ add_llvm_executable(mdir-model-test Driver/ModelTest.cpp)
 llvm_update_compile_flags(mdir-model-test)
 target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
 
+add_llvm_executable(mdir-dihedral-tunables-test Driver/DihedralTunablesTest.cpp)
+llvm_update_compile_flags(mdir-dihedral-tunables-test)
+target_link_libraries(mdir-dihedral-tunables-test PRIVATE MDIRDriver)
+
 add_llvm_executable(mdir-term-ir-test Driver/TermIRTest.cpp)
 llvm_update_compile_flags(mdir-term-ir-test)
 target_link_libraries(mdir-term-ir-test PRIVATE MDIRDriver MDIRCompiler MLIRParser)
@@ -79,6 +83,7 @@ set(MDIR_TEST_DEPENDS
   mdir-compile-cache-test
   mdir-compile-test
   mdir-model-test
+  mdir-dihedral-tunables-test
   mdir-output-rows-test
   mdir-prolate-test
   mdir-influence-test

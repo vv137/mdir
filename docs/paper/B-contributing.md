@@ -209,6 +209,13 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
+Built-in proper-dihedral coefficient tunables (D[dihedral-tunables], #730)
+remain in the dihedral adapter and share the native tuple-gradient seed
+construction with custom tuples. Each Fourier row retains its identity and
+order; explicit maps tie coefficient values and accumulate their derivatives.
+The Python reference and decision state the complete site order, units and
+update contract. Untuned construction keeps the same operations and fields.
+
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
 both closing steps. Leapfrog coupling uses full-time velocities and restores

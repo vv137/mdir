@@ -48,10 +48,14 @@ enum class BarostatCoupling { Isotropic, SemiIsotropic, Anisotropic };
 /// tuple term (its tuples). `map` has an entry for each site, the entry of θ it takes
 /// or -1 to keep its value; empty, each site is an entry of its own.
 /// `values` are the initial θ; empty, those of the model.
+/// `dihedral_k` selects the full periodic-dihedral rows, with improper rows
+/// fixed; an omitted map assigns dense entries to proper rows only.
 struct Tunable {
   std::string name, parameter, term;
   std::vector<int64_t> map;
   std::vector<double> values;
+  /// Distinguish explicit empty arrays from omitted maps/values at the boundary.
+  bool mapProvided = false, valuesProvided = false;
   /// The rule of σ of a pair of types: Arithmetic (Lorentz) or Geometric.
   driver::Mixing mixing = driver::Mixing::Arithmetic;
 };
@@ -65,7 +69,8 @@ struct TunableSet {
       SigmaPair,
       EpsilonPair,
       PairConstant,
-      TupleParameter
+      TupleParameter,
+      DihedralK
     };
     std::string name, parameter, term;
     Kind kind = Charge;

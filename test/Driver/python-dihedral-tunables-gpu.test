@@ -1,0 +1,7 @@
+# REQUIRES: python-api, cuda
+# Same independent reference and update checks as the CPU test, on a GPU.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_dihedral_tunables.py physics %t/double GPU Double | FileCheck %s --check-prefix=DOUBLE
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_dihedral_tunables.py physics %t/mixed GPU Mixed | FileCheck %s --check-prefix=MIXED
+# DOUBLE: dihedral physics GPU Double: oracle, coefficient differences, atomic updates, retained arrays, frames and coexistence passed
+# MIXED: dihedral physics GPU Mixed: oracle, coefficient differences, atomic updates, retained arrays, frames and coexistence passed

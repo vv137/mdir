@@ -359,6 +359,9 @@ DependentTerms mdir::driver::getDependentTerms(const Control &control,
                 {declaration.parameter}))
         addPair(declaration.termIndex);
       break;
+    case Control::TunableKind::DihedralK:
+      kept.dihedrals = true;
+      break;
     case Control::TunableKind::TupleParameter:
       if (system.topology &&
           declaration.termIndex < system.topology->tupleTerms.size() &&
@@ -374,6 +377,8 @@ DependentTerms mdir::driver::getDependentTerms(const Control &control,
     kept.names.push_back("lennard_jones");
   if (kept.coulomb)
     kept.names.push_back("coulomb");
+  if (kept.dihedrals)
+    kept.names.push_back("dihedrals");
   for (unsigned index : kept.pairs)
     kept.names.push_back("pair:" + control.pairs[index].name);
   for (unsigned index : kept.tuples)

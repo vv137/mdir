@@ -161,6 +161,21 @@ inline void bind(py::module_ &m) {
         out.push_back(d.i); out.push_back(d.j); out.push_back(d.k); out.push_back(d.l);
       });
     })
+    .def_property_readonly("dihedral_force_constants", [t](const View &v) {
+      std::vector<double> values;
+      for (const auto &row : t(v).dihedrals) values.push_back(row.force);
+      return host::copy(values.data(), values.size(), {static_cast<py::ssize_t>(values.size())});
+    })
+    .def_property_readonly("dihedral_periodicities", [t](const View &v) {
+      std::vector<int64_t> values;
+      for (const auto &row : t(v).dihedrals) values.push_back(row.n);
+      return column(values);
+    })
+    .def_property_readonly("dihedral_phases", [t](const View &v) {
+      std::vector<double> values;
+      for (const auto &row : t(v).dihedrals) values.push_back(row.phase);
+      return host::copy(values.data(), values.size(), {static_cast<py::ssize_t>(values.size())});
+    })
     .def_property_readonly("improper_dihedrals", [t](const View &v) {
       std::vector<bool> flags;
       for (const auto &d : t(v).dihedrals) flags.push_back(d.improper);

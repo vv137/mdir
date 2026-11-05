@@ -73,6 +73,8 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
       return input(where + ": a mixing rule is for \"sigma\" only");
     // The values of the sites in the model.
     std::vector<double> sites;
+    if (tunable.parameter == "dihedral_k" && !tunable.term.empty())
+      return input(where + ": dihedral_k takes the built-in proper dihedrals, not `term`");
     if (tunable.term.empty()) {
       if (tunable.parameter == "charge") {
         entry.kind = TunableSet::Entry::Charge;
@@ -100,9 +102,19 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
         for (size_t a = 0; a != types; ++a)
           for (size_t b = a; b != types; ++b)
             sites.push_back(table[a * types + b]);
+      } else if (tunable.parameter == "dihedral_k") {
+        entry.kind = TunableSet::Entry::DihedralK;
+        entry.unit = "kJ/mol";
+        bool proper = false;
+        for (const auto &row : topology.dihedrals) {
+          sites.push_back(row.force);
+          proper |= !row.improper;
+        }
+        if (!proper)
+          return input(where + ": dihedral_k needs at least one proper periodic dihedral row");
       } else {
         return input(where + ": the parameter is \"charge\", \"sigma\", "
-                     "\"epsilon\", \"sigma_pair\", or \"epsilon_pair\", or a "
+                     "\"epsilon\", \"sigma_pair\", \"epsilon_pair\", or \"dihedral_k\", or a "
                      "constant or parameter of the term given as `term`; "
                      "found \"" + tunable.parameter + "\"");
       }
@@ -148,9 +160,13 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
                    " is declared by another tunable");
 
     // The map from the sites to the entries.
-    if (tunable.map.empty()) {
+    if (tunable.map.empty() &&
+        !(entry.kind == TunableSet::Entry::DihedralK && tunable.mapProvided)) {
+      int64_t next = 0;
       for (size_t i = 0; i != sites.size(); ++i)
-        entry.map.push_back(static_cast<int64_t>(i));
+        entry.map.push_back(entry.kind == TunableSet::Entry::DihedralK &&
+                                    topology.dihedrals[i].improper
+                                ? -1 : next++);
     } else {
       if (tunable.map.size() != sites.size())
         return input(where + ": the map has " + llvm::Twine(tunable.map.size()) +
@@ -158,6 +174,11 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
                      " sites");
       entry.map = tunable.map;
     }
+    if (entry.kind == TunableSet::Entry::DihedralK)
+      for (size_t row = 0; row != entry.map.size(); ++row)
+        if (entry.map[row] >= 0 && topology.dihedrals[row].improper)
+          return input(where + ": dihedral_k selects improper row " + llvm::Twine(row) +
+                       "; improper rows must have map -1");
     int64_t most = -1;
     for (int64_t k : entry.map) {
       if (k < -1)
@@ -179,7 +200,8 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
     // The initial values: those given, or the common value of the sites of
     // each entry.
     std::vector<double> values;
-    if (!tunable.values.empty()) {
+    if (!tunable.values.empty() ||
+        (entry.kind == TunableSet::Entry::DihedralK && tunable.valuesProvided)) {
       if (tunable.values.size() != entry.entries)
         return input(where + ": `values` has " + llvm::Twine(tunable.values.size()) +
                      " entries, and the map " + llvm::Twine(entry.entries));
@@ -347,7 +369,8 @@ llvm::Error mdir::model::checkTunableValues(
         return input("the tunable '" + entry.name + "' takes finite values");
       if (entry.kind != TunableSet::Entry::Charge &&
           entry.kind != TunableSet::Entry::PairConstant &&
-          entry.kind != TunableSet::Entry::TupleParameter && value < 0.0)
+          entry.kind != TunableSet::Entry::TupleParameter &&
+          entry.kind != TunableSet::Entry::DihedralK && value < 0.0)
         return input("the tunable '" + entry.name + "' takes values of at "
                      "least 0 (" + entry.unit + ")");
     }
@@ -412,6 +435,11 @@ static llvm::Error apply(Apply mode, const TunableSet &set,
       for (auto &[name, value] : control.pairs[entry.termIndex].constants)
         if (name == entry.parameter && entry.map[0] >= 0)
           value = theta[entry.map[0]];
+      break;
+    case TunableSet::Entry::DihedralK:
+      for (size_t row = 0; row != entry.map.size(); ++row)
+        if (entry.map[row] >= 0)
+          topology->dihedrals[row].force = theta[entry.map[row]];
       break;
     case TunableSet::Entry::TupleParameter:
       for (auto &[name, list] : topology->tupleTerms[entry.termIndex].parameters)

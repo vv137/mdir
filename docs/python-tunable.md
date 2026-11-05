@@ -55,6 +55,7 @@ map from the *sites* of its parameter to its entries.
 | `"epsilon"` | none | the Lennard-Jones types, $T$ | kJ/mol |
 | `"sigma_pair"` | none | the unordered pairs of types, $T(T+1)/2$ (`Topology.type_pairs`) | nm |
 | `"epsilon_pair"` | none | the unordered pairs of types, $T(T+1)/2$ | kJ/mol |
+| `"dihedral_k"` | none | all periodic-dihedral rows, with improper rows fixed | kJ/mol |
 | a constant of a pair term | the term's name | one | that of the expression |
 | a parameter of a tuple term | the term's name | its tuples, $n$ | that of the expression |
 
@@ -86,6 +87,49 @@ charge_map = np.array([entries.setdefault((res, atom) if res == "WAT" else (res,
                        for i, (atom, res) in enumerate(zip(top.atom_names, residues))])
 system.tunables = [mdir.Tunable("q", "charge", map=charge_map)]
 ```
+
+### Built-in proper dihedral coefficients
+
+D[dihedral-tunables], part of #730. `mdir.Tunable(name, "dihedral_k")`
+tunes the coefficient $k_r$ in the existing built-in energy
+$U_r=k_r[1+\cos(n_r\phi_r-\delta_r)]$, in kJ/mol. Finite signed values,
+including zero, are accepted; NaN and infinity are errors. No symmetry,
+multiplicity or half factor is added, and a negative coefficient does not
+change the phase. `term` and `mixing` are not accepted for this parameter.
+
+**Site order and map meaning:** sites are the full rows of
+`system.topology.dihedrals`, in reader order, one row per Fourier contribution.
+The map has that full row count, including periodic improper rows. An improper
+row must map to `-1` and remains fixed; selecting it is an `InputError` naming
+the row. Without a map, proper rows receive independent dense entries in
+reader order and improper rows remain fixed. A system without a proper row,
+or a map selecting no site, is an error. There is one declaration of
+`dihedral_k`; its map represents all desired coefficient groups.
+
+Repeated quadruples and Fourier rows remain separate sites, even with equal
+periodicity and phase. Tying rows is explicit, and may tie different
+periodicities or phases. The usual dense-map, initial-value and shape checks
+apply: a tied entry with differing model coefficients needs explicit `values`.
+The read-only copied arrays `dihedral_force_constants` (kJ/mol),
+`dihedral_periodicities` (int64), and `dihedral_phases` (radians) align with
+`dihedrals` and `improper_dihedrals`; they describe the model snapshot, not
+the live values of a simulation.
+
+```python
+top = system.topology
+proper = np.flatnonzero(~top.improper_dihedrals)
+mapping = np.full(len(top.dihedrals), -1, dtype=np.int64)
+mapping[proper] = np.arange(len(proper))
+system.tunables = [mdir.Tunable("torsion_k", "dihedral_k", map=mapping)]
+system.tunable_gradient = True
+```
+
+An update rewrites coefficient-dependent tuple arrays through the same builder
+as compilation, with the existing atomic-update, version and borrow checks.
+It neither lowers nor recompiles. Crossing zero keeps the row and derivative
+path. Periodicities, phases, row order, exclusions and all 1–4 parameters and
+scale factors stay unchanged. Improper, angle, bond and CMAP tunables are
+later parts of #730; there is no implicit selection by force-field class.
 
 ### Per-type Lennard-Jones and the combining rule
 
@@ -217,6 +261,7 @@ reaches:
 | sigma, epsilon, sigma_pair, epsilon_pair | the tables `lj_sigma` and `lj_epsilon`; the correction for the dispersion $\langle C_6\rangle$ and its shift estimate; the tails of pair terms that read `sigma`/`epsilon` |
 | a constant of a pair term | a table of the program's scalars, read by the term's kernel; the term's tail and shift estimate |
 | a parameter of a tuple term | that tuple field |
+| `dihedral_k` | the built-in `dihedrals.k` tuple field; no 1–4 field or scale |
 
 The program takes these as runtime values: per-particle fields, type tables,
 and tuple fields are entry buffers already (D196 builds them anew for every

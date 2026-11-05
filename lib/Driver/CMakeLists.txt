@@ -58,6 +58,7 @@ add_mlir_library(MDIRDriver
   TermPairs14.cpp
   TermCMap.cpp
   TermIR.cpp
+  TupleGradient.cpp
   TermLennardJones.cpp
   TermNonbonded.cpp
   TermModel.cpp

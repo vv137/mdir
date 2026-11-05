@@ -81,6 +81,9 @@ particle is `[top.residue_names[r] for r in top.residue_indices]`.
 | `angles` | $(n, 3)$ int64 | The harmonic angles, the vertex in the middle |
 | `dihedrals` | $(n, 4)$ int64 | The periodic torsions, proper and improper, one row for each term |
 | `improper_dihedrals` | $(n,)$ bool | Whether each row of `dihedrals` is an improper torsion |
+| `dihedral_force_constants` | $(n,)$ float64 | The coefficient of each periodic torsion, in kJ/mol |
+| `dihedral_periodicities` | $(n,)$ int64 | Its fixed periodicity |
+| `dihedral_phases` | $(n,)$ float64 | Its fixed phase, in radians |
 | `harmonic_impropers` | $(n, 4)$ int64 | The harmonic impropers of CHARMM and of GROMACS function 2 |
 | `virtual_sites` | $(n, 4)$ int64 | Each site and the three particles that place it |
 
@@ -88,6 +91,10 @@ The rows are those of the terms of the potential, in the order of the
 reader. A quadruple with a torsion of several terms (a dihedral type of two
 terms in CHARMM or GROMACS, the repeated entries of an Amber `prmtop`) has a
 row for each term; `np.unique(top.dihedrals, axis=0)` gives the quadruples.
+The three coefficient/periodicity/phase arrays (D[dihedral-tunables]) are
+read-only copies in this same order, including improper rows. Maps of the
+`dihedral_k` tunable use the full row count, with improper rows fixed at `-1`
+([python-tunable.md](python-tunable.md#built-in-proper-dihedral-coefficients)).
 Amber's `prmtop` lists the H–H "bond" of a three-site water among its
 bonds, and so does the view. The bonds, angles, and torsions of an Amber
 extra point carry no energy and are dropped, as sander drops them;

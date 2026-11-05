@@ -48,6 +48,7 @@ tools = [
     "mdir",
     "mdir-opt",
     "mdir-model-test",
+    "mdir-dihedral-tunables-test",
     "mdir-output-rows-test",
     "mdir-prolate-test",
     "mdir-influence-test",

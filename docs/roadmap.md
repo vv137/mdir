@@ -215,6 +215,7 @@ at stored frames, with a derivative rule in $\theta$.
 | Reweighting | Next, the first M2b work after the single-owner builder line lands (#719, #568; the maintainer, 2026-11-04): in the framework, an example that fits the radial distribution function and the density of water, with the effective sample size $\exp(-\sum_i w_i\ln w_i)$ deciding when to sample again |
 | Force matching (#726) | Design, after the JAX adapter (M2b-2); no longer deferred to M3 (the maintainer, 2026-11-04). It needs the mixed derivative of the forces in the tunables (forward over reverse, one vector per frame); every second derivative is refused until then |
 | A Python front end for energy terms (#725) | Design: pair, tuple, and field terms written in Python produce the same term IR as the control file's custom terms, with one validation; after #568 |
+| Tunable force-field bonded coefficients (#730) | Proper periodic-dihedral coefficients, updates and derivatives use explicit topology-row maps (D[dihedral-tunables]); impropers, angles, bonds and CMAP need their own later designs. The Python term front end (#725) follows this work |
 | Further targets | Free energies through `[free_energy]` ($\partial\Delta G/\partial\theta$ from $\langle\partial U/\partial\theta\rangle$ or MBAR weights), the pressure through the derivative of the virial, the relative entropy of coarse-grained models |
 
 Learned potentials (M3) keep their parameters in the framework: MDIR

@@ -1,0 +1,10 @@
+# REQUIRES: python-api
+# D[dihedral-tunables]: aligned proper/improper rows, declaration errors,
+# independent NumPy energy/force/parameter derivative, updates and frames.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_dihedral_tunables.py declarations %t/declarations | FileCheck %s --check-prefix=DECLARATIONS
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_dihedral_tunables.py physics %t/double CPU Double | FileCheck %s --check-prefix=DOUBLE
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_dihedral_tunables.py physics %t/mixed CPU Mixed | FileCheck %s --check-prefix=MIXED
+# DECLARATIONS: dihedral declarations: row order, copied read-only metadata, signed values and map refusals passed
+# DOUBLE: dihedral physics CPU Double: oracle, coefficient differences, atomic updates, retained arrays, frames and coexistence passed
+# MIXED: dihedral physics CPU Mixed: oracle, coefficient differences, atomic updates, retained arrays, frames and coexistence passed
