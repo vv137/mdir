@@ -1,4 +1,4 @@
-# The handler of "CUDA" of mdir.jax (D[frame-evaluator-jax-cuda]), scenario
+# The handler of "CUDA" of mdir.jax (D373), scenario
 # sanitize of Driver/Inputs/python_frames_jax.py, under compute-sanitizer:
 # the copies of a call between XLA's buffers on the device and the host on
 # XLA's stream, the evaluation of the frames by a program of the GPU, and a

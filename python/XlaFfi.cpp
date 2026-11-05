@@ -17,7 +17,7 @@
 // XLA's buffers on the device on XLA's stream, waits for them, evaluates
 // the frames, and copies the outputs back on that stream, waiting for them
 // too. The work of XLA before the call and after it is therefore ordered
-// with it, through the waits on the host (D[frame-evaluator-jax-cuda]). The
+// with it, through the waits on the host (D373). The
 // boundary of a batch on the device (PR 1 of #138) replaces these copies.
 #include "XlaFfi.h"
 

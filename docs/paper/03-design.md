@@ -1495,7 +1495,7 @@ added without changing the function. The gradient in the cell is formed
 for each frame by one routine, which the PyTorch adapter uses as well, so
 the two adapters, a batch of frames and each frame alone, and a compiled
 call and an uncompiled one give the same numbers to the bit. On a CUDA
-device (D[frame-evaluator-jax-cuda]) the operation is the same: its
+device (D373) the operation is the same: its
 inputs are copied to the host after the work that wrote them on XLA's
 stream, and its outputs back before the work that reads them, each copy
 waited for. The handlers of the two platforms therefore give the same

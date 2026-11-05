@@ -1,6 +1,6 @@
 # REQUIRES: python-api, jax, cuda
 # The JAX adapter of the frame evaluator, mdir.jax, on a CUDA device
-# (D[frame-evaluator-jax-cuda], docs/python-frames.md, The JAX adapter):
+# (D373, docs/python-frames.md, The JAX adapter):
 # programs of the GPU, the arrays of JAX on the device, and the handler of
 # "CUDA", in double and mixed precision, Inputs/python_frames_jax.py:
 # everything of python-frames-jax.test; the handler of CUDA against that of
@@ -9,7 +9,7 @@
 # double. XLA's preallocation is off, as for any script that runs an MDIR
 # simulation on the GPU beside JAX, and XLA's deterministic ops are on: a
 # reduction of XLA on a GPU, such as a sum over the frames, has one order
-# only with them (D[frame-evaluator-jax-cuda]).
+# only with them (D373).
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Double GPU | FileCheck %s --check-prefixes=GATE,FD -DMODE="GPU Double"
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Mixed GPU | FileCheck %s --check-prefixes=GATE -DMODE="GPU Mixed"
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Double GPU | FileCheck %s --check-prefixes=REFUSE,REFUSE-DOUBLE -DMODE="GPU Double"

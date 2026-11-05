@@ -192,7 +192,7 @@ Remaining: the derivative of the virial and of observed terms in the
 parameters, which a fit to the pressure needs; and the parts of the JAX
 adapter after the first. The first part
 (D371) runs on the CPU, on the loop of frames above, and its device
-target (D[frame-evaluator-jax-cuda]) on the same loop, through copies in
+target (D373) on the same loop, through copies in
 host memory that it waits for on XLA's stream; a batch boundary on the
 device, which removes those copies, and a second pass for a Jacobian
 above its bound follow.

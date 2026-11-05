@@ -1,6 +1,6 @@
 # REQUIRES: python-api, jax, torch, cuda
 # mdir.jax against mdir.torch.evaluate on the same programs and frames
-# (D371, D[frame-evaluator-jax-cuda]), on a CUDA device: programs of the
+# (D371, D373), on a CUDA device: programs of the
 # GPU, and the arrays of JAX on the device, in the deterministic mode,
 # double and mixed precision, Inputs/python_frames_jax.py: an interpreter with PyTorch
 # writes the energies of three frames of the dipeptide and their gradients
@@ -10,7 +10,7 @@
 # form the gradient in the cell with one function of the extension. XLA's
 # deterministic ops are on: the sum over the frames of the VJP is a
 # reduction of XLA on the device, whose order is otherwise chosen when it
-# compiles (D[frame-evaluator-jax-cuda]).
+# compiles (D373).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Double GPU %t/double.npz | FileCheck %s --check-prefix=DUMP -DMODE="GPU Double"
 # RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Double GPU %t/double.npz | FileCheck %s -DMODE="GPU Double"

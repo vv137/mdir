@@ -668,6 +668,7 @@ specification follow those made with it.
 | [D370](decisions/D370.md) | A conversion of floating point in a PME template is one op, `mdrt.template_convert`, that the compiler makes an extension, a truncation, or a cast of the bits in IR for the types of the instance; the seven text placeholders are gone. | 2026-11-05 |
 | [D371](decisions/D371.md) | The frame evaluator is a pure function of JAX, `mdir.jax.energy_fn(program)(params, positions, cell)`, a `jax.custom_jvp` built on one primitive, `mdir_frames`, lowered through `jax.ffi` to a typed FFI handler of the extension. | 2026-11-05 |
 | [D372](decisions/D372.md) | The force constants of built-in proper periodic dihedrals are tunable runtime values, with explicit topology-row maps, updates without recompilation, and derivatives through the existing native tuple IR. | 2026-11-05 |
+| [D373](decisions/D373.md) | `mdir_frames` has a handler for the platform `"CUDA"`. Until the boundary of a batch is on the device (PR 1 of #138), it stages a call through the host on XLA's stream. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

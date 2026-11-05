@@ -316,7 +316,7 @@ state in float64 with its velocities and forces.
 ### The JAX adapter
 
 D371, the design and Ruling 20 on #138: the CPU, on the existing loop of
-frames; and D[frame-evaluator-jax-cuda], the target `"CUDA"`, which
+frames; and D373, the target `"CUDA"`, which
 takes arrays on a CUDA device through the same loop.
 
 ```python
@@ -416,7 +416,7 @@ program are serialized. The headers of the XLA FFI are vendored in
 `third_party/xla_ffi` (jaxlib 0.11.2, FFI API 0.4), and the handler
 checks the version that XLA gives it at every stage.
 
-**On a CUDA device** (D[frame-evaluator-jax-cuda]). Where MDIR is built
+**On a CUDA device** (D373). Where MDIR is built
 with CUDA, `mdir_frames` has a handler for the platform `"CUDA"` too, and
 `mdir.jax` registers it when JAX has a CUDA backend in the process
 (`_core._xla_ffi_platforms()` names the platforms of the build). The
