@@ -8,6 +8,10 @@
 # (scripts/hooks/pre-push) runs it before every push.
 set -u
 cd "$(dirname "$0")/.." || exit 2
+# A git hook runs with GIT_DIR, GIT_INDEX_FILE, ... set, which would send the
+# git commands of the checks (check-path.sh makes a repository of its own) to
+# the repository being pushed.
+unset $(git rev-parse --local-env-vars)
 
 failed=0
 run() {
