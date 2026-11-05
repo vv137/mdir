@@ -1829,7 +1829,7 @@ PYBIND11_MODULE(_core, m) {
     })
     // The key and the fingerprint under which the handlers of the XLA FFI
     // find this simulation of a frame evaluator (`mdir.jax`,
-    // D[frame-evaluator-jax]); private.
+    // D371); private.
     .def("_xla_ffi_register", [](PySimulation &s) {
       const model::PreparedModel &prepared = *s.program->prepared;
       auto [key, fingerprint] = python::xla::registerProgram(s.simulation, prepared);

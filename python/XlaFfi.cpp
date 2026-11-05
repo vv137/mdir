@@ -1,5 +1,5 @@
 // The handlers of the XLA FFI for the JAX adapter of the frame evaluator
-// (D[frame-evaluator-jax], docs/python-frames.md, `mdir.jax`).
+// (D371, docs/python-frames.md, `mdir.jax`).
 //
 // `mdir_frames` evaluates the K frames of a call in the simulation of a
 // frame evaluator, one frame after the other on its existing loop

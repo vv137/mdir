@@ -1,5 +1,5 @@
 // `mdrt.template_convert`, the conversion that a template of the lowering
-// leaves to its instance (D[template-ir-pme-convert], #739): it parses and
+// leaves to its instance (D370, #739): it parses and
 // prints for floating point and vectors of it of the same shape, and is
 // refused otherwise.
 //

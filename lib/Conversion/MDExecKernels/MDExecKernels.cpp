@@ -2596,7 +2596,7 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
 
 LogicalResult kernels::resolveTemplateConversions(Operation *root) {
   // Each `mdrt.template_convert` of a template becomes the conversion that
-  // the types of its instance need (D[template-ir-pme-convert], #739): a
+  // the types of its instance need (D370, #739): a
   // cast of the bits between two of the same type, which changes nothing,
   // and otherwise an extension or a truncation. Every op is checked before
   // any is replaced, so that a module with an error is left as it was.

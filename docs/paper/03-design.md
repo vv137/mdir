@@ -1468,7 +1468,7 @@ needs for its gradient in $\boldsymbol\theta$, is not computed, and each
 product is an operation whose own derivative is an error, so that the
 missing term is never taken for zero.
 
-*The JAX adapter* (D[frame-evaluator-jax], `docs/python-frames.md`) gives
+*The JAX adapter* (D371, `docs/python-frames.md`) gives
 the energy of a frame as a pure function of $(\boldsymbol\theta,
 \mathbf x, H)$ and states its derivative in forward mode, as a rule for
 the tangent:

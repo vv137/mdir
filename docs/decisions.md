@@ -665,6 +665,8 @@ specification follow those made with it.
 | [D367](decisions/D367.md) | The equivalence check of the builder also compares the instances of the templates of the lowering: in every precision mode, under environment variables that select a strategy, with cases of its own for what nothing else reaches, and with a count of the cases of each instance. | 2026-11-04 |
 | [D368](decisions/D368.md) | The instance in f32 of the templates of the neighbor matrix is made in IR from the parsed f64 template, not by substituting text before the parse. | 2026-11-04 |
 | [D369](decisions/D369.md) | The scalar and expansion parameters of the PME templates on a device are calls of declared functions, `@mdir.template.*`, that the compiler resolves in IR after the parse, not placeholders substituted in text. | 2026-11-05 |
+| [D370](decisions/D370.md) | A conversion of floating point in a PME template is one op, `mdrt.template_convert`, that the compiler makes an extension, a truncation, or a cast of the bits in IR for the types of the instance; the seven text placeholders are gone. | 2026-11-05 |
+| [D371](decisions/D371.md) | The frame evaluator is a pure function of JAX, `mdir.jax.energy_fn(program)(params, positions, cell)`, a `jax.custom_jvp` built on one primitive, `mdir_frames`, lowered through `jax.ffi` to a typed FFI handler of the extension. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

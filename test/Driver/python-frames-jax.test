@@ -1,5 +1,5 @@
 # REQUIRES: python-api, jax
-# The JAX adapter of the frame evaluator, mdir.jax (D[frame-evaluator-jax],
+# The JAX adapter of the frame evaluator, mdir.jax (D371,
 # docs/python-frames.md, The JAX adapter), on the CPU, in double and mixed
 # precision, Inputs/python_frames_jax.py: the energies, the gradient in the
 # positions, and the Jacobian in the tunables against

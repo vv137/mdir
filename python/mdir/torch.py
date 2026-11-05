@@ -64,7 +64,7 @@ def _cell_gradient(positions, cells, tilts, gradient, strain):
     dU/dh = h^-T (S - sum_i G_i (x) x_i)^T. An entry (k, a) of it with
     k >= a takes S only along strains that keep the cell lower triangular.
     It is formed by the function of the extension that the handler of
-    `mdir.jax` uses (D[frame-evaluator-jax]), so that the two adapters give
+    `mdir.jax` uses (D371), so that the two adapters give
     the same bits: the sum over the particles in f64 in the order of the
     input, and a back substitution."""
     count = len(strain)

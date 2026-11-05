@@ -1,4 +1,4 @@
-"""The JAX adapter of the frame evaluator, `mdir.jax` (D[frame-evaluator-jax],
+"""The JAX adapter of the frame evaluator, `mdir.jax` (D371,
 docs/python-frames.md, The JAX adapter), on the CPU.
 
 Usage: python_frames_jax.py ROOT SCENARIO PRECISION [FILE]

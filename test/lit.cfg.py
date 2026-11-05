@@ -127,7 +127,7 @@ if config.mdir_python:
         if subprocess.run([torch_python, "-c", "import torchpme"],
                           capture_output=True).returncode == 0:
             config.available_features.add("torchpme")
-    # JAX, for its adapter of the frame evaluator (D[frame-evaluator-jax]):
+    # JAX, for its adapter of the frame evaluator (D371):
     # the interpreter that lit is given with -Djax_python=<interpreter> (or
     # MDIR_JAX_PYTHON), which the models in stages take as well (below) and
     # which must import the module of this build (the same Python version),

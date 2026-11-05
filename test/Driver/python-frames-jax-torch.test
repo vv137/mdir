@@ -1,6 +1,6 @@
 # REQUIRES: python-api, jax, torch
 # mdir.jax against mdir.torch.evaluate on the same programs and frames
-# (D[frame-evaluator-jax]), on the CPU, in the deterministic mode, double and
+# (D371), on the CPU, in the deterministic mode, double and
 # mixed precision, Inputs/python_frames_jax.py: an interpreter with PyTorch
 # writes the energies of three frames of the dipeptide and their gradients
 # (in the positions, the edges of the cells, and the tunables, under a

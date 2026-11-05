@@ -315,7 +315,7 @@ state in float64 with its velocities and forces.
 
 ### The JAX adapter
 
-D[frame-evaluator-jax], the design and Ruling 20 on #138. This is the
+D371, the design and Ruling 20 on #138. This is the
 first part: the CPU, on the existing loop of frames.
 
 ```python
@@ -1653,7 +1653,7 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
   whose rounding differs: by at most $5.4\times10^{-14}$ of the largest
   entry of a frame on the frames of the tests, and by up to
   $3.3\times10^{-12}$ of the smallest entries
-  (D[frame-evaluator-jax]). A gradient has the shape, the
+  (D371). A gradient has the shape, the
   type, and the device of the tensor it is of; one cell given for every
   frame takes the sum over the frames. The gradient in the cell is not
   $\mathsf S$: the strain moves the positions with the cell, and is the
@@ -1983,7 +1983,7 @@ first.
 | 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
 | 3 (done, D252, #313) | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138) and of the whole potential with OpenMM; autograd in the positions and the cell through `mdir.torch.evaluate`; one argument `gradients=` |
 | 3b | the metatomic shape of #138 (a list of systems in, outputs out) |
-| The JAX adapter, part 1 (done, D[frame-evaluator-jax], #138) | `mdir.jax.energy_fn` and `mdir.jax.params` on the CPU, on the loop of D251 ([The JAX adapter](#the-jax-adapter)) |
+| The JAX adapter, part 1 (done, D371, #138) | `mdir.jax.energy_fn` and `mdir.jax.params` on the CPU, on the loop of D251 ([The JAX adapter](#the-jax-adapter)) |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the rest of the JAX adapter (M2b-2: the batch boundary on the device, the CUDA target, the second pass, `aux`, `mdir.jax.jax_md`); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
 
 ## Maintainer rulings

@@ -631,7 +631,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
   // The conversions between the types of the instance and f64
-  // (D[template-ir-pme-convert], #739).
+  // (D370, #739).
   if (failed(resolveTemplateConversions(*templates)))
     return failure();
   // On one thread the spreading adds to the fixed-point grid without

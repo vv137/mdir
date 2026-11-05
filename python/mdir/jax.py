@@ -1,5 +1,5 @@
 """The frame evaluator as a pure function of JAX (docs/python-frames.md,
-D[frame-evaluator-jax]).
+D371).
 
 `energy_fn(program)` returns `energy_fn(params, positions, cell)`, the
 potential energy that the forces sample (D210) of one frame in kJ/mol, a

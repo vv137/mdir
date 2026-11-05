@@ -20,7 +20,7 @@ find_package(pybind11 3.0.1 EXACT CONFIG REQUIRED)
 set(MDIR_PYTHON_PACKAGE_DIR ${CMAKE_BINARY_DIR}/python/mdir)
 pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp XlaFfi.cpp)
 # The headers of the XLA FFI for the handlers of `mdir.jax`, vendored so
-# that MDIR builds without JAX (third_party/xla_ffi, D[frame-evaluator-jax]).
+# that MDIR builds without JAX (third_party/xla_ffi, D371).
 target_include_directories(mdir_python SYSTEM PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/xla_ffi)
 set_target_properties(mdir_python PROPERTIES OUTPUT_NAME _core
@@ -38,7 +38,7 @@ configure_file(mdir/__init__.py ${MDIR_PYTHON_PACKAGE_DIR}/__init__.py COPYONLY)
 # `mdir.torch` imports torch and is imported only by a script that asks.
 configure_file(mdir/_frames.py ${MDIR_PYTHON_PACKAGE_DIR}/_frames.py COPYONLY)
 configure_file(mdir/torch.py ${MDIR_PYTHON_PACKAGE_DIR}/torch.py COPYONLY)
-# Its JAX adapter (D[frame-evaluator-jax]); `mdir.jax` imports jax.
+# Its JAX adapter (D371); `mdir.jax` imports jax.
 configure_file(mdir/jax.py ${MDIR_PYTHON_PACKAGE_DIR}/jax.py COPYONLY)
 
 if(SKBUILD)

@@ -230,7 +230,7 @@ def MDRT_TemplateConvertOp : MDRT_Op<"template_convert", [Pure]> {
   let description = [{
     A template of the lowering (`lib/Runtime/Templates`) is written once for
     every type of the positions, the charges, and the forces of an instance
-    (D[template-ir-pme-convert], #739). Where it converts between two of
+    (D370, #739). Where it converts between two of
     them, or between one of them and `f64`, it writes this op, since which
     conversion is needed depends on the types of the instance:
 

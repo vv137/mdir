@@ -1,5 +1,5 @@
 // The handlers of the XLA FFI for the JAX adapter of the frame evaluator
-// (D[frame-evaluator-jax], docs/python-frames.md, `mdir.jax`).
+// (D371, docs/python-frames.md, `mdir.jax`).
 #ifndef MDIR_PYTHON_XLAFFI_H
 #define MDIR_PYTHON_XLAFFI_H
 

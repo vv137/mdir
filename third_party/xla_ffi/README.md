@@ -17,4 +17,4 @@ MDIR uses them for the handlers of the JAX adapter of the frame evaluator
 (`python/XlaFfi.cpp`, `mdir.jax`, docs/python-frames.md), so that MDIR
 builds without JAX. The handlers check the version of the API that XLA
 gives them against these headers when they are registered and at each
-instantiation (D[frame-evaluator-jax]).
+instantiation (D371).

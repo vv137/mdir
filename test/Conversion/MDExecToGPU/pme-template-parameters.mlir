@@ -5,7 +5,7 @@
 // a value is added to a tile by an atomic of the block and to the grid by
 // PTX's reduction of the device, and a load of the grid takes the
 // alignment of 4 bytes. No call or declaration of a parameter is left,
-// and no `mdrt.template_convert` (D[template-ir-pme-convert]).
+// and no `mdrt.template_convert` (D370).
 //
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s --implicit-check-not=mdir.template \

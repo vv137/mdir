@@ -10,7 +10,7 @@
 // `!pme_chg`, and `!pme_frc` are the types that the positions, the charges,
 // and the forces are stored in; the instance replaces them, and each
 // `mdrt.template_convert` between them and f64 with the conversion that
-// their types need (D[template-ir-pme-convert]). `!pme_real` is the type
+// their types need (D370). `!pme_real` is the type
 // of the forces, as in the
 // template for devices (PMEGPU.mlir): the weights of the B-splines, the
 // grid and its transform, the factors of the influence function, the

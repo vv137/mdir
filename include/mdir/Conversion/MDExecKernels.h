@@ -391,7 +391,7 @@ std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
 /// Replaces, in `root`, each `mdrt.template_convert` of a template with the
 /// conversion that the types of its instance need: `arith.bitcast` between
 /// two of the same type, `arith.extf` to a wider one, and `arith.truncf` to
-/// a narrower one (D[template-ir-pme-convert], #739).
+/// a narrower one (D370, #739).
 mlir::LogicalResult resolveTemplateConversions(mlir::Operation *root);
 
 /// Resolves, in `root`, the parameters of the instance that the templates of

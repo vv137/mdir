@@ -50,7 +50,7 @@ classifiers = [
 # nvidia/cu13.
 cuda = ["nvidia-cufft>=12.0,<13", "nvidia-cublas>=13.0,<14",
         "nvidia-cuda-nvcc>=13.0,<14"]
-# The JAX adapter of the frame evaluator, `mdir.jax` (D[frame-evaluator-jax]):
+# The JAX adapter of the frame evaluator, `mdir.jax` (D371):
 # the lowest JAX is the one its tests run (0.11.2, whose XLA FFI is version
 # 0.4, the headers of third_party/xla_ffi). A CUDA plugin of JAX is the
 # user's choice.
