@@ -1,0 +1,91 @@
+# D[force-matching-pme]
+
+Recorded at its merge.
+
+**The tangent of a reciprocal sum in the positions is $-\sum_i\mathbf t_i\cdot\mathbf F_i$ of the forces that the sum yields, and its derivative in a number that the charges depend on is exact as the half difference of that tangent at the charges shifted by $\pm\partial\mathbf c/\partial\theta$, two more reciprocal sums with their forces for each number; the derivative in the charge of each particle stays refused.**
+
+Part C(i) of the design on #726 (Ruling 21, Q10), after D376
+(#752). The per-particle form, C(ii), is pursued only if its ablation against
+this one shows that it pays.
+
+## The rule
+
+The energy of a reciprocal sum is a quadratic form of its charges,
+$E = \tfrac12\mathbf c^{\mathsf T}\mathsf A(\mathbf x)\mathbf c$. Its tangent
+along $\mathbf t$ at a fixed cell is
+$\Phi_\mathrm{rec} = \sum_i\mathbf t_i\cdot\partial E/\partial\mathbf x_i = -\sum_i\mathbf t_i\cdot\mathbf F_i = \tfrac12\mathbf c^{\mathsf T}\dot{\mathsf A}\mathbf c$,
+with $\dot{\mathsf A} = \sum_j\mathbf t_j\cdot\partial\mathsf A/\partial\mathbf x_j$
+symmetric: a quadratic form of the charges too. For a number $\theta$ on which
+the charges depend, with $\Delta = \partial\mathbf c/\partial\theta$ at the
+current $\theta$,
+
+$$
+\frac{\partial\Phi_\mathrm{rec}}{\partial\theta} = \Delta^{\mathsf T}\dot{\mathsf A}\mathbf c
+= \tfrac12\big[\Phi_\mathrm{rec}(\mathbf c+\Delta) - \Phi_\mathrm{rec}(\mathbf c-\Delta)\big],
+$$
+
+exactly, for any $\Delta$: the terms in $\Delta^{\mathsf T}\dot{\mathsf A}\Delta$
+cancel. It is the rule of D161 for the energy, applied to its tangent.
+
+## The IR
+
+`md-differentiate` (D376) builds the tangent of `md.reciprocal`
+as a sum over particles that gathers the forces of the op and $\mathbf t$,
+with the kernel $-\mathbf F_i\cdot\mathbf t_i$. Within the pass, an attribute
+marks that sum, and the pass removes the attribute before it ends. The
+derivative of the tangent potential in a number:
+
+- shifts the field of the charges by $\pm\Delta$ with the map that computes it, as D161 does;
+- clones the reciprocal sum at each shifted field, and the marked sum over the forces of each clone;
+- takes half the difference.
+
+A number that the charges do not depend on reads no reciprocal sum, by the
+proof of activity: $\epsilon$ of a pair term beside PME takes the pairs alone.
+
+The derivative in the charge of each particle, $(\dot{\mathsf A}\mathbf c)_i$,
+is refused by name. It needs $\mathbf t_i\cdot\nabla\phi(\mathbf x_i)$ and the
+potential of a second density, the charges spread with the slopes of the
+window along $\mathbf t$, which no lowering forms (C(ii)). A charge field that
+is an argument of the potential and enters a reciprocal sum directly is
+therefore not differentiable in this form. For the frame evaluator (part B of
+D376), the charges of the entries of a tunable enter as numbers
+with their directions $\Delta_m$, $M$ of them. The tangent of the forces,
+the virial, or the potential of the op is refused as well.
+
+## Cost
+
+For each number in which the tangent is differentiated: two reciprocal sums
+with their forces (spreading, one forward and one inverse FFT, and the gather
+of the forces each), and two sums over particles. This is in addition to the
+reciprocal sum of the tangent itself. That makes $2M$ reciprocal sums for $M$
+entries. This is the baseline that the per-particle form, about two reciprocal
+sums independent of $M$, is measured against (E8 of the design).
+
+## Validation
+
+`test/Integration/tangent-pme.test` (CPU, double and mixed) and
+`tangent-pme-gpu.test` (RTX 5090, double and mixed) use ten charges in an
+orthorhombic cell of 2.0 × 2.2 × 1.9 nm. The mesh is 48 × 54 × 48 with
+B-splines of order 8, $\beta = 3$/nm, and charges $q_i = q_{0,i} + \lambda w_i$.
+The oracle is the Ewald sum of the reciprocal space in NumPy, in closed form
+($\Phi$ and $\partial\Phi/\partial\lambda$ are bilinear in sums of the
+structure, Inputs/tangent_pme.py), checked there against central differences.
+Relative errors:
+
+| Quantity | CPU double | CPU mixed | GPU double | GPU mixed |
+|---|---|---|---|---|
+| $E$ | 7.9e-11 | 7.9e-11 | 7.8e-11 | 7.8e-11 |
+| $\Phi$ | 1.7e-9 | 1.7e-9 | 1.8e-9 | 1.8e-9 |
+| $\partial\Phi/\partial\lambda$ | 5.0e-9 | 7.8e-7 | 5.0e-9 | 6.3e-6 |
+| $\partial E/\partial\lambda$ (D161) | 2.9e-11 | 6.2e-7 | 2.8e-11 | 8.4e-7 |
+
+The tolerances are 2e-8 in double and 3e-5 in mixed. In mixed precision the energy and the tangent agree with double to the digits shown, and the derivatives in $\lambda$ carry the rounding of the mixed mode.
+
+- With a pair term besides, $\partial\Phi/\partial\lambda$ is the same to the bit.
+- $\Phi$ equals $-\sum_i\mathbf t_i\cdot\mathbf F_i$ of the same call: to the bit on the CPU, and within $6.4\times10^{-16}$ relative on the GPU.
+- Under `md-check-derivatives` (CPU, double), central differences along $\mathbf t$ at the step $10^{-4}$, within $10^{-9} + 10^{-6}$ of the value:
+  - the tangent: $1.5\times10^{-7}$;
+  - $\partial\Phi/\partial\lambda$: $1.3\times10^{-7}$;
+  - $\partial E/\partial\lambda$: $2.0\times10^{-7}$.
+
+  These errors are the truncation error at that step. The energy of the mesh carries a rounding of about $10^{-10}$ of itself, so a step of $10^{-5}$ gives errors of $3.5\times10^{-6}$ from the rounding.

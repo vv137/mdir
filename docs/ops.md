@@ -627,16 +627,33 @@ expanded first:
 | `md.sum_relation`, a kernel $u(r)$ | the same relation; the kernel gathers $\mathbf t$ at both ends and yields $u'(r)\,\mathbf d_{ij}\cdot(\mathbf t_i-\mathbf t_j)/r$, invariant under exchange as $u$ is (`exchange(symmetric, derived)`) |
 | `md.sum_tuples` | the same tuples; the kernel gathers $\mathbf t$ at each member and yields $\sum_k(\partial u/\partial c_k)\,\dot c_k$ over its coordinates: $\dot{\mathbf d} = \mathbf t_a-\mathbf t_b$ for a displacement $\mathbf d = \mathbf x_a-\mathbf x_b$, and $\dot c = \sum_m\partial c/\partial\mathbf x_m\cdot\mathbf t_m$ for a distance, an angle, its cosine, or a dihedral, from the gradient of the coordinate in the displacements that the op receives |
 | `md.sum_particles` that gathers the positions | the derivative of its kernel along $\mathbf t_i$ |
+| `md.reciprocal`, its energy (D[force-matching-pme]) | $-\sum_i\mathbf t_i\cdot\mathbf F_i$, a sum over particles of the forces that the op yields and of $\mathbf t$ |
 | a value that does not depend on the positions, by the proof of activity (Section 5.3.1) | none: such a term is absent from $\Phi$, and its derivative there is not formed |
 
-Each is refused, by name, never taken as zero: a reciprocal sum (a later
-part of #726), a field computed from the positions (`md.gather_relation`,
+The tangent of a reciprocal sum, $\Phi_\mathrm{rec} = \sum_i\mathbf t_i\cdot\partial E/\partial\mathbf x_i$
+with $E = \tfrac12\mathbf c^{\mathsf T}\mathsf A(\mathbf x)\mathbf c$, is a
+quadratic form of the charges as $E$ is,
+$\tfrac12\mathbf c^{\mathsf T}\dot{\mathsf A}\mathbf c$ with
+$\dot{\mathsf A} = \sum_j\mathbf t_j\cdot\partial\mathsf A/\partial\mathbf x_j$.
+Its derivative in a number $\theta$ that the charges depend on (through a
+map, as for D161) is therefore exact as the half difference
+$\Delta^{\mathsf T}\dot{\mathsf A}\mathbf c = (\Phi_\mathrm{rec}(\mathbf c+\Delta)-\Phi_\mathrm{rec}(\mathbf c-\Delta))/2$,
+$\Delta = \partial\mathbf c/\partial\theta$: two more reciprocal sums with
+their forces for each number, the rule of D161 applied to the tangent. Its
+derivative in the charge of each particle, $(\dot{\mathsf A}\mathbf c)_i$,
+needs the potential of a second density (the charges spread with the slopes
+of the window along $\mathbf t$), which no lowering forms: it is refused.
+
+Each is refused, by name, never taken as zero: the derivative of the
+tangent of a reciprocal sum in the charge of each particle, the tangent of
+its forces, virial, or potential, a field computed from the positions (`md.gather_relation`,
 `md.map_particles` of them), a pair kernel that reads the displacement, a
 learned stage, a potential on domains (D276), and any other op that depends
 on the positions. `md-check-derivatives` checks `tangent` against central
 differences of the energy along $\mathbf t$, and `tangent_derivative(n)`
 against those of `derivative(n)` along $\mathbf t$, each value of a field on
-its own (`test/Integration/tangent.mlir`).
+its own (`test/Integration/tangent.mlir`; with a reciprocal sum, against the
+Ewald sum as well, `test/Integration/tangent-pme.test`).
 
 ### 5.4 Rules
 

@@ -1509,7 +1509,12 @@ x}_i-\dot{\mathbf x}_j)/r_{ij}$, since $\dot r_{ij} = \mathbf
 d_{ij}\cdot(\dot{\mathbf x}_i-\dot{\mathbf x}_j)/r_{ij}$. A term over
 tuples becomes $\sum_k(\partial u/\partial c_k)\,\dot c_k$ over its
 coordinates, and a term that does not read the positions is absent, by
-the proof of activity. The derivative of $\dot U_{\mathbf x}$ in
+the proof of activity. The reciprocal sum of the mesh is a quadratic
+form of the charges $q_i$, and so is its tangent
+$-\sum_i\dot{\mathbf x}_i\cdot\mathbf F_i$, so its derivative in a number
+$\theta$ on which the charges depend is exactly half the difference of the
+tangent at the charges shifted by $\pm\partial q_i/\partial\theta$: two more
+reciprocal sums for each number (D[force-matching-pme]). The derivative of $\dot U_{\mathbf x}$ in
 $\boldsymbol\theta$ is then that of an energy, by the rules and the seeds
 that give $\partial U/\partial\boldsymbol\theta$, and the matrix of the
 mixed derivatives, $3N\times M_\theta$ for a frame, is never formed. The gradient in the cell is formed
