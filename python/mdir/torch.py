@@ -63,23 +63,22 @@ def _cell_gradient(positions, cells, tilts, gradient, strain):
     S = sum_i G_i (x) x_i + (dU/dh)^T h, so that
     dU/dh = h^-T (S - sum_i G_i (x) x_i)^T. An entry (k, a) of it with
     k >= a takes S only along strains that keep the cell lower triangular.
-    The sum over the particles is taken in f64."""
+    It is formed by the function of the extension that the handler of
+    `mdir.jax` uses (D[frame-evaluator-jax]), so that the two adapters give
+    the same bits: the sum over the particles in f64 in the order of the
+    input, and a back substitution."""
     count = len(strain)
-    x = np.asarray(positions)
+    x = np.asarray(positions, dtype=np.float64)
     if x.ndim == 2:
         x = x[None]
+    x = np.broadcast_to(x, (count,) + x.shape[1:])
     diagonal = np.broadcast_to(np.asarray(cells, dtype=np.float64), (count, 3))
     tilt = (np.zeros((count, 3)) if tilts is None else
             np.broadcast_to(np.asarray(tilts, dtype=np.float64), (count, 3)))
-    result = np.empty((count, 6))
-    for n in range(count):
-        h = np.array([[diagonal[n, 0], 0.0, 0.0], [tilt[n, 0], diagonal[n, 1], 0.0],
-                      [tilt[n, 1], tilt[n, 2], diagonal[n, 2]]])
-        moment = gradient[n].astype(np.float64).T @ np.asarray(x[n], dtype=np.float64)
-        by_vector = np.linalg.solve(h.T, (strain[n] - moment).T)
-        result[n] = (by_vector[0, 0], by_vector[1, 1], by_vector[2, 2],
-                     by_vector[1, 0], by_vector[2, 0], by_vector[2, 1])
-    return result
+    by_vector = _core._frame_cell_gradient(x, gradient, strain,
+                                           np.concatenate([diagonal, tilt], axis=1))
+    return np.stack([by_vector[:, 0, 0], by_vector[:, 1, 1], by_vector[:, 2, 2],
+                     by_vector[:, 1, 0], by_vector[:, 2, 0], by_vector[:, 2, 1]], axis=1)
 
 
 @torch.library.custom_op("mdir::frame_energies", mutates_args=())

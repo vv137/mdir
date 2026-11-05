@@ -15,6 +15,8 @@
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
+#include <pybind11/numpy.h>
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/SHA256.h"
@@ -113,6 +115,8 @@ ffi::ErrorOr<std::unique_ptr<FrameState>> instantiate(int64_t program,
 /// dU/dh = h^-T (S - sum_i G_i (x) x_i)^T (D252), the nine entries row by
 /// row. The sum over the particles is taken in f64 in the order of the
 /// input; h^T is upper triangular, so the solve is a back substitution.
+/// Both adapters form it here (`_frame_cell_gradient` for `mdir.torch`), so
+/// that they give the same bits.
 template <class Force>
 void cellGradient(const double *x, const Force *g, size_t particles,
                   const std::array<double, 9> &strain, const std::array<double, 6> &cell,
@@ -332,6 +336,45 @@ void addBindings(py::module_ &m) {
     state["type_info"] = capsule(&frameStateInfo);
     types["mdir_frames_state"] = state;
     return types;
+  });
+  // The gradient in the cell vectors of `cellGradient`, for the PyTorch
+  // adapter, so that both adapters form it with the same arithmetic:
+  // positions (K, N, 3) float64, the gradient in them (K, N, 3) in the type
+  // of the forces, the strain (K, 3, 3), and the cells (K, 6) give
+  // dU/dh (K, 3, 3).
+  m.def("_frame_cell_gradient", [](py::array_t<double, py::array::c_style | py::array::forcecast> x,
+                                   py::array gradient,
+                                   py::array_t<double, py::array::c_style | py::array::forcecast> strain,
+                                   py::array_t<double, py::array::c_style | py::array::forcecast> cells) {
+    if (x.ndim() != 3 || x.shape(2) != 3)
+      throw py::value_error("_frame_cell_gradient: positions (K, N, 3)");
+    py::ssize_t frames = x.shape(0), particles = x.shape(1);
+    if (gradient.ndim() != 3 || gradient.shape(0) != frames || gradient.shape(1) != particles ||
+        gradient.shape(2) != 3 || strain.ndim() != 3 || strain.shape(0) != frames ||
+        cells.ndim() != 2 || cells.shape(0) != frames || cells.shape(1) != 6)
+      throw py::value_error("_frame_cell_gradient: shapes (K, N, 3), (K, 3, 3), (K, 6)");
+    bool single = gradient.dtype().is(py::dtype::of<float>());
+    if (!single && !gradient.dtype().is(py::dtype::of<double>()))
+      throw py::value_error("_frame_cell_gradient: the gradient is float32 or float64");
+    py::array g = single ? py::array(py::array_t<float, py::array::c_style | py::array::forcecast>(gradient))
+                         : py::array(py::array_t<double, py::array::c_style | py::array::forcecast>(gradient));
+    py::array_t<double> result({frames, py::ssize_t(3), py::ssize_t(3)});
+    const double *xs = x.data(), *s = strain.data(), *c = cells.data();
+    double *out = result.mutable_data();
+    for (py::ssize_t k = 0; k != frames; ++k) {
+      std::array<double, 9> frameStrain;
+      std::copy(s + 9 * k, s + 9 * k + 9, frameStrain.begin());
+      std::array<double, 6> cell;
+      std::copy(c + 6 * k, c + 6 * k + 6, cell.begin());
+      size_t at = 3 * static_cast<size_t>(particles) * k;
+      if (single)
+        cellGradient(xs + at, static_cast<const float *>(g.data()) + at, particles, frameStrain,
+                     cell, out + 9 * k);
+      else
+        cellGradient(xs + at, static_cast<const double *>(g.data()) + at, particles, frameStrain,
+                     cell, out + 9 * k);
+    }
+    return result;
   });
   m.def("_xla_ffi_api_version",
         []() { return py::make_tuple(XLA_FFI_API_MAJOR, XLA_FFI_API_MINOR); });
