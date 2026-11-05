@@ -2725,6 +2725,339 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
 }
 
 //===----------------------------------------------------------------------===//
+// The tangent of a potential in the positions (D[force-matching])
+//===----------------------------------------------------------------------===//
+//
+// From a potential U(x, c, θ...), the potential
+//
+//   Φ(x, c, θ..., t) = Σ_i t_i · ∂U/∂x_i,
+//
+// the derivative of U along a tangent t of the positions at a fixed cell,
+// with t its last argument. Each sum that reads the positions becomes a sum
+// of the same structure that gathers t as well and whose kernel yields the
+// directional derivative of its own; a sum that does not read them has no
+// tangent, which the activity proof states, so that Φ holds only the terms
+// that depend on the positions. The derivative of Φ in an argument of U at
+// fixed t, which `derivative(n)` of Φ gives by the rules of a parameter or
+// a field (D161, D230), is the mixed derivative Σ_i t_i · ∂²U/∂x_i ∂θ_n:
+// the product that force matching needs (#726), without the matrix.
+
+namespace {
+
+class TangentBuilder {
+public:
+  TangentBuilder(PotentialOp potential, StringRef name)
+      : potential(potential), name(name), builder(potential.getContext()),
+        loc(potential.getLoc()) {}
+
+  /// The tangent potential, placed after `after`, or a null op after a
+  /// diagnostic.
+  PotentialOp build(Operation *after);
+
+private:
+  LogicalResult checkUses();
+  /// Fails with a diagnostic if the kernel of `op` applies a learned stage.
+  LogicalResult checkKernel(Operation *op);
+  /// Sets `tangent` to the tangent of the sum `op`, a sum of the same
+  /// structure, or to null if its kernel does not depend on the positions.
+  LogicalResult pairTangent(SumRelationOp op, Value &tangent);
+  LogicalResult tupleTangent(SumTuplesOp op, Value &tangent);
+  LogicalResult particleTangent(SumParticlesOp op, Value &tangent);
+
+  PotentialOp potential;
+  StringRef name;
+  OpBuilder builder;
+  Location loc;
+  Block *body = nullptr;
+  Value positions;
+  Value tangentField;
+};
+
+} // namespace
+
+/// a · b for two vectors of the kernel, or null where either is zero.
+static Value emitDot(ScalarEmitter &emit, Value a, Value b) {
+  Value product = emit.mul(a, b);
+  if (!product)
+    return Value();
+  return vector::ReductionOp::create(emit.builder, emit.loc,
+                                     vector::CombiningKind::ADD, product);
+}
+
+LogicalResult TangentBuilder::checkUses() {
+  for (OpOperand &use : positions.getUses()) {
+    Operation *user = use.getOwner();
+    unsigned index = use.getOperandNumber();
+    if (isa<ReciprocalOp>(user))
+      return user->emitError()
+             << "cannot form the tangent in the positions of a reciprocal "
+                "sum yet (D[force-matching]): the charges with a mesh come "
+                "in a later part of #726";
+    if (isa<GatherRelationOp, GatherTuplesOp, MapParticlesOp>(user))
+      return user->emitError()
+             << "cannot form the tangent in the positions of a field "
+                "computed from them (D[force-matching])";
+    bool known = (isa<NeighborhoodOp>(user) && index == 0) ||
+                 (isa<SumRelationOp, SumTuplesOp>(user) && index == 1) ||
+                 isa<SumParticlesOp>(user);
+    if (!known)
+      return user->emitError()
+             << "cannot form the tangent in the positions through this use";
+  }
+  return success();
+}
+
+LogicalResult TangentBuilder::checkKernel(Operation *op) {
+  bool staged = false;
+  op->walk([&](ApplyStageOp) { staged = true; });
+  if (staged)
+    return op->emitOpError()
+           << "applies a learned stage, whose tangent in the positions is "
+              "not formed (D[force-matching])";
+  if (!op->getResult(0).getType().isF64())
+    return op->emitOpError()
+           << "cannot form the tangent of a sum whose result is not f64";
+  return success();
+}
+
+LogicalResult TangentBuilder::pairTangent(SumRelationOp sum, Value &tangent) {
+  tangent = Value();
+  if (failed(checkKernel(sum)))
+    return failure();
+  if (!sum.getKernel().front().getArgument(1).use_empty())
+    return sum.emitOpError()
+           << "cannot form the tangent of a kernel that uses the "
+              "displacement; only kernels that depend on the distance are "
+              "supported";
+  auto op = cast<SumRelationOp>(builder.clone(*sum));
+  op.getGatheredMutable().append(tangentField);
+  op.setExchangeBasis(ExchangeBasis::Derived);
+  Block &block = op.getKernel().front();
+  Type type = cast<FieldType>(tangentField.getType()).getKernelValueType();
+  // The tangent at the two ends, i and j, after the values of the other
+  // gathered fields; d = x_i − x_j, so that ṙ = d · (t_i − t_j) / r.
+  Value ti = block.addArgument(type, loc);
+  Value tj = block.addArgument(type, loc);
+  Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+  Value r = block.getArgument(0), d = block.getArgument(1);
+
+  OpBuilder kernel(block.getTerminator());
+  ScalarDerivative derivative(kernel, r);
+  Value slope;
+  if (failed(derivative.get(pairEnergy, slope)))
+    return failure();
+  if (!slope) {
+    op->erase();
+    return success();
+  }
+  ScalarEmitter emit(kernel, loc);
+  Value along = emitDot(emit, d, emit.sub(ti, tj));
+  setYield(block, emit.mul(emit.div(slope, r), along));
+  tangent = op.getResult();
+  return success();
+}
+
+LogicalResult TangentBuilder::tupleTangent(SumTuplesOp sum, Value &tangent) {
+  tangent = Value();
+  if (failed(checkKernel(sum)))
+    return failure();
+  unsigned arity = sum.getArity();
+  SmallVector<Coordinate, 2> coordinates = sum.getCoordinates();
+  unsigned first = coordinates.size() + sum.getGathered().size() * arity;
+  auto op = cast<SumTuplesOp>(builder.clone(*sum));
+  op.getGatheredMutable().append(tangentField);
+  Block &block = op.getKernel().front();
+  Type type = cast<FieldType>(tangentField.getType()).getKernelValueType();
+  // The tangent at each member, after the values of the other gathered
+  // fields and before the fields of the tuples.
+  SmallVector<Value, 4> members;
+  for (unsigned member = 0; member != arity; ++member)
+    members.push_back(block.insertArgument(first + member, type, loc));
+  Value tupleEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+
+  OpBuilder kernel(block.getTerminator());
+  ScalarEmitter emit(kernel, loc);
+  Value total;
+  for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
+    Value value = block.getArgument(index);
+    if (value.use_empty())
+      continue;
+    if (coordinate.kind == CoordinateKind::Displacement) {
+      // d = x_a − x_b: the derivative of u along ḋ = t_a − t_b.
+      Value seed = emit.sub(members[coordinate.members[0]],
+                            members[coordinate.members[1]]);
+      ScalarDerivative derivative(kernel, value, nullptr, seed);
+      Value slope;
+      if (failed(derivative.get(tupleEnergy, slope)))
+        return failure();
+      total = emit.add(total, slope);
+      continue;
+    }
+    // (∂u/∂q) q̇, with q̇ = Σ_m ∂q/∂x_m · t_m from the gradient of the
+    // coordinate in the positions of its members.
+    ScalarDerivative derivative(kernel, value);
+    Value slope;
+    if (failed(derivative.get(tupleEnergy, slope)))
+      return failure();
+    if (!slope)
+      continue;
+    SmallVector<Value, 3> displacements =
+        getDisplacementArguments(op, getDisplacements(coordinate));
+    CoordinateGradient gradient =
+        emitCoordinateGradient(kernel, loc, coordinate.kind, displacements);
+    Value rate;
+    for (auto [place, member] : llvm::enumerate(coordinate.members))
+      rate = emit.add(rate,
+                      emitDot(emit, gradient.members[place], members[member]));
+    total = emit.add(total, emit.mul(slope, rate));
+  }
+  if (!total) {
+    op->erase();
+    return success();
+  }
+  setYield(block, total);
+  tangent = op.getResult();
+  return success();
+}
+
+LogicalResult TangentBuilder::particleTangent(SumParticlesOp sum,
+                                              Value &tangent) {
+  tangent = Value();
+  if (failed(checkKernel(sum)))
+    return failure();
+  SmallVector<unsigned, 1> places;
+  for (auto [place, field] : llvm::enumerate(sum.getGathered()))
+    if (field == positions)
+      places.push_back(place);
+  auto op = cast<SumParticlesOp>(builder.clone(*sum));
+  op.getGatheredMutable().append(tangentField);
+  Block &block = op.getKernel().front();
+  Type type = cast<FieldType>(tangentField.getType()).getKernelValueType();
+  Value ti = block.addArgument(type, loc);
+  Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
+
+  OpBuilder kernel(block.getTerminator());
+  ScalarEmitter emit(kernel, loc);
+  Value total;
+  for (unsigned place : places) {
+    ScalarDerivative derivative(kernel, block.getArgument(place), nullptr, ti);
+    Value slope;
+    if (failed(derivative.get(value, slope)))
+      return failure();
+    total = emit.add(total, slope);
+  }
+  if (!total) {
+    op->erase();
+    return success();
+  }
+  setYield(block, total);
+  tangent = op.getResult();
+  return success();
+}
+
+PotentialOp TangentBuilder::build(Operation *after) {
+  if (potential.isExternal()) {
+    potential.emitOpError() << "cannot form the tangent of a declaration";
+    return PotentialOp();
+  }
+  if (!llvm::hasSingleElement(potential.getBody())) {
+    potential.emitOpError()
+        << "cannot form the tangent of a body with more than one block";
+    return PotentialOp();
+  }
+  FunctionType type = potential.getFunctionType();
+  if (type.getNumInputs() < 2 || !isa<FieldType>(type.getInput(0)) ||
+      type.getNumResults() != 1 || !type.getResult(0).isF64()) {
+    potential.emitOpError() << "cannot form the tangent of a potential "
+                               "that does not take the positions first "
+                               "and return one f64";
+    return PotentialOp();
+  }
+  SmallVector<Type> inputs(type.getInputs());
+  inputs.push_back(type.getInput(0));
+
+  OperationState state(loc, PotentialOp::getOperationName());
+  state.addAttribute(PotentialOp::getSymNameAttrName(state.name),
+                     builder.getStringAttr(name));
+  state.addAttribute(
+      PotentialOp::getFunctionTypeAttrName(state.name),
+      TypeAttr::get(builder.getFunctionType(inputs, type.getResults())));
+  state.addRegion();
+  builder.setInsertionPointAfter(after);
+  auto result = cast<PotentialOp>(builder.create(state));
+  IRMapping mapping;
+  potential.getBody().cloneInto(&result.getBody(), mapping);
+  body = &result.getBody().front();
+  positions = body->getArgument(0);
+  tangentField = body->addArgument(type.getInput(0), loc);
+  auto fail = [&]() {
+    result.erase();
+    return PotentialOp();
+  };
+
+  if (llvm::any_of(*body, [](Operation &op) {
+        return isa_and_nonnull<md_dist::MDDistDialect>(op.getDialect());
+      })) {
+    potential.emitOpError() << "cannot form the tangent of a potential on "
+                               "domains (D276)";
+    return fail();
+  }
+  // The truncation is part of the energy of a pair, which the tangent
+  // differentiates.
+  for (Operation &op : llvm::make_early_inc_range(*body))
+    if (auto sum = dyn_cast<SumRelationOp>(&op))
+      if (failed(expandTruncation(sum)))
+        return fail();
+  if (failed(checkUses()))
+    return fail();
+
+  auto oldReturn = cast<ReturnOp>(body->getTerminator());
+  Value energy = oldReturn.getOperand(0);
+  builder.setInsertionPoint(oldReturn);
+
+  ActivityAnalysis activity(positions);
+  activity.addKnownBlock(body);
+  auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
+    tangent = Value();
+    ActivityResult verdict = activity.classify(value);
+    if (verdict.dependence == Activity::Inactive)
+      return success();
+    Operation *op = value.getDefiningOp();
+    if (verdict.dependence == Activity::Active && op) {
+      if (auto sum = dyn_cast<SumRelationOp>(op))
+        return pairTangent(sum, tangent);
+      if (auto sum = dyn_cast<SumTuplesOp>(op))
+        return tupleTangent(sum, tangent);
+      if (auto sum = dyn_cast<SumParticlesOp>(op))
+        return particleTangent(sum, tangent);
+    }
+    Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc()
+                  : op                     ? op->getLoc()
+                                           : value.getLoc();
+    if (verdict.dependence == Activity::Unknown)
+      return emitError(at) << "cannot prove that this value does not depend "
+                              "on the positions: "
+                           << verdict.reason;
+    if (op)
+      return emitError(at) << "'" << op->getName()
+                           << "' depends on the positions and has no rule "
+                              "for its tangent";
+    return emitError(at) << "a block argument depends on the positions and "
+                            "has no rule for its tangent";
+  };
+  ScalarDerivative derivative(builder, positions, leaf);
+  Value tangent;
+  if (failed(derivative.get(energy, tangent)))
+    return fail();
+  if (!tangent)
+    tangent = ScalarEmitter(builder, loc).constant(0.0, builder.getF64Type());
+  ReturnOp::create(builder, loc, ValueRange{tangent});
+  oldReturn.erase();
+  eraseDeadOps(*body);
+  return result;
+}
+
+//===----------------------------------------------------------------------===//
 // The function
 //===----------------------------------------------------------------------===//
 
@@ -2760,6 +3093,13 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     case Request::Virial:
       resultTypes.push_back(VectorType::get({9}, builder.getF64Type()));
       break;
+    case Request::Tangent:
+    case Request::TangentDerivative:
+      // The pass asks the tangent potential for these, as its energy and
+      // its derivatives.
+      potential.emitOpError()
+          << "a request of the tangent reached the derivative of a potential";
+      return FunctionOp();
     }
   }
 
@@ -2871,6 +3211,9 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
                    ? buildFieldDerivative(arguments[i], result)
                    : buildParameterDerivative(arguments[i], result);
       break;
+    case Request::Tangent:
+    case Request::TangentDerivative:
+      llvm_unreachable("refused when the result types were formed");
     }
     if (failed(status))
       return fail();
@@ -2894,7 +3237,7 @@ static std::string getDerivativeName(StringRef potential,
       name += "_";
     auto kind = static_cast<Request>(kinds[i]);
     name += stringifyRequest(kind).str();
-    if (kind == Request::Derivative)
+    if (kind == Request::Derivative || kind == Request::TangentDerivative)
       name += std::to_string(arguments[i]);
   }
   return name;
@@ -2913,7 +3256,6 @@ public:
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    MLIRContext *context = module.getContext();
 
     SmallVector<EvaluateOp> evaluations;
     module->walk([&](EvaluateOp op) { evaluations.push_back(op); });
@@ -2928,34 +3270,132 @@ public:
         return signalPassFailure();
       }
 
-      std::string name = getDerivativeName(potential.getSymName(),
-                                           evaluate.getRequestKinds(),
-                                           evaluate.getRequestArguments());
-      if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {
-        if (!isa<FunctionOp>(existing)) {
-          evaluate.emitOpError()
-              << "the name '" << name
-              << "' is needed for a generated function, but is taken";
+      if (!evaluate.hasTangent()) {
+        Operation *call = emitCall(evaluate, potential,
+                                   evaluate.getRequestKinds(),
+                                   evaluate.getRequestArguments(),
+                                   evaluate.getOperands(),
+                                   evaluate.getResultTypes());
+        if (!call)
           return signalPassFailure();
-        }
-      } else {
-        DerivativeBuilder derivative(potential, name, remarks,
-                                     separateStages);
-        if (!derivative.build(evaluate.getRequestKinds(),
-                              evaluate.getRequestArguments()))
-          return signalPassFailure();
+        evaluate->replaceAllUsesWith(call);
+        evaluate.erase();
+        continue;
       }
 
-      OperationState state(evaluate.getLoc(), CallOp::getOperationName());
-      state.addOperands(evaluate.getOperands());
-      state.addAttribute("callee", FlatSymbolRefAttr::get(context, name));
-      state.addTypes(evaluate.getResultTypes());
-      OpBuilder builder(evaluate);
-      Operation *call = builder.create(state);
-      evaluate->replaceAllUsesWith(call);
+      // The requests of U and those of its tangent Φ, which are the energy
+      // and the derivatives of the tangent potential, each in one call.
+      SmallVector<int32_t> kinds[2];
+      SmallVector<int64_t> arguments[2];
+      SmallVector<Type> types[2];
+      SmallVector<unsigned> places[2];
+      for (auto [index, kind] : llvm::enumerate(evaluate.getRequestKinds())) {
+        auto request = static_cast<Request>(kind);
+        int64_t argument = evaluate.getRequestArguments()[index];
+        unsigned part = 0;
+        if (request == Request::Tangent) {
+          part = 1;
+          request = Request::Energy;
+        } else if (request == Request::TangentDerivative) {
+          part = 1;
+          request = Request::Derivative;
+        }
+        kinds[part].push_back(static_cast<int32_t>(request));
+        arguments[part].push_back(argument);
+        types[part].push_back(evaluate.getResult(index).getType());
+        places[part].push_back(index);
+      }
+      SmallVector<Value> results(evaluate.getNumResults());
+      if (!kinds[0].empty()) {
+        Operation *call =
+            emitCall(evaluate, potential, kinds[0], arguments[0],
+                     evaluate.getPotentialOperands(), types[0]);
+        if (!call)
+          return signalPassFailure();
+        for (auto [k, place] : llvm::enumerate(places[0]))
+          results[place] = call->getResult(k);
+      }
+      PotentialOp tangent = getTangent(module, potential);
+      if (!tangent)
+        return signalPassFailure();
+      Operation *call = emitCall(evaluate, tangent, kinds[1], arguments[1],
+                                 evaluate.getOperands(), types[1]);
+      if (!call)
+        return signalPassFailure();
+      for (auto [k, place] : llvm::enumerate(places[1]))
+        results[place] = call->getResult(k);
+      evaluate->replaceAllUsesWith(results);
       evaluate.erase();
     }
+    // The tangent potentials are read only by the functions generated
+    // from them, which hold copies of their bodies.
+    for (PotentialOp tangent : tangents)
+      tangent.erase();
   }
+
+private:
+  /// A call of the function that computes `kinds` from `potential`, built
+  /// at the first request, in place of `evaluate`; null after a
+  /// diagnostic.
+  Operation *emitCall(EvaluateOp evaluate, PotentialOp potential,
+                      ArrayRef<int32_t> kinds, ArrayRef<int64_t> arguments,
+                      ValueRange operands, TypeRange types) {
+    ModuleOp module = getOperation();
+    std::string name =
+        getDerivativeName(potential.getSymName(), kinds, arguments);
+    if (Operation *existing = SymbolTable::lookupSymbolIn(module, name)) {
+      if (!isa<FunctionOp>(existing)) {
+        evaluate.emitOpError()
+            << "the name '" << name
+            << "' is needed for a generated function, but is taken";
+        return nullptr;
+      }
+    } else {
+      DerivativeBuilder derivative(potential, name, remarks, separateStages);
+      if (!derivative.build(kinds, arguments))
+        return nullptr;
+    }
+    OperationState state(evaluate.getLoc(), CallOp::getOperationName());
+    state.addOperands(operands);
+    state.addAttribute("callee",
+                       FlatSymbolRefAttr::get(module.getContext(), name));
+    state.addTypes(types);
+    OpBuilder builder(evaluate);
+    return builder.create(state);
+  }
+
+  /// The tangent potential of `potential`, `<name>.tangent`, built at the
+  /// first request; null after a diagnostic.
+  PotentialOp getTangent(ModuleOp module, PotentialOp potential) {
+    auto found = tangentOf.find(potential);
+    if (found != tangentOf.end())
+      return found->second;
+    std::string name = (potential.getSymName() + ".tangent").str();
+    if (SymbolTable::lookupSymbolIn(module, name)) {
+      potential.emitOpError()
+          << "the name '" << name
+          << "' is needed for the tangent of the potential, but is taken";
+      return PotentialOp();
+    }
+    // After the potential and the functions generated from it so far.
+    Operation *last = potential;
+    std::string prefix = (potential.getSymName() + ".").str();
+    while (Operation *next = last->getNextNode()) {
+      auto generated = dyn_cast<FunctionOp>(next);
+      if (!generated || !generated.getSymName().starts_with(prefix))
+        break;
+      last = next;
+    }
+    PotentialOp tangent = TangentBuilder(potential, name).build(last);
+    if (tangent) {
+      tangentOf[potential] = tangent;
+      tangents.push_back(tangent);
+    }
+    return tangent;
+  }
+
+  llvm::DenseMap<Operation *, PotentialOp> tangentOf;
+  SmallVector<PotentialOp> tangents;
 };
 } // namespace
 
