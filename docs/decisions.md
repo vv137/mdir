@@ -671,6 +671,7 @@ specification follow those made with it.
 | [D373](decisions/D373.md) | `mdir_frames` has a handler for the platform `"CUDA"`. Until the boundary of a batch is on the device (PR 1 of #138), it stages a call through the host on XLA's stream. | 2026-11-05 |
 | [D374](decisions/D374.md) | The PME templates take the types of an instance from a header of alias definitions above their unchanged text, and the names of the instance in IR through the symbol table; no template of the lowering is instantiated by rewriting its text any more. | 2026-11-05 |
 | [D375](decisions/D375.md) | The derivative of `mdir.jax.energy_fn` in `params` has a second pass for a Jacobian above `jacobian_bytes`: two primitives, `mdir_frames_theta_tangent` and `mdir_frames_vjp`, whose handlers evaluate the frames and contract the row of each frame with the tangent or the cotangent as it is formed, with no Jacobian kept. | 2026-11-05 |
+| [D376](decisions/D376.md) | The gradient of a loss on the forces in the tunables is the derivative in the tunables of the tangent of the potential in the positions, $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$ at a fixed tangent $\mathbf t$, which `md-differentiate` builds as a potential of its own from the sums of $U$ and differentiates by the rules of D161 and D230; `md.evaluate` asks for it with the requests `tangent` and `tangent_derivative(n)`, the tangent its last operand. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
-// What the tangent in the positions does not take yet (D[force-matching]),
+// What the tangent in the positions does not take yet (D376),
 // each refused by name, never a zero.
 
 !vec = !md.field<@atoms, 3 x f64>

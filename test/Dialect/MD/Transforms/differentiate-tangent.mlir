@@ -2,7 +2,7 @@
 
 // The tangent of a potential in the positions, Φ = Σ_i t_i · ∂U/∂x_i, and
 // its derivative in an argument at fixed t, the mixed derivative of force
-// matching (D[force-matching], #726). md-differentiate builds Φ as a
+// matching (D376, #726). md-differentiate builds Φ as a
 // potential `<name>.tangent` that takes t last, asks it for its energy and
 // derivatives by the rules of D161 and D230, and erases it: the functions
 // hold copies of its body. The values are checked by central differences

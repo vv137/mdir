@@ -1,5 +1,5 @@
 // The tangent of a potential in the positions and its mixed derivative
-// (D[force-matching], #726), compiled and run on the CPU and checked by
+// (D376, #726), compiled and run on the CPU and checked by
 // central differences along the tangent: `tangent` against differences of
 // the energy, `tangent_derivative(n)` against differences of
 // `derivative(n)` (the oracle of md-check-derivatives, which aborts with a

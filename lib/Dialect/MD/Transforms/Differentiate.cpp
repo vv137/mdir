@@ -2725,7 +2725,7 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
 }
 
 //===----------------------------------------------------------------------===//
-// The tangent of a potential in the positions (D[force-matching])
+// The tangent of a potential in the positions (D376)
 //===----------------------------------------------------------------------===//
 //
 // From a potential U(x, c, θ...), the potential
@@ -2791,12 +2791,12 @@ LogicalResult TangentBuilder::checkUses() {
     if (isa<ReciprocalOp>(user))
       return user->emitError()
              << "cannot form the tangent in the positions of a reciprocal "
-                "sum yet (D[force-matching]): the charges with a mesh come "
+                "sum yet (D376): the charges with a mesh come "
                 "in a later part of #726";
     if (isa<GatherRelationOp, GatherTuplesOp, MapParticlesOp>(user))
       return user->emitError()
              << "cannot form the tangent in the positions of a field "
-                "computed from them (D[force-matching])";
+                "computed from them (D376)";
     bool known = (isa<NeighborhoodOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp>(user) && index == 1) ||
                  isa<SumParticlesOp>(user);
@@ -2813,7 +2813,7 @@ LogicalResult TangentBuilder::checkKernel(Operation *op) {
   if (staged)
     return op->emitOpError()
            << "applies a learned stage, whose tangent in the positions is "
-              "not formed (D[force-matching])";
+              "not formed (D376)";
   if (!op->getResult(0).getType().isF64())
     return op->emitOpError()
            << "cannot form the tangent of a sum whose result is not f64";

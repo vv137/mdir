@@ -114,7 +114,7 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
     if (request == Request::Tangent || request == Request::TangentDerivative) {
       // Central differences along the tangent t of the positions, at the
       // fixed step h: of the energy for Φ = Σ t_i · ∂U/∂x_i, and of the
-      // derivative in argument n for ∂Φ/∂θ_n (D[force-matching]).
+      // derivative in argument n for ∂Φ/∂θ_n (D376).
       Value h = constant(b, step);
       Value tangents = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, tangent);
       Value shiftedFields[2], values[2];

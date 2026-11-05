@@ -276,7 +276,7 @@ md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
   md.return %a : f64
 }
 
-// The tangent is a field of the type of the positions (D[force-matching]).
+// The tangent is a field of the type of the positions (D376).
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
                %t: !md.field<@atoms, f64>) -> f64 {
   // expected-error@+1 {{expected the tangent, the last operand, to have the type of the positions, '!md.field<@atoms, 3 x f64>', got '!md.field<@atoms, f64>'}}

@@ -1492,7 +1492,7 @@ evaluated only where its tangent is not identically zero. Stated in
 forward mode, the mixed derivative of the forces in $\boldsymbol\theta$
 that force matching needs is a tangent rule for the evaluation itself,
 added without changing the function. The product that rule needs is formed in the IR of
-the potential (D[force-matching], #726). A loss $L$ on the gradients in
+the potential (D376, #726). A loss $L$ on the gradients in
 the positions of stored frames has
 $\partial L/\partial\boldsymbol\theta = \sum_n\sum_i
 (\partial^2U_n/\partial\mathbf x_i\,\partial\boldsymbol\theta)^{\mathsf T}

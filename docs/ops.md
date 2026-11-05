@@ -491,8 +491,8 @@ $$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 | `virial` | `vector<9xf64>` | $\mathsf W$, as defined in Section 5.3, in row-major order |
 | `derivative(n)` | `f64` | $\partial U/\partial\theta_n$, where $\theta_n$ is scalar argument `n` |
 | `derivative(n)` | Type of the field | $g_i = \partial U/\partial a_i$, where $a$ is argument `n`, a field of the particles with one component of `f64` (D230) |
-| `tangent` | `f64` | $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$, the derivative of $U$ along the tangent $\mathbf t$ of the positions at a fixed cell (D[force-matching]) |
-| `tangent_derivative(n)` | as `derivative(n)` | $\partial\Phi/\partial\theta_n$ or $\partial\Phi/\partial a_i$ at fixed $\mathbf t$: the mixed derivative $\sum_i\mathbf t_i\cdot\partial^2U/\partial\mathbf x_i\,\partial\theta_n$ (D[force-matching]) |
+| `tangent` | `f64` | $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$, the derivative of $U$ along the tangent $\mathbf t$ of the positions at a fixed cell (D376) |
+| `tangent_derivative(n)` | as `derivative(n)` | $\partial\Phi/\partial\theta_n$ or $\partial\Phi/\partial a_i$ at fixed $\mathbf t$: the mixed derivative $\sum_i\mathbf t_i\cdot\partial^2U/\partial\mathbf x_i\,\partial\theta_n$ (D376) |
 
 With a request of the tangent, the op takes one operand after the
 arguments of the potential: the tangent $\mathbf t$, a field of the type of
@@ -596,7 +596,7 @@ parameters. It follows operands and values captured by kernels.
 `--md-analyze-activity=argument=N` reports the three outcomes for the
 results in each potential body. See [ad-robust.md](ad-robust.md).
 
-### 5.3.2 The tangent in the positions (D[force-matching])
+### 5.3.2 The tangent in the positions (D376)
 
 The gradient of a loss on the forces in the parameters (#726) is the
 product of the mixed second derivative with one field per frame,

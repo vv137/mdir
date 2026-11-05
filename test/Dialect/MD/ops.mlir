@@ -185,7 +185,7 @@ md.function @requests(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
 }
 
 // The tangent along a field of the positions, its last operand, and the
-// mixed derivative (D[force-matching]).
+// mixed derivative (D376).
 //
 // CHECK-LABEL: md.function @tangents(
 md.function @tangents(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64,
