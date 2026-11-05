@@ -1189,6 +1189,8 @@ _Quantity requested from a potential_
 | Forces | `1` | forces |
 | Virial | `2` | virial |
 | Derivative | `3` | derivative |
+| Tangent | `4` | tangent |
+| TangentDerivative | `5` | tangent_derivative |
 
 ### Truncation
 
