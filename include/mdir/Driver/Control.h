@@ -206,6 +206,10 @@ struct Control {
   /// frame evaluator of the dependent terms, which takes no steps of a
   /// trajectory. No key of the control file sets it.
   bool dependentTerms = false;
+  /// Internal form of the frames entry (#138 PR 1). No control-file key
+  /// sets it; the batch caller selects DeviceBatch when its entry exists.
+  enum class FrameMode { Host, DeviceBatch };
+  FrameMode frameMode = FrameMode::Host;
   /// Whether the entry of the program of segments is a loop over frames
   /// (D251, docs/python-frames.md): the program of a frame
   /// evaluator, which takes the cell and the positions of a frame at each
