@@ -90,7 +90,7 @@ system.tunables = [mdir.Tunable("q", "charge", map=charge_map)]
 
 ### Built-in proper dihedral coefficients
 
-D[dihedral-tunables], part of #730. `mdir.Tunable(name, "dihedral_k")`
+D372, part of #730. `mdir.Tunable(name, "dihedral_k")`
 tunes the coefficient $k_r$ in the existing built-in energy
 $U_r=k_r[1+\cos(n_r\phi_r-\delta_r)]$, in kJ/mol. Finite signed values,
 including zero, are accepted; NaN and infinity are errors. No symmetry,

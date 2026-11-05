@@ -91,7 +91,7 @@ The rows are those of the terms of the potential, in the order of the
 reader. A quadruple with a torsion of several terms (a dihedral type of two
 terms in CHARMM or GROMACS, the repeated entries of an Amber `prmtop`) has a
 row for each term; `np.unique(top.dihedrals, axis=0)` gives the quadruples.
-The three coefficient/periodicity/phase arrays (D[dihedral-tunables]) are
+The three coefficient/periodicity/phase arrays (D372) are
 read-only copies in this same order, including improper rows. Maps of the
 `dihedral_k` tunable use the full row count, with improper rows fixed at `-1`
 ([python-tunable.md](python-tunable.md#built-in-proper-dihedral-coefficients)).

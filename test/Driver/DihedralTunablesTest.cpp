@@ -1,4 +1,4 @@
-// D[dihedral-tunables]: updates preserve the force field outside coefficients.
+// D372: updates preserve the force field outside coefficients.
 #include "mdir/Driver/Model.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"

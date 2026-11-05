@@ -1,4 +1,4 @@
-"""D[dihedral-tunables]: row identity, atomic updates and independent physics.
+"""D372: row identity, atomic updates and independent physics.
 
 The oracle differentiates a projected-vector atan2 torsion with forward-mode
 NumPy dual numbers. It neither calls MDIR for reference values nor differences

@@ -1337,7 +1337,7 @@ Correction sites compose typed results explicitly. Restraint energy is carried
 as an actual value from the correction to the stored-column report.
 
 The dihedral adapter also owns built-in proper-dihedral coefficient tunables
-(D[dihedral-tunables], part of #730). It shares the typed tuple-gradient seed
+(D372, part of #730). It shares the typed tuple-gradient seed
 layout with custom tuples; the descriptors identify their tuple set rather
 than assuming that every gradient belongs to a custom term. Parameter updates
 refill `dihedrals.k` through the same adapter without changing its relation,

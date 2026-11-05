@@ -47,7 +47,7 @@ g.zero                                  # the names whose derivative is zero by 
 - Units: kJ/mol per unit of the tunable (D213): per e for a charge, per nm
   for $\sigma$, dimensionless for $\epsilon$, and per unit of the constant
   or parameter for one of an expression.
-- For `dihedral_k` (D[dihedral-tunables]), the derivative is dimensionless:
+- For `dihedral_k` (D372), the derivative is dimensionless:
   $\partial U/\partial\theta_a=\sum_{r:m(r)=a}[1+\cos(n_r\phi_r-\delta_r)]$.
   Each selected proper Fourier row contributes once; fixed and improper rows
   have no gradient entry. Tied rows sum into their shared entry. It uses the
