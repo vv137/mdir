@@ -271,6 +271,70 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
 
 // -----
 
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// The tangent is a field of the type of the positions (D[force-matching]).
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %t: !md.field<@atoms, f64>) -> f64 {
+  // expected-error@+1 {{expected the tangent, the last operand, to have the type of the positions, '!md.field<@atoms, 3 x f64>', got '!md.field<@atoms, f64>'}}
+  %d = md.evaluate @u(%x, %cell, %a, %t) request [tangent]
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, !md.field<@atoms, f64>) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// The tangent is not a parameter of the potential.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %t: !md.field<@atoms, 3 x f64>) -> f64 {
+  // expected-error@+1 {{expected 'tangent_derivative' to name a parameter, an argument index from 2 to 2, got 3}}
+  %d = md.evaluate @u(%x, %cell, %a, %t) request [tangent_derivative(3)]
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, !md.field<@atoms, 3 x f64>) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+// The arguments of the potential come before the tangent.
+md.potential @v(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+                %b: f64) -> f64 {
+  md.return %a : f64
+}
+
+md.function @g(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %t: !md.field<@atoms, 3 x f64>) -> f64 {
+  // expected-error@+1 {{expected 5 operands, got 4}}
+  %d = md.evaluate @v(%x, %cell, %a, %t) request [tangent]
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, !md.field<@atoms, 3 x f64>) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// A request of the tangent takes the tangent after the arguments.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  // expected-error@+1 {{expected the tangent, the last operand, to have the type of the positions, '!md.field<@atoms, 3 x f64>', got 'f64'}}
+  %d = md.evaluate @u(%x, %cell, %a) request [tangent]
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64) -> f64
+  md.return %d : f64
+}
+
+// -----
+
 md.function @g(%a: f64) -> f64 {
   md.return %a : f64
 }

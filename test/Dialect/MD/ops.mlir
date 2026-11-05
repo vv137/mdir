@@ -183,3 +183,17 @@ md.function @requests(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
 
   md.return %u, %f, %w, %du, %e : f64, !vec, vector<9xf64>, f64, f64
 }
+
+// The tangent along a field of the positions, its last operand, and the
+// mixed derivative (D[force-matching]).
+//
+// CHECK-LABEL: md.function @tangents(
+md.function @tangents(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64,
+                      %t: !vec) -> (f64, f64, f64) {
+  // CHECK: md.evaluate @lj(%{{.*}}) request [energy, tangent, tangent_derivative(2)]
+  // CHECK-SAME: : (!md.field<@atoms, 3 x f64>, !md.cell, f64, f64, !md.field<@atoms, 3 x f64>) -> (f64, f64, f64)
+  %u, %p, %dp = md.evaluate @lj(%x, %cell, %eps, %sigma, %t)
+      request [energy, tangent, tangent_derivative(2)]
+      : (!vec, !md.cell, f64, f64, !vec) -> (f64, f64, f64)
+  md.return %u, %p, %dp : f64, f64, f64
+}

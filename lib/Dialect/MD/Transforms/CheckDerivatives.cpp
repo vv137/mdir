@@ -26,18 +26,26 @@ public:
   void runOnOperation() final;
 private:
   Value energy(OpBuilder &b, EvaluateOp source, ValueRange inputs);
+  /// One request of the potential of `source` at `inputs`.
+  Value request(OpBuilder &b, EvaluateOp source, ValueRange inputs,
+                Request kind, int64_t argument, Type type);
   void compare(OpBuilder &b, Location loc, Value analytic, Value plus,
                Value minus, Value h, StringRef label);
   LogicalResult instrument(EvaluateOp source);
 };
 
 Value CheckDerivatives::energy(OpBuilder &b, EvaluateOp source, ValueRange inputs) {
+  return request(b, source, inputs, Request::Energy, -1, b.getF64Type());
+}
+
+Value CheckDerivatives::request(OpBuilder &b, EvaluateOp source, ValueRange inputs,
+                                Request kind, int64_t argument, Type type) {
   OperationState state(source.getLoc(), EvaluateOp::getOperationName());
   state.addOperands(inputs);
-  state.addTypes(b.getF64Type());
+  state.addTypes(type);
   state.addAttribute("callee", source.getCalleeAttr());
-  state.addAttribute("request_kinds", b.getDenseI32ArrayAttr({static_cast<int32_t>(Request::Energy)}));
-  state.addAttribute("request_arguments", b.getDenseI64ArrayAttr({-1}));
+  state.addAttribute("request_kinds", b.getDenseI32ArrayAttr({static_cast<int32_t>(kind)}));
+  state.addAttribute("request_arguments", b.getDenseI64ArrayAttr({argument}));
   return b.create(state)->getResult(0);
 }
 
@@ -85,7 +93,9 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
   Location loc = source.getLoc();
   OpBuilder b(source);
   b.setInsertionPointAfter(source);
-  SmallVector<Value> inputs(source.getOperands());
+  // The arguments of the potential; the tangent, if any, is apart.
+  SmallVector<Value> inputs(source.getPotentialOperands());
+  Value tangent = source.hasTangent() ? source.getOperands().back() : Value();
   auto field = dyn_cast<FieldType>(inputs.front().getType());
   if (!field || field.getNumComponents() != 3 || !field.getElementType().isF64())
     return source.emitError("derivative checking requires positions with three f64 components");
@@ -101,6 +111,58 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
     Request request = static_cast<Request>(kind);
     if (request == Request::Energy) continue;
     Value analytic = source.getResult(resultIndex);
+    if (request == Request::Tangent || request == Request::TangentDerivative) {
+      // Central differences along the tangent t of the positions, at the
+      // fixed step h: of the energy for Φ = Σ t_i · ∂U/∂x_i, and of the
+      // derivative in argument n for ∂Φ/∂θ_n (D[force-matching]).
+      Value h = constant(b, step);
+      Value tangents = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, tangent);
+      Value shiftedFields[2], values[2];
+      int64_t argument = source.getRequestArguments()[resultIndex];
+      Type type = analytic.getType();
+      for (int sign : {1, -1}) {
+        Value delta = constant(b, sign * step);
+        Value buffer = memref::AllocOp::create(b, loc, bufferType, ValueRange{count});
+        auto loop = scf::ForOp::create(b, loc, zero, count, one);
+        OpBuilder at = OpBuilder::atBlockTerminator(loop.getBody());
+        for (int axis = 0; axis < 3; ++axis) {
+          Value a = arith::ConstantIndexOp::create(at, loc, axis);
+          SmallVector<Value, 2> indices{loop.getInductionVar(), a};
+          Value x = memref::LoadOp::create(at, loc, positions, indices);
+          Value t = memref::LoadOp::create(at, loc, tangents, indices);
+          x = arith::AddFOp::create(at, loc, x, arith::MulFOp::create(at, loc, delta, t));
+          memref::StoreOp::create(at, loc, x, buffer, indices);
+        }
+        auto shifted = inputs;
+        shifted[0] = mdir::mdrt::FromBufferOp::create(b, loc, field, buffer);
+        shiftedFields[sign == 1 ? 0 : 1] = shifted[0];
+        values[sign == 1 ? 0 : 1] =
+            request == Request::Tangent
+                ? energy(b, source, shifted)
+                : this->request(b, source, shifted, Request::Derivative, argument, type);
+      }
+      if (type.isF64()) {
+        std::string label = request == Request::Tangent
+            ? "tangent" : "tangent derivative in parameter " + std::to_string(argument);
+        compare(b, loc, analytic, values[0], values[1], h, prefix + label);
+      } else {
+        // A field of the particles: each value against its difference.
+        auto valueType = MemRefType::get({ShapedType::kDynamic}, b.getF64Type());
+        Value exact = mdir::mdrt::ToBufferOp::create(b, loc, valueType, analytic);
+        Value plus = mdir::mdrt::ToBufferOp::create(b, loc, valueType, values[0]);
+        Value minus = mdir::mdrt::ToBufferOp::create(b, loc, valueType, values[1]);
+        auto loop = scf::ForOp::create(b, loc, zero, count, one);
+        OpBuilder at = OpBuilder::atBlockTerminator(loop.getBody());
+        Value i = loop.getInductionVar();
+        compare(at, loc, memref::LoadOp::create(at, loc, exact, ValueRange{i}),
+                memref::LoadOp::create(at, loc, plus, ValueRange{i}),
+                memref::LoadOp::create(at, loc, minus, ValueRange{i}), h,
+                prefix + "tangent derivative in field " + std::to_string(argument));
+      }
+      for (Value shifted : shiftedFields)
+        memref::DeallocOp::create(b, loc, mdir::mdrt::ToBufferOp::create(b, loc, bufferType, shifted));
+      continue;
+    }
     if (request == Request::Derivative) {
       int64_t index = source.getRequestArguments()[resultIndex];
       Value value = inputs[index];

@@ -491,6 +491,13 @@ $$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 | `virial` | `vector<9xf64>` | $\mathsf W$, as defined in Section 5.3, in row-major order |
 | `derivative(n)` | `f64` | $\partial U/\partial\theta_n$, where $\theta_n$ is scalar argument `n` |
 | `derivative(n)` | Type of the field | $g_i = \partial U/\partial a_i$, where $a$ is argument `n`, a field of the particles with one component of `f64` (D230) |
+| `tangent` | `f64` | $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$, the derivative of $U$ along the tangent $\mathbf t$ of the positions at a fixed cell (D[force-matching]) |
+| `tangent_derivative(n)` | as `derivative(n)` | $\partial\Phi/\partial\theta_n$ or $\partial\Phi/\partial a_i$ at fixed $\mathbf t$: the mixed derivative $\sum_i\mathbf t_i\cdot\partial^2U/\partial\mathbf x_i\,\partial\theta_n$ (D[force-matching]) |
+
+With a request of the tangent, the op takes one operand after the
+arguments of the potential: the tangent $\mathbf t$, a field of the type of
+the positions. `tangent_derivative(n)` names an argument of the potential,
+never the tangent (Section 5.3.2).
 
 `md.evaluate` does not survive semantic differentiation. The pass replaces it
 with `md.call` to a generated `md.function`.
@@ -588,6 +595,48 @@ parameters. It follows operands and values captured by kernels.
 
 `--md-analyze-activity=argument=N` reports the three outcomes for the
 results in each potential body. See [ad-robust.md](ad-robust.md).
+
+### 5.3.2 The tangent in the positions (D[force-matching])
+
+The gradient of a loss on the forces in the parameters (#726) is the
+product of the mixed second derivative with one field per frame,
+$\sum_i(\partial^2U/\partial\mathbf x_i\,\partial\theta)^{\mathsf T}\mathbf t_i$.
+$U$ is twice continuously differentiable in $(\mathbf x, \theta)$ except
+where a pair crosses the cutoff, a set of measure zero, so the product is
+the derivative in $\theta$ of
+
+$$
+\Phi(\mathbf x, \theta, \mathbf t) = \sum_i \mathbf t_i\cdot\frac{\partial U}{\partial\mathbf x_i}
+$$
+
+at fixed $\mathbf t$. For a request of `tangent` or `tangent_derivative(n)`,
+`md-differentiate` builds $\Phi$ as a potential `<name>.tangent`, which takes
+the arguments of the potential and then $\mathbf t$, and asks it for its
+energy (`tangent`) and its `derivative(n)` (`tangent_derivative(n)`) by the
+rules of Sections 5.3 and 5.4 and of D230, unchanged: a sum over a relation
+becomes a gather in a field, a number takes the derivative of the kernel.
+The requests of $U$ in the same op are formed in a function of their own.
+The tangent potential is then erased; the generated functions hold copies of
+its body.
+
+$\Phi$ is built from the sums of the potential, with the truncation
+expanded first:
+
+| Sum | Its tangent |
+|---|---|
+| `md.sum_relation`, a kernel $u(r)$ | the same relation; the kernel gathers $\mathbf t$ at both ends and yields $u'(r)\,\mathbf d_{ij}\cdot(\mathbf t_i-\mathbf t_j)/r$, invariant under exchange as $u$ is (`exchange(symmetric, derived)`) |
+| `md.sum_tuples` | the same tuples; the kernel gathers $\mathbf t$ at each member and yields $\sum_k(\partial u/\partial c_k)\,\dot c_k$ over its coordinates: $\dot{\mathbf d} = \mathbf t_a-\mathbf t_b$ for a displacement $\mathbf d = \mathbf x_a-\mathbf x_b$, and $\dot c = \sum_m\partial c/\partial\mathbf x_m\cdot\mathbf t_m$ for a distance, an angle, its cosine, or a dihedral, from the gradient of the coordinate in the displacements that the op receives |
+| `md.sum_particles` that gathers the positions | the derivative of its kernel along $\mathbf t_i$ |
+| a value that does not depend on the positions, by the proof of activity (Section 5.3.1) | none: such a term is absent from $\Phi$, and its derivative there is not formed |
+
+Each is refused, by name, never taken as zero: a reciprocal sum (a later
+part of #726), a field computed from the positions (`md.gather_relation`,
+`md.map_particles` of them), a pair kernel that reads the displacement, a
+learned stage, a potential on domains (D276), and any other op that depends
+on the positions. `md-check-derivatives` checks `tangent` against central
+differences of the energy along $\mathbf t$, and `tangent_derivative(n)`
+against those of `derivative(n)` along $\mathbf t$, each value of a field on
+its own (`test/Integration/tangent.mlir`).
 
 ### 5.4 Rules
 

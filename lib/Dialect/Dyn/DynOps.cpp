@@ -360,7 +360,9 @@ static Operation *findGlobalSum(Region &body) {
         auto request = static_cast<mdir::md::Request>(kind);
         return request == mdir::md::Request::Energy ||
                request == mdir::md::Request::Virial ||
-               request == mdir::md::Request::Derivative;
+               request == mdir::md::Request::Derivative ||
+               request == mdir::md::Request::Tangent ||
+               request == mdir::md::Request::TangentDerivative;
       });
     }
     if (!isSum)
