@@ -370,7 +370,11 @@ gather; `real_bytes`; the sides and the points of the tiles, Section 3.3;
 and the atomic additions to the grid and to a tile). After the parse,
 `resolveTemplateParameters` replaces each call where it stands with the
 constant or the ops that the instance takes (D369,
-#739).
+#739). A conversion between the types of the positions, the
+charges, the forces, and f64 is an `mdrt.template_convert`
+([mdrt.md](dialects/mdrt.md)), which `resolveTemplateConversions` makes
+an extension, a truncation, or, between two of the same type, a cast of
+the bits (D[template-ir-pme-convert]); on the host as well (`PME.mlir`).
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and

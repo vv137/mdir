@@ -630,6 +630,10 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  // The conversions between the types of the instance and f64
+  // (D[template-ir-pme-convert], #739).
+  if (failed(resolveTemplateConversions(*templates)))
+    return failure();
   // On one thread the spreading adds to the fixed-point grid without
   // atomics: an integer sum is the same in any order, and a locked addition
   // costs about 20 cycles where nothing else writes (D271).

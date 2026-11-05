@@ -179,7 +179,7 @@ def place(body, p, x, length, k, n):
 %{p}frac = arith.subf %{p}s, %{p}fs : f64
 %{p}ki = arith.index_cast {k} : index to i32
 %{p}kf = arith.sitofp %{p}ki : i32 to !pme_real
-%{p}fracr = PME_F64_TO_REAL %{p}frac : f64 to !pme_real
+%{p}fracr = mdrt.template_convert %{p}frac : f64 to !pme_real
 %{p}u = arith.mulf %{p}fracr, %{p}kf : !pme_real
 %{p}fu0 = math.floor %{p}u : !pme_real
 // A coordinate that is not a number takes the point 0, so that the
@@ -241,10 +241,10 @@ def particle_prologue(body, slopes):
 %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
 %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
 %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-%xi = PME_EXTEND_POS %xs : !pme_pos to f64
-%yi = PME_EXTEND_POS %ys : !pme_pos to f64
-%zi = PME_EXTEND_POS %zs : !pme_pos to f64
-%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+%xi = mdrt.template_convert %xs : !pme_pos to f64
+%yi = mdrt.template_convert %ys : !pme_pos to f64
+%zi = mdrt.template_convert %zs : !pme_pos to f64
+%qi = mdrt.template_convert %qs : !pme_chg to !pme_real""")
     places = (("%xi", "%ilx"), ("%yi", "%ily"), ("%zi", "%ilz"))
     if TILTED:
         places = fractions(body, "%xi", "%yi", "%zi")
@@ -582,12 +582,12 @@ def dispersion_constants():
         return ""
     return """\
   %pib = arith.divf %pi, %beta : f64
-  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %pibr = mdrt.template_convert %pib : f64 to !pme_real
   %sqrtpi = arith.constant 1.7724538509055159 : f64
-  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %sqrtpir = mdrt.template_convert %sqrtpi : f64 to !pme_real
   %six = arith.constant 6.0 : f64
   %sixgauss = arith.mulf %six, %gauss : f64
-  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+  %sixgaussr = mdrt.template_convert %sixgauss : f64 to !pme_real
 """
 
 
@@ -802,7 +802,7 @@ scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
         body(f"""\
 %r{index} = gpu.all_reduce add {name} uniform {{
 }} : (!pme_real) -> !pme_real
-%r{index}w = PME_REAL_TO_F64 %r{index} : !pme_real to f64""")
+%r{index}w = mdrt.template_convert %r{index} : !pme_real to f64""")
     body("scf.if %lead {")
     for index in range(7):
         body(f"""\
@@ -868,15 +868,15 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: me
   %lxy = arith.mulf %lx, %ly : f64
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
-{prefactor()}  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+{prefactor()}  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
   %count = arith.muli %k1, %k2 : index
   %ty0 = arith.muli %k1, %c3t : index
   %k2_3 = arith.muli %k2, %c3t : index
@@ -1082,9 +1082,9 @@ func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables:
       %at0 = arith.addi %tstart, %k : index
       %at1 = arith.addi %at0, %kk : index
       %at2 = arith.addi %at1, %kk : index
-      %mr = PME_F64_TO_REAL %s0 : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %s1 : f64 to !pme_real
-      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      %mr = mdrt.template_convert %s0 : f64 to !pme_real
+      %m2r = mdrt.template_convert %s1 : f64 to !pme_real
+      %fr = mdrt.template_convert %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
       memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>
@@ -1093,8 +1093,8 @@ func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables:
       %xstart = arith.addi %xstart0, %xfrom : index
       %xat0 = arith.addi %xstart, %k : index
       %xat1 = arith.addi %xat0, %kk : index
-      %gmr = PME_F64_TO_REAL %gmean : f64 to !pme_real
-      %gqr = PME_F64_TO_REAL %gsquare : f64 to !pme_real
+      %gmr = mdrt.template_convert %gmean : f64 to !pme_real
+      %gqr = mdrt.template_convert %gsquare : f64 to !pme_real
       memref.store %gmr, %tables[%xat0] : memref<?x!pme_real, 1>
       memref.store %gqr, %tables[%xat1] : memref<?x!pme_real, 1>
     }
@@ -1144,9 +1144,9 @@ def tables():
 %at0 = arith.addi %tstart, %k : index
 %at1 = arith.addi %at0, %kk : index
 %at2 = arith.addi %at1, %kk : index
-%mr = PME_F64_TO_REAL %m : f64 to !pme_real
-%m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
-%fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+%mr = mdrt.template_convert %m : f64 to !pme_real
+%m2r = mdrt.template_convert %m2 : f64 to !pme_real
+%fr = mdrt.template_convert %factor : f64 to !pme_real
 memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
 memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
 memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>""")
@@ -1230,8 +1230,8 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memre
   %lxy = arith.mulf %lx, %ly : f64
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
-{prefactor()}  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
-  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+{prefactor()}  %gaussr = mdrt.template_convert %gauss : f64 to !pme_real
+  %prefactorr = mdrt.template_convert %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %c3t = arith.constant 3 : index
   %ty0 = arith.muli %k1, %c3t : index
@@ -1246,9 +1246,9 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memre
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
-  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
-  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %ilxr = mdrt.template_convert %ilx : f64 to !pme_real
+  %ilyr = mdrt.template_convert %ily : f64 to !pme_real
+  %ilzr = mdrt.template_convert %ilz : f64 to !pme_real
 {launch(body.text(), "%points")}  return
 }}
 """
@@ -1287,7 +1287,7 @@ def weights_kernels(listed=False):
             w(f"""\
 %{t}c = arith.constant {axis} : index
 %{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
-%{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64""")
+%{t}p = mdrt.template_convert %{t}s : !pme_pos to f64""")
         places = fractions(w, "%xp", "%yp", "%zp")
     for axis, ((coordinate, length), k) in enumerate(zip(places, ("%k1", "%k2", "%k3"))):
         t = "xyz"[axis]
@@ -1295,7 +1295,7 @@ def weights_kernels(listed=False):
             w(f"""\
 %{t}c = arith.constant {axis} : index
 %{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
-%{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64
+%{t}p = mdrt.template_convert %{t}s : !pme_pos to f64
 """)
         start, frac = place(w, f"p{t}_", coordinate, length, k, "%order")
         w(f"""\
@@ -1347,7 +1347,7 @@ memref.store %{t}start_r, %weights[%{t}sat] : memref<?x!pme_real, 1>""")
 %k3t = arith.index_cast %k3 : index to i32
 %b2t = arith.index_cast %b2 : index to i32
 %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+%qi = mdrt.template_convert %qs : !pme_chg to !pme_real""")
     def load(name, component):
         a(f"""\
 %{name}_n = arith.muli %n32, {component} : i32
@@ -1917,7 +1917,7 @@ func.func private @{name}{edge}({args}
           %particle = memref.load %bins[%entry_at] : memref<?xi32, 1>
           %i = arith.index_cast %particle : i32 to index
           %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-          %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+          %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
           memref.store %qi, %staged[%tx] : {staged_r}
           scf.for %ax = %c0 to %c3w step %c1 {{
             %at_n = arith.muli %n_all, %ax : index
@@ -2250,9 +2250,9 @@ func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
@@ -2292,7 +2292,7 @@ def gather_weights(listed=False):
 %dy = memref.alloca() : memref<8x!pme_real>
 %dz = memref.alloca() : memref<8x!pme_real>
 %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+%qi = mdrt.template_convert %qs : !pme_chg to !pme_real""")
     starts = []
     for axis in range(3):
         t = "xyz"[axis]
@@ -2384,9 +2384,9 @@ func.func private @mdrt_gpu_pme_gather_weights{tag}(%x: memref<?x3x!pme_pos, 1>,
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
@@ -2433,15 +2433,15 @@ def gather_store(potential):
     potential of the grid at it."""
     if potential:
         return """\
-        %pots = PME_REAL_TO_FRC %allx : !pme_real to !pme_frc
+        %pots = mdrt.template_convert %allx : !pme_real to !pme_frc
         memref.store %pots, %f[%i] : memref<?x!pme_frc, 1>
 """
     return """\
         %mq = arith.negf %qi : !pme_real
 """ + forces(TILTED) + """\
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fx64 : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fy64 : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
@@ -2604,12 +2604,12 @@ INVERSE = """\
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
 """
 
 
@@ -2633,11 +2633,11 @@ def triclinic():
     text = text.replace(": f64 from vector<3xf64>", ": f64 from vector<6xf64>")
     last = "  %lz = vector.extract %box[2] : f64 from vector<6xf64>\n"
     text = text.replace(last, last + INVERSE)
-    numbers = "  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real\n"
+    numbers = "  %rzr = mdrt.template_convert %rz : f64 to !pme_real\n"
     text = text.replace(numbers, numbers + """\
-  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
-  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
-  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+  %k1fr = mdrt.template_convert %k1f : f64 to !pme_real
+  %k2fr = mdrt.template_convert %k2f : f64 to !pme_real
+  %k3fr = mdrt.template_convert %k3f : f64 to !pme_real
 """)
     return HEADER_TRICLINIC + GATHER_DECLARATIONS + text
 

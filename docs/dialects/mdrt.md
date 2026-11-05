@@ -289,6 +289,53 @@ Interfaces: `MemoryEffectOpInterface`, `SymbolUserOpInterface`
 
 
 
+### `mdrt.template_convert` (::mdir::mdrt::TemplateConvertOp)
+
+_A conversion of floating point that a template leaves to its instance_
+
+Syntax:
+
+```
+operation ::= `mdrt.template_convert` $in attr-dict `:` type($in) `to` type($out)
+```
+
+A template of the lowering (`lib/Runtime/Templates`) is written once for
+every type of the positions, the charges, and the forces of an instance
+(D[template-ir-pme-convert], #739). Where it converts between two of
+them, or between one of them and `f64`, it writes this op, since which
+conversion is needed depends on the types of the instance:
+
+```mlir
+%y = mdrt.template_convert %x : !pme_pos to f64
+```
+
+After the template is parsed for an instance, the compiler replaces
+each op by `arith.extf` where the result is wider than the operand,
+`arith.truncf` where it is narrower, and `arith.bitcast` where the two
+types are the same (`kernels::resolveTemplateConversions`). No program
+holds the op after that. The operand and the result are floating point,
+or vectors of it of the same shape.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `in` | floating-point or vector of floating-point values |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `out` | floating-point or vector of floating-point values |
+
+
+
 ### `mdrt.to_buffer` (::mdir::mdrt::ToBufferOp)
 
 _The buffer that holds a field_

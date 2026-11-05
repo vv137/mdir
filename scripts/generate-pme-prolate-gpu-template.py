@@ -62,12 +62,12 @@ INVERSE = '''  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
   %h20d = arith.mulf %h20c, %h00 : f64
   %h20e = arith.mulf %h20d, %h11 : f64
   %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %h00r = mdrt.template_convert %h00 : f64 to !pme_real
+  %h10r = mdrt.template_convert %h10 : f64 to !pme_real
+  %h11r = mdrt.template_convert %h11 : f64 to !pme_real
+  %h20r = mdrt.template_convert %h20 : f64 to !pme_real
+  %h21r = mdrt.template_convert %h21 : f64 to !pme_real
+  %h22r = mdrt.template_convert %h22 : f64 to !pme_real
 '''
 
 
@@ -170,7 +170,7 @@ func.func private @mdrt_gpu_pme_prolate_coefficients(%moduli: memref<?x?xf64, 1>
         }
         scf.yield %v : f64
       }
-      %vr = PME_F64_TO_REAL %value : f64 to !pme_real
+      %vr = mdrt.template_convert %value : f64 to !pme_real
       %at = arith.addi %pe, %t : index
       memref.store %vr, %tables[%at] : memref<?x!pme_real, 1>
     }
@@ -190,7 +190,7 @@ def place(axis, k):
       %{a}_frac = arith.subf %{a}_s, %{a}_fs : f64
       %{a}_ki = arith.index_cast {k} : index to i32
       %{a}_kf = arith.sitofp %{a}_ki : i32 to !pme_real
-      %{a}_fracr = PME_F64_TO_REAL %{a}_frac : f64 to !pme_real
+      %{a}_fracr = mdrt.template_convert %{a}_frac : f64 to !pme_real
       %{a}_u = arith.mulf %{a}_fracr, %{a}_kf : !pme_real
       %{a}_v = arith.subf %{a}_u, %shift : !pme_real
       %{a}_fl0 = math.floor %{a}_v : !pme_real
@@ -263,7 +263,7 @@ func.func private @mdrt_gpu_pme_prolate_places{suffix}(%x: memref<?x3x!pme_pos, 
         a = 'xyz'[axis]
         text += f'''      %{a}c = arith.constant {axis} : index
       %{a}s = memref.load %x[%i, %{a}c] : memref<?x3x!pme_pos, 1>
-      %{a}p = PME_EXTEND_POS %{a}s : !pme_pos to f64
+      %{a}p = mdrt.template_convert %{a}s : !pme_pos to f64
 '''
     if triclinic:
         text += '''      %z_s = arith.mulf %zp, %h22 : f64
@@ -491,7 +491,7 @@ def spread(fixed, listed=False):
 '''
     inner = warp_weights(slopes=False)
     inner += '''      %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+      %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
       %first_axis = arith.cmpi eq, %axis, %c0w : index
       %qv = arith.mulf %wvalue, %qi : !pme_real
       %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
@@ -621,9 +621,9 @@ def gather(potential, triclinic=False, listed=False):
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
-  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
-  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
-  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %rxr = mdrt.template_convert %rx : f64 to !pme_real
+  %ryr = mdrt.template_convert %ry : f64 to !pme_real
+  %rzr = mdrt.template_convert %rz : f64 to !pme_real
 '''
     inner = warp_weights(slopes=not potential) + starts()
     inner += '''      %k1t = arith.index_cast %k1 : index to i32
@@ -743,13 +743,13 @@ def gather(potential, triclinic=False, listed=False):
       scf.if %lane0 {
 '''
     if potential:
-        inner += f'''        %stored = PME_REAL_TO_FRC {names[0]} : !pme_real to !pme_frc
+        inner += f'''        %stored = mdrt.template_convert {names[0]} : !pme_real to !pme_frc
         memref.store %stored, %f[%i] : memref<?x!pme_frc, 1>
 '''
     elif triclinic:
         # F = −q H⁻ᵀ (K ∘ g), as the gathering of a triclinic cell.
         inner += f'''        %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-        %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+        %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
         %mq = arith.negf %qi : !pme_real
         %k1fr0 = arith.sitofp %k1t : i32 to !pme_real
         %k2fr0 = arith.sitofp %k2t : i32 to !pme_real
@@ -769,9 +769,9 @@ def gather(potential, triclinic=False, listed=False):
         %fxv = arith.mulf %mq, %fxh : !pme_real
         %fyv = arith.mulf %mq, %fyh : !pme_real
         %fzv = arith.mulf %mq, %fzh : !pme_real
-        %fxs = PME_REAL_TO_FRC %fxv : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fyv : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fzv : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fxv : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fyv : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fzv : !pme_real to !pme_frc
         %i0 = arith.constant 0 : index
         %i1 = arith.constant 1 : index
         %i2 = arith.constant 2 : index
@@ -781,7 +781,7 @@ def gather(potential, triclinic=False, listed=False):
 '''
     else:
         inner += f'''        %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-        %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+        %qi = mdrt.template_convert %qs : !pme_chg to !pme_real
         %mq = arith.negf %qi : !pme_real
         %sxq = arith.mulf %mq, %rxr : !pme_real
         %syq = arith.mulf %mq, %ryr : !pme_real
@@ -789,9 +789,9 @@ def gather(potential, triclinic=False, listed=False):
         %fxv = arith.mulf %sxq, {names[0]} : !pme_real
         %fyv = arith.mulf %syq, {names[1]} : !pme_real
         %fzv = arith.mulf %szq, {names[2]} : !pme_real
-        %fxs = PME_REAL_TO_FRC %fxv : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fyv : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fzv : !pme_real to !pme_frc
+        %fxs = mdrt.template_convert %fxv : !pme_real to !pme_frc
+        %fys = mdrt.template_convert %fyv : !pme_real to !pme_frc
+        %fzs = mdrt.template_convert %fzv : !pme_real to !pme_frc
         %i0 = arith.constant 0 : index
         %i1 = arith.constant 1 : index
         %i2 = arith.constant 2 : index

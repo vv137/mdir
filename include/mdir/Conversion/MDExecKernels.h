@@ -378,16 +378,22 @@ std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 
 /// The templates of particle mesh Ewald for positions, charges, and forces
 /// stored as `position`, `charge`, and `force`: the aliases `!pme_pos`,
-/// `!pme_chg`, and `!pme_frc` take those types, the conversions from and to
-/// f64 become the ops that they need, and the functions take the suffix of
-/// `getPMESuffix`. The alias `!pme_real` of the template for devices, the
-/// type of the splines and the grid, takes the type of the forces, and
+/// `!pme_chg`, and `!pme_frc` take those types, and the functions take the
+/// suffix of `getPMESuffix`. The alias `!pme_real` of the template for
+/// devices, the type of the splines and the grid, takes the type of the
+/// forces, and
 /// `PME_TILE_POINTS_E` in the shapes of the tiles the points of a tile of
 /// edge E, (E + P - 1)^3. The other parameters of the instance are resolved
-/// in IR (resolveTemplateParameters).
+/// in IR (resolveTemplateParameters, resolveTemplateConversions).
 std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
                                     mlir::Type charge, mlir::Type force,
                                     int64_t order);
+/// Replaces, in `root`, each `mdrt.template_convert` of a template with the
+/// conversion that the types of its instance need: `arith.bitcast` between
+/// two of the same type, `arith.extf` to a wider one, and `arith.truncf` to
+/// a narrower one (D[template-ir-pme-convert], #739).
+mlir::LogicalResult resolveTemplateConversions(mlir::Operation *root);
+
 /// Resolves, in `root`, the parameters of the instance that the templates of
 /// particle mesh Ewald on a device call (D369, #739):
 /// `@mdir.template.order`, `lanes`, `real_bytes`, `tile_side_E`, and

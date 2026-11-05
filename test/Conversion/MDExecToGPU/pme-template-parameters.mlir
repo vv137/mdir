@@ -4,10 +4,12 @@
 // the tiles of edge 8 have sides of 8 + 4 - 1 = 11 points and 1331 in all,
 // a value is added to a tile by an atomic of the block and to the grid by
 // PTX's reduction of the device, and a load of the grid takes the
-// alignment of 4 bytes. No call or declaration of a parameter is left.
+// alignment of 4 bytes. No call or declaration of a parameter is left,
+// and no `mdrt.template_convert` (D[template-ir-pme-convert]).
 //
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu \
-// RUN: | FileCheck %s --implicit-check-not=mdir.template
+// RUN: | FileCheck %s --implicit-check-not=mdir.template \
+// RUN:     --implicit-check-not=mdrt.template_convert
 
 !pos = memref<?x3xf32, 1>
 !chg = memref<?xf32, 1>
