@@ -5139,6 +5139,10 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald for devices";
+  // The parameters of the instance: the order, the constants of the
+  // tiles, and the atomic additions (D[template-ir-pme-scalars], #739).
+  if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
+    return failure();
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
@@ -5220,6 +5224,10 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of the prolate kernel for devices";
+  // The parameters of the instance: the order, the constants of the
+  // tiles, and the atomic additions (D[template-ir-pme-scalars], #739).
+  if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
+    return failure();
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();
   // As addPMETemplates: the loops over the points unroll, and the

@@ -71,7 +71,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -92,7 +92,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -100,7 +100,7 @@ func.func private @mdrt_gpu_pme_spread_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -533,7 +533,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -554,7 +554,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -562,7 +562,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -905,7 +905,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
       }
       %scale = arith.constant 1.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
-      %eight = arith.constant PME_REAL_BYTES : i64
+      %eight = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
       // The grid is a buffer of its own, with no offset.
       %gridbase = arith.index_cast %gridindex : index to i64
@@ -947,7 +947,7 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
             // An addition without a result: the instance chooses its op,
             // since the NVPTX backend of LLVM expands atomicrmw fadd of f32
             // into a loop of compare-and-swap.
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
     }
@@ -1020,7 +1020,7 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %xc = arith.constant 0 : index
       %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
       %xp = PME_EXTEND_POS %xs : !pme_pos to f64
@@ -2442,7 +2442,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
@@ -2451,13 +2451,13 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -2465,7 +2465,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -3003,7 +3003,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
   %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
   %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
@@ -3012,13 +3012,13 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -3514,7 +3514,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
@@ -3523,13 +3523,13 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -3537,7 +3537,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -4045,7 +4045,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -4066,7 +4066,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -4079,7 +4079,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -4515,7 +4515,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -4536,7 +4536,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -4549,7 +4549,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -4892,7 +4892,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
       }
       %scale = arith.constant 1.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
-      %eight = arith.constant PME_REAL_BYTES : i64
+      %eight = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
       // The grid is a buffer of its own, with no offset.
       %gridbase = arith.index_cast %gridindex : index to i64
@@ -4934,7 +4934,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
             // An addition without a result: the instance chooses its op,
             // since the NVPTX backend of LLVM expands atomicrmw fadd of f32
             // into a loop of compare-and-swap.
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
       }
@@ -5010,7 +5010,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
@@ -5019,13 +5019,13 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-    %lanes = arith.constant PME_LANES : index
+    %lanes = func.call @mdir.template.lanes.index() : () -> index
     %slot = arith.divui %item, %lanes : index
     %j3 = arith.remui %item, %lanes : index
     %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -5051,7 +5051,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -5608,7 +5608,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
   %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
   %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
@@ -5617,13 +5617,13 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-    %lanes = arith.constant PME_LANES : index
+    %lanes = func.call @mdir.template.lanes.index() : () -> index
     %slot = arith.divui %item, %lanes : index
     %j3 = arith.remui %item, %lanes : index
     %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -6093,3 +6093,9 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
   }
   return
 }
+
+// The parameters of the instance, which the compiler resolves.
+func.func private @mdir.template.global_add(!llvm.ptr<1>, !pme_real)
+func.func private @mdir.template.lanes.index() -> index
+func.func private @mdir.template.order.index() -> index
+func.func private @mdir.template.real_bytes.i64() -> i64

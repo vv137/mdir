@@ -8,6 +8,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -2584,79 +2585,20 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       instance += convert(Float64Type::get(force.getContext()), force);
     } else if (text.consume_front("PME_REAL_TO_F64")) {
       instance += convert(force, Float64Type::get(force.getContext()));
-    } else if (text.consume_front("PME_ATOMIC_ADD %pointer, %value")) {
-      // An atomic addition of `!pme_real` to global memory at the scope of
-      // the device, with no result. The NVPTX backend of LLVM expands
-      // `atomicrmw fadd` of f32 into a loop of compare-and-swap, at four
-      // times the time of PTX's own reduction on an RTX 3090, so f32 takes
-      // that (NVIDIA only, as the template is); f64 is native.
-      if (force.isF64())
-        instance += "%old = llvm.atomicrmw fadd %pointer, %value "
-                    "syncscope(\"device\") monotonic : !llvm.ptr<1>, f64";
-      else
-        instance += "llvm.inline_asm has_side_effects "
-                    "\"red.relaxed.gpu.global.add.f32 [$0], $1;\", \"l,f\" "
-                    "%pointer, %value : (!llvm.ptr<1>, f32) -> ()";
-    } else if (text.starts_with("PME_TILE_") ||
-               text.starts_with("PME_SHARED_ADD_")) {
-      // The tiles of the spreading of bins of E points (D282):
-      // `PME_TILE_SIDE_E` the points of a side of a tile, E + P - 1, and
-      // `PME_TILE_POINTS_E` those of the tile; `PME_SHARED_ADD_E %tile[%t],
-      // %value` an atomic addition to the tile in the memory of the block.
-      bool side = text.consume_front("PME_TILE_SIDE_");
-      bool add = !side && text.consume_front("PME_SHARED_ADD_");
-      if (!side && !add)
-        (void)text.consume_front("PME_TILE_POINTS_");
+    } else if (text.consume_front("PME_TILE_POINTS_")) {
+      // The points of a tile of the spreading of bins of E points (D282),
+      // (E + P - 1)^3, in the shapes of the tiles; the constants of the
+      // tiles are parameters resolved in IR (resolveTemplateParameters).
       StringRef digits = text.take_while(llvm::isDigit);
       text = text.drop_front(digits.size());
       int64_t edge = 0;
       (void)digits.getAsInteger(10, edge);
       int64_t length = edge + order - 1;
-      int64_t points = length * length * length;
-      if (side) {
-        instance += std::to_string(length);
-      } else if (!add) {
-        instance += std::to_string(points);
-      } else {
-        // A relaxed atomic addition at the scope of the block, native for
-        // f32 and f64 (`atom.relaxed.cta.shared.add`): `memref.atomic_rmw`
-        // is acq_rel at the scope of the system.
-        StringRef rest = text.take_until([](char c) { return c == '\n'; });
-        text = text.drop_front(rest.size());
-        auto [target, value] = rest.trim().split(", ");
-        auto [memory, subscript] = target.split('[');
-        StringRef at = subscript.rtrim(']');
-        std::string real = force.isF64() ? "f64" : "f32";
-        std::string bytes = force.isF64() ? "8" : "4";
-        std::string type = "memref<" + std::to_string(points) + "x" + real +
-                           ", #gpu.address_space<workgroup>>";
-        instance += "%shared_base = memref.extract_aligned_pointer_as_index " +
-                    memory.str() + " : " + type +
-                    " -> index\n%shared_bytes = arith.constant " + bytes +
-                    " : index\n%shared_at = arith.muli " + at.str() +
-                    ", %shared_bytes : index\n";
-        instance += "%shared_address = arith.addi %shared_base, %shared_at "
-                    ": index\n%shared_int = arith.index_cast "
-                    "%shared_address : index to i64\n%shared_pointer = "
-                    "llvm.inttoptr %shared_int : i64 to !llvm.ptr<3>\n"
-                    "%shared_old = llvm.atomicrmw fadd %shared_pointer, " +
-                    value.str() + " syncscope(\"block\") monotonic : "
-                    "!llvm.ptr<3>, " + real;
-      }
+      instance += std::to_string(length * length * length);
     } else if (text.consume_front("PME_FFT")) {
       // The transforms of the runtime of the host for a grid in
       // `!pme_real` (runtime/mdrt_fft.c).
       instance += force.isF64() ? "mdrtFFT64" : "mdrtFFT32";
-    } else if (text.consume_front("PME_REAL_BYTES")) {
-      // The bytes of a value of `!pme_real`, the type of the forces.
-      instance += force.isF64() ? "8" : "4";
-    } else if (text.consume_front("PME_LANES")) {
-      // The threads of a particle in the gather: the least power of 2 not
-      // below the order, so that they are aligned within a warp.
-      instance += order <= 4 ? "4" : "8";
-    } else if (text.consume_front("PME_ORDER")) {
-      // The order of the splines, a constant in the kernels.
-      instance += std::to_string(order);
     } else if (text.consume_front("PME_REAL_TO_FRC")) {
       instance += "arith.bitcast";
     } else if (text.consume_front("@mdrt")) {
@@ -2674,6 +2616,163 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
     }
   }
   return instance;
+}
+
+LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,
+                                                 int64_t order) {
+  // The calls `@mdir.template.NAME.TYPE()` and `@mdir.template.NAME(...)`
+  // of the templates of particle mesh Ewald on a device, each replaced
+  // where it stands by what the instance takes for it
+  // (D[template-ir-pme-scalars], #739). Every call is checked before any is
+  // replaced, so that a module with an error is left as it was.
+  constexpr StringLiteral prefix = "mdir.template.";
+  MLIRContext *context = root->getContext();
+  bool wide = real.isF64();
+  int64_t bytes = wide ? 8 : 4;
+  SmallVector<func::CallOp> calls;
+  root->walk([&](func::CallOp call) {
+    if (call.getCallee().starts_with(prefix))
+      calls.push_back(call);
+  });
+  // The edge E of a name `NAME_E`, or 0.
+  auto edgeOf = [](StringRef name, StringRef stem) -> int64_t {
+    int64_t edge = 0;
+    if (!name.consume_front(stem) || name.getAsInteger(10, edge))
+      return 0;
+    return edge;
+  };
+  for (func::CallOp call : calls) {
+    StringRef name =
+        call.getCallee().drop_front(prefix.size()).split('.').first;
+    bool constant = name == "order" || name == "lanes" ||
+                    name == "real_bytes" || edgeOf(name, "tile_side_") ||
+                    edgeOf(name, "tile_points_");
+    if (constant) {
+      if (call.getNumOperands() != 0 || call.getNumResults() != 1 ||
+          !call.getResult(0).getType().isIntOrIndex())
+        return call.emitOpError()
+               << "takes the parameter '" << name
+               << "' of the template, which is an integer of no operands";
+      continue;
+    }
+    if (name == "global_add") {
+      if (call.getNumOperands() != 2 || call.getNumResults() != 0 ||
+          !isa<LLVM::LLVMPointerType>(call.getOperand(0).getType()) ||
+          call.getOperand(1).getType() != real)
+        return call.emitOpError()
+               << "adds to global memory with operands other than a "
+                  "pointer and a value of "
+               << real;
+      continue;
+    }
+    if (edgeOf(name, "shared_add_")) {
+      auto tile = dyn_cast<MemRefType>(call.getOperand(0).getType());
+      if (call.getNumOperands() != 3 || call.getNumResults() != 0 || !tile ||
+          tile.getElementType() != real ||
+          !call.getOperand(1).getType().isIndex() ||
+          call.getOperand(2).getType() != real)
+        return call.emitOpError()
+               << "adds to a tile with operands other than the tile of "
+               << real << ", an index, and a value";
+      continue;
+    }
+    return call.emitOpError()
+           << "calls an unknown parameter of the template '" << name << "'";
+  }
+  for (func::CallOp call : calls) {
+    OpBuilder builder(call);
+    Location loc = call.getLoc();
+    StringRef name =
+        call.getCallee().drop_front(prefix.size()).split('.').first;
+    if (call.getNumResults() == 1) {
+      // The order of the splines, the threads of a particle in the gather
+      // (the least power of 2 not below the order, so that they are aligned
+      // within a warp), the bytes of a value of the type of the forces, and
+      // the points of a side, E + P - 1, and of a tile, (E + P - 1)^3, of
+      // the spreading of bins of E points (D282).
+      int64_t value = 0;
+      if (name == "order")
+        value = order;
+      else if (name == "lanes")
+        value = order <= 4 ? 4 : 8;
+      else if (name == "real_bytes")
+        value = bytes;
+      else if (int64_t edge = edgeOf(name, "tile_side_"))
+        value = edge + order - 1;
+      else if (int64_t edge = edgeOf(name, "tile_points_"))
+        value = (edge + order - 1) * (edge + order - 1) * (edge + order - 1);
+      Type type = call.getResult(0).getType();
+      Value result = arith::ConstantOp::create(
+          builder, loc, builder.getIntegerAttr(type, value));
+      call.getResult(0).replaceAllUsesWith(result);
+    } else if (name == "global_add") {
+      // An atomic addition to global memory at the scope of the device,
+      // with no result. The NVPTX backend of LLVM expands `atomicrmw fadd`
+      // of f32 into a loop of compare-and-swap, at four times the time of
+      // PTX's own reduction on an RTX 3090, so f32 takes that (NVIDIA only,
+      // as the template is); f64 is native.
+      Value pointer = call.getOperand(0), value = call.getOperand(1);
+      if (wide)
+        LLVM::AtomicRMWOp::create(builder, loc, LLVM::AtomicBinOp::fadd,
+                                  pointer, value,
+                                  LLVM::AtomicOrdering::monotonic, "device");
+      else
+        LLVM::InlineAsmOp::create(
+            builder, loc, TypeRange(), ValueRange{pointer, value},
+            "red.relaxed.gpu.global.add.f32 [$0], $1;", "l,f",
+            /*has_side_effects=*/true, /*is_align_stack=*/false,
+            LLVM::tailcallkind::TailCallKind::None,
+            /*asm_dialect=*/LLVM::AsmDialectAttr(),
+            /*operand_attrs=*/ArrayAttr());
+    } else {
+      // A relaxed atomic addition to a tile in the memory of the block, at
+      // the scope of the block, native for f32 and f64
+      // (`atom.relaxed.cta.shared.add`): `memref.atomic_rmw` is acq_rel at
+      // the scope of the system.
+      Value tile = call.getOperand(0), at = call.getOperand(1),
+            value = call.getOperand(2);
+      Value base =
+          memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, tile);
+      Value size = arith::ConstantOp::create(builder, loc,
+                                             builder.getIndexAttr(bytes));
+      Value offset = arith::MulIOp::create(builder, loc, at, size);
+      Value address = arith::AddIOp::create(builder, loc, base, offset);
+      Value integer = arith::IndexCastOp::create(
+          builder, loc, builder.getI64Type(), address);
+      Value pointer = LLVM::IntToPtrOp::create(
+          builder, loc, LLVM::LLVMPointerType::get(context, 3), integer);
+      LLVM::AtomicRMWOp::create(builder, loc, LLVM::AtomicBinOp::fadd,
+                                pointer, value,
+                                LLVM::AtomicOrdering::monotonic, "block");
+    }
+    call.erase();
+  }
+  // The alignment of a load or a store of a value of the type of the forces:
+  // its bytes.
+  auto alignment = StringAttr::get(context, "mdir.template.real_alignment");
+  root->walk([&](Operation *op) {
+    if (!op->hasAttr(alignment))
+      return;
+    op->removeAttr(alignment);
+    if (auto load = dyn_cast<LLVM::LoadOp>(op))
+      load.setAlignment(bytes);
+    else if (auto store = dyn_cast<LLVM::StoreOp>(op))
+      store.setAlignment(bytes);
+  });
+  // The declarations, now that nothing calls them.
+  SmallVector<func::FuncOp> declarations;
+  root->walk([&](func::FuncOp function) {
+    if (function.getSymName().starts_with(prefix))
+      declarations.push_back(function);
+  });
+  for (func::FuncOp function : declarations) {
+    if (!function.isDeclaration())
+      return function.emitOpError()
+             << "defines a parameter of the template, which the instance "
+                "gives";
+    function.erase();
+  }
+  return success();
 }
 
 LogicalResult kernels::instantiateTemplates(ModuleOp templates, Type real) {

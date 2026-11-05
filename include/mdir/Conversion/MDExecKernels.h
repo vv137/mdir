@@ -382,10 +382,22 @@ std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 /// f64 become the ops that they need, and the functions take the suffix of
 /// `getPMESuffix`. The alias `!pme_real` of the template for devices, the
 /// type of the splines and the grid, takes the type of the forces, and
-/// `PME_ORDER` the order of the splines, a constant in its kernels.
+/// `PME_TILE_POINTS_E` in the shapes of the tiles the points of a tile of
+/// edge E, (E + P - 1)^3. The other parameters of the instance are resolved
+/// in IR (resolveTemplateParameters).
 std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
                                     mlir::Type charge, mlir::Type force,
                                     int64_t order);
+/// Resolves, in `root`, the parameters of the instance that the templates of
+/// particle mesh Ewald on a device call (D[template-ir-pme-scalars], #739):
+/// `@mdir.template.order`, `lanes`, `real_bytes`, `tile_side_E`, and
+/// `tile_points_E` become constants; `@mdir.template.global_add` and
+/// `shared_add_E` the atomic additions of a value of `real`, the type of the
+/// forces, to global memory and to a tile in the memory of the block; and a
+/// load or a store marked `mdir.template.real_alignment` takes the bytes of
+/// `real` as its alignment. The declarations are removed.
+mlir::LogicalResult resolveTemplateParameters(mlir::Operation *root,
+                                              mlir::Type real, int64_t order);
 std::string getPMEInstanceName(llvm::StringRef name, mlir::Type position,
                                mlir::Type charge, mlir::Type force,
                                int64_t order);

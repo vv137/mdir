@@ -58,7 +58,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -79,7 +79,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -87,7 +87,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -485,7 +485,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -506,7 +506,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -514,7 +514,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -847,7 +847,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       }
       %scale = arith.constant 1.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
-      %eight = arith.constant PME_REAL_BYTES : i64
+      %eight = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
       // The grid is a buffer of its own, with no offset.
       %gridbase = arith.index_cast %gridindex : index to i64
@@ -889,7 +889,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
             // An addition without a result: the instance chooses its op,
             // since the NVPTX backend of LLVM expands atomicrmw fadd of f32
             // into a loop of compare-and-swap.
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
     }
@@ -937,7 +937,7 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %xc = arith.constant 0 : index
       %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
       %xp = PME_EXTEND_POS %xs : !pme_pos to f64
@@ -1250,7 +1250,7 @@ func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: m
       %iny = arith.remui %g2, %t4 : i32
       %iny4 = arith.muli %iny, %t4 : i32
       %inxy = arith.addi %iny4, %inx : i32
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
       %bbase = arith.index_cast %bindex : index to i64
       %h0 = arith.constant 0 : index
@@ -1272,7 +1272,7 @@ func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: m
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
         %value = arith.mulf %qxy, %wz : !pme_real
-        PME_ATOMIC_ADD %pointer, %value
+        func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
       }
     }
     gpu.terminator
@@ -1293,7 +1293,7 @@ func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: m
     %by1 = arith.remui %bxy, %b2 : index
     %slab0 = arith.muli %bxy, %k3 : index
     %zero_r = arith.constant 0.0 : !pme_real
-    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
     %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
     %bbase = arith.index_cast %bindex : index to i64
     scf.for %j = %c0 to %c4 step %c1 {
@@ -1311,7 +1311,7 @@ func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: m
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %value = llvm.load %pointer {mdir.template.real_alignment} : !llvm.ptr<1> -> !pme_real
         %t17 = arith.muli %zz, %c17 : index
         %tat = arith.addi %t17, %inxy : index
         memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
@@ -1335,7 +1335,7 @@ func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: m
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {mdir.template.real_alignment} : !pme_real, !llvm.ptr<1>
       }
     }
     // Each warp writes a row of the brick, its lanes the 32 values along
@@ -2479,7 +2479,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -2488,13 +2488,13 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -2502,7 +2502,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -2993,7 +2993,7 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
   %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
   %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -3002,13 +3002,13 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -3467,7 +3467,7 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -3476,13 +3476,13 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-      %lanes = arith.constant PME_LANES : index
+      %lanes = func.call @mdir.template.lanes.index() : () -> index
       %i = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %i0 = arith.constant 0 : index
@@ -3490,7 +3490,7 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -3963,7 +3963,7 @@ func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -3984,7 +3984,7 @@ func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -3997,7 +3997,7 @@ func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -4398,7 +4398,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
   %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %spread_lanes = arith.constant PME_ORDER : index
+  %spread_lanes = func.call @mdir.template.order.index() : () -> index
   %spread = arith.muli %count, %spread_lanes : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -4419,7 +4419,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %spread : index
     scf.if %inside {
-      %lanes = arith.constant PME_ORDER : index
+      %lanes = func.call @mdir.template.order.index() : () -> index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -4432,7 +4432,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -4765,7 +4765,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
       }
       %scale = arith.constant 1.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
-      %eight = arith.constant PME_REAL_BYTES : i64
+      %eight = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
       // The grid is a buffer of its own, with no offset.
       %gridbase = arith.index_cast %gridindex : index to i64
@@ -4807,7 +4807,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
             // An addition without a result: the instance chooses its op,
             // since the NVPTX backend of LLVM expands atomicrmw fadd of f32
             // into a loop of compare-and-swap.
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
         }
       }
       }
@@ -5021,7 +5021,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
       %iny = arith.remui %g2, %t4 : i32
       %iny4 = arith.muli %iny, %t4 : i32
       %inxy = arith.addi %iny4, %inx : i32
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
       %bbase = arith.index_cast %bindex : index to i64
       %h0 = arith.constant 0 : index
@@ -5043,7 +5043,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
         %value = arith.mulf %qxy, %wz : !pme_real
-        PME_ATOMIC_ADD %pointer, %value
+        func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
       }
       }
     }
@@ -5065,7 +5065,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
     %by1 = arith.remui %bxy, %b2 : index
     %slab0 = arith.muli %bxy, %k3 : index
     %zero_r = arith.constant 0.0 : !pme_real
-    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
     %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
     %bbase = arith.index_cast %bindex : index to i64
     scf.for %j = %c0 to %c4 step %c1 {
@@ -5083,7 +5083,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %value = llvm.load %pointer {mdir.template.real_alignment} : !llvm.ptr<1> -> !pme_real
         %t17 = arith.muli %zz, %c17 : index
         %tat = arith.addi %t17, %inxy : index
         memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
@@ -5107,7 +5107,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
         %offset = arith.muli %ati, %bytes : i64
         %address = arith.addi %bbase, %offset : i64
         %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {mdir.template.real_alignment} : !pme_real, !llvm.ptr<1>
       }
     }
     // Each warp writes a row of the brick, its lanes the 32 values along
@@ -5183,7 +5183,7 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -5192,13 +5192,13 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-    %lanes = arith.constant PME_LANES : index
+    %lanes = func.call @mdir.template.lanes.index() : () -> index
     %slot = arith.divui %item, %lanes : index
     %j3 = arith.remui %item, %lanes : index
     %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -5224,7 +5224,7 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
       %i2 = arith.constant 2 : index
       // The order of the splines, a constant of the instance, so that the loops
       // over it unroll and the splines are held in registers.
-      %order = arith.constant PME_ORDER : index
+      %order = func.call @mdir.template.order.index() : () -> index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -5734,7 +5734,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
   %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
   %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lanes_all = arith.constant PME_LANES : index
+  %lanes_all = func.call @mdir.template.lanes.index() : () -> index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -5743,13 +5743,13 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
     %base = arith.muli %bx, %c128 : index
     %item0 = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item0, %points : index
-    %lanes_l = arith.constant PME_LANES : index
+    %lanes_l = func.call @mdir.template.lanes.index() : () -> index
     %c4l = arith.constant 4 : index
     %lane_of = arith.remui %item0, %lanes_l : index
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-    %lanes = arith.constant PME_LANES : index
+    %lanes = func.call @mdir.template.lanes.index() : () -> index
     %slot = arith.divui %item, %lanes : index
     %j3 = arith.remui %item, %lanes : index
     %listed = memref.load %list[%slot] : memref<?xi32, 1>
@@ -6552,8 +6552,8 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
     %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_4 : i32
-    %volume = arith.constant PME_TILE_POINTS_4 : index
+    %side32 = func.call @mdir.template.tile_side_4.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_4.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -6587,8 +6587,8 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -6611,7 +6611,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -6651,7 +6651,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
           %fk0 = arith.addi %axis_at, %k : index
           %fk = arith.addi %fk0, %cthreads : index
           %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
-          %order = arith.constant PME_ORDER : index
+          %order = func.call @mdir.template.order.index() : () -> index
           %c4o = arith.constant 4 : index
           %closed = arith.cmpi eq, %order, %c4o : index
           %splines = memref.alloca() : memref<8x!pme_real>
@@ -6828,7 +6828,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -6838,7 +6838,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_4 %tile[%tat], %value
+                func.call @mdir.template.shared_add_4(%tile, %tat, %value) : (memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -6878,7 +6878,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -7229,8 +7229,8 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
     %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_8 : i32
-    %volume = arith.constant PME_TILE_POINTS_8 : index
+    %side32 = func.call @mdir.template.tile_side_8.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_8.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -7264,8 +7264,8 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -7288,7 +7288,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -7328,7 +7328,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
           %fk0 = arith.addi %axis_at, %k : index
           %fk = arith.addi %fk0, %cthreads : index
           %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
-          %order = arith.constant PME_ORDER : index
+          %order = func.call @mdir.template.order.index() : () -> index
           %c4o = arith.constant 4 : index
           %closed = arith.cmpi eq, %order, %c4o : index
           %splines = memref.alloca() : memref<8x!pme_real>
@@ -7505,7 +7505,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -7515,7 +7515,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_8 %tile[%tat], %value
+                func.call @mdir.template.shared_add_8(%tile, %tat, %value) : (memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -7555,7 +7555,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -7906,8 +7906,8 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
     %cthreads2 = arith.constant 1024 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
-    %side32 = arith.constant PME_TILE_SIDE_16 : i32
-    %volume = arith.constant PME_TILE_POINTS_16 : index
+    %side32 = func.call @mdir.template.tile_side_16.i32() : () -> i32
+    %volume = func.call @mdir.template.tile_points_16.index() : () -> index
     // The block of the overflow, after the bins.
     %overflows = arith.cmpi eq, %bx, %nbins : index
     %bins_block = arith.xori %overflows, %true_w : i1
@@ -7941,8 +7941,8 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
       %lane = arith.index_cast %lane_x : index to i32
-      %pt = arith.constant PME_ORDER : i32
-      %pidx = arith.constant PME_ORDER : index
+      %pt = func.call @mdir.template.order.i32() : () -> i32
+      %pidx = func.call @mdir.template.order.index() : () -> index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -7965,7 +7965,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %k3w = arith.extui %k3t : i32 to i64
-      %bytes = arith.constant PME_REAL_BYTES : i64
+      %bytes = func.call @mdir.template.real_bytes.i64() : () -> i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
       scf.for %round = %c0 to %count step %cthreads {
@@ -8005,7 +8005,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
           %fk0 = arith.addi %axis_at, %k : index
           %fk = arith.addi %fk0, %cthreads : index
           %frac = memref.load %staged[%fk] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
-          %order = arith.constant PME_ORDER : index
+          %order = func.call @mdir.template.order.index() : () -> index
           %c4o = arith.constant 4 : index
           %closed = arith.cmpi eq, %order, %c4o : index
           %splines = memref.alloca() : memref<8x!pme_real>
@@ -8182,7 +8182,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
                 %offset = arith.muli %at, %bytes : i64
                 %address = arith.addi %gbase, %offset : i64
                 %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-                PME_ATOMIC_ADD %pointer, %value
+                func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
               } else {
                 %t1 = arith.addi %l1, %pa : i32
                 %t2 = arith.addi %l2, %pb : i32
@@ -8192,7 +8192,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                PME_SHARED_ADD_16 %tile[%tat], %value
+                func.call @mdir.template.shared_add_16(%tile, %tat, %value) : (memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
               }
             }
           }
@@ -8232,7 +8232,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
             %offset = arith.muli %at, %bytes : i64
             %address = arith.addi %gbase, %offset : i64
             %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-            PME_ATOMIC_ADD %pointer, %value
+            func.call @mdir.template.global_add(%pointer, %value) : (!llvm.ptr<1>, !pme_real) -> ()
           }
         }
       }
@@ -8754,3 +8754,19 @@ func.func private @mdrt_gpu_pme_convolve_p3m(%c: memref<?x!pme_real, 1>, %tables
   %virial = vector.from_elements %w00, %w01, %w02, %w01, %w11, %w12, %w02, %w12, %w22 : vector<9xf64>
   return %e, %virial : f64, vector<9xf64>
 }
+
+// The parameters of the instance, which the compiler resolves.
+func.func private @mdir.template.global_add(!llvm.ptr<1>, !pme_real)
+func.func private @mdir.template.lanes.index() -> index
+func.func private @mdir.template.order.i32() -> i32
+func.func private @mdir.template.order.index() -> index
+func.func private @mdir.template.real_bytes.i64() -> i64
+func.func private @mdir.template.shared_add_16(memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.shared_add_4(memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.shared_add_8(memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.tile_points_16.index() -> index
+func.func private @mdir.template.tile_points_4.index() -> index
+func.func private @mdir.template.tile_points_8.index() -> index
+func.func private @mdir.template.tile_side_16.i32() -> i32
+func.func private @mdir.template.tile_side_4.i32() -> i32
+func.func private @mdir.template.tile_side_8.i32() -> i32
