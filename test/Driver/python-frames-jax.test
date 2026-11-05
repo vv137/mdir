@@ -1,0 +1,38 @@
+# REQUIRES: python-api, jax
+# The JAX adapter of the frame evaluator, mdir.jax (D[frame-evaluator-jax],
+# docs/python-frames.md, The JAX adapter), on the CPU, in double and mixed
+# precision, Inputs/python_frames_jax.py: the energies, the gradient in the
+# positions, and the Jacobian in the tunables against
+# FrameEvaluator.evaluate, and vmap against a loop and jit against eager, to
+# the bit; in double precision, central differences of the energy in
+# params, the positions, and the cell, and jax.test_util.check_grads; every
+# row of the refusal matrix, the errors of data, and the dtype table.
+# JAX_PLATFORMS=cpu keeps a JAX with a CUDA plugin on the CPU, where the
+# target is registered.
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Double | FileCheck %s --check-prefixes=GATE,FD -DMODE="CPU Double"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Mixed | FileCheck %s --check-prefixes=GATE -DMODE="CPU Mixed"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Double | FileCheck %s --check-prefixes=REFUSE,REFUSE-DOUBLE -DMODE="CPU Double"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Mixed | FileCheck %s --check-prefixes=REFUSE,REFUSE-MIXED -DMODE="CPU Mixed"
+# GATE: [[MODE]]: the energies, the gradient in the positions, and the Jacobian in the tunables against FrameEvaluator.evaluate, to the bit: True
+# GATE: [[MODE]]: one frame, eager and under jit, to the bit: True
+# GATE: [[MODE]]: the energy's gradients in params, the positions, and the cell of each frame, vmap and jit(vmap) against a loop, jit against eager, to the bit: True
+# GATE: [[MODE]]: nested vmap, frames on the second axis, and one cell for every frame against a loop, to the bit: True
+# FD: [[MODE]]: central differences in params['sigma']: largest relative error
+# FD: [[MODE]]: central differences in params['q']: largest relative error
+# FD: [[MODE]]: central differences in the positions: largest relative error
+# FD: [[MODE]]: central differences in the edges of the cell: largest relative error
+# FD: [[MODE]]: central differences in the six numbers of a triclinic cell (3, 3): largest relative error
+# FD: [[MODE]]: jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) in params, step 1e-07: passed
+# FD: [[MODE]]: jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) in the positions, step 1e-07: passed
+# FD: [[MODE]]: jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) in the edges, step 3e-05: passed
+# FD: [[MODE]]: jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) in the six numbers of a triclinic cell (3, 3), step 3e-05: passed
+# GATE: jax passed
+# REFUSE: [[MODE]]: refused at trace time: every second derivative (9 forms, under jit too), vmap over params, jax_enable_x64 off, a missing or an extra name of params, a wrong shape or type of params, the positions, or the cell
+# REFUSE: [[MODE]]: a derivative in params whose Jacobian passes jacobian_bytes is refused, for one frame and for the frames of a vmap; the gradient in the positions is given
+# REFUSE: [[MODE]]: the gradient in the cell of a program with restraints to reference positions is refused; the gradient in the positions is given
+# REFUSE: [[MODE]]: a position that is not finite and a cell below twice the cutoff raise an error of JAX naming the frame of the call, eager and under jit; the function then gives the same energy, to the bit
+# REFUSE: [[MODE]]: eval_shape, lax.scan, jax.checkpoint, a cell (3, 3) whose gradient has the edges on its diagonal, and the program's cell: True
+# REFUSE: [[MODE]]: a compiled call names the program by its key and its fingerprint; a key that was released is refused when the executable is instantiated
+# REFUSE-DOUBLE: [[MODE]]: float32 positions are refused; float64 give a float64 gradient: True
+# REFUSE-MIXED: [[MODE]]: deterministic: float32 positions refused; not deterministic (forces in f32): float32 positions give the f32 forces of the program and float64 positions those forces widened, to the bit: True
+# REFUSE: jax passed
