@@ -16,4 +16,13 @@ The work of XLA before and after the call is therefore ordered with it, through 
 
 **The device.** A program of the GPU called on a device other than its runtime's is refused when the call runs (`MDRT_DEVICE`, else the first visible device). The check is in `execute`, because XLA 0.11.2 gives no device ordinal to `instantiate`.
 
-The gate and its open question are on the PR.
+**Bitwise results through a reduction of XLA on a GPU need `XLA_FLAGS=--xla_gpu_deterministic_ops=true`**, as MDIR's own need the deterministic mode (D201); this was the maintainer's ruling on this PR. On the RTX 5090, without the flag, the VJP of `jax.grad` of the sum of the batched energies, a sum over the frames that XLA forms on the device, was the same bits on every call of one process. It differed from the rows summed in order by $5.8	imes10^{-11}$ (absolute) in one process, and agreed with `mdir.torch` in another. With the flag it equals the sum in order. The rows of the Jacobian are the same bits on every call. The device tests of `mdir.jax` run with the flag.
+
+**The gate's tolerances for mixed against double** are those that the evaluator has in mixed precision (the maintainer's ruling on this PR; the design's $3	imes10^{-8}$ for the energy and "the f32 rounding" for $\mathbf G$ were a mis-citation):
+- the energy within $5	imes10^{-3}$ kJ/mol;
+- $\mathbf G$ and the gradient in the cell within $10^{-4}$ of the largest entry of the frame;
+- $\partial U/\partialoldsymbol	heta$ within $10^{-6}$ of the largest entry.
+
+The adapter's own gate is the bitwise match against `FrameEvaluator.evaluate`, through both handlers.
+
+**A program in mixed precision without the deterministic mode** sums its forces on a GPU in an order that changes from one evaluation to the next: $1.4	imes10^{-7}$ of the largest entry, on the RTX 5090. Its gradient in the positions is therefore compared with the evaluator at $10^{-5}$ of the largest entry, and its energy at $5	imes10^{-3}$ kJ/mol, the tolerances of runs without the mode. On the CPU it is compared to the bit.

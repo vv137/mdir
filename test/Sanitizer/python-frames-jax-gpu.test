@@ -6,7 +6,7 @@
 #
 # REQUIRES: cuda, compute-sanitizer, python-api, jax
 #
-# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false %compute_sanitizer --tool memcheck --error-exitcode 1 %jax_python \
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %compute_sanitizer --tool memcheck --error-exitcode 1 %jax_python \
 # RUN:   %S/../Driver/Inputs/python_frames_jax.py %S/../Driver/Inputs/dipeptide sanitize Double GPU 2>&1 \
 # RUN:   | FileCheck %s
 

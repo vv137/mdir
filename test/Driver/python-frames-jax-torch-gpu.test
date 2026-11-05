@@ -7,12 +7,15 @@
 # (in the positions, the edges of the cells, and the tunables, under a
 # cotangent of weights) and those of water in a triclinic cell; the
 # interpreter with JAX gives the same numbers, to the bit. The two adapters
-# form the gradient in the cell with one function of the extension.
+# form the gradient in the cell with one function of the extension. XLA's
+# deterministic ops are on: the sum over the frames of the VJP is a
+# reduction of XLA on the device, whose order is otherwise chosen when it
+# compiles (D[frame-evaluator-jax-cuda]).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Double GPU %t/double.npz | FileCheck %s --check-prefix=DUMP -DMODE="GPU Double"
-# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Double GPU %t/double.npz | FileCheck %s -DMODE="GPU Double"
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Double GPU %t/double.npz | FileCheck %s -DMODE="GPU Double"
 # RUN: %torch_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-dump Mixed GPU %t/mixed.npz | FileCheck %s --check-prefix=DUMP -DMODE="GPU Mixed"
-# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Mixed GPU %t/mixed.npz | FileCheck %s -DMODE="GPU Mixed"
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide torch-compare Mixed GPU %t/mixed.npz | FileCheck %s -DMODE="GPU Mixed"
 # DUMP: [[MODE]]: mdir.torch.evaluate written
 # DUMP: torch passed
 # CHECK: [[MODE]]: against mdir.torch.evaluate, the energies, to the bit: True
