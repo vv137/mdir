@@ -1,0 +1,28 @@
+# D[frame-evaluator-jax-cuda]
+
+Recorded at its merge.
+
+**`mdir_frames` has a handler for the platform `"CUDA"`. Until the boundary of a batch is on the device (PR 1 of #138), it stages a call through the host on XLA's stream.** This is PR 3 of the design on #138 (Ruling 20), and it extends D371 with no change of the API. `mdir.jax.energy_fn` takes arrays on a CUDA device as it takes arrays on the CPU. See [python-frames.md, The JAX adapter](../python-frames.md#the-jax-adapter).
+
+**Registration.** The handler is built where MDIR is built with CUDA. `_core._xla_ffi_platforms()` then names `"CUDA"` beside `"cpu"`. `mdir.jax` registers the type of the state and the target for `"CUDA"` too, when JAX has a CUDA backend in the process. The CUDA plugin of XLA keeps a registry of types of its own, so the state of an executable of CUDA is a type of its own. The extension links no CUDA library: it takes `libcuda.so.1` as the process has loaded it.
+
+**The handler in v1.** On XLA's stream, it:
+
+1. copies θ, the positions, and the cells to the host, and waits;
+2. evaluates the frames on the loop of the CPU handler (the same function, so the two handlers give the same bits on one program);
+3. copies the outputs that were asked back to XLA's buffers, and waits again.
+
+The work of XLA before and after the call is therefore ordered with it, through two waits on the host. The design's call with no wait on the host comes with PR 1, inside the handler.
+
+**The device.** A program of the GPU called on a device other than its runtime's is refused when the call runs (`MDRT_DEVICE`, else the first visible device). The check is in `execute`, because XLA 0.11.2 gives no device ordinal to `instantiate`.
+
+**Bitwise results through a reduction of XLA on a GPU need `XLA_FLAGS=--xla_gpu_deterministic_ops=true`**, as MDIR's own need the deterministic mode (D201); this was the maintainer's ruling on this PR. On the RTX 5090, without the flag, the VJP of `jax.grad` of the sum of the batched energies, a sum over the frames that XLA forms on the device, was the same bits on every call of one process. It differed from the rows summed in order by $5.8	imes10^{-11}$ (absolute) in one process, and agreed with `mdir.torch` in another. With the flag it equals the sum in order. The rows of the Jacobian are the same bits on every call. The device tests of `mdir.jax` run with the flag.
+
+**The gate's tolerances for mixed against double** are those that the evaluator has in mixed precision (the maintainer's ruling on this PR; the design's $3	imes10^{-8}$ for the energy and "the f32 rounding" for $\mathbf G$ were a mis-citation):
+- the energy within $5	imes10^{-3}$ kJ/mol;
+- $\mathbf G$ and the gradient in the cell within $10^{-4}$ of the largest entry of the frame;
+- $\partial U/\partialoldsymbol	heta$ within $10^{-6}$ of the largest entry.
+
+The adapter's own gate is the bitwise match against `FrameEvaluator.evaluate`, through both handlers.
+
+**A program in mixed precision without the deterministic mode** sums its forces on a GPU in an order that changes from one evaluation to the next: $1.4	imes10^{-7}$ of the largest entry, on the RTX 5090. Its gradient in the positions is therefore compared with the evaluator at $10^{-5}$ of the largest entry, and its energy at $5	imes10^{-3}$ kJ/mol, the tolerances of runs without the mode. On the CPU it is compared to the bit.

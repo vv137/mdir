@@ -1,0 +1,15 @@
+# The handler of "CUDA" of mdir.jax (D[frame-evaluator-jax-cuda]), scenario
+# sanitize of Driver/Inputs/python_frames_jax.py, under compute-sanitizer:
+# the copies of a call between XLA's buffers on the device and the host on
+# XLA's stream, the evaluation of the frames by a program of the GPU, and a
+# frame that fails, with no access beyond a buffer.
+#
+# REQUIRES: cuda, compute-sanitizer, python-api, jax
+#
+# RUN: env XLA_PYTHON_CLIENT_PREALLOCATE=false XLA_FLAGS=--xla_gpu_deterministic_ops=true %compute_sanitizer --tool memcheck --error-exitcode 1 %jax_python \
+# RUN:   %S/../Driver/Inputs/python_frames_jax.py %S/../Driver/Inputs/dipeptide sanitize Double GPU 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: GPU Double: sanitize: energies, gradients, the program's cell, new values of params, a frame that fails, and the same energies after it: True
+# CHECK: jax passed
+# CHECK: ERROR SUMMARY: 0 errors

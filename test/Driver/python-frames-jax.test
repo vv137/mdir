@@ -9,10 +9,10 @@
 # row of the refusal matrix, the errors of data, and the dtype table.
 # JAX_PLATFORMS=cpu keeps a JAX with a CUDA plugin on the CPU, where the
 # target is registered.
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Double | FileCheck %s --check-prefixes=GATE,FD -DMODE="CPU Double"
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Mixed | FileCheck %s --check-prefixes=GATE -DMODE="CPU Mixed"
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Double | FileCheck %s --check-prefixes=REFUSE,REFUSE-DOUBLE -DMODE="CPU Double"
-# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Mixed | FileCheck %s --check-prefixes=REFUSE,REFUSE-MIXED -DMODE="CPU Mixed"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Double CPU | FileCheck %s --check-prefixes=GATE,FD -DMODE="CPU Double"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide gate Mixed CPU | FileCheck %s --check-prefixes=GATE -DMODE="CPU Mixed"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Double CPU | FileCheck %s --check-prefixes=REFUSE,REFUSE-DOUBLE -DMODE="CPU Double"
+# RUN: env JAX_PLATFORMS=cpu %jax_python %S/Inputs/python_frames_jax.py %S/Inputs/dipeptide refusals Mixed CPU | FileCheck %s --check-prefixes=REFUSE,REFUSE-MIXED -DMODE="CPU Mixed"
 # GATE: [[MODE]]: the energies, the gradient in the positions, and the Jacobian in the tunables against FrameEvaluator.evaluate, to the bit: True
 # GATE: [[MODE]]: one frame, eager and under jit, to the bit: True
 # GATE: [[MODE]]: the energy's gradients in params, the positions, and the cell of each frame, vmap and jit(vmap) against a loop, jit against eager, to the bit: True

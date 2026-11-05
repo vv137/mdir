@@ -21,8 +21,8 @@ std::pair<int64_t, std::string>
 registerProgram(std::shared_ptr<compiler::Simulation> simulation,
                 const model::PreparedModel &prepared);
 
-/// Adds `_xla_ffi_targets`, `_xla_ffi_types`, `_xla_ffi_api_version`, and
-/// `_xla_ffi_release` to the module.
+/// Adds `_xla_ffi_targets`, `_xla_ffi_types`, `_xla_ffi_platforms`,
+/// `_xla_ffi_api_version`, and `_xla_ffi_release` to the module.
 void addBindings(pybind11::module_ &m);
 
 } // namespace mdir::python::xla

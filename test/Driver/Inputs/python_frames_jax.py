@@ -1,9 +1,13 @@
 """The JAX adapter of the frame evaluator, `mdir.jax` (D371,
-docs/python-frames.md, The JAX adapter), on the CPU.
+docs/python-frames.md, The JAX adapter), on the CPU and on a CUDA device
+(D[frame-evaluator-jax-cuda]).
 
-Usage: python_frames_jax.py ROOT SCENARIO PRECISION [FILE]
+Usage: python_frames_jax.py ROOT SCENARIO PRECISION TARGET [FILE]
 
 ROOT is Inputs/dipeptide. PRECISION is Double or Mixed (deterministic).
+TARGET is CPU or GPU, the target of the programs; with GPU the arrays of
+JAX are on its CUDA device, and the calls go to the handler of "CUDA"
+(JAX_PLATFORMS=cpu keeps them on the CPU for CPU).
 
 Scenarios:
   gate       against FrameEvaluator.evaluate of the same program, to the bit:
@@ -23,14 +27,24 @@ Scenarios:
              the dipeptide and of water in a triclinic cell, written to FILE
   torch-compare  (an interpreter with jax) the same through mdir.jax, against
              FILE, to the bit
+  device     (GPU) the handler of CUDA against that of the CPU on the same
+             program, to the bit, for a program of the GPU and one of the
+             CPU; the order of the calls on XLA's stream: JAX ops that
+             produce the positions and consume the energies and the
+             gradients with no wait in between, against synchronized calls;
+             a call on another device than the program's is refused
+  precisions (GPU) mixed against double on the same frames, deterministic
+             and not, through mdir.jax on the device, at the tolerances of
+             the evaluator in mixed precision
+  sanitize   (GPU) a few calls of each kind, for compute-sanitizer
 """
 import gc
 import sys
 
 import numpy as np
 
-root, scenario, precision = sys.argv[1:4]
-mode = f"CPU {precision}"
+root, scenario, precision, target = sys.argv[1:5]
+mode = f"{target} {precision}"
 double = precision == "Double"
 torch_side = scenario == "torch-dump"
 
@@ -44,13 +58,16 @@ import mdir
 
 if not torch_side:
     import mdir.jax
+    # The arrays of a GPU run are on the CUDA device, those of a CPU run on
+    # the CPU.
+    assert jax.default_backend() == ("gpu" if target == "GPU" else "cpu"), jax.default_backend()
 
 SOLUTE = 22
 
 
-def compile_(system, state, precision_=None, deterministic=True):
+def compile_(system, state, precision_=None, deterministic=True, target_=None):
     execution = mdir.Execution()
-    execution.target = mdir.Target.CPU
+    execution.target = getattr(mdir.Target, target_ or target)
     execution.precision = getattr(mdir.Precision, precision_ or precision)
     execution.deterministic = deterministic
     execution.reorder = False
@@ -500,13 +517,35 @@ def run_refusals():
     g64 = jax.grad(lf, argnums=1)(params, x0, c0)
     wide = mdir.FrameEvaluator(loose).evaluate(np.asarray(x0)[None], np.asarray(c0)[None],
                                                gradients=("positions",))
-    exact = (g32.dtype == jnp.float32 and same(g32, narrow.gradients["positions"][0]) and
-             g64.dtype == jnp.float64 and
-             same(g64, wide.gradients["positions"][0].astype(np.float64)) and
-             same(lf(params, x32, c0), narrow.energy[0]))
+    if target == "CPU":
+        exact = (g32.dtype == jnp.float32 and same(g32, narrow.gradients["positions"][0]) and
+                 g64.dtype == jnp.float64 and
+                 same(g64, wide.gradients["positions"][0].astype(np.float64)) and
+                 same(lf(params, x32, c0), narrow.energy[0]))
+        print(f"{mode}: deterministic: float32 positions refused; not deterministic (forces in "
+              f"f32): float32 positions give the f32 forces of the program and float64 positions "
+              f"those forces widened, to the bit: {exact}")
+        assert exact
+        return
+    # Without the deterministic mode, the forces of a program of the GPU
+    # are summed in an order that changes from one evaluation to the next
+    # (bitwise determinism is the opt-in mode, D201): measured on the RTX
+    # 5090, 1.4e-7 of the largest entry between two evaluations of one
+    # evaluator. The types are compared, and the values at the tolerance
+    # of the evaluator's own runs without the mode against each other
+    # (docs/python-frames.md, Validation of the gradients: 1e-5).
+    def close(a, b):
+        a, b = np.asarray(a, np.float64), np.asarray(b, np.float64)
+        return float(np.max(np.abs(a - b)) / np.max(np.abs(b)))
+    gap = max(close(g32, narrow.gradients["positions"][0]),
+              close(g64, wide.gradients["positions"][0]))
+    shift = abs(float(lf(params, x32, c0)) - float(narrow.energy[0]))
+    exact = (g32.dtype == jnp.float32 and g64.dtype == jnp.float64 and gap <= 1e-5 and
+             shift <= 5e-3)
     print(f"{mode}: deterministic: float32 positions refused; not deterministic (forces in f32): "
-          f"float32 positions give the f32 forces of the program and float64 positions those "
-          f"forces widened, to the bit: {exact}")
+          f"float32 positions give f32 forces and float64 positions f64 ones, against the "
+          f"evaluator {gap:.1e} of the largest entry (tolerance 1e-5) and {shift:.1e} kJ/mol "
+          f"(tolerance 5e-3): {exact}")
     assert exact
     del lf, f, other
     gc.collect()
@@ -585,15 +624,170 @@ def run_torch_compare(path):
     assert weighted <= 1e-14
     assert all(checks.values())
 
+# --- the device -----------------------------------------------------------------
+
+def on_cpu(tree):
+    return jax.device_put(tree, jax.devices("cpu")[0])
+
+
+def run_device():
+    assert target == "GPU"
+    system, state = dipeptide()
+    frames, cells = frames_of(state, 3)
+    gpu, cpu = jax.devices("gpu")[0], jax.devices("cpu")[0]
+
+    # The handler of CUDA against that of the CPU, on one program of each
+    # target: the same loop of frames, so the same bits.
+    for kind in ("GPU", "CPU"):
+        program = compile_(system, state, target_=kind)
+        f, params = mdir.jax.energy_fn(program), mdir.jax.params(program)
+        batched = jax.vmap(f, in_axes=(None, 0, 0))
+        everything = jax.jit(jax.vmap(jax.value_and_grad(f, argnums=(0, 1, 2)),
+                                      in_axes=(None, 0, 0)))
+        rows = jax.jit(jax.jacrev(batched))
+        jx, jc = jnp.asarray(frames), jnp.asarray(cells)
+        on_device = leaves(everything(params, jx, jc)) + leaves(rows(params, jx, jc))
+        on_host = leaves(everything(on_cpu(params), on_cpu(jx), on_cpu(jc))) + leaves(
+            rows(on_cpu(params), on_cpu(jx), on_cpu(jc)))
+        placed = (everything(params, jx, jc)[0].devices() == {gpu} and
+                  everything(on_cpu(params), on_cpu(jx), on_cpu(jc))[0].devices() == {cpu})
+        exact = placed and all(same(a, b) for a, b in zip(on_device, on_host))
+        print(f"{mode}: a program of the {kind}: the energies, the gradients in params, the "
+              f"positions, and the cell, and the rows, the handler of CUDA against that of the "
+              f"CPU, to the bit: {exact}")
+        assert exact
+
+    # The order on XLA's stream. Each call is preceded by a JAX op on the
+    # device that writes its positions and followed by ops that read its
+    # energies and gradients, all dispatched without a wait, eager and in
+    # one compiled function; against the same ops on the results of calls
+    # that were waited for.
+    program = compile_(system, state)
+    f, params = mdir.jax.energy_fn(program), mdir.jax.params(program)
+    batched = jax.vmap(f, in_axes=(None, 0, 0))
+    gradient = jax.vmap(jax.grad(f, argnums=1), in_axes=(None, 0, 0))
+    jx, jc = jnp.asarray(frames), jnp.asarray(cells)
+
+    @jax.jit
+    def produce(x, t):
+        return x + t * jnp.sin(jnp.arange(x.size, dtype=x.dtype)).reshape(x.shape) * 1e-3
+
+    @jax.jit
+    def consume(e, g):
+        return jnp.cumsum(e) * 2.0 - e[::-1] + jnp.sum(g * g, axis=(1, 2))
+
+    @jax.jit
+    def chain(p, x, c, t):
+        y = produce(x, t)
+        return consume(batched(p, y, c), gradient(p, y, c))
+
+    steps = [float(t) for t in np.linspace(0.0, 1.0, 8)]
+    eager = [consume(batched(params, produce(jx, t), jc), gradient(params, produce(jx, t), jc))
+             for t in steps]
+    fused = [chain(params, jx, jc, t) for t in steps]
+    reference = []
+    for t in steps:
+        y = produce(jx, t).block_until_ready()
+        e = batched(params, y, jc).block_until_ready()
+        g = gradient(params, y, jc).block_until_ready()
+        e, g = jax.device_put(np.asarray(e), gpu), jax.device_put(np.asarray(g), gpu)
+        reference.append(np.asarray(consume(e, g).block_until_ready()))
+    exact = (all(same(a, b) for a, b in zip(eager, reference)) and
+             all(same(a, b) for a, b in zip(fused, reference)))
+    print(f"{mode}: on XLA's stream, {len(steps)} calls between JAX ops that write their positions "
+          f"and read their energies and gradients, with no wait, eager and under one jit, against "
+          f"synchronized calls, to the bit: {exact}")
+    assert exact
+
+    # A call on another device than the program's. With one device the
+    # runtime's device is named by MDRT_DEVICE as the handler reads it at
+    # each call; the runtime keeps the device it took when it began.
+    import os
+    before = os.environ.get("MDRT_DEVICE")
+    os.environ["MDRT_DEVICE"] = "1"
+    try:
+        message = expect((jax.errors.JaxRuntimeError, ValueError),
+                         lambda: jax.jit(f)(params, jx[0], jc[0]).block_until_ready(),
+                         "the call is on device 0, and the program runs on device 1")
+    finally:
+        if before is None:
+            del os.environ["MDRT_DEVICE"]
+        else:
+            os.environ["MDRT_DEVICE"] = before
+    exact = same(jax.jit(f)(params, jx[0], jc[0]), batched(params, jx, jc)[0])
+    print(f"{mode}: a call of a program of the GPU on another device than its runtime's is "
+          f"refused, naming both; the next call gives the same energy, to the bit: {exact}")
+    assert exact
+
+
+def run_precisions():
+    assert target == "GPU"
+    system, state = dipeptide()
+    frames, cells = frames_of(state, 5)
+    jx, jc = jnp.asarray(frames), jnp.asarray(cells)
+    results = {}
+    for label, precision_, deterministic in (("double", "Double", True),
+                                              ("mixed, deterministic", "Mixed", True),
+                                              ("mixed", "Mixed", False)):
+        program = compile_(system, state, precision_=precision_, deterministic=deterministic)
+        f, params = mdir.jax.energy_fn(program), mdir.jax.params(program)
+        e, (gp, gx, gc_) = jax.jit(jax.vmap(jax.value_and_grad(f, argnums=(0, 1, 2)),
+                                            in_axes=(None, 0, 0)))(params, jx, jc)
+        results[label] = (np.asarray(e), np.asarray(gx).astype(np.float64), np.asarray(gc_),
+                          np.concatenate([np.asarray(gp[n]) for n in params], axis=1))
+    energy, by_x, by_cell, by_theta = results["double"]
+
+    def of_largest(a, b):
+        axes = tuple(range(1, a.ndim))
+        return float(np.max(np.max(np.abs(a - b), axis=axes) / np.max(np.abs(b), axis=axes)))
+
+    for label in ("mixed, deterministic", "mixed"):
+        e, gx, gc_, gp = results[label]
+        found = (float(np.max(np.abs(e - energy))), of_largest(gx, by_x), of_largest(gc_, by_cell),
+                 of_largest(gp, by_theta))
+        print(f"{mode}: {label} against double, 5 frames: the energy {found[0]:.1e} kJ/mol "
+              f"(tolerance 5e-3); the gradient in the positions {found[1]:.1e} and in the edges "
+              f"{found[2]:.1e} of the largest entry of the frame (tolerance 1e-4); in params "
+              f"{found[3]:.1e} of the largest entry (tolerance 1e-6)")
+        assert found[0] <= 5e-3 and found[1] <= 1e-4 and found[2] <= 1e-4 and found[3] <= 1e-6, found
+
+
+def run_sanitize():
+    assert target == "GPU"
+    system, state = dipeptide()
+    frames, cells = frames_of(state, 2)
+    program = compile_(system, state)
+    f, params = mdir.jax.energy_fn(program), mdir.jax.params(program)
+    jx, jc = jnp.asarray(frames), jnp.asarray(cells)
+    batched = jax.vmap(f, in_axes=(None, 0, 0))
+    energies = batched(params, jx, jc)
+    grads = jax.jit(jax.vmap(jax.grad(f, argnums=(0, 1, 2)), in_axes=(None, 0, 0)))(params, jx, jc)
+    single = f(params, jx[0])
+    moved = jax.grad(f)(dict(params, sigma=params["sigma"] * 1.001), jx[0], jc[0])
+    expect((jax.errors.JaxRuntimeError, ValueError),
+           lambda: batched(params, jx.at[1, 3, 0].set(jnp.nan), jc).block_until_ready(),
+           "frame 1 of the call")
+    exact = same(batched(params, jx, jc), energies)
+    jax.block_until_ready((grads, single, moved))
+    print(f"{mode}: sanitize: energies, gradients, the program's cell, new values of params, a "
+          f"frame that fails, and the same energies after it: {exact}")
+    assert exact
+
 
 if scenario == "gate":
     run_gate()
 elif scenario == "refusals":
     run_refusals()
 elif scenario == "torch-dump":
-    run_torch_dump(sys.argv[4])
+    run_torch_dump(sys.argv[5])
 elif scenario == "torch-compare":
-    run_torch_compare(sys.argv[4])
+    run_torch_compare(sys.argv[5])
+elif scenario == "device":
+    run_device()
+elif scenario == "precisions":
+    run_precisions()
+elif scenario == "sanitize":
+    run_sanitize()
 else:
     raise SystemExit(f"unknown scenario {scenario}")
 print("jax passed" if not torch_side else "torch passed")
