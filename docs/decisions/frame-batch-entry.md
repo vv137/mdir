@@ -36,6 +36,11 @@ plans take it on each execution. The batch checks positions on the device,
 records the first failing frame and reason, and waits once per call to
 report data errors (Q5). A failed batch discards its activation.
 
+The runtime scope uses event dependencies in both directions, including
+nested scopes and the legacy default stream. This first implementation
+component is not yet connected to a batch caller; its device regression
+and the remaining batch implementation are pending.
+
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.

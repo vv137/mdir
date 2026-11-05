@@ -158,6 +158,11 @@ static CUcontext context = NULL;
    error of the order apart from other errors and names the kernel that
    fails. */
 static CUstream sharedStream = NULL;
+/* A caller may supply the legacy default stream (NULL), so a borrowed
+   stream cannot be distinguished from an uninitialized owned stream by
+   its handle. Scopes are serialized with the rest of the runtime. */
+static unsigned borrowedStreamDepth = 0;
+static CUevent streamScopeEvent = NULL;
 static int waitsAlways = -1;
 
 /* A second stream, on which work that is independent of what follows it on
@@ -419,7 +424,7 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
 void mgpuModuleUnload(CUmodule module) {
   /* This runs when the program ends, possibly after the driver has shut
      down. */
-  if (isPending && sharedStream)
+  if (isPending && (sharedStream || borrowedStreamDepth))
     cuStreamSynchronize(sharedStream);
   isPending = 0;
   /* The program ends: the copies of its constants made outside an
@@ -509,7 +514,7 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
 
 CUstream mgpuStreamCreate(void) {
   enter();
-  if (!sharedStream)
+  if (!sharedStream && !borrowedStreamDepth)
     check(cuStreamCreate(&sharedStream, CU_STREAM_NON_BLOCKING),
           "cuStreamCreate");
   return onSide ? sideStream : sharedStream;
@@ -541,6 +546,36 @@ void mdrtSideJoin(void) {
     return;
   check(cuStreamWaitEvent(sharedStream, joinEvent, 0), "cuStreamWaitEvent");
   joinPending = 0;
+}
+
+/* Transfer the ordering of the runtime's work without synchronizing the
+   host. An event wait observes the most recent record at the time it is
+   issued; the same event can therefore serve nested, serialized scopes. */
+static void changeStream(CUstream next) {
+  mdrtSideJoin();
+  if (next != sharedStream) {
+    if (!streamScopeEvent)
+      check(cuEventCreate(&streamScopeEvent, CU_EVENT_DISABLE_TIMING),
+            "cuEventCreate");
+    check(cuEventRecord(streamScopeEvent, sharedStream), "cuEventRecord");
+    check(cuStreamWaitEvent(next, streamScopeEvent, 0), "cuStreamWaitEvent");
+    sharedStream = next;
+  }
+}
+
+/* The caller owns `stream` and keeps it alive through the matching
+   restore. Launches, copies, FFT plans and side streams all use it. */
+void *mdrtUseStream(void *stream) {
+  mgpuStreamCreate();
+  CUstream previous = sharedStream;
+  changeStream((CUstream)stream);
+  ++borrowedStreamDepth;
+  return (void *)previous;
+}
+
+void mdrtRestoreStream(void *previous) {
+  changeStream((CUstream)previous);
+  --borrowedStreamDepth;
 }
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
@@ -677,7 +712,7 @@ int32_t mdrtFlagTake(void *device) {
 
 /* Waits until the device has run everything that was issued. */
 static void finish(void) {
-  if (!isPending || !sharedStream)
+  if (!isPending || (!sharedStream && !borrowedStreamDepth))
     return;
   double start = begin();
   if (sideStream)
