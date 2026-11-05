@@ -37,6 +37,12 @@ Scenarios:
              and not, through mdir.jax on the device, at the tolerances of
              the evaluator in mixed precision
   sanitize   (GPU) a few calls of each kind, for compute-sanitizer
+  second     the second pass (jacobian="recompute", D[frame-evaluator-jax-second-pass])
+             against the kept Jacobian on the same frames: the VJP and the
+             JVP in params under every transformation, to 1e-12 relative;
+             the evaluations of the frames of each; in double precision,
+             central differences in params and jax.test_util.check_grads
+             through it; its refusals
 """
 import gc
 import sys
@@ -764,14 +770,152 @@ def run_sanitize():
     grads = jax.jit(jax.vmap(jax.grad(f, argnums=(0, 1, 2)), in_axes=(None, 0, 0)))(params, jx, jc)
     single = f(params, jx[0])
     moved = jax.grad(f)(dict(params, sigma=params["sigma"] * 1.001), jx[0], jc[0])
+    second = mdir.jax.energy_fn(program, jacobian="recompute")
+    recomputed = (jax.grad(lambda q: jax.vmap(second, in_axes=(None, 0, 0))(q, jx, jc).sum())(params),
+                  jax.jacfwd(lambda q: jax.vmap(second, in_axes=(None, 0, 0))(q, jx, jc))(params))
     expect((jax.errors.JaxRuntimeError, ValueError),
            lambda: batched(params, jx.at[1, 3, 0].set(jnp.nan), jc).block_until_ready(),
            "frame 1 of the call")
     exact = same(batched(params, jx, jc), energies)
-    jax.block_until_ready((grads, single, moved))
-    print(f"{mode}: sanitize: energies, gradients, the program's cell, new values of params, a "
-          f"frame that fails, and the same energies after it: {exact}")
+    jax.block_until_ready((grads, single, moved, recomputed))
+    print(f"{mode}: sanitize: energies, gradients, the program's cell, new values of params, the "
+          f"second pass, a frame that fails, and the same energies after it: {exact}")
     assert exact
+
+
+# --- the second pass ------------------------------------------------------------
+
+def evaluated_frames(fun, *args):
+    """The frames that the compiled `fun` evaluates: the sum over its calls
+    of the targets of mdir.jax of the frames of each call."""
+    import re
+    text = jax.jit(fun).lower(*args).as_text()
+    count = 0
+    for line in text.splitlines():
+        if re.search(r'"mdir_frames(_theta_tangent|_vjp)?"', line) or re.search(
+                r"@mdir_frames(_theta_tangent|_vjp)?\(", line):
+            found = re.search(r"tensor<(\d+)x\d+x3xf64>", line)
+            if found:
+                count += int(found.group(1))
+    return count
+
+
+def run_second():
+    system, state = dipeptide()
+    program = compile_(system, state)
+    kept = mdir.jax.energy_fn(program)
+    second = mdir.jax.energy_fn(program, jacobian="recompute")
+    params = mdir.jax.params(program)
+    frames, cells = frames_of(state, 4)
+    jx, jc = jnp.asarray(frames), jnp.asarray(cells)
+    w = jnp.asarray([0.7, -1.3, 2.1, 0.4])
+    ones = {n: jnp.ones_like(v) for n, v in params.items()}
+
+    def flat(tree):
+        return np.concatenate([np.asarray(leaf, np.float64).ravel()
+                               for leaf in jax.tree.leaves(tree)])
+
+    def cases(f):
+        batched = jax.vmap(f, in_axes=(None, 0, 0))
+
+        def loss(p, x, c):
+            return jnp.sum(w * batched(p, x, c))
+        return {
+            "grad of a weighted sum over a vmap": lambda: jax.grad(loss)(params, jx, jc),
+            "the same under jit": lambda: jax.jit(jax.grad(loss))(params, jx, jc),
+            "value_and_grad in params, the positions, and the cell":
+                lambda: jax.value_and_grad(loss, argnums=(0, 1, 2))(params, jx, jc),
+            "jvp in params of the batch":
+                lambda: jax.jvp(lambda q: batched(q, jx, jc), (params,), (ones,)),
+            "jax.linearize in params, applied":
+                lambda: jax.linearize(lambda q: batched(q, jx, jc), params)[1](ones),
+            "jacfwd in params": lambda: jax.jacfwd(lambda q: batched(q, jx, jc))(params),
+            "jacrev in params": lambda: jax.jacrev(lambda q: batched(q, jx, jc))(params),
+            "vmap of grad": lambda: jax.vmap(jax.grad(f), in_axes=(None, 0, 0))(params, jx, jc),
+            "grad of one frame, eager and under jit":
+                lambda: (jax.grad(f)(params, jx[0], jc[0]), jax.jit(jax.grad(f))(params, jx[1], jc[1])),
+            "jvp of one frame under jit": lambda: jax.jit(
+                lambda q, t: jax.jvp(lambda r: f(r, jx[0], jc[0]), (q,), (t,)))(params, ones),
+        }
+    reference, found = cases(kept), cases(second)
+    worst = 0.0
+    for label in reference:
+        a, b = flat(found[label]()), flat(reference[label]())
+        error = float(np.max(np.abs(a - b)) / np.max(np.abs(b)))
+        worst = max(worst, error)
+        print(f"{mode}: the second pass against the kept Jacobian, {label}: {error:.1e} of the "
+              f"largest entry (tolerance 1e-12)")
+        assert error <= 1e-12, (label, error)
+    # The cost: the frames that a derivative in params evaluates. With the
+    # rows kept, the energies and the rows come from one evaluation. With the
+    # second pass, grad alone evaluates the frames once, in the second pass
+    # (the energies of the first are not used, and XLA removes their call),
+    # and value_and_grad twice.
+    def loss_of(f):
+        return lambda p: jnp.sum(w * jax.vmap(f, in_axes=(None, 0, 0))(p, jx, jc))
+    counts = [evaluated_frames(transform(loss_of(f)), params)
+              for transform in (jax.grad, jax.value_and_grad) for f in (kept, second)]
+    print(f"{mode}: the frames evaluated for a derivative in params of 4 frames, with the "
+          f"Jacobian kept and with the second pass: grad {counts[0]} and {counts[1]}, "
+          f"value_and_grad {counts[2]} and {counts[3]}")
+    assert counts == [4, 4, 4, 8], counts
+
+    # The refusals.
+    expect(mdir.InputError, lambda: mdir.jax.energy_fn(program, jacobian="kept"),
+           "jacobian is 'keep' or 'recompute'")
+    for label, call in {
+        "jax.hessian in params": lambda: jax.hessian(second)(params, jx[0], jc[0]),
+        "jax.jacfwd(jax.grad) in params": lambda: jax.jacfwd(jax.grad(second))(params, jx[0], jc[0]),
+        "jax.jvp(jax.grad) in params":
+            lambda: jax.jvp(lambda q: jax.grad(second)(q, jx[0], jc[0]), (params,), (ones,)),
+        "jax.jacrev(jax.jacrev) in params under jit":
+            lambda: jax.jit(jax.jacrev(jax.jacrev(second)))(params, jx[0], jc[0]),
+        "the mixed derivative of the forces in params":
+            lambda: jax.jacrev(lambda q: jax.grad(second, argnums=1)(q, jx[0], jc[0]))(params),
+    }.items():
+        expect(mdir.UnsupportedError, call, "a second derivative of the energy")
+    expect(NotImplementedError,
+           lambda: jax.vmap(jax.grad(second), in_axes=(0, None, None))(
+               {n: jnp.stack([v, v]) for n, v in params.items()}, jx[0], jc[0]), "vmap over params")
+    small = mdir.jax.energy_fn(program, jacobian_bytes=8 * 23 * 2)
+    small_second = mdir.jax.energy_fn(program, jacobian="recompute", jacobian_bytes=0)
+    message = expect(mdir.UnsupportedError,
+                     lambda: jax.grad(loss_of(small))(params), "above jacobian_bytes")
+    assert "jacobian='recompute'" in message and "jax.checkpoint" in message, message
+    exact = same(flat(jax.grad(loss_of(small_second))(params)),
+                 flat(jax.grad(loss_of(second))(params)))
+    print(f"{mode}: refused: an unknown jacobian, every second derivative through the second "
+          f"pass, vmap over params; above jacobian_bytes, jacobian='keep' names the second pass, "
+          f"which jacobian_bytes does not bound: {exact}")
+    assert exact
+
+    if not double:
+        return
+    # Central differences in params through the second pass, of the smooth
+    # program (`dipeptide`), and check_grads.
+    system, state = dipeptide(smooth=True)
+    program = compile_(system, state)
+    f = mdir.jax.energy_fn(program, jacobian="recompute")
+    rng = np.random.default_rng(7)
+    x0, c0 = jx[0], jc[0]
+    for name in params:
+        direction = rng.standard_normal(params[name].shape)
+        v = {n: jnp.zeros_like(params[n]) for n in params}
+        v[name] = jnp.asarray(direction / np.linalg.norm(direction))
+
+        def along(t, v=v):
+            return {n: params[n] + t * v[n] for n in params}
+        exact_, difference, step = directional(
+            lambda t: f(along(t), x0, c0), lambda t: flat(jax.grad(f)(along(t), x0, c0)), flat(v))
+        error = abs(difference - exact_) / abs(exact_)
+        print(f"{mode}: the second pass, central differences in params['{name}']: relative "
+              f"error {error:.1e} (tolerance 1e-06; step {step:.1e})")
+        assert error <= 1e-6, (name, error)
+    scale = float(np.linalg.norm(flat(jax.grad(f)(params, x0, c0))))
+    jax.test_util.check_grads(lambda q: f(q, x0, c0), (params,), order=1, modes=("fwd", "rev"),
+                              eps=1e-7, rtol=1e-6, atol=1e-6 * scale * np.sqrt(23))
+    print(f"{mode}: the second pass, jax.test_util.check_grads(order=1, modes=('fwd', 'rev')) "
+          f"in params, step 1e-07: passed")
 
 
 if scenario == "gate":
@@ -788,6 +932,8 @@ elif scenario == "precisions":
     run_precisions()
 elif scenario == "sanitize":
     run_sanitize()
+elif scenario == "second":
+    run_second()
 else:
     raise SystemExit(f"unknown scenario {scenario}")
 print("jax passed" if not torch_side else "torch passed")

@@ -309,11 +309,11 @@ def _check_rows(count, entries, jacobian_bytes):
     if 8 * count * entries > jacobian_bytes:
         raise _core.UnsupportedError(
             f"mdir.jax: the Jacobian of {count} frames in {entries} entries of the tunables is "
-            f"{8 * count * entries} bytes, above jacobian_bytes ({jacobian_bytes}). Under "
-            "jax.vmap the derivative in params keeps the rows of every frame of the batch; "
-            "give energy_fn jacobian_bytes=0 for the second pass, which evaluates the frames "
-            "again and keeps no rows, or a larger jacobian_bytes, or map over chunks of "
-            "frames under jax.checkpoint (docs/python-frames.md)")
+            f"{8 * count * entries} bytes, above jacobian_bytes ({jacobian_bytes}): with "
+            "jacobian='keep' the derivative in params keeps the rows of every frame of a call. "
+            "Give energy_fn jacobian='recompute' for the second pass, which evaluates the "
+            "frames again and keeps no rows; or a larger jacobian_bytes; or map over chunks "
+            "of frames with jax.lax.map under jax.checkpoint (docs/python-frames.md)")
 
 
 def _zero(tangent):
@@ -347,7 +347,8 @@ class _Program:
     evaluator, which owns the simulation, and the static attributes of the
     calls."""
 
-    def __init__(self, program, jacobian_bytes):
+    def __init__(self, program, jacobian_bytes, jacobian="keep"):
+        self.jacobian = jacobian
         self.evaluator = _frames.FrameEvaluator(program, jacobian_bytes=jacobian_bytes)
         registered = self.evaluator._simulation._xla_ffi_register()
         self.key, self.fingerprint = registered["key"], registered["fingerprint"]
@@ -366,10 +367,9 @@ class _Program:
                     jacobian_bytes=self.jacobian_bytes)
 
     def second_pass(self):
-        """Whether the derivative in params takes the second pass: where
-        the Jacobian of one frame, 8 M bytes, is above jacobian_bytes, as
-        for FrameEvaluator (jacobian_bytes=0 is the second pass)."""
-        return 8 * sum(self.sizes) > self.jacobian_bytes
+        """Whether the derivative in params takes the second pass:
+        `energy_fn(..., jacobian="recompute")`."""
+        return self.jacobian == "recompute"
 
     def bind(self, theta, positions, cells, forces=False, cell=False, rows=False):
         return _frames_p.bind(theta, positions, cells, program=self.key,
@@ -387,7 +387,7 @@ def _cell_rows(cell):
     return jnp.stack([cell[0, 0], cell[1, 1], cell[2, 2], cell[1, 0], cell[2, 0], cell[2, 1]])
 
 
-def energy_fn(program, *, jacobian_bytes=1 << 28):
+def energy_fn(program, *, jacobian="keep", jacobian_bytes=1 << 28):
     """A pure function `energy_fn(params, positions, cell=None)` of one
     frame: the potential energy that the forces sample (D210), a float64
     scalar in kJ/mol.
@@ -400,15 +400,22 @@ def energy_fn(program, *, jacobian_bytes=1 << 28):
     the input; `cell` the three edges (3,) of an orthorhombic cell or the
     cell vectors in rows (3, 3), lower triangular, float64 in nm, or None
     for the cell of the program's initial state (and for a program without
-    a periodic cell). The forces are `-jax.grad(f, argnums=1)`. The
-    Jacobian in the tunables, 8 K M bytes for K frames of a call, is kept
-    up to `jacobian_bytes`; above it a derivative in `params` raises. See
-    docs/python-frames.md."""
+    a periodic cell). The forces are `-jax.grad(f, argnums=1)`.
+
+    `jacobian` chooses how a derivative in `params` is formed: "keep" (the
+    default) keeps the rows of the Jacobian in the tunables from the
+    evaluation of the frames, 8 K M bytes for the K frames of a call, up to
+    `jacobian_bytes`, above which it raises; "recompute" keeps no rows and
+    evaluates the frames again in a second pass, contracting each row as it
+    is formed. See docs/python-frames.md."""
     _check_x64()
     _register()
+    if jacobian not in ("keep", "recompute"):
+        raise _core.InputError("mdir.jax.energy_fn: jacobian is 'keep' or 'recompute'; found "
+                               f"{jacobian!r}")
     if int(jacobian_bytes) < 0:
         raise _core.InputError("mdir.jax.energy_fn: jacobian_bytes is not negative")
-    p = _Program(program, jacobian_bytes)
+    p = _Program(program, jacobian_bytes, jacobian)
     if p.evaluator.terms != "all":
         raise _core.InputError("mdir.jax.energy_fn: the program's energy is that of all terms")
 
@@ -441,6 +448,8 @@ def energy_fn(program, *, jacobian_bytes=1 << 28):
         # fits jacobian_bytes, and otherwise the tangent in params is the
         # second pass, linear in the tangent (D[frame-evaluator-jax-second-pass]).
         second = wants_theta and p.second_pass()
+        if wants_theta and not second:
+            _check_rows(1, sum(p.sizes), p.jacobian_bytes)
         flat = jnp.concatenate([theta[n] for n in p.names])
         frames = cells_of(cell)
         energies, gradient, by_cell, rows = p.bind(
