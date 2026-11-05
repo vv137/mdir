@@ -149,6 +149,11 @@ tests that bounded its wall time split into one file per scenario, the
 suite took about 260 s instead of about 1090 s on one RTX 3090 (D208,
 #141). The suite hands `CUDA_CACHE_PATH` to its tests, as it hands `HOME`,
 so that the driver's kernel cache of a suite goes where it says (#223).
+The CUDA toolkit of the tests is the first of `CUDA_ROOT`, `CUDA_HOME`, and
+`CUDA_PATH` that is set where lit runs, else the toolkit that the tree was
+configured with; each test receives it as `CUDA_ROOT`. A machine that runs
+the suite of a tree with the toolkit at another path sets one of them,
+with no edit of the generated `lit.site.cfg.py` (#758).
 
 Some tests check the tree itself:
 

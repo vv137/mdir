@@ -157,7 +157,15 @@ if config.mdir_python:
         config.substitutions.append(("%h5md_python", h5md_python))
 
 # Tests that run on a GPU need the runtime for NVIDIA GPUs and a device.
-# The kernels find the device math library through CUDA_ROOT.
+# The kernels find the device math library through CUDA_ROOT. The toolkit
+# is the first of CUDA_ROOT, CUDA_HOME, and CUDA_PATH that lit's
+# environment sets, as the runtime reads them (docs/environment.md), else
+# the toolkit of the build: a machine that runs the tests with the toolkit
+# at another path than the configured one states it there (#758).
+for name in ("CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"):
+    if os.environ.get(name):
+        config.mdir_cuda_root = os.environ[name]
+        break
 if config.mdir_cuda:
     # Emission/lowering needs the toolkit, not a visible device.
     config.available_features.add("cuda-toolkit")
