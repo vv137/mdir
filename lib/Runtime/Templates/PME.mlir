@@ -35,20 +35,21 @@
 // (D271). The arrays of a particle live on the stack of a
 // function of its own, which each iteration calls.
 
-!pme_pos = f64
-!pme_chg = f64
-!pme_frc = f64
-!pme_real = f64
+// The aliases !pme_pos, !pme_chg, and !pme_frc (the types that the
+// positions, the charges, and the forces are stored in) and !pme_real (the
+// type of the forces) are defined by the instance, in a header above this
+// text (getPMETemplateHeader, D[template-ir-pme-header], #739).
 
 // The transforms of the runtime (runtime/mdrt_fft.c), for a grid in
-// !pme_real: PME_FFT names those of its type.
+// !pme_real: the instance names @mdir.template.fft.NAME as the transform of
+// its type, @mdrtFFT64NAME or @mdrtFFT32NAME.
 func.func private @mdrtFFTPrepare(i64, i64, i64)
 func.func private @mdrtFFTColumnBlocks(i64, i64) -> i64
-func.func private @PME_FFTRowsForward(memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64)
+func.func private @mdir.template.fft.RowsForward(memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64)
     attributes {llvm.emit_c_interface}
-func.func private @PME_FFTRowsBackward(memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64)
+func.func private @mdir.template.fft.RowsBackward(memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64)
     attributes {llvm.emit_c_interface}
-func.func private @PME_FFTColumns(memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64)
+func.func private @mdir.template.fft.Columns(memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64)
     attributes {llvm.emit_c_interface}
 
 // Raises the weights `a` of the B-spline at the fraction `w` from order
@@ -517,7 +518,7 @@ func.func private @mdrt.pme_fft_forward(%real: memref<?x!pme_real>, %complex: me
     %ai = arith.index_cast %a : index to i64
     %first = arith.muli %ai, %k2i : i64
     %last = arith.addi %first, %k2i : i64
-    func.call @PME_FFTRowsForward(%real, %complex, %k3i, %first, %last)
+    func.call @mdir.template.fft.RowsForward(%real, %complex, %k3i, %first, %last)
         : (memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64) -> ()
     scf.reduce
   }
@@ -526,7 +527,7 @@ func.func private @mdrt.pme_fft_forward(%real: memref<?x!pme_real>, %complex: me
   scf.parallel (%u) = (%c0) to (%nyx) step (%c1) {
     %ui = arith.index_cast %u : index to i64
     %next = arith.addi %ui, %i1 : i64
-    func.call @PME_FFTColumns(%complex, %k1i, %k2i, %k3i, %i1, %i1, %ui, %next)
+    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i1, %i1, %ui, %next)
         : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
     scf.reduce
   }
@@ -535,7 +536,7 @@ func.func private @mdrt.pme_fft_forward(%real: memref<?x!pme_real>, %complex: me
   scf.parallel (%u) = (%c0) to (%nxx) step (%c1) {
     %ui = arith.index_cast %u : index to i64
     %next = arith.addi %ui, %i1 : i64
-    func.call @PME_FFTColumns(%complex, %k1i, %k2i, %k3i, %i0, %i1, %ui, %next)
+    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i0, %i1, %ui, %next)
         : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
     scf.reduce
   }
@@ -560,7 +561,7 @@ func.func private @mdrt.pme_fft_backward(%complex: memref<?x!pme_real>, %real: m
   scf.parallel (%u) = (%c0) to (%nyx) step (%c1) {
     %ui = arith.index_cast %u : index to i64
     %next = arith.addi %ui, %i1 : i64
-    func.call @PME_FFTColumns(%complex, %k1i, %k2i, %k3i, %i1, %i0, %ui, %next)
+    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i1, %i0, %ui, %next)
         : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
     scf.reduce
   }
@@ -569,7 +570,7 @@ func.func private @mdrt.pme_fft_backward(%complex: memref<?x!pme_real>, %real: m
   scf.parallel (%u) = (%c0) to (%nxx) step (%c1) {
     %ui = arith.index_cast %u : index to i64
     %next = arith.addi %ui, %i1 : i64
-    func.call @PME_FFTColumns(%complex, %k1i, %k2i, %k3i, %i0, %i0, %ui, %next)
+    func.call @mdir.template.fft.Columns(%complex, %k1i, %k2i, %k3i, %i0, %i0, %ui, %next)
         : (memref<?x!pme_real>, i64, i64, i64, i64, i64, i64, i64) -> ()
     scf.reduce
   }
@@ -577,7 +578,7 @@ func.func private @mdrt.pme_fft_backward(%complex: memref<?x!pme_real>, %real: m
     %ai = arith.index_cast %a : index to i64
     %first = arith.muli %ai, %k2i : i64
     %last = arith.addi %first, %k2i : i64
-    func.call @PME_FFTRowsBackward(%complex, %real, %k3i, %first, %last)
+    func.call @mdir.template.fft.RowsBackward(%complex, %real, %k3i, %first, %last)
         : (memref<?x!pme_real>, memref<?x!pme_real>, i64, i64, i64) -> ()
     scf.reduce
   }

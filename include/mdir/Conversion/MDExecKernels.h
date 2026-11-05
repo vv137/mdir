@@ -376,18 +376,26 @@ mlir::LogicalResult instantiateTemplates(mlir::ModuleOp templates,
                                          mlir::Type real);
 std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 
-/// The templates of particle mesh Ewald for positions, charges, and forces
-/// stored as `position`, `charge`, and `force`: the aliases `!pme_pos`,
-/// `!pme_chg`, and `!pme_frc` take those types, and the functions take the
-/// suffix of `getPMESuffix`. The alias `!pme_real` of the template for
-/// devices, the type of the splines and the grid, takes the type of the
-/// forces, and
-/// `PME_TILE_POINTS_E` in the shapes of the tiles the points of a tile of
-/// edge E, (E + P - 1)^3. The other parameters of the instance are resolved
-/// in IR (resolveTemplateParameters, resolveTemplateConversions).
-std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
-                                    mlir::Type charge, mlir::Type force,
-                                    int64_t order);
+/// The header of the text of a template of particle mesh Ewald for
+/// positions, charges, and forces stored as `position`, `charge`, and
+/// `force` and splines of the order `order`: the aliases `!pme_pos`,
+/// `!pme_chg`, `!pme_frc`, and `!pme_real` (the type of the forces), and,
+/// with `tiles`, `!pme_tile_E`, a tile of the spreading of bins of E points
+/// in the memory of the block (D[template-ir-pme-header], #739). The
+/// template is parsed with this header above its text.
+std::string getPMETemplateHeader(mlir::Type position, mlir::Type charge,
+                                 mlir::Type force, int64_t order,
+                                 bool tiles);
+/// Names the functions of the parsed templates `templates` of particle mesh
+/// Ewald for an instance: those that they define take the suffix of
+/// `getPMESuffix`, through the symbol table, and the transforms of the host,
+/// `@mdir.template.fft.NAME`, those of the runtime for the type of the
+/// forces. The other parameters of the instance are resolved in IR as well
+/// (resolveTemplateParameters, resolveTemplateConversions).
+mlir::LogicalResult instantiatePMESymbols(mlir::ModuleOp templates,
+                                          mlir::Type position,
+                                          mlir::Type charge, mlir::Type force,
+                                          int64_t order);
 /// Replaces, in `root`, each `mdrt.template_convert` of a template with the
 /// conversion that the types of its instance need: `arith.bitcast` between
 /// two of the same type, `arith.extf` to a wider one, and `arith.truncf` to

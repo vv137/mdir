@@ -1,7 +1,7 @@
 // The reciprocal sum of particle mesh Ewald with the prolate kernel on a
 // device, "Ewald summation with prolates" [Liang2026] (D266):
 // the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points along each edge
-// (PME_ORDER), whose weights and slopes are Chebyshev series in the
+// (the order of the instance), whose weights and slopes are Chebyshev series in the
 // fraction of the place, and the influence function χ̂(2π r_c |m|) / m²
 // times 1/φ̂₁² along each edge (Builder::collectProlate).
 //
@@ -14,10 +14,11 @@
 // pe + 3 + 2n + k P + j, its slope D P later; prolate_coefficients writes
 // them from the table of the op at each sum, in !pme_real.
 
-!pme_pos = f64
-!pme_chg = f64
-!pme_frc = f64
-!pme_real = f64
+// The aliases !pme_pos, !pme_chg, and !pme_frc (the types that the
+// positions, the charges, and the forces are stored in), !pme_real (the
+// type of the forces), and !pme_tile_E (a tile of the spreading of bins of
+// E points, D282) are defined by the instance, in a header above this text
+// (getPMETemplateHeader, D[template-ir-pme-header], #739).
 
 func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -4758,7 +4759,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
-             workgroup(%tile : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
+             workgroup(%tile : !pme_tile_4, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
     %cwarps = arith.constant 4 : index
@@ -4795,7 +4796,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
       scf.for %t = %tx to %volume step %cthreads {
-        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
+        memref.store %zero_r, %tile[%t] : !pme_tile_4
       }
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
@@ -4969,7 +4970,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                func.call @mdir.template.shared_add_4(%tile, %tat, %value) : (memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
+                func.call @mdir.template.shared_add_4(%tile, %tat, %value) : (!pme_tile_4, index, !pme_real) -> ()
               }
             }
           }
@@ -4980,7 +4981,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
         scf.for %t = %tx to %volume step %cthreads {
-          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
+          %value = memref.load %tile[%t] : !pme_tile_4
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
             %t32 = arith.index_cast %t : index to i32
@@ -5052,7 +5053,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
-             workgroup(%tile : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
+             workgroup(%tile : !pme_tile_8, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
     %cwarps = arith.constant 4 : index
@@ -5089,7 +5090,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
       scf.for %t = %tx to %volume step %cthreads {
-        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
+        memref.store %zero_r, %tile[%t] : !pme_tile_8
       }
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
@@ -5263,7 +5264,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                func.call @mdir.template.shared_add_8(%tile, %tat, %value) : (memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
+                func.call @mdir.template.shared_add_8(%tile, %tat, %value) : (!pme_tile_8, index, !pme_real) -> ()
               }
             }
           }
@@ -5274,7 +5275,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
         scf.for %t = %tx to %volume step %cthreads {
-          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
+          %value = memref.load %tile[%t] : !pme_tile_8
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
             %t32 = arith.index_cast %t : index to i32
@@ -5346,7 +5347,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
-             workgroup(%tile : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<2048x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<1536xi32, #gpu.address_space<workgroup>>) {
+             workgroup(%tile : !pme_tile_16, %staged : memref<2048x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<1536xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
     %cwarps = arith.constant 16 : index
@@ -5383,7 +5384,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
       scf.for %t = %tx to %volume step %cthreads {
-        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
+        memref.store %zero_r, %tile[%t] : !pme_tile_16
       }
       %warp = arith.divui %tx, %c32w : index
       %lane_x = arith.remui %tx, %c32w : index
@@ -5557,7 +5558,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
                 %t12s = arith.muli %t12, %side32 : i32
                 %t123 = arith.addi %t12s, %t3 : i32
                 %tat = arith.index_cast %t123 : i32 to index
-                func.call @mdir.template.shared_add_16(%tile, %tat, %value) : (memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real) -> ()
+                func.call @mdir.template.shared_add_16(%tile, %tat, %value) : (!pme_tile_16, index, !pme_real) -> ()
               }
             }
           }
@@ -5568,7 +5569,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
         scf.for %t = %tx to %volume step %cthreads {
-          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
+          %value = memref.load %tile[%t] : !pme_tile_16
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
             %t32 = arith.index_cast %t : index to i32
@@ -5612,9 +5613,9 @@ func.func private @mdir.template.global_add(!llvm.ptr<1>, !pme_real)
 func.func private @mdir.template.order.i32() -> i32
 func.func private @mdir.template.order.index() -> index
 func.func private @mdir.template.real_bytes.i64() -> i64
-func.func private @mdir.template.shared_add_16(memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
-func.func private @mdir.template.shared_add_4(memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
-func.func private @mdir.template.shared_add_8(memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, index, !pme_real)
+func.func private @mdir.template.shared_add_16(!pme_tile_16, index, !pme_real)
+func.func private @mdir.template.shared_add_4(!pme_tile_4, index, !pme_real)
+func.func private @mdir.template.shared_add_8(!pme_tile_8, index, !pme_real)
 func.func private @mdir.template.tile_points_16.index() -> index
 func.func private @mdir.template.tile_points_4.index() -> index
 func.func private @mdir.template.tile_points_8.index() -> index
