@@ -67,7 +67,9 @@ def MD_Request : I32EnumAttr<"Request", "quantity requested from a potential", [
     I32EnumAttrCase<"Energy", 0, "energy">,
     I32EnumAttrCase<"Forces", 1, "forces">,
     I32EnumAttrCase<"Virial", 2, "virial">,
-    I32EnumAttrCase<"Derivative", 3, "derivative">
+    I32EnumAttrCase<"Derivative", 3, "derivative">,
+    I32EnumAttrCase<"Tangent", 4, "tangent">,
+    I32EnumAttrCase<"TangentDerivative", 5, "tangent_derivative">
   ]> {
   let cppNamespace = "::mdir::md";
 }

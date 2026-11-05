@@ -1013,6 +1013,13 @@ def MD_EvaluateOp : MD_Op<"evaluate", [
     | `virial` | `vector<9xf64>` | `W = Σ d_ij ⊗ K(i, j)`, in row-major order |
     | `derivative(n)` | `f64` | `∂U/∂θ_n`, where `θ_n` is scalar argument `n` |
     | `derivative(n)` | Type of the field | `g_i = ∂U/∂a_i`, where `a` is argument `n`, a field of the particles with one component of `f64` |
+    | `tangent` | `f64` | `Φ = Σ_i t_i · ∂U/∂x_i`, the derivative of `U` along the tangent `t` of the positions |
+    | `tangent_derivative(n)` | as `derivative(n)` | `∂Φ/∂θ_n` or `∂Φ/∂a_i`: the mixed derivative `Σ_i t_i · ∂²U/∂x_i ∂θ_n` (D[force-matching]) |
+
+    With a `tangent` request, the op takes one operand more than the
+    potential, the last: the tangent `t`, a field of the type of the
+    positions. The tangent is held fixed: `tangent_derivative(n)` is the
+    derivative of `Φ` in argument `n` of the potential at fixed `t`.
 
     The op does not survive semantic differentiation, which replaces it with
     a call to a generated `md.function`.
@@ -1034,6 +1041,13 @@ def MD_EvaluateOp : MD_Op<"evaluate", [
     $callee `(` $operands `)`
     `request` custom<Requests>($request_kinds, $request_arguments)
     attr-dict `:` functional-type($operands, results)
+  }];
+  let extraClassDeclaration = [{
+    /// Whether a request is `tangent` or `tangent_derivative`, so that the
+    /// last operand is the tangent of the positions.
+    bool hasTangent();
+    /// The operands that are the arguments of the potential.
+    ::mlir::OperandRange getPotentialOperands();
   }];
   let hasVerifier = 1;
 }

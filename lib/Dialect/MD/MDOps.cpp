@@ -186,12 +186,12 @@ static ParseResult parseRequests(OpAsmParser &parser,
     std::optional<Request> kind = symbolizeRequest(keyword);
     if (!kind)
       return parser.emitError(loc)
-             << "expected 'energy', 'forces', 'virial', or 'derivative', "
-                "got '"
+             << "expected 'energy', 'forces', 'virial', 'derivative', "
+                "'tangent', or 'tangent_derivative', got '"
              << keyword << "'";
 
     int64_t argument = -1;
-    if (*kind == Request::Derivative) {
+    if (*kind == Request::Derivative || *kind == Request::TangentDerivative) {
       if (parser.parseLParen() || parser.parseInteger(argument) ||
           parser.parseRParen())
         return failure();
@@ -218,7 +218,7 @@ static void printRequests(OpAsmPrinter &printer, Operation *,
       printer << ", ";
     auto kind = static_cast<Request>(kinds[i]);
     printer << stringifyRequest(kind);
-    if (kind == Request::Derivative)
+    if (kind == Request::Derivative || kind == Request::TangentDerivative)
       printer << "(" << arguments[i] << ")";
   }
   printer << "]";
@@ -1322,6 +1322,18 @@ ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // EvaluateOp
 //===----------------------------------------------------------------------===//
 
+bool EvaluateOp::hasTangent() {
+  return llvm::any_of(getRequestKinds(), [](int32_t kind) {
+    auto request = static_cast<Request>(kind);
+    return request == Request::Tangent || request == Request::TangentDerivative;
+  });
+}
+
+OperandRange EvaluateOp::getPotentialOperands() {
+  OperandRange operands = getOperands();
+  return hasTangent() ? operands.drop_back() : operands;
+}
+
 LogicalResult EvaluateOp::verify() {
   ArrayRef<int32_t> kinds = getRequestKinds();
   ArrayRef<int64_t> arguments = getRequestArguments();
@@ -1338,11 +1350,26 @@ LogicalResult EvaluateOp::verify() {
     return emitOpError()
            << "expected at least 2 operands, a position field and a cell";
 
+  // The arguments of the potential, without the tangent.
+  unsigned potentialArguments = getPotentialOperands().size();
+  if (hasTangent()) {
+    if (potentialArguments < 2)
+      return emitOpError()
+             << "expected the positions, the cell, and then the tangent";
+    if (getOperands().back().getType() != getOperand(0).getType())
+      return emitOpError()
+             << "expected the tangent, the last operand, to have the type "
+                "of the positions, "
+             << getOperand(0).getType() << ", got "
+             << getOperands().back().getType();
+  }
+
   Builder builder(getContext());
   for (unsigned i = 0, e = kinds.size(); i != e; ++i) {
     Type expected;
     switch (static_cast<Request>(kinds[i])) {
     case Request::Energy:
+    case Request::Tangent:
       expected = builder.getF64Type();
       break;
     case Request::Forces:
@@ -1351,13 +1378,16 @@ LogicalResult EvaluateOp::verify() {
     case Request::Virial:
       expected = VectorType::get({9}, builder.getF64Type());
       break;
-    case Request::Derivative: {
+    case Request::Derivative:
+    case Request::TangentDerivative: {
       int64_t argument = arguments[i];
-      if (argument < 2 || argument >= static_cast<int64_t>(getNumOperands()))
+      if (argument < 2 || argument >= static_cast<int64_t>(potentialArguments))
         return emitOpError()
-               << "expected 'derivative' to name a parameter, an argument "
-                  "index from 2 to "
-               << getNumOperands() - 1 << ", got " << argument;
+               << "expected '"
+               << stringifyRequest(static_cast<Request>(kinds[i]))
+               << "' to name a parameter, an argument index from 2 to "
+               << static_cast<int64_t>(potentialArguments) - 1 << ", got "
+               << argument;
       // The derivative in a number is a number; that in a field of the
       // particles with one component of f64 is a field of its type, the
       // derivative in the value of each particle.
@@ -1403,7 +1433,14 @@ LogicalResult EvaluateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!potential)
     return emitOpError() << "'" << getCallee()
                          << "' does not name a potential";
-  return verifyCallOperands(getOperation(), potential.getFunctionType());
+  if (!hasTangent())
+    return verifyCallOperands(getOperation(), potential.getFunctionType());
+  // The tangent follows the arguments of the potential.
+  FunctionType type = potential.getFunctionType();
+  SmallVector<Type> inputs(type.getInputs());
+  inputs.push_back(getOperands().back().getType());
+  return verifyCallOperands(
+      getOperation(), FunctionType::get(getContext(), inputs, type.getResults()));
 }
 
 //===----------------------------------------------------------------------===//
