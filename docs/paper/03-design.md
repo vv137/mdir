@@ -1502,6 +1502,23 @@ waited for. The handlers of the two platforms therefore give the same
 numbers to the bit as well, and the order of the computation of JAX is
 the order of its stream.
 
+The last term of the rule is a product with the rows
+$\partial U_k/\partial\boldsymbol\theta$ of the $K$ frames of a call. It
+needs them in one of two forms (D[frame-evaluator-jax-second-pass]).
+Kept, they are $KM$ numbers that the evaluation of the frames gives with
+the energies. Reverse mode then forms
+$\sum_k \bar g_k\,\partial U_k/\partial\boldsymbol\theta$ from them
+with no further evaluation. Not kept, the term is an operation of its own,
+$\dot{\boldsymbol\theta}\mapsto(\partial U_k/\partial\boldsymbol\theta
+\cdot\dot{\boldsymbol\theta})_k$, which is linear in
+$\dot{\boldsymbol\theta}$. Its transpose,
+$\bar{\mathbf g}\mapsto\sum_k \bar g_k\,\partial U_k/\partial
+\boldsymbol\theta$, is what reverse mode asks of it. Both evaluate the
+frames again and add each row into the result as it is formed, so that
+the memory is $K + M$ numbers and not $KM$, for a second evaluation where
+the energies are also asked for. The rule sees one frame, so the form is
+chosen with the function, not with a call.
+
 *What is not differentiated.* The first term of the gradient,
 $\langle\partial O/\partial\boldsymbol\theta\rangle$, is not zero for
 an observable that reads the parameters at fixed positions: the virial,
