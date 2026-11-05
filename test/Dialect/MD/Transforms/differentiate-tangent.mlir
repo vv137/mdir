@@ -182,3 +182,58 @@ md.function @requests(%x: !vec, %cell: !md.cell, %bonds: !bonds,
       : (!vec, !md.cell, !bonds, !of_bond, !of_bond, !real, !vec) -> !real
   md.return %g : !real
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!grid = !md.table<2, f64>
+md.particle_set @atoms
+
+// The tangent of a reciprocal sum is −Σ_i t_i · F_i from the forces that
+// it yields; its derivative in a number that the charges depend on is
+// (Φ(q + Δ) − Φ(q − Δ)) / 2 with Δ = ∂q/∂λ, from two more reciprocal sums
+// at the shifted charges (D[force-matching-pme]); the mark of the pass is
+// gone from the result.
+//
+// CHECK-LABEL: md.function @mesh.tangent.energy_derivative4(
+// CHECK-SAME: %[[T:[^:]*]]: !md.field<@atoms, 3 x f64>) -> (f64, f64)
+// CHECK-NOT: md.reciprocal_tangent
+// CHECK: %{{.*}}, %[[F:.*]], %{{.*}} = md.reciprocal
+// CHECK: %[[P:.*]] = md.sum_particles gather(%[[F]], %[[T]] :
+// CHECK: ^bb0(%[[FI:[^:]*]]: vector<3xf64>, %[[TI:[^:]*]]: vector<3xf64>):
+// CHECK: %[[M:.*]] = arith.mulf %[[FI]], %[[TI]] : vector<3xf64>
+// CHECK: %[[S:.*]] = vector.reduction <add>, %[[M]]
+// CHECK: %[[N:.*]] = arith.negf %[[S]] : f64
+// CHECK: md.yield %[[N]] : f64
+// CHECK: %[[QP:.*]] = md.map_particles
+// CHECK: %{{.*}}, %[[FP:.*]], %{{.*}} = md.reciprocal %{{.*}}, %[[QP]],
+// CHECK: %[[PP:.*]] = md.sum_particles gather(%[[FP]], %[[T]] :
+// CHECK: %[[QM:.*]] = md.map_particles
+// CHECK: %{{.*}}, %[[FM:.*]], %{{.*}} = md.reciprocal %{{.*}}, %[[QM]],
+// CHECK: %[[PM:.*]] = md.sum_particles gather(%[[FM]], %[[T]] :
+// CHECK: %[[D:.*]] = arith.subf %[[PP]], %[[PM]] : f64
+// CHECK: %[[H:.*]] = arith.mulf %{{.*}}, %[[D]] : f64
+// CHECK: md.return %[[P]], %[[H]] : f64, f64
+// CHECK-NOT: md.reciprocal_tangent
+md.potential @mesh(%x: !vec, %cell: !md.cell, %q0: !real, %w: !real,
+                   %lam: f64, %moduli: !grid) -> f64 {
+  %q = md.map_particles gather(%q0, %w : !real, !real) {
+  ^bb0(%a: f64, %b: f64):
+    %s = arith.mulf %lam, %b : f64
+    %c = arith.addf %a, %s : f64
+    md.yield %c : f64
+  } : !real
+  %u, %f, %v = md.reciprocal %x, %q, %cell, %moduli
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
+      : !vec, !real, !grid -> f64, !vec, vector<9xf64>
+  md.return %u : f64
+}
+
+md.function @requests(%x: !vec, %cell: !md.cell, %q0: !real, %w: !real,
+                      %lam: f64, %moduli: !grid, %t: !vec) -> (f64, f64) {
+  %p, %dp = md.evaluate @mesh(%x, %cell, %q0, %w, %lam, %moduli, %t)
+      request [tangent, tangent_derivative(4)]
+      : (!vec, !md.cell, !real, !real, f64, !grid, !vec) -> (f64, f64)
+  md.return %p, %dp : f64, f64
+}
