@@ -1491,7 +1491,28 @@ that operation from the inputs would escape this. Each gradient is
 evaluated only where its tangent is not identically zero. Stated in
 forward mode, the mixed derivative of the forces in $\boldsymbol\theta$
 that force matching needs is a tangent rule for the evaluation itself,
-added without changing the function. The gradient in the cell is formed
+added without changing the function. The product that rule needs is formed in the IR of
+the potential (D[force-matching], #726). A loss $L$ on the gradients in
+the positions of stored frames has
+$\partial L/\partial\boldsymbol\theta = \sum_n\sum_i
+(\partial^2U_n/\partial\mathbf x_i\,\partial\boldsymbol\theta)^{\mathsf T}
+\dot{\mathbf x}_{n,i}$, with $\dot{\mathbf x}_{n,i} =
+\partial L/\partial(\partial U_n/\partial\mathbf x_i)$. $U$ is twice
+continuously differentiable in $(\mathbf x, \boldsymbol\theta)$ except
+where a pair crosses the cutoff, a set of measure zero, so the two
+derivatives commute, and the product of each frame is
+$\partial\dot U_{\mathbf x}/\partial\boldsymbol\theta$ at fixed
+$\dot{\mathbf x}$. `md-differentiate` builds $\dot U_{\mathbf x}$ as a
+potential of its own from the sums of $U$. A pair term $u(r)$ becomes the
+sum over the same pairs of $u'(r)\,\mathbf d_{ij}\cdot(\dot{\mathbf
+x}_i-\dot{\mathbf x}_j)/r_{ij}$, since $\dot r_{ij} = \mathbf
+d_{ij}\cdot(\dot{\mathbf x}_i-\dot{\mathbf x}_j)/r_{ij}$. A term over
+tuples becomes $\sum_k(\partial u/\partial c_k)\,\dot c_k$ over its
+coordinates, and a term that does not read the positions is absent, by
+the proof of activity. The derivative of $\dot U_{\mathbf x}$ in
+$\boldsymbol\theta$ is then that of an energy, by the rules and the seeds
+that give $\partial U/\partial\boldsymbol\theta$, and the matrix of the
+mixed derivatives, $3N\times M_\theta$ for a frame, is never formed. The gradient in the cell is formed
 for each frame by one routine, which the PyTorch adapter uses as well, so
 the two adapters, a batch of frames and each frame alone, and a compiled
 call and an uncompiled one give the same numbers to the bit. On a CUDA
