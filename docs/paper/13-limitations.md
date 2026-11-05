@@ -188,9 +188,12 @@ its vector-Jacobian product in the tunables, as an operation of PyTorch
 (D240, Section 3.6), with the frames of a call inside one activation
 (D251): 0.28 ms on the dipeptide in water and 0.69 ms on
 JAC on one RTX 4090, 5.5 and 5.6 steps, what the kernels of a frame cost.
-Remaining: the gradients in the positions and the strain as outputs; the derivative of
-the virial and of observed terms in the parameters, which a fit to the
-pressure needs; and the JAX adapter.
+Remaining: the derivative of the virial and of observed terms in the
+parameters, which a fit to the pressure needs; and the parts of the JAX
+adapter after the first. The first part
+(D[frame-evaluator-jax]) runs on the CPU, on the loop of frames above;
+its device target, a batch boundary on the device, and a second pass for
+a Jacobian above its bound follow.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
 one GPU first. A message-passing potential is not local: its layer $k$ forms

@@ -46,6 +46,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 #include "Tunables.h"
 #include "DLPack.h"
 #include "Topology.h"
+#include "XlaFfi.h"
 
 struct Version {
   uint64_t version = 0;
@@ -785,6 +786,17 @@ PYBIND11_MODULE(_core, m) {
     // The program of the terms that a tunable enters, alone
     // (D243, docs/python-frames.md), for a frame
     // evaluator: built from the model of this one, with its inputs.
+    // The values of the tunables of the program, by name, in MD units
+    // (`mdir.jax.params`); private.
+    .def("_tunable_values", [](const Program &p) {
+      py::dict d;
+      const model::TunableSet &set = p.prepared->tunables;
+      for (size_t k = 0; k != set.tunables.size(); ++k)
+        d[py::str(set.tunables[k].name)] =
+            host::copy(set.values[k].data(), set.values[k].size(),
+                       {static_cast<py::ssize_t>(set.values[k].size())});
+      return d;
+    })
     .def("_dependent", [](const Program &p) {
       if (p.dependent)
         return p.dependent;
@@ -947,6 +959,7 @@ PYBIND11_MODULE(_core, m) {
     py::gil_scoped_release release;
     return compiler::trimDeviceMemory();
   });
+  python::xla::addBindings(m);
   m.def("clear_compile_cache", [](std::optional<std::string> directory) {
     if (!directory)
       if (const char *named = std::getenv("MDIR_COMPILE_CACHE_DIR"); named && *named)
@@ -1813,6 +1826,21 @@ PYBIND11_MODULE(_core, m) {
     // in the positions of `_evaluate_frames`; private.
     .def_property_readonly("_forces_double", [](PySimulation &s) {
       return s.simulation->keepsForcesInDouble();
+    })
+    // The key and the fingerprint under which the handlers of the XLA FFI
+    // find this simulation of a frame evaluator (`mdir.jax`,
+    // D[frame-evaluator-jax]); private.
+    .def("_xla_ffi_register", [](PySimulation &s) {
+      const model::PreparedModel &prepared = *s.program->prepared;
+      auto [key, fingerprint] = python::xla::registerProgram(s.simulation, prepared);
+      py::dict d;
+      d["key"] = key;
+      d["fingerprint"] = fingerprint;
+      d["periodic"] = prepared.control.periodic;
+      // Restraints to reference positions, whose virial is not the
+      // derivative of the energy of a frame in the strain (D252).
+      d["restrained"] = !prepared.system.restraintConstants.empty();
+      return d;
     })
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();

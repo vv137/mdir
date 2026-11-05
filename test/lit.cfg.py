@@ -127,6 +127,16 @@ if config.mdir_python:
         if subprocess.run([torch_python, "-c", "import torchpme"],
                           capture_output=True).returncode == 0:
             config.available_features.add("torchpme")
+    # JAX, for its adapter of the frame evaluator (D[frame-evaluator-jax]):
+    # the interpreter that lit is given with -Djax_python=<interpreter> (or
+    # MDIR_JAX_PYTHON), which the models in stages take as well (below) and
+    # which must import the module of this build (the same Python version),
+    # or the interpreter of the tests if it imports jax.
+    jax_python = lit_config.params.get(
+        "jax_python", os.environ.get("MDIR_JAX_PYTHON", "") or config.mdir_python_executable)
+    if subprocess.run([jax_python, "-c", "import jax"], capture_output=True).returncode == 0:
+        config.available_features.add("jax")
+        config.substitutions.append(("%jax_python", jax_python))
 
 # Checkpoints need HDF5.
 if config.mdir_hdf5:
@@ -242,7 +252,10 @@ stablehlo_opt = lit_config.params.get("stablehlo_opt",
 if jax_python and stablehlo_opt and os.access(stablehlo_opt, os.X_OK) and _subprocess.run(
         [jax_python, "-c", "import jax, numpy"], capture_output=True).returncode == 0:
     config.available_features.add("stages-export")
-    config.substitutions.append(("%jax_python", jax_python))
+    # The same interpreter as that of the feature "jax" (above), whose
+    # substitution is then already there.
+    if not any(name == "%jax_python" for name, _ in config.substitutions):
+        config.substitutions.append(("%jax_python", jax_python))
     config.substitutions.append(("%stablehlo_opt", stablehlo_opt))
 
 # The tests that a release adds to the default suite: the whole matrix of
