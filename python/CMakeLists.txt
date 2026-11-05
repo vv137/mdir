@@ -18,7 +18,11 @@ find_package(pybind11 3.0.1 EXACT CONFIG REQUIRED)
 # <build>/python/mdir as in site-packages, so that PYTHONPATH=<build>/python
 # imports the build (D228).
 set(MDIR_PYTHON_PACKAGE_DIR ${CMAKE_BINARY_DIR}/python/mdir)
-pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp)
+pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp XlaFfi.cpp)
+# The headers of the XLA FFI for the handlers of `mdir.jax`, vendored so
+# that MDIR builds without JAX (third_party/xla_ffi, D[frame-evaluator-jax]).
+target_include_directories(mdir_python SYSTEM PRIVATE
+  ${PROJECT_SOURCE_DIR}/third_party/xla_ffi)
 set_target_properties(mdir_python PROPERTIES OUTPUT_NAME _core
   LIBRARY_OUTPUT_DIRECTORY ${MDIR_PYTHON_PACKAGE_DIR})
 target_compile_options(mdir_python PRIVATE -fexceptions)
@@ -34,6 +38,8 @@ configure_file(mdir/__init__.py ${MDIR_PYTHON_PACKAGE_DIR}/__init__.py COPYONLY)
 # `mdir.torch` imports torch and is imported only by a script that asks.
 configure_file(mdir/_frames.py ${MDIR_PYTHON_PACKAGE_DIR}/_frames.py COPYONLY)
 configure_file(mdir/torch.py ${MDIR_PYTHON_PACKAGE_DIR}/torch.py COPYONLY)
+# Its JAX adapter (D[frame-evaluator-jax]); `mdir.jax` imports jax.
+configure_file(mdir/jax.py ${MDIR_PYTHON_PACKAGE_DIR}/jax.py COPYONLY)
 
 if(SKBUILD)
   # A wheel (pyproject.toml): the package is the root of the wheel's
@@ -59,7 +65,7 @@ else()
 endif()
 install(TARGETS mdir_python LIBRARY DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
   COMPONENT python)
-install(FILES mdir/__init__.py mdir/_frames.py mdir/torch.py
+install(FILES mdir/__init__.py mdir/_frames.py mdir/torch.py mdir/jax.py
   DESTINATION ${MDIR_PYTHON_INSTALL_DIR} COMPONENT python)
 # What a wheel builds (pyproject.toml): the extension and the runtime.
 add_custom_target(mdir_wheel)
