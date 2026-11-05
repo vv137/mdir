@@ -84,6 +84,14 @@ ffi::Error invalid(std::string message) {
   return ffi::Error::InvalidArgument("mdir_frames: " + std::move(message));
 }
 
+/// An error of the data of a call (a frame that is refused or whose
+/// evaluation fails, values of the tunables that are refused): a failed
+/// precondition. JAX raises it as `JaxRuntimeError` where the result is
+/// awaited, and as `ValueError` where the call runs as it is made.
+ffi::Error failed(std::string message) {
+  return ffi::Error(ffi::ErrorCode::kFailedPrecondition, "mdir_frames: " + std::move(message));
+}
+
 ffi::ErrorOr<std::unique_ptr<FrameState>> instantiate(int64_t program,
                                                       std::string_view fingerprint) {
   std::shared_ptr<Entry> entry;
@@ -198,7 +206,7 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
       at += size;
     }
     if (llvm::Error error = simulation.updateTunables(changes))
-      return invalid("the values of the tunables: " + llvm::toString(std::move(error)));
+      return failed("the values of the tunables: " + llvm::toString(std::move(error)));
     std::memcpy(entry.theta.data(), values, entry.entries * sizeof(double));
   }
   const double *x = positions.typed_data();
@@ -218,7 +226,7 @@ ffi::Error execute(FrameState *state, ffi::Buffer<ffi::F64> theta,
     auto result = simulation.evaluateFrame(x + 3 * n * k, cell, wantsRows, frameGradient,
                                            wantsCell);
     if (!result)
-      return invalid("frame " + std::to_string(k) + " of the call: " +
+      return failed("frame " + std::to_string(k) + " of the call: " +
                      llvm::toString(result.takeError()));
     out[k] = result->energy;
     if (wantsRows) {
