@@ -2,7 +2,8 @@
 # The checks of the `checks` job of CI (.github/workflows/ci.yml, which calls
 # this script), run in the worktree that holds the script: the links, the
 # decision numbers and their table, the changelog fragments, the list of the
-# expected unsupported tests, and the release path (#764). No build, no
+# expected unsupported tests, the release path (#764), and the control
+# characters in the text files (#768). No build, no
 # network, no GPU; seconds. All checks run even when one fails; one line
 # per check; the exit status is nonzero if any failed. The pre-push hook
 # (scripts/hooks/pre-push) runs it before every push.
@@ -25,11 +26,25 @@ run() {
   fi
 }
 
+# A tracked text file (git grep -I skips the binary ones) holds no control
+# character but the tab and the newline: an escape such as \b or \t in a
+# shell or Python string turns the TeX of \boldsymbol or \times into bytes
+# (#768). Prints file:line of each.
+control_chars() {
+  hits=$(git grep -n -I -P '[\x00-\x08\x0b-\x1f]')
+  case $? in
+    0) printf '%s\n' "$hits" | cut -d: -f1,2; return 1 ;;
+    1) return 0 ;;
+    *) printf '%s\n' "$hits"; return 2 ;;
+  esac
+}
+
 run "Links" python3 scripts/check-markdown-links.py
 run "Decision numbers and their table" scripts/decision-number.sh check --pending
 run "Changelog fragments" python3 scripts/release/changelog.py fragments
 run "The list of the expected unsupported tests" python3 test/mdir_lit.py
 run "The release path" scripts/release/check-path.sh
+run "Control characters in the text files" control_chars
 
 if [ "$failed" -ne 0 ]; then
   echo "$failed check(s) failed"
