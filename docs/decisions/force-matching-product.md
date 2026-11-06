@@ -1,0 +1,83 @@
+# D[force-matching-product]
+
+Recorded at its merge.
+
+**`FrameEnergies.vjp(cotangent=None, *, positions=None)` gives, with `positions`, a cotangent on the gradients in the positions $\partial U_n/\partial\mathbf x_i$, the product $\sum_n[g_n\,\partial U_n/\partial\boldsymbol\theta + \sum_i\bar{\mathbf G}_{n,i}\cdot\partial^2U_n/\partial\mathbf x_i\,\partial\boldsymbol\theta]$ by a pass of a second program of the evaluator, the product program, compiled at the first product; it evaluates no energy and hands the derivatives of the energy and of its tangent (D376) to the chain rule of D230, where the host applies $g_n$.**
+
+Part B of the design on #726 (Ruling 21: Q2, a second program; Q3, the
+`vjp` extension only, no loss in MDIR; Q4, the cotangent is on
+$\mathbf G = \partial U/\partial\mathbf x$, the sign of a force loss is the
+caller's). It continues D376 (part A, the tangent in the IR) and uses the
+configuration of D380 (PR 0).
+
+## The interface
+
+`vjp(cotangent=None, *, positions=None)`. `cotangent` is $(K,)$ on the
+energies, as before; `positions` is $(K, N, 3)$ float64 on
+`gradients["positions"]`, in the order of the input. With `positions`
+alone the cotangent of the energy is zero. The result is a `FrameGradient`
+with `zero` and `version`. The frames are evaluated again, so the frames
+of `evaluate` must be a sequence (an iterator is refused), and the values
+of the tunables must still be those of `evaluate`, as for the second pass.
+The gradient in the positions need not have been asked of `evaluate`.
+
+For a loss $L = \frac1K\sum_n\sum_i\lVert\mathbf F_{n,i}-\mathbf F^\mathrm{ref}_{n,i}\rVert^2$:
+
+```python
+out = evaluator.evaluate(frames, gradients=("tunables", "positions"))
+forces = -out.gradients["positions"]
+grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/dF
+```
+
+## The product program
+
+`Control::frameProduct` (D380) selects it, in a simulation of its own that
+the evaluator creates at the first product, with the values of the tunables
+of the evaluator copied in where their bits differ. The ordinary frames
+program does not change.
+
+- **Its boundary** is `mdrtFrameProductBoundary`. It gives the positions and, as returned buffer 1, the cotangent of the gradient in the positions, in the type of the state. Request element 2 holds the cotangent of the energy (D380).
+- **Each frame** evaluates `@tunable` once, with `derivative(n)` and `tangent_derivative(n)` of every slot and field of D230, and the cotangent as the tangent. It hands over the scalars (those of the energy, then those of the tangent) through `mdrtWriteTunableGradient`, and the fields (those of the energy, then those of the tangent) through `mdrtWriteTunableGradientField`. It evaluates no energy, no forces, and no virial: that is E2 of the design.
+- **The host** applies the chain rule of D230 to each part, $p = g\,\mathcal C(\partial U/\partial\mathbf b; 1) + \mathcal C(\partial\Phi/\partial\mathbf b; 0)$. The second argument of $\mathcal C$ weights what the host adds to the energy (the tails, the shift estimates, the dispersion correction, the self term and background of PME). That addition depends on the volume and $\boldsymbol\theta$, not on the positions at a fixed cell. Since the host applies $g$ to it, it applies $g$ to the device part too, and the program does not read request 2 (the maintainer's ruling on PR #767). The slot stays reserved: the device-batch path (#138 PR 1, #765) consumes it when $g$ must stay on the device.
+
+## What is refused
+
+The product of a program with virtual sites (#726, a later part) and the
+derivative of the tangent of a reciprocal sum in the charge of each particle
+(C(ii) of the design; the directional form of D379 takes a number that the charges depend on) are refused. The charges as a field with PME
+therefore take no product yet: `vjp(positions=)` raises `UnsupportedError`,
+naming the reason, when the product program cannot be compiled.
+`terms="dependent"` is refused too.
+
+## Validation
+
+`test/Driver/python-frame-product.test` (CPU) and
+`python-frame-product-gpu.test` (RTX 5090) use random cotangents $g$ and
+$\bar{\mathbf G}$ on frames displaced from the state. The table gives the
+relative error, of the largest entry:
+
+| Reference | CPU double | CPU mixed | GPU double | GPU mixed |
+|---|---|---|---|---|
+| `dihedral_k` (D372 fixtures, 3 frames): the closed form, differentiated along $\bar{\mathbf G}$ with dual numbers | 4.6e-16 | 3.6e-6 | 1.0e-15 | 4.1e-6 |
+| per-type (geometric) and pair $\sigma$, $\epsilon$ with a pair set apart (propane and water, 224 atoms, 3 frames): a NumPy sum of the shifted Lennard-Jones and its tangent, with the correction and its shift estimate | 1.7e-11 | 4.2e-7 | 1.7e-11 | 1.3e-6 |
+| the charges by a map under a Coulomb cutoff (dipeptide in water, 1,168 atoms, 25 entries, 2 frames): a NumPy sum of the shifted Coulomb and the 1-4 pairs and its tangent | 4.7e-15 | 1.8e-6 | 2.5e-15 | 1.6e-6 |
+
+Tolerances: 1e-10, 1e-8, and 1e-9 in double; 2e-5 in mixed.
+
+- **Central differences of the rows of D230 along $\bar{\mathbf G}$** (Richardson from the steps $h$ and $h/2$), in double, on the CPU and the GPU:
+  - `dihedral_k`: 1.1e-12 and 1.2e-12 ($h = 10^{-4}$).
+  - $\sigma$, $\epsilon$: 9.1e-10 on both ($h = 10^{-4}$).
+  - The charges: 7.1e-10 and 8.1e-10 ($h = 10^{-6}$). The force of the shifted Coulomb jumps at the cutoff, and so does the derivative of a row, so $h = 10^{-4}$ and $10^{-5}$ carry pairs across it: 1.7e-2 and 7.7e-4.
+- **Mixed against double** on the same frames ($\sigma$, $\epsilon$): 4.2e-7 (CPU) and 1.3e-6 (GPU). The tolerance is 1e-5, as Ruling 21 Q9 began with.
+- **With a zero $\bar{\mathbf G}$**, `vjp(g, positions=0)` equals `vjp(g)` with the Jacobian: 0 (CPU double and mixed, GPU double) and 2.0e-16 (GPU mixed).
+- **The refusals:** no cotangent, a shape, a value that is not finite, an iterator, values changed since the frames were evaluated, virtual sites (OPC), and the charges with PME. After all of them, the evaluator gives the same product to the bit.
+
+**E2, the product pass without the energy** (propane and water, 3 frames, ms a frame):
+
+| | CPU double | CPU mixed | RTX 5090 double | RTX 5090 mixed |
+|---|---|---|---|---|
+| `evaluate` with the rows and the gradient in the positions | 2.40 | 2.47 | 0.39 | 0.29 |
+| the product pass, once compiled | 2.43 | 2.41 | 0.30 | 0.20 |
+
+A product pass with the energy as well would take about the sum of the two
+rows. The system is small, and the numbers are records, not a claim.

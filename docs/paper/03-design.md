@@ -1517,7 +1517,13 @@ tangent at the charges shifted by $\pm\partial q_i/\partial\theta$: two more
 reciprocal sums for each number (D379). The derivative of $\dot U_{\mathbf x}$ in
 $\boldsymbol\theta$ is then that of an energy, by the rules and the seeds
 that give $\partial U/\partial\boldsymbol\theta$, and the matrix of the
-mixed derivatives, $3N\times M_\theta$ for a frame, is never formed. The gradient in the cell is formed
+mixed derivatives, $3N\times M_\theta$ for a frame, is never formed. The frame evaluator forms the product in a second program of
+frames, compiled at the first product, which evaluates no energy
+(D[force-matching-product]). What the host adds to the energy, $c$, depends
+on the volume and $\boldsymbol\theta$ alone, so at a fixed cell it enters
+the product only through the cotangent of the energy, $g_n\,\partial
+c/\partial\boldsymbol\theta$, and the host applies $g_n$ with the chain
+rule. The gradient in the cell is formed
 for each frame by one routine, which the PyTorch adapter uses as well, so
 the two adapters, a batch of frames and each frame alone, and a compiled
 call and an uncompiled one give the same numbers to the bit. On a CUDA

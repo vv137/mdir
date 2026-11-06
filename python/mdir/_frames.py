@@ -288,20 +288,46 @@ class FrameEnergies:
         potential energy."""
         return self._only("dependent_energy", "dependent", self._energy)
 
-    def vjp(self, cotangent):
+    def vjp(self, cotangent=None, *, positions=None):
         """sum_n cotangent[n] dU_n/dtheta, for a cotangent (K,) float64 on
         the energy: a product with the Jacobian if it was kept, a second pass
-        over the frames otherwise."""
+        over the frames otherwise.
+
+        With `positions`, a cotangent (K, N, 3) on the gradients in the
+        positions dU_n/dx_i (`gradients["positions"]`, the forces with the
+        opposite sign), in the order of the input, the product adds
+        sum_n sum_i positions[n, i] . d2U_n/dx_i dtheta, the mixed
+        derivative of force matching (D[force-matching-product], #726), by a pass
+        of the product program of the evaluator over the frames; without
+        `cotangent` that of the energy is zero. The sign of a loss on the
+        forces is the caller's: its cotangent on F is minus that on dU/dx."""
         evaluator = self._evaluator
         if not self._gradient:
             raise _core.InputError("these frames were evaluated without 'tunables' in gradients")
-        g = np.asarray(_array(cotangent, "cotangent"), dtype=np.float64)
-        if g.shape != (self.count,):
-            raise _core.InputError(f"vjp: expected a cotangent of shape ({self.count},); found "
-                                   f"{g.shape}")
-        if not np.all(np.isfinite(g)):
-            raise _core.InputError("vjp: the cotangent is not finite")
-        if self._rows is not None:
+        if cotangent is None and positions is None:
+            raise _core.InputError("vjp: give a cotangent on the energies, on their gradients "
+                                   "in the positions (positions=), or both")
+        g = None
+        if cotangent is not None:
+            g = np.asarray(_array(cotangent, "cotangent"), dtype=np.float64)
+            if g.shape != (self.count,):
+                raise _core.InputError(f"vjp: expected a cotangent of shape ({self.count},); "
+                                       f"found {g.shape}")
+            if not np.all(np.isfinite(g)):
+                raise _core.InputError("vjp: the cotangent is not finite")
+        if positions is not None:
+            v = np.asarray(_array(positions, "positions"), dtype=np.float64)
+            shape = (self.count, evaluator._particles, 3)
+            if v.shape != shape:
+                raise _core.InputError(f"vjp: expected a cotangent on the gradients in the "
+                                       f"positions of shape {shape}; found {v.shape}")
+            if not np.all(np.isfinite(v)):
+                raise _core.InputError("vjp: the cotangent on the gradients in the positions is "
+                                       "not finite")
+            total = evaluator._product_pass(
+                self._source, self.version,
+                np.zeros(self.count) if g is None else g, np.ascontiguousarray(v))
+        elif self._rows is not None:
             total = g @ self._rows
         else:
             total = evaluator._second_pass(self._source, self.version, g)
@@ -346,6 +372,9 @@ class FrameEvaluator:
         if int(jacobian_bytes) < 0:
             raise _core.InputError("FrameEvaluator: jacobian_bytes is not negative")
         self.program, self.jacobian_bytes = program, int(jacobian_bytes)
+        # The product program (D[force-matching-product], #726), compiled at the
+        # first product.
+        self._product = None
         # A simulation whose entry is a loop over frames: the frames of
         # every call are evaluated in one activation of it.
         self._simulation = _core.Simulation(program, _frames=True)
@@ -406,6 +435,54 @@ class FrameEvaluator:
         if at != len(cotangent):
             raise _core.InputError(f"vjp: the frames gave another number of frames in the second "
                                    f"pass than the {len(cotangent)} of the first")
+        return total
+
+    def _product_pass(self, source, version, energy, position):
+        """The sum over the frames `source`, evaluated at the version
+        `version`, of energy[n] dU_n/dtheta + position[n] . d2U_n/dx dtheta,
+        by the product program (D[force-matching-product], #726), a simulation of
+        its own compiled at the first product, at the values of the tunables
+        of the evaluator."""
+        if self.terms != "all":
+            raise _core.UnsupportedError(
+                "the product in the gradients in the positions is not given by a frame "
+                "evaluator with terms='dependent': its gradients are not those of the "
+                "potential energy")
+        if not source.reusable:
+            raise _core.InputError(
+                "vjp: the product in the gradients in the positions evaluates the frames again, "
+                "and an iterator gives them once: give a sequence")
+        if self.tunables.version != version:
+            raise _core.SimulationError(
+                f"vjp: the values of the tunables changed since these frames were evaluated "
+                f"(version {version}, now {self.tunables.version}): the product would "
+                "differentiate another potential")
+        if self._product is None:
+            try:
+                self._product = _core.Simulation(self.program, _frames=True, _frame_product=True)
+            except (_core.InputError, _core.CompileError) as error:
+                raise _core.UnsupportedError(
+                    "the product of the gradients in the positions with their derivative in the "
+                    f"tunables is not formed for this program: {error}") from None
+        product = self._product
+        changes = {}
+        for name in self._slices:
+            value = np.ascontiguousarray(self.tunables[name])
+            if value.tobytes() != np.ascontiguousarray(product.tunables[name]).tobytes():
+                changes[name] = value
+        if changes:
+            product.tunables.update(changes)
+        total, at = np.zeros(self._entries), 0
+        for x, cells, tilts in source.batches():
+            if at + len(x) > len(energy):
+                break
+            total += product._evaluate_frame_products(
+                x, *self._cells(x, cells, tilts), energy[at:at + len(x)],
+                np.ascontiguousarray(position[at:at + len(x)]), at)
+            at += len(x)
+        if at != len(energy):
+            raise _core.InputError(f"vjp: the frames gave another number of frames in the "
+                                   f"product than the {len(energy)} of the first pass")
         return total
 
     def _cells(self, x, cells, tilts):

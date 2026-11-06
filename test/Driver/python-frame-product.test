@@ -1,0 +1,29 @@
+# The product of force matching in the frame evaluator,
+# FrameEnergies.vjp(cotangent, positions=) (D[force-matching-product], #726),
+# on the CPU: against closed forms and NumPy sums with their tangents, and
+# against central differences of the derivative in the tunables (D230) along
+# the cotangent; in mixed precision against double. Inputs/python_frame_product.py
+# says what each scenario checks.
+#
+# REQUIRES: python-api
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide dihedral CPU Double %t/dihedral | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide dihedral CPU Mixed %t/dihedral-mixed | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide lj CPU Double | FileCheck %s --check-prefix=LJ -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide lj CPU Mixed | FileCheck %s --check-prefix=LJMIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide charges CPU Double | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide charges CPU Mixed | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_product.py %S/Inputs/dipeptide refusals CPU Double %t/refusals | FileCheck %s --check-prefix=REFUSED
+
+# DIHEDRAL: [[MODE]]: dihedral_k, 3 frames, against the closed form along the cotangent
+# DIHEDRAL: [[MODE]]: with a zero cotangent on the positions, against vjp(g) with the Jacobian
+# LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart, 3 frames, against the NumPy sum
+# LJ: [[MODE]]: the same against central differences of the rows along the cotangent
+# LJ: [[MODE]]: 3 frames of 224 atoms
+# LJMIXED: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart, 3 frames, against the NumPy sum
+# LJMIXED: [[MODE]]: the product in mixed precision against that in double
+# CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, 2 frames, against the NumPy sum
+# REFUSED: refusals: no cotangent, a shape, a value that is not finite, frames given once, and values changed
+# REFUSED: refusals: virtual sites: the product of a frame is not implemented for a program with virtual sites
+# REFUSED: refusals: the charges with particle mesh Ewald are refused, never a zero

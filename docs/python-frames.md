@@ -2,9 +2,10 @@
 
 D380 (#726 PR 0) reserves the builder configuration for a
 separate product program, off by default, with cotangents passed through the
-frame boundary. It adds no Python API and implements no mixed derivative;
-the second-derivative refusals below remain in force until the later product
-implementation lands.
+frame boundary. D[force-matching-product] (#726 part B) uses it for the
+product of force matching, `FrameEnergies.vjp(positions=)`
+([below](#the-product-of-force-matching-dforce-matching-product)); the
+adapters (`mdir.jax`, `mdir.torch`) still refuse every second derivative.
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
@@ -190,6 +191,63 @@ the bound and dropped then. An iterator that can be read only once (a
 generator) is taken when the Jacobian is kept or without `"tunables"`; if
 its rows pass the bound, `evaluate` raises `InputError` naming the first
 frame beyond it, since the second pass would need the frames again.
+
+### The product of force matching (D[force-matching-product])
+
+#726, part B, Ruling 21. `vjp(cotangent=None, *, positions=None)`. With
+`positions`, a cotangent $\bar{\mathbf G}$ `(K, N, 3)` float64 on
+`gradients["positions"]`, $\mathbf G_{n,i} = \partial U_n/\partial\mathbf x_i$,
+in the order of the input, `vjp` returns
+
+$$
+\mathbf p = \sum_n\Big[g_n\frac{\partial U_n}{\partial\boldsymbol\theta}
++ \sum_i\bar{\mathbf G}_{n,i}\cdot\frac{\partial^2U_n}{\partial\mathbf x_i\,\partial\boldsymbol\theta}\Big],
+$$
+
+with $g = $ `cotangent`, zero if it is not given. The matrix of the mixed
+derivatives is never formed: the product is the derivative in
+$\boldsymbol\theta$ of the tangent of `@tunable` along $\bar{\mathbf G}$
+(D376). The cotangent is on $\mathbf G$, not on the forces; the sign of a
+force loss is the caller's. For
+$L = \frac1K\sum_n\sum_i\lVert\mathbf F_{n,i}-\mathbf F^\mathrm{ref}_{n,i}\rVert^2$:
+
+```python
+out = evaluator.evaluate(frames, gradients=("tunables", "positions"))
+forces = -out.gradients["positions"]
+grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/dF
+```
+
+- **The product program.** The evaluator compiles a second program of
+  frames at the first product (`Control::frameProduct`, D380), in a
+  simulation of its own, and gives it its values of the tunables where
+  their bits differ. Its boundary hands each frame its positions and
+  $\bar{\mathbf G}$. It evaluates `@tunable` once with `derivative(n)` and
+  `tangent_derivative(n)` of every slot and field of D230, and evaluates no
+  energy, forces, or virial. The host applies the chain rule of D230 to
+  the derivatives of the energy times $g_n$, with what it adds to the
+  energy, and to those of the tangent, to which it adds nothing: the tails,
+  the shift estimates, the self term and the background of PME depend on
+  the volume and $\boldsymbol\theta$ only. D380's request 2 stays reserved
+  and is not read: the device-batch path (#138 PR 1, #765) takes $g$ there
+  where it must stay on the device.
+- **The frames again.** As for the second pass, the product evaluates the
+  frames again: they must be a sequence (an iterator is refused with
+  `InputError`), at the values of the tunables of `evaluate` (else
+  `SimulationError`). `gradients` need not have asked for the positions.
+- **Refused**, with `UnsupportedError` when the product is asked, never a
+  zero: a program with virtual sites; the charges as a field with PME (the
+  derivative of the tangent of the reciprocal sum in each charge, D379);
+  `terms="dependent"`. The evaluator stays usable after each.
+
+**Validation** (`python-frame-product.test`, `python-frame-product-gpu.test`).
+See the decision for the numbers. The references are: the closed form of
+`dihedral_k` (D372) differentiated along $\bar{\mathbf G}$ with dual
+numbers; a NumPy sum of the shifted Lennard-Jones and its tangent for
+per-type and pair $\sigma$ and $\epsilon$ on propane and water; a NumPy sum
+of the shifted Coulomb and the 1-4 pairs and its tangent for the charges on
+the dipeptide in water. Central differences of the rows of the Jacobian
+along $\bar{\mathbf G}$ check all of them, and in mixed precision the
+product is compared with that in double.
 
 `gradients` without `"tunables"` keeps no rows and refuses `vjp`. It does not make a pass
 faster: the energy of D210 is that of `@tunable`, which is evaluated with
@@ -708,7 +766,8 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| Second derivatives, the derivative of the forces or of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | force matching: stage 4 of #138 |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D[force-matching-product]) | the adapters (#726 D and E) |
+| Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of
 `observe` belongs to one term: it may read the tunable constants and

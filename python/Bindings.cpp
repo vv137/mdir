@@ -1550,7 +1550,7 @@ PYBIND11_MODULE(_core, m) {
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache,
                      std::optional<std::string> checkpoint, bool stage, bool append,
-                     bool frames) {
+                     bool frames, bool frameProduct) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
       if (!checkpoint && stage)
@@ -1591,7 +1591,8 @@ PYBIND11_MODULE(_core, m) {
         // The inputs were copied at compilation; nothing here touches Python.
         py::gil_scoped_release release;
         created.emplace(compiler::Simulation::create(*prepared, useCache,
-                                                     program->code.get(), frames));
+                                                     program->code.get(), frames,
+                                                     frameProduct));
       }
       PySimulation result;
       result.program = std::move(program);
@@ -1610,7 +1611,10 @@ PYBIND11_MODULE(_core, m) {
        py::arg("append") = true,
        // The simulation of a frame evaluator, whose entry is a loop over
        // frames (D251); private to `mdir.FrameEvaluator`.
-       py::arg("_frames") = false)
+       py::arg("_frames") = false,
+       // With `_frames`, the product program of a frame evaluator
+       // (D[force-matching-product], #726); private to `mdir.FrameEvaluator`.
+       py::arg("_frame_product") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;
       {
@@ -1819,6 +1823,87 @@ PYBIND11_MODULE(_core, m) {
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("gradient"),
        py::arg("first") = 0, py::arg("position_gradient") = false,
        py::arg("strain_gradient") = false)
+    // The product of stored frames (D[force-matching-product], #726), for
+    // `FrameEnergies.vjp`: `positions` (k, N, 3) float64 in nm in the order
+    // of the input, `cells` and `tilts` (k, 3) or None, the cotangents of
+    // the energies `energy` (k,) and of their gradients in the positions
+    // `position` (k, N, 3) float64; `first` is the index of the first frame,
+    // for the messages. Returns the sum over the frames, in their order, of
+    // g_n dU_n/dθ + Σ_i Ḡ_n,i · d²U_n/dx_i dθ, (entries of all tunables in
+    // their order) float64.
+    .def("_evaluate_frame_products", [](py::object self,
+                                        py::array_t<double, py::array::c_style> positions,
+                                        py::object cellsGiven, py::object tiltsGiven,
+                                        py::array_t<double, py::array::c_style> energy,
+                                        py::array_t<double, py::array::c_style> position,
+                                        int64_t first) {
+      auto &s = self.cast<PySimulation &>();
+      compiler::Simulation &sim = *s.simulation;
+      const auto &set = sim.getTunables();
+      size_t count = sim.getParticleCount();
+      if (positions.ndim() != 3 || static_cast<size_t>(positions.shape(1)) != count ||
+          positions.shape(2) != 3)
+        throw InputError("frames: expected positions of shape (K, " + std::to_string(count) +
+                         ", 3)");
+      size_t frames = positions.shape(0);
+      if (energy.ndim() != 1 || static_cast<size_t>(energy.shape(0)) != frames)
+        throw InputError("frames: expected the cotangents of the energies of shape (K,)");
+      if (position.ndim() != 3 || static_cast<size_t>(position.shape(0)) != frames ||
+          static_cast<size_t>(position.shape(1)) != count || position.shape(2) != 3)
+        throw InputError("frames: expected the cotangents of the gradients in the positions "
+                         "of shape (K, " + std::to_string(count) + ", 3)");
+      std::optional<py::array_t<double, py::array::c_style>> cells, tilts;
+      if (!cellsGiven.is_none()) {
+        cells = cellsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (cells->ndim() != 2 || static_cast<size_t>(cells->shape(0)) != frames ||
+            cells->shape(1) != 3)
+          throw InputError("frames: expected cells of shape (K, 3)");
+      }
+      if (!tiltsGiven.is_none()) {
+        tilts = tiltsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (tilts->ndim() != 2 || static_cast<size_t>(tilts->shape(0)) != frames ||
+            tilts->shape(1) != 3)
+          throw InputError("frames: expected tilts of shape (K, 3)");
+      }
+      size_t entries = 0;
+      for (const auto &entry : set.tunables) entries += entry.entries;
+      std::vector<double> total(entries, 0.0);
+      const double *x = positions.data(), *g = energy.data(), *v = position.data();
+      const double *c = cells ? cells->data() : nullptr, *t = tilts ? tilts->data() : nullptr;
+      std::optional<llvm::Error> error;
+      size_t at = 0;
+      {
+        py::gil_scoped_release release;
+        for (; at != frames && !error; ++at) {
+          std::optional<std::array<double, 6>> cell;
+          if (c)
+            cell = {c[3 * at], c[3 * at + 1], c[3 * at + 2],
+                    t ? t[3 * at] : 0.0, t ? t[3 * at + 1] : 0.0, t ? t[3 * at + 2] : 0.0};
+          auto result = sim.evaluateFrameProduct(x + 3 * count * at, cell, g[at],
+                                                 v + 3 * count * at);
+          if (!result) { error.emplace(result.takeError()); break; }
+          size_t offset = 0;
+          for (const auto &values : *result) {
+            for (size_t m = 0; m != values.size(); ++m) total[offset + m] += values[m];
+            offset += values.size();
+          }
+        }
+      }
+      if (error) {
+        std::string where = "frame " + std::to_string(first + static_cast<int64_t>(at)) + ": ";
+        try {
+          raise(std::move(*error));
+        } catch (const UnsupportedError &e) {
+          throw UnsupportedError(where + e.what());
+        } catch (const SimulationError &e) {
+          throw SimulationError(where + e.what());
+        } catch (const InputError &e) {
+          throw InputError(where + e.what());
+        }
+      }
+      return host::copy(total.data(), entries, {static_cast<py::ssize_t>(entries)});
+    }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("energy"),
+       py::arg("position"), py::arg("first") = 0)
     .def_property_readonly("_particle_count", [](PySimulation &s) {
       return s.simulation->getParticleCount();
     })

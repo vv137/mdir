@@ -370,6 +370,13 @@ struct compiler::Activation {
   /// What the host asks of that frame, each 1 or 0: its forces, its virial
   /// (D252).
   std::array<double, 2> frameAsks{};
+  /// Of a product program (D[force-matching-product], #726): the cotangent of
+  /// the gradient in the positions of the next frame, in the order of the
+  /// input and the type of the state, and that of its energy, which the
+  /// entry takes at each boundary in place of the asks (D380: request 2,
+  /// returned buffer 1).
+  std::unique_ptr<HostBuffer<2>> frameCotangent;
+  double frameEnergyCotangent = 0.0;
   /// The particle at each place of the program, once read.
   std::vector<int32_t> places;
 };
@@ -431,6 +438,29 @@ _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
     cell->data[cell->offset + k * cell->strides[0]] = a->frameCell[k];
   for (size_t k = 0; k != a->frameAsks.size(); ++k)
     asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
+}
+/// The boundary of a product program (D[force-matching-product], #726): as
+/// `mdrtFrameBoundary`, with the buffer of the cotangent of the gradient in
+/// the positions as a second result and the cotangent of the energy in
+/// element 2 of `asks` (D380).
+struct FrameProductBuffers {
+  StridedMemRefType<char, 2> positions, cotangent;
+};
+extern "C" void
+_mlir_ciface_mdrtFrameProductBoundary(FrameProductBuffers *buffers,
+                                      StridedMemRefType<double, 1> *cell,
+                                      StridedMemRefType<double, 1> *asks) {
+  compiler::Activation *a = runningActivation;
+  a->boundary = static_cast<const char *>(__builtin_frame_address(0));
+  a->atBoundary = true;
+  swapcontext(&a->context, &a->host);
+  buffers->positions = a->framePositions->descriptor;
+  buffers->cotangent = a->frameCotangent->descriptor;
+  for (size_t k = 0; k != a->frameCell.size(); ++k)
+    cell->data[cell->offset + k * cell->strides[0]] = a->frameCell[k];
+  double values[3] = {0.0, 0.0, a->frameEnergyCotangent};
+  for (size_t k = 0; k != 3; ++k)
+    asks->data[asks->offset + k * asks->strides[0]] = values[k];
 }
 } // namespace
 
@@ -680,6 +710,8 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtPartBoundary);
     add("_mlir_ciface_mdrtFrameBoundary",
         (void *)&_mlir_ciface_mdrtFrameBoundary);
+    add("_mlir_ciface_mdrtFrameProductBoundary",
+        (void *)&_mlir_ciface_mdrtFrameProductBoundary);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         writesForces ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
                      : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
@@ -749,7 +781,8 @@ compileEngine(const Control &control, const System &system,
 
 llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared, bool cache,
-                   compiler::CodeStore *store, bool frames) {
+                   compiler::CodeStore *store, bool frames,
+                   bool frameProduct) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -775,6 +808,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   simulation->minimizationCheckPeriod = control.energyPeriod;
   control = compiler::getSegmentsControl(control);
   control.frames = frames;
+  control.frameProduct = frames && frameProduct;
   System &system = simulation->system;
   system = start;
   size_t count = system.getNumParticles();
@@ -986,6 +1020,9 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   if (engine.control.frames)
     a->framePositions =
         std::make_unique<HostBuffer<2>>(system.positions, p.state, count);
+  if (engine.control.frames && engine.control.frameProduct)
+    a->frameCotangent = std::make_unique<HostBuffer<2>>(
+        std::vector<double>(system.positions.size(), 0.0), p.state, count);
   kept.velocities.fill(system.velocities.data(), system.velocities.size(),
                        p.state, count);
   kept.velocities.addTo(args.pointers);
@@ -2918,18 +2955,11 @@ bool Simulation::keepsForcesInDouble() const {
   return compiled->program.force == Element::F64;
 }
 
-llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
+llvm::Error Simulation::checkFrame(
     const double *positions, const std::optional<std::array<double, 6>> &cell,
-    bool gradient, void *positionGradient, bool strain) {
-  if (busy.exchange(true))
-    return simulationError("another operation is under way on this "
-                           "simulation");
-  struct Release {
-    std::atomic<bool> &flag;
-    ~Release() { flag = false; }
-  } release{busy};
+    bool strain, bool &changesCell) {
   if (llvm::Error error = checkLeases("an evaluation of a frame"))
-    return std::move(error);
+    return error;
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
@@ -2965,7 +2995,7 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
       return inputError("the position of particle " + llvm::Twine(i / 3) +
                         " of the input is not finite");
   const std::array<double, 6> cellBefore = getCell();
-  bool changesCell = false;
+  changesCell = false;
   if (cell) {
     if (!prepared.control.periodic)
       return inputError("the program has no periodic cell, and the frame "
@@ -2990,7 +3020,25 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
         return inputError(message);
       }
   }
-  if (!compiled->control.frames)
+  return llvm::Error::success();
+}
+
+llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
+    const double *positions, const std::optional<std::array<double, 6>> &cell,
+    bool gradient, void *positionGradient, bool strain) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  bool changesCell = false;
+  if (llvm::Error error = checkFrame(positions, cell, strain, changesCell))
+    return std::move(error);
+  size_t count = system.getNumParticles();
+  const std::array<double, 6> cellBefore = getCell();
+  if (!compiled->control.frames || compiled->control.frameProduct)
     return simulationError("frames are evaluated by the simulation of a "
                            "frame evaluator; this is a defect of mdir");
   // The frame is evaluated in the activation that the last one left
@@ -3104,6 +3152,206 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
   return result;
 }
 
+llvm::Expected<std::vector<std::vector<double>>>
+Simulation::evaluateFrameProduct(
+    const double *positions, const std::optional<std::array<double, 6>> &cell,
+    double energyCotangent, const double *positionCotangent) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  bool changesCell = false;
+  if (llvm::Error error = checkFrame(positions, cell, false, changesCell))
+    return std::move(error);
+  size_t count = system.getNumParticles();
+  if (!std::isfinite(energyCotangent))
+    return inputError("the cotangent of the energy of the frame is not "
+                      "finite");
+  for (size_t i = 0; i != 3 * count; ++i)
+    if (!std::isfinite(positionCotangent[i]))
+      return inputError("the cotangent of the gradient in the position of "
+                        "particle " + llvm::Twine(i / 3) +
+                        " of the input is not finite");
+  const std::array<double, 6> cellBefore = getCell();
+  if (!compiled->control.frames || !compiled->control.frameProduct)
+    return simulationError("the product of a frame is evaluated by the "
+                           "product program of a frame evaluator; this is a "
+                           "defect of mdir");
+  // As evaluateFrame: the frame and its cotangents go to the activation
+  // that the last frame left waiting at its boundary, or to one that it
+  // begins. The entry evaluates the derivatives in the values of the
+  // program of the energy and of its tangent along the cotangent, and
+  // hands them over as those of the energy are (D230): the scalars of
+  // the slots, those of the energy first, and the fields, those of the
+  // energy first.
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  Output &out = *output;
+  const Program &p = compiled->program;
+  describeProgram(out, p);
+  out.endStep = step;
+  double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
+  std::string failure;
+  auto fail = [&](const std::string &message) {
+    if (failure.empty())
+      failure = message;
+  };
+  out.fail = fail;
+  out.system = &system;
+  setOutput(&out);
+  out.quietStep = step;
+  out.tunablesVersion = tunablesVersion;
+  stopMessage.clear();
+  hostCurrent = true;
+  auto begin = [&]() -> llvm::Error {
+    if (activation)
+      return llvm::Error::success();
+    gradientAsked = true;
+    llvm::Error started = startActivation(1);
+    gradientAsked = false;
+    return started;
+  };
+  llvm::Error error = begin();
+  if (!error && failure.empty() && stopMessage.empty() &&
+      activation->atBoundary) {
+    Activation &a = *activation;
+    a.framePositions->assign(positions, 3 * count, p.state);
+    a.frameCotangent->assign(positionCotangent, 3 * count, p.state);
+    a.frameEnergyCotangent = energyCotangent;
+    if (changesCell)
+      setCell(*cell);
+    a.frameCell = getCell();
+    out.tunableGradientWritten = false;
+    out.tunableGradientFields.clear();
+    resumeActivation();
+  }
+  out.fail = nullptr;
+  if (failure.empty())
+    failure = stopMessage;
+  if (!error && failure.empty() &&
+      (activation->returned || !activation->atBoundary))
+    failure = "the program did not reach the end of the frame; this is a "
+              "defect of mdir";
+  size_t slots = p.gradientSlots.size(), fields = p.gradientFields.size();
+  if (!error && failure.empty() &&
+      (!out.tunableGradientWritten || out.tunableGradient.size() < 2 * slots ||
+       out.tunableGradientFields.size() < 2 * fields))
+    failure = "the evaluation did not give the product in the tunables; "
+              "this is a defect of mdir";
+  std::vector<std::vector<double>> result;
+  if (!error && failure.empty()) {
+    // g times the derivative of the energy, with what the host adds to
+    // it, and the derivative of the tangent, to which the host adds
+    // nothing at a fixed cell.
+    std::vector<double> energyScalars(out.tunableGradient.begin(),
+                                      out.tunableGradient.begin() + slots);
+    std::vector<double> tangentScalars(out.tunableGradient.begin() + slots,
+                                       out.tunableGradient.begin() + 2 * slots);
+    std::vector<std::vector<double>> energyFields(
+        out.tunableGradientFields.begin(),
+        out.tunableGradientFields.begin() + fields);
+    std::vector<std::vector<double>> tangentFields(
+        out.tunableGradientFields.begin() + fields,
+        out.tunableGradientFields.begin() + 2 * fields);
+    result = applyTunableChainRule(energyScalars, energyFields,
+                                   out.tunableGradientVolume, 1.0);
+    std::vector<std::vector<double>> tangent = applyTunableChainRule(
+        tangentScalars, tangentFields, out.tunableGradientVolume, 0.0);
+    for (auto [k, values] : llvm::enumerate(result))
+      for (auto [m, value] : llvm::enumerate(values)) {
+        value = energyCotangent * value + tangent[k][m];
+        if (!std::isfinite(value))
+          failure = "the product in the tunable '" +
+                    prepared.tunables.tunables[k].name +
+                    "' is not finite at this frame";
+      }
+  }
+  if (!error && !failure.empty())
+    error = simulationError("the simulation failed after step " +
+                            llvm::Twine(step) + ": " + failure +
+                            "; it keeps the state of step " +
+                            llvm::Twine(step));
+  if (error) {
+    if (changesCell) {
+      setCell(cellBefore);
+      for (int k = 0; k != 3; ++k)
+        system.box[k] = systemBoxBefore[k];
+    }
+    endActivation(Ended::UndoneFrame);
+    failed = false;
+    ended = Ended::UndoneFrame;
+    return simulationError(llvm::toString(std::move(error)) +
+                           "; the evaluator keeps the state of before");
+  }
+  return result;
+}
+
+std::vector<std::vector<double>> Simulation::applyTunableChainRule(
+    const std::vector<double> &scalars,
+    const std::vector<std::vector<double>> &fields, double volume,
+    double constants) {
+  const model::TunableSet &set = prepared.tunables;
+  const Program &p = compiled->program;
+  double scale = compiled->volume / volume;
+  std::vector<std::vector<double>> values;
+  for (const auto &entry : set.tunables)
+    values.emplace_back(entry.entries, 0.0);
+  // The chain rule from the sites to the entries: each site adds its
+  // derivative to the entry that its map names. What the host adds to the
+  // energy (the tails of pair terms) is proportional to 1 / V, but the part
+  // of the estimate of the shift that does not depend on the volume
+  // (#224).
+  bool adds = constants != 0.0;
+  for (auto [i, slot] : llvm::enumerate(p.gradientSlots)) {
+    const model::TunableSet::Entry &entry = set.tunables[slot.tunable];
+    int64_t at = entry.map[slot.site];
+    if (at < 0)
+      continue;
+    values[slot.tunable][at] +=
+        adds ? scalars[i] + constants * (slot.volumeConstant * scale) +
+                   constants * slot.fixedConstant
+             : scalars[i];
+  }
+  for (auto [c, field] : llvm::enumerate(p.gradientFields)) {
+    const model::TunableSet::Entry &entry = set.tunables[field.tunable];
+    const std::vector<double> &derivative = fields[c];
+    for (auto [site, particle] : field.sites) {
+      int64_t at = entry.map[site];
+      if (at >= 0)
+        values[field.tunable][at] += derivative[particle];
+    }
+    // The charges: what the host adds to the energy, the self term and
+    // the background of a net charge.
+    if (adds && !p.gradientChargeFixed.empty() &&
+        entry.kind == model::TunableSet::Entry::Charge)
+      for (size_t i = 0; i != p.gradientChargeFixed.size(); ++i)
+        if (entry.map[i] >= 0)
+          values[field.tunable][entry.map[i]] +=
+              constants * (p.gradientChargeFixed[i] +
+                           p.gradientChargeVolume[i] * scale);
+    // A seed of a table: the sum over the particles of each type, and
+    // what the host adds.
+    if (field.rows.empty())
+      continue;
+    const std::vector<unsigned> &types = prepared.system.topology->types;
+    std::vector<double> sums(field.rows.size(), 0.0);
+    for (size_t i = 0; i != types.size(); ++i)
+      sums[types[i]] += derivative[i];
+    for (auto [type, row] : llvm::enumerate(field.rows)) {
+      int64_t at = row.site < 0 ? -1 : entry.map[row.site];
+      if (at >= 0)
+        values[field.tunable][at] +=
+            row.scale *
+            (adds ? sums[type] + constants * (row.volumeConstant * scale) +
+                        constants * row.fixedConstant
+                  : sums[type]);
+    }
+  }
+  return values;
+}
+
 llvm::Expected<Simulation::TunableGradient>
 Simulation::collectTunableGradient() {
   const model::TunableSet &set = prepared.tunables;
@@ -3120,58 +3368,13 @@ Simulation::collectTunableGradient() {
                   p.gradientShiftEnergy * scale + p.gradientShiftFixedEnergy;
   result.version = tunablesVersion;
   result.step = step;
-  for (auto [k, entry] : llvm::enumerate(set.tunables)) {
-    result.values.emplace_back(entry.entries, 0.0);
+  for (auto [k, entry] : llvm::enumerate(set.tunables))
     result.zero.push_back(k < p.gradientOutcomes.size() &&
                           p.gradientOutcomes[k] ==
                               Program::GradientOutcome::Zero);
-  }
-  // The chain rule from the sites to the entries: each site adds its
-  // derivative to the entry that its map names. What the host adds to the
-  // energy (the tails of pair terms) is proportional to 1 / V, but the part
-  // of the estimate of the shift that does not depend on the volume
-  // (#224).
-  for (auto [i, slot] : llvm::enumerate(p.gradientSlots)) {
-    const model::TunableSet::Entry &entry = set.tunables[slot.tunable];
-    int64_t at = entry.map[slot.site];
-    if (at < 0)
-      continue;
-    result.values[slot.tunable][at] +=
-        output->tunableGradient[i] + slot.volumeConstant * scale +
-        slot.fixedConstant;
-  }
-  for (auto [c, field] : llvm::enumerate(p.gradientFields)) {
-    const model::TunableSet::Entry &entry = set.tunables[field.tunable];
-    const std::vector<double> &values = output->tunableGradientFields[c];
-    for (auto [site, particle] : field.sites) {
-      int64_t at = entry.map[site];
-      if (at >= 0)
-        result.values[field.tunable][at] += values[particle];
-    }
-    // The charges: what the host adds to the energy, the self term and
-    // the background of a net charge.
-    if (!p.gradientChargeFixed.empty() &&
-        entry.kind == model::TunableSet::Entry::Charge)
-      for (size_t i = 0; i != p.gradientChargeFixed.size(); ++i)
-        if (entry.map[i] >= 0)
-          result.values[field.tunable][entry.map[i]] +=
-              p.gradientChargeFixed[i] + p.gradientChargeVolume[i] * scale;
-    // A seed of a table: the sum over the particles of each type, and
-    // what the host adds.
-    if (field.rows.empty())
-      continue;
-    const std::vector<unsigned> &types = prepared.system.topology->types;
-    std::vector<double> sums(field.rows.size(), 0.0);
-    for (size_t i = 0; i != types.size(); ++i)
-      sums[types[i]] += values[i];
-    for (auto [type, row] : llvm::enumerate(field.rows)) {
-      int64_t at = row.site < 0 ? -1 : entry.map[row.site];
-      if (at >= 0)
-        result.values[field.tunable][at] +=
-            row.scale *
-            (sums[type] + row.volumeConstant * scale + row.fixedConstant);
-    }
-  }
+  result.values = applyTunableChainRule(output->tunableGradient,
+                                        output->tunableGradientFields,
+                                        output->tunableGradientVolume, 1.0);
   for (auto [k, values] : llvm::enumerate(result.values))
     for (double value : values)
       if (!std::isfinite(value))
