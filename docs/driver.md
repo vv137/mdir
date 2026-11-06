@@ -1418,7 +1418,7 @@ entry and its caller are #138 PR 1's subsequent work; existing generated
 programs remain byte-identical.
 
 D[frame-batch-entry] implements scoped caller streams, borrowed device
-field inputs, device field result views, and device scalar-parameter
+field and table inputs, matching device result views, and device scalar-parameter
 lowering for that entry. Marked scalar expressions execute inside their
 consuming kernels, including side-stream kernels; they cannot be consumed
 on the host. The batch entry, its caller, tunable updates and chain rule

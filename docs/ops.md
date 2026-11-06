@@ -1944,6 +1944,14 @@ expressions inside each consuming kernel, including kernels on the side
 stream, and removes the host loads. A surviving host consumer is rejected.
 These markers do not change ordinary entries or their scalar computations.
 
+Tables also support explicit device-buffer imports and views through
+`mdrt.from_buffer` and `mdrt.to_buffer`. The view must match the actual
+storage width and memory space; it does not narrow, copy, or take ownership
+of the table. A borrowed device table has no implicit host buffer for
+tabulation or host export. Its caller retains the storage through all
+device work. Table-only functions with these new boundaries are assigned
+storage; ordinary table helpers retain their existing conversion path.
+
 The current copy sequence is `gpu.wait async`, `gpu.memcpy async`, and an
 immediate `gpu.wait` for that copy. [The #567 contract](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
 verifies token completion, buffer borrows, and host visibility without

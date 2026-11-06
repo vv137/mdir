@@ -1809,6 +1809,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // A table is where the loops are that read it.
     if (isa<md::TableType>(from.getResult().getType())) {
       Value buffer = mapping.lookup(from.getBuffer());
+      if (cast<MemRefType>(buffer.getType()).getMemorySpace()) {
+        if (!onDevice)
+          return op->emitOpError()
+                 << "a borrowed device table requires memory=device";
+        mapping.map(from.getResult(), buffer);
+        return success();
+      }
       hostTables[from.getResult()] = buffer;
       placeTable(builder, op->getLoc(), from.getResult(), buffer);
       return success();
@@ -1903,6 +1910,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
     auto resultType = cast<MemRefType>(to.getResult().getType());
     bool deviceResult = bool(resultType.getMemorySpace());
+    if (isa<md::TableType>(to.getField().getType())) {
+      if (deviceResult && !onDevice)
+        return op->emitOpError()
+               << "a device table result requires memory=device";
+      Value buffer = deviceResult ? mapping.lookupOrNull(to.getField())
+                                  : hostTables.lookup(to.getField());
+      if (!buffer)
+        return op->emitOpError() << "the table has no buffer in the requested memory space";
+      if (buffer.getType() != resultType)
+        return op->emitOpError()
+               << "the table storage has type " << buffer.getType()
+               << ", which differs from the requested view " << resultType;
+      mapping.map(to.getResult(), buffer);
+      return success();
+    }
     if (deviceResult && !onDevice)
       return op->emitOpError()
              << "a device field result requires memory=device";
@@ -2358,6 +2380,13 @@ static bool usesFields(func::FuncOp function) {
   bool found = false;
   function.walk([&](Operation *op) {
     found |= llvm::any_of(op->getResultTypes(), isField);
+    // Only the new table boundaries extend the selection. Ordinary table
+    // helpers retain their existing conversion path.
+    if (auto from = dyn_cast<mdrt::FromBufferOp>(op))
+      found |= isa<md::TableType>(from.getResult().getType()) &&
+               bool(cast<MemRefType>(from.getBuffer().getType()).getMemorySpace());
+    if (auto to = dyn_cast<mdrt::ToBufferOp>(op))
+      found |= isa<md::TableType>(to.getField().getType());
     found |= isa<BuildNeighborsOp>(op);
     if (auto empty = dyn_cast<EmptyNeighborsOp>(op))
       found |= !empty.isStorageForm();

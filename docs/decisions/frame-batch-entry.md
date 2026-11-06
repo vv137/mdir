@@ -62,6 +62,14 @@ preserving the operations and eliminating the host loads. A remaining host
 consumer is an error. This component supplies device scalar parameters;
 the batch caller and device tunable updates remain in progress.
 
+Device tables can also be borrowed and viewed without a copy. Their
+explicit memref element type gives the physical storage width, including
+f32 storage for logical f64 tables. A view with a different width or a
+request for an absent host buffer is rejected. Storage assignment selects
+table-only functions containing these new import/export boundaries while
+retaining its existing selection for ordinary table helpers. This supplies
+table storage for device tunable updates without a host round trip.
+
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.

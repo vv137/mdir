@@ -234,7 +234,7 @@ caller. This reserves plumbing only; the device batch entry, chain rule and
 stream handling follow separately. Existing programs remain byte-identical.
 
 The implementation of that entry (D[frame-batch-entry]) now has scoped
-caller streams, borrowed device field inputs and result views, and f64
+caller streams, borrowed device field/table inputs and result views, and f64
 scalar expressions evaluated by each consuming kernel rather than the
 host. Focused compiler checks include side-stream consumption and rejection
 of an escaping device view or a host consumer of a device parameter. The

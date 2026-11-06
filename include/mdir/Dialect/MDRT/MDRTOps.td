@@ -61,6 +61,11 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
     %sigma = mdrt.from_buffer %buffer
                : memref<?x?xf64> to !md.table<2, f64, symmetric>
     ```
+
+    A table may borrow explicit device memory space 1 without a copy or
+    ownership transfer. Its buffer gives the physical width, including
+    f32 storage for a logical f64 table. The caller keeps it alive until
+    device work completes; it has no implicit host copy for tabulation.
   }];
   let arguments = (ins AnyMemRef:$buffer);
   let results = (outs MDRT_FieldOrRelation:$result);
@@ -91,8 +96,13 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
     within that iteration; it cannot escape or pass to an opaque consumer.
     Its storage returns to the loop's pool at the yield. Host storage
     assignment refuses a device result.
+
+    A table can also expose its existing buffer. A device table view must
+    match the physical storage width and address space exactly; it never
+    converts or copies the table. A host view requires an existing host
+    buffer. The storage owner must outlive all work using the view.
   }];
-  let arguments = (ins MD_FieldType:$field);
+  let arguments = (ins AnyTypeOf<[MD_FieldType, MD_TableType]>:$field);
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
     $field attr-dict `:` qualified(type($field)) `to` type($result)
