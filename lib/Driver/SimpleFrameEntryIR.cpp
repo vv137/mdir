@@ -169,23 +169,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     for (int64_t index = 0; index != config.cellEdges; ++index)
       indices.push_back(arith::ConstantIndexOp::create(at, loc, index));
     Value end = arith::ConstantIndexOp::create(at, loc, std::numeric_limits<int64_t>::max());
-    auto frames = buildEntryLoop(at, "frames", zero, end, one, {},
-        [&](OpBuilder &frame, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
-      auto boundary = product
-          ? func::CallOp::create(frame, loc, "mdrtFrameProductBoundary",
-                TypeRange{storage, storage}, ValueRange{cellMemory, requests})
-          : func::CallOp::create(frame, loc, "mdrtFrameBoundary",
-                TypeRange{storage}, ValueRange{cellMemory, requests});
-      SmallVector<Value> edges, asks;
-      for (Value index : indices)
-        edges.push_back(memref::LoadOp::create(frame, loc, cellMemory, index));
-      for (unsigned index = 0; index != 2; ++index)
-        asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
+    // A loop's body is constructed before the loop is attached to its
+    // parent. Capture the owning entry here rather than walking ancestors
+    // from a still-detached batch loop body.
+    auto batchEntry = cast<func::FuncOp>(at.getInsertionBlock()->getParentOp());
+    auto emitFrame = [&](OpBuilder &frame, Value inputPositions,
+                         ValueRange edges, ValueRange asks, Value productInput)
+        -> llvm::Expected<SmallVector<Value>> {
       Value scale;
       if (config.referenceEdges) scale = buildReferenceScale(frame, ValueRange(edges).take_front(3), reference);
       Value cell = buildCell(frame, edges);
       auto physical = imported;
-      physical.positions = buildEntryField(frame, boundary.getResult(0), 3, false);
+      physical.positions = buildEntryField(frame, inputPositions, 3, false);
       auto originalParameters = buildEntryPotentialFields(physical);
       physical.positions = buildEntrySites(frame,
           {physical.positions, cell, originalParameters, time}, config.sites);
@@ -195,7 +190,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       if (product) {
         const auto &gradient = *config.output.gradient;
         Value tangent = buildEntryField(frame,
-            boundary.getResult(product->positionCotangentResult), 3, false);
+            productInput, 3, false);
         // The tangent of the placement: J Gbar, in place of the entries of
         // the sites, whose own cotangent meets a gradient that is zero.
         for (const auto &site : config.sites)
@@ -335,6 +330,55 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       if (llvm::Error error = checkFrameEvaluation(*iteration->getOperation()))
         return std::move(error);
       return SmallVector<Value>{};
+    };
+    auto frames = buildEntryLoop(at, "frames", zero, end, one, {},
+        [&](OpBuilder &frame, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+      if (config.deviceBatch) {
+        if (product)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+              "the device batch entry does not select the separate force product program");
+        auto entry = batchEntry;
+        entry->setAttr("mdir.frame_batch", frame.getUnitAttr());
+        auto module = entry->getParentOfType<ModuleOp>();
+        Attribute space = config.batchOnDevice ? Attribute(frame.getI64IntegerAttr(1)) : Attribute{};
+        auto bytes = MemRefType::get({ShapedType::kDynamic}, frame.getI8Type(),
+            MemRefLayoutAttrInterface(), space);
+        auto cells = MemRefType::get({ShapedType::kDynamic, 6}, frame.getF64Type());
+        if (!module.lookupSymbol("mdrtFrameBatchBoundary")) {
+          OpBuilder top(entry);
+          auto declaration = func::FuncOp::create(top, loc, "mdrtFrameBatchBoundary",
+              top.getFunctionType({MemRefType::get({2}, top.getF64Type())}, {bytes, cells}));
+          declaration.setPrivate();
+          declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
+        }
+        auto batch = func::CallOp::create(frame, loc, "mdrtFrameBatchBoundary",
+            TypeRange{bytes, cells}, ValueRange{requests});
+        SmallVector<Value> asks;
+        for (unsigned index = 0; index != 2; ++index)
+          asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
+        Value particles = memref::DimOp::create(frame, loc, arguments.masses, zero);
+        auto rows = buildFrameBatchRows(frame, batch.getResult(0), batch.getResult(1),
+            particles, storage.getElementType(), config.cellEdges,
+            [&](OpBuilder &row, const FrameBatchRowIR &inputs) -> llvm::Error {
+          auto result = emitFrame(row, inputs.positions, inputs.edges, asks, {});
+          if (!result) return result.takeError();
+          return llvm::Error::success();
+        });
+        if (!rows) return rows.takeError();
+        return SmallVector<Value>{};
+      }
+      auto boundary = product
+          ? func::CallOp::create(frame, loc, "mdrtFrameProductBoundary",
+                TypeRange{storage, storage}, ValueRange{cellMemory, requests})
+          : func::CallOp::create(frame, loc, "mdrtFrameBoundary",
+                TypeRange{storage}, ValueRange{cellMemory, requests});
+      SmallVector<Value> edges, asks;
+      for (Value index : indices)
+        edges.push_back(memref::LoadOp::create(frame, loc, cellMemory, index));
+      for (unsigned index = 0; index != 2; ++index)
+        asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
+      return emitFrame(frame, boundary.getResult(0), edges, asks,
+          product ? boundary.getResult(product->positionCotangentResult) : Value{});
     });
     if (!frames) return frames.takeError();
     if (!arguments.positions.use_empty())

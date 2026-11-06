@@ -70,6 +70,15 @@ table-only functions containing these new import/export boundaries while
 retaining its existing selection for ordinary table helpers. This supplies
 table storage for device tunable updates without a host round trip.
 
+The native row loop takes a canonical contiguous byte buffer and a host
+cell buffer with K rows and six columns. Each iteration creates an
+identity-layout position view at its byte offset and reads that row's
+cell. The builder's device-batch mode emits this K-loop behind one
+`mdrtFrameBatchBoundary`; its C interface hands over the two descriptors at
+one activation boundary. Storage assignment preserves the batch marker
+for later GPU scalar lowering. The caller, device output writers, tunable
+updates and chain rule are still being connected; no batch API is exposed.
+
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.

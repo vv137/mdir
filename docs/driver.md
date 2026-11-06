@@ -1421,8 +1421,11 @@ D[frame-batch-entry] implements scoped caller streams, borrowed device
 field and table inputs, matching device result views, and device scalar-parameter
 lowering for that entry. Marked scalar expressions execute inside their
 consuming kernels, including side-stream kernels; they cannot be consumed
-on the host. The batch entry, its caller, tunable updates and chain rule
-remain in progress, with no change to the existing host entry.
+on the host. A native K-loop now advances identity-layout position views
+from canonical contiguous bytes and reads the corresponding host cell
+row. Its batch boundary hands over both descriptors at one activation
+boundary. Device output writers, the caller, tunable updates and chain
+rule remain in progress, with no change to the existing host entry.
 
 Exact trial virtual-site placement and force spreading deliberately retain the
 archived entry cell (#722); trial energy evaluation and other gathers retain

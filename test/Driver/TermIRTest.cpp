@@ -1693,6 +1693,26 @@ static void checkNativeFrameEntry() {
   reject(checkFrameEvaluation(*empty.getOperation()),
          "the program of frames: the start of this program evaluates "
          "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+  auto batchMetadata = metadata;
+  batchMetadata.entry = "native_device_batch_frames";
+  auto batchConfig = config;
+  batchConfig.deviceBatch = batchConfig.batchOnDevice = true;
+  auto batchEntry = buildSimpleFrameEntry(builder, batchMetadata, batchConfig);
+  require(bool(batchEntry), "native device batch entry did not construct");
+  require((*batchEntry)->hasAttr("mdir.frame_batch"),
+          "native batch entry lost its lowering marker");
+  unsigned batchBoundaries = 0, legacyBoundaries = 0, positionViews = 0;
+  batchEntry->walk([&](func::CallOp call) {
+    batchBoundaries += call.getCallee() == "mdrtFrameBatchBoundary";
+    legacyBoundaries += call.getCallee() == "mdrtFrameBoundary";
+  });
+  batchEntry->walk([&](memref::ViewOp view) {
+    auto type = cast<MemRefType>(view.getType());
+    positionViews += type.getRank() == 2 && type.getMemorySpaceAsInt() == 1;
+  });
+  require(batchBoundaries == 1 && legacyBoundaries == 0 && positionViews == 1,
+          "native batch entry did not replace the per-frame boundary with row views");
+  require(succeeded(verify(*batchEntry)), "native device batch entry is invalid");
   metadata.entry = "native_triclinic_frames";
   metadata.startValues = {{"tilt_bx", 0.1}, {"tilt_cx", 0.2}, {"tilt_cy", 0.3},
       {"rest_edge0", 3.0}, {"rest_edge1", 3.0}, {"rest_edge2", 3.0}};
@@ -1782,7 +1802,69 @@ static void checkNativeFrameEntry() {
 
 }
 
+static void checkNativeFrameBatchRows() {
+  for (bool device : {false, true})
+    for (bool wide : {false, true})
+      for (unsigned edges : {3u, 6u}) {
+        TermIRPlan plan;
+        OpBuilder builder(&plan.getContext());
+        auto module = plan.getModule();
+        builder.setInsertionPointToEnd(module.getBody());
+        auto loc = builder.getUnknownLoc();
+        Attribute space = device ? Attribute(builder.getI64IntegerAttr(1)) : Attribute{};
+        auto bytes = MemRefType::get({ShapedType::kDynamic}, builder.getI8Type(),
+            MemRefLayoutAttrInterface(), space);
+        auto cells = MemRefType::get({ShapedType::kDynamic, 6}, builder.getF64Type());
+        Type state = wide ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+        auto function = func::FuncOp::create(builder, loc, "batch",
+            builder.getFunctionType({bytes, cells, builder.getIndexType()}, {}));
+        auto args = function.addEntryBlock()->getArguments();
+        builder.setInsertionPointToEnd(&function.getBody().front());
+        unsigned calls = 0;
+        FrameBatchRowIR captured;
+        auto loop = buildFrameBatchRows(builder, args[0], args[1], args[2], state, edges,
+            [&](OpBuilder &, const FrameBatchRowIR &row) -> llvm::Error {
+          ++calls;
+          captured = row;
+          return llvm::Error::success();
+        });
+        require(bool(loop), "native batch row construction failed");
+        require(calls == 1 && captured.index == loop->getInductionVar() &&
+                    captured.edges.size() == edges,
+                "native batch lost its row index or cell shape");
+        auto view = captured.positions.getDefiningOp<memref::ViewOp>();
+        auto positionType = cast<MemRefType>(captured.positions.getType());
+        require(view && view.getSource() == args[0] &&
+                    positionType.getMemorySpace() == space &&
+                    positionType.getElementType() == state &&
+                    positionType.getLayout().isIdentity(),
+                "native batch did not create an identity view of input bytes");
+        auto offset = view.getByteShift().getDefiningOp<arith::MulIOp>();
+        require(offset && offset.getLhs() == captured.index,
+                "native batch view does not advance with the row");
+        auto stride = offset.getRhs().getDefiningOp<arith::MulIOp>();
+        require(stride && stride.getLhs() == args[2] &&
+                    stride.getRhs().getDefiningOp<arith::ConstantIndexOp>().value() ==
+                        (wide ? 24 : 12),
+                "native batch byte stride lost the particle count or width");
+        for (auto [edge, value] : llvm::enumerate(captured.edges)) {
+          auto load = value.getDefiningOp<memref::LoadOp>();
+          require(load && load.getMemRef() == args[1] &&
+                      load.getIndices()[0] == captured.index &&
+                      load.getIndices()[1].getDefiningOp<arith::ConstantIndexOp>().value() ==
+                          int64_t(edge),
+                  "native batch loaded the wrong cell row or edge");
+        }
+        auto count = loop->getUpperBound().getDefiningOp<memref::DimOp>();
+        require(count && count.getSource() == args[1],
+                "native batch trip count does not follow its cells");
+        func::ReturnOp::create(builder, loc);
+        require(succeeded(verify(module)), "native batch row IR is invalid");
+      }
+}
+
 int main(int argc, char **argv) {
+  checkNativeFrameBatchRows();
   for (bool leapfrog : {false, true})
     for (bool constrained : {false, true})
       for (bool nose : {false, true})

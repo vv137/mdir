@@ -126,7 +126,8 @@ public:
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
          CodeStore *store = nullptr, bool frames = false,
-         bool frameProduct = false, bool frameProductPositions = false);
+         bool frameProduct = false, bool frameProductPositions = false,
+         bool deviceBatch = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;

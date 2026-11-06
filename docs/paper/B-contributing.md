@@ -238,7 +238,10 @@ caller streams, borrowed device field/table inputs and result views, and f64
 scalar expressions evaluated by each consuming kernel rather than the
 host. Focused compiler checks include side-stream consumption and rejection
 of an escaping device view or a host consumer of a device parameter. The
-batch caller, tunable updates, chain rule and final validation are pending.
+batch entry also constructs one native loop over contiguous position
+views and cell rows, with one descriptor handoff per batch. Device output
+writers, the batch caller, tunable updates, chain rule and final validation
+are pending.
 
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain

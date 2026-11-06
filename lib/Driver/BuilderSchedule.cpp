@@ -290,6 +290,7 @@ llvm::Error Builder::emitEntry() {
     emitRuntimeDeclarations(ir, declarations, true);
     SimpleFrameEntryIRConfig config;
     config.deviceBatch = control.frameMode == Control::FrameMode::DeviceBatch;
+    config.batchOnDevice = control.target == Target::GPU;
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
     config.timed = control.usesTime;

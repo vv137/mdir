@@ -2430,6 +2430,10 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
       func::FuncOp::create(function.getLoc(), function.getName(),
                            FunctionType::get(context, inputs, results));
   converted.setSymVisibilityAttr(function.getSymVisibilityAttr());
+  // The new batch entry's device scalar loads are consumed by GPU
+  // lowering after fields have been assigned storage.
+  if (Attribute batch = function->getAttr("mdir.frame_batch"))
+    converted->setAttr("mdir.frame_batch", batch);
   // The attributes of the arguments, among them which are read-only.
   if (ArrayAttr attributes = function.getArgAttrsAttr())
     converted.setArgAttrsAttr(attributes);

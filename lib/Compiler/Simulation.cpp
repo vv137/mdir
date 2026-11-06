@@ -370,6 +370,11 @@ struct compiler::Activation {
   /// What the host asks of that frame, each 1 or 0: its forces, its virial
   /// (D252).
   std::array<double, 2> frameAsks{};
+  /// A complete batch is handed over at one boundary. Position bytes are
+  /// borrowed from the caller; cell values are the one host copy of the
+  /// batch's K by 6 metadata, retained until the boundary is reached again.
+  StridedMemRefType<char, 1> frameBatchPositionBytes{};
+  StridedMemRefType<double, 2> frameBatchCells{};
   /// Of a product program (D381, #726): the cotangent of
   /// the gradient in the positions of the next frame, in the order of the
   /// input and the type of the state, and that of its energy, which the
@@ -446,6 +451,22 @@ _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
 struct FrameProductBuffers {
   StridedMemRefType<char, 2> positions, cotangent;
 };
+struct FrameBatchBuffers {
+  StridedMemRefType<char, 1> positions;
+  StridedMemRefType<double, 2> cells;
+};
+extern "C" void
+_mlir_ciface_mdrtFrameBatchBoundary(FrameBatchBuffers *buffers,
+                                   StridedMemRefType<double, 1> *asks) {
+  compiler::Activation *a = runningActivation;
+  a->boundary = static_cast<const char *>(__builtin_frame_address(0));
+  a->atBoundary = true;
+  swapcontext(&a->context, &a->host);
+  buffers->positions = a->frameBatchPositionBytes;
+  buffers->cells = a->frameBatchCells;
+  for (size_t k = 0; k != a->frameAsks.size(); ++k)
+    asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
+}
 extern "C" void
 _mlir_ciface_mdrtFrameProductBoundary(FrameProductBuffers *buffers,
                                       StridedMemRefType<double, 1> *cell,
@@ -712,6 +733,8 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtPartBoundary);
     add("_mlir_ciface_mdrtFrameBoundary",
         (void *)&_mlir_ciface_mdrtFrameBoundary);
+    add("_mlir_ciface_mdrtFrameBatchBoundary",
+        (void *)&_mlir_ciface_mdrtFrameBatchBoundary);
     add("_mlir_ciface_mdrtFrameProductBoundary",
         (void *)&_mlir_ciface_mdrtFrameProductBoundary);
     add("_mlir_ciface_mdrtWriteCheckpoint",
@@ -784,7 +807,9 @@ compileEngine(const Control &control, const System &system,
 llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared, bool cache,
                    compiler::CodeStore *store, bool frames,
-                   bool frameProduct, bool frameProductPositions) {
+                   bool frameProduct, bool frameProductPositions, bool deviceBatch) {
+  if (deviceBatch && (!frames || frameProduct))
+    return inputError("the device batch entry requires frames without the separate force product");
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -810,6 +835,8 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   simulation->minimizationCheckPeriod = control.energyPeriod;
   control = compiler::getSegmentsControl(control);
   control.frames = frames;
+  if (deviceBatch)
+    control.frameMode = Control::FrameMode::DeviceBatch;
   control.frameProduct = frames && frameProduct;
   control.frameProductPositions = control.frameProduct && frameProductPositions;
   System &system = simulation->system;
@@ -1020,7 +1047,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   kept.positions.fill(system.positions.data(), system.positions.size(),
                       p.state, count);
   kept.positions.addTo(args.pointers);
-  if (engine.control.frames)
+  if (engine.control.frames && engine.control.frameMode == Control::FrameMode::Host)
     a->framePositions =
         std::make_unique<HostBuffer<2>>(system.positions, p.state, count);
   if (engine.control.frames && engine.control.frameProduct)
