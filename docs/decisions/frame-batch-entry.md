@@ -47,6 +47,14 @@ Host storage assignment refuses this boundary. The caller keeps the input
 alive until device work completes. This supplies the input boundary for
 the native batch entry while preserving ordinary host-buffer imports.
 
+`mdrt.to_buffer` can expose a field's device storage through an explicit
+memory-space-1 result without a host copy. A function-level view retains
+its storage for the activation. A loop-local view allows direct reads and
+descriptor views within its iteration, but cannot escape or pass to an
+opaque consumer. The storage stays pinned through those reads and returns
+to the loop's carried buffer pool at the yield, keeping allocations outside
+the frame loop. Host storage assignment refuses device results.
+
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.

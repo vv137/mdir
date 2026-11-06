@@ -74,7 +74,7 @@ struct Scope {
   /// A buffer of a fixed length that has the type of buffers with a row a
   /// particle (the partial sums of `scratch`) is never put in the pool.
   void release(Value buffer) {
-    if (getRoot().fixedLength.contains(buffer))
+    if (pinned.contains(buffer) || getRoot().fixedLength.contains(buffer))
       return;
     pool[{buffer.getType(), getSet(buffer)}].push_back(buffer);
   }
@@ -91,6 +91,9 @@ struct Scope {
   Block *body = nullptr;
 
   llvm::DenseSet<Value> owned;
+  /// Device views keep their storage until this region's readers finish
+  /// issuing work. A loop then returns it to its carried buffer pool.
+  llvm::DenseSet<Value> pinned;
   llvm::MapVector<std::pair<Type, Attribute>, SmallVector<Value, 2>> pool;
   /// The set, of particles or of tuples, whose elements each buffer holds,
   /// by which it is reused: buffers of one type are of one size only within
@@ -1594,6 +1597,12 @@ LogicalResult Assignment::convertYield(scf::YieldOp op, Scope &scope) {
     values.push_back(buffer);
   }
 
+  SmallVector<Value> pinned(scope.pinned.begin(), scope.pinned.end());
+  scope.pinned.clear();
+  for (Value buffer : pinned)
+    if (scope.owns(buffer) && !held.contains(buffer))
+      scope.release(buffer);
+
   // Hand back as many unused buffers as the loop borrowed.
   for (Value extra : scope.extraArguments) {
     SmallVector<Value, 2> &available =
@@ -1638,6 +1647,31 @@ static LogicalResult checkStored(Operation *op, Type field, Type buffer) {
          << "the field has the type " << field
          << ", which is not the type that the buffer stores; run "
             "'md-exec-assign-precision' first";
+}
+
+/// A view made in a loop is a borrow of that iteration's storage. Known
+/// descriptor views and direct reads retain it; yielding it or giving it
+/// to an opaque operation could outlive the iteration's buffer pool.
+static bool deviceViewEscapesRegion(Value view) {
+  SmallVector<Value> pending{view};
+  llvm::DenseSet<Value> visited;
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    if (!visited.insert(value).second)
+      continue;
+    for (Operation *user : value.getUsers()) {
+      if (isa<memref::LoadOp, memref::DimOp>(user))
+        continue;
+      if (isa<memref::CastOp, memref::MemorySpaceCastOp, memref::ViewOp,
+              memref::SubViewOp, memref::ReinterpretCastOp>(user)) {
+        for (Value result : user->getResults())
+          pending.push_back(result);
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 void Assignment::placeTable(OpBuilder &builder, Location loc, Value table,
@@ -1867,12 +1901,36 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
-    if (failed(checkStored(op, to.getField().getType(),
-                           to.getResult().getType())))
+    auto resultType = cast<MemRefType>(to.getResult().getType());
+    bool deviceResult = bool(resultType.getMemorySpace());
+    if (deviceResult && !onDevice)
+      return op->emitOpError()
+             << "a device field result requires memory=device";
+    if (deviceResult && scope.parent &&
+        deviceViewEscapesRegion(to.getResult()))
+      return op->emitOpError()
+             << "a device field view in a loop must be read in that region";
+    Type storedType = deviceResult
+        ? MemRefType::get(resultType.getShape(), resultType.getElementType(),
+                         resultType.getLayout())
+        : resultType;
+    if (failed(checkStored(op, to.getField().getType(), storedType)))
       return failure();
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();
+    if (deviceResult) {
+      // The caller reads this storage directly. Keep it beyond the field's
+      // last use, then let a loop return it to its pool at the yield.
+      if (scope.owns(buffer))
+        scope.pinned.insert(buffer);
+      buffer = eraseSetForHostCall(builder, op->getLoc(), buffer);
+      if (buffer.getType() != resultType)
+        buffer = memref::CastOp::create(builder, op->getLoc(), resultType,
+                                        buffer);
+      mapping.map(to.getResult(), buffer);
+      return success();
+    }
     if (!onDevice) {
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);

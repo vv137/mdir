@@ -83,6 +83,14 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
     %buffer = mdrt.to_buffer %x
                 : !md.field<@atoms, 3 x f64> to memref<?x3xf64>
     ```
+
+    A result in explicit device memory space 1 exposes the device storage
+    without a host copy. A function-level view retains its storage for the
+    activation, which must remain alive until the caller's device work
+    completes. A loop-local view permits direct reads and descriptor views
+    within that iteration; it cannot escape or pass to an opaque consumer.
+    Its storage returns to the loop's pool at the yield. Host storage
+    assignment refuses a device result.
   }];
   let arguments = (ins MD_FieldType:$field);
   let results = (outs AnyMemRef:$result);
