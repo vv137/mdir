@@ -119,9 +119,14 @@ public:
   /// program is a loop over frames (Control::frames), it takes
   /// `evaluateFrame` and updates of the tunables, and it takes no steps, no
   /// evaluation of its state, no view, and no borrow.
+  ///
+  /// With `frameProduct` as well, the program is the product program of a
+  /// frame evaluator (D[force-matching], #726): its loop over frames
+  /// evaluates no energy, and takes `evaluateFrameProduct` alone.
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
-         CodeStore *store = nullptr, bool frames = false);
+         CodeStore *store = nullptr, bool frames = false,
+         bool frameProduct = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;
@@ -379,6 +384,25 @@ public:
                 const std::optional<std::array<double, 6>> &cell,
                 bool gradient, void *positionGradient = nullptr,
                 bool strain = false);
+  /// The product of the derivative in the tunables of the energy of a
+  /// frame and of its gradient in the positions with the cotangents
+  /// `energyCotangent` (g) and `positionCotangent` (3 N numbers in the
+  /// order of the input, Ḡ, on dU/dx_i):
+  ///
+  ///   p = g ∂U/∂θ + Σ_i Ḡ_i · ∂²U/∂x_i ∂θ,
+  ///
+  /// one array per tunable, by the program of the product
+  /// (D[force-matching], #726): the derivative in θ of the tangent of the
+  /// potential along Ḡ, with the chain rule of D230; what the host adds to
+  /// the energy (the tails, the self term) enters with g alone, since it
+  /// does not depend on the positions at a fixed cell. Only a simulation
+  /// created with `frames` and `frameProduct` takes it. The checks and the
+  /// failures are those of `evaluateFrame`.
+  llvm::Expected<std::vector<std::vector<double>>>
+  evaluateFrameProduct(const double *positions,
+                       const std::optional<std::array<double, 6>> &cell,
+                       double energyCotangent,
+                       const double *positionCotangent);
   size_t getParticleCount() const { return system.getNumParticles(); }
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
@@ -528,6 +552,21 @@ private:
   /// The derivative that the last evaluation with `gradientAsked` handed
   /// to the host, with the chain rule from the sites to the entries.
   llvm::Expected<TunableGradient> collectTunableGradient();
+  /// The checks of a frame before anything changes, shared by
+  /// evaluateFrame and evaluateFrameProduct; `changesCell` says whether the
+  /// frame gives another cell than the simulation has.
+  llvm::Error checkFrame(const double *positions,
+                         const std::optional<std::array<double, 6>> &cell,
+                         bool strain, bool &changesCell);
+  /// The chain rule of D230 from the derivatives in the values of the
+  /// program, `scalars` by slot and `fields` by field of the gradient, to
+  /// the entries of the tunables, at the volume `volume` of the evaluation;
+  /// what the host adds to the energy enters times `constants`, and not at
+  /// all where it is 0.
+  std::vector<std::vector<double>>
+  applyTunableChainRule(const std::vector<double> &scalars,
+                        const std::vector<std::vector<double>> &fields,
+                        double volume, double constants);
   /// Begins an activation of the entry from the state of the host
   /// (`%first_call` as given) and runs it to the end of its start.
   llvm::Error startActivation(int64_t firstCall);
