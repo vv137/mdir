@@ -104,17 +104,55 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     }
     Value cellMemory = memref::AllocaOp::create(at, loc,
         MemRefType::get({6}, at.getF64Type()));
+    // The product program of a frame evaluator (D[force-matching], #726,
+    // D380): its boundary also gives the cotangent of the energy, in
+    // request 2, and that of the gradient in the positions, as returned
+    // buffer 1; it evaluates the product alone. The program hands over the
+    // derivatives of the energy and of its tangent apart, and the host
+    // applies the cotangent of the energy with its chain rule, where what
+    // it adds to the energy takes it too: request 2 is not read here.
+    const std::optional<EntryGradientProductIR> product =
+        config.output.gradient ? config.output.gradient->product : std::nullopt;
     Value requests = memref::AllocaOp::create(at, loc,
-        MemRefType::get({2}, at.getF64Type()));
+        MemRefType::get({product ? 3 : 2}, at.getF64Type()));
+    auto storage = cast<MemRefType>(arguments.positions.getType());
+    if (product) {
+      if (!config.sites.empty())
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "the product of a frame is not implemented for a program with "
+            "virtual sites yet (#726)");
+      if (program.reorders)
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "the product program of frames keeps the order of the input; "
+            "this is a defect of mdir");
+      if (product->energyCotangentRequest != 2 || product->positionCotangentResult != 1)
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "the boundary of the product program takes the cotangent of the "
+            "energy in request 2 and that of the positions as result 1");
+      Operation *entry = at.getBlock()->getParentOp();
+      while (entry && !isa<func::FuncOp>(entry)) entry = entry->getParentOp();
+      auto module = entry->getParentOfType<ModuleOp>();
+      if (!module.lookupSymbol("mdrtFrameProductBoundary")) {
+        OpBuilder top(entry);
+        auto declaration = func::FuncOp::create(top, loc, "mdrtFrameProductBoundary",
+            top.getFunctionType({MemRefType::get({6}, top.getF64Type()),
+                                 MemRefType::get({3}, top.getF64Type())},
+                                {storage, storage}));
+        declaration.setPrivate();
+        declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
+      }
+    }
     SmallVector<Value> indices;
     for (int64_t index = 0; index != config.cellEdges; ++index)
       indices.push_back(arith::ConstantIndexOp::create(at, loc, index));
     Value end = arith::ConstantIndexOp::create(at, loc, std::numeric_limits<int64_t>::max());
     auto frames = buildEntryLoop(at, "frames", zero, end, one, {},
         [&](OpBuilder &frame, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
-      auto storage = cast<MemRefType>(arguments.positions.getType());
-      auto boundary = func::CallOp::create(frame, loc, "mdrtFrameBoundary",
-          TypeRange{storage}, ValueRange{cellMemory, requests});
+      auto boundary = product
+          ? func::CallOp::create(frame, loc, "mdrtFrameProductBoundary",
+                TypeRange{storage, storage}, ValueRange{cellMemory, requests})
+          : func::CallOp::create(frame, loc, "mdrtFrameBoundary",
+                TypeRange{storage}, ValueRange{cellMemory, requests});
       SmallVector<Value> edges, asks;
       for (Value index : indices)
         edges.push_back(memref::LoadOp::create(frame, loc, cellMemory, index));
@@ -131,6 +169,25 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       physical = buildEntryReorder(frame, program, std::move(physical), cell);
       auto parameters = buildEntryPotentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
+      if (product) {
+        const auto &gradient = *config.output.gradient;
+        Value tangent = buildEntryField(frame,
+            boundary.getResult(product->positionCotangentResult), 3, false);
+        auto iteration = buildEntryLoop(frame, "frame product", zero, one, one, {},
+            [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          SmallVector<Value> constants, seeds;
+          for (unsigned slot : gradient.constants) constants.push_back(arguments.startValues[slot]);
+          if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
+          buildTunableProductOutput(body, state, tangent,
+              physical.identities, constants, seeds, gradient.output);
+          return SmallVector<Value>{};
+        });
+        if (!iteration) return iteration.takeError();
+        (*iteration)->setAttr("mdrt.segment", frame.getUnitAttr());
+        if (llvm::Error error = checkFrameEvaluation(*iteration->getOperation()))
+          return std::move(error);
+        return SmallVector<Value>{};
+      }
       SmallVector<Value> storedTerms;
       auto evaluate = [&](OpBuilder &at, EnergyRequests requests) {
         auto result = buildEntryEvaluation(at, state, requests, config.sites, complete, scale);

@@ -193,6 +193,53 @@ void mdir::driver::builder::buildTunableGradientOutput(
   out.write("mdrtWriteTunableGradient", memory, {});
 }
 
+void mdir::driver::builder::buildTunableProductOutput(
+    OpBuilder &builder, const PotentialStateIR &state, Value tangent,
+    Value ids, ValueRange constants, ValueRange seeds,
+    const TunableGradientOutputConfig &config) {
+  auto loc = builder.getUnknownLoc();
+  OutputBuilder out(builder);
+  size_t count = config.scalarArguments.size();
+  size_t fields = config.fieldArguments.size();
+  Value memory = out.allocate({static_cast<int64_t>(2 * count)});
+  SmallVector<Value> values = potentialArguments(state);
+  llvm::append_range(values, constants);
+  llvm::append_range(values, seeds);
+  SmallVector<Type> types;
+  SmallVector<int32_t> kinds;
+  SmallVector<int64_t> derivatives;
+  for (auto request : {mdir::md::Request::Derivative,
+                       mdir::md::Request::TangentDerivative})
+    for (unsigned argument : config.scalarArguments) {
+      kinds.push_back(int32_t(request));
+      derivatives.push_back(argument);
+      types.push_back(builder.getF64Type());
+    }
+  for (auto request : {mdir::md::Request::Derivative,
+                       mdir::md::Request::TangentDerivative})
+    for (unsigned argument : config.fieldArguments) {
+      kinds.push_back(int32_t(request));
+      derivatives.push_back(argument);
+      types.push_back(values[argument].getType());
+    }
+  values.push_back(tangent);
+  auto result = mdir::md::EvaluateOp::create(
+      builder, loc, types, FlatSymbolRefAttr::get(builder.getContext(), "tunable"),
+      values, builder.getDenseI32ArrayAttr(kinds),
+      builder.getDenseI64ArrayAttr(derivatives));
+  for (size_t c = 0; c != 2 * fields; ++c) {
+    Value number = arith::ConstantIntOp::create(builder, loc, c, 64);
+    mdir::mdrt::HostCallOp::create(
+        builder, loc, TypeRange{},
+        FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteTunableGradientField"),
+        ValueRange{number, result.getResult(2 * count + c), ids}, ValueRange{},
+        UnitAttr{});
+  }
+  for (size_t i = 0; i != 2 * count; ++i)
+    out.store(result.getResult(i), memory, ValueRange{out.index(i)});
+  out.write("mdrtWriteTunableGradient", memory, {});
+}
+
 void mdir::driver::builder::buildWriteSolvent(OpBuilder &builder, Value sums) {
   auto loc = builder.getUnknownLoc();
   Value full = vector::ExtractOp::create(builder, loc, sums, int64_t{0});
