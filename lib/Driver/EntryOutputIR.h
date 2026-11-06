@@ -3,11 +3,16 @@
 #define MDIR_LIB_DRIVER_ENTRYOUTPUTIR_H
 #include "OutputIR.h"
 namespace mdir::driver::builder {
+struct EntryGradientProductIR {
+  // Ordinals in the frame boundary's request buffer and returned buffers.
+  unsigned energyCotangentRequest, positionCotangentResult;
+};
 struct EntryGradientOutputIR {
   TunableGradientOutputConfig output;
   unsigned request = 0, seeds = 0;
   std::vector<unsigned> constants;
   std::optional<unsigned> seedField;
+  std::optional<EntryGradientProductIR> product;
 };
 struct EntryOutputIRConfig {
   std::optional<FreeEnergyOutputConfig> freeEnergy;

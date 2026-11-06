@@ -217,6 +217,9 @@ struct Control {
   /// particles in the order of the input whatever `reorder` says. It takes
   /// no steps. No key of the control file sets it.
   bool frames = false;
+  /// Select the separate frame product program (#726). Internal only;
+  /// no control-file key sets it. Its entry is supplied by the product path.
+  bool frameProduct = false;
   enum class TunableKind {
     Charge,
     Sigma,

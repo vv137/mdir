@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+D[frame-product-field] reserves internal configuration for the separate
+frame product program. No control-file key sets it, and no default, file
+format, checkpoint or overwrite behavior changes.
+
 D357 rejects compiler IR whose neighbor coverage cannot be
 proved across a boundary. It changes no control key, neighbor strategy,
 default, format, checkpoint, or overwrite behavior.

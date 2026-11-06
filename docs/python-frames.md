@@ -1,5 +1,11 @@
 # The frame evaluator (D240)
 
+D[frame-product-field] (#726 PR 0) reserves the builder configuration for a
+separate product program, off by default, with cotangents passed through the
+frame boundary. It adds no Python API and implements no mixed derivative;
+the second-derivative refusals below remain in force until the later product
+implementation lands.
+
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
 ([Maintainer rulings](#maintainer-rulings)), and the frames of every call

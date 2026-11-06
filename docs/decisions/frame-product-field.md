@@ -1,0 +1,35 @@
+# D[frame-product-field]
+
+Recorded 2026-11-05.
+
+Part of #726, PR 0, following Ruling 21.
+
+**The builder carries an opt-in configuration for the separate frame product
+program.** `Control::frameProduct` defaults to false and has no control-file
+key. With frames and tunable-gradient output selected, it fills
+`EntryGradientOutputIR::product` with the boundary ordinals of the two
+cotangent inputs: request-buffer element 2 for the energy cotangent, and
+returned buffer 1 for the cotangent of the position gradient. Request
+elements 0 and 1 retain the force and virial requests; returned buffer 0
+retains the positions.
+
+The position-gradient cotangent comes from a buffer returned by the frame
+boundary, rather than a declared program field beside `tg_zero`. It changes
+at every frame and belongs to that boundary's inputs, rather than topology
+parameters. This choice needs no change to `BuilderParameters.cpp`, and
+adds no field, potential argument, start value or allocation to existing
+programs. The product buffer will contain three f64 components per particle,
+in input order. Its cotangent is on the position gradient, not the force;
+the caller supplies the sign.
+
+This change reserves configuration only. The product entry, the extended
+runtime boundary and the mixed derivative are subsequent parts of #726;
+no public product call or second derivative becomes available here. They
+will consume these ordinals in a second program compiled on first use,
+without adding a product branch to the ordinary frames program.
+
+The disabled default leaves every existing generated program byte-identical.
+Validation compares printed module and lowered forms with an independently
+archived base, over CPU/GPU and all precisions, plus the order matrix, five
+bitwise checkpoints and the full D309 suite. No control key, default, file
+format or overwrite behavior changes.
