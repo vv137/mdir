@@ -55,6 +55,13 @@ opaque consumer. The storage stays pinned through those reads and returns
 to the loop's carried buffer pool at the yield, keeping allocations outside
 the frame loop. Host storage assignment refuses device results.
 
+The GPU lowering of a function marked `mdir.frame_batch` recognizes f64
+device loads marked `mdir.frame_parameter`. It clones their pure scalar
+expressions into each consuming kernel, including side-stream kernels,
+preserving the operations and eliminating the host loads. A remaining host
+consumer is an error. This component supplies device scalar parameters;
+the batch caller and device tunable updates remain in progress.
+
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.

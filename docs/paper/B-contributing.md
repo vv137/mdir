@@ -233,6 +233,13 @@ entry's `deviceBatch` flag without changing the existing frames selector or
 caller. This reserves plumbing only; the device batch entry, chain rule and
 stream handling follow separately. Existing programs remain byte-identical.
 
+The implementation of that entry (D[frame-batch-entry]) now has scoped
+caller streams, borrowed device field inputs and result views, and f64
+scalar expressions evaluated by each consuming kernel rather than the
+host. Focused compiler checks include side-stream consumption and rejection
+of an escaping device view or a host consumer of a device parameter. The
+batch caller, tunable updates, chain rule and final validation are pending.
+
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
 both closing steps. Leapfrog coupling uses full-time velocities and restores

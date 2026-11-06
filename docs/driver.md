@@ -1417,6 +1417,13 @@ change `Control::frames` or its existing caller. The separate device batch
 entry and its caller are #138 PR 1's subsequent work; existing generated
 programs remain byte-identical.
 
+D[frame-batch-entry] implements scoped caller streams, borrowed device
+field inputs, device field result views, and device scalar-parameter
+lowering for that entry. Marked scalar expressions execute inside their
+consuming kernels, including side-stream kernels; they cannot be consumed
+on the host. The batch entry, its caller, tunable updates and chain rule
+remain in progress, with no change to the existing host entry.
+
 Exact trial virtual-site placement and force spreading deliberately retain the
 archived entry cell (#722); trial energy evaluation and other gathers retain
 their original cells. Plain energy rows construct no unused virial diagonal;

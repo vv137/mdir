@@ -8227,6 +8227,105 @@ static void expandPowers(func::FuncOp function) {
   }
 }
 
+/// Device batch parameters are loaded by their consuming kernels, including
+/// kernels on a side stream. Clone their scalar expressions without changing
+/// the f64 operations, and reject a surviving host consumer rather than
+/// reading a device address on the host. Ordinary entries do not use this path.
+static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
+  SmallVector<memref::LoadOp> inputs;
+  function.walk([&](memref::LoadOp load) {
+    if (load->hasAttr("mdir.frame_parameter") &&
+        !load->getParentOfType<gpu::LaunchOp>())
+      inputs.push_back(load);
+  });
+  if (inputs.empty())
+    return success();
+  for (memref::LoadOp load : inputs) {
+    if (!function->hasAttr("mdir.frame_batch"))
+      return load.emitOpError()
+             << "a device scalar input requires a frame batch entry";
+    auto space = dyn_cast_or_null<IntegerAttr>(
+        load.getMemRefType().getMemorySpace());
+    if (!space || space.getInt() != 1 || !load.getType().isF64())
+      return load.emitOpError()
+             << "a frame parameter requires an f64 buffer in device memory space 1";
+  }
+  llvm::DenseSet<Operation *> sources;
+  for (memref::LoadOp load : inputs)
+    sources.insert(load);
+  auto isPure = [](Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  };
+  llvm::DenseMap<Value, bool> dependent;
+  std::function<bool(Value)> readsParameter = [&](Value value) {
+    auto found = dependent.find(value);
+    if (found != dependent.end())
+      return found->second;
+    dependent[value] = false;
+    Operation *def = value.getDefiningOp();
+    bool result = sources.contains(def);
+    if (def && isPure(def))
+      for (Value operand : def->getOperands())
+        result |= readsParameter(operand);
+    dependent[value] = result;
+    return result;
+  };
+  SmallVector<gpu::LaunchOp> launches;
+  function.walk([&](gpu::LaunchOp launch) { launches.push_back(launch); });
+  for (gpu::LaunchOp launch : launches) {
+    Region &body = launch.getBody();
+    llvm::SetVector<Value> captured;
+    body.walk([&](Operation *op) {
+      for (Value value : op->getOperands())
+        if (!body.isAncestor(value.getParentRegion()))
+          captured.insert(value);
+    });
+    OpBuilder builder = OpBuilder::atBlockBegin(&body.front());
+    IRMapping mapping;
+    std::function<Value(Value)> clone = [&](Value value) -> Value {
+      if (Value done = mapping.lookupOrNull(value))
+        return done;
+      if (!readsParameter(value))
+        return value;
+      Operation *def = value.getDefiningOp();
+      for (Value operand : def->getOperands())
+        mapping.map(operand, clone(operand));
+      Operation *copy = builder.clone(*def, mapping);
+      copy->removeAttr("mdir.frame_parameter");
+      return copy->getResult(cast<OpResult>(value).getResultNumber());
+    };
+    for (Value value : captured) {
+      if (!readsParameter(value))
+        continue;
+      Value inside = clone(value);
+      value.replaceUsesWithIf(inside, [&](OpOperand &use) {
+        return body.isAncestor(use.getOwner()->getParentRegion());
+      });
+    }
+  }
+  // Remove only the parameter-dependent chains. Ordinary programs and
+  // their host scalar computations do not enter this path.
+  bool erased;
+  do {
+    SmallVector<Operation *> dead;
+    function.walk([&](Operation *op) {
+      if (op->use_empty() && op->getNumResults() &&
+          (sources.contains(op) || isPure(op)) &&
+          llvm::any_of(op->getResults(), readsParameter))
+        dead.push_back(op);
+    });
+    erased = !dead.empty();
+    for (Operation *op : dead) {
+      sources.erase(op);
+      op->erase();
+    }
+  } while (erased);
+  for (Operation *load : sources)
+    return load->emitOpError()
+           << "a frame parameter cannot be consumed on the host";
+  return success();
+}
+
 /// Kernels that take a value the host computes from global sums compute it
 /// themselves from the copy of the sums on the device, so that the host
 /// need not wait for the sums to launch them (D156). The value is a chain
@@ -8649,6 +8748,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // The kernels read tables from their buffers.
   lowerLookups(function);
   expandPowers(function);
+  if (failed(keepFrameParametersOnDevice(function)))
+    return failure();
   keepReadbacksOnDevice(function);
   deferReadbacks(function);
 

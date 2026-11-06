@@ -487,6 +487,10 @@ configuration for #138 PR 1. The host form remains the default; this adds
 no Python API, implements no device batch boundary and removes none of
 D373's host staging. The entry and caller that use the mode follow in PR 1.
 
+The implementation of PR 1 is in progress (D[frame-batch-entry]). Its
+compiler and stream components do not yet expose a batch API or remove
+the host staging described below.
+
 D371, the design and Ruling 20 on #138: the CPU, on the existing loop of
 frames; and D373, the target `"CUDA"`, which
 takes arrays on a CUDA device through the same loop.

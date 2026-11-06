@@ -1937,6 +1937,13 @@ iteration, and cannot escape or pass to an opaque consumer. Its storage
 returns to the loop's pool at the yield rather than being allocated again
 for each frame. Host storage assignment refuses a device result.
 
+For the internal device frame entry (D[frame-batch-entry]), a function
+marked `mdir.frame_batch` may mark f64 device-buffer loads with
+`mdir.frame_parameter`. GPU lowering reconstructs their pure scalar
+expressions inside each consuming kernel, including kernels on the side
+stream, and removes the host loads. A surviving host consumer is rejected.
+These markers do not change ordinary entries or their scalar computations.
+
 The current copy sequence is `gpu.wait async`, `gpu.memcpy async`, and an
 immediate `gpu.wait` for that copy. [The #567 contract](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
 verifies token completion, buffer borrows, and host visibility without
