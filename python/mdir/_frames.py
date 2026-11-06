@@ -460,7 +460,7 @@ class FrameEvaluator:
         if self._product is None:
             try:
                 self._product = _core.Simulation(self.program, _frames=True, _frame_product=True)
-            except _core.InputError as error:
+            except (_core.InputError, _core.CompileError) as error:
                 raise _core.UnsupportedError(
                     "the product of the gradients in the positions with their derivative in the "
                     f"tunables is not formed for this program: {error}") from None
