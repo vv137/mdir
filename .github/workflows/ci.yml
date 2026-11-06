@@ -29,16 +29,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Links
-        run: python3 scripts/check-markdown-links.py
-      - name: Decision numbers and their table
-        run: scripts/decision-number.sh check --pending
-      - name: Changelog fragments
-        run: python3 scripts/release/changelog.py fragments
-      - name: The list of the expected unsupported tests
-        run: python3 test/mdir_lit.py
-      - name: The release path
-        run: scripts/release/check-path.sh
+      # One list of checks for CI and for the pre-push hook (#764): the
+      # script runs all of them and prints a line for each.
+      - name: Checks
+        run: scripts/check-before-push.sh
 
   build:
     if: github.event_name == 'push' || github.event.pull_request.draft == false

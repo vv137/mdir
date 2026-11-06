@@ -1,0 +1,8 @@
+#!/bin/sh
+# Refuses a push when the checks of CI fail (#764; docs/workflow.md,
+# Continuous integration). Enable once per clone with
+#   git config core.hooksPath scripts/hooks
+# (the path is relative, so every worktree uses its own copy of the hook and
+# checks its own files). Bypass for one push with `git push --no-verify`.
+# The checks look at the worktree, not at the commits pushed: commit first.
+exec "$(dirname "$0")/../check-before-push.sh"
