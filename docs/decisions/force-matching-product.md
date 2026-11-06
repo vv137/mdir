@@ -58,18 +58,18 @@ relative error, of the largest entry:
 
 | Reference | CPU double | CPU mixed | GPU double | GPU mixed |
 |---|---|---|---|---|
-| `dihedral_k` (D372 fixtures, 3 frames): the closed form, differentiated along $ar{\mathbf G}$ with dual numbers | 4.6e-16 | 3.6e-6 | 1.0e-15 | 4.1e-6 |
+| `dihedral_k` (D372 fixtures, 3 frames): the closed form, differentiated along $\bar{\mathbf G}$ with dual numbers | 4.6e-16 | 3.6e-6 | 1.0e-15 | 4.1e-6 |
 | per-type (geometric) and pair $\sigma$, $\epsilon$ with a pair set apart (propane and water, 224 atoms, 3 frames): a NumPy sum of the shifted Lennard-Jones and its tangent, with the correction and its shift estimate | 1.7e-11 | 4.2e-7 | 1.7e-11 | 1.3e-6 |
 | the charges by a map under a Coulomb cutoff (dipeptide in water, 1,168 atoms, 25 entries, 2 frames): a NumPy sum of the shifted Coulomb and the 1-4 pairs and its tangent | 4.7e-15 | 1.8e-6 | 2.5e-15 | 1.6e-6 |
 
 Tolerances: 1e-10, 1e-8, and 1e-9 in double; 2e-5 in mixed.
 
-- **Central differences of the rows of D230 along $ar{\mathbf G}$** (Richardson from the steps $h$ and $h/2$), in double, on the CPU and the GPU:
+- **Central differences of the rows of D230 along $\bar{\mathbf G}$** (Richardson from the steps $h$ and $h/2$), in double, on the CPU and the GPU:
   - `dihedral_k`: 1.1e-12 and 1.2e-12 ($h = 10^{-4}$).
   - $\sigma$, $\epsilon$: 9.1e-10 on both ($h = 10^{-4}$).
   - The charges: 7.1e-10 and 8.1e-10 ($h = 10^{-6}$). The force of the shifted Coulomb jumps at the cutoff, and so does the derivative of a row, so $h = 10^{-4}$ and $10^{-5}$ carry pairs across it: 1.7e-2 and 7.7e-4.
 - **Mixed against double** on the same frames ($\sigma$, $\epsilon$): 4.2e-7 (CPU) and 1.3e-6 (GPU). The tolerance is 1e-5, as Ruling 21 Q9 began with.
-- **With a zero $ar{\mathbf G}$**, `vjp(g, positions=0)` equals `vjp(g)` with the Jacobian: 0 (CPU double and mixed, GPU double) and 2.0e-16 (GPU mixed).
+- **With a zero $\bar{\mathbf G}$**, `vjp(g, positions=0)` equals `vjp(g)` with the Jacobian: 0 (CPU double and mixed, GPU double) and 2.0e-16 (GPU mixed).
 - **The refusals:** no cotangent, a shape, a value that is not finite, an iterator, values changed since the frames were evaluated, virtual sites (OPC), and the charges with PME. After all of them, the evaluator gives the same product to the bit.
 
 **E2, the product pass without the energy** (propane and water, 3 frames, ms a frame):

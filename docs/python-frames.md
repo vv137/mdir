@@ -195,21 +195,21 @@ frame beyond it, since the second pass would need the frames again.
 ### The product of force matching (D[force-matching-product])
 
 #726, part B, Ruling 21. `vjp(cotangent=None, *, positions=None)`. With
-`positions`, a cotangent $ar{\mathbf G}$ `(K, N, 3)` float64 on
+`positions`, a cotangent $\bar{\mathbf G}$ `(K, N, 3)` float64 on
 `gradients["positions"]`, $\mathbf G_{n,i} = \partial U_n/\partial\mathbf x_i$,
 in the order of the input, `vjp` returns
 
 $$
-\mathbf p = \sum_n\Big[g_nrac{\partial U_n}{\partialoldsymbol	heta}
-+ \sum_iar{\mathbf G}_{n,i}\cdotrac{\partial^2U_n}{\partial\mathbf x_i\,\partialoldsymbol	heta}\Big],
+\mathbf p = \sum_n\Big[g_n\frac{\partial U_n}{\partial\boldsymbol\theta}
++ \sum_i\bar{\mathbf G}_{n,i}\cdot\frac{\partial^2U_n}{\partial\mathbf x_i\,\partial\boldsymbol\theta}\Big],
 $$
 
 with $g = $ `cotangent`, zero if it is not given. The matrix of the mixed
 derivatives is never formed: the product is the derivative in
-$oldsymbol	heta$ of the tangent of `@tunable` along $ar{\mathbf G}$
+$\boldsymbol\theta$ of the tangent of `@tunable` along $\bar{\mathbf G}$
 (D376). The cotangent is on $\mathbf G$, not on the forces; the sign of a
 force loss is the caller's. For
-$L = rac1K\sum_n\sum_i\lVert\mathbf F_{n,i}-\mathbf F^\mathrm{ref}_{n,i}Vert^2$:
+$L = \frac1K\sum_n\sum_i\lVert\mathbf F_{n,i}-\mathbf F^\mathrm{ref}_{n,i}\rVert^2$:
 
 ```python
 out = evaluator.evaluate(frames, gradients=("tunables", "positions"))
@@ -221,13 +221,13 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   frames at the first product (`Control::frameProduct`, D380), in a
   simulation of its own, and gives it its values of the tunables where
   their bits differ. Its boundary hands each frame its positions and
-  $ar{\mathbf G}$. It evaluates `@tunable` once with `derivative(n)` and
+  $\bar{\mathbf G}$. It evaluates `@tunable` once with `derivative(n)` and
   `tangent_derivative(n)` of every slot and field of D230, and evaluates no
   energy, forces, or virial. The host applies the chain rule of D230 to
   the derivatives of the energy times $g_n$, with what it adds to the
   energy, and to those of the tangent, to which it adds nothing: the tails,
   the shift estimates, the self term and the background of PME depend on
-  the volume and $oldsymbol	heta$ only. D380's request 2 stays reserved
+  the volume and $\boldsymbol\theta$ only. D380's request 2 stays reserved
   and is not read: the device-batch path (#138 PR 1, #765) takes $g$ there
   where it must stay on the device.
 - **The frames again.** As for the second pass, the product evaluates the
@@ -241,12 +241,12 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
 
 **Validation** (`python-frame-product.test`, `python-frame-product-gpu.test`).
 See the decision for the numbers. The references are: the closed form of
-`dihedral_k` (D372) differentiated along $ar{\mathbf G}$ with dual
+`dihedral_k` (D372) differentiated along $\bar{\mathbf G}$ with dual
 numbers; a NumPy sum of the shifted Lennard-Jones and its tangent for
 per-type and pair $\sigma$ and $\epsilon$ on propane and water; a NumPy sum
 of the shifted Coulomb and the 1-4 pairs and its tangent for the charges on
 the dipeptide in water. Central differences of the rows of the Jacobian
-along $ar{\mathbf G}$ check all of them, and in mixed precision the
+along $\bar{\mathbf G}$ check all of them, and in mixed precision the
 product is compared with that in double.
 
 `gradients` without `"tunables"` keeps no rows and refuses `vjp`. It does not make a pass
