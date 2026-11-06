@@ -212,7 +212,7 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
-The frame product configuration (D[frame-product-field], #726 PR 0) is
+The frame product configuration (D380, #726 PR 0) is
 internal and off by default. It reserves the energy-cotangent request slot
 and the position-gradient-cotangent buffer returned by the frame boundary.
 The buffer belongs to each frame, not to the topology parameters. The

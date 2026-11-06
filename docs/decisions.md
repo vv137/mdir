@@ -675,6 +675,7 @@ specification follow those made with it.
 | [D377](decisions/D377.md) | A sum keeps the functions of a PME template that it needs by attributes that state what each function is for, not by substrings of their names. | 2026-11-05 |
 | [D378](decisions/D378.md) | Part of #138 PR 1, following Ruling 20 and D371/D373. | 2026-11-05 |
 | [D379](decisions/D379.md) | The tangent of a reciprocal sum in the positions is $-\sum_i\mathbf t_i\cdot\mathbf F_i$ of the forces that the sum yields, and its derivative in a number that the charges depend on is exact as the half difference of that tangent at the charges shifted by $\pm\partial\mathbf c/\partial\theta$, two more reciprocal sums with their forces for each number; the derivative in the charge of each particle stays refused. | 2026-11-05 |
+| [D380](decisions/D380.md) | Part of #726, PR 0, following Ruling 21. | 2026-11-05 |
 <!-- end decisions-table -->
 
 

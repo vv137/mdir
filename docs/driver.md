@@ -1393,7 +1393,7 @@ boundary remains in place and loads the original part counts. Minimization
 retains accepted/rejected controller state and first-call projection. Frame
 checks inspect actual evaluation operations and operand provenance.
 
-D[frame-product-field] reserves `Control::frameProduct` and the frame
+D380 reserves `Control::frameProduct` and the frame
 gradient output's product configuration for #726. The default is off. The
 configuration names request element 2 for the energy cotangent and returned
 buffer 1 for the position-gradient cotangent; the frame boundary will supply

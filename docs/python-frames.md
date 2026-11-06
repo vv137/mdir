@@ -1,6 +1,6 @@
 # The frame evaluator (D240)
 
-D[frame-product-field] (#726 PR 0) reserves the builder configuration for a
+D380 (#726 PR 0) reserves the builder configuration for a
 separate product program, off by default, with cotangents passed through the
 frame boundary. It adds no Python API and implements no mixed derivative;
 the second-derivative refusals below remain in force until the later product
