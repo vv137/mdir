@@ -10,8 +10,7 @@ The device batch entry consumes `Control::FrameMode::DeviceBatch` through
 `SimpleFrameEntryIRConfig::deviceBatch`. It is selected by a new C++
 `Simulation::evaluateFrames` caller, independently of the existing host
 `evaluateFrame` path. This decision is being implemented; the entry is not
-yet available. It is stacked on the field plumbing of #755 until that PR
-merges.
+yet available. It extends the field plumbing merged in D378 (#755).
 
 One call evaluates K frames in one activation, using the caller's stream.
 Positions, tunable values, and results remain in device buffers. Positions
@@ -38,8 +37,15 @@ report data errors (Q5). A failed batch discards its activation.
 
 The runtime scope uses event dependencies in both directions, including
 nested scopes and the legacy default stream. This first implementation
-component is not yet connected to a batch caller; its device regression
-and the remaining batch implementation are pending.
+component is not yet connected to a batch caller. Focused component checks
+precede the remaining batch implementation and its final-head validation.
+
+`mdrt.from_buffer` accepts fields in explicit device memory space 1. Device
+storage assignment borrows them without a host copy or ownership transfer;
+they remain read-only, and a later destination takes separate storage.
+Host storage assignment refuses this boundary. The caller keeps the input
+alive until device work completes. This supplies the input boundary for
+the native batch entry while preserving ordinary host-buffer imports.
 
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
@@ -48,7 +54,7 @@ The existing host path remains available as the independent oracle.
 
 ## Required validation
 
-Implementation and all validation are pending. Before readiness:
+The batch implementation and final validation remain in progress. Before readiness:
 
 - CPU and RTX 5090, Mixed and Double: compare the batch with the host path
   and finite differences; check native batching, changing parameters without
@@ -60,6 +66,6 @@ Implementation and all validation are pending. Before readiness:
 - Compare every existing printed module and lowered program and the order
   matrix with an independently archived final main; run the five bitwise
   checkpoints, both D309 shards, and the sanitizer tier on RTX 5090.
-- Rebase onto main after #755 merges and rerun final gates at the final
+- Rebase onto current main before readiness and run every gate at that
   clean head. Stop on any output difference, numerical mismatch, test
   failure, or intermittent failure; never retry one.

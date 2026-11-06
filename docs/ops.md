@@ -1919,10 +1919,16 @@ With `memory=device`, storage assignment puts the buffers on a device.
 
 | Value form | Storage form on a device |
 |---|---|
-| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back, unless it is read-only (`mdrt.read_only`). |
+| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back, unless it is read-only (`mdrt.read_only`). A field imported from a buffer already in memory space 1 borrows that device buffer without copying or taking ownership (D[frame-batch-entry]). |
 | `mdrt.to_buffer` | A copy from the device to a buffer of the host. The field stays on the device. |
 | A loop with global sums | The loop with two buffers in `scratch` for each sum: the contributions, a row a particle, from the pool of its region, and the partial sums, 1024 rows allocated once in the body of the function and shared by its sums by type (D364) |
 | A refresh that tests validity | The refresh with two buffers in `scratch`, as a loop with one sum |
+
+A borrowed device field is read-only and is not returned to the storage
+pool, even after its last use. A destination takes separate storage. The
+caller keeps the input alive until its device work completes; host storage
+assignment refuses this boundary. Ordinary host-buffer imports retain
+their existing behavior.
 
 The current copy sequence is `gpu.wait async`, `gpu.memcpy async`, and an
 immediate `gpu.wait` for that copy. [The #567 contract](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)

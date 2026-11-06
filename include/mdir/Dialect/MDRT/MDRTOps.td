@@ -38,6 +38,13 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
            : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
     ```
 
+    A field may also borrow a buffer in device memory space 1. Storage
+    assignment with `memory=device` aliases that buffer without copying,
+    freeing, or overwriting it. The caller keeps the buffer alive until
+    the work using the field has completed. Storage assignment on the
+    host refuses a borrowed device field. Host buffers retain their
+    existing copy and ownership rules.
+
     The tuples of a tuple set enter the program in the same way. The buffer
     holds, for each tuple, its members: the places of the particles in
     their fields. The program does not write to the buffer.

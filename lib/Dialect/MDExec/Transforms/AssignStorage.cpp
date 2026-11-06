@@ -1795,10 +1795,29 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
             arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
       return success();
     }
-    if (failed(checkStored(op, from.getResult().getType(),
-                           from.getBuffer().getType())))
+    auto inputType = cast<MemRefType>(from.getBuffer().getType());
+    bool deviceInput = bool(inputType.getMemorySpace());
+    if (deviceInput && !onDevice)
+      return op->emitOpError()
+             << "a borrowed device field requires memory=device";
+    Type storedType = deviceInput
+        ? MemRefType::get(inputType.getShape(), inputType.getElementType(),
+                         inputType.getLayout())
+        : inputType;
+    if (failed(checkStored(op, from.getResult().getType(), storedType)))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
+    if (deviceInput) {
+      buffer = tagInputBuffer(builder, op->getLoc(),
+                              getStorageType(from.getResult().getType()),
+                              buffer);
+      // Neither the allocation nor permission to overwrite it belongs to
+      // this scope. A later destination gets its own storage, even when
+      // this is the last use of the borrowed field.
+      bind(from.getResult(), buffer, scope);
+      readOnly.insert(buffer);
+      return success();
+    }
     // A buffer that a call in the body of a loop returns is given anew at
     // every iteration, and may be the same memory each time: the frames of
     // a frame evaluator, which the host hands the entry at a boundary

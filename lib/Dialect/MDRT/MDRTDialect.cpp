@@ -78,6 +78,18 @@ static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
 }
 
 LogicalResult FromBufferOp::verify() {
+  // Device frame boundaries lend a field directly. Its address space is
+  // explicit in the buffer type; it is not a host pointer to copy.
+  auto buffer = dyn_cast<MemRefType>(getBuffer().getType());
+  auto space = buffer ? dyn_cast_or_null<IntegerAttr>(buffer.getMemorySpace())
+                      : IntegerAttr{};
+  if (space && space.getInt() == 1 &&
+      isa<FieldType>(getResult().getType())) {
+    auto hostType = MemRefType::get(buffer.getShape(), buffer.getElementType(),
+                                    buffer.getLayout());
+    if (canHold(hostType, cast<FieldType>(getResult().getType())))
+      return success();
+  }
   if (auto table = dyn_cast<md::TableType>(getResult().getType())) {
     if (getBuffer().getType() != getTableBufferType(table))
       return emitOpError() << "expected the buffer of " << table
