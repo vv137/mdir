@@ -121,7 +121,7 @@ public:
   /// evaluation of its state, no view, and no borrow.
   ///
   /// With `frameProduct` as well, the program is the product program of a
-  /// frame evaluator (D[force-matching], #726): its loop over frames
+  /// frame evaluator (D[force-matching-product], #726): its loop over frames
   /// evaluates no energy, and takes `evaluateFrameProduct` alone.
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
@@ -392,7 +392,7 @@ public:
   ///   p = g ∂U/∂θ + Σ_i Ḡ_i · ∂²U/∂x_i ∂θ,
   ///
   /// one array per tunable, by the program of the product
-  /// (D[force-matching], #726): the derivative in θ of the tangent of the
+  /// (D[force-matching-product], #726): the derivative in θ of the tangent of the
   /// potential along Ḡ, with the chain rule of D230; what the host adds to
   /// the energy (the tails, the self term) enters with g alone, since it
   /// does not depend on the positions at a fixed cell. Only a simulation

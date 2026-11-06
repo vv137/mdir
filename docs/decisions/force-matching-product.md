@@ -44,7 +44,7 @@ program does not change.
 
 The product of a program with virtual sites (#726, a later part) and the
 derivative of the tangent of a reciprocal sum in the charge of each particle
-(D[force-matching-pme], C(ii)) are refused. The charges as a field with PME
+(C(ii) of the design; the directional form of #757 takes a number that the charges depend on) are refused. The charges as a field with PME
 therefore take no product yet: `vjp(positions=)` raises `UnsupportedError`,
 naming the reason, when the product program cannot be compiled.
 `terms="dependent"` is refused too.

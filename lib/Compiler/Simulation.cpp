@@ -370,7 +370,7 @@ struct compiler::Activation {
   /// What the host asks of that frame, each 1 or 0: its forces, its virial
   /// (D252).
   std::array<double, 2> frameAsks{};
-  /// Of a product program (D[force-matching], #726): the cotangent of
+  /// Of a product program (D[force-matching-product], #726): the cotangent of
   /// the gradient in the positions of the next frame, in the order of the
   /// input and the type of the state, and that of its energy, which the
   /// entry takes at each boundary in place of the asks (D380: request 2,
@@ -439,7 +439,7 @@ _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
   for (size_t k = 0; k != a->frameAsks.size(); ++k)
     asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
 }
-/// The boundary of a product program (D[force-matching], #726): as
+/// The boundary of a product program (D[force-matching-product], #726): as
 /// `mdrtFrameBoundary`, with the buffer of the cotangent of the gradient in
 /// the positions as a second result and the cotangent of the energy in
 /// element 2 of `asks` (D380).

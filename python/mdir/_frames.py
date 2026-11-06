@@ -297,7 +297,7 @@ class FrameEnergies:
         positions dU_n/dx_i (`gradients["positions"]`, the forces with the
         opposite sign), in the order of the input, the product adds
         sum_n sum_i positions[n, i] . d2U_n/dx_i dtheta, the mixed
-        derivative of force matching (D[force-matching], #726), by a pass
+        derivative of force matching (D[force-matching-product], #726), by a pass
         of the product program of the evaluator over the frames; without
         `cotangent` that of the energy is zero. The sign of a loss on the
         forces is the caller's: its cotangent on F is minus that on dU/dx."""
@@ -372,7 +372,7 @@ class FrameEvaluator:
         if int(jacobian_bytes) < 0:
             raise _core.InputError("FrameEvaluator: jacobian_bytes is not negative")
         self.program, self.jacobian_bytes = program, int(jacobian_bytes)
-        # The product program (D[force-matching], #726), compiled at the
+        # The product program (D[force-matching-product], #726), compiled at the
         # first product.
         self._product = None
         # A simulation whose entry is a loop over frames: the frames of
@@ -440,7 +440,7 @@ class FrameEvaluator:
     def _product_pass(self, source, version, energy, position):
         """The sum over the frames `source`, evaluated at the version
         `version`, of energy[n] dU_n/dtheta + position[n] . d2U_n/dx dtheta,
-        by the product program (D[force-matching], #726), a simulation of
+        by the product program (D[force-matching-product], #726), a simulation of
         its own compiled at the first product, at the values of the tunables
         of the evaluator."""
         if self.terms != "all":

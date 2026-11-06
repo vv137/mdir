@@ -104,7 +104,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     }
     Value cellMemory = memref::AllocaOp::create(at, loc,
         MemRefType::get({6}, at.getF64Type()));
-    // The product program of a frame evaluator (D[force-matching], #726,
+    // The product program of a frame evaluator (D[force-matching-product], #726,
     // D380): its boundary also gives the cotangent of the energy, in
     // request 2, and that of the gradient in the positions, as returned
     // buffer 1; it evaluates the product alone. The program hands over the
