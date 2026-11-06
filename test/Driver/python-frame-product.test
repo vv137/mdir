@@ -1,5 +1,5 @@
 # The product of force matching in the frame evaluator,
-# FrameEnergies.vjp(cotangent, positions=) (D[force-matching-product], #726),
+# FrameEnergies.vjp(cotangent, positions=) (D381, #726),
 # on the CPU: against closed forms and NumPy sums with their tangents, and
 # against central differences of the derivative in the tunables (D230) along
 # the cotangent; in mixed precision against double. Inputs/python_frame_product.py

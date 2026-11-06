@@ -1519,7 +1519,7 @@ $\boldsymbol\theta$ is then that of an energy, by the rules and the seeds
 that give $\partial U/\partial\boldsymbol\theta$, and the matrix of the
 mixed derivatives, $3N\times M_\theta$ for a frame, is never formed. The frame evaluator forms the product in a second program of
 frames, compiled at the first product, which evaluates no energy
-(D[force-matching-product]). What the host adds to the energy, $c$, depends
+(D381). What the host adds to the energy, $c$, depends
 on the volume and $\boldsymbol\theta$ alone, so at a fixed cell it enters
 the product only through the cotangent of the energy, $g_n\,\partial
 c/\partial\boldsymbol\theta$, and the host applies $g_n$ with the chain

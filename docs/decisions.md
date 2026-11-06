@@ -676,6 +676,7 @@ specification follow those made with it.
 | [D378](decisions/D378.md) | Part of #138 PR 1, following Ruling 20 and D371/D373. | 2026-11-05 |
 | [D379](decisions/D379.md) | The tangent of a reciprocal sum in the positions is $-\sum_i\mathbf t_i\cdot\mathbf F_i$ of the forces that the sum yields, and its derivative in a number that the charges depend on is exact as the half difference of that tangent at the charges shifted by $\pm\partial\mathbf c/\partial\theta$, two more reciprocal sums with their forces for each number; the derivative in the charge of each particle stays refused. | 2026-11-05 |
 | [D380](decisions/D380.md) | Part of #726, PR 0, following Ruling 21. | 2026-11-05 |
+| [D381](decisions/D381.md) | `FrameEnergies.vjp(cotangent=None, *, positions=None)` gives, with `positions`, a cotangent on the gradients in the positions $\partial U_n/\partial\mathbf x_i$, the product $\sum_n[g_n\,\partial U_n/\partial\boldsymbol\theta + \sum_i\bar{\mathbf G}_{n,i}\cdot\partial^2U_n/\partial\mathbf x_i\,\partial\boldsymbol\theta]$ by a pass of a second program of the evaluator, the product program, compiled at the first product; it evaluates no energy and hands the derivatives of the energy and of its tangent (D376) to the chain rule of D230, where the host applies $g_n$. | 2026-11-06 |
 <!-- end decisions-table -->
 
 

@@ -1613,7 +1613,7 @@ PYBIND11_MODULE(_core, m) {
        // frames (D251); private to `mdir.FrameEvaluator`.
        py::arg("_frames") = false,
        // With `_frames`, the product program of a frame evaluator
-       // (D[force-matching-product], #726); private to `mdir.FrameEvaluator`.
+       // (D381, #726); private to `mdir.FrameEvaluator`.
        py::arg("_frame_product") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;
@@ -1823,7 +1823,7 @@ PYBIND11_MODULE(_core, m) {
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("gradient"),
        py::arg("first") = 0, py::arg("position_gradient") = false,
        py::arg("strain_gradient") = false)
-    // The product of stored frames (D[force-matching-product], #726), for
+    // The product of stored frames (D381, #726), for
     // `FrameEnergies.vjp`: `positions` (k, N, 3) float64 in nm in the order
     // of the input, `cells` and `tilts` (k, 3) or None, the cotangents of
     // the energies `energy` (k,) and of their gradients in the positions

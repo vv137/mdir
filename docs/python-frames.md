@@ -2,9 +2,9 @@
 
 D380 (#726 PR 0) reserves the builder configuration for a
 separate product program, off by default, with cotangents passed through the
-frame boundary. D[force-matching-product] (#726 part B) uses it for the
+frame boundary. D381 (#726 part B) uses it for the
 product of force matching, `FrameEnergies.vjp(positions=)`
-([below](#the-product-of-force-matching-dforce-matching-product)); the
+([below](#the-product-of-force-matching-d381)); the
 adapters (`mdir.jax`, `mdir.torch`) still refuse every second derivative.
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
@@ -192,7 +192,7 @@ generator) is taken when the Jacobian is kept or without `"tunables"`; if
 its rows pass the bound, `evaluate` raises `InputError` naming the first
 frame beyond it, since the second pass would need the frames again.
 
-### The product of force matching (D[force-matching-product])
+### The product of force matching (D381)
 
 #726, part B, Ruling 21. `vjp(cotangent=None, *, positions=None)`. With
 `positions`, a cotangent $\bar{\mathbf G}$ `(K, N, 3)` float64 on
@@ -766,7 +766,7 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D[force-matching-product]) | the adapters (#726 D and E) |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381) | the adapters (#726 D and E) |
 | Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of

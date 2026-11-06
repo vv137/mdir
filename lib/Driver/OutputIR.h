@@ -49,7 +49,7 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
                                  mlir::ValueRange constants,
                                  mlir::ValueRange seeds,
                                  const TunableGradientOutputConfig &);
-/// The product of a frame (D[force-matching-product], #726): the derivatives of
+/// The product of a frame (D381, #726): the derivatives of
 /// @tunable in its slots and fields, and those of its tangent along
 /// `tangent`, the cotangent of the gradient in the positions, handed over
 /// as the derivative of D230 is: the scalars of the energy and then those

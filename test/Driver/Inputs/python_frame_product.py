@@ -1,5 +1,5 @@
 """The product of force matching in the frame evaluator
-(D[force-matching-product], #726): `FrameEnergies.vjp(cotangent, positions=)`,
+(D381, #726): `FrameEnergies.vjp(cotangent, positions=)`,
 
   p = sum_n [ g_n dU_n/dtheta + sum_i Gbar_n,i . d2U_n/dx_i dtheta ],
 
