@@ -246,8 +246,10 @@ constant constructors supply the next components. The C++ caller and a
 private DLPack exercise entry now write device energy, position gradients,
 strain and parameter rows. A two-frame torsion check matches 46 host values
 bitwise in each of three calls, with repeated deterministic results and a
-theta update that does not restart the activation. Derived updates, general
-correction derivatives, auxiliary outputs and final validation are pending.
+theta update that does not restart the activation. Combining rules, PME
+corrections, general pair-tail quadrature and Richardson derivatives,
+auxiliary outputs, contractions and device input checks are implemented;
+their focused checks pass. Final validation is pending.
 The independently implemented host and device dispersion/shift correction
 is compared at relative error at most 1e-14, while repeated deterministic
 device results and quantities from the same compiled program retain their

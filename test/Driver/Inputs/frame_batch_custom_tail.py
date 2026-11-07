@@ -23,9 +23,13 @@ system.electrostatics = mdir.Electrostatics.Cutoff
 system.truncation = mdir.Truncation.None_
 system.dispersion = mdir.DispersionCorrection.EnergyPressure
 term = mdir.PairTerm()
-term.name, term.expression, term.constants = "tail", "-c/r^6", [("c", 0.0078125)]
+exponential = len(sys.argv) > 2 and sys.argv[2] == "exponential"
+term.name = "tail"
+term.expression = "a*exp(-r/l)" if exponential else "-c/r^6"
+term.constants = [("a", 2.), ("l", .125)] if exponential else [("c", 0.0078125)]
+names = [name for name, _ in term.constants]
 system.pair_terms = [term]
-system.tunables = [mdir.Tunable("c", "c", term="tail")]
+system.tunables = [mdir.Tunable(name, name, term="tail") for name in names]
 system.tunable_gradient = True
 execution = mdir.Execution()
 execution.target, execution.precision = mdir.Target.GPU, mdir.Precision.Double
@@ -38,14 +42,15 @@ frames = np.stack((x, x))
 cells = np.array([[4., 4., 4.], [5., 5., 5.]])
 positions = torch.tensor(frames, device="cuda", dtype=torch.float64)
 device_cells = torch.tensor(np.column_stack((cells, np.zeros_like(cells))), device="cuda")
-theta = torch.empty(1, device="cuda", dtype=torch.float64)
+theta = torch.empty(len(names), device="cuda", dtype=torch.float64)
 energy = torch.empty(2, device="cuda", dtype=torch.float64)
 gradient = torch.empty_like(positions)
 strain = torch.empty((2, 3, 3), device="cuda", dtype=torch.float64)
-rows = torch.empty((2, 1), device="cuda", dtype=torch.float64)
-for coefficient in (0.0078125, 0.01171875):
-    theta.fill_(coefficient)
-    evaluator.tunables["c"] = np.array([coefficient])
+rows = torch.empty((2, len(names)), device="cuda", dtype=torch.float64)
+points = [(2., .125), (2.25, .15625)] if exponential else [(0.0078125,), (0.01171875,)]
+for coefficients in points:
+    theta.copy_(torch.tensor(coefficients, device="cuda", dtype=torch.float64))
+    evaluator.tunables.update({name: np.array([value]) for name, value in zip(names, coefficients)})
     reference = evaluator.evaluate(frames, cells=cells, gradients=("positions", "strain", "tunables"))
     evaluator._evaluate_device_batch(positions, theta, energy, cells=device_cells,
         position_gradient=gradient, strain=strain, rows=rows)
@@ -54,12 +59,12 @@ for coefficient in (0.0078125, 0.01171875):
             ("energy", energy, reference.energy, False),
             ("positions", gradient, reference.gradients["positions"], True),
             ("strain", strain, reference.gradients["strain"], False),
-            ("rows", rows, reference.jacobian["c"], False)):
+            ("rows", rows, np.concatenate([reference.jacobian[name] for name in names], axis=1), False)):
         actual = tensor.cpu().numpy()
         relative = np.abs(actual - expected) / np.maximum(np.abs(expected), 1e-300)
         mismatch = actual.view(np.uint64) != expected.view(np.uint64) if exact else (
             ~np.isfinite(actual) | (relative > 1e-14))
-        print("coefficient", coefficient, name, "device", actual.tolist(),
+        print("coefficients", coefficients, name, "device", actual.tolist(),
               "host", expected.tolist(), "relative", relative.tolist(), flush=True)
         for index in zip(*np.where(mismatch)):
             a, b = actual[index], expected[index]

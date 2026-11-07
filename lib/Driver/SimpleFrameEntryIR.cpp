@@ -116,11 +116,21 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
       tailWorkspace = gpu::AllocOp::create(at, loc, workspace, Type(),
           ValueRange(), ValueRange(), ValueRange()).getMemref();
-      for (auto [i, table] : llvm::enumerate(program.tables)) {
-        auto type = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-            program.parameter == Element::F64 ? Type(at.getF64Type()) : Type(at.getF32Type()),
+      for (const auto &table : program.tables) {
+        bool used = llvm::any_of(config.batchTails->terms, [&](const auto &term) {
+          return llvm::is_contained(term.expression.getInputs({}).tables, table.name);
+        });
+        if (!used) continue;
+        // Host quadrature uses the logical double coefficients even when
+        // ordinary potential kernels store their tables in f32.
+        auto coefficients = buildFrameBatchInitialValues(at, table.values);
+        if (!coefficients) return coefficients.takeError();
+        auto type = MemRefType::get({table.count, table.getColumns()}, at.getF64Type(),
             MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
-        tailTables[table.name] = mdir::mdrt::ToBufferOp::create(at, loc, type, imported.tables[i]);
+        SmallVector<OpFoldResult> sizes{at.getIndexAttr(table.count), at.getIndexAttr(table.getColumns())};
+        SmallVector<OpFoldResult> strides{at.getIndexAttr(table.getColumns()), at.getIndexAttr(1)};
+        tailTables[table.name] = memref::ReinterpretCastOp::create(at, loc, type,
+            *coefficients, at.getIndexAttr(0), sizes, strides);
       }
     }
     if (config.deviceBatch) {

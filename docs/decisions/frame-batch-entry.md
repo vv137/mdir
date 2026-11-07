@@ -110,8 +110,19 @@ three calls, including an exact repeat and changed theta. With cutoff
 electrostatics and with PME, energies, position gradients and strain are
 bitwise identical to the host; parameter rows meet the relative 1e-14
 bound and repeated device values are bitwise identical. These checks each
-passed their first focused run. General custom pair-tail updates,
-transfer-counter validation and final-head gates remain in progress.
+passed their first focused run.
+
+General custom pair tails use the same adaptive 7/15-point Gauss–Kronrod
+rule, cancellation scale, interval order and Richardson derivative
+convention as the host correction. Their workspace and logical f64 table
+coefficients are uploaded or allocated once per activation. Power-law and
+nonlinear exponential-tail component checks passed, including changed
+theta and derivative rows. A deterministic namespace declaration error in
+the initial build was corrected once; the next build and native checks
+passed. The branch was rebased onto main containing D383 (#772), retaining
+its separate position-product flag. The post-rebase focused selection
+passed 3/3 tests: nonlinear tails, the batch entry and the existing HVP
+entry. Transfer-counter validation and final-head gates remain pending.
 
 `mdrt.from_buffer` accepts fields in explicit device memory space 1. Device
 storage assignment borrows them without a host copy or ownership transfer;

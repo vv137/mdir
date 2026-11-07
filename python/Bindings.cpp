@@ -1822,7 +1822,7 @@ PYBIND11_MODULE(_core, m) {
         std::lock_guard<std::mutex> lock(*s.frameBatchMutex);
         if (!s.frameBatch) {
           auto created = compiler::Simulation::create(*s.program->prepared,
-              s.program->cache, s.program->code.get(), true, false, true);
+              s.program->cache, s.program->code.get(), true, false, false, true);
           if (!created) error = created.takeError();
           else s.frameBatch = std::move(*created);
         }
