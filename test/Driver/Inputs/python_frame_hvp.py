@@ -231,10 +231,11 @@ def run_refusals():
     # placement (#771), zero in the rows of the sites.
     given = np.asarray(out.vjp(np.ones(1), positions=np.ones_like(y),
                                gradients=("positions",)).positions)
-    placed = np.asarray(sites.evaluate(y, gradients=("positions",)).gradients["positions"])
-    empty = np.all(placed == 0.0, axis=2)
-    assert np.isfinite(given).all() and empty.any()
-    assert np.array_equal(given[empty], np.zeros_like(given[empty]))
+    rows = np.zeros(y.shape[1], dtype=bool)
+    rows[np.asarray(system.topology.virtual_sites)[:, 0]] = True
+    zero = np.all(given[0] == 0.0, axis=1)
+    assert np.isfinite(given).all() and rows.any()
+    assert np.array_equal(zero, rows), "the zero rows are not those of the sites"
     print("refusals: the extra points of Amber are given, zero in the rows of the sites")
     # The arguments of vjp.
     system, state = base.torsion_fixture()
