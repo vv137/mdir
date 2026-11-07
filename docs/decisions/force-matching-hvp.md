@@ -48,4 +48,27 @@ The names follow `gradients=` of `evaluate`. The other options were a method of 
 
 ## Validation
 
-(Filled in by the PR.)
+The selection line of `lib/Driver/BuilderSchedule.cpp` comes from its owner (above). The numbers below were measured with a local, uncommitted copy of that line: they are development evidence, and the gate of the combination is the train's.
+
+`test/Driver/python-frame-hvp.test` (CPU) and `python-frame-hvp-gpu.test` (RTX 5090) take random cotangents $g$ and $\bar{\mathbf G}$ on frames displaced from the state. The table gives the relative error of the largest entry of $\partial\Phi/\partial\mathbf x$:
+
+| Reference | CPU double | CPU mixed | GPU double | GPU mixed |
+|---|---|---|---|---|
+| Pairs (a fluid of 24 atoms of two types, a pair of types set apart by NBFIX, Lennard-Jones and Coulomb under a cutoff with the shift of D210, 2 frames): central differences of a NumPy $\Phi$ | 7.6e-12 | 6.2e-7 | 7.1e-12 | 7.1e-7 |
+| The same: central differences of $\Phi$ from the evaluator | 7.1e-12 | | 6.5e-12 | |
+| Dihedrals (the D372 fixtures, 3 frames): central differences of the closed form of $\Phi$, with dual numbers along $\bar{\mathbf G}$ | 3.3e-12 | 2.1e-6 | 3.3e-12 | 2.3e-6 |
+| The same: central differences of $\Phi$ from the evaluator | 3.0e-12 | | 2.9e-12 | |
+
+The differences are Richardson-extrapolated from the steps $10^{-4}$ and $5\times10^{-5}$. Tolerances: 1e-8 against the NumPy forms and 1e-7 against the evaluator in double; 2e-5 in mixed.
+
+- **Mixed against double** (pairs): 6.2e-7 (CPU) and 7.1e-7 (GPU), within 1e-5.
+- **The product in $\boldsymbol\theta$ of the variant** equals that of D381 to the bit, in every scenario, target, and precision.
+- **With $\bar{\mathbf G} = 0$**, `vjp(g, gradients=("positions",))` equals $g\,\partial U/\partial\mathbf x$ from `evaluate` exactly (CPU double). With `("positions",)` alone and beside `"tunables"`, the positions are the same to the bit.
+- **The refusals:** with PME, the derivative in the positions is refused, naming the reciprocal sum, and the product in $\boldsymbol\theta$ is still given; virtual sites (OPC) are refused by name; the names of `gradients` are checked.
+- **`md-check-derivatives`** checks `tangent_forces` in `test/Integration/tangent.mlir` (a pair term with a switch and charges, a bond, an angle that reads the charges, a dihedral, and a term of the positions) within $10^{-9}+10^{-6}$ of the central differences.
+
+**Programs without the variant are unchanged**, against `main` 1c474af4 built in a tree of its own:
+
+- The equivalence corpus (`scripts/builder-equivalence/check.py`, the module and the lowered program): 1030 cases of 258 control files identical, 442 of them stopping with the same error in both.
+- The order matrix (`scripts/builder-equivalence/order.py`): 40 cases identical, 20 of them stopping with the same error in both.
+- Five checkpoints (JAC NVE, Factor IX NPT, and Cellulose NVE of the Amber suite, 200 steps each; the ala3 minimization; argon, 200 steps, on the GPU), in deterministic mode with the compile cache off, both executables alternated in one job on the RTX 5090: every dataset of the final checkpoint (positions, velocities, forces, box, and the rest) identical to the bit, 5 of 5.
