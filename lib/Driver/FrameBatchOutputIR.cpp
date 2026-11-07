@@ -46,8 +46,7 @@ void launch(OpBuilder &builder, Value count,
     scf::YieldOp::create(at, loc);
   });
 }
-void checkFinite(OpBuilder &builder, Value value, Value frame, Value status,
-                 unsigned reason) {
+Value finite(OpBuilder &builder, Value value) {
   auto loc = builder.getUnknownLoc();
   unsigned width = value.getType().getIntOrFloatBitWidth();
   Type integer = builder.getIntegerType(width);
@@ -55,12 +54,16 @@ void checkFinite(OpBuilder &builder, Value value, Value frame, Value status,
   uint64_t exponent = width == 64 ? 0x7ff0000000000000ULL : 0x7f800000ULL;
   Value mask = arith::ConstantOp::create(builder, loc, builder.getIntegerAttr(integer, exponent));
   Value selected = arith::AndIOp::create(builder, loc, bits, mask);
-  Value invalid = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, selected, mask);
+  return arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne, selected, mask);
+}
+void failure(OpBuilder &builder, Value invalid, Value frame, Value status, unsigned reason) {
+  auto loc = builder.getUnknownLoc();
   scf::IfOp::create(builder, loc, invalid, [&](OpBuilder &at, Location) {
     Value index = arith::IndexCastOp::create(at, loc, at.getI64Type(), frame);
     Value shift = arith::ConstantIntOp::create(at, loc, 16, 64);
     Value high = arith::ShLIOp::create(at, loc, index, shift);
-    Value code = arith::ConstantIntOp::create(at, loc, reason, 64);
+    unsigned priority = reason == 1 || reason == 7 || reason == 8 ? 0 : 1;
+    Value code = arith::ConstantIntOp::create(at, loc, (priority << 8) | reason, 64);
     Value encoded = arith::OrIOp::create(at, loc, high, code);
     Value zero = arith::ConstantIndexOp::create(at, loc, 0);
     memref::AtomicRMWOp::create(at, loc, arith::AtomicRMWKind::mins,
@@ -68,13 +71,34 @@ void checkFinite(OpBuilder &builder, Value value, Value frame, Value status,
     scf::YieldOp::create(at, loc);
   });
 }
+void checkFinite(OpBuilder &builder, Value value, Value frame, Value status,
+                 unsigned reason) {
+  auto loc = builder.getUnknownLoc();
+  Value no = arith::ConstantIntOp::create(builder, loc, 0, 1);
+  Value invalid = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+      finite(builder, value), no);
+  failure(builder, invalid, frame, status, reason);
 }
-llvm::Error mdir::driver::builder::buildFrameBatchStatus(OpBuilder &builder, Value status) {
+}
+Value mdir::driver::builder::buildFrameBatchIsFinite(OpBuilder &builder, Value value) {
+  return finite(builder, value);
+}
+void mdir::driver::builder::buildFrameBatchFailure(OpBuilder &builder, Value invalid,
+    Value frame, Value status, unsigned reason) {
+  failure(builder, invalid, frame, status, reason);
+}
+void mdir::driver::builder::buildFrameBatchFiniteCheck(OpBuilder &builder,
+    Value value, Value frame, Value status, unsigned reason) {
+  checkFinite(builder, value, frame, status, reason);
+}
+llvm::Error mdir::driver::builder::buildFrameBatchStatus(OpBuilder &builder, Value status,
+    Value initial) {
   if (!statusBuffer(builder, status)) return bad();
   auto loc = builder.getUnknownLoc();
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);
   launch(builder, one, [&](OpBuilder &at, Value zero) {
-    Value success = arith::ConstantIntOp::create(at, loc, std::numeric_limits<int64_t>::max(), 64);
+    Value success = initial ? initial : Value(arith::ConstantIntOp::create(at, loc,
+        std::numeric_limits<int64_t>::max(), 64));
     memref::StoreOp::create(at, loc, success, status, zero);
   });
   return llvm::Error::success();
@@ -112,7 +136,7 @@ llvm::Error mdir::driver::builder::buildFrameBatchScalarOutput(OpBuilder &builde
     Value scalar, Value destination, Value frame, Value status, unsigned reason,
     Value destinationIndex) {
   if (!scalar.getType().isF64() || !buffer(destination, 1, builder.getF64Type()) ||
-      !frame.getType().isIndex() || !statusBuffer(builder, status) || reason >= 65536) return bad();
+      !frame.getType().isIndex() || !statusBuffer(builder, status) || reason >= 256) return bad();
   auto loc = builder.getUnknownLoc();
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);
   launch(builder, one, [&](OpBuilder &at, Value) {

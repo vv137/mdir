@@ -22,6 +22,7 @@ struct SimpleFrameEntryIRConfig {
   // Selected by the internal device-resident batch caller of #138 PR 1.
   bool deviceBatch = false;
   bool batchOnDevice = false;
+  bool dependent = false;
   std::optional<FrameBatchParameterPlan> batchParameters;
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
@@ -48,7 +49,8 @@ struct FrameBatchRowIR {
 llvm::Expected<mlir::scf::ForOp> buildFrameBatchRows(
     mlir::OpBuilder &, mlir::Value positionBytes, mlir::Value cells,
     mlir::Value particles, mlir::Type stateType, unsigned cellEdges,
-    llvm::function_ref<llvm::Error(mlir::OpBuilder &, const FrameBatchRowIR &)>);
+    llvm::function_ref<llvm::Error(mlir::OpBuilder &, const FrameBatchRowIR &)>,
+    bool positionViews = true);
 llvm::Expected<mlir::func::FuncOp> buildSimpleFrameEntry(
     mlir::OpBuilder &, const Program &, const SimpleFrameEntryIRConfig &,
     llvm::function_ref<EntryCompletionIR(mlir::OpBuilder &, const PotentialStateIR &,

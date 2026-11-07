@@ -1696,6 +1696,9 @@ PYBIND11_MODULE(_core, m) {
       if (!s.frameBatch) return std::array<int64_t, 3>{};
       return s.frameBatch->getStartArguments();
     })
+    .def_property_readonly("_device_batch_aux_names", [](const PySimulation &s) {
+      return s.simulation->getFrameBatchAuxNames();
+    })
     // False: every start from the next on copies and converts the arrays
     // of the program anew, as a simulation that keeps nothing for its
     // starts. Private, for the tests, which compare the two.
@@ -1729,7 +1732,12 @@ PYBIND11_MODULE(_core, m) {
     // (D252), else None.
     .def("_evaluate_device_batch", [](PySimulation &s, py::object positions,
         py::object theta, py::object energies, py::object cells,
-        py::object positionGradient, py::object strain, py::object rows, uint64_t stream) {
+        py::object positionGradient, py::object strain, py::object rows,
+        py::object tangent, py::object cotangent, py::object jvp, py::object vjp,
+        py::object aux,
+        uint64_t stream) {
+      if (tangent.is_none() != jvp.is_none() || cotangent.is_none() != vjp.is_none())
+        throw InputError("device frames: pair each product output with its tangent or cotangent");
       dlpack::BorrowedTensor x(positions, stream, false, "positions");
       auto device = x.tensor.device;
       if (device.type != dlpack::CUDA || x.tensor.ndim != 3 || !x.tensor.shape)
@@ -1737,6 +1745,9 @@ PYBIND11_MODULE(_core, m) {
       int64_t frames = x.tensor.shape[0];
       int64_t particles = s.simulation->getParticleCount();
       unsigned bits = s.program->prepared->control.precision == driver::Precision::Single ? 32 : 64;
+      if (s.program->prepared->control.precision == driver::Precision::Mixed &&
+          !s.program->prepared->control.deterministic && x.tensor.dtype.bits == 32)
+        bits = 32;
       auto check = [&](const dlpack::BorrowedTensor &tensor,
                        llvm::ArrayRef<int64_t> shape, unsigned width,
                        dlpack::Device where, const char *name) {
@@ -1768,6 +1779,24 @@ PYBIND11_MODULE(_core, m) {
         r = std::make_unique<dlpack::BorrowedTensor>(rows, stream, true, "rows");
         check(*r, {frames, entries}, 64, device, "rows");
       }
+      std::unique_ptr<dlpack::BorrowedTensor> t, q, j, p;
+      if (!jvp.is_none()) {
+        t = std::make_unique<dlpack::BorrowedTensor>(tangent, stream, false, "tangent");
+        j = std::make_unique<dlpack::BorrowedTensor>(jvp, stream, true, "jvp");
+        check(*t, {entries}, 64, device, "tangent");
+        check(*j, {frames}, 64, device, "jvp");
+      }
+      if (!vjp.is_none()) {
+        q = std::make_unique<dlpack::BorrowedTensor>(cotangent, stream, false, "cotangent");
+        p = std::make_unique<dlpack::BorrowedTensor>(vjp, stream, true, "vjp");
+        check(*q, {frames}, 64, device, "cotangent");
+        check(*p, {entries}, 64, device, "vjp");
+      }
+      std::unique_ptr<dlpack::BorrowedTensor> a;
+      if (!aux.is_none()) {
+        a = std::make_unique<dlpack::BorrowedTensor>(aux, stream, true, "aux");
+        check(*a, {frames, int64_t(s.simulation->getFrameBatchAuxNames().size())}, 64, device, "aux");
+      }
       compiler::Simulation::FrameBatch batch;
       batch.positions = x.data();
       batch.parameters = static_cast<const double *>(parameters.data());
@@ -1777,9 +1806,15 @@ PYBIND11_MODULE(_core, m) {
       batch.positionGradient = g ? g->data() : nullptr;
       batch.strain = v ? static_cast<double *>(v->data()) : nullptr;
       batch.rows = r ? static_cast<double *>(r->data()) : nullptr;
+      batch.tangent = t ? static_cast<const double *>(t->data()) : nullptr;
+      batch.cotangent = q ? static_cast<const double *>(q->data()) : nullptr;
+      batch.jvp = j ? static_cast<double *>(j->data()) : nullptr;
+      batch.vjp = p ? static_cast<double *>(p->data()) : nullptr;
+      batch.aux = a ? static_cast<double *>(a->data()) : nullptr;
       batch.frames = frames;
       batch.parameterCount = entries;
       batch.device = device.id;
+      batch.positionWidth = bits / 8;
       batch.stream = stream == 1 ? nullptr : reinterpret_cast<void *>(stream);
       llvm::Error error = llvm::Error::success();
       {
@@ -1798,6 +1833,9 @@ PYBIND11_MODULE(_core, m) {
        py::kw_only(), py::arg("cells") = py::none(),
        py::arg("position_gradient") = py::none(), py::arg("strain") = py::none(),
        py::arg("rows") = py::none(),
+       py::arg("tangent") = py::none(), py::arg("cotangent") = py::none(),
+       py::arg("jvp") = py::none(), py::arg("vjp") = py::none(),
+       py::arg("aux") = py::none(),
        py::arg("stream") = 1)
     .def("_evaluate_frames", [](py::object self,
                                 py::array_t<double, py::array::c_style> positions,

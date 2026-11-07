@@ -8335,14 +8335,15 @@ static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
 /// before, in the order of the stream. A group of copies whose loads the
 /// host then no longer needs is removed. The work of a second stream (D87)
 /// is left as it is, since its order relative to the first is the host's.
-static void keepReadbacksOnDevice(func::FuncOp function) {
+static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
+  const bool batch = function->hasAttr("mdir.frame_batch");
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
     if (copy->hasAttr("mdir.readback"))
       deviceOf[copy.getDst()] = copy.getSrc();
   });
   if (deviceOf.empty())
-    return;
+    return success();
   // The ops of the work of a second stream.
   llvm::DenseSet<Operation *> side;
   function.walk([&](Block *block) {
@@ -8364,7 +8365,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
   auto isSum = [&](Operation *op) {
     auto load = dyn_cast_or_null<memref::LoadOp>(op);
     return load && load->hasAttr("mdir.readback") &&
-           deviceOf.count(load.getMemRef()) && !side.contains(op);
+           deviceOf.count(load.getMemRef()) && (batch || !side.contains(op));
   };
   // Whether `value` is computed by pure ops from at least one load of the
   // sums.
@@ -8378,7 +8379,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
     bool result = false;
     if (isSum(def)) {
       result = true;
-    } else if (def && isPure(def) && !side.contains(def)) {
+    } else if (def && isPure(def) && (batch || !side.contains(def))) {
       for (Value operand : def->getOperands())
         result |= readsSums(operand);
     }
@@ -8388,7 +8389,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
 
   SmallVector<gpu::LaunchOp> launches;
   function.walk([&](gpu::LaunchOp launch) {
-    if (!side.contains(launch))
+    if (batch || !side.contains(launch))
       launches.push_back(launch);
   });
   for (gpu::LaunchOp launch : launches) {
@@ -8399,6 +8400,14 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
         if (!body.isAncestor(operand.getParentRegion()))
           captured.insert(operand);
     });
+    if (batch && !side.empty() && !side.contains(launch) &&
+        llvm::any_of(captured, readsSums)) {
+      // A device frame reads reciprocal sums on its caller stream. The
+      // ordinary path keeps its existing host copy and stream behavior.
+      // Join by event before borrowing a side stream's reduction buffer.
+      OpBuilder outside(launch);
+      func::CallOp::create(outside, launch.getLoc(), "mdrtSideJoin", TypeRange{}, ValueRange{});
+    }
     OpBuilder builder = OpBuilder::atBlockBegin(&body.front());
     IRMapping mapping;
     std::function<Value(Value)> clone = [&](Value value) -> Value {
@@ -8469,6 +8478,16 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
           llvm::all_of(op->getUsers(), [](Operation *) { return false; }))
         op->erase();
   }
+  bool escaped = false;
+  if (batch)
+    function.walk([&](memref::LoadOp load) {
+      if (load->hasAttr("mdir.readback") && isa<FloatType>(load.getType()) &&
+          !load->getParentOfType<gpu::LaunchOp>()) {
+        load.emitOpError("device frame result still requires a host readback");
+        escaped = true;
+      }
+    });
+  return failure(escaped);
 }
 
 /// Moves each group of ops that reads global sums back to the host (marked
@@ -8750,7 +8769,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   expandPowers(function);
   if (failed(keepFrameParametersOnDevice(function)))
     return failure();
-  keepReadbacksOnDevice(function);
+  if (failed(keepReadbacksOnDevice(function)))
+    return failure();
   deferReadbacks(function);
 
   releaseStack(function);
@@ -8898,6 +8918,8 @@ public:
     // nvcc makes them by default: the backend fuses only what is marked.
     if (contract)
       getOperation()->walk([](gpu::LaunchOp launch) {
+        if (launch->hasAttr("mdir.frame_host_arithmetic"))
+          return;
         launch.getBody().walk([](arith::ArithFastMathInterface op) {
           arith::FastMathFlags flags = arith::FastMathFlags::none;
           if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())

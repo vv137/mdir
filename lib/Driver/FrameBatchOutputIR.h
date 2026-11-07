@@ -6,8 +6,16 @@
 namespace mlir { class OpBuilder; }
 namespace mdir::driver::builder {
 /// Status is one device i64: INT64_MAX means success, otherwise
-/// (frame << 16) | reason. Atomic minimum selects the first failing frame.
-llvm::Error buildFrameBatchStatus(mlir::OpBuilder &, mlir::Value status);
+/// (frame << 16) | (priority << 8) | reason. Input errors precede derived
+/// failures in the same frame. Atomic minimum selects the first frame.
+llvm::Error buildFrameBatchStatus(mlir::OpBuilder &, mlir::Value status,
+    mlir::Value initial = {});
+/// Emit inside a GPU kernel; record a nonfinite value at the given frame.
+void buildFrameBatchFiniteCheck(mlir::OpBuilder &, mlir::Value value,
+    mlir::Value frame, mlir::Value status, unsigned reason);
+mlir::Value buildFrameBatchIsFinite(mlir::OpBuilder &, mlir::Value value);
+void buildFrameBatchFailure(mlir::OpBuilder &, mlir::Value invalid,
+    mlir::Value frame, mlir::Value status, unsigned reason);
 /// Force and destination rows are N by 3; identities maps reordered atoms
 /// back to input order. f32 forces can widen exactly to f64, never narrow.
 llvm::Error buildFrameBatchPositionOutput(mlir::OpBuilder &, mlir::Value forces,

@@ -4,3 +4,4 @@
 # CHECK: call 1: all 46 results bitwise identical to host
 # CHECK: call 2: all 46 results bitwise identical to host
 # CHECK: device frame entry: rows, repeated calls and theta updates passed
+# CHECK: device frame entry: auxiliary outputs, input errors, recovery and empty batch passed

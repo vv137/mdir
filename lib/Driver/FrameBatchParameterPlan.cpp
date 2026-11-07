@@ -8,7 +8,8 @@ using namespace mdir::driver::builder;
 
 llvm::Expected<FrameBatchParameterPlan>
 mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
-    const model::TunableSet &set, const Control &control, const System &system) {
+    const model::TunableSet &set, const Control &control, const System &system,
+    double coulomb) {
   FrameBatchParameterPlan plan;
   plan.types = set.typeSigma.size();
   plan.typeSigma = set.typeSigma;
@@ -18,6 +19,11 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
   plan.epsilonMap.assign(plan.types, -1);
   plan.sigmaPairs.assign(size_t(plan.types) * plan.types, -1);
   plan.epsilonPairs.assign(size_t(plan.types) * plan.types, -1);
+  plan.chargeMap.assign(system.getNumParticles(), -1);
+  plan.initialPositions.assign(system.positions.begin(), system.positions.end());
+  if (plan.initialPositions.size() != 3 * system.getNumParticles())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+        "device frame parameter plan: model positions have an inconsistent size");
   auto fail = [](const llvm::Twine &message) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
         "device frame parameter plan: " + message);
@@ -25,11 +31,19 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
   if (plan.typeEpsilon.size() != plan.types ||
       (!plan.fixedPairs.empty() && plan.fixedPairs.size() != size_t(plan.types) * plan.types))
     return fail("inconsistent type metadata");
-  for (const auto &entry : set.tunables) {
+  for (auto [i, entry] : llvm::enumerate(set.tunables)) {
     if (entry.entries > size_t(std::numeric_limits<int64_t>::max() - plan.parameters))
       return fail("theta size overflows int64");
     plan.offsets.push_back(plan.parameters);
     plan.parameters += entry.entries;
+    if (i >= set.values.size() || set.values[i].size() != entry.entries)
+      return fail("initial theta has an inconsistent shape");
+    llvm::append_range(plan.initialParameters, set.values[i]);
+    using Entry = model::TunableSet::Entry;
+    int64_t kind = entry.kind == Entry::Sigma || entry.kind == Entry::Epsilon ||
+        entry.kind == Entry::SigmaPair || entry.kind == Entry::EpsilonPair ? 1 :
+        (entry.kind == Entry::Charge && program.pme ? 2 : 0);
+    plan.parameterKinds.insert(plan.parameterKinds.end(), entry.entries, kind);
   }
   auto resource = [&](FrameBatchMappedResource::Kind kind, unsigned index,
                       unsigned field, size_t size) -> FrameBatchMappedResource & {
@@ -72,6 +86,9 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
     switch (entry.kind) {
     case Entry::Charge:
       target = bindField("q");
+      if (mapped.size() != plan.chargeMap.size()) return fail("a charge map has the wrong size");
+      for (size_t i = 0; i != mapped.size(); ++i)
+        if (mapped[i] >= 0) plan.chargeMap[i] = mapped[i];
       break;
     case Entry::DihedralK:
       target = bindTuple("dihedrals", "k");
@@ -140,6 +157,16 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
     if (auto table = bindTable("lj_sigma")) table->map = plan.sigmaPairs;
   if (!plan.mixesEpsilon && llvm::any_of(plan.epsilonPairs, [](int64_t i) { return i >= 0; }))
     if (auto table = bindTable("lj_epsilon")) table->map = plan.epsilonPairs;
+  if (plan.mixesSigma)
+    if (auto table = bindTable("lj_sigma")) {
+      table->map = plan.sigmaPairs;
+      table->update = FrameBatchMappedResource::MixSigma;
+    }
+  if (plan.mixesEpsilon)
+    if (auto table = bindTable("lj_epsilon")) {
+      table->map = plan.epsilonPairs;
+      table->update = FrameBatchMappedResource::MixEpsilon;
+    }
   auto allocate = [&](size_t count) -> llvm::Expected<int64_t> {
     if (count > size_t(std::numeric_limits<int64_t>::max() - plan.rawValues))
       return fail("raw derivative size overflows int64");
@@ -232,6 +259,60 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
       plan.typeOffsets.push_back(plan.particlesByType.size());
     }
   }
+  plan.rawKinds.assign(plan.rawValues, 0);
+  plan.rawVolumeConstants.assign(plan.rawValues, 0.0);
+  plan.rawFixedConstants.assign(plan.rawValues, 0.0);
+  auto correction = [&](size_t index, int kind, double volume, double fixed) {
+    plan.rawKinds[index] = kind;
+    plan.rawVolumeConstants[index] = volume;
+    plan.rawFixedConstants[index] = fixed;
+  };
+  for (auto [i, slot] : llvm::enumerate(program.gradientSlots))
+    correction(i, 1, slot.volumeConstant, slot.fixedConstant);
+  if (plan.chargeValues >= 0)
+    for (size_t i = 0; i != particles; ++i)
+      correction(plan.chargeValues + i, 2,
+          program.gradientChargeVolume[i], program.gradientChargeFixed[i]);
+  for (auto [i, field] : llvm::enumerate(program.gradientFields))
+    for (auto [type, row] : llvm::enumerate(field.rows))
+      correction(plan.typeSums[i] + type, 1, row.volumeConstant, row.fixedConstant);
+  if (system.topology) {
+    plan.initialSigma = system.topology->sigma;
+    plan.initialEpsilon = system.topology->epsilon;
+  }
+  for (auto [i, seed] : llvm::enumerate(control.tunableTableSeeds)) {
+    if (i >= plan.typeSums.size() || i >= system.tunableSeedWeights.size() ||
+        seed.tunable >= set.tunables.size() || seed.sites.size() != plan.types)
+      return fail("inconsistent table-seed metadata");
+    FrameBatchParameterPlan::Seed item;
+    const auto &entry = set.tunables[seed.tunable];
+    item.sigma = seed.sigma;
+    item.perType = entry.kind == model::TunableSet::Entry::Sigma ||
+                   entry.kind == model::TunableSet::Entry::Epsilon;
+    item.geometric = !seed.sigma || entry.mixing == Mixing::Geometric;
+    item.rawBase = plan.typeSums[i];
+    item.weights = system.tunableSeedWeights[i];
+    if (item.weights.size() != size_t(plan.types) * plan.types)
+      return fail("a table seed has the wrong weight-table size");
+    if (item.perType) {
+      item.mask.assign(size_t(plan.types) * plan.types, -1);
+      const auto &overrides = seed.sigma ? plan.sigmaPairs : plan.epsilonPairs;
+      for (size_t a = 0; a != plan.types; ++a)
+        for (size_t b = 0; b != plan.types; ++b) {
+          size_t pair = a * plan.types + b;
+          if (seed.sites[a] >= 0 && overrides[pair] < 0 &&
+              (plan.fixedPairs.empty() || !plan.fixedPairs[pair]))
+            item.mask[pair] = 0;
+        }
+      if (auto table = bindTable("tgw" + std::to_string(i))) {
+        table->map = item.mask;
+        table->update = seed.sigma ? FrameBatchMappedResource::SeedSigma
+                                  : FrameBatchMappedResource::SeedEpsilon;
+        table->seed = i;
+      }
+    }
+    plan.seeds.push_back(std::move(item));
+  }
   plan.referenceVolume = system.box[0] * system.box[1] * system.box[2];
   plan.corrections = {program.dispersionEnergy, program.dispersionFixedEnergy,
       program.gradientShiftEnergy, program.gradientShiftFixedEnergy,
@@ -239,6 +320,15 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
   auto active = [](const auto &map) {
     return llvm::any_of(map, [](int64_t index) { return index >= 0; });
   };
+  if (program.pme && active(plan.chargeMap)) {
+    if (!system.topology || plan.chargeValues < 0)
+      return fail("charge-dependent PME requires logical charges and correction slots");
+    plan.initialCharges = system.topology->charges;
+    plan.pme = FrameBatchPMEConstants{plan.chargeValues,
+        -coulomb * program.pmeSelfFactor, -coulomb * M_PI,
+        program.pmeBackgroundFactor, -2.0 * coulomb * program.pmeSelfFactor,
+        -2.0 * coulomb * M_PI, plan.referenceVolume};
+  }
   bool changesLJ = active(plan.sigmaMap) || active(plan.epsilonMap) ||
       active(plan.sigmaPairs) || active(plan.epsilonPairs);
   bool includesLJ = !control.dependentTerms || getDependentTerms(control, system).lennardJones;
@@ -259,6 +349,17 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
     double volume = plan.referenceVolume;
     bool shifted = control.truncation == Truncation::Shift;
     plan.lj = FrameBatchLJConstants{plan.types, n, ordered, cutoff, volume, shifted};
+    plan.ljSlopeFactor = ordered > 0.0 ? -2.0 * M_PI / (3.0 * volume) * n * n /
+        (ordered * cutoff * cutoff * cutoff) : 0.0;
+    plan.ljFixedFactor = (1.0 - volume /
+        (n * 4.0 * M_PI / 3.0 * cutoff * cutoff * cutoff)) - 1.0;
+    plan.orderedTypePairs.resize(size_t(plan.types) * plan.types);
+    for (size_t a = 0; a != plan.types; ++a)
+      for (size_t b = 0; b != plan.types; ++b)
+        plan.orderedTypePairs[a * plan.types + b] =
+            plan.typeCounts[a] * (plan.typeCounts[b] - (a == b ? 1.0 : 0.0));
+    for (auto [i, j] : topology.exclusions)
+      plan.orderedTypePairs[topology.types[i] * plan.types + topology.types[j]] -= 2.0;
     // Static contributions of other terms stay at their compiled values.
     // The dynamic builtin replaces the same formula's initial contribution.
     auto c6 = [&](unsigned a, unsigned b) {

@@ -9,7 +9,8 @@ using namespace mdir::driver::builder;
 llvm::Expected<scf::ForOp> mdir::driver::builder::buildFrameBatchRows(
     OpBuilder &builder, Value positionBytes, Value cells, Value particles,
     Type stateType, unsigned cellEdges,
-    llvm::function_ref<llvm::Error(OpBuilder &, const FrameBatchRowIR &)> body) {
+    llvm::function_ref<llvm::Error(OpBuilder &, const FrameBatchRowIR &)> body,
+    bool positionViews) {
   auto bytes = dyn_cast<MemRefType>(positionBytes.getType());
   auto boxes = dyn_cast<MemRefType>(cells.getType());
   if (!bytes || bytes.getRank() != 1 || !bytes.getElementType().isInteger(8) ||
@@ -25,19 +26,24 @@ llvm::Expected<scf::ForOp> mdir::driver::builder::buildFrameBatchRows(
   Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);
   Value count = memref::DimOp::create(builder, loc, cells, zero);
-  Value stride = arith::ConstantIndexOp::create(builder, loc,
-      3 * (stateType.isF64() ? 8 : 4));
-  Value frameBytes = arith::MulIOp::create(builder, loc, particles, stride);
+  Value frameBytes;
+  if (positionViews) {
+    Value stride = arith::ConstantIndexOp::create(builder, loc,
+        3 * (stateType.isF64() ? 8 : 4));
+    frameBytes = arith::MulIOp::create(builder, loc, particles, stride);
+  }
   auto positions = MemRefType::get({ShapedType::kDynamic, 3}, stateType,
       MemRefLayoutAttrInterface(), bytes.getMemorySpace());
   return buildEntryLoop(builder, "frame batch", zero, count, one, {},
       [&](OpBuilder &at, Value index, ValueRange)
           -> llvm::Expected<SmallVector<Value>> {
-    Value offset = arith::MulIOp::create(at, loc, index, frameBytes);
     FrameBatchRowIR row;
     row.index = index;
-    row.positions = memref::ViewOp::create(at, loc, positions,
-        positionBytes, offset, ValueRange{particles});
+    if (positionViews) {
+      Value offset = arith::MulIOp::create(at, loc, index, frameBytes);
+      row.positions = memref::ViewOp::create(at, loc, positions,
+          positionBytes, offset, ValueRange{particles});
+    }
     for (unsigned edge = 0; edge != cellEdges; ++edge) {
       Value column = arith::ConstantIndexOp::create(at, loc, edge);
       row.edges.push_back(memref::LoadOp::create(at, loc, cells,

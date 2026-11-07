@@ -381,7 +381,13 @@ struct compiler::Activation {
   StridedMemRefType<char, 1> frameBatchGradients{};
   StridedMemRefType<double, 2> frameBatchStrain{};
   StridedMemRefType<char, 1> frameBatchRows{};
+  int64_t frameBatchPositionWidth = 8;
+  StridedMemRefType<double, 1> frameBatchTangent{}, frameBatchCotangent{};
+  StridedMemRefType<double, 1> frameBatchJvp{}, frameBatchVjp{};
+  StridedMemRefType<char, 1> frameBatchAux{};
   StridedMemRefType<int64_t, 1> frameBatchStatus{};
+  int64_t frameBatchInitialStatus = std::numeric_limits<int64_t>::max();
+  int64_t frameBatchCurrentFrame = 0;
   std::function<void(int64_t)> frameBatchFrame;
   /// Of a product program (D381, #726): the cotangent of
   /// the gradient in the positions of the next frame, in the order of the
@@ -467,8 +473,13 @@ struct FrameBatchBuffers {
   StridedMemRefType<char, 1> gradients;
   StridedMemRefType<double, 2> strain;
   StridedMemRefType<char, 1> rows;
+  int64_t positionWidth;
+  StridedMemRefType<double, 1> tangent, cotangent, jvp, vjp;
+  StridedMemRefType<char, 1> aux;
+  int64_t initialStatus;
 };
 extern "C" void mdrtFrameBatchFrame(int64_t frame) {
+  runningActivation->frameBatchCurrentFrame = frame;
   if (runningActivation->frameBatchFrame)
     runningActivation->frameBatchFrame(frame);
 }
@@ -488,6 +499,13 @@ _mlir_ciface_mdrtFrameBatchBoundary(FrameBatchBuffers *buffers,
   buffers->gradients = a->frameBatchGradients;
   buffers->strain = a->frameBatchStrain;
   buffers->rows = a->frameBatchRows;
+  buffers->positionWidth = a->frameBatchPositionWidth;
+  buffers->tangent = a->frameBatchTangent;
+  buffers->cotangent = a->frameBatchCotangent;
+  buffers->jvp = a->frameBatchJvp;
+  buffers->vjp = a->frameBatchVjp;
+  buffers->aux = a->frameBatchAux;
+  buffers->initialStatus = a->frameBatchInitialStatus;
   for (size_t k = 0; k != a->frameAsks.size(); ++k)
     asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
 }
@@ -3080,6 +3098,14 @@ llvm::Error Simulation::checkFrame(
   return llvm::Error::success();
 }
 
+std::vector<std::string> Simulation::getFrameBatchAuxNames() const {
+  std::vector<std::string> names;
+  if (!compiled->control.dependentTerms) names.push_back("virial");
+  names.push_back("volume");
+  llvm::append_range(names, getObservableNames());
+  return names;
+}
+
 llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this simulation");
@@ -3099,22 +3125,80 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
     parameters += values.size();
   }
   if (batch.frames < 0 || batch.frames > (std::numeric_limits<int64_t>::max() >> 16) ||
-      batch.parameterCount != parameters || !batch.parameters ||
+      batch.parameterCount != parameters || (parameters && !batch.parameters) ||
       (batch.frames && (!batch.positions || !batch.energies)))
     return inputError("invalid device frame buffers or dimensions");
+  if ((batch.jvp && parameters && !batch.tangent) ||
+      (batch.vjp && batch.frames && !batch.cotangent))
+    return inputError("a device frame product requires its tangent or cotangent buffer");
   if (batch.cells && !prepared.control.periodic)
     return inputError("the program has no periodic cell, and the batch gives one");
+  if (compiled->control.dependentTerms && (batch.positionGradient || batch.strain))
+    return unsupported("the gradients in the positions and strain are not given by a dependent-term frame program");
   if (batch.strain && !system.restraintConstants.empty())
     return unsupported("the gradient in the strain is not given for a program with restraints to reference positions");
   size_t particles = system.getNumParticles();
   size_t width = getWidth(compiled->program.state);
+  size_t auxColumns = getFrameBatchAuxNames().size();
+  unsigned inputWidth = batch.positionWidth ? batch.positionWidth : width;
+  bool acceptsF32 = compiled->program.state == Element::F64 &&
+                    compiled->program.force == Element::F32;
+  if (inputWidth != width && !(acceptsF32 && inputWidth == 4))
+    return inputError("the positions have an unsupported physical width for this frame program");
   if (particles > size_t(std::numeric_limits<int64_t>::max()) / 3 / width ||
       uint64_t(batch.frames) > uint64_t(std::numeric_limits<int64_t>::max()) /
           std::max<size_t>(1, particles * 3 * width) ||
       uint64_t(batch.frames) > std::numeric_limits<size_t>::max() / (6 * sizeof(double)) ||
+      uint64_t(auxColumns) > uint64_t(std::numeric_limits<int64_t>::max()) / 8 /
+          std::max<int64_t>(1, batch.frames) ||
       uint64_t(parameters) > uint64_t(std::numeric_limits<int64_t>::max()) / 8 /
           std::max<int64_t>(1, batch.frames))
     return inputError("the device frame batch size overflows int64");
+  struct Span {
+    uintptr_t first, last;
+    const char *name;
+    bool output;
+  };
+  std::vector<Span> spans;
+  auto span = [&](const char *name, const void *pointer, uint64_t bytes,
+                  bool output) -> llvm::Error {
+    if (!bytes) return llvm::Error::success();
+    uintptr_t first = reinterpret_cast<uintptr_t>(pointer);
+    if (!pointer || bytes > std::numeric_limits<uintptr_t>::max() - first)
+      return inputError(llvm::Twine("invalid device frame memory range: ") + name);
+    spans.push_back({first, first + bytes, name, output});
+    return llvm::Error::success();
+  };
+  uint64_t positionBytes = uint64_t(batch.frames) * particles * 3 * inputWidth;
+  uint64_t parameterBytes = uint64_t(parameters) * sizeof(double);
+  uint64_t frameBytes = uint64_t(batch.frames) * sizeof(double);
+  if (auto error = span("positions", batch.positions, positionBytes, false)) return error;
+  if (auto error = span("theta", batch.parameters, parameterBytes, false)) return error;
+  if (batch.cells && batch.cellsOnDevice)
+    if (auto error = span("cells", batch.cells, frameBytes * 6, false)) return error;
+  if (batch.jvp)
+    if (auto error = span("tangent", batch.tangent, parameterBytes, false)) return error;
+  if (batch.vjp)
+    if (auto error = span("cotangent", batch.cotangent, frameBytes, false)) return error;
+  if (auto error = span("energies", batch.energies, frameBytes, true)) return error;
+  if (batch.positionGradient)
+    if (auto error = span("position gradient", batch.positionGradient, positionBytes, true)) return error;
+  if (batch.strain)
+    if (auto error = span("strain", batch.strain, frameBytes * 9, true)) return error;
+  if (batch.rows)
+    if (auto error = span("rows", batch.rows, parameterBytes * batch.frames, true)) return error;
+  if (batch.jvp)
+    if (auto error = span("JVP", batch.jvp, frameBytes, true)) return error;
+  if (batch.vjp)
+    if (auto error = span("VJP", batch.vjp, parameterBytes, true)) return error;
+  if (batch.aux)
+    if (auto error = span("auxiliary outputs", batch.aux, frameBytes * auxColumns, true)) return error;
+  for (size_t i = 0; i != spans.size(); ++i)
+    for (size_t j = 0; j != i; ++j)
+      if ((spans[i].output || spans[j].output) &&
+          spans[i].first < spans[j].last && spans[j].first < spans[i].last)
+        return inputError(llvm::Twine("device frame buffers overlap: ") +
+                          spans[j].name + " and " + spans[i].name);
   std::lock_guard<std::mutex> lock(getRunMutex());
   auto ordinal = findRuntime<int32_t()>("mdrtDeviceOrdinal");
   auto use = findRuntime<void *(void *)>("mdrtUseStream");
@@ -3129,28 +3213,42 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
     void *previous;
     ~RestoreStream() { restore(previous); }
   } stream{restore, use(batch.stream)};
-  std::vector<std::array<double, 6>> cells(batch.frames, getCell());
+  const auto cellBefore = getCell();
+  std::vector<std::array<double, 6>> cells(batch.frames, cellBefore);
   if (batch.cells && batch.frames) {
     if (batch.cellsOnDevice)
       copy(cells.data(), batch.cells, cells.size() * sizeof(cells.front()));
     else
       std::memcpy(cells.data(), batch.cells, cells.size() * sizeof(cells.front()));
   }
+  int64_t initialStatus = std::numeric_limits<int64_t>::max();
+  std::string cellFailure;
   if (prepared.control.periodic) {
     for (auto [index, cell] : llvm::enumerate(cells))
-      if (llvm::Error error = checkCommittedCell(cell))
-        return inputError("frame " + llvm::Twine(index) + ": " + llvm::toString(std::move(error)));
+      if (llvm::Error error = checkCommittedCell(cell)) {
+        std::string message = llvm::toString(std::move(error));
+        if (cellFailure.empty()) {
+          initialStatus = (int64_t(index) << 16) | 8;
+          cellFailure = std::move(message);
+        }
+        cells[index] = cellBefore;
+      }
   }
-  if (!batch.frames) return llvm::Error::success();
   Output &out = *output;
   describeProgram(out, compiled->program);
   out.system = &system;
   out.endStep = out.quietStep = step;
   std::string failure;
-  out.fail = [&](const std::string &message) { if (failure.empty()) failure = message; };
+  int64_t failureFrame = 0;
+  bool evaluated = false;
+  out.fail = [&](const std::string &message) {
+    if (failure.empty()) {
+      failure = message;
+      failureFrame = activation ? activation->frameBatchCurrentFrame : 0;
+    }
+  };
   setOutput(&out);
   stopMessage.clear();
-  const auto cellBefore = getCell();
   auto error = activation ? llvm::Error::success() : startActivation(1);
   if (!error && failure.empty() && stopMessage.empty() && activation->atBoundary) {
     auto vector = [](auto pointer, int64_t count) {
@@ -3162,19 +3260,29 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
       return result;
     };
     Activation &a = *activation;
+    a.frameBatchInitialStatus = initialStatus;
+    a.frameBatchCurrentFrame = 0;
     a.frameBatchFrame = [&](int64_t frame) { setCell(cells[frame]); };
     a.frameBatchPositionBytes = vector(static_cast<const char *>(batch.positions),
-        batch.frames * particles * 3 * width);
+        batch.frames * particles * 3 * inputWidth);
+    a.frameBatchPositionWidth = inputWidth;
+    a.frameBatchTangent = vector(batch.tangent, batch.jvp ? parameters : 0);
+    a.frameBatchCotangent = vector(batch.cotangent, batch.vjp ? batch.frames : 0);
+    a.frameBatchJvp = vector(batch.jvp, batch.jvp ? batch.frames : 0);
+    a.frameBatchVjp = vector(batch.vjp, batch.vjp ? parameters : 0);
+    a.frameBatchAux = vector(reinterpret_cast<char *>(batch.aux),
+        batch.aux ? batch.frames * auxColumns * 8 : 0);
     a.frameBatchParameters = vector(batch.parameters, parameters);
     a.frameBatchEnergies = vector(batch.energies, batch.frames);
     a.frameBatchRows = vector(reinterpret_cast<char *>(batch.rows),
         batch.rows ? batch.frames * parameters * 8 : 0);
     a.frameBatchGradients = vector(static_cast<char *>(batch.positionGradient),
-        batch.positionGradient ? batch.frames * particles * 3 * width : 0);
+        batch.positionGradient ? batch.frames * particles * 3 * inputWidth : 0);
     a.frameBatchCells = {reinterpret_cast<double *>(cells.data()),
         reinterpret_cast<double *>(cells.data()), 0, {batch.frames, 6}, {6, 1}};
     a.frameBatchStrain = {batch.strain, batch.strain, 0, {batch.frames, 9}, {9, 1}};
     a.frameAsks = {batch.positionGradient ? 1.0 : 0.0, batch.strain ? 1.0 : 0.0};
+    evaluated = true;
     resumeActivation();
     a.frameBatchFrame = nullptr;
   }
@@ -3183,11 +3291,21 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   if (!error && failure.empty() && (activation->returned || !activation->atBoundary))
     failure = "the program did not reach the end of the frame batch";
   int64_t status = std::numeric_limits<int64_t>::max();
-  if (!error && failure.empty())
+  if (evaluated && activation && activation->frameBatchStatus.data)
     copy(&status, activation->frameBatchStatus.data, sizeof(status));
-  if (!error && failure.empty() && status != std::numeric_limits<int64_t>::max())
-    failure = "frame " + std::to_string(uint64_t(status) >> 16) +
-        " has a nonfinite device result (reason " + std::to_string(status & 65535) + ")";
+  if (!error && status != std::numeric_limits<int64_t>::max() &&
+      (failure.empty() || int64_t(uint64_t(status) >> 16) <= failureFrame)) {
+    unsigned reason = status & 255;
+    std::string message = "frame " + std::to_string(uint64_t(status) >> 16) + ": ";
+    if (reason == 1) message += "the positions contain a nonfinite value";
+    else if (reason == 7) message += "theta is nonfinite or outside its domain";
+    else if (reason == 8) message += cellFailure;
+    else message += "a device result is nonfinite (reason " + std::to_string(reason) + ")";
+    if (reason == 1 || reason == 7 || reason == 8)
+      error = inputError(message);
+    else
+      error = simulationError(message);
+  }
   if (!error && !failure.empty()) error = simulationError(failure);
   if (error) {
     setCell(cellBefore);

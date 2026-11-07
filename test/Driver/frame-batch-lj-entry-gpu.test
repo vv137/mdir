@@ -1,0 +1,8 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: %torch_python %S/Inputs/frame_batch_lj_entry.py %t | FileCheck %s
+# CHECK: integrated LJ entry passed
+# CHECK-SAME: "energies": 16
+# CHECK-SAME: "strain_correction_values": 48
+# CHECK-SAME: "exact_gradients": 96
+# CHECK-SAME: "exact_strain_off_diagonals": 96
+# CHECK-SAME: "deterministic_repeat_values": 256

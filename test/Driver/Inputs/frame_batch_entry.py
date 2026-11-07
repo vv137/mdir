@@ -41,20 +41,30 @@ energy = torch.empty(2, device="cuda", dtype=torch.float64)
 gradient = torch.empty_like(positions)
 strain = torch.empty((2, 3, 3), device="cuda", dtype=torch.float64)
 rows = torch.empty((2, theta.numel()), device="cuda", dtype=torch.float64)
+tangent = torch.tensor([0.5], device="cuda", dtype=torch.float64)
+cotangent = torch.tensor([0.25, -0.5], device="cuda", dtype=torch.float64)
+jvp = torch.empty(2, device="cuda", dtype=torch.float64)
+vjp = torch.empty(theta.numel(), device="cuda", dtype=torch.float64)
+aux = torch.empty((2, 2), device="cuda", dtype=torch.float64)
+assert evaluator._simulation._device_batch_aux_names == ["virial", "volume"]
 start_counts, previous = None, None
 for call, coefficient in enumerate((1.5, 1.5, 2.25)):
     theta.fill_(coefficient)
     evaluator.tunables["k"] = np.array([coefficient])
     reference = evaluator.evaluate(frames, gradients=("tunables", "positions", "strain"))
     evaluator._evaluate_device_batch(positions, theta, energy,
-        position_gradient=gradient, strain=strain, rows=rows,
+        position_gradient=gradient, strain=strain, rows=rows if call != 1 else None,
+        tangent=tangent, cotangent=cotangent, jvp=jvp, vjp=vjp, aux=aux,
         stream=torch.cuda.current_stream().cuda_stream or 1)
     actual_values = []
     for name, actual, expected in (
             ("energy", energy.cpu().numpy(), reference.energy),
             ("positions", gradient.cpu().numpy(), reference.gradients["positions"]),
             ("strain", strain.cpu().numpy(), reference.gradients["strain"]),
-            ("rows", rows.cpu().numpy(), reference.jacobian["k"])):
+            ("rows", rows.cpu().numpy(), reference.jacobian["k"]),
+            ("jvp", jvp.cpu().numpy(), reference.jacobian["k"] @ np.array([0.5])),
+            ("vjp", vjp.cpu().numpy(), np.array([0.25, -0.5]) @ reference.jacobian["k"]),
+            ("aux", aux.cpu().numpy(), np.stack((reference.virial, reference.volume), axis=1))):
         mismatch = actual.view(np.uint64) != expected.view(np.uint64)
         if np.any(mismatch):
             for index in zip(*np.where(mismatch)):
@@ -72,4 +82,28 @@ for call, coefficient in enumerate((1.5, 1.5, 2.25)):
                    for a, b in zip(previous, actual_values)), "device repeat differs"
     previous = actual_values
     print(f"call {call}: all 46 results bitwise identical to host", flush=True)
+    print(f"call {call}: JVP/VJP bitwise identical; rows requested: {call != 1}", flush=True)
 print("device frame entry: rows, repeated calls and theta updates passed", flush=True)
+
+def expect_input_error(call, text):
+    try:
+        call()
+    except mdir.InputError as error:
+        assert text in str(error), (text, str(error))
+    else:
+        raise AssertionError(f"expected InputError: {text}")
+
+bad = positions.clone()
+bad[1, 0, 0] = float("nan")
+expect_input_error(lambda: evaluator._evaluate_device_batch(bad, theta, energy), "frame 1")
+theta.fill_(float("nan"))
+expect_input_error(lambda: evaluator._evaluate_device_batch(positions, theta, energy), "theta")
+theta.fill_(2.25)
+evaluator._evaluate_device_batch(positions, theta, energy)
+assert np.array_equal(energy.cpu().numpy().view(np.uint64), reference.energy.view(np.uint64))
+expect_input_error(lambda: evaluator._evaluate_device_batch(positions, energy[:1], energy), "overlap")
+vjp.fill_(float("nan"))
+evaluator._evaluate_device_batch(positions[:0], theta, energy[:0],
+    cotangent=cotangent[:0], vjp=vjp)
+assert torch.equal(vjp, torch.zeros_like(vjp)), "empty batch VJP must be zero"
+print("device frame entry: auxiliary outputs, input errors, recovery and empty batch passed", flush=True)

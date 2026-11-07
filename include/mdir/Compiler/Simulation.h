@@ -393,13 +393,20 @@ public:
   struct FrameBatch {
     const void *positions = nullptr;
     const double *parameters = nullptr, *cells = nullptr;
+    const double *tangent = nullptr, *cotangent = nullptr;
     double *energies = nullptr, *strain = nullptr, *rows = nullptr;
+    double *jvp = nullptr, *vjp = nullptr;
+    double *aux = nullptr;
     void *positionGradient = nullptr, *stream = nullptr;
     int64_t frames = 0, parameterCount = 0;
     int device = 0;
+    unsigned positionWidth = 0; // 0 selects the state width; otherwise 4 or 8.
     bool cellsOnDevice = false;
   };
   llvm::Error evaluateFrames(const FrameBatch &);
+  /// Auxiliary columns: virial (whole potential only), volume, then the
+  /// observable columns in their established order. Values are f64.
+  std::vector<std::string> getFrameBatchAuxNames() const;
   /// The product of the derivative in the tunables of the energy of a
   /// frame and of its gradient in the positions with the cotangents
   /// `energyCotangent` (g) and `positionCotangent` (3 N numbers in the

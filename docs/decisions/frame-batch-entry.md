@@ -13,9 +13,11 @@ The device batch entry consumes `Control::FrameMode::DeviceBatch` through
 yet available. It extends the field plumbing merged in D378 (#755).
 
 One call evaluates K frames in one activation, using the caller's stream.
-Positions, tunable values, and results remain in device buffers. Positions
-of each frame are views into the batch, and results are written into their
-corresponding output rows. The host may read the K by 6 cell values once
+Positions, tunable values, and results remain in device buffers. Each
+frame's position view is validated into an owned one-frame device scratch
+buffer before neighbor indexing. This also widens f32 input for a
+nondeterministic Mixed program; it never copies batch positions to the
+host. Results are written into their corresponding output rows. The host may read the K by 6 cell values once
 per call to validate them (Ruling 20, Q2). Tunable values are boundary inputs:
 `applyTunables` runs on the device, so a change of parameters does not
 restart the activation (Q3).
@@ -91,6 +93,25 @@ device results are bitwise identical, and the activation-start argument
 counters do not increase across the calls. Derived tables, general
 correction derivatives, auxiliary outputs and final-head gates remain
 in progress.
+
+Later component checks cover device JVP/VJP contractions, including a call
+without a Jacobian output buffer, and bitwise virial/volume auxiliary
+outputs. Device validation records nonfinite positions and invalid theta;
+host cell validation seeds the same ordered status, so the final report
+names the earliest bad frame. Invalid inputs use safe model values during
+evaluation and the failed activation is discarded. A focused check covers
+error attribution, recovery, overlapping output refusal and an empty batch
+whose VJP is zero. The native constructor checks and all these focused
+checks passed.
+
+The combining-rule and charge-map component checks cover arithmetic and
+geometric sigma mixing and epsilon mixing in Double and Mixed. Each uses
+three calls, including an exact repeat and changed theta. With cutoff
+electrostatics and with PME, energies, position gradients and strain are
+bitwise identical to the host; parameter rows meet the relative 1e-14
+bound and repeated device values are bitwise identical. These checks each
+passed their first focused run. General custom pair-tail updates,
+transfer-counter validation and final-head gates remain in progress.
 
 `mdrt.from_buffer` accepts fields in explicit device memory space 1. Device
 storage assignment borrows them without a host copy or ownership transfer;

@@ -9,6 +9,11 @@ struct FrameBatchEvaluationPoint {
   mlir::Value frame, energies, gradients, strain, status, corrections;
   mlir::ValueRange edges, asks, startValues;
   mlir::Value raw, rows, rowOffsets, sourceIndices, weights;
+  mlir::Value rawKinds, rawVolume, rawFixed, typeOffsets, particlesByType;
+  mlir::Value coulombCorrections;
+  mlir::Value positionWidth;
+  mlir::Value rowWork, tangent, cotangent, jvp, vjp;
+  mlir::Value aux, observableVolume, observableFixed;
 };
 llvm::Error buildFrameBatchEvaluation(mlir::OpBuilder &, const Program &,
     const SimpleFrameEntryIRConfig &, const EntryFieldsIR &,

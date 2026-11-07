@@ -1,0 +1,3 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: %torch_python %S/Inputs/frame_batch_mixing.py %t PME | FileCheck %s
+# CHECK: device combining rules and charge maps passed
