@@ -30,8 +30,15 @@ Quantities taken from the same compiled program must match the deterministic
 host evaluator to the bit for the same precision. The tunable-dependent
 dispersion and shift correction has two implementations: C++ in the host
 entry and a kernel in the device entry. For the energies this correction
-contributes to, the relative difference must be at most 1e-14. This bound
-allows the few ULP introduced by the independent arithmetic implementations;
+contributes to, the relative difference must be at most 1e-14. The same
+relative bound applies to that correction's strain and virial contribution,
+as ruled after the first integrated check. That check measured a largest
+strain-contribution relative difference of 1.1158433802099432e-16 (1 ULP):
+the three diagonal entries of one frame differed, while all twelve position
+gradient entries were bitwise identical. The run stopped without a retry;
+the maintainer authorized continuing with this explicit correction bound.
+The compiled virial tensor and every other contribution remain bitwise.
+This bound allows the few ULP introduced by the independent implementations;
 it does not relax comparisons of other quantities. Report the largest
 measured relative difference and ULP count. Repeated device calls in
 deterministic mode must still be bitwise identical. Device integer powers
@@ -48,6 +55,14 @@ difference of 2.989680490180319e-16 and at most 2 ULP; its repeated device
 invocations were bitwise identical. The map/contraction check covered 879
 values, with exact mapped values, a maximum contraction relative difference
 of 1.4814145717262463e-16, and bitwise identical repeated device invocations.
+
+The integrated check resumed under the explicit strain/virial ruling:
+16/16 energies and 48/48 dispersion strain contributions satisfy 1e-14.
+The maxima are 2.989680490180319e-16 (2 ULP) for energy and
+2.1075144471205114e-16 (1 ULP) for the strain contribution. All 96 position
+gradient values and 96 strain off-diagonal values are bitwise identical to
+the host. All 256 repeated deterministic device values are bitwise
+identical. These are component-snapshot results, not final-head gates.
 
 A scoped runtime stream selection restores the previous stream after the
 call, including errors. Side streams join the selected stream, and FFT
