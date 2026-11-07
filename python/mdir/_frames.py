@@ -313,10 +313,10 @@ class FrameEnergies:
         in the positions, as the attribute `positions` (K, N, 3) float64, in
         the order of the input, by the same pass of a product program that
         gives it as well; a term without a rule for it (the reciprocal sum
-        of particle mesh Ewald, the extra points of Amber, placed by the
-        directions of their bonds) raises UnsupportedError, naming it.
-        Virtual sites take the product in theta, and linear ones the
-        derivative in the positions too (D384); the
+        of particle mesh Ewald) raises UnsupportedError, naming it.
+        Virtual sites take both: linear ones (D384) and the extra points
+        of Amber, placed by the directions of their bonds, with the
+        curvature of their placement (D[force-matching-amber-curvature]); the
         cotangent on a site is not read, its gradient being zero."""
         evaluator = self._evaluator
         if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):

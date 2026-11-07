@@ -64,6 +64,18 @@ By default the program writes that transpose out. With
 as a potential of the positions and takes its forces from
 `md-differentiate`: the declared transpose of the sum over the sites and
 the reverse derivative of the placement (D298, Section 3.3).
+Force matching differentiates the spread forces once more, in the
+positions along a tangent $\dot{\mathbf x}$ (Section 3.6). Besides
+$J^\mathsf T$ applied to the change of $\mathbf f$, that derivative has
+the gradient in $\mathbf x$ of $\dot{\mathbf x}\cdot J^\mathsf T\mathbf f$
+at a fixed $\mathbf f$. This is the second derivative of
+$\sum_s \mathbf f_s\cdot\mathbf x_s(\mathbf x)$ applied to
+$\dot{\mathbf x}$, and by its symmetry it equals the derivative of
+$J^\mathsf T\mathbf f$ along $\dot{\mathbf x}$ at a fixed $\mathbf f$.
+It vanishes for a linear site, whose $J$ is constant. For Amber's extra
+point the program forms it by the product rule from the derivatives of
+the unit vectors of the bonds and of their bisector
+(D[force-matching-amber-curvature]).
 The virial changes by $\sum_k (\mathbf x_k - \mathbf x_s)\otimes\mathbf F_k$
 over the forces $\mathbf F_k$ moved to the atoms, which the derived form
 takes as the virial of those forces, negated, less

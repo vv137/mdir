@@ -622,9 +622,9 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     force matching (D382, `FrameEnergies.vjp(positions=)`).
     Their derivative in the positions is that of the product,
     g dU/dx + H v (D383, D385), where the backward takes a
-    gradient in the positions; a term without a rule for it (the
-    reciprocal sum of particle mesh Ewald, the extra points of Amber,
-    placed by the directions of their bonds) raises
+    gradient in the positions, the extra points of Amber included
+    (D[force-matching-amber-curvature]); a term without a rule for it (the
+    reciprocal sum of particle mesh Ewald) raises
     UnsupportedError, naming it, there alone. Their derivative in the cell,
     and every other second derivative, are refused (`UnsupportedError`)
     where a backward needs them. The positions and the cell are nodes of
