@@ -1,0 +1,40 @@
+# REQUIRES: python-api, torch
+# Force matching through mdir.torch (D[force-matching-torch], #726 part E),
+# on the CPU. Inputs/python_frame_product_torch.py forms the product of
+# D381 by autograd in its two forms: through the output
+# gradients["positions"], and through the gradient of the energy taken with
+# create_graph=True. Both must equal FrameEnergies.vjp, and the references
+# of the scenarios of python_frame_product.py then check the result:
+# closed forms and NumPy sums with their tangents, central differences, and
+# mixed against double. Then gradcheck of the gradient in the positions in
+# theta, and the refusals.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide dihedral CPU Double %t/dihedral | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide dihedral CPU Mixed %t/dihedral-mixed | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Mixed torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide lj CPU Double | FileCheck %s --check-prefix=LJ -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide lj CPU Mixed | FileCheck %s --check-prefix=LJMIXED -DMODE="CPU Mixed torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide charges CPU Double | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide charges CPU Mixed | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Mixed torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide gradcheck CPU Double %t/gradcheck | FileCheck %s --check-prefix=GRADCHECK -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide refusals CPU Double %t/refusals | FileCheck %s --check-prefix=REFUSED
+
+# DIHEDRAL: [[MODE]]: the product through mdir.torch (output) against FrameEnergies.vjp
+# DIHEDRAL: [[MODE]]: the product through mdir.torch (create_graph) against FrameEnergies.vjp
+# DIHEDRAL: [[MODE]]: dihedral_k, 3 frames, against the closed form along the cotangent
+# DIHEDRAL: [[MODE]]: with a zero cotangent on the positions, against vjp(g) with the Jacobian
+# LJ: [[MODE]]: the product through mdir.torch (create_graph) against FrameEnergies.vjp
+# LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart, 3 frames, against the NumPy sum
+# LJ: [[MODE]]: the same against central differences of the rows along the cotangent
+# LJMIXED: [[MODE]]: the product through mdir.torch (create_graph) against FrameEnergies.vjp
+# LJMIXED: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart, 3 frames, against the NumPy sum
+# LJMIXED: [[MODE]]: the product in mixed precision against that in double
+# CHARGES: [[MODE]]: the product through mdir.torch (create_graph) against FrameEnergies.vjp
+# CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, 2 frames, against the NumPy sum
+# GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (output): dihedral_k on the torsion fixtures, passed
+# GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (create_graph): dihedral_k on the torsion fixtures, passed
+# GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (output): sigma and epsilon of two pairs of types on propane and water, passed
+# GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (create_graph): sigma and epsilon of two pairs of types on propane and water, passed
+# REFUSED: refusals: the Hessian in the positions, by torch.autograd.grad, by backward, and through a tensor that moves the positions
+# REFUSED: refusals: the derivative of the gradient in the strain, and the second derivative in theta
+# REFUSED: refusals: a backward after other frames; the evaluator then gives the same gradient, to the bit
