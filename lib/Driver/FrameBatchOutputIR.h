@@ -15,7 +15,12 @@ llvm::Error buildFrameBatchPositionOutput(mlir::OpBuilder &, mlir::Value forces,
     mlir::Value status);
 llvm::Error buildFrameBatchScalarOutput(mlir::OpBuilder &, mlir::Value scalar,
     mlir::Value destination, mlir::Value frame, mlir::Value status,
-    unsigned reason);
+    unsigned reason, mlir::Value destinationIndex = {});
+/// A scalar derivative field in physical precision, reordered into f64 raw
+/// derivative storage at offset + input particle index.
+llvm::Error buildFrameBatchFieldOutput(mlir::OpBuilder &, mlir::Value source,
+    mlir::Value identities, mlir::Value destination, mlir::Value offset,
+    mlir::Value frame, mlir::Value status);
 /// Transpose and negate W, then subtract the isotropic correction on the
 /// diagonal, as Output::getFrameStrain does. Destination is K by 9 f64.
 llvm::Error buildFrameBatchStrainOutput(mlir::OpBuilder &, mlir::Value virial,

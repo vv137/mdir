@@ -385,6 +385,21 @@ public:
                 const std::optional<std::array<double, 6>> &cell,
                 bool gradient, void *positionGradient = nullptr,
                 bool strain = false);
+  /// Internal, contiguous device-buffer contract of the batch entry.
+  /// Pointers remain borrowed until evaluateFrames returns. Theta and the
+  /// energies are f64; positions and their gradient use the state type.
+  /// Cells are K by 6 f64 metadata, on the host unless cellsOnDevice.
+  /// Strain is K by 9 f64. A null optional output is not requested.
+  struct FrameBatch {
+    const void *positions = nullptr;
+    const double *parameters = nullptr, *cells = nullptr;
+    double *energies = nullptr, *strain = nullptr, *rows = nullptr;
+    void *positionGradient = nullptr, *stream = nullptr;
+    int64_t frames = 0, parameterCount = 0;
+    int device = 0;
+    bool cellsOnDevice = false;
+  };
+  llvm::Error evaluateFrames(const FrameBatch &);
   /// The product of the derivative in the tunables of the energy of a
   /// frame and of its gradient in the positions with the cotangents
   /// `energyCotangent` (g) and `positionCotangent` (3 N numbers in the

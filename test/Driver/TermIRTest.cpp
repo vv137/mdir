@@ -1711,7 +1711,10 @@ static void checkNativeFrameEntry() {
   });
   batchEntry->walk([&](memref::ViewOp view) {
     auto type = cast<MemRefType>(view.getType());
-    positionViews += type.getRank() == 2 && type.getMemorySpaceAsInt() == 1;
+    auto boundary = view.getSource().getDefiningOp<func::CallOp>();
+    positionViews += type.getRank() == 2 && type.getMemorySpaceAsInt() == 1 &&
+        boundary && boundary.getCallee() == "mdrtFrameBatchBoundary" &&
+        view.getSource() == boundary.getResult(0);
   });
   require(batchBoundaries == 1 && legacyBoundaries == 0 && positionViews == 1,
           "native batch entry did not replace the per-frame boundary with row views");

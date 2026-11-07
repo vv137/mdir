@@ -242,9 +242,12 @@ batch entry also constructs one native loop over contiguous position
 views and cell rows, with one descriptor handoff per batch, including device
 theta. Immutable maps upload at activation start; mapped updates return fresh
 field/table descriptors before evaluation. Ordered CSR contraction and LJ
-constant constructors supply the next components. Device output writers,
-the batch caller, derived updates, correction and chain-rule hookup, and
-final validation are pending.
+constant constructors supply the next components. The C++ caller and a
+private DLPack exercise entry now write device energy, position gradients,
+strain and parameter rows. A two-frame torsion check matches 46 host values
+bitwise in each of three calls, with repeated deterministic results and a
+theta update that does not restart the activation. Derived updates, general
+correction derivatives, auxiliary outputs and final validation are pending.
 The independently implemented host and device dispersion/shift correction
 is compared at relative error at most 1e-14, while repeated deterministic
 device results and quantities from the same compiled program retain their

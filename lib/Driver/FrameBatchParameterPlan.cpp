@@ -1,6 +1,7 @@
 #include "FrameBatchParameterPlan.h"
 #include "llvm/ADT/STLExtras.h"
 #include <limits>
+#include <cmath>
 using namespace mdir;
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -149,7 +150,7 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
   if (auto scalars = allocate(program.gradientSlots.size()); !scalars)
     return scalars.takeError();
   size_t particles = system.getNumParticles();
-  for (const auto &field : program.gradientFields) {
+  for (size_t i = 0; i != program.gradientFields.size(); ++i) {
     auto values = allocate(particles);
     if (!values) return values.takeError();
     plan.fieldValues.push_back(*values);
@@ -230,6 +231,55 @@ mdir::driver::builder::makeFrameBatchParameterPlan(const Program &program,
       llvm::append_range(plan.particlesByType, group);
       plan.typeOffsets.push_back(plan.particlesByType.size());
     }
+  }
+  plan.referenceVolume = system.box[0] * system.box[1] * system.box[2];
+  plan.corrections = {program.dispersionEnergy, program.dispersionFixedEnergy,
+      program.gradientShiftEnergy, program.gradientShiftFixedEnergy,
+      program.dispersionVirial};
+  auto active = [](const auto &map) {
+    return llvm::any_of(map, [](int64_t index) { return index >= 0; });
+  };
+  bool changesLJ = active(plan.sigmaMap) || active(plan.epsilonMap) ||
+      active(plan.sigmaPairs) || active(plan.epsilonPairs);
+  bool includesLJ = !control.dependentTerms || getDependentTerms(control, system).lennardJones;
+  if (changesLJ && includesLJ && system.topology &&
+      control.topologyDispersion != DispersionCorrection::None) {
+    const auto &topology = *system.topology;
+    plan.initialSigma = topology.sigma;
+    plan.initialEpsilon = topology.epsilon;
+    plan.typeCounts.assign(plan.types, 0.0);
+    for (unsigned type : topology.types) ++plan.typeCounts[type];
+    for (auto [i, j] : topology.exclusions) {
+      plan.excludedTypes.push_back(topology.types[i]);
+      plan.excludedTypes.push_back(topology.types[j]);
+    }
+    double n = topology.getNumParticles();
+    double ordered = n * (n - 1) - 2.0 * topology.exclusions.size();
+    double cutoff = control.cutoffDistance * units::length;
+    double volume = plan.referenceVolume;
+    bool shifted = control.truncation == Truncation::Shift;
+    plan.lj = FrameBatchLJConstants{plan.types, n, ordered, cutoff, volume, shifted};
+    // Static contributions of other terms stay at their compiled values.
+    // The dynamic builtin replaces the same formula's initial contribution.
+    auto c6 = [&](unsigned a, unsigned b) {
+      size_t index = size_t(a) * plan.types + b;
+      return 4.0 * topology.epsilon[index] * std::pow(topology.sigma[index], 6);
+    };
+    double sum = 0;
+    for (unsigned a = 0; a != plan.types; ++a)
+      for (unsigned b = 0; b != plan.types; ++b)
+        sum += plan.typeCounts[a] * (plan.typeCounts[b] - (a == b ? 1.0 : 0.0)) * c6(a, b);
+    for (auto [i, j] : topology.exclusions)
+      sum -= 2.0 * c6(topology.types[i], topology.types[j]);
+    double mean = ordered > 0 ? sum / ordered : 0.0;
+    double tail = -2.0 * M_PI / (3.0 * volume) * n * n * mean / (cutoff * cutoff * cutoff);
+    double fixed = tail * ((1.0 - volume /
+        (n * 4.0 * M_PI / 3.0 * cutoff * cutoff * cutoff)) - 1.0);
+    std::array<double, 5> builtin{shifted ? tail + tail : tail,
+        shifted ? fixed : 0.0, shifted ? 0.0 : tail,
+        shifted ? 0.0 : fixed, 6.0 * tail};
+    for (unsigned i = 0; i != 5; ++i)
+      plan.correctionOffsets[i] = plan.corrections[i] - builtin[i];
   }
   return plan;
 }

@@ -31,6 +31,9 @@ void launch(OpBuilder &builder, Value count,
   Value nonempty = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ugt, count, zero);
   scf::IfOp::create(builder, loc, nonempty, [&](OpBuilder &at, Location) {
     auto work = gpu::LaunchOp::create(at, loc, blocks, one, one, threads, one, one);
+    // This kernel replaces host output arithmetic, not a potential kernel.
+    // Preserve its separate multiply/add roundings in deterministic mode.
+    work->setAttr("mdir.frame_host_arithmetic", at.getUnitAttr());
     OpBuilder kernel = OpBuilder::atBlockEnd(&work.getBody().front());
     Value base = arith::MulIOp::create(kernel, loc, work.getBlockIds().x, threads);
     Value row = arith::AddIOp::create(kernel, loc, base, work.getThreadIds().x);
@@ -106,14 +109,40 @@ llvm::Error mdir::driver::builder::buildFrameBatchPositionOutput(OpBuilder &buil
   return llvm::Error::success();
 }
 llvm::Error mdir::driver::builder::buildFrameBatchScalarOutput(OpBuilder &builder,
-    Value scalar, Value destination, Value frame, Value status, unsigned reason) {
+    Value scalar, Value destination, Value frame, Value status, unsigned reason,
+    Value destinationIndex) {
   if (!scalar.getType().isF64() || !buffer(destination, 1, builder.getF64Type()) ||
       !frame.getType().isIndex() || !statusBuffer(builder, status) || reason >= 65536) return bad();
   auto loc = builder.getUnknownLoc();
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);
   launch(builder, one, [&](OpBuilder &at, Value) {
-    memref::StoreOp::create(at, loc, scalar, destination, frame);
+    memref::StoreOp::create(at, loc, scalar, destination,
+        destinationIndex ? destinationIndex : frame);
     checkFinite(at, scalar, frame, status, reason);
+  });
+  return llvm::Error::success();
+}
+llvm::Error mdir::driver::builder::buildFrameBatchFieldOutput(OpBuilder &builder,
+    Value source, Value identities, Value destination, Value offset,
+    Value frame, Value status) {
+  auto type = dyn_cast<MemRefType>(source.getType());
+  if (!type || !(type.getElementType().isF32() || type.getElementType().isF64()) ||
+      !buffer(source, 1, type.getElementType()) ||
+      !buffer(identities, 1, builder.getI32Type()) ||
+      !buffer(destination, 1, builder.getF64Type()) || !statusBuffer(builder, status))
+    return bad();
+  auto loc = builder.getUnknownLoc();
+  Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+  Value count = memref::DimOp::create(builder, loc, source, zero);
+  launch(builder, count, [&](OpBuilder &at, Value particle) {
+    Value value = memref::LoadOp::create(at, loc, source, particle);
+    if (type.getElementType().isF32())
+      value = arith::ExtFOp::create(at, loc, at.getF64Type(), value);
+    Value identity = memref::LoadOp::create(at, loc, identities, particle);
+    Value index = arith::IndexCastOp::create(at, loc, at.getIndexType(), identity);
+    index = arith::AddIOp::create(at, loc, offset, index);
+    memref::StoreOp::create(at, loc, value, destination, index);
+    checkFinite(at, value, frame, status, 4);
   });
   return llvm::Error::success();
 }

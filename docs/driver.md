@@ -1428,9 +1428,13 @@ boundary, including a device theta descriptor. Resolved maps upload once
 per activation; direct field, tuple and pair-table updates return fresh
 descriptors for field/table imports, keeping derived values after the update.
 The CSR contraction and reference-volume LJ correction constructors are
-implemented. Device output writers, the caller, derived updates, correction
-hookup and model chain rule remain in progress, with no change to the existing
-host entry.
+implemented. The C++ caller and a private DLPack exercise entry borrow the
+caller stream and device buffers, write energy, position gradients, strain
+and parameter rows, then read the batch status. A two-frame torsion check
+matches 46 host values bitwise in three calls, including a theta update
+without another activation start. Derived updates, general correction
+derivatives, auxiliary outputs and final gates remain in progress, with
+no change to the existing host entry.
 Its tunable-dependent dispersion/shift correction is independently computed
 in C++ on the host and in a kernel on the device. D[frame-batch-entry]
 requires relative agreement within 1e-14 for energies receiving that

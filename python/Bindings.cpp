@@ -1327,6 +1327,8 @@ PYBIND11_MODULE(_core, m) {
     /// Shared with the leases of views, which keep it alive
     /// (D220).
     std::shared_ptr<compiler::Simulation> simulation;
+    std::shared_ptr<compiler::Simulation> frameBatch;
+    std::shared_ptr<std::mutex> frameBatchMutex = std::make_shared<std::mutex>();
     py::list reporters;
     /// The checkpoint reporter of the list, if any.
     std::optional<CheckpointReporter> checkpoints;
@@ -1690,6 +1692,10 @@ PYBIND11_MODULE(_core, m) {
       auto counts = s.simulation->getStartArguments();
       return py::make_tuple(counts[0], counts[1], counts[2]);
     })
+    .def_property_readonly("_device_batch_start_arguments", [](const PySimulation &s) {
+      if (!s.frameBatch) return std::array<int64_t, 3>{};
+      return s.frameBatch->getStartArguments();
+    })
     // False: every start from the next on copies and converts the arrays
     // of the program anew, as a simulation that keeps nothing for its
     // starts. Private, for the tests, which compare the two.
@@ -1721,6 +1727,78 @@ PYBIND11_MODULE(_core, m) {
     // (k, N, 3) in the type of the forces of the program, kJ/mol/nm, and
     // with `strain_gradient` that in the strain (k, 3, 3) float64, kJ/mol
     // (D252), else None.
+    .def("_evaluate_device_batch", [](PySimulation &s, py::object positions,
+        py::object theta, py::object energies, py::object cells,
+        py::object positionGradient, py::object strain, py::object rows, uint64_t stream) {
+      dlpack::BorrowedTensor x(positions, stream, false, "positions");
+      auto device = x.tensor.device;
+      if (device.type != dlpack::CUDA || x.tensor.ndim != 3 || !x.tensor.shape)
+        throw InputError("device frames require CUDA positions of shape (K, N, 3)");
+      int64_t frames = x.tensor.shape[0];
+      int64_t particles = s.simulation->getParticleCount();
+      unsigned bits = s.program->prepared->control.precision == driver::Precision::Single ? 32 : 64;
+      auto check = [&](const dlpack::BorrowedTensor &tensor,
+                       llvm::ArrayRef<int64_t> shape, unsigned width,
+                       dlpack::Device where, const char *name) {
+        if (!tensor.contiguous(shape, width, where))
+          throw InputError(std::string("device frames: invalid shape, dtype, device or strides for ") + name);
+      };
+      check(x, {frames, particles, 3}, bits, device, "positions");
+      dlpack::BorrowedTensor parameters(theta, stream, false, "theta");
+      int64_t entries = 0;
+      for (const auto &entry : s.simulation->getTunables().tunables) entries += entry.entries;
+      check(parameters, {entries}, 64, device, "theta");
+      dlpack::BorrowedTensor u(energies, stream, true, "energies");
+      check(u, {frames}, 64, device, "energies");
+      std::unique_ptr<dlpack::BorrowedTensor> c, g, v, r;
+      if (!cells.is_none()) {
+        c = std::make_unique<dlpack::BorrowedTensor>(cells, stream, false, "cells");
+        auto where = c->tensor.device.type == dlpack::CPU ? dlpack::Device{dlpack::CPU, 0} : device;
+        check(*c, {frames, 6}, 64, where, "cells");
+      }
+      if (!positionGradient.is_none()) {
+        g = std::make_unique<dlpack::BorrowedTensor>(positionGradient, stream, true, "position_gradient");
+        check(*g, {frames, particles, 3}, bits, device, "position_gradient");
+      }
+      if (!strain.is_none()) {
+        v = std::make_unique<dlpack::BorrowedTensor>(strain, stream, true, "strain");
+        check(*v, {frames, 3, 3}, 64, device, "strain");
+      }
+      if (!rows.is_none()) {
+        r = std::make_unique<dlpack::BorrowedTensor>(rows, stream, true, "rows");
+        check(*r, {frames, entries}, 64, device, "rows");
+      }
+      compiler::Simulation::FrameBatch batch;
+      batch.positions = x.data();
+      batch.parameters = static_cast<const double *>(parameters.data());
+      batch.energies = static_cast<double *>(u.data());
+      batch.cells = c ? static_cast<const double *>(c->data()) : nullptr;
+      batch.cellsOnDevice = c && c->tensor.device.type == dlpack::CUDA;
+      batch.positionGradient = g ? g->data() : nullptr;
+      batch.strain = v ? static_cast<double *>(v->data()) : nullptr;
+      batch.rows = r ? static_cast<double *>(r->data()) : nullptr;
+      batch.frames = frames;
+      batch.parameterCount = entries;
+      batch.device = device.id;
+      batch.stream = stream == 1 ? nullptr : reinterpret_cast<void *>(stream);
+      llvm::Error error = llvm::Error::success();
+      {
+        py::gil_scoped_release release;
+        std::lock_guard<std::mutex> lock(*s.frameBatchMutex);
+        if (!s.frameBatch) {
+          auto created = compiler::Simulation::create(*s.program->prepared,
+              s.program->cache, s.program->code.get(), true, false, true);
+          if (!created) error = created.takeError();
+          else s.frameBatch = std::move(*created);
+        }
+        if (!error) error = s.frameBatch->evaluateFrames(batch);
+      }
+      if (error) raise(std::move(error));
+    }, py::arg("positions"), py::arg("theta"), py::arg("energies"),
+       py::kw_only(), py::arg("cells") = py::none(),
+       py::arg("position_gradient") = py::none(), py::arg("strain") = py::none(),
+       py::arg("rows") = py::none(),
+       py::arg("stream") = 1)
     .def("_evaluate_frames", [](py::object self,
                                 py::array_t<double, py::array::c_style> positions,
                                 py::object cellsGiven, py::object tiltsGiven, bool gradient,

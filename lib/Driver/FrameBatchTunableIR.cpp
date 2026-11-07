@@ -30,6 +30,7 @@ void launchRows(OpBuilder &builder, Value destination,
   scf::IfOp::create(builder, loc, nonempty, [&](OpBuilder &at, Location) {
     auto launch = gpu::LaunchOp::create(at, loc, blocks, one, one,
         threads, one, one);
+    launch->setAttr("mdir.frame_host_arithmetic", at.getUnitAttr());
     OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
     Value base = arith::MulIOp::create(kernel, loc,
         launch.getBlockIds().x, threads);

@@ -12,6 +12,7 @@
 #include "TermIR.h"
 #include "FrameBatchTunableIR.h"
 #include "FrameBatchOutputIR.h"
+#include "FrameBatchEvaluationIR.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -89,7 +90,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       reference = vector::FromElementsOp::create(at, loc, VectorType::get({3}, at.getF64Type()), edges);
     }
     auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
-    Value frameStatus;
+    Value frameStatus, frameCorrections;
+    Value correctionSigma, correctionEpsilon, correctionCounts, correctionExcluded;
+    Value correctionSigmaMap, correctionEpsilonMap;
+    Value rawParameters, rowOffsets, sourceIndices, rowWeights;
     if (config.deviceBatch) {
       Attribute space = config.batchOnDevice ? Attribute(at.getI64IntegerAttr(1)) : Attribute{};
       auto type = MemRefType::get({1}, at.getI64Type(), MemRefLayoutAttrInterface(), space);
@@ -98,6 +102,34 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
             ValueRange(), ValueRange(), ValueRange()).getMemref();
       else
         frameStatus = memref::AllocaOp::create(at, loc, type);
+      if (config.batchOnDevice) {
+        std::array<double, 5> values{};
+        if (config.batchParameters) values = config.batchParameters->corrections;
+        auto uploaded = buildFrameBatchInitialValues(at, values);
+        if (!uploaded) return uploaded.takeError();
+        frameCorrections = *uploaded;
+        if (config.batchParameters && config.batchParameters->lj) {
+          const auto &plan = *config.batchParameters;
+          auto upload = [&](ArrayRef<double> values, Value &destination) -> llvm::Error {
+            auto memory = buildFrameBatchInitialValues(at, values);
+            if (!memory) return memory.takeError();
+            destination = *memory;
+            return llvm::Error::success();
+          };
+          if (auto error = upload(plan.initialSigma, correctionSigma)) return error;
+          if (auto error = upload(plan.initialEpsilon, correctionEpsilon)) return error;
+          if (auto error = upload(plan.typeCounts, correctionCounts)) return error;
+          auto exclusions = buildFrameBatchParameterMap(at, plan.excludedTypes, plan.types);
+          if (!exclusions) return exclusions.takeError();
+          correctionExcluded = *exclusions;
+          auto sigma = buildFrameBatchParameterMap(at, plan.sigmaPairs, plan.parameters);
+          if (!sigma) return sigma.takeError();
+          correctionSigmaMap = *sigma;
+          auto epsilon = buildFrameBatchParameterMap(at, plan.epsilonPairs, plan.parameters);
+          if (!epsilon) return epsilon.takeError();
+          correctionEpsilonMap = *epsilon;
+        }
+      }
     }
     SmallVector<Value> parameterMaps, parameterDestinations;
     SmallVector<Type> parameterTypes;
@@ -107,6 +139,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
             "device frame parameters require a GPU batch entry");
       const auto &plan = *config.batchParameters;
+      auto raw = buildFrameBatchInitialValues(at, std::vector<double>(plan.rawValues, 0.0));
+      if (!raw) return raw.takeError();
+      rawParameters = *raw;
+      auto offsets = buildFrameBatchParameterMap(at, plan.rowOffsets,
+          plan.sourceIndices.size() + 1);
+      if (!offsets) return offsets.takeError();
+      rowOffsets = *offsets;
+      auto sources = buildFrameBatchParameterMap(at, plan.sourceIndices, plan.rawValues);
+      if (!sources) return sources.takeError();
+      sourceIndices = *sources;
+      auto weights = buildFrameBatchInitialValues(at, plan.weights);
+      if (!weights) return weights.takeError();
+      rowWeights = *weights;
       for (const auto &binding : plan.mapped) {
         auto map = buildFrameBatchParameterMap(at, binding.map, plan.parameters);
         if (!map) return map.takeError();
@@ -250,9 +295,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     // parent. Capture the owning entry here rather than walking ancestors
     // from a still-detached batch loop body.
     auto batchEntry = cast<func::FuncOp>(at.getInsertionBlock()->getParentOp());
+    if (config.deviceBatch) {
+      auto module = batchEntry->getParentOfType<ModuleOp>();
+      if (!module.lookupSymbol("mdrtFrameBatchFrame")) {
+        OpBuilder top(batchEntry);
+        auto declaration = func::FuncOp::create(top, loc, "mdrtFrameBatchFrame",
+            top.getFunctionType({top.getI64Type()}, {}));
+        declaration.setPrivate();
+      }
+    }
     auto emitFrame = [&](OpBuilder &frame, Value inputPositions,
                          ValueRange edges, ValueRange asks, Value productInput,
-                         ValueRange startValues, const EntryFieldsIR &parameterFields)
+                         ValueRange startValues, const EntryFieldsIR &parameterFields,
+                         const FrameBatchEvaluationPoint *batchPoint = nullptr)
         -> llvm::Expected<SmallVector<Value>> {
       Value scale;
       if (config.referenceEdges) scale = buildReferenceScale(frame, ValueRange(edges).take_front(3), reference);
@@ -265,6 +320,12 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       physical = buildEntryReorder(frame, program, std::move(physical), cell);
       auto parameters = buildEntryPotentialFields(physical);
       PotentialStateIR state{physical.positions, cell, parameters, time};
+      if (batchPoint) {
+        if (llvm::Error error = buildFrameBatchEvaluation(frame, program, config,
+                physical, state, *batchPoint, complete, scale))
+          return std::move(error);
+        return SmallVector<Value>{};
+      }
       if (product) {
         const auto &gradient = *config.output.gradient;
         Value tangent = buildEntryField(frame,
@@ -424,16 +485,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         auto cells = MemRefType::get({ShapedType::kDynamic, 6}, frame.getF64Type());
         auto parameters = MemRefType::get({ShapedType::kDynamic}, frame.getF64Type(),
             MemRefLayoutAttrInterface(), space);
+        auto strain = MemRefType::get({ShapedType::kDynamic, 9}, frame.getF64Type(),
+            MemRefLayoutAttrInterface(), space);
+        SmallVector<Type> results{bytes, cells, parameters, parameters, bytes, strain, bytes};
         if (!module.lookupSymbol("mdrtFrameBatchBoundary")) {
           OpBuilder top(entry);
           auto declaration = func::FuncOp::create(top, loc, "mdrtFrameBatchBoundary",
               top.getFunctionType({MemRefType::get({2}, top.getF64Type()), frameStatus.getType()},
-                  {bytes, cells, parameters}));
+                  results));
           declaration.setPrivate();
           declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
         }
         auto batch = func::CallOp::create(frame, loc, "mdrtFrameBatchBoundary",
-            TypeRange{bytes, cells, parameters}, ValueRange{requests, frameStatus});
+            results, ValueRange{requests, frameStatus});
         if (config.batchOnDevice) {
           if (llvm::Error error = buildFrameBatchStatus(frame, frameStatus))
             return std::move(error);
@@ -458,6 +522,15 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
               parameterFields.tables[binding.resource] = borrowed;
           }
         SmallVector<Value> parameterValues(arguments.startValues);
+        if (config.batchParameters && config.batchParameters->lj) {
+          if (auto error = buildFrameBatchMappedParameters(frame, batch.getResult(2),
+                  correctionSigmaMap, correctionSigma)) return error;
+          if (auto error = buildFrameBatchMappedParameters(frame, batch.getResult(2),
+                  correctionEpsilonMap, correctionEpsilon)) return error;
+          if (auto error = buildFrameBatchLJConstants(frame, correctionSigma,
+                  correctionEpsilon, correctionCounts, correctionExcluded,
+                  frameCorrections, *config.batchParameters->lj)) return error;
+        }
         if (config.batchParameters)
           for (const auto &scalar : config.batchParameters->scalars) {
             Value index = arith::ConstantIndexOp::create(frame, loc, scalar.parameter);
@@ -472,7 +545,22 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         auto rows = buildFrameBatchRows(frame, batch.getResult(0), batch.getResult(1),
             particles, storage.getElementType(), config.cellEdges,
             [&](OpBuilder &row, const FrameBatchRowIR &inputs) -> llvm::Error {
-          auto result = emitFrame(row, inputs.positions, inputs.edges, asks, {}, parameterValues, parameterFields);
+          Value index = arith::IndexCastOp::create(row, loc, row.getI64Type(), inputs.index);
+          func::CallOp::create(row, loc, "mdrtFrameBatchFrame", TypeRange{}, ValueRange{index});
+          FrameBatchEvaluationPoint point;
+          if (config.batchOnDevice)
+            point = {inputs.index, batch.getResult(3), batch.getResult(4),
+                batch.getResult(5), frameStatus, frameCorrections,
+                inputs.edges, asks, parameterValues};
+          if (config.batchParameters) {
+            point.raw = rawParameters;
+            point.rows = batch.getResult(6);
+            point.rowOffsets = rowOffsets;
+            point.sourceIndices = sourceIndices;
+            point.weights = rowWeights;
+          }
+          auto result = emitFrame(row, inputs.positions, inputs.edges, asks, {},
+              parameterValues, parameterFields, config.batchOnDevice ? &point : nullptr);
           if (!result) return result.takeError();
           return llvm::Error::success();
         });

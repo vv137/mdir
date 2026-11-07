@@ -3,9 +3,12 @@
 #define MDIR_LIB_DRIVER_FRAMEBATCHPARAMETERPLAN_H
 #include "mdir/Driver/Model.h"
 #include "mdir/Driver/Builder.h"
+#include "FrameBatchLJIR.h"
 #include "llvm/Support/Error.h"
 #include <cstdint>
 #include <vector>
+#include <array>
+#include <optional>
 namespace mdir::driver::builder {
 struct FrameBatchMappedResource {
   enum Kind { Field, Table, TupleField } kind;
@@ -32,6 +35,11 @@ struct FrameBatchParameterPlan {
   std::vector<double> weights;
   // Stable grouping preserves the host's particle order within each type.
   std::vector<int64_t> typeOffsets, particlesByType;
+  double referenceVolume = 1.0;
+  std::array<double, 5> corrections{}, correctionOffsets{};
+  std::optional<FrameBatchLJConstants> lj;
+  std::vector<double> initialSigma, initialEpsilon, typeCounts;
+  std::vector<int64_t> excludedTypes;
 };
 llvm::Expected<FrameBatchParameterPlan> makeFrameBatchParameterPlan(
     const Program &, const model::TunableSet &, const Control &, const System &);

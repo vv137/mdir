@@ -56,9 +56,26 @@ records the first failing frame and reason, and waits once per call to
 report data errors (Q5). A failed batch discards its activation.
 
 The runtime scope uses event dependencies in both directions, including
-nested scopes and the legacy default stream. This first implementation
-component is not yet connected to a batch caller. Focused component checks
+nested scopes and the legacy default stream. The C++ batch caller and its
+private DLPack exercise entry now use this scope. Focused component checks
 precede the remaining batch implementation and its final-head validation.
+
+The first end-to-end Double check on RTX 5090, without a dispersion tail,
+compared one energy, twelve position-gradient entries and nine strain
+entries with the host frame entry: all 22 were bitwise identical. This
+checks a component snapshot, not a final-head gate. Only the new batch
+output and chain-rule kernels carry `mdir.frame_host_arithmetic`: their
+postprocessing preserves the separate multiply/add roundings of the host
+entry. Existing potential kernels and ordinary lowering do not carry this
+mark and retain their established compilation behavior.
+
+The subsequent two-frame torsion check includes the tunable Jacobian:
+46 values per call, all bitwise identical to the host in each of three
+calls. Two calls repeat the same inputs; the third changes theta. Repeated
+device results are bitwise identical, and the activation-start argument
+counters do not increase across the calls. Derived tables, general
+correction derivatives, auxiliary outputs and final-head gates remain
+in progress.
 
 `mdrt.from_buffer` accepts fields in explicit device memory space 1. Device
 storage assignment borrows them without a host copy or ownership transfer;

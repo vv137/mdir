@@ -8916,6 +8916,11 @@ public:
     // two products, the first operand is fused.
     if (explicitFma)
       getOperation()->walk([](gpu::LaunchOp launch) {
+        // Only the new frame-batch postprocessing kernels carry this mark.
+        // They implement the host entry's chain rule and output arithmetic,
+        // whose separate roundings are part of the entry equivalence gate.
+        if (launch->hasAttr("mdir.frame_host_arithmetic"))
+          return;
         SmallVector<Operation *> sums;
         launch.getBody().walk([&](Operation *op) {
           if (isa<arith::AddFOp, arith::SubFOp>(op))
