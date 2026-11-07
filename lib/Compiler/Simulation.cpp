@@ -14,6 +14,7 @@
 #include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/Profile.h"
+#include "mdir/Runtime/CopyAudit.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "JITEngine.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
@@ -3204,7 +3205,8 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   auto use = findRuntime<void *(void *)>("mdrtUseStream");
   auto restore = findRuntime<void(void *)>("mdrtRestoreStream");
   auto copy = findRuntime<void(void *, const void *, uint64_t)>("mdrtDeviceCopyToHost");
-  if (!ordinal || !use || !restore || !copy)
+  auto auditCopies = findRuntime<void *(void *)>("mdrtDeviceAuditCopies");
+  if (!ordinal || !use || !restore || !copy || !auditCopies)
     return simulationError("the device batch runtime is unavailable");
   if (ordinal() != batch.device)
     return inputError("the frame buffers belong to another device");
@@ -3214,6 +3216,22 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
     ~RestoreStream() { restore(previous); }
   } stream{restore, use(batch.stream)};
   const auto cellBefore = getCell();
+  MdirDeviceCopyAudit copyAudit{};
+  struct EndCopyAudit {
+    void *(*restore)(void *);
+    MdirDeviceCopyAudit &audit;
+    std::array<uint64_t, 4> &report;
+    void *previous = nullptr;
+    bool enabled = false;
+    ~EndCopyAudit() {
+      if (enabled) {
+        restore(previous);
+        report = {audit.uploads, audit.downloads,
+                  audit.metadataUploads, audit.metadataDownloads};
+      }
+    }
+  } auditScope{auditCopies, copyAudit, frameBatchCopyBytes};
+  frameBatchCopyBytes = {};
   std::vector<std::array<double, 6>> cells(batch.frames, cellBefore);
   if (batch.cells && batch.frames) {
     if (batch.cellsOnDevice)
@@ -3282,6 +3300,14 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
         reinterpret_cast<double *>(cells.data()), 0, {batch.frames, 6}, {6, 1}};
     a.frameBatchStrain = {batch.strain, batch.strain, 0, {batch.frames, 9}, {9, 1}};
     a.frameAsks = {batch.positionGradient ? 1.0 : 0.0, batch.strain ? 1.0 : 0.0};
+    for (const auto &span : spans) {
+      assert(copyAudit.ranges < 16 && "device batch has at most sixteen buffers");
+      unsigned i = copyAudit.ranges++;
+      copyAudit.first[i] = span.first;
+      copyAudit.last[i] = span.last;
+    }
+    auditScope.previous = auditCopies(&copyAudit);
+    auditScope.enabled = true;
     evaluated = true;
     resumeActivation();
     a.frameBatchFrame = nullptr;

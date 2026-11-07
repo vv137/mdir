@@ -492,8 +492,9 @@ DLPack exercise entry now borrows device positions and theta on the
 caller's stream and writes device energy, gradients, parameter rows and
 products. It includes combining rules, PME corrections, general pair-tail
 quadrature and auxiliary outputs. It copies the K by 6 cell metadata to
-the host once per call for validation, as Ruling 20 allows. Final validation
-is pending. It exposes no public batch API and does not yet replace the
+the host once per call for validation, as Ruling 20 allows. Its readiness
+gates include independent finite differences and measured zero numerical
+host transfers. It exposes no public batch API and does not yet replace the
 JAX handler's host staging described below.
 
 D371, the design and Ruling 20 on #138: the CPU, on the existing loop of

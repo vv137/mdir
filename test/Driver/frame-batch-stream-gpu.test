@@ -1,0 +1,4 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: %torch_python %S/Inputs/frame_batch_entry.py %t stream | FileCheck %s
+# CHECK: device frame entry: nondefault producer/call/consumer stream passed
+# CHECK: device frame entry: auxiliary outputs, input errors, recovery and empty batch passed

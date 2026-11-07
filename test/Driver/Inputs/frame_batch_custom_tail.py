@@ -54,6 +54,7 @@ for coefficients in points:
     reference = evaluator.evaluate(frames, cells=cells, gradients=("positions", "strain", "tunables"))
     evaluator._evaluate_device_batch(positions, theta, energy, cells=device_cells,
         position_gradient=gradient, strain=strain, rows=rows)
+    assert evaluator._simulation._device_batch_copy_bytes[:2] == [0, 0]
     failed = False
     for name, tensor, expected, exact in (
             ("energy", energy, reference.energy, False),

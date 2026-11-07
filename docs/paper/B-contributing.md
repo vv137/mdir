@@ -249,7 +249,11 @@ bitwise in each of three calls, with repeated deterministic results and a
 theta update that does not restart the activation. Combining rules, PME
 corrections, general pair-tail quadrature and Richardson derivatives,
 auxiliary outputs, contractions and device input checks are implemented;
-their focused checks pass. Final validation is pending.
+their focused checks pass. Measured transfers distinguish integer/status
+metadata from numerical results, with zero numerical host transfers.
+PME sums are snapshotted on the device before scratch reuse. Independent
+NumPy finite differences check CPU/GPU, Double/Mixed and f32 inputs;
+corpus, order, checkpoints, suite and sanitizer gates precede readiness.
 The independently implemented host and device dispersion/shift correction
 is compared at relative error at most 1e-14, while repeated deterministic
 device results and quantities from the same compiled program retain their

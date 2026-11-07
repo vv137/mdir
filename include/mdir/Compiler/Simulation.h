@@ -301,6 +301,10 @@ public:
   /// taken as the simulation kept them, and how many were made. For the
   /// tests and the measurements.
   std::array<int64_t, 3> getStartArguments() const;
+  /// Private measurement of the last device batch's evaluation: generic
+  /// upload/download bytes, then structural/status upload/download bytes.
+  /// Static activation initialization precedes this scope.
+  std::array<uint64_t, 4> getFrameBatchCopyBytes() const { return frameBatchCopyBytes; }
   /// Whether a start hands the entry the arrays of the program and the
   /// conversions that the simulation keeps (the default), or copies and
   /// converts every one anew, as before D258: for the tests,
@@ -545,6 +549,7 @@ public:
 
 private:
   Simulation() = default;
+  std::array<uint64_t, 4> frameBatchCopyBytes{};
   llvm::Expected<Engine *> getEngine();
   /// The counts of a part: periods (or steps) of the first nest, its plain
   /// steps per period, plain steps after it, a plain step of energy (0 or

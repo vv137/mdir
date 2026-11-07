@@ -9,16 +9,16 @@ Part of #138, PR 1 of its accepted section 6.
 The device batch entry consumes `Control::FrameMode::DeviceBatch` through
 `SimpleFrameEntryIRConfig::deviceBatch`. It is selected by a new C++
 `Simulation::evaluateFrames` caller, independently of the existing host
-`evaluateFrame` path. This decision is being implemented; the entry is not
-yet available. It extends the field plumbing merged in D378 (#755).
+`evaluateFrame` path. It extends the field plumbing merged in D378 (#755).
 
 One call evaluates K frames in one activation, using the caller's stream.
 Positions, tunable values, and results remain in device buffers. Each
 frame's position view is validated into an owned one-frame device scratch
 buffer before neighbor indexing. This also widens f32 input for a
 nondeterministic Mixed program; it never copies batch positions to the
-host. Results are written into their corresponding output rows. The host may read the K by 6 cell values once
-per call to validate them (Ruling 20, Q2). Tunable values are boundary inputs:
+host. Results are written into their corresponding output rows. The host
+may read the K by 6 cell values once per call to validate them (Ruling 20,
+Q2). Tunable values are boundary inputs:
 `applyTunables` runs on the device, so a change of parameters does not
 restart the activation (Q3).
 
@@ -90,9 +90,9 @@ The subsequent two-frame torsion check includes the tunable Jacobian:
 46 values per call, all bitwise identical to the host in each of three
 calls. Two calls repeat the same inputs; the third changes theta. Repeated
 device results are bitwise identical, and the activation-start argument
-counters do not increase across the calls. Derived tables, general
-correction derivatives, auxiliary outputs and final-head gates remain
-in progress.
+counters do not increase across the calls. These numbers describe the
+earlier direct-map component; subsequent checks include derived maps,
+general corrections, auxiliary outputs and products.
 
 Later component checks cover device JVP/VJP contractions, including a call
 without a Jacobian output buffer, and bitwise virial/volume auxiliary
@@ -122,7 +122,45 @@ the initial build was corrected once; the next build and native checks
 passed. The branch was rebased onto main containing D383 (#772), retaining
 its separate position-product flag. The post-rebase focused selection
 passed 3/3 tests: nonlinear tails, the batch entry and the existing HVP
-entry. Transfer-counter validation and final-head gates remain pending.
+entry.
+
+Copy counters observe the runtime's actual transfers during evaluation,
+after static activation initialization. Borrowed device ranges are
+registered for classification. Typed integer neighbor-capacity and
+invalid-coordinate records, plus explicit structural/status boundaries,
+are counted separately from numerical transfers. A positive control
+measures 64 upload bytes and 64 download bytes and checks nested scopes.
+The frame, tuple, custom-tail, LJ and PME checks measure zero numerical
+host-transfer bytes. The permitted cell-metadata copy precedes this
+evaluation scope.
+
+PME's numerical-return helpers are inlined only for the batch entry. Their
+seven device sums are snapshotted on the producer stream into storage
+allocated once per activation, before the scratch can be reused. The
+existing readback-cloning pass then moves their scalar consumers into
+kernels and removes the host copies. Event joins order consumers on the
+caller stream. The corrected PME check retains bitwise energy, position
+gradient and strain results, bounded parameter rows and zero numerical
+host transfers. Ordinary programs retain their helper ABI and lowering.
+
+Independent finite differences of a NumPy torsion check energy, position
+and strain gradients and theta rows against CPU and GPU entries. The
+largest absolute errors across the two entries are:
+
+| Mode | Energy, kJ/mol | Position gradient, kJ/mol/nm | Strain, kJ/mol | Theta row |
+|---|---:|---:|---:|---:|
+| Double, deterministic | 4.441e-16 | 3.779e-11 | 4.940e-11 | 6.017e-13 |
+| Mixed, deterministic | 3.405e-8 | 1.927e-6 | 3.170e-7 | 3.813e-8 |
+| Mixed, f32 input | 2.903e-7 | 2.809e-6 | 7.815e-7 | 1.350e-7 |
+
+Double bounds are 1e-12 for energy, 5e-7 for position and strain gradients
+and 1e-6 for theta. The accepted Mixed bounds are 5e-3 kJ/mol, 1e-4 and
+1e-6 respectively; deterministic execution does not change the precision
+of the model. Simultaneous type/pair overrides, custom tuple fields and
+observed scalar parameters pass their host comparisons in Double and
+Mixed. A nondefault stream check enqueues a producer, the batch call and
+an immediate consumer without restarting the activation. All these
+component checks pass; final-head gates remain the readiness requirement.
 
 `mdrt.from_buffer` accepts fields in explicit device memory space 1. Device
 storage assignment borrows them without a host copy or ownership transfer;
@@ -143,8 +181,8 @@ The GPU lowering of a function marked `mdir.frame_batch` recognizes f64
 device loads marked `mdir.frame_parameter`. It clones their pure scalar
 expressions into each consuming kernel, including side-stream kernels,
 preserving the operations and eliminating the host loads. A remaining host
-consumer is an error. This component supplies device scalar parameters;
-the batch caller and device tunable updates remain in progress.
+consumer is an error. This supplies device scalar parameters to the
+batch caller and its device tunable updates.
 
 Device tables can also be borrowed and viewed without a copy. Their
 explicit memref element type gives the physical storage width, including
@@ -170,9 +208,9 @@ Scalar tunables become marked device loads in their consuming kernels.
 The ordered contraction constructor uses CSR indices and f64 weights, with
 one thread per result and no atomics in its sums. A separate LJ constructor
 evaluates reference-volume dispersion/shift constants using multiplication
-for integer powers. Device output writers, the caller, derived table updates,
-correction hookup and the model chain rule are still being connected; no
-batch API is exposed.
+for integer powers. Device output writers and the caller use these
+constructors with the derived table updates and model chain rule. Only the
+private DLPack exercise entry exposes this boundary.
 
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,
@@ -181,7 +219,7 @@ The existing host path remains available as the independent oracle.
 
 ## Required validation
 
-The batch implementation and final validation remain in progress. Before readiness:
+Every readiness head must satisfy these gates:
 
 - CPU and RTX 5090, Mixed and Double: compare the batch with the host path
   and finite differences; check native batching, changing parameters without

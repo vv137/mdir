@@ -1,0 +1,3 @@
+# REQUIRES: cuda
+# RUN: mdir-cuda-copy-audit-test | FileCheck %s
+# CHECK: Copy audit: 64 upload bytes, 64 download bytes; nested metadata scopes exact

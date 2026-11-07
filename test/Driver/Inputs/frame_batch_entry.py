@@ -74,6 +74,9 @@ for call, coefficient in enumerate((1.5, 1.5, 2.25)):
             raise AssertionError(name)
         actual_values.append(actual.copy())
     counts = evaluator._simulation._device_batch_start_arguments
+    transfers = evaluator._simulation._device_batch_copy_bytes
+    assert transfers[:2] == [0, 0], ("host transfer during evaluation", transfers)
+    print("device batch copy bytes", transfers, flush=True)
     if start_counts is None:
         start_counts = counts
     assert counts == start_counts, "theta update restarted the activation"
@@ -84,6 +87,22 @@ for call, coefficient in enumerate((1.5, 1.5, 2.25)):
     print(f"call {call}: all 46 results bitwise identical to host", flush=True)
     print(f"call {call}: JVP/VJP bitwise identical; rows requested: {call != 1}", flush=True)
 print("device frame entry: rows, repeated calls and theta updates passed", flush=True)
+
+if len(sys.argv) > 2 and sys.argv[2] == "stream":
+    caller = torch.cuda.Stream()
+    with torch.cuda.stream(caller):
+        positions.copy_(torch.tensor(frames, device="cuda", dtype=torch.float64))
+        theta.fill_(2.25)
+        evaluator._evaluate_device_batch(positions, theta, energy,
+            position_gradient=gradient, strain=strain, rows=rows,
+            tangent=tangent, cotangent=cotangent, jvp=jvp, vjp=vjp,
+            stream=caller.cuda_stream)
+        # A consumer is enqueued immediately on the caller's stream.
+        consumed = (energy * 2).cpu().numpy()
+    assert np.array_equal(consumed.view(np.uint64), (reference.energy * 2).view(np.uint64))
+    assert evaluator._simulation._device_batch_start_arguments == start_counts
+    assert evaluator._simulation._device_batch_copy_bytes[:2] == [0, 0]
+    print("device frame entry: nondefault producer/call/consumer stream passed", flush=True)
 
 def expect_input_error(call, text):
     try:

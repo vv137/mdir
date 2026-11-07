@@ -1,0 +1,3 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: %torch_python %S/Inputs/frame_batch_tuple.py %t | FileCheck %s
+# CHECK: tuple fields, observed scalar parameters and empty theta refusal passed

@@ -59,6 +59,7 @@ for sigma in (0.15, 0.20, 0.25, 0.30, 0.3150752406575124,
     evaluator._evaluate_device_batch(positions, theta, energy, cells=device_cells,
         position_gradient=gradient, strain=strain, rows=rows,
         stream=torch.cuda.current_stream().cuda_stream or 1)
+    assert evaluator._simulation._device_batch_copy_bytes[:2] == [0, 0]
     actual_u, actual_g, actual_s = (value.cpu().numpy() for value in (energy, gradient, strain))
     relative = np.abs(actual_u - reference.energy) / np.maximum(np.abs(reference.energy), 1e-300)
     maximum = max(maximum, float(relative.max()))

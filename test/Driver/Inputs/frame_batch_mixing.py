@@ -8,10 +8,12 @@ import torch
 
 work = Path(sys.argv[1])
 electrostatics = sys.argv[2] if len(sys.argv) > 2 else "Cutoff"
+overrides = len(sys.argv) > 3 and sys.argv[3] == "overrides"
 work.mkdir(parents=True, exist_ok=True)
 (work / "system.top").write_text(
     "[ defaults ]\n1 2 no 1.0 1.0\n[ atomtypes ]\n"
-    "A 6 12.0 0.0 A 0.30 0.60\nB 8 16.0 0.0 A 0.25 0.40\n"
+    "A 6 12.0 0.0 A 0.30 0.60\nB 8 16.0 0.0 A 0.25 0.40\n" +
+    ("[ nonbond_params ]\nA B 1 0.28 0.45\n" if overrides else "") +
     "[ moleculetype ]\nM 0\n[ atoms ]\n"
     "1 A 1 M A1 1 0.2 12.0\n2 B 1 M B2 2 -0.3 16.0\n"
     "3 A 1 M A3 3 0.1 12.0\n[ system ]\nmixing\n[ molecules ]\nM 1\n")
@@ -45,6 +47,10 @@ for precision in (mdir.Precision.Double, mdir.Precision.Mixed):
         system.dispersion = mdir.DispersionCorrection.None_
         system.tunables = [mdir.Tunable("sigma", "sigma", mixing=mixing),
                            mdir.Tunable("epsilon", "epsilon"), mdir.Tunable("q", "charge")]
+        if overrides:
+            taken = np.array([-1, 0, -1], dtype=np.int64)
+            system.tunables += [mdir.Tunable("sigma_pair", "sigma_pair", map=taken),
+                                mdir.Tunable("epsilon_pair", "epsilon_pair", map=taken)]
         system.tunable_gradient = True
         execution = mdir.Execution()
         execution.target, execution.precision = mdir.Target.GPU, precision
@@ -53,7 +59,7 @@ for precision in (mdir.Precision.Double, mdir.Precision.Mixed):
         ensemble.com_period = 0
         program = mdir.compile(system, state, mdir.Integrator(), ensemble, execution, mdir.Schedule())
         evaluator = mdir.FrameEvaluator(program)
-        names = ("sigma", "epsilon", "q")
+        names = ("sigma", "epsilon", "q") + (("sigma_pair", "epsilon_pair") if overrides else ())
         initial = {name: np.array(evaluator.tunables[name]) for name in names}
         position = torch.tensor(frames, device="cuda", dtype=torch.float64)
         count = sum(initial[name].size for name in names)
@@ -70,6 +76,8 @@ for precision in (mdir.Precision.Double, mdir.Precision.Mixed):
             reference = evaluator.evaluate(frames, gradients=("tunables", "positions", "strain"))
             evaluator._evaluate_device_batch(position, theta, energy,
                 position_gradient=gradient, strain=strain, rows=rows)
+            transfers = evaluator._simulation._device_batch_copy_bytes
+            assert transfers[:2] == [0, 0], (precision, mixing, call, transfers)
             actual = [compare("energy", energy, reference.energy),
                       compare("positions", gradient, reference.gradients["positions"]),
                       compare("strain", strain, reference.gradients["strain"]),

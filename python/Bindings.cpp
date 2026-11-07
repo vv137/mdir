@@ -1699,6 +1699,9 @@ PYBIND11_MODULE(_core, m) {
     .def_property_readonly("_device_batch_aux_names", [](const PySimulation &s) {
       return s.simulation->getFrameBatchAuxNames();
     })
+    .def_property_readonly("_device_batch_copy_bytes", [](const PySimulation &s) {
+      return s.frameBatch ? s.frameBatch->getFrameBatchCopyBytes() : std::array<uint64_t, 4>{};
+    })
     // False: every start from the next on copies and converts the arrays
     // of the program anew, as a simulation that keeps nothing for its
     // starts. Private, for the tests, which compare the two.

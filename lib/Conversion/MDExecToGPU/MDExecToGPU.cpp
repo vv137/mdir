@@ -711,6 +711,7 @@ private:
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  LogicalResult inlineFrameReadbacks(func::FuncOp function);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
 
   ModuleOp module;
@@ -8575,6 +8576,81 @@ static void deferReadbacks(func::FuncOp function) {
   function.walk([](Operation *op) { op->removeAttr("mdir.readback"); });
 }
 
+LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
+  if (!function->hasAttr("mdir.frame_batch")) return success();
+  auto numericalCopy = [](gpu::MemcpyOp copy) {
+    auto host = dyn_cast<MemRefType>(copy.getDst().getType());
+    auto device = dyn_cast<MemRefType>(copy.getSrc().getType());
+    return host && device && host.getMemorySpaceAsInt() == 0 &&
+        device.getMemorySpaceAsInt() == 1 && isa<FloatType>(host.getElementType());
+  };
+  SmallVector<func::CallOp> calls;
+  function.walk([&](func::CallOp call) { calls.push_back(call); });
+  for (func::CallOp call : calls) {
+    auto callee = module.lookupSymbol<func::FuncOp>(call.getCallee());
+    if (!callee || callee.isExternal()) continue;
+    bool readsNumbers = false;
+    callee.walk([&](gpu::MemcpyOp copy) { readsNumbers |= numericalCopy(copy); });
+    if (!readsNumbers) continue;
+    if (!llvm::hasSingleElement(callee.getBody()))
+      return call.emitOpError("device frame numerical helper must have one return block");
+    OpBuilder at(call);
+    IRMapping mapping;
+    for (auto [argument, value] : llvm::zip(callee.getArguments(), call.getOperands()))
+      mapping.map(argument, value);
+    SmallVector<gpu::MemcpyOp> readbacks;
+    for (Operation &op : callee.front().without_terminator()) {
+      Operation *copy = at.clone(op, mapping);
+      copy->walk([&](gpu::LaunchOp launch) { bringIn(launch); });
+      copy->walk([&](gpu::MemcpyOp transfer) {
+        if (numericalCopy(transfer)) readbacks.push_back(transfer);
+      });
+    }
+    auto returned = cast<func::ReturnOp>(callee.front().getTerminator());
+    for (auto [old, value] : llvm::zip(call.getResults(), returned.getOperands()))
+      old.replaceAllUsesWith(mapping.lookupOrDefault(value));
+    call.erase();
+    for (gpu::MemcpyOp copy : readbacks) {
+      auto host = cast<MemRefType>(copy.getDst().getType());
+      if (host.getRank() != 1 || !host.hasStaticShape() || host.getNumElements() > 16)
+        return copy.emitOpError("device frame helper has an unsupported numerical readback shape");
+      // A helper's row scratch can be reused by the next evaluation.
+      // Snapshot its small result on the producer stream, into storage
+      // owned by the activation rather than allocated for every frame.
+      OpBuilder entry = OpBuilder::atBlockBegin(&function.front());
+      auto type = MemRefType::get(host.getShape(), host.getElementType(),
+          MemRefLayoutAttrInterface(), entry.getI64IntegerAttr(1));
+      Value stable = gpu::AllocOp::create(entry, copy.getLoc(), type, Type(),
+          ValueRange(), ValueRange(), ValueRange()).getMemref();
+      OpBuilder snapshot(copy);
+      Value count = createIndex(snapshot, copy.getLoc(), host.getNumElements());
+      launchOver(snapshot, copy.getLoc(), count, [&](OpBuilder &write, Value index) {
+        Value value = memref::LoadOp::create(write, copy.getLoc(), copy.getSrc(), index);
+        memref::StoreOp::create(write, copy.getLoc(), value, stable, index);
+      });
+      copy.getSrcMutable().assign(stable);
+      int64_t id = numReadbacks++;
+      auto mark = [&](Operation *op) {
+        op->setAttr("mdir.readback", snapshot.getI64IntegerAttr(id));
+      };
+      mark(copy);
+      for (Value token : copy.getAsyncDependencies())
+        if (auto wait = token.getDefiningOp<gpu::WaitOp>()) mark(wait);
+      for (Operation *user : copy->getUsers())
+        if (isa<gpu::WaitOp>(user)) mark(user);
+      SmallVector<memref::LoadOp> loads;
+      for (Operation *user : copy.getDst().getUsers())
+        if (auto load = dyn_cast<memref::LoadOp>(user)) loads.push_back(load);
+      for (memref::LoadOp load : loads) {
+        mark(load);
+        for (Value index : load.getIndices())
+          if (Operation *definition = index.getDefiningOp()) mark(definition);
+      }
+    }
+  }
+  return success();
+}
+
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({getCellSize()}, Float64Type::get(context));
@@ -8765,6 +8841,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   neighbors.clear();
 
   // The kernels read tables from their buffers.
+  if (failed(inlineFrameReadbacks(function)))
+    return failure();
   lowerLookups(function);
   expandPowers(function);
   if (failed(keepFrameParametersOnDevice(function)))
@@ -8831,6 +8909,33 @@ LogicalResult Lowering::run() {
   for (func::FuncOp function : functions)
     if (failed(lowerFunction(function)))
       return failure();
+
+  // The frame-copy audit distinguishes typed integer metadata (neighbor
+  // capacity and invalid-coordinate counts) from numerical results. Tag
+  // the next actual copy, without changing its synchronization or data.
+  // Ordinary programs have no batch marker and emit exactly their old IR.
+  bool frameBatch = llvm::any_of(functions, [](func::FuncOp function) {
+    return function->hasAttr("mdir.frame_batch");
+  });
+  if (frameBatch)
+    module.walk([&](gpu::MemcpyOp copy) {
+      auto destination = dyn_cast<MemRefType>(copy.getDst().getType());
+      auto source = dyn_cast<MemRefType>(copy.getSrc().getType());
+      if (!destination || !source || destination.getMemorySpaceAsInt() != 0 ||
+          source.getMemorySpaceAsInt() != 1 || !isa<IntegerType>(destination.getElementType()))
+        return;
+      OpBuilder at(copy);
+      Location loc = copy.getLoc();
+      auto metadata = memref::ExtractStridedMetadataOp::create(at, loc, copy.getDst());
+      Value base = memref::ExtractAlignedPointerAsIndexOp::create(at, loc, copy.getDst());
+      Value width = createIndex(at, loc, (destination.getElementTypeBitWidth() + 7) / 8);
+      Value offset = arith::MulIOp::create(at, loc, metadata.getOffset(), width);
+      Value address = arith::AddIOp::create(at, loc, base, offset);
+      Value pointer = arith::IndexCastOp::create(at, loc, at.getI64Type(), address);
+      func::CallOp::create(at, loc,
+          getOrDeclare("mdrtDeviceAuditMetadataCopy", at.getFunctionType({at.getI64Type()}, {})),
+          ValueRange{pointer});
+    });
 
   // What is left of the semantic dialects are definitions that nothing
   // refers to any more.
