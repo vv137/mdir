@@ -22,7 +22,7 @@ loaded = mdir.load_gromacs(str(work / "system.top"), str(work / "system.gro"))
 system, state = loaded.make_system(), loaded.make_state()
 system.cutoff, system.pairlist_distance, system.switch_distance = 1.0, 1.15, 1.0
 system.electrostatics = mdir.Electrostatics.Cutoff
-system.truncation = mdir.Truncation.None_
+system.truncation = getattr(mdir.Truncation, sys.argv[2]) if len(sys.argv) > 2 else mdir.Truncation.None_
 system.dispersion = mdir.DispersionCorrection.EnergyPressure
 system.tunables = [mdir.Tunable("sigma", "sigma_pair"),
                    mdir.Tunable("epsilon", "epsilon_pair")]
@@ -43,6 +43,7 @@ theta = torch.empty(2, device="cuda", dtype=torch.float64)
 energy = torch.empty(2, device="cuda", dtype=torch.float64)
 gradient = torch.empty_like(positions)
 strain = torch.empty((2, 3, 3), device="cuda", dtype=torch.float64)
+rows = torch.empty((2, 2), device="cuda", dtype=torch.float64)
 maximum = maximum_strain = 0.0
 energy_ulp = strain_ulp = 0
 diagonal = np.eye(3, dtype=bool)[None].repeat(2, axis=0)
@@ -54,9 +55,9 @@ for sigma in (0.15, 0.20, 0.25, 0.30, 0.3150752406575124,
               0.3399669508423535, 0.35, 0.40):
     theta.copy_(torch.tensor([sigma, 0.6363864], device="cuda", dtype=torch.float64))
     evaluator.tunables.update({"sigma": np.array([sigma]), "epsilon": np.array([0.6363864])})
-    reference = evaluator.evaluate(frames, cells=cells, gradients=("positions", "strain"))
+    reference = evaluator.evaluate(frames, cells=cells, gradients=("positions", "strain", "tunables"))
     evaluator._evaluate_device_batch(positions, theta, energy, cells=device_cells,
-        position_gradient=gradient, strain=strain,
+        position_gradient=gradient, strain=strain, rows=rows,
         stream=torch.cuda.current_stream().cuda_stream or 1)
     actual_u, actual_g, actual_s = (value.cpu().numpy() for value in (energy, gradient, strain))
     relative = np.abs(actual_u - reference.energy) / np.maximum(np.abs(reference.energy), 1e-300)
@@ -88,6 +89,13 @@ for sigma in (0.15, 0.20, 0.25, 0.30, 0.3150752406575124,
                       "ULP", abs(int(a.view(np.uint64)) - int(b.view(np.uint64))), flush=True)
     if failed:
         raise AssertionError("integrated LJ entry differs outside the accepted contracts")
+    actual_rows = rows.cpu().numpy()
+    expected_rows = np.concatenate([reference.jacobian[n] for n in ("sigma", "epsilon")], axis=1)
+    relative_rows = np.abs(actual_rows - expected_rows) / np.maximum(np.abs(expected_rows), 1e-300)
+    print("rows device", actual_rows.tolist(), "host", expected_rows.tolist(),
+          "relative", relative_rows.tolist(), flush=True)
+    if not np.all(np.isfinite(actual_rows) & (relative_rows <= 1e-14)):
+        raise AssertionError("LJ parameter rows differ outside the accepted bound")
     first = [value.copy() for value in (actual_u, actual_g, actual_s)]
     evaluator._evaluate_device_batch(positions, theta, energy, cells=device_cells,
         position_gradient=gradient, strain=strain,

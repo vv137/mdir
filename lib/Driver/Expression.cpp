@@ -4,6 +4,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Location.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -569,6 +570,39 @@ public:
     llvm_unreachable("unknown expression node");
   }
 
+  mlir::Value emitMagnitude(const Expression::Node &node) {
+    using Node = Expression::Node;
+    auto magnitude = [&](const Node &child) { return emitMagnitude(child); };
+    switch (node.kind) {
+    case Node::Name:
+      if (!values.count(node.name) && definitions.count(node.name))
+        return magnitude(*definitions.lookup(node.name));
+      break;
+    case Node::Negate:
+      return magnitude(*node.lhs);
+    case Node::Add:
+    case Node::Subtract:
+      return op("arith.addf", {magnitude(*node.lhs), magnitude(*node.rhs)});
+    case Node::Multiply:
+      return op("arith.mulf", {magnitude(*node.lhs), magnitude(*node.rhs)});
+    case Node::Divide:
+      return op("arith.divf", {magnitude(*node.lhs), op("math.absf", {emit(*node.rhs)})});
+    case Node::Power: {
+      mlir::Value base = magnitude(*node.lhs), power;
+      double exponent;
+      if (isWholeNumber(*node.rhs, exponent))
+        power = mlir::math::FPowIOp::create(builder, loc, base,
+            integer(static_cast<int64_t>(exponent)));
+      else
+        power = op("math.powf", {base, emit(*node.rhs)});
+      return op("arith.maxnumf", {op("math.absf", {emit(node)}), power});
+    }
+    default:
+      break;
+    }
+    return op("math.absf", {emit(node)});
+  }
+
 private:
   using Value = mlir::Value;
   Value constant(double value) {
@@ -647,8 +681,17 @@ private:
         mlir::arith::FPToSIOp::create(builder, loc, builder.getI32Type(), row);
     auto lookup = [&](unsigned k) -> Value {
       Value column = integer(k);
+      Value table = tables.lookup(spline.table);
+      if (auto memory = mlir::dyn_cast<mlir::MemRefType>(table.getType())) {
+        Value i = mlir::arith::IndexCastOp::create(builder, loc, builder.getIndexType(), index);
+        Value j = mlir::arith::IndexCastOp::create(builder, loc, builder.getIndexType(), column);
+        Value value = mlir::memref::LoadOp::create(builder, loc, table, mlir::ValueRange{i, j});
+        if (memory.getElementType().isF32())
+          value = mlir::arith::ExtFOp::create(builder, loc, builder.getF64Type(), value);
+        return value;
+      }
       return mdir::md::LookupOp::create(builder, loc, builder.getF64Type(),
-                                        tables.lookup(spline.table),
+                                        table,
                                         mlir::ValueRange{index, column});
     };
     if (spline.discrete)
@@ -1168,4 +1211,14 @@ mlir::Value ExpressionIR::build(mlir::OpBuilder &builder,
         builder.getUnknownLoc());
   return IREmitter(builder, loc, values, tables, definitions, state->splines)
       .emit(*state->root);
+}
+
+mlir::Value ExpressionIR::buildMagnitude(mlir::OpBuilder &builder,
+    const llvm::StringMap<mlir::Value> &values,
+    const llvm::StringMap<mlir::Value> &tables) const {
+  llvm::StringMap<const Expression::Node *> definitions;
+  for (const auto &[name, definition] : state->definitions)
+    definitions[name] = definition.get();
+  return IREmitter(builder, builder.getUnknownLoc(), values, tables,
+      definitions, state->splines).emitMagnitude(*state->root);
 }

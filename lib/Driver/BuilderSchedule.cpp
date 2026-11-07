@@ -296,6 +296,11 @@ llvm::Error Builder::emitEntry() {
       auto parameters = makeFrameBatchParameterPlan(program,
           *control.frameBatchTunables, control, system, coulombInternal);
       if (!parameters) return parameters.takeError();
+      auto tails = makeFrameBatchTailPlan(*this, program, *control.frameBatchTunables,
+          parameters->offsets);
+      if (!tails) return tails.takeError();
+      tails->resetCorrections = !parameters->lj.has_value();
+      config.batchTails = std::move(*tails);
       config.batchParameters = std::move(*parameters);
     }
     config.branchesStart = branchesStart();

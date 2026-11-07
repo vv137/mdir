@@ -9,6 +9,7 @@
 #include "EntryOutputIR.h"
 #include "BarostatIR.h"
 #include "FrameBatchParameterPlan.h"
+#include "FrameBatchTailIR.h"
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -24,6 +25,7 @@ struct SimpleFrameEntryIRConfig {
   bool batchOnDevice = false;
   bool dependent = false;
   std::optional<FrameBatchParameterPlan> batchParameters;
+  std::optional<FrameBatchTailPlan> batchTails;
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
   bool stepMemory = false, leapfrog = false, brownian = false, coupled = false;

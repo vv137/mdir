@@ -94,6 +94,8 @@ add_mlir_library(MDIRDriver
   FrameBatchProductsIR.cpp
   FrameBatchAuxIR.cpp
   FrameBatchInputIR.cpp
+  FrameBatchTailIR.cpp
+  FrameBatchTailPlan.cpp
   SimpleStepEntryIR.cpp
   MinimizationEntryIR.cpp
   BarostatIR.cpp

@@ -109,6 +109,20 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     SmallVector<Value> seedWeights;
     Value logicalCharges, chargeMap, coulombCorrections;
     Value observableVolume, observableFixed;
+    Value tailWorkspace;
+    llvm::StringMap<Value> tailTables;
+    if (config.batchTails && !config.batchTails->terms.empty()) {
+      auto workspace = MemRefType::get({4001, 5}, at.getF64Type(),
+          MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
+      tailWorkspace = gpu::AllocOp::create(at, loc, workspace, Type(),
+          ValueRange(), ValueRange(), ValueRange()).getMemref();
+      for (auto [i, table] : llvm::enumerate(program.tables)) {
+        auto type = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+            program.parameter == Element::F64 ? Type(at.getF64Type()) : Type(at.getF32Type()),
+            MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
+        tailTables[table.name] = mdir::mdrt::ToBufferOp::create(at, loc, type, imported.tables[i]);
+      }
+    }
     if (config.deviceBatch) {
       Attribute space = config.batchOnDevice ? Attribute(at.getI64IntegerAttr(1)) : Attribute{};
       auto type = MemRefType::get({1}, at.getI64Type(), MemRefLayoutAttrInterface(), space);
@@ -697,6 +711,10 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
                   orderedTypePairs, seedWeights[i], rawVolume, rawFixed,
                   {plan.types, seed.rawBase, seed.sigma, plan.ljSlopeFactor, plan.ljFixedFactor});
         }
+        if (tailWorkspace)
+          if (auto error = buildFrameBatchTails(frame, *config.batchTails,
+                  thetaValues, tailWorkspace, frameCorrections, rawVolume, rawFixed,
+                  observableVolume, observableFixed, tailTables)) return error;
         if (config.batchParameters)
           for (const auto &scalar : config.batchParameters->scalars) {
             Value index = arith::ConstantIndexOp::create(frame, loc, scalar.parameter);
