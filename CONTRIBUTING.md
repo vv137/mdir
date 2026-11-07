@@ -25,8 +25,8 @@ schedule also passes the short runs of the Amber suite
 
 Before every push, `scripts/check-before-push.sh` runs the checks that CI
 runs first (links, decisions, changelog fragments, the list of expected
-unsupported tests, the release path, control characters in text files) in
-seconds. Enable it as a hook, once
+unsupported tests, the release path, control characters in text files and
+tabs in Markdown) in seconds. Enable it as a hook, once
 per clone, with `git config core.hooksPath scripts/hooks`; `git push
 --no-verify` skips it for one push (#764,
 [docs/workflow.md](docs/workflow.md#continuous-integration)).

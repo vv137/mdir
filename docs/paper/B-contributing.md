@@ -134,7 +134,7 @@ reports the result on the pull request before the maintainer approves the
 merge. Before a push, `scripts/check-before-push.sh` runs the cheap checks
 of continuous integration (links, decision numbers, changelog fragments, the
 list of expected unsupported tests, the release path, control characters in
-text files) on the local files, and `git config core.hooksPath
+text files and tabs in Markdown) on the local files, and `git config core.hooksPath
 scripts/hooks` makes git run it as a pre-push hook.
 
 D359's explicit term registry and the bounded interfaces of D361 now cover

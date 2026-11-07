@@ -233,8 +233,9 @@ the cluster.
   and their table, the changelog fragments, the list of the expected
   unsupported tests (`python3 test/mdir_lit.py`), the release path
   (`scripts/release/check-path.sh`), and the control characters in the
-  tracked text files (none but the tab and the newline, #768: an escape
-  such as `\b` or `\t` in a shell or Python string turns TeX into bytes).
+  tracked text files (none but the tab and the newline, and no tab in a
+  Markdown file, #768: an escape such as `\b` or `\t` in a shell or Python
+  string turns TeX such as `\times` into bytes).
   The job runs one script,
   `scripts/check-before-push.sh`, which holds the list; a contributor runs
   the same checks before every push (below), so that the two cannot drift.
