@@ -54,7 +54,7 @@ No new key and no new argument: `FrameEnergies.vjp` of D381 and D383 accepts pro
 
 ## Validation
 
-`test/Driver/python-frame-sites.test` (CPU) and `python-frame-sites-gpu.test` (RTX 5090), 2 frames each, Lennard-Jones and Coulomb under a cutoff with the shift of D210. Each definition of the site is checked against a NumPy model of its own; the references are Richardson central differences (steps $h$ and $h/2$, $h = 10^{-4}$) of the NumPy $\Phi$ in $\boldsymbol\theta$ and in $\mathbf x$. The relative error of the largest entry:
+`test/Driver/python-frame-sites.test` (CPU) and `python-frame-sites-gpu.test` (RTX 5090) for the linear sites, and `python-frame-sites-amber.test` and `python-frame-sites-amber-gpu.test` for the extra points of Amber and the placement (they need the lit feature `parmed`, ParmEd in the interpreter of the tests), 2 frames each, Lennard-Jones and Coulomb under a cutoff with the shift of D210. Each definition of the site is checked against a NumPy model of its own; the references are Richardson central differences (steps $h$ and $h/2$, $h = 10^{-4}$) of the NumPy $\Phi$ in $\boldsymbol\theta$ and in $\mathbf x$. The relative error of the largest entry:
 
 | Quantity | CPU double | CPU mixed | GPU double | GPU mixed |
 |---|---|---|---|---|

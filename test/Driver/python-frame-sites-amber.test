@@ -1,0 +1,20 @@
+# REQUIRES: python-api, parmed
+# The product in theta of force matching with the extra points of Amber
+# (D[force-matching-sites], #771 part 2), on the CPU: OPC from a
+# prmtop, cut by ParmEd, against a NumPy Phi, the derivative in the
+# positions refused by name; and on rigid waters, the extra point of Amber
+# and the linear site of ParmEd's topology of GROMACS are one place (the
+# same energy). ParmEd cuts and converts the topology.
+# Inputs/python_frame_sites.py says what each scenario checks.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide amber CPU Double %t/amber-Double | FileCheck %s --check-prefixes=AMBER,AMBERDOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide amber CPU Mixed %t/amber-Mixed | FileCheck %s --check-prefixes=AMBER,AMBERMIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide placement CPU Double %t/placement-Double | FileCheck %s --check-prefixes=PLACEMENT -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide placement CPU Mixed %t/placement-Mixed | FileCheck %s --check-prefixes=PLACEMENT -DMODE="CPU Mixed"
+
+# AMBER: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles), 2 frames: the product in theta against central differences of the NumPy Phi
+# AMBERDOUBLE: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles): the same against central differences of the rows along the cotangent
+# AMBERMIXED: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles): the product in theta in mixed precision against that in double
+# AMBER: Amber OPC: the derivative in the positions is refused by name; the product in theta stays, to the bit
+# PLACEMENT: [[MODE]]: OPC from Amber and from GROMACS (40 waters, a = {{[0-9.]+}}), 2 frames of rigid waters: the energy, through the places of the sites

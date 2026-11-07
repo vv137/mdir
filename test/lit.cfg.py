@@ -115,6 +115,11 @@ if config.mdir_python:
     if subprocess.run([config.mdir_python_executable, "-c", "import openmm.unit"],
                       capture_output=True).returncode == 0:
         config.available_features.add("openmm")
+    # ParmEd, which cuts and converts topologies of Amber in the tests of
+    # the extra points of Amber (D[force-matching-sites]).
+    if subprocess.run([config.mdir_python_executable, "-c", "import parmed"],
+                      capture_output=True).returncode == 0:
+        config.available_features.add("parmed")
     # PyTorch, the independent consumer of DLPack views (D220):
     # the interpreter of the tests if it imports torch, or one that lit is
     # given with -Dtorch_python=<interpreter>, which must import the module
