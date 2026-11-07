@@ -527,7 +527,7 @@ over the frames of a batch, which XLA forms on the device as the
 transpose of the batched contraction. Without the flag, XLA chooses the
 order of that sum when it compiles. Measured on the RTX 5090: the same
 bits on every call of one process. Against the rows summed in order, it
-differed by $5.8	imes10^{-11}$ (absolute) in one process and agreed in
+differed by $5.8\times10^{-11}$ (absolute) in one process and agreed in
 another. With the flag it equals the sum in order. The outputs of
 `mdir_frames` themselves do not depend on it.
 
@@ -644,13 +644,13 @@ the table above holds on the device, in double and mixed:
 
 | Oracle | Result |
 |---|---|
-| `FrameEvaluator.evaluate`, a loop of single frames, eager, `mdir.torch.evaluate` (the rows as above) | equal to the bit; the VJP under a cotangent of weights $2.1	imes10^{-16}$ (double) and 0 (mixed) relative |
-| central differences in double: `params['sigma']`, `params['q']`, the positions, the edges, a triclinic cell | $5.6	imes10^{-13}$, $4.9	imes10^{-11}$, $6.0	imes10^{-8}$, $4.5	imes10^{-7}$, $5.6	imes10^{-8}$; tolerance $10^{-6}$ |
+| `FrameEvaluator.evaluate`, a loop of single frames, eager, `mdir.torch.evaluate` (the rows as above) | equal to the bit; the VJP under a cotangent of weights $2.1\times10^{-16}$ (double) and 0 (mixed) relative |
+| central differences in double: `params['sigma']`, `params['q']`, the positions, the edges, a triclinic cell | $5.6\times10^{-13}$, $4.9\times10^{-11}$, $6.0\times10^{-8}$, $4.5\times10^{-7}$, $5.6\times10^{-8}$; tolerance $10^{-6}$ |
 | `jax.test_util.check_grads` as above | passed |
 | the handler of `"CUDA"` against that of `"cpu"` on the same program, a program of the GPU and one of the CPU: the energies, the three gradients, the rows | equal to the bit |
 | the order on XLA's stream: 8 calls between JAX ops that write their positions and read their energies and gradients, with no wait, eager and under one `jit` | equal to the bit to the same ops on synchronized calls |
-| mixed against double, 5 frames, deterministic and not: the energy; $\mathbf G$ and the gradient in the edges, of the largest entry of the frame; $\partial U/\partialoldsymbol	heta$, of the largest entry | at most $3.1	imes10^{-3}$ kJ/mol; $2.6	imes10^{-5}$ and $1.7	imes10^{-5}$; $2.3	imes10^{-7}$. Tolerances $5	imes10^{-3}$ kJ/mol, $10^{-4}$, $10^{-6}$: those of the evaluator in mixed precision |
-| a program in mixed precision without the deterministic mode, whose forces on a GPU are summed in an order that changes from one evaluation to the next ($1.4	imes10^{-7}$ of the largest entry): float32 and float64 positions against the evaluator | the types of the table; $1.8	imes10^{-7}$ of the largest entry and 0 kJ/mol, tolerances $10^{-5}$ and $5	imes10^{-3}$ kJ/mol (to the bit on the CPU) |
+| mixed against double, 5 frames, deterministic and not: the energy; $\mathbf G$ and the gradient in the edges, of the largest entry of the frame; $\partial U/\partial\boldsymbol\theta$, of the largest entry | at most $3.1\times10^{-3}$ kJ/mol; $2.6\times10^{-5}$ and $1.7\times10^{-5}$; $2.3\times10^{-7}$. Tolerances $5\times10^{-3}$ kJ/mol, $10^{-4}$, $10^{-6}$: those of the evaluator in mixed precision |
+| a program in mixed precision without the deterministic mode, whose forces on a GPU are summed in an order that changes from one evaluation to the next ($1.4\times10^{-7}$ of the largest entry): float32 and float64 positions against the evaluator | the types of the table; $1.8\times10^{-7}$ of the largest entry and 0 kJ/mol, tolerances $10^{-5}$ and $5\times10^{-3}$ kJ/mol (to the bit on the CPU) |
 | a call of a program of the GPU on another device than its runtime's | refused, naming both. Tested with one device by naming another in `MDRT_DEVICE` after the runtime began; a second device was not available |
 | compute-sanitizer memcheck: energies, gradients, new values of `params`, the second pass, a frame that fails | 0 errors |
 
