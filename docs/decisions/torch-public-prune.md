@@ -12,7 +12,7 @@ D382 refused the derivative of $\mathbf G = \partial U/\partial\mathbf x$ in the
 
 Now:
 
-- `torch.autograd.grad(loss, x)`, and a `loss.backward()` that reaches positions requiring a gradient, are given where every term has a rule for the derivative in the positions (D383): pairs, tuples, terms of the positions, and the linear virtual sites of D[force-matching-sites]. The gradient in the positions of $\Phi = g\,U + \bar{\mathbf G}\cdot\mathbf G$ is $g\,\nabla U + \mathsf H\bar{\mathbf G}$.
+- `torch.autograd.grad(loss, x)`, and a `loss.backward()` that reaches positions requiring a gradient, are given where every term has a rule for the derivative in the positions (D383): pairs, tuples, terms of the positions, and the linear virtual sites of D384. The gradient in the positions of $\Phi = g\,U + \bar{\mathbf G}\cdot\mathbf G$ is $g\,\nabla U + \mathsf H\bar{\mathbf G}$.
 - Where a term has no rule (the reciprocal sum of PME, the extra points of Amber that follow the directions of their bonds), such a backward raises `UnsupportedError`, naming the term. `torch.autograd.grad(loss, theta)` and `loss.backward(inputs=theta)` stay given there.
 - The private function is not called, and the case without it goes.
 - The derivative of $\mathbf G$ in the cell, the derivatives of the strain and of the gradient in the cell, a backward through the virial or an observable, and $\partial^2U/\partial\boldsymbol\theta^2$ stay refused as in D382, with the same wording. The derivative of $\mathsf H\bar{\mathbf G}$, a third derivative, is refused too.
@@ -63,7 +63,7 @@ A force loss on a fluid of 1000 atoms (Lennard-Jones with NBFIX, and Coulomb und
 ## Validation
 
 - `test/Driver/python-frame-hvp-torch.test` (CPU) and `-gpu.test` (RTX 5090), in double and mixed: on the torsion fixtures of D372 and the pair fluid of D383, every form of the backward against `FrameEnergies.vjp`, and the passes each form makes. The forms are `grad(L, theta)`, `grad(L, x)`, both together, `L.backward()`, `L.backward(inputs=theta)`, a loss with a term of the energy, and the forward compiled with `aot_eager`. With PME, `grad(L, theta)` and `backward(inputs=theta)` are given and equal to `vjp`, while the forms that take the positions are refused, naming the reciprocal sum.
-- `test/Driver/python-frame-hvp-torch-amber.test` (CPU) and `-gpu.test` (RTX 5090), with ParmEd: OPC from a prmtop of Amber cut to 40 waters (the fixture of D[force-matching-sites]). `grad(L, theta)` is given and equal to `vjp`, and the forms that take the positions are refused, naming the extra points. The linear sites of OPC from GROMACS: `grad(L, x)` is given and equal to `vjp`.
+- `test/Driver/python-frame-hvp-torch-amber.test` (CPU) and `-gpu.test` (RTX 5090), with ParmEd: OPC from a prmtop of Amber cut to 40 waters (the fixture of D384). `grad(L, theta)` is given and equal to `vjp`, and the forms that take the positions are refused, naming the extra points. The linear sites of OPC from GROMACS: `grad(L, x)` is given and equal to `vjp`.
 - `python-frame-product-torch.test`: the refusals of the Hessian by `torch.autograd.grad`, by `backward()`, and through a tensor that moves the positions now run on PME, where they name the reciprocal sum. The block on the missing private function is replaced by `grad(L, theta)` on PME with the positions requiring a gradient, equal to `vjp` to the bit.
 - The other tests of `mdir.torch` pass unchanged, with every refusal of the cell, the strain, the virial, and the observables in its wording.
 
