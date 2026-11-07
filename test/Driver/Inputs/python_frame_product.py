@@ -532,7 +532,8 @@ def run_refusals():
           "values changed since the frames were evaluated are refused; the evaluator gives the "
           "same product after them, to the bit")
 
-    # What the product does not form yet, refused when it is asked.
+    # Virtual sites: the extra points of Amber take the product in theta
+    # (D[force-matching-sites]); python_frame_sites.py checks its values.
     opc = root + "/../opc"
     loaded = mdir.load_amber(opc + "/opc.prmtop", opc + "/opc.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
@@ -544,10 +545,8 @@ def run_refusals():
     sites = mdir.FrameEvaluator(compile_(system, state))
     y = np.array(state.positions)[None]
     out = sites.evaluate(y)
-    text = expect(mdir.UnsupportedError, lambda: out.vjp(positions=np.ones_like(y)),
-                  "virtual sites")
-    assert np.isfinite(sites.evaluate(y).energy).all()
-    print(f"refusals: virtual sites: {text.split(': ', 1)[1][:110]}")
+    assert np.isfinite(out.vjp(positions=np.ones_like(y))["sigma"]).all()
+    print("refusals: virtual sites of Amber: the product is given")
 
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()

@@ -1,20 +1,25 @@
 # REQUIRES: python-api
-# The products of force matching with linear virtual sites
-# (D[force-matching-sites], #771 part 2), on the CPU: OPC water of GROMACS,
-# the product in theta of D381 and the derivative in the positions of D383
-# against central differences of a NumPy Phi, against central differences
-# of Phi from the evaluator, and in mixed precision against double; with
-# the spread of the sites written out and derived (MDIR_SITE_SPREAD, D298);
-# the refusal of the extra points of Amber.
+# The products of force matching with virtual sites
+# (D[force-matching-sites], #771 part 2), on the CPU:
+# - linear sites (OPC of GROMACS): the product in theta of D381 and the
+#   derivative in the positions of D383 against central differences of a
+#   NumPy Phi and of Phi from the evaluator, and mixed against double, with the spread written out and derived (MDIR_SITE_SPREAD, D298);
+# - the extra points of Amber (OPC from a prmtop, cut by ParmEd): the
+#   product in theta against a NumPy Phi, the derivative in the positions
+#   refused by name;
+# - on rigid waters, the two placements are one place (the same energy).
 # Inputs/python_frame_sites.py says what each scenario checks.
 #
 # RUN: rm -rf %t && mkdir -p %t
-# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Double %t/pair | FileCheck %s --check-prefixes=PAIR,DOUBLE -DMODE="CPU Double"
-# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Mixed %t/pair-mixed | FileCheck %s --check-prefixes=PAIR,MIXED -DMODE="CPU Mixed"
-# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
-# RUN: env MDIR_SITE_SPREAD=derived %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box-derived | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
-# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Mixed %t/box-mixed | FileCheck %s --check-prefixes=BOX,MIXED -DMODE="CPU Mixed"
-# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide refusals CPU Double %t/refusals | FileCheck %s --check-prefix=REFUSED
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Double %t/pair-Double | FileCheck %s --check-prefixes=PAIR,DOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Mixed %t/pair-Mixed | FileCheck %s --check-prefixes=PAIR,MIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box-Double | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
+# RUN: env MDIR_SITE_SPREAD=derived %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box-Double-derived | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Mixed %t/box-Mixed | FileCheck %s --check-prefixes=BOX,MIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide amber CPU Double %t/amber-Double | FileCheck %s --check-prefixes=AMBER,AMBERDOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide amber CPU Mixed %t/amber-Mixed | FileCheck %s --check-prefixes=AMBER,AMBERMIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide placement CPU Double %t/placement-Double | FileCheck %s --check-prefixes=PLACEMENT -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide placement CPU Mixed %t/placement-Mixed | FileCheck %s --check-prefixes=PLACEMENT -DMODE="CPU Mixed"
 
 # PAIR: [[MODE]]: two OPC waters: the NumPy energy against the evaluator
 # PAIR: [[MODE]]: two OPC waters: the NumPy gradient (zero on the sites) against the evaluator
@@ -30,4 +35,8 @@
 # MIXED: [[MODE]]: {{.*}}: the derivative in the positions in mixed precision against that in double
 # PAIR: [[MODE]]: two OPC waters: the derivative in the positions with another cotangent on the sites
 # BOX: [[MODE]]: eight OPC waters in 2.0 nm: the derivative in the positions with another cotangent on the sites
-# REFUSED: refusals: the extra points of Amber are refused by name, in theta and in the positions; the evaluator stays usable
+# AMBER: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles), 2 frames: the product in theta against central differences of the NumPy Phi
+# AMBERDOUBLE: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles): the same against central differences of the rows along the cotangent
+# AMBERMIXED: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters, 182 particles): the product in theta in mixed precision against that in double
+# AMBER: Amber OPC: the derivative in the positions is refused by name; the product in theta stays, to the bit
+# PLACEMENT: [[MODE]]: OPC from Amber and from GROMACS (40 waters, a = {{[0-9.]+}}), 2 frames of rigid waters: the energy, through the places of the sites

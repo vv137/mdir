@@ -25,5 +25,5 @@
 # LJMIXED: [[MODE]]: the product in mixed precision against that in double
 # CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, 2 frames, against the NumPy sum
 # REFUSED: refusals: no cotangent, a shape, a value that is not finite, frames given once, and values changed
-# REFUSED: refusals: virtual sites: the product of a frame is not implemented for a program with virtual sites
+# REFUSED: refusals: virtual sites of Amber: the product is given
 # REFUSED: refusals: the charges with particle mesh Ewald are refused, never a zero
