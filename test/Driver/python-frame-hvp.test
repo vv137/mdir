@@ -27,5 +27,5 @@
 # DIHEDRALMIXED: [[MODE]]: dihedrals, 3 frames: the derivative of the product in the positions against central differences of the closed form of Phi
 # DIHEDRALMIXED: [[MODE]]: the product in theta of the variant against D381's
 # REFUSED: refusals: with particle mesh Ewald, the derivative in the positions is refused, naming the reciprocal sum; the product in theta is given
-# REFUSED: refusals: virtual sites are refused, by name
+# REFUSED: refusals: the extra points of Amber are given, zero in the rows of the sites
 # REFUSED: refusals: the names of gradients; positions alone, and beside the tunables, the same to the bit; without it, no positions
