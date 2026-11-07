@@ -1,0 +1,21 @@
+# REQUIRES: python-api, torch
+# The derivative in the positions of the gradient in the positions through
+# mdir.torch (D[torch-public-prune], #771 part 4), on the CPU: every form of
+# the backward of a loss on the forces against FrameEnergies.vjp (D383),
+# with the passes of the product program that each makes, on the torsion
+# fixtures, the pair fluid, and OPC with the linear sites of GROMACS, and
+# under torch.compile; with PME the gradient in theta alone is given and the
+# forms that take the positions are refused by name.
+# Inputs/python_frame_hvp_torch.py says what each scenario checks.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide forms CPU Double %t/forms-Double | FileCheck %s --check-prefix=FORMS -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide forms CPU Mixed %t/forms-Mixed | FileCheck %s --check-prefix=FORMS -DMODE="CPU Mixed torch"
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide pme CPU Double %t/pme-Double | FileCheck %s --check-prefix=PME -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide pme CPU Mixed %t/pme-Mixed | FileCheck %s --check-prefix=PME -DMODE="CPU Mixed torch"
+
+# FORMS: [[MODE]]: dihedral_k on the torsion fixtures, 2 frames: every form, with and without a term of the energy, against FrameEnergies.vjp: theta to the bit
+# FORMS: [[MODE]]: dihedral_k on the torsion fixtures: under torch.compile (aot_eager), grad(L, theta) and grad(L, x) make the passes of eager and give its gradients, to the bit
+# FORMS: [[MODE]]: the pair fluid (LJ with NBFIX and Coulomb, shifted at the cutoff), 2 frames: every form, with and without a term of the energy, against FrameEnergies.vjp: theta to the bit
+# FORMS: [[MODE]]: eight OPC waters with the linear sites of GROMACS, 2 frames: every form, with and without a term of the energy, against FrameEnergies.vjp: theta to the bit
+# PME: [[MODE]]: the dipeptide with PME, 2 frames: grad(L, theta) and L.backward(inputs=theta), with positions that require a gradient, against FrameEnergies.vjp, to the bit; grad(L, x), grad(L, [theta, x]), and L.backward() refused, naming reciprocal sum

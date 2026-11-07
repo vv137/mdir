@@ -17,7 +17,9 @@ Scenarios:
             theta against finite differences of the forces, on the torsion
             fixtures and on propane and water
   refusals  the second derivatives that stay refused, each where a
-            backward needs it, and that the evaluator stays usable (CPU)
+            backward needs it, the derivative in the positions with PME
+            among them, the gradient in theta alone given there, and that
+            the evaluator stays usable (CPU)
 """
 import sys
 from pathlib import Path
@@ -148,7 +150,59 @@ def expect(error, call, text):
     raise AssertionError(f"expected {error.__name__} containing {text!r}")
 
 
+def pme():
+    loaded = mdir.load_amber(base.root + "/dipeptide.prmtop", base.root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 0.8, 0.9
+    system.electrostatics = mdir.Electrostatics.PME
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.tunables = [mdir.Tunable("sigma", "sigma_pair")]
+    system.tunable_gradient = True
+    evaluator = mdir.FrameEvaluator(base.compile_(system, state))
+    return evaluator, base.frames(state, count=2, spread=0.004)
+
+
 def refusals():
+    # The derivative in the positions of the gradient in the positions is
+    # given where every term has a rule for it (D383,
+    # python-frame-hvp-torch.test); with PME it is refused, naming the
+    # reciprocal sum, where a backward takes a gradient in the positions,
+    # and there alone (D[torch-public-prune]).
+    evaluator, x = pme()
+    theta = {"sigma": torch.tensor(np.array(evaluator.tunables["sigma"]), requires_grad=True)}
+    f_ref = torch.from_numpy(np.random.default_rng(3).normal(size=x.shape))
+
+    def force_loss(positions):
+        out = mdir.torch.evaluate(evaluator, theta, positions)
+        g, = torch.autograd.grad(out.energy.sum(), positions, create_graph=True)
+        return ((-g - f_ref) ** 2).sum(), g
+
+    positions = torch.tensor(x, requires_grad=True)
+    loss, g = force_loss(positions)
+    first, = torch.autograd.grad(loss, theta["sigma"], retain_graph=True)
+    expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, positions, retain_graph=True),
+           "reciprocal sum")
+    expect(mdir.UnsupportedError, lambda: loss.backward(retain_graph=True), "reciprocal sum")
+    # The positions moved by a tensor of their own: the gradient that
+    # reaches it is refused too.
+    shift = torch.zeros_like(positions, requires_grad=True)
+    moved, _ = force_loss(torch.from_numpy(x) + shift)
+    expect(mdir.UnsupportedError, lambda: torch.autograd.grad(moved, shift), "reciprocal sum")
+    print("refusals: with PME, the derivative in the positions, by torch.autograd.grad, by "
+          "backward, and through a tensor that moves the positions, naming the reciprocal sum")
+    # The gradient in theta alone, with the positions requiring a gradient:
+    # the product of D381, that of FrameEnergies.vjp at the cotangent that
+    # the loss puts on G, dL/dG = 2 (G + f).
+    cotangent = 2.0 * (g.detach().numpy() + f_ref.numpy())
+    reference = evaluator.evaluate(x).vjp(np.zeros(len(x)), positions=cotangent)["sigma"]
+    assert np.array_equal(first.numpy(), reference)
+    positions = torch.tensor(x, requires_grad=True)
+    loss, _ = force_loss(positions)
+    loss.backward(inputs=[theta["sigma"]])
+    assert torch.equal(theta["sigma"].grad, first) and positions.grad is None
+    print("refusals: with PME, the gradient in theta alone, with positions that require a "
+          "gradient, by torch.autograd.grad and by backward(inputs=theta), against "
+          "FrameEnergies.vjp, to the bit")
     evaluator, x = torsion()
     theta = {"k": torch.tensor(np.array(evaluator.tunables["k"]), requires_grad=True)}
     f_ref = torch.from_numpy(np.random.default_rng(3).normal(size=x.shape))
@@ -158,42 +212,7 @@ def refusals():
         g, = torch.autograd.grad(out.energy.sum(), positions, create_graph=True)
         return ((-g - f_ref) ** 2).sum()
 
-    positions = torch.tensor(x, requires_grad=True)
-    loss = force_loss(positions)
-    first, = torch.autograd.grad(loss, theta["k"], retain_graph=True)
-    expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, positions, retain_graph=True),
-           "in the positions (the Hessian)")
-    expect(mdir.UnsupportedError, lambda: loss.backward(retain_graph=True),
-           "in the positions (the Hessian)")
-    # The positions moved by a tensor of their own: the gradient that
-    # reaches it is refused too.
-    shift = torch.zeros_like(positions, requires_grad=True)
-    moved = torch.from_numpy(x) + shift
-    loss = force_loss(moved)
-    expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, shift), "the Hessian")
-    print("refusals: the Hessian in the positions, by torch.autograd.grad, by backward, and "
-          "through a tensor that moves the positions")
-    # The engine is asked by a private function of PyTorch; without it, or
-    # without an answer, the derivative is refused even where the backward
-    # would not take the gradient in the positions (fail closed).
-    original = torch._C._will_engine_execute_node
-    for replaced in ("absent", "no answer"):
-        if replaced == "absent":
-            del torch._C._will_engine_execute_node
-        else:
-            torch._C._will_engine_execute_node = lambda node: None
-        try:
-            positions = torch.tensor(x, requires_grad=True)
-            loss = force_loss(positions)
-            expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, theta["k"]),
-                   "in the positions (the Hessian)")
-        finally:
-            torch._C._will_engine_execute_node = original
-    positions = torch.tensor(x, requires_grad=True)
-    assert torch.equal(torch.autograd.grad(force_loss(positions), theta["k"])[0], first)
-    print("refusals: without the private function of PyTorch that tells whether the gradient "
-          "in the positions is taken, or without its answer, the derivative is refused; with "
-          "it back, the same gradient, to the bit")
+    first, = torch.autograd.grad(force_loss(torch.tensor(x, requires_grad=True)), theta["k"])
     out = mdir.torch.evaluate(evaluator, theta, x, gradients=("strain",))
     expect(mdir.UnsupportedError,
            lambda: torch.autograd.grad(out.gradients["strain"].sum(), theta["k"]),

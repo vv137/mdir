@@ -1,0 +1,3 @@
+### Changed
+
+- **`mdir.torch` differentiates the gradient in the positions in the positions** (D[torch-public-prune], #771 part 4). The positions and the cell that take a gradient are nodes of the graph of their own, beside that of the tunables. `torch.autograd.grad(loss, x)` and a `loss.backward()` that reaches the positions are given where every term has a rule (D383), and are refused by the name of the term otherwise (the reciprocal sum of PME, the extra points of Amber). `torch.autograd.grad(loss, theta)` stays given on every system. The private `torch._C._will_engine_execute_node` of D382 is no longer called ([docs/python-frames.md](docs/python-frames.md)).
