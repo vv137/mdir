@@ -118,6 +118,44 @@ Value composeVirial(OpBuilder &builder, ValueRange elements) {
 }
 } // namespace
 
+Value mdir::driver::builder::buildPlacedSiteTangents(OpBuilder &builder,
+                                                    const SiteSpreadInputs &in,
+                                                    bool amber) {
+  auto loc = builder.getUnknownLoc();
+  Geometry k(builder);
+  // The displacements from the owner to the hydrogens, which the placement
+  // of Amber depends on; the members' tangents are the field.
+  auto delta = gather(builder, in,
+                      {{displacement, {2, 1}}, {displacement, {3, 1}}}, true);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = kernel(builder, delta.getKernel(), 6, 2)->getArguments();
+    Value toJ = k.sub(args[4], args[3]), toK = k.sub(args[5], args[3]);
+    Value moved;
+    if (amber) {
+      // w = a s / |s|, s = u + v, u = U / |U|: along the tangents dU and dV,
+      // du = (dU - u (u . dU)) / |U|, and dw = a (ds - b (b . ds)) / |s|
+      // with b = s / |s|.
+      SiteFrame frame(k, args[0], args[1]);
+      auto unit = [&](Value direction, Value length, Value change) {
+        Value along = k.scale(k.dot(direction, change), direction);
+        return k.div(k.sub(change, along), k.splat(length));
+      };
+      Value ds = k.add(unit(frame.u, frame.lengthU, toJ),
+                       unit(frame.v, frame.lengthV, toK));
+      Value bisector = k.div(frame.sum, k.splat(frame.lengthSum));
+      Value across = k.sub(ds, k.scale(k.dot(bisector, ds), bisector));
+      moved = k.scale(k.div(args[6], frame.lengthSum), across);
+    } else {
+      moved = buildSitePlacement(builder, false, toJ, toK, args[6], args[7]);
+    }
+    Value placed = k.add(args[3], moved);
+    Value change = k.sub(placed, args[2]), zero = k.zero();
+    mdir::md::YieldOp::create(builder, loc, ValueRange{change, zero, zero, zero});
+  }
+  return buildAddChange(builder, in.forces, delta.getResult());
+}
+
 SiteSpreadResult mdir::driver::builder::buildSiteSpread(
     OpBuilder &builder, const SiteSpreadInputs &in, bool amber, bool derived,
     llvm::StringRef potential) {

@@ -117,10 +117,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         MemRefType::get({product ? 3 : 2}, at.getF64Type()));
     auto storage = cast<MemRefType>(arguments.positions.getType());
     if (product) {
-      if (!config.sites.empty())
+      // The product takes the tangent J Gbar of the placement, and the
+      // variant spreads the forces with J^T (D[force-matching-sites]). The
+      // J of the sites of four-site water of Amber, which follow the
+      // directions of the bonds, depends on the positions: the derivative
+      // in the positions would need its curvature as well.
+      if (product->positions &&
+          llvm::any_of(config.sites, [](const auto &site) { return site.amber; }))
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
-            "the product of a frame is not implemented for a program with "
-            "virtual sites yet (#726)");
+            "the derivative in the positions of the product of a frame is not "
+            "implemented for a program with virtual sites placed by the directions "
+            "of their bonds (the extra points of four-site water of Amber) yet; "
+            "linear sites are, and the product in theta takes both (#771)");
       if (program.reorders)
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
             "the product program of frames keeps the order of the input; "
@@ -188,13 +196,29 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         const auto &gradient = *config.output.gradient;
         Value tangent = buildEntryField(frame,
             boundary.getResult(product->positionCotangentResult), 3, false);
+        // The tangent of the placement: J Gbar, in place of the entries of
+        // the sites, whose own cotangent meets a gradient that is zero.
+        for (const auto &site : config.sites)
+          tangent = buildPlacedSiteTangents(frame,
+              {originalParameters[site.relation], physical.positions, cell,
+               originalParameters[site.a], originalParameters[site.b], tangent, {}},
+              site.amber);
+        auto spread = [&](OpBuilder &at, Value forces) {
+          for (const auto &site : config.sites)
+            forces = buildSiteSpread(at,
+                {state.fields[site.relation], state.positions, state.cell,
+                 state.fields[site.a], state.fields[site.b], forces, {}},
+                site.amber, site.derived, site.potential).forces;
+          return forces;
+        };
         auto iteration = buildEntryLoop(frame, "frame product", zero, one, one, {},
             [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
           SmallVector<Value> constants, seeds;
           for (unsigned slot : gradient.constants) constants.push_back(arguments.startValues[slot]);
           if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
           buildTunableProductOutput(body, state, tangent,
-              physical.identities, constants, seeds, gradient.output, product->positions);
+              physical.identities, constants, seeds, gradient.output, product->positions,
+              config.sites.empty() ? llvm::function_ref<Value(OpBuilder &, Value)>() : spread);
           return SmallVector<Value>{};
         });
         if (!iteration) return iteration.takeError();
