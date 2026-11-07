@@ -187,7 +187,7 @@ static ParseResult parseRequests(OpAsmParser &parser,
     if (!kind)
       return parser.emitError(loc)
              << "expected 'energy', 'forces', 'virial', 'derivative', "
-                "'tangent', or 'tangent_derivative', got '"
+                "'tangent', 'tangent_derivative', or 'tangent_forces', got '"
              << keyword << "'";
 
     int64_t argument = -1;
@@ -1325,7 +1325,8 @@ ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 bool EvaluateOp::hasTangent() {
   return llvm::any_of(getRequestKinds(), [](int32_t kind) {
     auto request = static_cast<Request>(kind);
-    return request == Request::Tangent || request == Request::TangentDerivative;
+    return request == Request::Tangent || request == Request::TangentDerivative ||
+           request == Request::TangentForces;
   });
 }
 
@@ -1373,6 +1374,7 @@ LogicalResult EvaluateOp::verify() {
       expected = builder.getF64Type();
       break;
     case Request::Forces:
+    case Request::TangentForces:
       expected = getOperand(0).getType();
       break;
     case Request::Virial:

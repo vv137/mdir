@@ -266,6 +266,14 @@ private:
   bool requestForces = false;
   bool requestVirial = false;
 
+public:
+  /// Whether the potential is the tangent of another (D376), whose pair
+  /// kernels read the displacement and take the forces of
+  /// D[force-matching-hvp].
+  bool ofTangent = false;
+
+private:
+
   FunctionOp function;
   Block *body = nullptr;
   Value energy;
@@ -315,7 +323,11 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
   }
   for (SumRelationOp sum : sums) {
     Block &kernel = sum.getKernel().front();
-    if (!kernel.getArgument(1).use_empty())
+    // The forces of the tangent of a pair term (D376), whose kernel reads
+    // the displacement, take its derivative in each component
+    // (D[force-matching-hvp]); its virial, and the forces of other kernels
+    // that read it, do not exist yet.
+    if (!kernel.getArgument(1).use_empty() && (!ofTangent || requestVirial))
       return sum.emitOpError()
              << "cannot differentiate a kernel that uses the displacement; "
                 "only kernels that depend on the distance are supported";
@@ -1207,6 +1219,13 @@ Value DerivativeBuilder::scaleField(Value field, Value weight) {
 }
 
 LogicalResult DerivativeBuilder::buildForces(Value &forces) {
+  // The tangent of a reciprocal sum reads the forces of the op, whose
+  // derivative in the positions has no rule yet (#771): refused, not zero.
+  for (Operation *op : potentialOps)
+    if (op->hasAttr(kReciprocalTangent))
+      return op->emitError()
+             << "the derivative in the positions of the tangent of a reciprocal "
+                "sum is not formed yet (D[force-matching-hvp], #771)";
   Type fieldType = body->getArgument(0).getType();
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
 
@@ -1237,9 +1256,41 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
       Value broadcast =
           vector::BroadcastOp::create(kernel, loc, vectorType, factor);
       contribution = emit.mul(broadcast, block.getArgument(1));
-    } else {
-      contribution = emit.constant(0.0, vectorType);
     }
+    // A kernel that reads the displacement d = x_i - x_j besides the
+    // distance, as the tangent of a pair term does (D376): K(i, j) takes
+    // -weight * dk/dd as well, a component at a time along the unit vectors,
+    // with r held fixed, as the forces of a term over tuples take theirs
+    // (D[force-matching-hvp]). The kernel is invariant under the exchange of
+    // the particles, so K(j, i) = -K(i, j).
+    Value d = block.getArgument(1);
+    if (!d.use_empty()) {
+      Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+      Type element = cast<VectorType>(vectorType).getElementType();
+      SmallVector<Value, 3> components;
+      bool any = false;
+      for (int64_t c = 0; c < 3; ++c) {
+        SmallVector<double, 3> unit(3, 0.0);
+        unit[c] = 1.0;
+        Value seed = arith::ConstantOp::create(
+            kernel, loc, vectorType,
+            DenseElementsAttr::get(cast<ShapedType>(vectorType),
+                                   ArrayRef<double>(unit)));
+        ScalarDerivative derivative(kernel, d, nullptr, seed);
+        Value slope;
+        if (failed(derivative.get(pairEnergy, slope)))
+          return failure();
+        Value component = emit.neg(emit.mul(weight, slope));
+        any |= static_cast<bool>(component);
+        components.push_back(component ? component : emit.constant(0.0, element));
+      }
+      if (any)
+        contribution = emit.add(contribution,
+                                vector::FromElementsOp::create(kernel, loc, vectorType,
+                                                               components));
+    }
+    if (!contribution)
+      contribution = emit.constant(0.0, vectorType);
     setYield(block, contribution);
     terms.push_back(gather->getResult(0));
   }
@@ -3184,8 +3235,9 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       break;
     case Request::Tangent:
     case Request::TangentDerivative:
-      // The pass asks the tangent potential for these, as its energy and
-      // its derivatives.
+    case Request::TangentForces:
+      // The pass asks the tangent potential for these, as its energy, its
+      // derivatives, and its forces.
       potential.emitOpError()
           << "a request of the tangent reached the derivative of a potential";
       return FunctionOp();
@@ -3302,6 +3354,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       break;
     case Request::Tangent:
     case Request::TangentDerivative:
+    case Request::TangentForces:
       llvm_unreachable("refused when the result types were formed");
     }
     if (failed(status))
@@ -3388,6 +3441,9 @@ public:
         } else if (request == Request::TangentDerivative) {
           part = 1;
           request = Request::Derivative;
+        } else if (request == Request::TangentForces) {
+          part = 1;
+          request = Request::Forces;
         }
         kinds[part].push_back(static_cast<int32_t>(request));
         arguments[part].push_back(argument);
@@ -3443,6 +3499,7 @@ private:
       }
     } else {
       DerivativeBuilder derivative(potential, name, remarks, separateStages);
+      derivative.ofTangent = llvm::is_contained(tangents, potential);
       if (!derivative.build(kinds, arguments))
         return nullptr;
     }

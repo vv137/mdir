@@ -177,7 +177,18 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
       compare(b, loc, analytic, plus, minus, h, prefix + "parameter " + std::to_string(index));
       continue;
     }
-    if (request == Request::Forces) {
+    if (request == Request::Forces || request == Request::TangentForces) {
+      // The forces of the energy against differences of the energy, and
+      // those of the tangent (D[force-matching-hvp]) against differences of
+      // the tangent, at a position at a time.
+      bool ofTangent = request == Request::TangentForces;
+      auto of = [&](OpBuilder &at, ValueRange shifted) {
+        if (!ofTangent)
+          return energy(at, source, shifted);
+        SmallVector<Value> operands(shifted);
+        operands.push_back(tangent);
+        return this->request(at, source, operands, Request::Tangent, -1, at.getF64Type());
+      };
       Value forces = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, analytic);
       auto particles = scf::ForOp::create(b, loc, zero, count, one);
       OpBuilder particle = OpBuilder::atBlockTerminator(particles.getBody());
@@ -196,12 +207,13 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
       auto shifted = inputs;
       shifted[0] = mdir::mdrt::FromBufferOp::create(at, loc, field, plusBuffer);
       Value plusField = shifted[0];
-      Value plus = energy(at, source, shifted);
+      Value plus = of(at, shifted);
       shifted[0] = mdir::mdrt::FromBufferOp::create(at, loc, field, minusBuffer);
       Value minusField = shifted[0];
-      Value minus = energy(at, source, shifted);
+      Value minus = of(at, shifted);
       Value force = memref::LoadOp::create(at, loc, forces, indices);
-      compare(at, loc, arith::NegFOp::create(at, loc, force), plus, minus, h, prefix + "force component");
+      compare(at, loc, arith::NegFOp::create(at, loc, force), plus, minus, h,
+              prefix + (ofTangent ? "tangent force component" : "force component"));
       // Export before freeing: storage must not recycle these imported
       // buffers as field scratch. Each perturbation is immutable after import.
       memref::DeallocOp::create(at, loc, mdir::mdrt::ToBufferOp::create(at, loc, bufferType, plusField));

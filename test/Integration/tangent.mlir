@@ -2,8 +2,10 @@
 // (D376, #726), compiled and run on the CPU and checked by
 // central differences along the tangent: `tangent` against differences of
 // the energy, `tangent_derivative(n)` against differences of
-// `derivative(n)` (the oracle of md-check-derivatives, which aborts with a
-// message on a value outside the tolerance).
+// `derivative(n)`, and `tangent_forces` against differences of the tangent
+// in each position (D[force-matching-hvp]: the forces of the tangent of the
+// pair term read the displacement) (the oracle of md-check-derivatives, which
+// aborts with a message on a value outside the tolerance).
 //
 // RUN: mdir-opt %s --md-check-derivative-coverage \
 // RUN:     --md-check-derivatives="step=1e-5 atol=1e-9 rtol=1e-6" %md_passes \
@@ -169,13 +171,13 @@ func.func @main() {
   %kd = arith.constant 2.5 : f64
   %c = arith.constant 0.3 : f64
 
-  %u, %f, %p, %pe, %pk, %pc, %pq = md.evaluate @model(%x, %cell, %eps, %q,
+  %u, %f, %p, %pe, %pk, %pc, %pq, %tf = md.evaluate @model(%x, %cell, %eps, %q,
         %kd, %c, %bonds, %angles, %dihedrals, %t)
       request [energy, forces, tangent, tangent_derivative(2),
                tangent_derivative(4), tangent_derivative(5),
-               tangent_derivative(3)]
+               tangent_derivative(3), tangent_forces]
       : (!vec, !md.cell, f64, !real, f64, f64, !bonds, !angles, !dihedrals,
-         !vec) -> (f64, !vec, f64, f64, f64, f64, !real)
+         !vec) -> (f64, !vec, f64, f64, f64, f64, !real, !vec)
 
   // Φ = Σ t_i · ∂U/∂x_i = −Σ t_i · F_i, from the forces of the same call.
   %forces = mdrt.to_buffer %f : !vec to memref<?x3xf64>
