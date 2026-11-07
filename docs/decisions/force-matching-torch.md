@@ -36,4 +36,25 @@ The rest of B's limits hold: virtual sites, and the charges as a field with PME,
 
 ## Validation
 
-(Filled in by the PR.)
+`test/Driver/python-frame-product-torch.test` (CPU) and `-gpu.test` (RTX 5090) form the product of D381 by autograd, in both forms above. They run the scenarios of `python_frame_product.py` with the product of `mdir.torch` in place of `FrameEnergies.vjp`, so that the references of D381 check the backward of the adapter.
+
+- **Both forms against `FrameEnergies.vjp`:** equal to the bit on every scenario, on the CPU and the RTX 5090, in double and mixed. The tolerances were $10^{-14}$ and $10^{-6}$.
+- **The references of D381, through `mdir.torch`.** The relative error, of the largest entry, is that of `vjp`:
+
+  | Reference | CPU double | CPU mixed | GPU double | GPU mixed |
+  |---|---|---|---|---|
+  | `dihedral_k`, the closed form along the cotangent | 4.6e-16 | 3.6e-6 | 1.0e-15 | 4.1e-6 |
+  | $\sigma$, $\epsilon$ (propane and water), NumPy | 1.7e-11 | 4.2e-7 | 1.7e-11 | 1.3e-6 |
+  | the charges under a Coulomb cutoff, NumPy | 4.7e-15 | 1.8e-6 | 2.5e-15 | 1.6e-6 |
+
+  Central differences of the rows along the cotangent agree to 1.1e-12 to 9.1e-10 in double. Mixed against double agrees to 4.2e-7 (CPU) and 1.3e-6 (GPU).
+- **`torch.autograd.gradcheck`, in double,** of $\mathbf G$ as a function of `theta`, in both forms. This is the second-order check of a force loss: the Jacobian of the forces in `theta` from the backward, against finite differences of the forces. It passed for `dihedral_k` on the torsion fixtures and for $\sigma$, $\epsilon$ of two pairs of types on propane and water, on the CPU and the GPU, with eps $10^{-5}$, atol $10^{-5}$, and rtol $10^{-5}$. With eps $10^{-6}$, atol $10^{-7}$, and rtol $10^{-6}$ it failed on propane. The entries of $\partial\mathbf G/\partial\boldsymbol\theta$ there are of $10^3$ to $10^4$, so a difference of $\mathbf G$ at a step of $10^{-6}$ carries a rounding of about $10^{-7}$.
+- **`gradgradcheck`** differentiates the first backward in every input, so it needs $\partial^2U/\partial\boldsymbol\theta^2$, which stays refused. `gradcheck` of the gradient takes its place.
+- **The refusals:**
+  - the Hessian by `torch.autograd.grad(loss, x)`, by `loss.backward()`, and through a tensor that moves the positions;
+  - the derivative of the gradient in the strain, and $\partial^2U/\partial\boldsymbol\theta^2$;
+  - without the private function, or with no answer from it, the derivative even for `torch.autograd.grad(loss, theta)`;
+  - a backward after another call of the adapter.
+
+  After each, the evaluator gives the same gradient to the bit.
+- **The existing tests pass unchanged.** `python-frame-gradients-torch.test` asserts the wording of two refusals that are still refusals: a backward through `gradients["positions"]` with positions that take a gradient, and the second derivative in the cell. The messages keep that wording.
