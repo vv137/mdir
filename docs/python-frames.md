@@ -237,7 +237,9 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   `InputError`), at the values of the tunables of `evaluate` (else
   `SimulationError`). `gradients` need not have asked for the positions.
 - **Refused**, with `UnsupportedError` when the product is asked, never a
-  zero: a program with virtual sites; the charges as a field with PME (the
+  zero: a program with virtual sites placed by the directions of their
+  bonds (the extra points of four-site water of Amber; linear sites are
+  taken, below); the charges as a field with PME (the
   derivative of the tangent of the reciprocal sum in each charge, D379);
   `terms="dependent"`. The evaluator stays usable after each.
 - **The derivative in the positions** (D383, #771 part 1;
@@ -258,10 +260,30 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   the attribute is `None`, and with `("positions",)` alone the mapping is
   empty. Pair terms (whose tangent reads the displacement), terms over
   tuples, and terms of the absolute positions take it. The reciprocal sum
-  of PME and virtual sites raise `UnsupportedError`, naming the term, when
+  of PME and the virtual sites of Amber raise `UnsupportedError`, naming the term, when
   `"positions"` is asked; the product in $\boldsymbol\theta$ stays
   available without it. `mdir.torch` does not use it yet (D382 still
   refuses the derivative in the positions).
+- **Linear virtual sites** (D[force-matching-sites], #771 part 2): a site
+  $\mathbf X_s = (1-a-b)\,\mathbf x_i + a\,\mathbf x_j + b\,\mathbf x_k$
+  (`[ virtual_sites3 ]`, function 1, of GROMACS: OPC and TIP4P of its
+  force fields). With $\mathbf X$ the places of all particles and
+  $\mathsf J = \partial\mathbf X/\partial\mathbf x$, constant, the gradient
+  is $\mathbf G = \mathsf J^{\mathsf T}\,\partial U/\partial\mathbf X$, zero
+  on the sites, so $\bar{\mathbf G}\cdot\mathbf G = (\mathsf J\bar{\mathbf G})\cdot\partial U/\partial\mathbf X$:
+  the product places the tangent as the positions are placed and takes its
+  product in $\boldsymbol\theta$ along $\mathsf J\bar{\mathbf G}$. The
+  derivative in the positions is
+  $\mathsf J^{\mathsf T}(g\,\partial U/\partial\mathbf X + \mathsf H_{\mathbf X}\,\mathsf J\bar{\mathbf G})$,
+  the forces of the energy and of the tangent spread to the atoms as the
+  forces of a step are; its rows on the sites are zero. The cotangent on a
+  site is not read. The extra points of Amber,
+  $\mathbf x_i + a\,(\hat{\mathbf u}+\hat{\mathbf v})/\lvert\hat{\mathbf u}+\hat{\mathbf v}\rvert$,
+  follow the directions of the bonds: their $\mathsf J$ depends on the
+  positions, which adds a term of the second derivative of the placement
+  to the derivative in the positions; the tangent of their placement is
+  not written for the product in $\boldsymbol\theta$ either, and both
+  products refuse them.
 
 **Validation** (`python-frame-product.test`, `python-frame-product-gpu.test`).
 See the decision for the numbers. The references are: the closed form of
