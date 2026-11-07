@@ -62,9 +62,20 @@ A force loss on a fluid of 1000 atoms (Lennard-Jones with NBFIX, and Coulomb und
 
 ## Validation
 
-- `test/Driver/python-frame-hvp-torch.test` (CPU) and `-gpu.test` (RTX 5090), in double and mixed: on the torsion fixtures of D372 and the pair fluid of D383, every form of the backward against `FrameEnergies.vjp`, and the passes each form makes. The forms are `grad(L, theta)`, `grad(L, x)`, both together, `L.backward()`, `L.backward(inputs=theta)`, a loss with a term of the energy, and the forward compiled with `aot_eager`. With PME, `grad(L, theta)` and `backward(inputs=theta)` are given and equal to `vjp`, while the forms that take the positions are refused, naming the reciprocal sum.
-- `test/Driver/python-frame-hvp-torch-amber.test` (CPU) and `-gpu.test` (RTX 5090), with ParmEd: OPC from a prmtop of Amber cut to 40 waters (the fixture of D384). `grad(L, theta)` is given and equal to `vjp`, and the forms that take the positions are refused, naming the extra points. The linear sites of OPC from GROMACS: `grad(L, x)` is given and equal to `vjp`.
-- `python-frame-product-torch.test`: the refusals of the Hessian by `torch.autograd.grad`, by `backward()`, and through a tensor that moves the positions now run on PME, where they name the reciprocal sum. The block on the missing private function is replaced by `grad(L, theta)` on PME with the positions requiring a gradient, equal to `vjp` to the bit.
-- The other tests of `mdir.torch` pass unchanged, with every refusal of the cell, the strain, the virial, and the observables in its wording.
+The loss is $L = \sum(-\mathbf G - \mathbf f)^2 + w\sum U$, with $w = 0$ and $w = 0.7$. Its cotangents are $\bar{\mathbf G} = 2(\mathbf G + \mathbf f)$ and $w$, so the reference is `FrameEnergies.vjp(w, positions=Gbar, gradients=("tunables", "positions"))`.
 
-The numbers of the comparisons are in the PR, and are recorded here at the merge.
+- `test/Driver/python-frame-hvp-torch.test` (CPU) and `-gpu.test` (RTX 5090), in double and mixed. The systems are the torsion fixtures of D372, the pair fluid of D383, and eight OPC waters with the linear sites of GROMACS (D384), 2 frames each. Every form of the backward is checked against `vjp`, with the passes it makes: `grad(L, theta)`, `grad(L, x)`, both together, `L.backward()`, and `L.backward(inputs=theta)`.
+
+  | Quantity | CPU double | CPU mixed | GPU double | GPU mixed | Tolerance |
+  |---|---|---|---|---|---|
+  | $\partial L/\partial\boldsymbol\theta$, every form that takes it | to the bit | to the bit | to the bit | to the bit | 0 |
+  | $\partial L/\partial\mathbf x$, the largest entry, relative | 0 | 5.4e-11 (pair fluid; 0 for the others) | 0 | 0 | 1e-14 (double), 1e-9 (mixed) |
+  | the passes | one of each product that the form takes | the same | the same | the same | exact |
+
+  The difference in CPU mixed comes from $w\,\mathbf G$. The adapter forms it from the gradient output, which is f32 in mixed, while `vjp` forms $w\,\partial U/\partial\mathbf x$ in f64 in its pass.
+
+  Under `torch.compile` (`aot_eager`) of the forward, `grad(L, theta)` and `grad(L, x)` make the passes of eager and give its gradients to the bit (torsion fixtures). With PME (the dipeptide), `grad(L, theta)` and `backward(inputs=theta)` are given and equal to `vjp` to the bit, in every mode. The forms that take the positions are refused, naming the reciprocal sum.
+- `test/Driver/python-frame-hvp-torch-amber.test` (CPU) and `-gpu.test` (RTX 5090), with ParmEd (for the cut of the prmtop alone). The system is OPC from a prmtop of Amber, ACE-ALA-NME and 40 waters, the fixture of D384. `grad(L, theta)` and `backward(inputs=theta)` are given and equal to `vjp` to the bit, in double and mixed. The forms that take the positions are refused, naming the extra points that follow the directions of their bonds.
+- `python-frame-product-torch.test`. The refusals of the derivative in the positions, by `torch.autograd.grad`, by `backward()`, and through a tensor that moves the positions, now run on PME and name the reciprocal sum. The block on the missing private function is replaced: `grad(L, theta)` and `backward(inputs=theta)` on PME, with the positions requiring a gradient, equal `vjp` to the bit.
+- The other tests of `mdir.torch` pass unchanged, with every refusal of the cell, the strain, the virial, and the observables in its wording. `python_frame_hvp.py` and `python_frame_sites.py` run their scenarios only as scripts, so that the new test imports their fixtures; `python_frame_sites.py` gains the scenario `cut`, which writes the prmtop alone.
+- The change is to Python alone. The equivalence corpus, the order matrix, the checkpoints, and compute-sanitizer were not run.
