@@ -121,8 +121,65 @@ theta.fill_(2.25)
 evaluator._evaluate_device_batch(positions, theta, energy)
 assert np.array_equal(energy.cpu().numpy().view(np.uint64), reference.energy.view(np.uint64))
 expect_input_error(lambda: evaluator._evaluate_device_batch(positions, energy[:1], energy), "overlap")
+for name, weights, outputs in (
+        ("tangent", tangent, dict(tangent=tangent, jvp=jvp)),
+        ("cotangent", cotangent, dict(cotangent=cotangent, vjp=vjp))):
+    saved = weights.clone()
+    weights[-1] = float("nan")
+    try:
+        evaluator._evaluate_device_batch(positions, theta, energy, **outputs)
+    except mdir.InputError as error:
+        message = str(error)
+        assert name in message and "nonfinite" in message, message
+        if name == "tangent":
+            assert "frame " not in message, message
+        else:
+            assert "frame 1" in message, message
+    else:
+        raise AssertionError(f"expected InputError for nonfinite {name}")
+    weights.copy_(saved)
+    evaluator._evaluate_device_batch(positions, theta, energy, **outputs)
+    assert np.array_equal(energy.cpu().numpy().view(np.uint64), reference.energy.view(np.uint64))
+print("device frame entry: tangent/cotangent InputError and recovery passed", flush=True)
 vjp.fill_(float("nan"))
 evaluator._evaluate_device_batch(positions[:0], theta, energy[:0],
     cotangent=cotangent[:0], vjp=vjp)
 assert torch.equal(vjp, torch.zeros_like(vjp)), "empty batch VJP must be zero"
 print("device frame entry: auxiliary outputs, input errors, recovery and empty batch passed", flush=True)
+
+# Exercise the C++ boundary through PySimulation directly: FrameEvaluator
+# already refuses this program before its device entry can be reached.
+system.tunable_gradient = False
+without_gradient = mdir.Simulation(
+    mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule()),
+    _frames=True)
+for name, output, given in (
+        ("rows", rows, dict(rows=rows)),
+        ("jvp", jvp, dict(tangent=tangent, jvp=jvp)),
+        ("vjp", vjp, dict(cotangent=cotangent, vjp=vjp))):
+    output.fill_(123.0)
+    expect_input_error(lambda: without_gradient._evaluate_device_batch(
+        positions, theta, energy, **given), "compiled without the derivative in the tunables")
+    assert torch.all(output == 123.0), ("refusal modified", name)
+print("device frame entry: rows/JVP/VJP without tunable_gradient refused", flush=True)
+
+# Both readers share the lock of lazy batch creation and evaluation. A
+# read can precede or follow an evaluation; each returned snapshot is whole.
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+barrier = Barrier(2)
+def read_statistics():
+    for _ in range(3):
+        barrier.wait(timeout=30)
+        for _ in range(10):
+            counts = evaluator._simulation._device_batch_start_arguments
+            copies = evaluator._simulation._device_batch_copy_bytes
+            assert len(counts) == 3 and all(c >= 0 for c in counts), counts
+            assert copies[:2] == [0, 0], copies
+with ThreadPoolExecutor(max_workers=1) as pool:
+    reader = pool.submit(read_statistics)
+    for _ in range(3):
+        barrier.wait(timeout=30)
+        evaluator._evaluate_device_batch(positions, theta, energy)
+    reader.result(timeout=60)
+print("device frame entry: concurrent batch statistics passed", flush=True)

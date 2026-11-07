@@ -3119,6 +3119,10 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
       compiled->control.frameMode != Control::FrameMode::DeviceBatch ||
       compiled->control.target != Target::GPU)
     return simulationError("device frames require a device batch entry");
+  if ((batch.rows || batch.jvp || batch.vjp) && !prepared.control.tunableGradient)
+    return inputError("the program of this simulation was compiled without "
+                      "the derivative in the tunables: set "
+                      "System.tunable_gradient = True and compile again");
   int64_t parameters = 0;
   for (const auto &values : tunableValues) {
     if (values.size() > size_t(std::numeric_limits<int64_t>::max() - parameters))
@@ -3322,12 +3326,15 @@ llvm::Error Simulation::evaluateFrames(const FrameBatch &batch) {
   if (!error && status != std::numeric_limits<int64_t>::max() &&
       (failure.empty() || int64_t(uint64_t(status) >> 16) <= failureFrame)) {
     unsigned reason = status & 255;
-    std::string message = "frame " + std::to_string(uint64_t(status) >> 16) + ": ";
+    std::string message = reason == 9 ? "" :
+        "frame " + std::to_string(uint64_t(status) >> 16) + ": ";
     if (reason == 1) message += "the positions contain a nonfinite value";
     else if (reason == 7) message += "theta is nonfinite or outside its domain";
     else if (reason == 8) message += cellFailure;
+    else if (reason == 9) message += "the tangent contains a nonfinite value";
+    else if (reason == 10) message += "the cotangent contains a nonfinite value";
     else message += "a device result is nonfinite (reason " + std::to_string(reason) + ")";
-    if (reason == 1 || reason == 7 || reason == 8)
+    if (reason == 1 || reason == 7 || reason == 8 || reason == 9 || reason == 10)
       error = inputError(message);
     else
       error = simulationError(message);

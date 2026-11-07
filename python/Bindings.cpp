@@ -1693,6 +1693,8 @@ PYBIND11_MODULE(_core, m) {
       return py::make_tuple(counts[0], counts[1], counts[2]);
     })
     .def_property_readonly("_device_batch_start_arguments", [](const PySimulation &s) {
+      py::gil_scoped_release release;
+      std::lock_guard<std::mutex> lock(*s.frameBatchMutex);
       if (!s.frameBatch) return std::array<int64_t, 3>{};
       return s.frameBatch->getStartArguments();
     })
@@ -1700,6 +1702,8 @@ PYBIND11_MODULE(_core, m) {
       return s.simulation->getFrameBatchAuxNames();
     })
     .def_property_readonly("_device_batch_copy_bytes", [](const PySimulation &s) {
+      py::gil_scoped_release release;
+      std::lock_guard<std::mutex> lock(*s.frameBatchMutex);
       return s.frameBatch ? s.frameBatch->getFrameBatchCopyBytes() : std::array<uint64_t, 4>{};
     })
     // False: every start from the next on copies and converts the arrays

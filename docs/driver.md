@@ -1433,8 +1433,15 @@ caller stream and device buffers, write energy, position gradients, strain
 and parameter rows, then read the batch status. A two-frame torsion check
 matches 46 host values bitwise in three calls, including a theta update
 without another activation start. Derived updates, general correction
-derivatives, auxiliary outputs and final gates remain in progress, with
-no change to the existing host entry.
+derivatives and auxiliary outputs are implemented; final-head gates
+precede readiness, with no change to the existing host entry.
+Rows, JVPs and VJPs require `tunable_gradient` at the C++ boundary too.
+Nonfinite tangent and cotangent buffers raise `InputError`; a tangent
+belongs to the batch, and a cotangent error names its frame. Statistics
+readers share the batch mutex. Relocated readback consumers on a side
+stream join both queues before a subsequent release can reuse their
+source. Raw C++ pointers and streams must belong to the current CUDA
+context; querying those handles for a clean refusal is not implemented.
 Its tunable-dependent dispersion/shift correction is independently computed
 in C++ on the host and in a kernel on the device. D[frame-batch-entry]
 requires relative agreement within 1e-14 for energies receiving that

@@ -55,7 +55,7 @@ void mdir::driver::builder::buildFrameBatchRowProducts(OpBuilder &builder,
     buildFrameBatchFiniteCheck(at, value, frame, status, 4);
     scf::IfOp::create(at, loc, takesVjp, [&](OpBuilder &write, Location) {
       Value weight = memref::LoadOp::create(write, loc, cotangent, frame);
-      buildFrameBatchFiniteCheck(write, weight, frame, status, 5);
+      buildFrameBatchFiniteCheck(write, weight, frame, status, 10);
       Value product = arith::MulFOp::create(write, loc, weight, value);
       Value previous = memref::LoadOp::create(write, loc, vjp, index);
       Value sum = arith::AddFOp::create(write, loc, previous, product);
@@ -73,7 +73,8 @@ void mdir::driver::builder::buildFrameBatchRowProducts(OpBuilder &builder,
           [&](OpBuilder &term, Location, Value index, ValueRange carried) {
         Value value = memref::LoadOp::create(term, loc, row, index);
         Value weight = memref::LoadOp::create(term, loc, tangent, index);
-        buildFrameBatchFiniteCheck(term, weight, frame, status, 5);
+        // A tangent belongs to the whole batch, not to any one frame.
+        buildFrameBatchFiniteCheck(term, weight, zero, status, 9);
         Value product = arith::MulFOp::create(term, loc, value, weight);
         Value added = arith::AddFOp::create(term, loc, carried[0], product);
         scf::YieldOp::create(term, loc, added);

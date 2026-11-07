@@ -62,7 +62,8 @@ void failure(OpBuilder &builder, Value invalid, Value frame, Value status, unsig
     Value index = arith::IndexCastOp::create(at, loc, at.getI64Type(), frame);
     Value shift = arith::ConstantIntOp::create(at, loc, 16, 64);
     Value high = arith::ShLIOp::create(at, loc, index, shift);
-    unsigned priority = reason == 1 || reason == 7 || reason == 8 ? 0 : 1;
+    unsigned priority = reason == 1 || reason == 7 || reason == 8 ||
+        reason == 9 || reason == 10 ? 0 : 1;
     Value code = arith::ConstantIntOp::create(at, loc, (priority << 8) | reason, 64);
     Value encoded = arith::OrIOp::create(at, loc, high, code);
     Value zero = arith::ConstantIndexOp::create(at, loc, 0);

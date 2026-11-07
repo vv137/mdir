@@ -8335,7 +8335,9 @@ static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
 /// reading the device's buffer, which the kernel of the reduction wrote
 /// before, in the order of the stream. A group of copies whose loads the
 /// host then no longer needs is removed. The work of a second stream (D87)
-/// is left as it is, since its order relative to the first is the host's.
+/// is left as it is for ordinary programs. Device batches join both queues
+/// after a side-stream reader, before storage assignment's old last use
+/// can release and reuse its source on another stream.
 static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
   const bool batch = function->hasAttr("mdir.frame_batch");
   llvm::DenseMap<Value, Value> deviceOf;
@@ -8401,6 +8403,45 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
         if (!body.isAncestor(operand.getParentRegion()))
           captured.insert(operand);
     });
+    bool sideReader = batch && side.contains(launch) &&
+        llvm::any_of(captured, readsSums);
+    if (sideReader) {
+      auto allocation = [](Value value) {
+        while (Operation *op = value.getDefiningOp()) {
+          if (!isa<memref::CastOp, memref::MemorySpaceCastOp,
+                   memref::ReinterpretCastOp, memref::SubViewOp,
+                   memref::ViewOp>(op))
+            break;
+          value = op->getOperand(0);
+        }
+        return value;
+      };
+      llvm::DenseSet<Value> checked;
+      std::function<LogicalResult(Value)> checkLifetime = [&](Value value) -> LogicalResult {
+        if (!readsSums(value) || !checked.insert(value).second)
+          return success();
+        Operation *definition = value.getDefiningOp();
+        if (auto load = dyn_cast<memref::LoadOp>(definition)) {
+          Value source = allocation(deviceOf.lookup(load.getMemRef()));
+          bool released = false;
+          function.walk([&](gpu::DeallocOp release) {
+            if (allocation(release.getMemref()) == source &&
+                (release->getBlock() != launch->getBlock() ||
+                 !launch->isBeforeInBlock(release.getOperation())))
+              released = true;
+          });
+          if (released)
+            return launch.emitOpError(
+                "a side-stream frame readback source may be released before its reader");
+          return success();
+        }
+        for (Value operand : definition->getOperands())
+          if (failed(checkLifetime(operand))) return failure();
+        return success();
+      };
+      for (Value value : captured)
+        if (failed(checkLifetime(value))) return failure();
+    }
     if (batch && !side.empty() && !side.contains(launch) &&
         llvm::any_of(captured, readsSums)) {
       // A device frame reads reciprocal sums on its caller stream. The
@@ -8441,6 +8482,25 @@ static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
       value.replaceUsesWithIf(inside, [&](OpOperand &use) {
         return body.isAncestor(use.getOwner()->getParentRegion());
       });
+    }
+    if (sideReader) {
+      // Storage assignment precedes this cloning, so it cannot extend a
+      // pooled source's lifetime to the new side-stream load. Complete
+      // that reader before any following release; reopen the side region
+      // so subsequent work retains its original stream. These are event
+      // dependencies in both directions, not a wait on the host.
+      auto module = function->getParentOfType<ModuleOp>();
+      if (!module.lookupSymbol<func::FuncOp>("mdrtSideJoin")) {
+        OpBuilder declarations(module.getContext());
+        declarations.setInsertionPointToEnd(module.getBody());
+        auto join = func::FuncOp::create(declarations, launch.getLoc(),
+            "mdrtSideJoin", declarations.getFunctionType({}, {}));
+        join.setPrivate();
+      }
+      OpBuilder after(launch);
+      after.setInsertionPointAfter(launch);
+      for (StringRef name : {"mdrtSideEnd", "mdrtSideJoin", "mdrtSideBegin"})
+        func::CallOp::create(after, launch.getLoc(), name, TypeRange{}, ValueRange{});
     }
   }
 

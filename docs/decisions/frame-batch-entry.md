@@ -217,6 +217,23 @@ boundary. This PR adds no JAX handler, batching rule, public Python API,
 control-file key, file format, checkpoint format, or overwrite behavior.
 The existing host path remains available as the independent oracle.
 
+Rows, JVPs and VJPs require compilation with `tunable_gradient`, including
+at the C++ batch boundary. Nonfinite caller tangents and cotangents raise
+`InputError` naming their buffer; only a cotangent has a frame index.
+The private statistics readers take the same mutex as batch creation and
+evaluation. A side-stream kernel that takes a relocated readback sum joins
+both queues before any subsequent release can return its source to the
+pool, then reopens its side region. A source that may already be released
+before that reader, including through a buffer view, is refused during
+lowering; ordinary programs are unchanged.
+
+Raw C++ callers must provide valid pointers and a stream in the current
+CUDA context. The boundary checks the device ordinal, dimensions, physical
+widths and overlap, but does not query `cuPointerGetAttribute` or
+`cuStreamGetCtx`. Invalid raw pointers or a foreign-context stream can
+therefore cause a fatal driver error. Clean refusal of those raw CUDA
+handles is deferred; the private DLPack adapter checks tensor device tags.
+
 ## Required validation
 
 Every readiness head must satisfy these gates:
