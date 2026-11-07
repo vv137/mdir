@@ -149,9 +149,13 @@ print("device frame entry: auxiliary outputs, input errors, recovery and empty b
 
 # Exercise the C++ boundary through PySimulation directly: FrameEvaluator
 # already refuses this program before its device entry can be reached.
-system.tunable_gradient = False
+without_system = loaded.make_system()
+without_system.cutoff, without_system.pairlist_distance = 0.8, 0.9
+without_system.dispersion = mdir.DispersionCorrection.None_
+without_system.tunables = [mdir.Tunable("k", "dihedral_k")]
+without_system.tunable_gradient = False
 without_gradient = mdir.Simulation(
-    mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule()),
+    mdir.compile(without_system, state, integrator, ensemble, execution, mdir.Schedule()),
     _frames=True)
 for name, output, given in (
         ("rows", rows, dict(rows=rows)),
@@ -183,3 +187,4 @@ with ThreadPoolExecutor(max_workers=1) as pool:
         evaluator._evaluate_device_batch(positions, theta, energy)
     reader.result(timeout=60)
 print("device frame entry: concurrent batch statistics passed", flush=True)
+assert system.tunable_gradient, "the reusable oracle fixture lost its derivative configuration"
