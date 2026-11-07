@@ -375,6 +375,9 @@ class FrameEvaluator:
         # The product program (D381, #726), compiled at the
         # first product.
         self._product = None
+        # The product program that also gives the derivative in the
+        # positions (#771), compiled at the first such product.
+        self._product_positions = None
         # A simulation whose entry is a loop over frames: the frames of
         # every call are evaluated in one activation of it.
         self._simulation = _core.Simulation(program, _frames=True)
@@ -437,12 +440,17 @@ class FrameEvaluator:
                                    f"pass than the {len(cotangent)} of the first")
         return total
 
-    def _product_pass(self, source, version, energy, position):
+    def _product_pass(self, source, version, energy, position, positions=False):
         """The sum over the frames `source`, evaluated at the version
         `version`, of energy[n] dU_n/dtheta + position[n] . d2U_n/dx dtheta,
         by the product program (D381, #726), a simulation of
         its own compiled at the first product, at the values of the tunables
-        of the evaluator."""
+        of the evaluator.
+
+        With `positions`, also the derivative of the product of each frame in
+        its positions, energy[n] dU_n/dx + H_n position[n], (K, N, 3), by the
+        product program that gives it (#771, D[force-matching-hvp]), compiled
+        at the first such product; returns (total, derivative)."""
         if self.terms != "all":
             raise _core.UnsupportedError(
                 "the product in the gradients in the positions is not given by a frame "
@@ -457,14 +465,27 @@ class FrameEvaluator:
                 f"vjp: the values of the tunables changed since these frames were evaluated "
                 f"(version {version}, now {self.tunables.version}): the product would "
                 "differentiate another potential")
-        if self._product is None:
-            try:
-                self._product = _core.Simulation(self.program, _frames=True, _frame_product=True)
-            except (_core.InputError, _core.CompileError) as error:
-                raise _core.UnsupportedError(
-                    "the product of the gradients in the positions with their derivative in the "
-                    f"tunables is not formed for this program: {error}") from None
-        product = self._product
+        if positions:
+            if self._product_positions is None:
+                try:
+                    self._product_positions = _core.Simulation(
+                        self.program, _frames=True, _frame_product=True,
+                        _frame_product_positions=True)
+                except (_core.InputError, _core.CompileError) as error:
+                    raise _core.UnsupportedError(
+                        "the derivative in the positions of the product of the gradients in the "
+                        f"positions is not formed for this program: {error}") from None
+            product = self._product_positions
+        else:
+            if self._product is None:
+                try:
+                    self._product = _core.Simulation(self.program, _frames=True,
+                                                     _frame_product=True)
+                except (_core.InputError, _core.CompileError) as error:
+                    raise _core.UnsupportedError(
+                        "the product of the gradients in the positions with their derivative in "
+                        f"the tunables is not formed for this program: {error}") from None
+            product = self._product
         changes = {}
         for name in self._slices:
             value = np.ascontiguousarray(self.tunables[name])
@@ -472,17 +493,24 @@ class FrameEvaluator:
                 changes[name] = value
         if changes:
             product.tunables.update(changes)
-        total, at = np.zeros(self._entries), 0
+        total, at, parts = np.zeros(self._entries), 0, []
         for x, cells, tilts in source.batches():
             if at + len(x) > len(energy):
                 break
-            total += product._evaluate_frame_products(
+            result = product._evaluate_frame_products(
                 x, *self._cells(x, cells, tilts), energy[at:at + len(x)],
-                np.ascontiguousarray(position[at:at + len(x)]), at)
+                np.ascontiguousarray(position[at:at + len(x)]), at, positions)
+            if positions:
+                total += result[0]
+                parts.append(result[1])
+            else:
+                total += result
             at += len(x)
         if at != len(energy):
             raise _core.InputError(f"vjp: the frames gave another number of frames in the "
                                    f"product than the {len(energy)} of the first pass")
+        if positions:
+            return total, (parts[0] if len(parts) == 1 else np.concatenate(parts))
         return total
 
     def _cells(self, x, cells, tilts):

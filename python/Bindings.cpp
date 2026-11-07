@@ -1550,7 +1550,7 @@ PYBIND11_MODULE(_core, m) {
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache,
                      std::optional<std::string> checkpoint, bool stage, bool append,
-                     bool frames, bool frameProduct) {
+                     bool frames, bool frameProduct, bool frameProductPositions) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
       if (!checkpoint && stage)
@@ -1592,7 +1592,7 @@ PYBIND11_MODULE(_core, m) {
         py::gil_scoped_release release;
         created.emplace(compiler::Simulation::create(*prepared, useCache,
                                                      program->code.get(), frames,
-                                                     frameProduct));
+                                                     frameProduct, frameProductPositions));
       }
       PySimulation result;
       result.program = std::move(program);
@@ -1614,7 +1614,11 @@ PYBIND11_MODULE(_core, m) {
        py::arg("_frames") = false,
        // With `_frames`, the product program of a frame evaluator
        // (D381, #726); private to `mdir.FrameEvaluator`.
-       py::arg("_frame_product") = false)
+       py::arg("_frame_product") = false,
+       // With `_frame_product`, the product program that also gives the
+       // derivative of the product in the positions (#771,
+       // D[force-matching-hvp]); private to `mdir.FrameEvaluator`.
+       py::arg("_frame_product_positions") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;
       {
@@ -1836,7 +1840,7 @@ PYBIND11_MODULE(_core, m) {
                                         py::object cellsGiven, py::object tiltsGiven,
                                         py::array_t<double, py::array::c_style> energy,
                                         py::array_t<double, py::array::c_style> position,
-                                        int64_t first) {
+                                        int64_t first, bool positionsDerivative) {
       auto &s = self.cast<PySimulation &>();
       compiler::Simulation &sim = *s.simulation;
       const auto &set = sim.getTunables();
@@ -1868,6 +1872,16 @@ PYBIND11_MODULE(_core, m) {
       size_t entries = 0;
       for (const auto &entry : set.tunables) entries += entry.entries;
       std::vector<double> total(entries, 0.0);
+      // With `positions_derivative`, the derivative of the product of each
+      // frame in its positions, (k, N, 3) float64 (#771).
+      py::object derivatives = py::none();
+      double *dx = nullptr;
+      if (positionsDerivative) {
+        py::array_t<double> made({static_cast<py::ssize_t>(frames),
+                                  static_cast<py::ssize_t>(count), py::ssize_t(3)});
+        dx = made.mutable_data();
+        derivatives = made;
+      }
       const double *x = positions.data(), *g = energy.data(), *v = position.data();
       const double *c = cells ? cells->data() : nullptr, *t = tilts ? tilts->data() : nullptr;
       std::optional<llvm::Error> error;
@@ -1880,7 +1894,8 @@ PYBIND11_MODULE(_core, m) {
             cell = {c[3 * at], c[3 * at + 1], c[3 * at + 2],
                     t ? t[3 * at] : 0.0, t ? t[3 * at + 1] : 0.0, t ? t[3 * at + 2] : 0.0};
           auto result = sim.evaluateFrameProduct(x + 3 * count * at, cell, g[at],
-                                                 v + 3 * count * at);
+                                                 v + 3 * count * at,
+                                                 dx ? dx + 3 * count * at : nullptr);
           if (!result) { error.emplace(result.takeError()); break; }
           size_t offset = 0;
           for (const auto &values : *result) {
@@ -1901,9 +1916,11 @@ PYBIND11_MODULE(_core, m) {
           throw InputError(where + e.what());
         }
       }
-      return host::copy(total.data(), entries, {static_cast<py::ssize_t>(entries)});
+      py::object summed = host::copy(total.data(), entries, {static_cast<py::ssize_t>(entries)});
+      if (!positionsDerivative) return summed;
+      return py::object(py::make_tuple(summed, derivatives));
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("energy"),
-       py::arg("position"), py::arg("first") = 0)
+       py::arg("position"), py::arg("first") = 0, py::arg("positions_derivative") = false)
     .def_property_readonly("_particle_count", [](PySimulation &s) {
       return s.simulation->getParticleCount();
     })
