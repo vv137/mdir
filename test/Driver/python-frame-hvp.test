@@ -1,0 +1,31 @@
+# REQUIRES: python-api
+# The derivative of the product of force matching in the positions,
+# FrameEnergies.vjp(..., gradients=("tunables", "positions"))
+# (D[force-matching-hvp], #771 part 1), on the CPU: against NumPy oracles
+# (pairs: LJ with NBFIX and Coulomb under a cutoff; dihedrals: the closed
+# form by dual numbers), against central differences of Phi from the
+# evaluator, and in mixed precision against double; the refusals.
+# Inputs/python_frame_hvp.py says what each scenario checks.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_hvp.py %S/Inputs/dipeptide pairs CPU Double %t/pairs | FileCheck %s --check-prefix=PAIRS -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_hvp.py %S/Inputs/dipeptide pairs CPU Mixed %t/pairs-mixed | FileCheck %s --check-prefix=PAIRSMIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_hvp.py %S/Inputs/dipeptide dihedral CPU Double %t/dihedral | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_hvp.py %S/Inputs/dipeptide dihedral CPU Mixed %t/dihedral-mixed | FileCheck %s --check-prefix=DIHEDRALMIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_hvp.py %S/Inputs/dipeptide refusals CPU Double %t/refusals | FileCheck %s --check-prefix=REFUSED
+
+# PAIRS: [[MODE]]: the pair fluid: the NumPy energy against the evaluator
+# PAIRS: [[MODE]]: the pair fluid (LJ with NBFIX and Coulomb, shifted at the cutoff), 2 frames: the derivative of the product in the positions against central differences of the NumPy Phi
+# PAIRS: [[MODE]]: the same against central differences of Phi from the evaluator
+# PAIRS: [[MODE]]: the product in theta of the variant against D381's
+# PAIRSMIXED: [[MODE]]: the pair fluid (LJ with NBFIX and Coulomb, shifted at the cutoff), 2 frames: the derivative of the product in the positions against central differences of the NumPy Phi
+# PAIRSMIXED: [[MODE]]: the derivative in the positions in mixed precision against that in double
+# PAIRSMIXED: [[MODE]]: the product in theta of the variant against D381's
+# DIHEDRAL: [[MODE]]: dihedrals, 3 frames: the derivative of the product in the positions against central differences of the closed form of Phi
+# DIHEDRAL: [[MODE]]: the same against central differences of Phi from the evaluator
+# DIHEDRAL: [[MODE]]: the product in theta of the variant against D381's
+# DIHEDRALMIXED: [[MODE]]: dihedrals, 3 frames: the derivative of the product in the positions against central differences of the closed form of Phi
+# DIHEDRALMIXED: [[MODE]]: the product in theta of the variant against D381's
+# REFUSED: refusals: with particle mesh Ewald, the derivative in the positions is refused, naming the reciprocal sum; the product in theta is given
+# REFUSED: refusals: virtual sites are refused, by name
+# REFUSED: refusals: the names of gradients; positions alone, and beside the tunables, the same to the bit; without it, no positions

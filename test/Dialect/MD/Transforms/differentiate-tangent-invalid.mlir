@@ -79,3 +79,28 @@ md.function @f(%x: !vec, %cell: !md.cell, %t: !vec) -> f64 {
       : (!vec, !md.cell, !vec) -> f64
   md.return %p : f64
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!grid = !md.table<2, f64>
+md.particle_set @atoms
+
+// The forces of the tangent of a reciprocal sum: not formed yet
+// (D[force-matching-hvp], #771).
+md.potential @mesh(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
+    -> f64 {
+  // expected-error@+1 {{the derivative in the positions of the tangent of a reciprocal sum is not formed yet}}
+  %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
+      : !vec, !real, !grid -> f64, !vec, vector<9xf64>
+  md.return %u : f64
+}
+
+md.function @f(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid,
+               %t: !vec) -> !vec {
+  %g = md.evaluate @mesh(%x, %cell, %q, %moduli, %t) request [tangent_forces]
+      : (!vec, !md.cell, !real, !grid, !vec) -> !vec
+  md.return %g : !vec
+}

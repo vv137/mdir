@@ -212,8 +212,12 @@ class FrameGradient(Mapping):
     the tunable times the unit of the cotangent, as `TunableGradient`
     (D230) is at one state."""
 
-    def __init__(self, values, zero, version):
+    def __init__(self, values, zero, version, positions=None):
         self._values, self.zero, self.version = values, zero, version
+        # With "positions" in the gradients of FrameEnergies.vjp, the
+        # derivative of the product in the positions (K, N, 3) float64, in
+        # the order of the input (D[force-matching-hvp]); None otherwise.
+        self.positions = positions
 
     def __getitem__(self, name):
         return self._values[name]
@@ -288,7 +292,7 @@ class FrameEnergies:
         potential energy."""
         return self._only("dependent_energy", "dependent", self._energy)
 
-    def vjp(self, cotangent=None, *, positions=None):
+    def vjp(self, cotangent=None, *, positions=None, gradients=("tunables",)):
         """sum_n cotangent[n] dU_n/dtheta, for a cotangent (K,) float64 on
         the energy: a product with the Jacobian if it was kept, a second pass
         over the frames otherwise.
@@ -300,8 +304,27 @@ class FrameEnergies:
         derivative of force matching (D381, #726), by a pass
         of the product program of the evaluator over the frames; without
         `cotangent` that of the energy is zero. The sign of a loss on the
-        forces is the caller's: its cotangent on F is minus that on dU/dx."""
+        forces is the caller's: its cotangent on F is minus that on dU/dx.
+
+        `gradients` names what is returned, among "tunables" (the mapping,
+        the default) and "positions" (D[force-matching-hvp], #771): the
+        derivative of the same product in the positions,
+        cotangent[n] dU_n/dx + H_n positions[n] with H_n the Hessian of U_n
+        in the positions, as the attribute `positions` (K, N, 3) float64, in
+        the order of the input, by the same pass of a product program that
+        gives it as well; a term without a rule for it (the reciprocal sum
+        of particle mesh Ewald, virtual sites) raises UnsupportedError,
+        naming it."""
         evaluator = self._evaluator
+        if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):
+            raise _core.InputError("vjp: gradients is a tuple of names among 'tunables' and "
+                                   f"'positions'; found {gradients!r}")
+        names = tuple(dict.fromkeys(gradients))
+        for name in names:
+            if name not in ("tunables", "positions"):
+                raise _core.InputError("vjp: gradients names 'tunables' and 'positions'; "
+                                       f"found {name!r}")
+        wants = "positions" in names
         if not self._gradient:
             raise _core.InputError("these frames were evaluated without 'tunables' in gradients")
         if cotangent is None and positions is None:
@@ -315,6 +338,9 @@ class FrameEnergies:
                                        f"found {g.shape}")
             if not np.all(np.isfinite(g)):
                 raise _core.InputError("vjp: the cotangent is not finite")
+        dx = None
+        if wants and positions is None:
+            positions = np.zeros((self.count, evaluator._particles, 3))
         if positions is not None:
             v = np.asarray(_array(positions, "positions"), dtype=np.float64)
             shape = (self.count, evaluator._particles, 3)
@@ -326,14 +352,18 @@ class FrameEnergies:
                                        "not finite")
             total = evaluator._product_pass(
                 self._source, self.version,
-                np.zeros(self.count) if g is None else g, np.ascontiguousarray(v))
+                np.zeros(self.count) if g is None else g, np.ascontiguousarray(v), wants)
+            if wants:
+                total, dx = total
+                dx = _frozen(dx)
         elif self._rows is not None:
             total = g @ self._rows
         else:
             total = evaluator._second_pass(self._source, self.version, g)
-        values = {name: _frozen(np.ascontiguousarray(total[begin:end]))
-                  for name, (begin, end) in evaluator._slices.items()}
-        return FrameGradient(values, self.zero, self.version)
+        values = {} if "tunables" not in names else {
+            name: _frozen(np.ascontiguousarray(total[begin:end]))
+            for name, (begin, end) in evaluator._slices.items()}
+        return FrameGradient(values, self.zero, self.version, dx)
 
     def __repr__(self):
         return (f"FrameEnergies(count={self.count}, version={self.version}, "
@@ -375,6 +405,9 @@ class FrameEvaluator:
         # The product program (D381, #726), compiled at the
         # first product.
         self._product = None
+        # The product program that also gives the derivative in the
+        # positions (#771), compiled at the first such product.
+        self._product_positions = None
         # A simulation whose entry is a loop over frames: the frames of
         # every call are evaluated in one activation of it.
         self._simulation = _core.Simulation(program, _frames=True)
@@ -437,12 +470,17 @@ class FrameEvaluator:
                                    f"pass than the {len(cotangent)} of the first")
         return total
 
-    def _product_pass(self, source, version, energy, position):
+    def _product_pass(self, source, version, energy, position, positions=False):
         """The sum over the frames `source`, evaluated at the version
         `version`, of energy[n] dU_n/dtheta + position[n] . d2U_n/dx dtheta,
         by the product program (D381, #726), a simulation of
         its own compiled at the first product, at the values of the tunables
-        of the evaluator."""
+        of the evaluator.
+
+        With `positions`, also the derivative of the product of each frame in
+        its positions, energy[n] dU_n/dx + H_n position[n], (K, N, 3), by the
+        product program that gives it (#771, D[force-matching-hvp]), compiled
+        at the first such product; returns (total, derivative)."""
         if self.terms != "all":
             raise _core.UnsupportedError(
                 "the product in the gradients in the positions is not given by a frame "
@@ -457,14 +495,27 @@ class FrameEvaluator:
                 f"vjp: the values of the tunables changed since these frames were evaluated "
                 f"(version {version}, now {self.tunables.version}): the product would "
                 "differentiate another potential")
-        if self._product is None:
-            try:
-                self._product = _core.Simulation(self.program, _frames=True, _frame_product=True)
-            except (_core.InputError, _core.CompileError) as error:
-                raise _core.UnsupportedError(
-                    "the product of the gradients in the positions with their derivative in the "
-                    f"tunables is not formed for this program: {error}") from None
-        product = self._product
+        if positions:
+            if self._product_positions is None:
+                try:
+                    self._product_positions = _core.Simulation(
+                        self.program, _frames=True, _frame_product=True,
+                        _frame_product_positions=True)
+                except (_core.InputError, _core.CompileError) as error:
+                    raise _core.UnsupportedError(
+                        "the derivative in the positions of the product of the gradients in the "
+                        f"positions is not formed for this program: {error}") from None
+            product = self._product_positions
+        else:
+            if self._product is None:
+                try:
+                    self._product = _core.Simulation(self.program, _frames=True,
+                                                     _frame_product=True)
+                except (_core.InputError, _core.CompileError) as error:
+                    raise _core.UnsupportedError(
+                        "the product of the gradients in the positions with their derivative in "
+                        f"the tunables is not formed for this program: {error}") from None
+            product = self._product
         changes = {}
         for name in self._slices:
             value = np.ascontiguousarray(self.tunables[name])
@@ -472,17 +523,24 @@ class FrameEvaluator:
                 changes[name] = value
         if changes:
             product.tunables.update(changes)
-        total, at = np.zeros(self._entries), 0
+        total, at, parts = np.zeros(self._entries), 0, []
         for x, cells, tilts in source.batches():
             if at + len(x) > len(energy):
                 break
-            total += product._evaluate_frame_products(
+            result = product._evaluate_frame_products(
                 x, *self._cells(x, cells, tilts), energy[at:at + len(x)],
-                np.ascontiguousarray(position[at:at + len(x)]), at)
+                np.ascontiguousarray(position[at:at + len(x)]), at, positions)
+            if positions:
+                total += result[0]
+                parts.append(result[1])
+            else:
+                total += result
             at += len(x)
         if at != len(energy):
             raise _core.InputError(f"vjp: the frames gave another number of frames in the "
                                    f"product than the {len(energy)} of the first pass")
+        if positions:
+            return total, (parts[0] if len(parts) == 1 else np.concatenate(parts))
         return total
 
     def _cells(self, x, cells, tilts):

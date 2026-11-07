@@ -141,6 +141,21 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         declaration.setPrivate();
         declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
       }
+      // The forces of the energy and of its tangent (#771): the types of
+      // those that mdrtWriteFrameForces takes.
+      if (product->positions && !module.lookupSymbol("mdrtWriteFrameProductForces")) {
+        auto forces = module.lookupSymbol<func::FuncOp>("mdrtWriteFrameForces");
+        if (!forces)
+          return llvm::createStringError(llvm::inconvertibleErrorCode(),
+              "the product program of frames declares no mdrtWriteFrameForces; this is a "
+              "defect of mdir");
+        TypeRange inputs = forces.getFunctionType().getInputs();
+        OpBuilder top(entry);
+        auto declaration = func::FuncOp::create(top, loc, "mdrtWriteFrameProductForces",
+            top.getFunctionType({inputs[0], inputs[0], inputs[1]}, {}));
+        declaration.setPrivate();
+        declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
+      }
     }
     SmallVector<Value> indices;
     for (int64_t index = 0; index != config.cellEdges; ++index)
@@ -179,7 +194,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           for (unsigned slot : gradient.constants) constants.push_back(arguments.startValues[slot]);
           if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
           buildTunableProductOutput(body, state, tangent,
-              physical.identities, constants, seeds, gradient.output);
+              physical.identities, constants, seeds, gradient.output, product->positions);
           return SmallVector<Value>{};
         });
         if (!iteration) return iteration.takeError();

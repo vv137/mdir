@@ -682,6 +682,8 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtModelEvaluateEdgesEnergy);
     add("_mlir_ciface_mdrtWriteFrameForces",
         (void *)&_mlir_ciface_mdrtWriteFrameForces);
+    add("_mlir_ciface_mdrtWriteFrameProductForces",
+        (void *)&_mlir_ciface_mdrtWriteFrameProductForces);
     add("_mlir_ciface_mdrtWriteFrameVirial",
         (void *)&_mlir_ciface_mdrtWriteFrameVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
@@ -782,7 +784,7 @@ compileEngine(const Control &control, const System &system,
 llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared, bool cache,
                    compiler::CodeStore *store, bool frames,
-                   bool frameProduct) {
+                   bool frameProduct, bool frameProductPositions) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -809,6 +811,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   control = compiler::getSegmentsControl(control);
   control.frames = frames;
   control.frameProduct = frames && frameProduct;
+  control.frameProductPositions = control.frameProduct && frameProductPositions;
   System &system = simulation->system;
   system = start;
   size_t count = system.getNumParticles();
@@ -3155,7 +3158,8 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
 llvm::Expected<std::vector<std::vector<double>>>
 Simulation::evaluateFrameProduct(
     const double *positions, const std::optional<std::array<double, 6>> &cell,
-    double energyCotangent, const double *positionCotangent) {
+    double energyCotangent, const double *positionCotangent,
+    double *positionDerivative) {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
                            "simulation");
@@ -3180,6 +3184,10 @@ Simulation::evaluateFrameProduct(
     return simulationError("the product of a frame is evaluated by the "
                            "product program of a frame evaluator; this is a "
                            "defect of mdir");
+  if (positionDerivative && !compiled->control.frameProductPositions)
+    return simulationError("the derivative of the product in the positions is "
+                           "evaluated by the product program that gives it; "
+                           "this is a defect of mdir");
   // As evaluateFrame: the frame and its cotangents go to the activation
   // that the last frame left waiting at its boundary, or to one that it
   // begins. The entry evaluates the derivatives in the values of the
@@ -3225,11 +3233,26 @@ Simulation::evaluateFrameProduct(
     a.frameCell = getCell();
     out.tunableGradientWritten = false;
     out.tunableGradientFields.clear();
+    out.frameProductForcesWritten = false;
     resumeActivation();
   }
   out.fail = nullptr;
   if (failure.empty())
     failure = stopMessage;
+  if (!error && failure.empty() && compiled->control.frameProductPositions &&
+      (!out.frameProductForcesWritten ||
+       out.frameProductGradient.size() != 3 * count ||
+       out.frameProductHessian.size() != 3 * count))
+    failure = "the evaluation did not give the derivative of the product in the "
+              "positions; this is a defect of mdir";
+  if (!error && failure.empty() && positionDerivative)
+    for (size_t i = 0; i != 3 * count; ++i) {
+      positionDerivative[i] = energyCotangent * out.frameProductGradient[i] +
+                              out.frameProductHessian[i];
+      if (!std::isfinite(positionDerivative[i]))
+        failure = "the derivative of the product in the position of particle " +
+                  std::to_string(i / 3) + " is not finite at this frame";
+    }
   if (!error && failure.empty() &&
       (activation->returned || !activation->atBoundary))
     failure = "the program did not reach the end of the frame; this is a "

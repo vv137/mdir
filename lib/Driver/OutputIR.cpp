@@ -196,7 +196,7 @@ void mdir::driver::builder::buildTunableGradientOutput(
 void mdir::driver::builder::buildTunableProductOutput(
     OpBuilder &builder, const PotentialStateIR &state, Value tangent,
     Value ids, ValueRange constants, ValueRange seeds,
-    const TunableGradientOutputConfig &config) {
+    const TunableGradientOutputConfig &config, bool positions) {
   auto loc = builder.getUnknownLoc();
   OutputBuilder out(builder);
   size_t count = config.scalarArguments.size();
@@ -222,6 +222,16 @@ void mdir::driver::builder::buildTunableProductOutput(
       derivatives.push_back(argument);
       types.push_back(values[argument].getType());
     }
+  if (positions) {
+    // The forces of the energy and of its tangent, -dU/dx and
+    // -H Gbar, from which the host forms the derivative of the product
+    // in the positions, g dU/dx + H Gbar.
+    for (auto request : {mdir::md::Request::Forces, mdir::md::Request::TangentForces}) {
+      kinds.push_back(int32_t(request));
+      derivatives.push_back(-1);
+      types.push_back(values[0].getType());
+    }
+  }
   values.push_back(tangent);
   auto result = mdir::md::EvaluateOp::create(
       builder, loc, types, FlatSymbolRefAttr::get(builder.getContext(), "tunable"),
@@ -233,6 +243,14 @@ void mdir::driver::builder::buildTunableProductOutput(
         builder, loc, TypeRange{},
         FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteTunableGradientField"),
         ValueRange{number, result.getResult(2 * count + c), ids}, ValueRange{},
+        UnitAttr{});
+  }
+  if (positions) {
+    size_t at = 2 * count + 2 * fields;
+    mdir::mdrt::HostCallOp::create(
+        builder, loc, TypeRange{},
+        FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameProductForces"),
+        ValueRange{result.getResult(at), result.getResult(at + 1), ids}, ValueRange{},
         UnitAttr{});
   }
   for (size_t i = 0; i != 2 * count; ++i)
