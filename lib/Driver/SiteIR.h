@@ -31,6 +31,16 @@ struct SiteSpreadResult {
 /// image. `forces` of the inputs holds the tangent; `virial` is not read.
 mlir::Value buildPlacedSiteTangents(mlir::OpBuilder &, const SiteSpreadInputs &,
                                     bool amber);
+/// The curvature of the placement of the extra points of Amber (#771),
+/// whose J depends on the positions: the derivative of the spread
+/// J(x)^T F_s along the tangent, the force F_s on the site held fixed,
+/// added to `forces` of the inputs. `siteForces` holds F_s in the rows of
+/// the sites (the forces of the energy before their spread), `tangent` the
+/// tangent in the rows of the atoms, read as it is; the rows of the sites
+/// of the result are unchanged. With D384's J^T H J Gbar it forms the
+/// derivative in the positions of Gbar . G. Linear sites have none.
+mlir::Value buildSiteSpreadCurvature(mlir::OpBuilder &, const SiteSpreadInputs &,
+                                     mlir::Value siteForces, mlir::Value tangent);
 SiteSpreadResult buildSiteSpread(mlir::OpBuilder &, const SiteSpreadInputs &,
                                   bool amber, bool derived,
                                   llvm::StringRef potential);

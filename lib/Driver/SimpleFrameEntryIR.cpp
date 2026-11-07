@@ -118,17 +118,9 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     auto storage = cast<MemRefType>(arguments.positions.getType());
     if (product) {
       // The product takes the tangent J Gbar of the placement, and the
-      // variant spreads the forces with J^T (D384). The
-      // J of the sites of four-site water of Amber, which follow the
-      // directions of the bonds, depends on the positions: the derivative
-      // in the positions would need its curvature as well.
-      if (product->positions &&
-          llvm::any_of(config.sites, [](const auto &site) { return site.amber; }))
-        return llvm::createStringError(llvm::inconvertibleErrorCode(),
-            "the derivative in the positions of the product of a frame is not "
-            "implemented for a program with virtual sites placed by the directions "
-            "of their bonds (the extra points of four-site water of Amber) yet; "
-            "linear sites are, and the product in theta takes both (#771)");
+      // variant spreads the forces with J^T (D384); for the sites of
+      // four-site water of Amber, whose J depends on the positions, it adds
+      // the curvature of the placement as well (#771).
       if (program.reorders)
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
             "the product program of frames keeps the order of the input; "
@@ -211,6 +203,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
                 site.amber, site.derived, site.potential).forces;
           return forces;
         };
+        // The derivative of J^T along Gbar, the forces of the energy on the
+        // sites held fixed, for the sites whose J depends on the positions.
+        auto curvature = [&](OpBuilder &at, Value energyForces, Value forces) {
+          for (const auto &site : config.sites)
+            if (site.amber)
+              forces = buildSiteSpreadCurvature(at,
+                  {state.fields[site.relation], state.positions, state.cell,
+                   state.fields[site.a], state.fields[site.b], forces, {}},
+                  energyForces, tangent);
+          return forces;
+        };
+        bool curved = llvm::any_of(config.sites, [](const auto &site) { return site.amber; });
         auto iteration = buildEntryLoop(frame, "frame product", zero, one, one, {},
             [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
           SmallVector<Value> constants, seeds;
@@ -218,7 +222,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
           if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
           buildTunableProductOutput(body, state, tangent,
               physical.identities, constants, seeds, gradient.output, product->positions,
-              config.sites.empty() ? llvm::function_ref<Value(OpBuilder &, Value)>() : spread);
+              config.sites.empty() ? llvm::function_ref<Value(OpBuilder &, Value)>() : spread,
+              curved ? llvm::function_ref<Value(OpBuilder &, Value, Value)>(curvature) : nullptr);
           return SmallVector<Value>{};
         });
         if (!iteration) return iteration.takeError();
