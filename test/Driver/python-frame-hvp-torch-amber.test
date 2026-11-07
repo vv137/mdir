@@ -1,0 +1,14 @@
+# REQUIRES: python-api, torch, parmed
+# The derivative in the positions through mdir.torch with the extra points
+# of Amber (D[torch-public-prune], D384, #771), on the CPU: OPC from a
+# prmtop cut by ParmEd (with the interpreter of the tests, which has it),
+# the gradient in theta alone given with positions that require a
+# gradient, against FrameEnergies.vjp, and the forms that take the
+# positions refused, naming the extra points.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide cut CPU Double %t
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide amber CPU Double %t | FileCheck %s -DMODE="CPU Double torch"
+# RUN: %torch_python %S/Inputs/python_frame_hvp_torch.py %S/Inputs/dipeptide amber CPU Mixed %t | FileCheck %s -DMODE="CPU Mixed torch"
+
+# CHECK: [[MODE]]: Amber OPC (ACE-ALA-NME and 40 waters), 2 frames: grad(L, theta) and L.backward(inputs=theta), with positions that require a gradient, against FrameEnergies.vjp, to the bit; grad(L, x), grad(L, [theta, x]), and L.backward() refused, naming virtual sites placed by the directions of their bonds
