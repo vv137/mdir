@@ -623,7 +623,8 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     Their derivative in the positions is that of the product,
     g dU/dx + H v (D383, D[torch-public-prune]), where the backward takes a
     gradient in the positions; a term without a rule for it (the
-    reciprocal sum of particle mesh Ewald, virtual sites) raises
+    reciprocal sum of particle mesh Ewald, the extra points of Amber,
+    placed by the directions of their bonds) raises
     UnsupportedError, naming it, there alone. Their derivative in the cell,
     and every other second derivative, are refused (`UnsupportedError`)
     where a backward needs them. The positions and the cell are nodes of
