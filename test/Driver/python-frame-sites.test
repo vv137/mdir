@@ -1,0 +1,33 @@
+# REQUIRES: python-api
+# The products of force matching with linear virtual sites
+# (D[force-matching-sites], #771 part 2), on the CPU: OPC water of GROMACS,
+# the product in theta of D381 and the derivative in the positions of D383
+# against central differences of a NumPy Phi, against central differences
+# of Phi from the evaluator, and in mixed precision against double; with
+# the spread of the sites written out and derived (MDIR_SITE_SPREAD, D298);
+# the refusal of the extra points of Amber.
+# Inputs/python_frame_sites.py says what each scenario checks.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Double %t/pair | FileCheck %s --check-prefixes=PAIR,DOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide pair CPU Mixed %t/pair-mixed | FileCheck %s --check-prefixes=PAIR,MIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
+# RUN: env MDIR_SITE_SPREAD=derived %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Double %t/box-derived | FileCheck %s --check-prefixes=BOX,DOUBLE -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide box CPU Mixed %t/box-mixed | FileCheck %s --check-prefixes=BOX,MIXED -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_sites.py %S/Inputs/dipeptide refusals CPU Double %t/refusals | FileCheck %s --check-prefix=REFUSED
+
+# PAIR: [[MODE]]: two OPC waters: the NumPy energy against the evaluator
+# PAIR: [[MODE]]: two OPC waters: the NumPy gradient (zero on the sites) against the evaluator
+# PAIR: [[MODE]]: two OPC waters, 2 frames of 8 particles: the product in theta against central differences of the NumPy Phi
+# PAIR: [[MODE]]: two OPC waters: the product in theta of the variant against D381's
+# PAIR: [[MODE]]: two OPC waters: the derivative in the positions against central differences of the NumPy Phi
+# BOX: [[MODE]]: eight OPC waters in 2.0 nm: the NumPy energy against the evaluator
+# BOX: [[MODE]]: eight OPC waters in 2.0 nm, 2 frames of 32 particles: the product in theta against central differences of the NumPy Phi
+# BOX: [[MODE]]: eight OPC waters in 2.0 nm: the product in theta of the variant against D381's
+# BOX: [[MODE]]: eight OPC waters in 2.0 nm: the derivative in the positions against central differences of the NumPy Phi
+# DOUBLE: [[MODE]]: {{.*}}: the same against central differences of Phi from the evaluator
+# MIXED: [[MODE]]: {{.*}}: the product in theta in mixed precision against that in double
+# MIXED: [[MODE]]: {{.*}}: the derivative in the positions in mixed precision against that in double
+# PAIR: [[MODE]]: two OPC waters: the derivative in the positions with another cotangent on the sites
+# BOX: [[MODE]]: eight OPC waters in 2.0 nm: the derivative in the positions with another cotangent on the sites
+# REFUSED: refusals: the extra points of Amber are refused by name, in theta and in the positions; the evaluator stays usable
