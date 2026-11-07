@@ -92,16 +92,16 @@ The relative error of the largest entry:
 
 | Quantity | CPU double | CPU mixed | GPU double | GPU mixed |
 |---|---|---|---|---|
-| The part of the extra points, against the complex step of the NumPy $\Phi_M$ | 2.6e-15 | 1.5e-6 | | |
-| The same, against Richardson differences of the NumPy $\Phi_M$ | 2.3e-10 | 1.5e-6 | | |
-| The whole, against Richardson differences of $\Phi$ from the evaluator | 1.0e-10 | | | |
-| The whole, in mixed precision against double | | 2.2e-6 | | |
-| The product in $\boldsymbol\theta$, against central differences of the NumPy $\Phi$ (D384's check) | 5.6e-13 | 7.8e-7 | | |
+| The part of the extra points, against the complex step of the NumPy $\Phi_M$ | 2.6e-15 | 1.5e-6 | 2.6e-15 | 1.6e-6 |
+| The same, against Richardson differences of the NumPy $\Phi_M$ | 2.3e-10 | 1.5e-6 | 2.3e-10 | 1.6e-6 |
+| The whole, against Richardson differences of $\Phi$ from the evaluator | 1.0e-10 | | 1.0e-10 | |
+| The whole, in mixed precision against double | | 2.2e-6 | | 2.2e-6 |
+| The product in $\boldsymbol\theta$, against central differences of the NumPy $\Phi$ (D384's check) | 5.6e-13 | 7.8e-7 | 5.8e-13 | 7.9e-7 |
 
 Tolerances: 1e-8 against NumPy and 1e-7 against the evaluator in double; 2e-5 against NumPy and 1e-5 against double in mixed (those of D383 and D384).
 
 - With `MDIR_SITE_SPREAD=derived`, on the CPU in double: 3.1e-15, 2.3e-10, and 1.1e-10.
 - **The product in $\boldsymbol\theta$ of the variant** equals that of D381 to the bit, and the rows of the sites in the derivative in the positions are zero to the bit, in all four modes.
-- **Another cotangent on the sites** changes the product in $\boldsymbol\theta$ and the derivative in the positions by at most 1.0e-16 in double and 3.3e-8 in mixed (CPU; tolerances 1e-14 and 1e-6): the rounding of the placement of the tangent.
-- **Through `mdir.torch`** (`python-frame-hvp-torch-amber.test`, `-gpu.test`): every form of the backward, `grad(L, x)`, `grad(L, [theta, x])`, and `L.backward()` among them, with and without a term of the energy in the loss, against `FrameEnergies.vjp`: $\boldsymbol\theta$ to the bit, $\mathbf x$ 0 in double and 3.5e-14 in mixed on the CPU (tolerances 1e-14 and 1e-9), one pass of each product that the form takes. These forms were refused.
+- **Another cotangent on the sites** changes the product in $\boldsymbol\theta$ and the derivative in the positions by at most 1.7e-16 in double and 4.1e-8 in mixed (CPU and GPU; tolerances 1e-14 and 1e-6): the rounding of the placement of the tangent.
+- **Through `mdir.torch`** (`python-frame-hvp-torch-amber.test`, `-gpu.test`): every form of the backward, `grad(L, x)`, `grad(L, [theta, x])`, and `L.backward()` among them, with and without a term of the energy in the loss, against `FrameEnergies.vjp`: $\boldsymbol\theta$ to the bit, $\mathbf x$ 0 in double on both, and 3.5e-14 (CPU) and 6.9e-14 (GPU) in mixed (tolerances 1e-14 and 1e-9), one pass of each product that the form takes. These forms were refused.
 - **D383's test of the refusals** (`python-frame-hvp.test`) expected the refusal on the full OPC fixture (1570 particles); it now expects the derivative, finite and zero in the rows of the sites.
