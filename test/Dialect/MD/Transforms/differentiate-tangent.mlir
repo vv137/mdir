@@ -237,3 +237,36 @@ md.function @requests(%x: !vec, %cell: !md.cell, %q0: !real, %w: !real,
       : (!vec, !md.cell, !real, !real, f64, !grid, !vec) -> (f64, f64)
   md.return %p, %dp : f64, f64
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!pairs = !md.relation<@atoms, 2, unordered>
+md.particle_set @atoms
+
+// The forces of the tangent of a pair term (D[force-matching-hvp]): the
+// kernel of the tangent reads the displacement, and the gather of its
+// forces takes the derivative in each of its components beside the radial
+// factor, under the antisymmetric contract.
+//
+// CHECK-LABEL: md.function @soft.tangent.forces(
+// CHECK: md.gather_relation %{{.*}}, %{{.*}}, %{{.*}} gather(%{{.*}} : !md.field<@atoms, 3 x f64>) exchange(antisymmetric, derived)
+// CHECK: ^bb0(%{{[^:]*}}: f64, %[[D:[^:]*]]: vector<3xf64>, %{{[^:]*}}: vector<3xf64>, %{{[^:]*}}: vector<3xf64>):
+// CHECK: vector.from_elements
+// CHECK: md.yield %{{.*}} : vector<3xf64>
+md.potential @soft(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(2.0) : !vec -> !pairs
+  %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %r2 = arith.mulf %r, %r : f64
+    %k = arith.divf %a, %r2 : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
+
+md.function @requests(%x: !vec, %cell: !md.cell, %a: f64, %t: !vec) -> !vec {
+  %f = md.evaluate @soft(%x, %cell, %a, %t) request [tangent_forces]
+      : (!vec, !md.cell, f64, !vec) -> !vec
+  md.return %f : !vec
+}

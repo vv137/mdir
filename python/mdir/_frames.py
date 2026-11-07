@@ -212,8 +212,12 @@ class FrameGradient(Mapping):
     the tunable times the unit of the cotangent, as `TunableGradient`
     (D230) is at one state."""
 
-    def __init__(self, values, zero, version):
+    def __init__(self, values, zero, version, positions=None):
         self._values, self.zero, self.version = values, zero, version
+        # With "positions" in the gradients of FrameEnergies.vjp, the
+        # derivative of the product in the positions (K, N, 3) float64, in
+        # the order of the input (D[force-matching-hvp]); None otherwise.
+        self.positions = positions
 
     def __getitem__(self, name):
         return self._values[name]
@@ -288,7 +292,7 @@ class FrameEnergies:
         potential energy."""
         return self._only("dependent_energy", "dependent", self._energy)
 
-    def vjp(self, cotangent=None, *, positions=None):
+    def vjp(self, cotangent=None, *, positions=None, gradients=("tunables",)):
         """sum_n cotangent[n] dU_n/dtheta, for a cotangent (K,) float64 on
         the energy: a product with the Jacobian if it was kept, a second pass
         over the frames otherwise.
@@ -300,8 +304,27 @@ class FrameEnergies:
         derivative of force matching (D381, #726), by a pass
         of the product program of the evaluator over the frames; without
         `cotangent` that of the energy is zero. The sign of a loss on the
-        forces is the caller's: its cotangent on F is minus that on dU/dx."""
+        forces is the caller's: its cotangent on F is minus that on dU/dx.
+
+        `gradients` names what is returned, among "tunables" (the mapping,
+        the default) and "positions" (D[force-matching-hvp], #771): the
+        derivative of the same product in the positions,
+        cotangent[n] dU_n/dx + H_n positions[n] with H_n the Hessian of U_n
+        in the positions, as the attribute `positions` (K, N, 3) float64, in
+        the order of the input, by the same pass of a product program that
+        gives it as well; a term without a rule for it (the reciprocal sum
+        of particle mesh Ewald, virtual sites) raises UnsupportedError,
+        naming it."""
         evaluator = self._evaluator
+        if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):
+            raise _core.InputError("vjp: gradients is a tuple of names among 'tunables' and "
+                                   f"'positions'; found {gradients!r}")
+        names = tuple(dict.fromkeys(gradients))
+        for name in names:
+            if name not in ("tunables", "positions"):
+                raise _core.InputError("vjp: gradients names 'tunables' and 'positions'; "
+                                       f"found {name!r}")
+        wants = "positions" in names
         if not self._gradient:
             raise _core.InputError("these frames were evaluated without 'tunables' in gradients")
         if cotangent is None and positions is None:
@@ -315,6 +338,9 @@ class FrameEnergies:
                                        f"found {g.shape}")
             if not np.all(np.isfinite(g)):
                 raise _core.InputError("vjp: the cotangent is not finite")
+        dx = None
+        if wants and positions is None:
+            positions = np.zeros((self.count, evaluator._particles, 3))
         if positions is not None:
             v = np.asarray(_array(positions, "positions"), dtype=np.float64)
             shape = (self.count, evaluator._particles, 3)
@@ -326,14 +352,18 @@ class FrameEnergies:
                                        "not finite")
             total = evaluator._product_pass(
                 self._source, self.version,
-                np.zeros(self.count) if g is None else g, np.ascontiguousarray(v))
+                np.zeros(self.count) if g is None else g, np.ascontiguousarray(v), wants)
+            if wants:
+                total, dx = total
+                dx = _frozen(dx)
         elif self._rows is not None:
             total = g @ self._rows
         else:
             total = evaluator._second_pass(self._source, self.version, g)
-        values = {name: _frozen(np.ascontiguousarray(total[begin:end]))
-                  for name, (begin, end) in evaluator._slices.items()}
-        return FrameGradient(values, self.zero, self.version)
+        values = {} if "tunables" not in names else {
+            name: _frozen(np.ascontiguousarray(total[begin:end]))
+            for name, (begin, end) in evaluator._slices.items()}
+        return FrameGradient(values, self.zero, self.version, dx)
 
     def __repr__(self):
         return (f"FrameEnergies(count={self.count}, version={self.version}, "
