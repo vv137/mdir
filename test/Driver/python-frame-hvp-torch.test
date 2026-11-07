@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch
 # The derivative in the positions of the gradient in the positions through
-# mdir.torch (D[torch-public-prune], #771 part 4), on the CPU: every form of
+# mdir.torch (D385, #771 part 4), on the CPU: every form of
 # the backward of a loss on the forces against FrameEnergies.vjp (D383),
 # with the passes of the product program that each makes, on the torsion
 # fixtures, the pair fluid, and OPC with the linear sites of GROMACS, and

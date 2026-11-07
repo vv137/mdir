@@ -8,7 +8,7 @@
 # closed forms and NumPy sums with their tangents, central differences, and
 # mixed against double. Then gradcheck of the gradient in the positions in
 # theta, and the refusals (with PME for the derivative in the positions,
-# D[torch-public-prune]).
+# D385).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %torch_python %S/Inputs/python_frame_product_torch.py %S/Inputs/dipeptide dihedral CPU Double %t/dihedral | FileCheck %s --check-prefix=DIHEDRAL -DMODE="CPU Double torch"

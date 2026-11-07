@@ -621,7 +621,7 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     `theta`: a loss on the forces trains the tunables, by the product of
     force matching (D382, `FrameEnergies.vjp(positions=)`).
     Their derivative in the positions is that of the product,
-    g dU/dx + H v (D383, D[torch-public-prune]), where the backward takes a
+    g dU/dx + H v (D383, D385), where the backward takes a
     gradient in the positions; a term without a rule for it (the
     reciprocal sum of particle mesh Ewald, the extra points of Amber,
     placed by the directions of their bonds) raises

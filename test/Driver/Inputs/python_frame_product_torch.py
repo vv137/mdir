@@ -167,7 +167,7 @@ def refusals():
     # given where every term has a rule for it (D383,
     # python-frame-hvp-torch.test); with PME it is refused, naming the
     # reciprocal sum, where a backward takes a gradient in the positions,
-    # and there alone (D[torch-public-prune]).
+    # and there alone (D385).
     evaluator, x = pme()
     theta = {"sigma": torch.tensor(np.array(evaluator.tunables["sigma"]), requires_grad=True)}
     f_ref = torch.from_numpy(np.random.default_rng(3).normal(size=x.shape))

@@ -1,5 +1,5 @@
 """The derivative in the positions of the gradient in the positions through
-mdir.torch (D[torch-public-prune], #771 part 4): every form of the backward
+mdir.torch (D385, #771 part 4): every form of the backward
 of a loss on the forces against FrameEnergies.vjp (D381, D383), and the
 passes of the product program that each form makes.
 

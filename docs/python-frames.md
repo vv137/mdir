@@ -6,7 +6,7 @@ frame boundary. D381 (#726 part B) uses it for the
 product of force matching, `FrameEnergies.vjp(positions=)`
 ([below](#the-product-of-force-matching-d381)), and
 D382 (#726 part E) makes it the backward of the
-gradient in the positions in `mdir.torch`, and D[torch-public-prune]
+gradient in the positions in `mdir.torch`, and D385
 (#771 part 4) adds the derivative of that gradient in the positions (D383)
 where a backward takes it; `mdir.jax` still refuses every second
 derivative.
@@ -263,7 +263,7 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   of PME and the extra points of Amber (below) raise `UnsupportedError`, naming the term, when
   `"positions"` is asked; the product in $\boldsymbol\theta$ stays
   available without it. `mdir.torch` forms it where a backward takes a
-  gradient in the positions (D[torch-public-prune],
+  gradient in the positions (D385,
   [below](#the-pytorch-adapter)).
 - **Virtual sites** (D384, #771 part 2). With
   $\mathbf X$ the places of all particles, the sites placed, and
@@ -393,7 +393,7 @@ zero.
   backward after the evaluator has evaluated other frames raises
   `SimulationError`. The frames of an iterable are refused, as for
   `vjp(positions=)`.
-- **The derivative of $\mathbf G$ in the positions** (D[torch-public-prune],
+- **The derivative of $\mathbf G$ in the positions** (D385,
   #771 part 4). A backward that takes a gradient in the positions through
   $\mathbf G$, such as `torch.autograd.grad(loss, x)` or a
   `loss.backward()` that reaches positions requiring a gradient, gives
@@ -422,7 +422,7 @@ zero.
   backward in the tunables reaches through the positions as well; with
   PME, such a backward raises. Where both `theta` and `x` are taken, the
   two nodes make a pass each, about 1.8 times one pass of `vjp` with both
-  (D[torch-public-prune]). Until that decision, the adapter asked the
+  (D385). Until that decision, the adapter asked the
   engine whether it would run the node of the positions, by a private
   function of PyTorch, and refused the Hessian wherever it was asked
   (D382).
@@ -450,7 +450,7 @@ are `torch.library.custom_op`s; the first has `register_autograd`, whose
 backward calls the second, and both have shape functions
 (`register_fake`). The first takes the tunables alone. The positions
 and the cell that take a gradient enter through operations of their own
-that return zeros, added to its outputs (D[torch-public-prune]):
+that return zeros, added to its outputs (D385):
 `mdir::frame_positions`, whose backward forms
 $\mathsf H\bar{\mathbf G}$ by `mdir::frame_hvp`; `mdir::frame_cell`,
 whose backward refuses; and `mdir::frame_energy_in`, added to the energy,
@@ -2014,7 +2014,7 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
   force matching (D382,
   [above](#the-pytorch-adapter)), and its derivative in the positions
   is $\mathsf H\bar{\mathbf G}$ where every term has a rule for it
-  (D[torch-public-prune]). Every other derivative of them, a second
+  (D385). Every other derivative of them, a second
   derivative of $U$, is not implemented. That covers
   `gradients["strain"]` in anything and `gradients["positions"]` in the
   cell. Its backward raises `UnsupportedError` when it

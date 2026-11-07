@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch, parmed
 # The derivative in the positions through mdir.torch with the extra points
-# of Amber (D[torch-public-prune], D384, #771), on the CPU: OPC from a
+# of Amber (D385, D384, #771), on the CPU: OPC from a
 # prmtop cut by ParmEd (with the interpreter of the tests, which has it),
 # the gradient in theta alone given with positions that require a
 # gradient, against FrameEnergies.vjp, and the forms that take the
