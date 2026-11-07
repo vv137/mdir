@@ -173,6 +173,27 @@ def refusals():
     expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, shift), "the Hessian")
     print("refusals: the Hessian in the positions, by torch.autograd.grad, by backward, and "
           "through a tensor that moves the positions")
+    # The engine is asked by a private function of PyTorch; without it, or
+    # without an answer, the derivative is refused even where the backward
+    # would not take the gradient in the positions (fail closed).
+    original = torch._C._will_engine_execute_node
+    for replaced in ("absent", "no answer"):
+        if replaced == "absent":
+            del torch._C._will_engine_execute_node
+        else:
+            torch._C._will_engine_execute_node = lambda node: None
+        try:
+            positions = torch.tensor(x, requires_grad=True)
+            loss = force_loss(positions)
+            expect(mdir.UnsupportedError, lambda: torch.autograd.grad(loss, theta["k"]),
+                   "in the positions (the Hessian)")
+        finally:
+            torch._C._will_engine_execute_node = original
+    positions = torch.tensor(x, requires_grad=True)
+    assert torch.equal(torch.autograd.grad(force_loss(positions), theta["k"])[0], first)
+    print("refusals: without the private function of PyTorch that tells whether the gradient "
+          "in the positions is taken, or without its answer, the derivative is refused; with "
+          "it back, the same gradient, to the bit")
     out = mdir.torch.evaluate(evaluator, theta, x, gradients=("strain",))
     expect(mdir.UnsupportedError,
            lambda: torch.autograd.grad(out.gradients["strain"].sum(), theta["k"]),

@@ -189,14 +189,20 @@ def _frame_vjp(call: int, entries: int, serial: Tensor, energy: Tensor, others: 
     depends = record.depends if record else {}
     listed = [f"'{names[k]}' (which may read {', '.join(sorted(depends.get(names[k], [])))})"
               for k in asked]
-    listed += [f"the gradient of the energy in {what}"
-               for what, cotangent in zip(("the strain", "the cell"), gradients[1:])
-               if _nonzero(cotangent)]
+    if _nonzero(gradients[1]):
+        listed.append("the gradient of the energy in the strain")
     if listed:
         raise _core.UnsupportedError(
             f"the derivative of the output {', '.join(listed)} in the tunables, the positions, "
             "or the cell is not implemented; it is not zero. Detach the output to leave that "
             "term out of a gradient")
+    # The gradient in the six numbers of the cell is no output: a cotangent
+    # on it comes from a backward of the backward in the cell.
+    if _nonzero(gradients[2]):
+        raise _core.UnsupportedError(
+            "a second derivative of the energy of the frames is not implemented: the derivative "
+            "of the gradient of the energy in the cell was asked for (a backward with "
+            "create_graph=True, a Hessian, or a gradient of a gradient). It is not zero")
     if not needed:
         return energy.new_zeros((entries,))
     product = _nonzero(gradients[0])
@@ -278,14 +284,24 @@ def _setup(ctx, inputs, output):
 
 
 def _needed(edge):
-    """Whether the backward under way takes a gradient through `edge`."""
+    """Whether the backward under way takes a gradient through `edge`.
+
+    It asks the engine of autograd by a private function of PyTorch,
+    `torch._C._will_engine_execute_node` (tested with PyTorch 2.14.1), and
+    fails closed: where the function is missing, raises, or gives no
+    answer, the gradient is taken as needed, and its derivative is refused.
+    The question goes away when the derivative of the gradient in the
+    positions in the positions is formed for every term (#726)."""
     if edge is None:
         return False
-    try:
-        return bool(torch._C._will_engine_execute_node(edge.node))
-    except (AttributeError, RuntimeError):
-        # Without the answer, what may be needed is refused.
+    ask = getattr(torch._C, "_will_engine_execute_node", None)
+    if ask is None:
         return True
+    try:
+        answer = ask(edge.node)
+    except RuntimeError:
+        return True
+    return True if answer is None else bool(answer)
 
 
 def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in_cell):
@@ -296,8 +312,8 @@ def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in
             if _needed(edge):
                 raise _core.UnsupportedError(
                     "a second derivative of the energy of the frames is not implemented: the "
-                    f"derivative of its gradient in the positions in {what} was asked for. It "
-                    "is not zero. The derivative in the tunables is given "
+                    f"derivative of the gradient of the energy in the positions, in {what}, was "
+                    "asked for. It is not zero. The derivative in the tunables is given "
                     "(D[force-matching-torch]): take the gradient in the tunables alone "
                     "(torch.autograd.grad(loss, theta)), or detach the positions")
     product = _frame_vjp(ctx.call, sum(ctx.sizes), ctx.serial, energy, others, ctx.jacobian,

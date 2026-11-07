@@ -354,7 +354,12 @@ zero.
   `torch.autograd.grad(loss, x)`, or a `loss.backward()` that reaches a
   positions tensor requiring a gradient, raises. In the example above, `x`
   is a leaf that requires a gradient, so `loss.backward()` would raise
-  there. With `gradients=("positions",)` and positions that take no
+  there. The question uses a private function of PyTorch, tested with
+  PyTorch 2.14.1, and fails closed: where the function is missing or
+  answers nothing, the derivative is refused even for
+  `torch.autograd.grad(loss, theta)`. It goes once the Hessian-vector
+  product in the positions is formed for every term (#726). With
+  `gradients=("positions",)` and positions that take no
   gradient, `out.gradients["positions"]` takes the place of `g`, and
   `loss.backward()` is given.
 - One operation at a time on an evaluator, from any thread, with the GIL

@@ -36,5 +36,6 @@
 # GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (output): sigma and epsilon of two pairs of types on propane and water, passed
 # GRADCHECK: [[MODE]]: gradcheck of the gradient in the positions in theta (create_graph): sigma and epsilon of two pairs of types on propane and water, passed
 # REFUSED: refusals: the Hessian in the positions, by torch.autograd.grad, by backward, and through a tensor that moves the positions
+# REFUSED: refusals: without the private function of PyTorch that tells whether the gradient in the positions is taken, or without its answer, the derivative is refused
 # REFUSED: refusals: the derivative of the gradient in the strain, and the second derivative in theta
 # REFUSED: refusals: a backward after other frames; the evaluator then gives the same gradient, to the bit
