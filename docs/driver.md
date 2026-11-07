@@ -1426,6 +1426,12 @@ from canonical contiguous bytes and reads the corresponding host cell
 row. Its batch boundary hands over both descriptors at one activation
 boundary. Device output writers, the caller, tunable updates and chain
 rule remain in progress, with no change to the existing host entry.
+Its tunable-dependent dispersion/shift correction is independently computed
+in C++ on the host and in a kernel on the device. D[frame-batch-entry]
+requires relative agreement within 1e-14 for energies receiving that
+correction, and bitwise identical repeated deterministic device calls.
+All other shared-program quantities retain their bitwise comparison.
+Device integer powers use multiplication; existing lowering is unchanged.
 
 Exact trial virtual-site placement and force spreading deliberately retain the
 archived entry cell (#722); trial energy evaluation and other gathers retain

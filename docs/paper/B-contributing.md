@@ -242,6 +242,11 @@ batch entry also constructs one native loop over contiguous position
 views and cell rows, with one descriptor handoff per batch. Device output
 writers, the batch caller, tunable updates, chain rule and final validation
 are pending.
+The independently implemented host and device dispersion/shift correction
+is compared at relative error at most 1e-14, while repeated deterministic
+device results and quantities from the same compiled program retain their
+bitwise requirements. Device integer powers use multiplication. This
+exception changes neither the host implementation nor existing lowering.
 
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain

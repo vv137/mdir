@@ -26,8 +26,23 @@ of the form c0(theta) + c1(theta)/V and their derivatives are evaluated on
 the device. The chain rule is uploaded as indices and weights; its f64
 sums preserve the host contribution order where possible, and the accepted
 comparison of tunable rows and VJPs is relative error at most 1e-14.
-Position and strain gradients and energies must match the deterministic
-host evaluator to the bit for the same precision.
+Quantities taken from the same compiled program must match the deterministic
+host evaluator to the bit for the same precision. The tunable-dependent
+dispersion and shift correction has two implementations: C++ in the host
+entry and a kernel in the device entry. For the energies this correction
+contributes to, the relative difference must be at most 1e-14. This bound
+allows the few ULP introduced by the independent arithmetic implementations;
+it does not relax comparisons of other quantities. Report the largest
+measured relative difference and ULP count. Repeated device calls in
+deterministic mode must still be bitwise identical. Device integer powers
+use multiplication, not `pow`. The host path and existing lowering remain
+unchanged.
+
+The focused eight-energy Double preflight measured a largest relative
+difference of 1.582914503133543e-16, with at most 1 ULP,
+against the actual host FrameEvaluator on RTX 5090. Two device kernel
+invocations in the same run produced bitwise identical results. This
+is a correction arithmetic component check, not final batch validation.
 
 A scoped runtime stream selection restores the previous stream after the
 call, including errors. Side streams join the selected stream, and FFT
@@ -99,5 +114,8 @@ The batch implementation and final validation remain in progress. Before readine
   matrix with an independently archived final main; run the five bitwise
   checkpoints, both D309 shards, and the sanitizer tier on RTX 5090.
 - Rebase onto current main before readiness and run every gate at that
-  clean head. Stop on any output difference, numerical mismatch, test
-  failure, or intermittent failure; never retry one.
+  clean head. Stop on existing-output differences, numerical comparisons
+  outside the accepted bounds, intermittent failures, or design questions.
+  For a deterministic failure of a new work-in-progress test, fix it,
+  rerun once, and record both counts. Never retry a numerical or
+  intermittent failure.
