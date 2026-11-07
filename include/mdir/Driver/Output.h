@@ -224,6 +224,13 @@ struct Output {
   /// the host adds at its volume, row by row, in kJ/mol, which
   /// mdrtWriteFrameVirial fills. Each call sets its flag.
   void *frameGradient = nullptr;
+  /// Of a product program with the derivative in the positions (#771,
+  /// D[force-matching-hvp]): the gradient of the energy dU/dx and the
+  /// Hessian times the cotangent H Gbar of the frame, 3 N numbers each in
+  /// f64 in the order of the input, which mdrtWriteFrameProductForces
+  /// fills from the forces of the energy and of its tangent.
+  std::vector<double> frameProductGradient, frameProductHessian;
+  bool frameProductForcesWritten = false;
   std::array<double, 9> frameStrain{};
   bool frameGradientWritten = false, frameStrainWritten = false;
   std::unique_ptr<TrajectoryWriter> trajectory;
@@ -549,6 +556,11 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// The forces of a frame of a frame evaluator (D252), in
 /// kJ/mol/nm, for Output::frameGradient.
 void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids);
+/// The forces of the energy and of its tangent of a frame of a product
+/// program (#771, D[force-matching-hvp]), whose negatives it keeps in
+/// Output::frameProductGradient and frameProductHessian.
+void _mlir_ciface_mdrtWriteFrameProductForces(void *forces, void *tangentForces,
+                                              void *ids);
 /// The virial tensor of the forces of that frame, W = Σ d ⊗ F row by row,
 /// in kJ/mol, without the constraints, for Output::frameStrain.
 void _mlir_ciface_mdrtWriteFrameVirial(double xx, double xy, double xz,

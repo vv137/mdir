@@ -566,6 +566,32 @@ void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids) {
   output.frameGradientWritten = true;
 }
 
+void _mlir_ciface_mdrtWriteFrameProductForces(void *forces, void *tangentForces,
+                                              void *ids) {
+  Output &output = *current;
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  auto take = [&](void *values, std::vector<double> &to) {
+    auto *buffer = static_cast<StridedMemRefType<char, 2> *>(values);
+    int64_t count = buffer->sizes[0];
+    to.assign(static_cast<size_t>(3 * count), 0.0);
+    auto fill = [&](auto *from) {
+      for (int64_t i = 0; i != count; ++i) {
+        int64_t place = numbers->data[numbers->offset + i * numbers->strides[0]];
+        for (int64_t c = 0; c != 3; ++c)
+          to[3 * place + c] = -static_cast<double>(
+              from[buffer->offset + i * buffer->strides[0] + c * buffer->strides[1]]);
+      }
+    };
+    if (output.force == Element::F32)
+      fill(reinterpret_cast<const float *>(buffer->data));
+    else
+      fill(reinterpret_cast<const double *>(buffer->data));
+  };
+  take(forces, output.frameProductGradient);
+  take(tangentForces, output.frameProductHessian);
+  output.frameProductForcesWritten = true;
+}
+
 void _mlir_ciface_mdrtWriteFrameVirial(double xx, double xy, double xz,
                                        double yx, double yy, double yz,
                                        double zx, double zy, double zz) {

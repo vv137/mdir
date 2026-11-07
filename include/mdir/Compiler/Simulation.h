@@ -126,7 +126,7 @@ public:
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
          CodeStore *store = nullptr, bool frames = false,
-         bool frameProduct = false);
+         bool frameProduct = false, bool frameProductPositions = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;
@@ -398,11 +398,18 @@ public:
   /// does not depend on the positions at a fixed cell. Only a simulation
   /// created with `frames` and `frameProduct` takes it. The checks and the
   /// failures are those of `evaluateFrame`.
+  ///
+  /// With `positionDerivative`, 3 N numbers in the order of the input, of a
+  /// simulation created with `frameProductPositions` as well, it also
+  /// takes the derivative of the product in the positions,
+  /// g dU/dx + H Gbar, H the Hessian of U in the positions (#771,
+  /// D[force-matching-hvp]).
   llvm::Expected<std::vector<std::vector<double>>>
   evaluateFrameProduct(const double *positions,
                        const std::optional<std::array<double, 6>> &cell,
                        double energyCotangent,
-                       const double *positionCotangent);
+                       const double *positionCotangent,
+                       double *positionDerivative = nullptr);
   size_t getParticleCount() const { return system.getNumParticles(); }
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
