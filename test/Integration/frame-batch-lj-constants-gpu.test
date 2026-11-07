@@ -1,4 +1,5 @@
 # REQUIRES: cuda
+# RUN: rm -f %t.json %t.mlir
 # RUN: %mdir_python %S/Inputs/frame_batch_lj_native_probe.py emit %t.json mdir-term-ir-test > %t.mlir
 # RUN: mdir-opt %t.mlir '--convert-md-exec-to-gpu=deterministic=true explicit-fma=true contract=false' \
 # RUN: | mlir-opt %lower_gpu_to_llvm \

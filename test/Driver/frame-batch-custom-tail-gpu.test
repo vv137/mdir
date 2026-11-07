@@ -1,3 +1,4 @@
 # REQUIRES: python-api, torch, cuda
+# RUN: rm -rf %t
 # RUN: %torch_python %S/Inputs/frame_batch_custom_tail.py %t | FileCheck %s
 # CHECK: general pair-tail device quadrature passed

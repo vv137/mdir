@@ -1,3 +1,4 @@
 # REQUIRES: python-api, torch, cuda
+# RUN: rm -rf %t
 # RUN: %torch_python %S/Inputs/frame_batch_lj_entry.py %t Shift | FileCheck %s
 # CHECK: integrated LJ entry passed

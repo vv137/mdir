@@ -1,4 +1,5 @@
 # REQUIRES: python-api, torch, cuda
+# RUN: rm -rf %t
 # RUN: %torch_python %S/Inputs/frame_batch_entry.py %t | FileCheck %s
 # CHECK: call 0: all 46 results bitwise identical to host
 # CHECK: call 1: all 46 results bitwise identical to host

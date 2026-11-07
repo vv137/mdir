@@ -1,6 +1,7 @@
 # The private device batch entry: input validation, dtype conversion,
 # products, combining rules, PME, correction derivatives and quadrature.
 # REQUIRES: cuda, compute-sanitizer, python-api, torch
+# RUN: rm -rf %t
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_oracle.py %t/oracle 2>&1 | FileCheck %s --check-prefix=ORACLE
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_entry.py %t/stream stream 2>&1 | FileCheck %s --check-prefix=STREAM
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_mixing.py %t/pme PME 2>&1 | FileCheck %s --check-prefix=PME
