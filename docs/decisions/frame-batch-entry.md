@@ -22,7 +22,7 @@ restart the activation (Q3).
 
 The boundary carries static requests for energy, position and strain
 gradients, tunable rows, and tangent or cotangent contractions. Corrections
-of the form c0(theta) + c1(theta)/V and their derivatives are evaluated on
+of the form $c_0(\boldsymbol\theta) + c_1(\boldsymbol\theta)/V$ and their derivatives are evaluated on
 the device. The chain rule is uploaded as indices and weights; its f64
 sums preserve the host contribution order where possible, and the accepted
 comparison of tunable rows and VJPs is relative error at most 1e-14.
@@ -43,6 +43,11 @@ difference of 1.582914503133543e-16, with at most 1 ULP,
 against the actual host FrameEvaluator on RTX 5090. Two device kernel
 invocations in the same run produced bitwise identical results. This
 is a correction arithmetic component check, not final batch validation.
+The native LJ constructor's eight-energy check measured a largest relative
+difference of 2.989680490180319e-16 and at most 2 ULP; its repeated device
+invocations were bitwise identical. The map/contraction check covered 879
+values, with exact mapped values, a maximum contraction relative difference
+of 1.4814145717262463e-16, and bitwise identical repeated device invocations.
 
 A scoped runtime stream selection restores the previous stream after the
 call, including errors. Side streams join the selected stream, and FFT
@@ -89,10 +94,21 @@ The native row loop takes a canonical contiguous byte buffer and a host
 cell buffer with K rows and six columns. Each iteration creates an
 identity-layout position view at its byte offset and reads that row's
 cell. The builder's device-batch mode emits this K-loop behind one
-`mdrtFrameBatchBoundary`; its C interface hands over the two descriptors at
-one activation boundary. Storage assignment preserves the batch marker
-for later GPU scalar lowering. The caller, device output writers, tunable
-updates and chain rule are still being connected; no batch API is exposed.
+`mdrtFrameBatchBoundary`; its C interface hands over positions, cells and
+device theta at one activation boundary. Storage assignment preserves the
+batch marker for later GPU scalar lowering. Immutable resolved maps are
+uploaded at activation start. Direct field, tuple and pair-table maps update
+owned device storage in physical precision; sites mapped to `-1` keep their values.
+An effectful update call returns the descriptor for a fresh field/table
+import, so Pure imports and their derived values cannot move above the update.
+Scalar tunables become marked device loads in their consuming kernels.
+
+The ordered contraction constructor uses CSR indices and f64 weights, with
+one thread per result and no atomics in its sums. A separate LJ constructor
+evaluates reference-volume dispersion/shift constants using multiplication
+for integer powers. Device output writers, the caller, derived table updates,
+correction hookup and the model chain rule are still being connected; no
+batch API is exposed.
 
 A private `FrameEvaluator` method accepting DLPack buffers exercises the
 boundary. This PR adds no JAX handler, batching rule, public Python API,

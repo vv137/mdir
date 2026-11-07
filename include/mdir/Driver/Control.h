@@ -15,10 +15,12 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace mdir {
+namespace model { struct TunableSet; }
 namespace driver {
 
 /// A type of particle: its mass and its parameters, in the units of the
@@ -210,6 +212,9 @@ struct Control {
   /// sets it; the batch caller selects DeviceBatch when its entry exists.
   enum class FrameMode { Host, DeviceBatch };
   FrameMode frameMode = FrameMode::Host;
+  /// Immutable resolved metadata for the internal device batch entry.
+  /// Theta itself is a device boundary input, never stored here.
+  std::shared_ptr<const model::TunableSet> frameBatchTunables;
   /// Whether the entry of the program of segments is a loop over frames
   /// (D251, docs/python-frames.md): the program of a frame
   /// evaluator, which takes the cell and the positions of a frame at each

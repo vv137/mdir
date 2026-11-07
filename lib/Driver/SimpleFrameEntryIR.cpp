@@ -10,10 +10,13 @@
 #include "SiteIR.h"
 #include "CouplingIR.h"
 #include "TermIR.h"
+#include "FrameBatchTunableIR.h"
+#include "FrameBatchOutputIR.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -86,6 +89,80 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       reference = vector::FromElementsOp::create(at, loc, VectorType::get({3}, at.getF64Type()), edges);
     }
     auto imported = buildEntryFields(at, program, arguments, false, config.givenForces);
+    Value frameStatus;
+    if (config.deviceBatch) {
+      Attribute space = config.batchOnDevice ? Attribute(at.getI64IntegerAttr(1)) : Attribute{};
+      auto type = MemRefType::get({1}, at.getI64Type(), MemRefLayoutAttrInterface(), space);
+      if (config.batchOnDevice)
+        frameStatus = gpu::AllocOp::create(at, loc, type, Type(),
+            ValueRange(), ValueRange(), ValueRange()).getMemref();
+      else
+        frameStatus = memref::AllocaOp::create(at, loc, type);
+    }
+    SmallVector<Value> parameterMaps, parameterDestinations;
+    SmallVector<Type> parameterTypes;
+    SmallVector<std::string> parameterUpdates;
+    if (config.batchParameters) {
+      if (!config.deviceBatch || !config.batchOnDevice)
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "device frame parameters require a GPU batch entry");
+      const auto &plan = *config.batchParameters;
+      for (const auto &binding : plan.mapped) {
+        auto map = buildFrameBatchParameterMap(at, binding.map, plan.parameters);
+        if (!map) return map.takeError();
+        parameterMaps.push_back(*map);
+        Value field;
+        Type element;
+        SmallVector<int64_t> shape;
+        if (binding.kind == FrameBatchMappedResource::Field) {
+          field = imported.fields[binding.resource];
+          element = program.parameter == Element::F64 ? Type(at.getF64Type()) : Type(at.getF32Type());
+          shape = {ShapedType::kDynamic};
+        } else if (binding.kind == FrameBatchMappedResource::TupleField) {
+          field = imported.tuples[binding.resource].fields[binding.field];
+          element = at.getF64Type();
+          shape = {ShapedType::kDynamic};
+        } else {
+          field = imported.tables[binding.resource];
+          element = program.parameter == Element::F64 ? Type(at.getF64Type()) : Type(at.getF32Type());
+          shape = {ShapedType::kDynamic, ShapedType::kDynamic};
+        }
+        auto type = MemRefType::get(shape, element, MemRefLayoutAttrInterface(),
+            at.getI64IntegerAttr(1));
+        Value memory = mdir::mdrt::ToBufferOp::create(at, loc, type, field);
+        // Return the updated descriptor through an effectful call. A fresh
+        // from_buffer below must depend on this call: from_buffer is Pure,
+        // so importing an invariant root descriptor could otherwise hoist
+        // the field and its derived values above the parameter update.
+        auto entry = at.getInsertionBlock()->getParentOp();
+        auto module = entry->getParentOfType<ModuleOp>();
+        std::string name;
+        unsigned serial = 0;
+        do { name = "__mdir_frame_update_" + std::to_string(serial++); }
+        while (module.lookupSymbol(name));
+        OpBuilder top(entry);
+        auto thetaType = MemRefType::get({ShapedType::kDynamic}, at.getF64Type(),
+            MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
+        auto update = func::FuncOp::create(top, loc, name,
+            top.getFunctionType({thetaType, map->getType(), type}, {type}));
+        update.setPrivate();
+        OpBuilder body = OpBuilder::atBlockEnd(update.addEntryBlock());
+        Value destination = update.getArgument(2);
+        if (shape.size() == 2) {
+          auto vector = MemRefType::get({ShapedType::kDynamic}, element,
+              MemRefLayoutAttrInterface(), at.getI64IntegerAttr(1));
+          destination = memref::CollapseShapeOp::create(body, loc, vector, destination,
+              ArrayRef<ReassociationIndices>{{0, 1}});
+        }
+        if (llvm::Error error = buildFrameBatchMappedParameters(body,
+                update.getArgument(0), update.getArgument(1), destination))
+          return std::move(error);
+        func::ReturnOp::create(body, loc, update.getArgument(2));
+        parameterDestinations.push_back(memory);
+        parameterTypes.push_back(field.getType());
+        parameterUpdates.push_back(name);
+      }
+    }
     CouplingMassIR massParameters;
 
     if (config.coupled) {
@@ -174,12 +251,13 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     // from a still-detached batch loop body.
     auto batchEntry = cast<func::FuncOp>(at.getInsertionBlock()->getParentOp());
     auto emitFrame = [&](OpBuilder &frame, Value inputPositions,
-                         ValueRange edges, ValueRange asks, Value productInput)
+                         ValueRange edges, ValueRange asks, Value productInput,
+                         ValueRange startValues, const EntryFieldsIR &parameterFields)
         -> llvm::Expected<SmallVector<Value>> {
       Value scale;
       if (config.referenceEdges) scale = buildReferenceScale(frame, ValueRange(edges).take_front(3), reference);
       Value cell = buildCell(frame, edges);
-      auto physical = imported;
+      auto physical = parameterFields;
       physical.positions = buildEntryField(frame, inputPositions, 3, false);
       auto originalParameters = buildEntryPotentialFields(physical);
       physical.positions = buildEntrySites(frame,
@@ -209,7 +287,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         auto iteration = buildEntryLoop(frame, "frame product", zero, one, one, {},
             [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
           SmallVector<Value> constants, seeds;
-          for (unsigned slot : gradient.constants) constants.push_back(arguments.startValues[slot]);
+          for (unsigned slot : gradient.constants) constants.push_back(startValues[slot]);
           if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
           buildTunableProductOutput(body, state, tangent,
               physical.identities, constants, seeds, gradient.output, product->positions,
@@ -292,7 +370,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         if (coordinateOutput) coordinateOutput(body, state, arguments.start);
         buildEntryOutputs(body,
             {state, arguments.start, physical.identities, arguments.interval, zero, one,
-             arguments.startValues, true, config.timed}, config.output);
+             startValues, true, config.timed}, config.output);
         if (config.scalesEveryStep) {
           auto virial = buildVirialDiagonal(body, energy.virial);
           Value diagonal = virial.vector;
@@ -344,15 +422,49 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         auto bytes = MemRefType::get({ShapedType::kDynamic}, frame.getI8Type(),
             MemRefLayoutAttrInterface(), space);
         auto cells = MemRefType::get({ShapedType::kDynamic, 6}, frame.getF64Type());
+        auto parameters = MemRefType::get({ShapedType::kDynamic}, frame.getF64Type(),
+            MemRefLayoutAttrInterface(), space);
         if (!module.lookupSymbol("mdrtFrameBatchBoundary")) {
           OpBuilder top(entry);
           auto declaration = func::FuncOp::create(top, loc, "mdrtFrameBatchBoundary",
-              top.getFunctionType({MemRefType::get({2}, top.getF64Type())}, {bytes, cells}));
+              top.getFunctionType({MemRefType::get({2}, top.getF64Type()), frameStatus.getType()},
+                  {bytes, cells, parameters}));
           declaration.setPrivate();
           declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
         }
         auto batch = func::CallOp::create(frame, loc, "mdrtFrameBatchBoundary",
-            TypeRange{bytes, cells}, ValueRange{requests});
+            TypeRange{bytes, cells, parameters}, ValueRange{requests, frameStatus});
+        if (config.batchOnDevice) {
+          if (llvm::Error error = buildFrameBatchStatus(frame, frameStatus))
+            return std::move(error);
+        } else {
+          Value success = arith::ConstantIntOp::create(frame, loc,
+              std::numeric_limits<int64_t>::max(), 64);
+          memref::StoreOp::create(frame, loc, success, frameStatus, zero);
+        }
+        auto parameterFields = imported;
+        if (config.batchParameters)
+          for (auto [index, binding] : llvm::enumerate(config.batchParameters->mapped)) {
+            auto updated = func::CallOp::create(frame, loc, parameterUpdates[index],
+                TypeRange{parameterDestinations[index].getType()},
+                ValueRange{batch.getResult(2), parameterMaps[index], parameterDestinations[index]});
+            Value borrowed = mdir::mdrt::FromBufferOp::create(frame, loc,
+                parameterTypes[index], updated.getResult(0));
+            if (binding.kind == FrameBatchMappedResource::Field)
+              parameterFields.fields[binding.resource] = borrowed;
+            else if (binding.kind == FrameBatchMappedResource::TupleField)
+              parameterFields.tuples[binding.resource].fields[binding.field] = borrowed;
+            else
+              parameterFields.tables[binding.resource] = borrowed;
+          }
+        SmallVector<Value> parameterValues(arguments.startValues);
+        if (config.batchParameters)
+          for (const auto &scalar : config.batchParameters->scalars) {
+            Value index = arith::ConstantIndexOp::create(frame, loc, scalar.parameter);
+            auto value = memref::LoadOp::create(frame, loc, batch.getResult(2), index);
+            value->setAttr("mdir.frame_parameter", frame.getUnitAttr());
+            parameterValues[scalar.start] = value;
+          }
         SmallVector<Value> asks;
         for (unsigned index = 0; index != 2; ++index)
           asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
@@ -360,7 +472,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         auto rows = buildFrameBatchRows(frame, batch.getResult(0), batch.getResult(1),
             particles, storage.getElementType(), config.cellEdges,
             [&](OpBuilder &row, const FrameBatchRowIR &inputs) -> llvm::Error {
-          auto result = emitFrame(row, inputs.positions, inputs.edges, asks, {});
+          auto result = emitFrame(row, inputs.positions, inputs.edges, asks, {}, parameterValues, parameterFields);
           if (!result) return result.takeError();
           return llvm::Error::success();
         });
@@ -378,7 +490,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       for (unsigned index = 0; index != 2; ++index)
         asks.push_back(memref::LoadOp::create(frame, loc, requests, indices[index]));
       return emitFrame(frame, boundary.getResult(0), edges, asks,
-          product ? boundary.getResult(product->positionCotangentResult) : Value{});
+          product ? boundary.getResult(product->positionCotangentResult) : Value{}, arguments.startValues, imported);
     });
     if (!frames) return frames.takeError();
     if (!arguments.positions.use_empty())

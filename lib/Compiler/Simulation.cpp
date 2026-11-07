@@ -375,6 +375,8 @@ struct compiler::Activation {
   /// batch's K by 6 metadata, retained until the boundary is reached again.
   StridedMemRefType<char, 1> frameBatchPositionBytes{};
   StridedMemRefType<double, 2> frameBatchCells{};
+  StridedMemRefType<double, 1> frameBatchParameters{};
+  StridedMemRefType<int64_t, 1> frameBatchStatus{};
   /// Of a product program (D381, #726): the cotangent of
   /// the gradient in the positions of the next frame, in the order of the
   /// input and the type of the state, and that of its energy, which the
@@ -454,16 +456,20 @@ struct FrameProductBuffers {
 struct FrameBatchBuffers {
   StridedMemRefType<char, 1> positions;
   StridedMemRefType<double, 2> cells;
+  StridedMemRefType<double, 1> parameters;
 };
 extern "C" void
 _mlir_ciface_mdrtFrameBatchBoundary(FrameBatchBuffers *buffers,
-                                   StridedMemRefType<double, 1> *asks) {
+                                   StridedMemRefType<double, 1> *asks,
+                                   StridedMemRefType<int64_t, 1> *status) {
   compiler::Activation *a = runningActivation;
+  a->frameBatchStatus = *status;
   a->boundary = static_cast<const char *>(__builtin_frame_address(0));
   a->atBoundary = true;
   swapcontext(&a->context, &a->host);
   buffers->positions = a->frameBatchPositionBytes;
   buffers->cells = a->frameBatchCells;
+  buffers->parameters = a->frameBatchParameters;
   for (size_t k = 0; k != a->frameAsks.size(); ++k)
     asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
 }
@@ -835,8 +841,10 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   simulation->minimizationCheckPeriod = control.energyPeriod;
   control = compiler::getSegmentsControl(control);
   control.frames = frames;
-  if (deviceBatch)
+  if (deviceBatch) {
     control.frameMode = Control::FrameMode::DeviceBatch;
+    control.frameBatchTunables = std::make_shared<model::TunableSet>(prepared.tunables);
+  }
   control.frameProduct = frames && frameProduct;
   control.frameProductPositions = control.frameProduct && frameProductPositions;
   System &system = simulation->system;
@@ -3071,6 +3079,8 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
   if (!compiled->control.frames || compiled->control.frameProduct)
     return simulationError("frames are evaluated by the simulation of a "
                            "frame evaluator; this is a defect of mdir");
+  if (compiled->control.frameMode == Control::FrameMode::DeviceBatch)
+    return simulationError("a device batch entry requires evaluateFrames");
   // The frame is evaluated in the activation that the last one left
   // waiting at its boundary (D251): the entry takes the
   // positions from the buffer of the host that it was given and the cell

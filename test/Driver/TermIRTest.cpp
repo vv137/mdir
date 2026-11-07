@@ -1,6 +1,8 @@
 // Native construction retains ownership and actual SSA operands through printing.
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
+#include "../../lib/Driver/FrameBatchTunableIR.h"
+#include "../../lib/Driver/FrameBatchLJIR.h"
 #include "../../lib/Driver/SimpleStepEntryIR.h"
 #include "../../lib/Driver/MinimizationEntryIR.h"
 #include "../../lib/Driver/PullOutputIR.h"
@@ -21,6 +23,7 @@
 #include "mdir/Driver/System.h"
 #include <cmath>
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1863,7 +1866,115 @@ static void checkNativeFrameBatchRows() {
       }
 }
 
+static void emitFrameBatchTunableFunctions() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect,
+      memref::MemRefDialect, scf::SCFDialect, gpu::GPUDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  auto module = ModuleOp::create(loc);
+  auto vector = [&](Type element) {
+    return MemRefType::get({ShapedType::kDynamic}, element,
+        MemRefLayoutAttrInterface(), builder.getI64IntegerAttr(1));
+  };
+  builder.setInsertionPointToEnd(module.getBody());
+  auto prepare = func::FuncOp::create(builder, loc, "prepare_map",
+      builder.getFunctionType({}, {vector(builder.getI64Type())}));
+  builder.setInsertionPointToEnd(prepare.addEntryBlock());
+  SmallVector<int64_t> mapping;
+  for (int64_t i = 0; i != 137; ++i)
+    mapping.push_back(i % 5 == 0 ? -1 : (i * 7) % 9);
+  auto deviceMap = buildFrameBatchParameterMap(builder, mapping, 9);
+  require(bool(deviceMap), deviceMap ? "" : llvm::toString(deviceMap.takeError()));
+  func::ReturnOp::create(builder, loc, *deviceMap);
+  for (bool wide : {false, true}) {
+    builder.setInsertionPointToEnd(module.getBody());
+    auto entry = func::FuncOp::create(builder, loc,
+        wide ? "mapped_f64" : "mapped_f32",
+        builder.getFunctionType({vector(builder.getF64Type()),
+            vector(builder.getI64Type()),
+            vector(wide ? Type(builder.getF64Type()) : Type(builder.getF32Type()))}, {}));
+    entry->setAttr("mdir.frame_batch", builder.getUnitAttr());
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    require(!buildFrameBatchMappedParameters(builder, entry.getArgument(0),
+        entry.getArgument(1), entry.getArgument(2)), "mapped parameter construction failed");
+    func::ReturnOp::create(builder, loc);
+  }
+  builder.setInsertionPointToEnd(module.getBody());
+  auto entry = func::FuncOp::create(builder, loc, "contract",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getI64Type()), vector(builder.getF64Type()),
+          vector(builder.getF64Type())}, {}));
+  entry->setAttr("mdir.frame_batch", builder.getUnitAttr());
+  builder.setInsertionPointToEnd(entry.addEntryBlock());
+  require(!buildFrameBatchOrderedContraction(builder, entry.getArgument(0),
+      entry.getArgument(1), entry.getArgument(2), entry.getArgument(3),
+      entry.getArgument(4)), "ordered contraction construction failed");
+  func::ReturnOp::create(builder, loc);
+  require(succeeded(verify(module)), "device tunable helper module is invalid");
+  for (Operation &operation : *module.getBody()) {
+    operation.print(llvm::outs());
+    llvm::outs() << "\n";
+  }
+}
+
+static void emitFrameBatchLJFunctions() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect,
+      memref::MemRefDialect, scf::SCFDialect, gpu::GPUDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  auto module = ModuleOp::create(loc);
+  auto vector = [&](Type element) {
+    return MemRefType::get({ShapedType::kDynamic}, element,
+        MemRefLayoutAttrInterface(), builder.getI64IntegerAttr(1));
+  };
+  for (unsigned index = 0; index != 3; ++index) {
+    builder.setInsertionPointToEnd(module.getBody());
+    bool counts = index == 2;
+    auto entry = func::FuncOp::create(builder, loc,
+        counts ? "prepare_counts" : index == 0 ? "prepare_sigma_map" : "prepare_epsilon_map",
+        builder.getFunctionType({}, {vector(counts ? Type(builder.getF64Type()) : Type(builder.getI64Type()))}));
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    auto values = counts ? buildFrameBatchInitialValues(builder, {2.0})
+        : buildFrameBatchParameterMap(builder, {static_cast<int64_t>(index)}, 2);
+    require(bool(values), values ? "" : llvm::toString(values.takeError()));
+    func::ReturnOp::create(builder, loc, *values);
+  }
+  builder.setInsertionPointToEnd(module.getBody());
+  auto mapped = func::FuncOp::create(builder, loc, "mapped_f64",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getF64Type())}, {}));
+  builder.setInsertionPointToEnd(mapped.addEntryBlock());
+  require(!buildFrameBatchMappedParameters(builder, mapped.getArgument(0),
+      mapped.getArgument(1), mapped.getArgument(2)), "LJ parameter map construction failed");
+  func::ReturnOp::create(builder, loc);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto entry = func::FuncOp::create(builder, loc, "lj_constants",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getF64Type()),
+          vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getF64Type())}, {}));
+  builder.setInsertionPointToEnd(entry.addEntryBlock());
+  require(!buildFrameBatchLJConstants(builder, entry.getArgument(0), entry.getArgument(1),
+      entry.getArgument(2), entry.getArgument(3), entry.getArgument(4),
+      {1, 2.0, 2.0, 1.0, 64.0, false}), "LJ device constant construction failed");
+  func::ReturnOp::create(builder, loc);
+  require(succeeded(verify(module)), "native LJ correction helper module is invalid");
+  for (Operation &operation : *module.getBody()) {
+    operation.print(llvm::outs());
+    llvm::outs() << "\n";
+  }
+}
+
 int main(int argc, char **argv) {
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--emit-frame-batch-lj-functions") {
+    emitFrameBatchLJFunctions();
+    return 0;
+  }
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--emit-frame-batch-tunable-functions") {
+    emitFrameBatchTunableFunctions();
+    return 0;
+  }
   checkNativeFrameBatchRows();
   for (bool leapfrog : {false, true})
     for (bool constrained : {false, true})

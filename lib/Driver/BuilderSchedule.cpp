@@ -291,6 +291,12 @@ llvm::Error Builder::emitEntry() {
     SimpleFrameEntryIRConfig config;
     config.deviceBatch = control.frameMode == Control::FrameMode::DeviceBatch;
     config.batchOnDevice = control.target == Target::GPU;
+    if (config.deviceBatch && control.frameBatchTunables) {
+      auto parameters = makeFrameBatchParameterPlan(program,
+          *control.frameBatchTunables, control, system);
+      if (!parameters) return parameters.takeError();
+      config.batchParameters = std::move(*parameters);
+    }
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
     config.timed = control.usesTime;

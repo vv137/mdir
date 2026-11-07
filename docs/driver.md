@@ -1424,8 +1424,13 @@ consuming kernels, including side-stream kernels; they cannot be consumed
 on the host. A native K-loop now advances identity-layout position views
 from canonical contiguous bytes and reads the corresponding host cell
 row. Its batch boundary hands over both descriptors at one activation
-boundary. Device output writers, the caller, tunable updates and chain
-rule remain in progress, with no change to the existing host entry.
+boundary, including a device theta descriptor. Resolved maps upload once
+per activation; direct field, tuple and pair-table updates return fresh
+descriptors for field/table imports, keeping derived values after the update.
+The CSR contraction and reference-volume LJ correction constructors are
+implemented. Device output writers, the caller, derived updates, correction
+hookup and model chain rule remain in progress, with no change to the existing
+host entry.
 Its tunable-dependent dispersion/shift correction is independently computed
 in C++ on the host and in a kernel on the device. D[frame-batch-entry]
 requires relative agreement within 1e-14 for energies receiving that

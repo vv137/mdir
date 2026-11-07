@@ -239,9 +239,12 @@ scalar expressions evaluated by each consuming kernel rather than the
 host. Focused compiler checks include side-stream consumption and rejection
 of an escaping device view or a host consumer of a device parameter. The
 batch entry also constructs one native loop over contiguous position
-views and cell rows, with one descriptor handoff per batch. Device output
-writers, the batch caller, tunable updates, chain rule and final validation
-are pending.
+views and cell rows, with one descriptor handoff per batch, including device
+theta. Immutable maps upload at activation start; mapped updates return fresh
+field/table descriptors before evaluation. Ordered CSR contraction and LJ
+constant constructors supply the next components. Device output writers,
+the batch caller, derived updates, correction and chain-rule hookup, and
+final validation are pending.
 The independently implemented host and device dispersion/shift correction
 is compared at relative error at most 1e-14, while repeated deterministic
 device results and quantities from the same compiled program retain their

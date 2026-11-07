@@ -195,8 +195,9 @@ def check(path):
     print(json.dumps(result, indent=2), flush=True)
     raise SystemExit(bool(mismatches) or not repeated_identical)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('command', choices=['emit', 'check'])
-parser.add_argument('reference')
-args = parser.parse_args()
-(emit if args.command == 'emit' else check)(args.reference)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=['emit', 'check'])
+    parser.add_argument('reference')
+    args = parser.parse_args()
+    (emit if args.command == 'emit' else check)(args.reference)

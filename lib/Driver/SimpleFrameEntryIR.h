@@ -8,6 +8,7 @@
 #include "DynamicsIR.h"
 #include "EntryOutputIR.h"
 #include "BarostatIR.h"
+#include "FrameBatchParameterPlan.h"
 #include <optional>
 #include <cstdint>
 #include <string>
@@ -18,9 +19,10 @@ struct FrameThermostatIR {
   double freedom, target, decay;
 };
 struct SimpleFrameEntryIRConfig {
-  // Reserved for the device-resident batch entry of #138 PR 1.
+  // Selected by the internal device-resident batch caller of #138 PR 1.
   bool deviceBatch = false;
   bool batchOnDevice = false;
+  std::optional<FrameBatchParameterPlan> batchParameters;
   bool branchesStart = false, givenForces = false, timed = false;
   unsigned cellEdges = 3;
   bool stepMemory = false, leapfrog = false, brownian = false, coupled = false;
