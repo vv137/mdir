@@ -2,7 +2,7 @@
 # The products of force matching with the extra points of Amber
 # (D384, #771), on a GPU: OPC from a prmtop, cut by ParmEd,
 # the product in theta against a NumPy Phi, and the derivative in the
-# positions with the curvature of the placement (D[force-matching-amber-curvature]),
+# positions with the curvature of the placement (D387),
 # its part of the extra points against a NumPy Phi and the whole against
 # differences of Phi from the evaluator; and on rigid waters, the extra point
 # of Amber and the linear site of ParmEd's topology of GROMACS are one place

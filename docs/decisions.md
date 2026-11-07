@@ -682,6 +682,7 @@ specification follow those made with it.
 | [D384](decisions/D384.md) | The product of force matching in $\boldsymbol\theta$ (D381) takes virtual sites, linear ones and the extra points of Amber, by the tangent of their placement; its derivative in the positions (D383) takes linear sites, by the spread of the forces of the energy and of the tangent to the atoms. For the extra points of Amber, whose Jacobian depends on the positions, the derivative in the positions stays refused by name. | 2026-11-07 |
 | [D385](decisions/D385.md) | In `mdir.torch`, the positions and the cell that take a gradient are nodes of the graph of their own, beside that of the tunables, so that autograd runs the backward of each only on a path to its input: the derivative of the gradient in the positions, in the positions, is formed where a backward takes a gradient in the positions (D383), and refused by the name of a term without a rule there alone; the private question to the engine of D382 goes. | 2026-11-07 |
 | [D386](decisions/D386.md) | Part of #138, PR 1 of its accepted section 6. | 2026-11-06 |
+| [D387](decisions/D387.md) | The derivative in the positions of the product of force matching (D383) takes the extra points of Amber, whose $\mathsf J$ depends on the positions, by the curvature of their placement: the derivative of the spread $\mathsf J^{\mathsf T}$ along the cotangent, the force of the energy on the site held fixed, added to the spread forces of the tangent. | 2026-11-07 |
 <!-- end decisions-table -->
 
 

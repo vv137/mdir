@@ -75,7 +75,7 @@ $J^\mathsf T\mathbf f$ along $\dot{\mathbf x}$ at a fixed $\mathbf f$.
 It vanishes for a linear site, whose $J$ is constant. For Amber's extra
 point the program forms it by the product rule from the derivatives of
 the unit vectors of the bonds and of their bisector
-(D[force-matching-amber-curvature]).
+(D387).
 The virial changes by $\sum_k (\mathbf x_k - \mathbf x_s)\otimes\mathbf F_k$
 over the forces $\mathbf F_k$ moved to the atoms, which the derived form
 takes as the virial of those forces, negated, less

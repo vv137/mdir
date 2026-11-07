@@ -287,7 +287,7 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
     bonds, and their $\mathsf J$ depends on the positions. The product in
     $\boldsymbol\theta$ takes them, with $\mathsf J\bar{\mathbf G}$ at the
     frame. The derivative in the positions adds the curvature of the
-    placement (D[force-matching-amber-curvature], #771),
+    placement (D387, #771),
     $\mathbf C = \partial[(\mathsf J\bar{\mathbf G})\cdot\partial U/\partial\mathbf X]/\partial\mathbf x$
     at a fixed $\partial U/\partial\mathbf X$, the derivative of the
     spread $\mathsf J^{\mathsf T}$ along $\bar{\mathbf G}$ with the force on

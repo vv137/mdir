@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch, parmed
 # The derivative in the positions through mdir.torch with the extra points
-# of Amber (D385, D384, D[force-matching-amber-curvature], #771), on the CPU:
+# of Amber (D385, D384, D387, #771), on the CPU:
 # OPC from a prmtop cut by ParmEd (with the interpreter of the tests, which
 # has it), every form of the backward, grad(L, x) among them, against
 # FrameEnergies.vjp.
