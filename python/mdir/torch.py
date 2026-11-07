@@ -51,9 +51,6 @@ class _Record:
         # The gradients that the caller named, and whether the positions or
         # the cell of the call take a gradient.
         self.asked, self.differentiated = (), False
-        # The product in the tunables of the pass of the positions of the
-        # backward under way (_frame_hvp), for that of the tunables.
-        self.shared = None
 
 
 def _cell_gradient(positions, cells, tilts, gradient, strain):
@@ -221,17 +218,7 @@ def _frame_vjp(call: int, entries: int, serial: Tensor, energy: Tensor, others: 
     g = np.ascontiguousarray(energy.detach().to(torch.float64).cpu().numpy())
     if product:
         v = np.ascontiguousarray(gradients[0].detach().to(torch.float64).cpu().numpy())
-        shared = record.shared
-        record.shared = None
-        if (_SHARE and shared is not None and shared[0] == record.serial and
-                np.array_equal(shared[1], v) and
-                (not g.any() or jacobian.shape[1] == entries)):
-            # The pass of the positions (_frame_hvp) ran first in this
-            # backward, with the same cotangent: its product in the
-            # tunables is that of g = 0, and the product is linear in g.
-            total = shared[2] if not g.any() else shared[2] + (energy @ jacobian).cpu().numpy()
-        else:
-            total = evaluator._product_pass(record.source, record.version, g, v)
+        total = evaluator._product_pass(record.source, record.version, g, v)
     else:
         total = evaluator._second_pass(record.source, record.version, g)
     begins = [evaluator._slices[name] for name in record.names]
@@ -293,19 +280,14 @@ def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in
     return None, None, list(torch.split(product, ctx.sizes))
 
 
-# Whether the product in the tunables of a backward that also takes the
-# gradient in the positions is taken from the pass of the positions (one
-# pass where the Jacobian is kept or the cotangent of the energy is zero).
-_SHARE = True
-
-
 @torch.library.custom_op("mdir::frame_hvp", mutates_args=())
 def _frame_hvp(call: int, serial: Tensor, gradient: Tensor) -> Tensor:
     # H_n v_n, the derivative in the positions of the product of force
     # matching at a zero cotangent of the energy (D383), by a pass of the
     # product program that gives it; a term without a rule is refused by
-    # name there. Its product in the tunables is kept for the backward of
-    # the tunables, where the same backward takes it.
+    # name there. Where the same backward takes the gradient in the
+    # tunables too, their node forms it by a pass of its own: the two do
+    # not depend on the order in which the engine runs them.
     record = _RECORDS.get(call)
     evaluator = record.evaluator() if record else None
     if evaluator is None or record.serial != int(serial) or record.source is None:
@@ -314,9 +296,8 @@ def _frame_hvp(call: int, serial: Tensor, gradient: Tensor) -> Tensor:
             "the gradient in the positions has a cotangent), and the evaluator has evaluated "
             "other frames since: the backward cannot read the frames again")
     v = np.ascontiguousarray(gradient.detach().to(torch.float64).cpu().numpy())
-    total, dx = evaluator._product_pass(record.source, record.version,
+    _, dx = evaluator._product_pass(record.source, record.version,
                                         np.zeros(len(v)), v, True)
-    record.shared = (record.serial, v, total)
     return torch.from_numpy(np.ascontiguousarray(dx)).to(gradient.device)
 
 
@@ -553,7 +534,7 @@ def _begin(evaluator, theta, positions, cells, tilts, gradients):
     record.wants = (in_positions or record.cell or "positions" in asked,
                     record.cell or "strain" in asked)
     record.asked, record.differentiated = asked, in_positions or record.cell
-    record.count, record.shared = None, None
+    record.count = None
     if isinstance(positions, (np.ndarray, Tensor)):
         record.count = positions.shape[0] if positions.ndim == 3 else 1
     elif hasattr(positions, "__len__") and not hasattr(positions, "positions"):
@@ -639,9 +620,15 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     (`torch.autograd.grad(..., create_graph=True)`), are differentiable in
     `theta`: a loss on the forces trains the tunables, by the product of
     force matching (D382, `FrameEnergies.vjp(positions=)`).
-    Their derivatives in the positions (the Hessian) and in the cell, and
-    every other second derivative, are refused (`UnsupportedError`) where a
-    backward needs them.
+    Their derivative in the positions is that of the product,
+    g dU/dx + H v (D383, D[torch-public-prune]), where the backward takes a
+    gradient in the positions; a term without a rule for it (the
+    reciprocal sum of particle mesh Ewald, virtual sites) raises
+    UnsupportedError, naming it, there alone. Their derivative in the cell,
+    and every other second derivative, are refused (`UnsupportedError`)
+    where a backward needs them. The positions and the cell are nodes of
+    the graph of their own beside that of `theta`, so that a backward that
+    takes the gradient in `theta` alone does not reach them.
     """
     number, gradient, inputs = _begin(evaluator, theta, positions, cells, tilts, gradients)
     energy, others, _, serial, in_positions, in_strain, in_cell = _frame_energies(
