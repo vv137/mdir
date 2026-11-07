@@ -319,7 +319,7 @@ zero.
   `energy` in positions that require one, taken with
   `torch.autograd.grad(out.energy.sum(), x, create_graph=True)`. Its
   backward is the product of `FrameEnergies.vjp(positions=)`
-  (D[force-matching-product]), which takes the cotangent of the energy in
+  (D381), which takes the cotangent of the energy in
   the same pass of the product program:
 
   ```python

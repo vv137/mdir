@@ -181,7 +181,7 @@ def _frame_vjp(call: int, entries: int, serial: Tensor, energy: Tensor, others: 
     # Without `needed` no tunable takes a gradient (the backward is that of
     # the positions or the cell), and the product is not formed. A
     # cotangent on the gradient in the positions takes the product of
-    # force matching (D[force-matching-product]) with that of the energy,
+    # force matching (D381) with that of the energy,
     # in one pass of the product program.
     record = _RECORDS.get(call)
     asked = torch.nonzero(others.abs().sum(dim=0)).flatten().tolist()
