@@ -240,7 +240,7 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   zero: a program with virtual sites; the charges as a field with PME (the
   derivative of the tangent of the reciprocal sum in each charge, D379);
   `terms="dependent"`. The evaluator stays usable after each.
-- **The derivative in the positions** (D[force-matching-hvp], #771 part 1;
+- **The derivative in the positions** (D383, #771 part 1;
   the maintainer's ruling on PR #772).
   `vjp(cotangent=None, *, positions=None, gradients=("tunables",))`. With
   `"positions"` in `gradients`, the result also has `positions`, a

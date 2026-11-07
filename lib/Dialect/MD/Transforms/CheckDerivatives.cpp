@@ -179,7 +179,7 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
     }
     if (request == Request::Forces || request == Request::TangentForces) {
       // The forces of the energy against differences of the energy, and
-      // those of the tangent (D[force-matching-hvp]) against differences of
+      // those of the tangent (D383) against differences of
       // the tangent, at a position at a time.
       bool ofTangent = request == Request::TangentForces;
       auto of = [&](OpBuilder &at, ValueRange shifted) {

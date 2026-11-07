@@ -269,7 +269,7 @@ private:
 public:
   /// Whether the potential is the tangent of another (D376), whose pair
   /// kernels read the displacement and take the forces of
-  /// D[force-matching-hvp].
+  /// D383.
   bool ofTangent = false;
 
 private:
@@ -325,7 +325,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     Block &kernel = sum.getKernel().front();
     // The forces of the tangent of a pair term (D376), whose kernel reads
     // the displacement, take its derivative in each component
-    // (D[force-matching-hvp]); its virial, and the forces of other kernels
+    // (D383); its virial, and the forces of other kernels
     // that read it, do not exist yet.
     if (!kernel.getArgument(1).use_empty() && (!ofTangent || requestVirial))
       return sum.emitOpError()
@@ -1225,7 +1225,7 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     if (op->hasAttr(kReciprocalTangent))
       return op->emitError()
              << "the derivative in the positions of the tangent of a reciprocal "
-                "sum is not formed yet (D[force-matching-hvp], #771)";
+                "sum is not formed yet (D383, #771)";
   Type fieldType = body->getArgument(0).getType();
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
 
@@ -1261,7 +1261,7 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     // distance, as the tangent of a pair term does (D376): K(i, j) takes
     // -weight * dk/dd as well, a component at a time along the unit vectors,
     // with r held fixed, as the forces of a term over tuples take theirs
-    // (D[force-matching-hvp]). The kernel is invariant under the exchange of
+    // (D383). The kernel is invariant under the exchange of
     // the particles, so K(j, i) = -K(i, j).
     Value d = block.getArgument(1);
     if (!d.use_empty()) {

@@ -403,7 +403,7 @@ public:
   /// simulation created with `frameProductPositions` as well, it also
   /// takes the derivative of the product in the positions,
   /// g dU/dx + H Gbar, H the Hessian of U in the positions (#771,
-  /// D[force-matching-hvp]).
+  /// D383).
   llvm::Expected<std::vector<std::vector<double>>>
   evaluateFrameProduct(const double *positions,
                        const std::optional<std::array<double, 6>> &cell,

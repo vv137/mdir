@@ -1617,7 +1617,7 @@ PYBIND11_MODULE(_core, m) {
        py::arg("_frame_product") = false,
        // With `_frame_product`, the product program that also gives the
        // derivative of the product in the positions (#771,
-       // D[force-matching-hvp]); private to `mdir.FrameEvaluator`.
+       // D383); private to `mdir.FrameEvaluator`.
        py::arg("_frame_product_positions") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;

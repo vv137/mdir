@@ -1,5 +1,5 @@
 """The derivative of the product of force matching in the positions
-(D[force-matching-hvp], #771 part 1):
+(D383, #771 part 1):
 
   dPhi_n/dx_i = g_n dU_n/dx_i + sum_j d2U_n/dx_i dx_j . Gbar_n,j,
   Phi_n = g_n U_n + Gbar_n . dU_n/dx,

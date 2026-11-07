@@ -1,7 +1,7 @@
 # REQUIRES: cuda, python-api
 # The derivative of the product of force matching in the positions,
 # FrameEnergies.vjp(..., gradients=("tunables", "positions"))
-# (D[force-matching-hvp], #771 part 1), on a GPU: against NumPy oracles
+# (D383, #771 part 1), on a GPU: against NumPy oracles
 # (pairs: LJ with NBFIX and Coulomb under a cutoff; dihedrals: the closed
 # form by dual numbers), against central differences of Phi from the
 # evaluator, and in mixed precision against double.

@@ -7,7 +7,7 @@ struct EntryGradientProductIR {
   // Ordinals in the frame boundary's request buffer and returned buffers.
   unsigned energyCotangentRequest, positionCotangentResult;
   // Whether the product entry also gives the derivative of the product in
-  // the positions (#771, D[force-matching-hvp]).
+  // the positions (#771, D383).
   bool positions = false;
 };
 struct EntryGradientOutputIR {

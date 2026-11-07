@@ -493,7 +493,7 @@ $$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 | `derivative(n)` | Type of the field | $g_i = \partial U/\partial a_i$, where $a$ is argument `n`, a field of the particles with one component of `f64` (D230) |
 | `tangent` | `f64` | $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$, the derivative of $U$ along the tangent $\mathbf t$ of the positions at a fixed cell (D376) |
 | `tangent_derivative(n)` | as `derivative(n)` | $\partial\Phi/\partial\theta_n$ or $\partial\Phi/\partial a_i$ at fixed $\mathbf t$: the mixed derivative $\sum_i\mathbf t_i\cdot\partial^2U/\partial\mathbf x_i\,\partial\theta_n$ (D376) |
-| `tangent_forces` | Position field type | $-\partial\Phi/\partial\mathbf x_i$ at fixed $\mathbf t$: minus the Hessian of $U$ times the tangent, $-\sum_j\partial^2U/\partial\mathbf x_i\,\partial\mathbf x_j\,\mathbf t_j$ (D[force-matching-hvp]). The forces of the tangent of a pair term take the derivative of its kernel in the displacement as well; the tangent of a reciprocal sum is refused |
+| `tangent_forces` | Position field type | $-\partial\Phi/\partial\mathbf x_i$ at fixed $\mathbf t$: minus the Hessian of $U$ times the tangent, $-\sum_j\partial^2U/\partial\mathbf x_i\,\partial\mathbf x_j\,\mathbf t_j$ (D383). The forces of the tangent of a pair term take the derivative of its kernel in the displacement as well; the tangent of a reciprocal sum is refused |
 
 With a request of the tangent, the op takes one operand after the
 arguments of the potential: the tangent $\mathbf t$, a field of the type of

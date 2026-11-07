@@ -222,7 +222,7 @@ struct Control {
   bool frameProduct = false;
   /// With frameProduct, the product program also gives the derivative of
   /// the product in the positions, the Hessian-vector product (#771,
-  /// D[force-matching-hvp]). Internal only; no control-file key sets it.
+  /// D383). Internal only; no control-file key sets it.
   bool frameProductPositions = false;
   enum class TunableKind {
     Charge,

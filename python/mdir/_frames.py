@@ -216,7 +216,7 @@ class FrameGradient(Mapping):
         self._values, self.zero, self.version = values, zero, version
         # With "positions" in the gradients of FrameEnergies.vjp, the
         # derivative of the product in the positions (K, N, 3) float64, in
-        # the order of the input (D[force-matching-hvp]); None otherwise.
+        # the order of the input (D383); None otherwise.
         self.positions = positions
 
     def __getitem__(self, name):
@@ -307,7 +307,7 @@ class FrameEnergies:
         forces is the caller's: its cotangent on F is minus that on dU/dx.
 
         `gradients` names what is returned, among "tunables" (the mapping,
-        the default) and "positions" (D[force-matching-hvp], #771): the
+        the default) and "positions" (D383, #771): the
         derivative of the same product in the positions,
         cotangent[n] dU_n/dx + H_n positions[n] with H_n the Hessian of U_n
         in the positions, as the attribute `positions` (K, N, 3) float64, in
@@ -479,7 +479,7 @@ class FrameEvaluator:
 
         With `positions`, also the derivative of the product of each frame in
         its positions, energy[n] dU_n/dx + H_n position[n], (K, N, 3), by the
-        product program that gives it (#771, D[force-matching-hvp]), compiled
+        product program that gives it (#771, D383), compiled
         at the first such product; returns (total, derivative)."""
         if self.terms != "all":
             raise _core.UnsupportedError(

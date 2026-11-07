@@ -225,7 +225,7 @@ struct Output {
   /// mdrtWriteFrameVirial fills. Each call sets its flag.
   void *frameGradient = nullptr;
   /// Of a product program with the derivative in the positions (#771,
-  /// D[force-matching-hvp]): the gradient of the energy dU/dx and the
+  /// D383): the gradient of the energy dU/dx and the
   /// Hessian times the cotangent H Gbar of the frame, 3 N numbers each in
   /// f64 in the order of the input, which mdrtWriteFrameProductForces
   /// fills from the forces of the energy and of its tangent.
@@ -557,7 +557,7 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// kJ/mol/nm, for Output::frameGradient.
 void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids);
 /// The forces of the energy and of its tangent of a frame of a product
-/// program (#771, D[force-matching-hvp]), whose negatives it keeps in
+/// program (#771, D383), whose negatives it keeps in
 /// Output::frameProductGradient and frameProductHessian.
 void _mlir_ciface_mdrtWriteFrameProductForces(void *forces, void *tangentForces,
                                               void *ids);

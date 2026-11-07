@@ -244,7 +244,7 @@ md.function @requests(%x: !vec, %cell: !md.cell, %q0: !real, %w: !real,
 !pairs = !md.relation<@atoms, 2, unordered>
 md.particle_set @atoms
 
-// The forces of the tangent of a pair term (D[force-matching-hvp]): the
+// The forces of the tangent of a pair term (D383): the
 // kernel of the tangent reads the displacement, and the gather of its
 // forces takes the derivative in each of its components beside the radial
 // factor, under the antisymmetric contract.

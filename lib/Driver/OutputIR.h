@@ -56,7 +56,7 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
 /// of the tangent in one call of mdrtWriteTunableGradient, and the fields
 /// of the energy and then those of the tangent. With `positions`, also the
 /// forces of the energy and those of its tangent, through
-/// mdrtWriteFrameProductForces (#771, D[force-matching-hvp]).
+/// mdrtWriteFrameProductForces (#771, D383).
 void buildTunableProductOutput(mlir::OpBuilder &, const PotentialStateIR &,
                                mlir::Value tangent, mlir::Value ids,
                                mlir::ValueRange constants,

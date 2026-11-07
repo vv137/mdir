@@ -315,7 +315,7 @@ operation ::= `md.evaluate` $callee `(` $operands `)`
 | `derivative(n)` | Type of the field | `g_i = ∂U/∂a_i`, where `a` is argument `n`, a field of the particles with one component of `f64` |
 | `tangent` | `f64` | `Φ = Σ_i t_i · ∂U/∂x_i`, the derivative of `U` along the tangent `t` of the positions |
 | `tangent_derivative(n)` | as `derivative(n)` | `∂Φ/∂θ_n` or `∂Φ/∂a_i`: the mixed derivative `Σ_i t_i · ∂²U/∂x_i ∂θ_n` (D376) |
-| `tangent_forces` | Type of the position field | `−∂Φ/∂x_i`: minus the Hessian of `U` times the tangent, `−Σ_j ∂²U/∂x_i ∂x_j · t_j` (D[force-matching-hvp]) |
+| `tangent_forces` | Type of the position field | `−∂Φ/∂x_i`: minus the Hessian of `U` times the tangent, `−Σ_j ∂²U/∂x_i ∂x_j · t_j` (D383) |
 
 With a `tangent` request, the op takes one operand more than the
 potential, the last: the tangent `t`, a field of the type of the

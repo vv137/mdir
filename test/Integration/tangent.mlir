@@ -3,7 +3,7 @@
 // central differences along the tangent: `tangent` against differences of
 // the energy, `tangent_derivative(n)` against differences of
 // `derivative(n)`, and `tangent_forces` against differences of the tangent
-// in each position (D[force-matching-hvp]: the forces of the tangent of the
+// in each position (D383: the forces of the tangent of the
 // pair term read the displacement) (the oracle of md-check-derivatives, which
 // aborts with a message on a value outside the tolerance).
 //
