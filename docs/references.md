@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-10-07.
+Last updated: 2026-11-05.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -260,6 +260,20 @@ C. W. Clenshaw, "A note on the summation of Chebyshev series,"
 [doi:10.1090/S0025-5718-1955-0071856-0](https://doi.org/10.1090/S0025-5718-1955-0071856-0)
 
 Used for: the recurrence by which `md.chebyshev` is evaluated (D280).
+
+### CRCHandbook
+
+"Concentrative properties of aqueous solutions: density, refractive
+index, freezing point depression, and viscosity," in *CRC Handbook of
+Chemistry and Physics* (CRC Press, Boca Raton). No DOI.
+
+**UNVERIFIED**: the copy of the table that was read carries no edition or
+page, and the edition could not be identified; the table gives its
+densities, at 20 °C, after [SohnelNovotny1985](#sohnelnovotny1985).
+
+Used for: the molality of KCl(aq) at a given molarity, by which
+`examples/kcl-osmotic` takes the osmotic coefficient of
+[HamerWu1972](#hamerwu1972) at the concentration of its runs (#140).
 
 ### CUB
 
@@ -579,6 +593,16 @@ illustrated by the Störmer–Verlet method," *Acta Numer.* **12**, 399–450
 Used for: the properties `symplectic` and `time_reversible` of velocity
 Verlet and leapfrog, and why neither conserves energy exactly (B9).
 
+### HamerWu1972
+
+W. J. Hamer, Y.-C. Wu, "Osmotic coefficients and mean activity
+coefficients of uni-univalent electrolytes in water at 25 °C," *J. Phys.
+Chem. Ref. Data* **1**(4), 1047–1100 (1972).
+[doi:10.1063/1.3253108](https://doi.org/10.1063/1.3253108)
+
+Used for: the osmotic coefficient of KCl(aq) at 25 °C (Table 28), the
+target of the K–Cl NBFIX fitted in `examples/kcl-osmotic` (#140).
+
 ### HansenMcDonald2013
 
 J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed.
@@ -707,6 +731,17 @@ W. L. Jorgensen, J. Chandrasekhar, J. D. Madura, R. W. Impey, M. L. Klein,
 
 Used for: TIP3P, the water model of M1 (D53); also TIP4P, which M1 cannot
 run.
+
+### JoungCheatham2008
+
+I. S. Joung, T. E. Cheatham III, "Determination of alkali and halide
+monovalent ion parameters for use in explicitly solvated biomolecular
+simulations," *J. Phys. Chem. B* **112**(30), 9020–9041 (2008).
+[doi:10.1021/jp8001614](https://doi.org/10.1021/jp8001614)
+
+Used for: the ions K⁺ and Cl⁻ for TIP3P (`frcmod.ionsjc_tip3p` of
+AmberTools) of `examples/kcl-osmotic`, whose K–Cl pair is refitted there
+(#140).
 
 ### Jung2018
 
@@ -1458,6 +1493,16 @@ analysis and uncertainty — I," *Bell Syst. Tech. J.* **40**, 43–63
 Used for: the prolate spheroidal wave functions as the functions of a
 given band limit most concentrated on an interval, the property that ESP
 uses (issue #334, D266).
+
+### SohnelNovotny1985
+
+O. Söhnel, P. Novotný, *Densities of Aqueous Solutions of Inorganic
+Substances*, Physical Sciences Data **22** (Elsevier, Amsterdam, 1985),
+ISBN 0-444-99596-X. No DOI.
+
+Used for: the source of the densities of [CRCHandbook](#crchandbook),
+through which `examples/kcl-osmotic` relates the molality and the
+molarity of KCl(aq) (#140).
 
 ### Song2024
 
