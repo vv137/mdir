@@ -28,7 +28,7 @@ the Hessian-vector product. The second term is the gradient in the positions of 
 
 ## The product program
 
-`Control::frameProductPositions` (no control-file key), beside `Control::frameProduct`, selects the variant. The builder copies it into `EntryGradientProductIR::positions`. That one line is in `lib/Driver/BuilderSchedule.cpp`, in the builder freeze, and its owner adds it.
+`Control::frameProductPositions` (no control-file key), beside `Control::frameProduct`, selects the variant. The builder copies it into `EntryGradientProductIR::positions`. That one line is in `lib/Driver/BuilderSchedule.cpp`, a file of the builder freeze; it was added in this PR by a one-time exception of the maintainer.
 
 The variant's `@tunable` evaluation also asks for `forces` and `tangent_forces`, and hands them to the host through `mdrtWriteFrameProductForces`. The host forms $g\,\partial U/\partial\mathbf x + \mathsf H\bar{\mathbf G}$ in f64, in the order of the input.
 
@@ -48,7 +48,7 @@ The names follow `gradients=` of `evaluate`. The other options were a method of 
 
 ## Validation
 
-The selection line of `lib/Driver/BuilderSchedule.cpp` comes from its owner (above). The numbers below were measured with a local, uncommitted copy of that line: they are development evidence, and the gate of the combination is the train's.
+The numbers below were measured at the head that contains the selection line.
 
 `test/Driver/python-frame-hvp.test` (CPU) and `python-frame-hvp-gpu.test` (RTX 5090) take random cotangents $g$ and $\bar{\mathbf G}$ on frames displaced from the state. The table gives the relative error of the largest entry of $\partial\Phi/\partial\mathbf x$:
 
@@ -71,4 +71,4 @@ The differences are Richardson-extrapolated from the steps $10^{-4}$ and $5\time
 
 - The equivalence corpus (`scripts/builder-equivalence/check.py`, the module and the lowered program): 1030 cases of 258 control files identical, 442 of them stopping with the same error in both.
 - The order matrix (`scripts/builder-equivalence/order.py`): 40 cases identical, 20 of them stopping with the same error in both.
-- Five checkpoints (JAC NVE, Factor IX NPT, and Cellulose NVE of the Amber suite, 200 steps each; the ala3 minimization; argon, 200 steps, on the GPU), in deterministic mode with the compile cache off, both executables alternated in one job on the RTX 5090: every dataset of the final checkpoint (positions, velocities, forces, box, and the rest) identical to the bit, 5 of 5.
+- Five checkpoints (JAC NVE, Factor IX NPT, and Cellulose NVE of the Amber suite, 200 steps each; the ala3 minimization; argon, 200 steps, on the GPU), in deterministic mode with the compile cache off, both executables alternated in one job on the RTX 5090: every dataset of the final checkpoint (positions, velocities, and box, and the forces in the four runs that write them; the minimization of ala3 writes none) identical to the bit, 5 of 5.
