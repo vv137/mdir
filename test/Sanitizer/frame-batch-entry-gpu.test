@@ -1,0 +1,22 @@
+# The private device batch entry: input validation, dtype conversion,
+# products, combining rules, PME, correction derivatives and quadrature.
+# REQUIRES: cuda, compute-sanitizer, python-api, torch
+# RUN: rm -rf %t
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_oracle.py %t/oracle 2>&1 | FileCheck %s --check-prefix=ORACLE
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_entry.py %t/stream stream 2>&1 | FileCheck %s --check-prefix=STREAM
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_mixing.py %t/pme PME 2>&1 | FileCheck %s --check-prefix=PME
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_lj_entry.py %t/lj Shift 2>&1 | FileCheck %s --check-prefix=LJ
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_custom_tail.py %t/tail exponential 2>&1 | FileCheck %s --check-prefix=TAIL
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %torch_python %S/../Driver/Inputs/frame_batch_tuple.py %t/tuple 2>&1 | FileCheck %s --check-prefix=TUPLE
+# ORACLE: independent frame finite differences: CPU and GPU, Double and Mixed passed
+# ORACLE: ERROR SUMMARY: 0 errors
+# STREAM: device frame entry: nondefault producer/call/consumer stream passed
+# STREAM: ERROR SUMMARY: 0 errors
+# PME: device combining rules and charge maps passed
+# PME: ERROR SUMMARY: 0 errors
+# LJ: integrated LJ entry passed
+# LJ: ERROR SUMMARY: 0 errors
+# TAIL: general pair-tail device quadrature passed
+# TAIL: ERROR SUMMARY: 0 errors
+# TUPLE: tuple fields, observed scalar parameters and empty theta refusal passed
+# TUPLE: ERROR SUMMARY: 0 errors

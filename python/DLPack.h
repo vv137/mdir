@@ -39,6 +39,82 @@ struct ManagedTensorVersioned {
   Tensor tensor;
 };
 constexpr uint64_t readOnly = 1;
+
+/// An internal consumer borrow. The producer is retained and its managed
+/// tensor is released only after the batch's final status wait.
+class BorrowedTensor {
+  py::object producer, capsule;
+  ManagedTensor *legacy = nullptr;
+  ManagedTensorVersioned *versioned = nullptr;
+public:
+  Tensor tensor{};
+  BorrowedTensor(py::object object, uint64_t stream, bool writable,
+                 const std::string &name) : producer(std::move(object)) {
+    if (!py::hasattr(producer, "__dlpack__") ||
+        !py::hasattr(producer, "__dlpack_device__"))
+      throw py::value_error(name + " must provide DLPack");
+    auto device = producer.attr("__dlpack_device__")().cast<std::pair<int, int>>();
+    if (device.first != CUDA && device.first != CPU)
+      throw py::value_error(name + " must be on a CUDA device or the CPU");
+    py::object ordering = device.first == CPU ? py::none() : py::object(py::int_(stream));
+    try {
+      capsule = producer.attr("__dlpack__")(py::arg("stream") = ordering,
+          py::arg("max_version") = py::make_tuple(1, 0));
+    } catch (py::error_already_set &error) {
+      if (!error.matches(PyExc_TypeError)) throw;
+      error.restore();
+      PyErr_Clear();
+      capsule = producer.attr("__dlpack__")(py::arg("stream") = ordering);
+    }
+    if (PyCapsule_IsValid(capsule.ptr(), "dltensor_versioned")) {
+      auto *managed = static_cast<ManagedTensorVersioned *>(
+          PyCapsule_GetPointer(capsule.ptr(), "dltensor_versioned"));
+      if (managed->version.major != 1)
+        throw py::value_error(name + " has an unsupported DLPack version");
+      if (writable && (managed->flags & readOnly))
+        throw py::value_error(name + " is read-only");
+      tensor = managed->tensor;
+      if (PyCapsule_SetName(capsule.ptr(), "used_dltensor_versioned"))
+        throw py::error_already_set();
+      versioned = managed;
+    } else if (PyCapsule_IsValid(capsule.ptr(), "dltensor")) {
+      auto *managed = static_cast<ManagedTensor *>(PyCapsule_GetPointer(capsule.ptr(), "dltensor"));
+      tensor = managed->tensor;
+      if (PyCapsule_SetName(capsule.ptr(), "used_dltensor"))
+        throw py::error_already_set();
+      legacy = managed;
+    } else {
+      throw py::value_error(name + " returned an invalid DLPack capsule");
+    }
+  }
+  BorrowedTensor(const BorrowedTensor &) = delete;
+  ~BorrowedTensor() {
+    if (legacy && legacy->deleter) legacy->deleter(legacy);
+    if (versioned && versioned->deleter) versioned->deleter(versioned);
+  }
+  void *data() const {
+    return tensor.data ? static_cast<char *>(tensor.data) + tensor.byteOffset : nullptr;
+  }
+  bool contiguous(llvm::ArrayRef<int64_t> shape, unsigned bits,
+                  Device device) const {
+    if (tensor.device.type != device.type || tensor.device.id != device.id ||
+        tensor.ndim != int(shape.size()) || tensor.dtype.code != Float ||
+        tensor.dtype.bits != bits || tensor.dtype.lanes != 1 ||
+        (tensor.ndim && !tensor.shape)) return false;
+    uint64_t stride = 1;
+    for (size_t i = shape.size(); i-- > 0;) {
+      if (shape[i] < 0 || tensor.shape[i] != shape[i] ||
+          (tensor.strides && shape[i] > 1 && uint64_t(tensor.strides[i]) != stride))
+        return false;
+      if (shape[i] && stride > uint64_t(INT64_MAX) / uint64_t(shape[i])) return false;
+      stride *= shape[i];
+    }
+    uint64_t width = bits / 8;
+    return (!stride || tensor.data) && tensor.byteOffset % width == 0 &&
+        tensor.byteOffset <= UINTPTR_MAX - reinterpret_cast<uintptr_t>(tensor.data) &&
+        stride <= (UINTPTR_MAX - reinterpret_cast<uintptr_t>(tensor.data) - tensor.byteOffset) / width;
+  }
+};
 } // namespace dlpack
 
 namespace views {

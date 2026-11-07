@@ -233,6 +233,38 @@ entry's `deviceBatch` flag without changing the existing frames selector or
 caller. This reserves plumbing only; the device batch entry, chain rule and
 stream handling follow separately. Existing programs remain byte-identical.
 
+The implementation of that entry (D[frame-batch-entry]) now has scoped
+caller streams, borrowed device field/table inputs and result views, and f64
+scalar expressions evaluated by each consuming kernel rather than the
+host. Focused compiler checks include side-stream consumption and rejection
+of an escaping device view or a host consumer of a device parameter. The
+batch entry also constructs one native loop over contiguous position
+views and cell rows, with one descriptor handoff per batch, including device
+theta. Immutable maps upload at activation start; mapped updates return fresh
+field/table descriptors before evaluation. Ordered CSR contraction and LJ
+constant constructors supply the next components. The C++ caller and a
+private DLPack exercise entry now write device energy, position gradients,
+strain and parameter rows. A two-frame torsion check matches 46 host values
+bitwise in each of three calls, with repeated deterministic results and a
+theta update that does not restart the activation. Combining rules, PME
+corrections, general pair-tail quadrature and Richardson derivatives,
+auxiliary outputs, contractions and device input checks are implemented;
+their focused checks pass. Measured transfers distinguish integer/status
+metadata from numerical results, with zero numerical host transfers.
+PME sums are snapshotted on the device before scratch reuse. The
+side-stream readback consumers join both queues before a subsequent
+release, protecting sources whose lifetime storage assignment fixed
+before consumer relocation. All derivative outputs require compilation
+with `tunable_gradient`. Caller tangent/cotangent faults are input errors,
+and private statistics readers share the batch mutex.
+Independent NumPy finite differences check CPU/GPU, Double/Mixed and f32 inputs;
+corpus, order, checkpoints, suite and sanitizer gates precede readiness.
+The independently implemented host and device dispersion/shift correction
+is compared at relative error at most 1e-14, while repeated deterministic
+device results and quantities from the same compiled program retain their
+bitwise requirements. Device integer powers use multiplication. This
+exception changes neither the host implementation nor existing lowering.
+
 COM and thermostat coupling, FIRST_ORDER/EXACT barostat coupling and both
 Trotter work modes share typed physical cores. Multistep Trotter periods retain
 both closing steps. Leapfrog coupling uses full-time velocities and restores

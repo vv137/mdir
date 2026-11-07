@@ -1,0 +1,4 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: rm -rf %t
+# RUN: %torch_python %S/Inputs/frame_batch_oracle.py %t | FileCheck %s
+# CHECK: independent frame finite differences: CPU and GPU, Double and Mixed passed

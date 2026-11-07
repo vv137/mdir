@@ -15,6 +15,8 @@ extern void mdrtCudaMemcpyScoped(uintptr_t, uintptr_t, uint64_t);
 extern void mdrtSideBegin(void);
 extern void mdrtSideEnd(void);
 extern void mdrtSideJoin(void);
+extern void *mdrtUseStream(void *);
+extern void mdrtRestoreStream(void *);
 
 static void check(CUresult status, const char *operation) {
   if (status == CUDA_SUCCESS)
@@ -72,8 +74,38 @@ int main(int argc, char **argv) {
   check(cuStreamSynchronize(mainStream), "complete test cleanup");
   check(cuEventDestroy(sideCompleted), "destroy event");
   check(cuMemFree(release), "free release flag");
+
+  /* Producer, runtime and consumer use one caller stream. Nested scopes
+     include the legacy default stream, whose valid handle is NULL. */
+  CUstream caller;
+  check(cuStreamCreate(&caller, CU_STREAM_NON_BLOCKING), "create caller stream");
+  void *previous = mdrtUseStream(caller);
+  if (mgpuStreamCreate() != caller)
+    abort();
+  check(cuMemsetD32Async((CUdeviceptr)device, 123, 16, caller),
+        "produce on caller stream");
+  mdrtSideBegin();
+  check(cuMemsetD32Async((CUdeviceptr)device, 456, 16, mgpuStreamCreate()),
+        "write on scoped side stream");
+  mdrtSideEnd();
+  void *nested = mdrtUseStream(NULL);
+  if (mgpuStreamCreate() != NULL)
+    abort();
+  mdrtCudaMemcpyScoped((uintptr_t)copied, (uintptr_t)device, sizeof(copied));
+  for (unsigned i = 0; i < 16; ++i)
+    if (copied[i] != 456)
+      abort();
+  mdrtRestoreStream(nested);
+  if (mgpuStreamCreate() != caller)
+    abort();
+  mdrtRestoreStream(previous);
+  if (mgpuStreamCreate() != mainStream)
+    abort();
+  check(cuStreamSynchronize(mainStream), "complete restored stream");
+  check(cuStreamDestroy(caller), "destroy caller stream");
   mgpuMemFree(device, mainStream);
   puts("Scoped copies: 16 exact integers; difference 0, tolerance 0");
   puts("Unrelated side work stayed pending until explicit release");
+  puts("Caller and nested default streams: side work ordered, scopes restored");
   return 0;
 }

@@ -1,0 +1,11 @@
+# REQUIRES: python-api, torch, cuda
+# RUN: rm -rf %t
+# RUN: %torch_python %S/Inputs/frame_batch_entry.py %t | FileCheck %s
+# CHECK: call 0: all 46 results bitwise identical to host
+# CHECK: call 1: all 46 results bitwise identical to host
+# CHECK: call 2: all 46 results bitwise identical to host
+# CHECK: device frame entry: rows, repeated calls and theta updates passed
+# CHECK: device frame entry: tangent/cotangent InputError and recovery passed
+# CHECK: device frame entry: auxiliary outputs, input errors, recovery and empty batch passed
+# CHECK: device frame entry: rows/JVP/VJP without tunable_gradient refused
+# CHECK: device frame entry: concurrent batch statistics passed

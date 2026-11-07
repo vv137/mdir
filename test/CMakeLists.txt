@@ -100,6 +100,11 @@ if(MDIR_CUDA_FOUND)
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
   list(APPEND MDIR_TEST_DEPENDS mdrt_cuda)
   list(APPEND MDIR_TEST_DEPENDS mdir-cuda-copy-scope-test)
+  add_executable(mdir-cuda-copy-audit-test Integration/Inputs/cuda_copy_audit.c)
+  target_link_libraries(mdir-cuda-copy-audit-test PRIVATE mdrt_cuda CUDA::cuda_driver)
+  set_target_properties(mdir-cuda-copy-audit-test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+  list(APPEND MDIR_TEST_DEPENDS mdir-cuda-copy-audit-test)
 endif()
 
 add_lit_testsuite(check-mdir "Running the MDIR regression tests"

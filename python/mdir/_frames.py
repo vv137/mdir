@@ -614,6 +614,10 @@ class FrameEvaluator:
         return FrameEnergies(self, source, *columns, rows, bool(gradient),
                              {name: given[name] for name in asked})
 
+    def _evaluate_device_batch(self, positions, theta, energies, **outputs):
+        """Internal DLPack entry; buffers stay borrowed through its status wait."""
+        return self._simulation._evaluate_device_batch(positions, theta, energies, **outputs)
+
     def __repr__(self):
         return (f"FrameEvaluator(terms='{self.terms}', tunables={list(self._slices)}, "
                 f"observables={self._columns})")
