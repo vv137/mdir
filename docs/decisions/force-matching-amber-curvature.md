@@ -105,3 +105,12 @@ Tolerances: 1e-8 against NumPy and 1e-7 against the evaluator in double; 2e-5 ag
 - **Another cotangent on the sites** changes the product in $\boldsymbol\theta$ and the derivative in the positions by at most 1.7e-16 in double and 4.1e-8 in mixed (CPU and GPU; tolerances 1e-14 and 1e-6): the rounding of the placement of the tangent.
 - **Through `mdir.torch`** (`python-frame-hvp-torch-amber.test`, `-gpu.test`): every form of the backward, `grad(L, x)`, `grad(L, [theta, x])`, and `L.backward()` among them, with and without a term of the energy in the loss, against `FrameEnergies.vjp`: $\boldsymbol\theta$ to the bit, $\mathbf x$ 0 in double on both, and 3.5e-14 (CPU) and 6.9e-14 (GPU) in mixed (tolerances 1e-14 and 1e-9), one pass of each product that the form takes. These forms were refused.
 - **D383's test of the refusals** (`python-frame-hvp.test`) expected the refusal on the full OPC fixture (1570 particles); it now expects the derivative, finite and zero in the rows of the sites.
+
+**What does not change**, against `main` built in a tree of its own (b1b287b0 for the corpus and the order matrix, 0795ad3e for the rest; `lib/` and `tools/` are the same in both):
+
+- **The products that existed**, on the CPU and the RTX 5090, in double and mixed, equal to the bit to those of `main`: the product in $\boldsymbol\theta$ with the extra points of Amber, the energy and the gradient there, and for eight OPC waters with linear sites the product in $\boldsymbol\theta$ (alone and in the variant) and the derivative in the positions.
+- The equivalence corpus (`scripts/builder-equivalence/check.py`, the module and the lowered program): 1030 cases of 258 control files identical, 442 of them stopping with the same error in both.
+- The order matrix (`scripts/builder-equivalence/order.py`): 560 cases identical (480 with the exact pair list, 40 padded, 40 searched), 108 of them stopping with the same error in both (68, 20, and 20).
+- Five checkpoints (JAC NVE, Factor IX NPT, and Cellulose NVE of the Amber suite, 200 steps each; the ala3 minimization; argon, 200 steps, on the GPU), in deterministic mode with the compile cache off, each tree's own executable, in one job on the RTX 5090: every dataset of the final checkpoint identical to the bit, 5 of 5.
+
+The device code of programs without the variant does not change (the lowered programs of the corpus are identical), so the tier of the sanitizer was not run.
