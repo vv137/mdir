@@ -526,7 +526,7 @@ configuration for #138 PR 1. The host form remains the default; this adds
 no Python API, implements no device batch boundary and removes none of
 D373's host staging. The entry and caller that use the mode follow in PR 1.
 
-The implementation of PR 1 is in progress (D[frame-batch-entry]). A private
+The implementation of PR 1 is in progress (D386). A private
 DLPack exercise entry now borrows device positions and theta on the
 caller's stream and writes device energy, gradients, parameter rows and
 products. It includes combining rules, PME corrections, general pair-tail

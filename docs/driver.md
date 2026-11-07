@@ -1417,7 +1417,7 @@ change `Control::frames` or its existing caller. The separate device batch
 entry and its caller are #138 PR 1's subsequent work; existing generated
 programs remain byte-identical.
 
-D[frame-batch-entry] implements scoped caller streams, borrowed device
+D386 implements scoped caller streams, borrowed device
 field and table inputs, matching device result views, and device scalar-parameter
 lowering for that entry. Marked scalar expressions execute inside their
 consuming kernels, including side-stream kernels; they cannot be consumed
@@ -1443,7 +1443,7 @@ stream join both queues before a subsequent release can reuse their
 source. Raw C++ pointers and streams must belong to the current CUDA
 context; querying those handles for a clean refusal is not implemented.
 Its tunable-dependent dispersion/shift correction is independently computed
-in C++ on the host and in a kernel on the device. D[frame-batch-entry]
+in C++ on the host and in a kernel on the device. D386
 requires relative agreement within 1e-14 for energies receiving that
 correction, and bitwise identical repeated deterministic device calls.
 All other shared-program quantities retain their bitwise comparison.

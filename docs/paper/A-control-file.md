@@ -20,7 +20,7 @@ D378 reserves an internal mode for the device batch frame
 entry. No control-file key sets it. The host form remains the default, with
 no change of a file format, checkpoint or overwrite behavior.
 
-D[frame-batch-entry] develops the entry that consumes this mode, without
+D386 develops the entry that consumes this mode, without
 adding a control-file key. Its stream and device-buffer compiler components
 are implemented; the batch caller is not yet available.
 

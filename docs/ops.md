@@ -1919,7 +1919,7 @@ With `memory=device`, storage assignment puts the buffers on a device.
 
 | Value form | Storage form on a device |
 |---|---|
-| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back, unless it is read-only (`mdrt.read_only`). A field imported from a buffer already in memory space 1 borrows that device buffer without copying or taking ownership (D[frame-batch-entry]). |
+| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back, unless it is read-only (`mdrt.read_only`). A field imported from a buffer already in memory space 1 borrows that device buffer without copying or taking ownership (D386). |
 | `mdrt.to_buffer` | A default-space result copies to the host. An explicit memory-space-1 result exposes the device storage without a copy. The field stays on the device. |
 | A loop with global sums | The loop with two buffers in `scratch` for each sum: the contributions, a row a particle, from the pool of its region, and the partial sums, 1024 rows allocated once in the body of the function and shared by its sums by type (D364) |
 | A refresh that tests validity | The refresh with two buffers in `scratch`, as a loop with one sum |
@@ -1937,7 +1937,7 @@ iteration, and cannot escape or pass to an opaque consumer. Its storage
 returns to the loop's pool at the yield rather than being allocated again
 for each frame. Host storage assignment refuses a device result.
 
-For the internal device frame entry (D[frame-batch-entry]), a function
+For the internal device frame entry (D386), a function
 marked `mdir.frame_batch` may mark f64 device-buffer loads with
 `mdir.frame_parameter`. GPU lowering reconstructs their pure scalar
 expressions inside each consuming kernel, including kernels on the side
