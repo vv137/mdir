@@ -7,6 +7,7 @@
 
 #include <cuda.h>
 #include "mdir/Runtime/GroupsABI.h"
+#include "mdir/Runtime/CopyAudit.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -20,6 +21,18 @@
    a kernel that fails is reported by the driver at the next call that
    waits for it. */
 static CUfunction lastFunction = NULL;
+static __thread struct MdirDeviceCopyAudit *copyAudit = NULL;
+static __thread uintptr_t copyMetadataDestination = 0;
+static void auditGenericCopy(void *destination, const void *source, uint64_t size);
+void *mdrtDeviceAuditCopies(void *audit) {
+  void *previous = copyAudit;
+  copyAudit = audit;
+  copyMetadataDestination = 0;
+  return previous;
+}
+void mdrtDeviceAuditMetadataCopy(uintptr_t destination) {
+  if (copyAudit) copyMetadataDestination = destination;
+}
 static const char *getKernelName(CUfunction function);
 
 /* A failure of the driver is reported and ends the run: compiled code has no
@@ -158,6 +171,11 @@ static CUcontext context = NULL;
    error of the order apart from other errors and names the kernel that
    fails. */
 static CUstream sharedStream = NULL;
+/* A caller may supply the legacy default stream (NULL), so a borrowed
+   stream cannot be distinguished from an uninitialized owned stream by
+   its handle. Scopes are serialized with the rest of the runtime. */
+static unsigned borrowedStreamDepth = 0;
+static CUevent streamScopeEvent = NULL;
 static int waitsAlways = -1;
 
 /* A second stream, on which work that is independent of what follows it on
@@ -419,7 +437,7 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
 void mgpuModuleUnload(CUmodule module) {
   /* This runs when the program ends, possibly after the driver has shut
      down. */
-  if (isPending && sharedStream)
+  if (isPending && (sharedStream || borrowedStreamDepth))
     cuStreamSynchronize(sharedStream);
   isPending = 0;
   /* The program ends: the copies of its constants made outside an
@@ -509,7 +527,7 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
 
 CUstream mgpuStreamCreate(void) {
   enter();
-  if (!sharedStream)
+  if (!sharedStream && !borrowedStreamDepth)
     check(cuStreamCreate(&sharedStream, CU_STREAM_NON_BLOCKING),
           "cuStreamCreate");
   return onSide ? sideStream : sharedStream;
@@ -541,6 +559,36 @@ void mdrtSideJoin(void) {
     return;
   check(cuStreamWaitEvent(sharedStream, joinEvent, 0), "cuStreamWaitEvent");
   joinPending = 0;
+}
+
+/* Transfer the ordering of the runtime's work without synchronizing the
+   host. An event wait observes the most recent record at the time it is
+   issued; the same event can therefore serve nested, serialized scopes. */
+static void changeStream(CUstream next) {
+  mdrtSideJoin();
+  if (next != sharedStream) {
+    if (!streamScopeEvent)
+      check(cuEventCreate(&streamScopeEvent, CU_EVENT_DISABLE_TIMING),
+            "cuEventCreate");
+    check(cuEventRecord(streamScopeEvent, sharedStream), "cuEventRecord");
+    check(cuStreamWaitEvent(next, streamScopeEvent, 0), "cuStreamWaitEvent");
+    sharedStream = next;
+  }
+}
+
+/* The caller owns `stream` and keeps it alive through the matching
+   restore. Launches, copies, FFT plans and side streams all use it. */
+void *mdrtUseStream(void *stream) {
+  mgpuStreamCreate();
+  CUstream previous = sharedStream;
+  changeStream((CUstream)stream);
+  ++borrowedStreamDepth;
+  return (void *)previous;
+}
+
+void mdrtRestoreStream(void *previous) {
+  changeStream((CUstream)previous);
+  --borrowedStreamDepth;
 }
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
@@ -636,6 +684,7 @@ int64_t mdrtFlagStart(void *device) {
     flagSources[slot] = mappedFlags + (address - mappedDevice) / sizeof(int32_t);
   } else {
     flagSources[slot] = NULL;
+    if (copyAudit) copyAudit->metadataDownloads += sizeof(*flagSlots);
     check(cuMemcpyDtoHAsync(&flagSlots[slot], address, sizeof(*flagSlots),
                             sharedStream),
           "cuMemcpyDtoHAsync");
@@ -677,7 +726,7 @@ int32_t mdrtFlagTake(void *device) {
 
 /* Waits until the device has run everything that was issued. */
 static void finish(void) {
-  if (!isPending || !sharedStream)
+  if (!isPending || (!sharedStream && !borrowedStreamDepth))
     return;
   double start = begin();
   if (sideStream)
@@ -1137,7 +1186,7 @@ static void recordCallHandle(void *handle) {
    library has allocated, all of which it records (#622). It does not ask
    the driver, which reports an error for memory of the host (and tools
    such as compute-sanitizer count it). */
-static bool isOnDevice(void *pointer) {
+static bool isOnDevice(const void *pointer) {
   CUdeviceptr address = (CUdeviceptr)pointer;
   for (int i = 0; i != numLive; ++i)
     if (address >= liveBlocks[i].pointer &&
@@ -1146,12 +1195,34 @@ static bool isOnDevice(void *pointer) {
   return false;
 }
 
+static bool auditDevicePointer(const void *pointer) {
+  uintptr_t address = (uintptr_t)pointer;
+  for (unsigned i = 0; i != copyAudit->ranges; ++i)
+    if (address >= copyAudit->first[i] && address < copyAudit->last[i])
+      return true;
+  return isOnDevice(pointer);
+}
+static void auditGenericCopy(void *destination, const void *source, uint64_t size) {
+  if (!copyAudit || !size) return;
+  if (copyMetadataDestination == (uintptr_t)destination) {
+    copyAudit->metadataDownloads += size;
+    copyMetadataDestination = 0;
+    return;
+  }
+  copyMetadataDestination = 0;
+  bool toDevice = auditDevicePointer(destination);
+  bool fromDevice = auditDevicePointer(source);
+  if (toDevice && !fromDevice) copyAudit->uploads += size;
+  if (fromDevice && !toDevice) copyAudit->downloads += size;
+}
+
 /* Copies between the host and the device, in either direction: the driver
    tells them apart by the address. */
 void mgpuMemcpy(void *destination, void *source, size_t size,
                 CUstream stream) {
   if (size == 0)
     return;
+  auditGenericCopy(destination, source, size);
   double start = begin();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
                       stream),
@@ -1187,6 +1258,7 @@ void mdrtCudaMemcpyScoped(uintptr_t destination, uintptr_t source,
                           uint64_t size) {
   if (size == 0)
     return;
+  auditGenericCopy((void *)destination, (const void *)source, size);
   CUstream stream = mgpuStreamCreate();
   double start = begin();
   check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source,
@@ -1946,6 +2018,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
                           uint64_t size) {
   if (!size)
     return;
+  if (copyAudit) copyAudit->metadataDownloads += size;
   mgpuStreamCreate();
   check(cuMemcpyDtoHAsync(destination, (CUdeviceptr)source, size,
                           sharedStream),
@@ -2120,6 +2193,7 @@ void mdrtDeviceTuplesCounts(void *opaque, int64_t *counts) {
 static void tuplesToDevice(void *device, const void *host, size_t bytes) {
   if (!bytes)
     return;
+  if (copyAudit) copyAudit->metadataUploads += bytes;
   mgpuStreamCreate();
   double start = begin();
   check(cuMemcpyHtoDAsync((CUdeviceptr)device, host, bytes, sharedStream),
@@ -2132,6 +2206,7 @@ static void tuplesToDevice(void *device, const void *host, size_t bytes) {
 static void tuplesToHost(void *host, const void *device, size_t bytes) {
   if (!bytes)
     return;
+  if (copyAudit) copyAudit->metadataDownloads += bytes;
   mgpuStreamCreate();
   double start = begin();
   check(cuMemcpyDtoHAsync(host, (CUdeviceptr)device, bytes, sharedStream),
@@ -2800,6 +2875,7 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
   int64_t before = beginAccount();
   check(allocateDevice(&device, (size_t)bytes), "cuMemAlloc");
   endAccount(ACCOUNT_CONSTANTS, before, bytes);
+  if (copyAudit) copyAudit->metadataUploads += bytes;
   check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
         "cuMemcpyHtoD");
   /* From pageable memory the copy may still be under way when it returns,

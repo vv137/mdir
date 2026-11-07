@@ -1,6 +1,12 @@
 // Native construction retains ownership and actual SSA operands through printing.
 #include "../../lib/Driver/TermIR.h"
 #include "../../lib/Driver/SimpleFrameEntryIR.h"
+#include "../../lib/Driver/FrameBatchTunableIR.h"
+#include "../../lib/Driver/FrameBatchLJIR.h"
+#include "../../lib/Driver/FrameBatchMixIR.h"
+#include "../../lib/Driver/FrameBatchLJSlopeIR.h"
+#include "../../lib/Driver/FrameBatchPMEIR.h"
+#include "../../lib/Driver/FrameBatchProductsIR.h"
 #include "../../lib/Driver/SimpleStepEntryIR.h"
 #include "../../lib/Driver/MinimizationEntryIR.h"
 #include "../../lib/Driver/PullOutputIR.h"
@@ -21,9 +27,11 @@
 #include "mdir/Driver/System.h"
 #include <cmath>
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -1693,6 +1701,50 @@ static void checkNativeFrameEntry() {
   reject(checkFrameEvaluation(*empty.getOperation()),
          "the program of frames: the start of this program evaluates "
          "nothing, so its loop over frames would give nothing (Builder::emitEntry)");
+  auto batchMetadata = metadata;
+  batchMetadata.entry = "native_device_batch_frames";
+  auto batchConfig = config;
+  batchConfig.deviceBatch = batchConfig.batchOnDevice = true;
+  auto batchEntry = buildSimpleFrameEntry(builder, batchMetadata, batchConfig);
+  require(bool(batchEntry), "native device batch entry did not construct");
+  require((*batchEntry)->hasAttr("mdir.frame_batch"),
+          "native batch entry lost its lowering marker");
+  unsigned batchBoundaries = 0, legacyBoundaries = 0, positionViews = 0;
+  batchEntry->walk([&](func::CallOp call) {
+    batchBoundaries += call.getCallee() == "mdrtFrameBatchBoundary";
+    legacyBoundaries += call.getCallee() == "mdrtFrameBoundary";
+    if (call.getCallee().starts_with("__mdir_frame_positions_")) {
+      auto reader = module.lookupSymbol<func::FuncOp>(call.getCallee());
+      require(reader && succeeded(verify(reader)), "native position validator is invalid");
+      reader.walk([&](memref::ViewOp view) {
+        positionViews += view.getSource() == reader.getArgument(0);
+      });
+    }
+  });
+  batchEntry->walk([&](memref::ViewOp view) {
+    auto type = cast<MemRefType>(view.getType());
+    auto boundary = view.getSource().getDefiningOp<func::CallOp>();
+    positionViews += type.getRank() == 2 && type.getMemorySpaceAsInt() == 1 &&
+        boundary && boundary.getCallee() == "mdrtFrameBatchBoundary" &&
+        view.getSource() == boundary.getResult(0);
+  });
+  require(batchBoundaries == 1 && legacyBoundaries == 0 && positionViews == 1,
+          "native batch entry did not replace the per-frame boundary with row views");
+  require(succeeded(verify(*batchEntry)), "native device batch entry is invalid");
+  auto mixedMetadata = batchMetadata;
+  mixedMetadata.entry = "native_mixed_device_batch_frames";
+  mixedMetadata.force = mdir::driver::Element::F32;
+  auto mixedBatch = buildSimpleFrameEntry(builder, mixedMetadata, batchConfig);
+  require(bool(mixedBatch), "native Mixed batch entry did not construct");
+  require(succeeded(verify(*mixedBatch)), "native Mixed batch entry is invalid");
+  unsigned readers = 0;
+  mixedBatch->walk([&](func::CallOp call) {
+    if (!call.getCallee().starts_with("__mdir_frame_positions_")) return;
+    ++readers;
+    auto reader = module.lookupSymbol<func::FuncOp>(call.getCallee());
+    require(reader && succeeded(verify(reader)), "native Mixed position reader is invalid");
+  });
+  require(readers == 1, "native Mixed batch lost its per-frame precision reader");
   metadata.entry = "native_triclinic_frames";
   metadata.startValues = {{"tilt_bx", 0.1}, {"tilt_cx", 0.2}, {"tilt_cy", 0.3},
       {"rest_edge0", 3.0}, {"rest_edge1", 3.0}, {"rest_edge2", 3.0}};
@@ -1782,7 +1834,222 @@ static void checkNativeFrameEntry() {
 
 }
 
+static void checkNativeFrameBatchRows() {
+  for (bool device : {false, true})
+    for (bool wide : {false, true})
+      for (unsigned edges : {3u, 6u}) {
+        TermIRPlan plan;
+        OpBuilder builder(&plan.getContext());
+        auto module = plan.getModule();
+        builder.setInsertionPointToEnd(module.getBody());
+        auto loc = builder.getUnknownLoc();
+        Attribute space = device ? Attribute(builder.getI64IntegerAttr(1)) : Attribute{};
+        auto bytes = MemRefType::get({ShapedType::kDynamic}, builder.getI8Type(),
+            MemRefLayoutAttrInterface(), space);
+        auto cells = MemRefType::get({ShapedType::kDynamic, 6}, builder.getF64Type());
+        Type state = wide ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+        auto function = func::FuncOp::create(builder, loc, "batch",
+            builder.getFunctionType({bytes, cells, builder.getIndexType()}, {}));
+        auto args = function.addEntryBlock()->getArguments();
+        builder.setInsertionPointToEnd(&function.getBody().front());
+        unsigned calls = 0;
+        FrameBatchRowIR captured;
+        auto loop = buildFrameBatchRows(builder, args[0], args[1], args[2], state, edges,
+            [&](OpBuilder &, const FrameBatchRowIR &row) -> llvm::Error {
+          ++calls;
+          captured = row;
+          return llvm::Error::success();
+        });
+        require(bool(loop), "native batch row construction failed");
+        require(calls == 1 && captured.index == loop->getInductionVar() &&
+                    captured.edges.size() == edges,
+                "native batch lost its row index or cell shape");
+        auto view = captured.positions.getDefiningOp<memref::ViewOp>();
+        auto positionType = cast<MemRefType>(captured.positions.getType());
+        require(view && view.getSource() == args[0] &&
+                    positionType.getMemorySpace() == space &&
+                    positionType.getElementType() == state &&
+                    positionType.getLayout().isIdentity(),
+                "native batch did not create an identity view of input bytes");
+        auto offset = view.getByteShift().getDefiningOp<arith::MulIOp>();
+        require(offset && offset.getLhs() == captured.index,
+                "native batch view does not advance with the row");
+        auto stride = offset.getRhs().getDefiningOp<arith::MulIOp>();
+        require(stride && stride.getLhs() == args[2] &&
+                    stride.getRhs().getDefiningOp<arith::ConstantIndexOp>().value() ==
+                        (wide ? 24 : 12),
+                "native batch byte stride lost the particle count or width");
+        for (auto [edge, value] : llvm::enumerate(captured.edges)) {
+          auto load = value.getDefiningOp<memref::LoadOp>();
+          require(load && load.getMemRef() == args[1] &&
+                      load.getIndices()[0] == captured.index &&
+                      load.getIndices()[1].getDefiningOp<arith::ConstantIndexOp>().value() ==
+                          int64_t(edge),
+                  "native batch loaded the wrong cell row or edge");
+        }
+        auto count = loop->getUpperBound().getDefiningOp<memref::DimOp>();
+        require(count && count.getSource() == args[1],
+                "native batch trip count does not follow its cells");
+        func::ReturnOp::create(builder, loc);
+        require(succeeded(verify(module)), "native batch row IR is invalid");
+      }
+}
+
+static void checkFrameBatchDerivedIR() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect,
+      memref::MemRefDialect, scf::SCFDialect, gpu::GPUDialect, math::MathDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  auto module = ModuleOp::create(loc);
+  auto vector = [&](Type element) {
+    return MemRefType::get({ShapedType::kDynamic}, element,
+        MemRefLayoutAttrInterface(), builder.getI64IntegerAttr(1));
+  };
+  auto real = vector(builder.getF64Type()), indices = vector(builder.getI64Type());
+  unsigned serial = 0;
+  for (bool wide : {false, true})
+    for (bool derivative : {false, true})
+      for (bool geometric : {false, true}) {
+        builder.setInsertionPointToEnd(module.getBody());
+        Type physical = vector(wide ? Type(builder.getF64Type()) : Type(builder.getF32Type()));
+        auto function = func::FuncOp::create(builder, loc,
+            "derived_" + std::to_string(serial++),
+            builder.getFunctionType({real, indices, real, indices, indices,
+                                    physical, real, real, real, real, real, real}, {}));
+        auto args = function.addEntryBlock()->getArguments();
+        builder.setInsertionPointToEnd(&function.getBody().front());
+        auto error = buildFrameBatchMixing(builder, args[0], args[1], args[2],
+            args[3], args[4], args[5], args[6], {2, geometric, derivative});
+        require(!error, "native combining rule did not construct");
+        buildFrameBatchLJSlopes(builder, args[6], args[6], args[9], args[10],
+            args[7], args[8], {2, 0, true, -0.02, -6.0});
+        buildFrameBatchPMEConstants(builder, args[0], args[11], args[7], args[8],
+            {0, -0.2, -1.0, 0.1, -0.4, -2.0, 64.0});
+        buildFrameBatchProductStart(builder, args[11]);
+        Value frame = arith::ConstantIndexOp::create(builder, loc, 0);
+        buildFrameBatchRowProducts(builder, args[0], args[2], args[6], args[7],
+            args[11], frame, args[1]);
+        function.walk([&](gpu::LaunchOp launch) {
+          require(launch->hasAttr("mdir.frame_host_arithmetic"),
+                  "frame postprocessing lost its host rounding contract");
+        });
+        func::ReturnOp::create(builder, loc);
+        require(succeeded(verify(function)), "native derived frame IR is invalid");
+      }
+  require(succeeded(verify(module)), "native derived frame module is invalid");
+}
+
+static void emitFrameBatchTunableFunctions() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect,
+      memref::MemRefDialect, scf::SCFDialect, gpu::GPUDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  auto module = ModuleOp::create(loc);
+  auto vector = [&](Type element) {
+    return MemRefType::get({ShapedType::kDynamic}, element,
+        MemRefLayoutAttrInterface(), builder.getI64IntegerAttr(1));
+  };
+  builder.setInsertionPointToEnd(module.getBody());
+  auto prepare = func::FuncOp::create(builder, loc, "prepare_map",
+      builder.getFunctionType({}, {vector(builder.getI64Type())}));
+  builder.setInsertionPointToEnd(prepare.addEntryBlock());
+  SmallVector<int64_t> mapping;
+  for (int64_t i = 0; i != 137; ++i)
+    mapping.push_back(i % 5 == 0 ? -1 : (i * 7) % 9);
+  auto deviceMap = buildFrameBatchParameterMap(builder, mapping, 9);
+  require(bool(deviceMap), deviceMap ? "" : llvm::toString(deviceMap.takeError()));
+  func::ReturnOp::create(builder, loc, *deviceMap);
+  for (bool wide : {false, true}) {
+    builder.setInsertionPointToEnd(module.getBody());
+    auto entry = func::FuncOp::create(builder, loc,
+        wide ? "mapped_f64" : "mapped_f32",
+        builder.getFunctionType({vector(builder.getF64Type()),
+            vector(builder.getI64Type()),
+            vector(wide ? Type(builder.getF64Type()) : Type(builder.getF32Type()))}, {}));
+    entry->setAttr("mdir.frame_batch", builder.getUnitAttr());
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    require(!buildFrameBatchMappedParameters(builder, entry.getArgument(0),
+        entry.getArgument(1), entry.getArgument(2)), "mapped parameter construction failed");
+    func::ReturnOp::create(builder, loc);
+  }
+  builder.setInsertionPointToEnd(module.getBody());
+  auto entry = func::FuncOp::create(builder, loc, "contract",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getI64Type()), vector(builder.getF64Type()),
+          vector(builder.getF64Type())}, {}));
+  entry->setAttr("mdir.frame_batch", builder.getUnitAttr());
+  builder.setInsertionPointToEnd(entry.addEntryBlock());
+  require(!buildFrameBatchOrderedContraction(builder, entry.getArgument(0),
+      entry.getArgument(1), entry.getArgument(2), entry.getArgument(3),
+      entry.getArgument(4)), "ordered contraction construction failed");
+  func::ReturnOp::create(builder, loc);
+  require(succeeded(verify(module)), "device tunable helper module is invalid");
+  for (Operation &operation : *module.getBody()) {
+    operation.print(llvm::outs());
+    llvm::outs() << "\n";
+  }
+}
+
+static void emitFrameBatchLJFunctions() {
+  MLIRContext context;
+  context.loadDialect<arith::ArithDialect, func::FuncDialect,
+      memref::MemRefDialect, scf::SCFDialect, gpu::GPUDialect>();
+  OpBuilder builder(&context);
+  auto loc = builder.getUnknownLoc();
+  auto module = ModuleOp::create(loc);
+  auto vector = [&](Type element) {
+    return MemRefType::get({ShapedType::kDynamic}, element,
+        MemRefLayoutAttrInterface(), builder.getI64IntegerAttr(1));
+  };
+  for (unsigned index = 0; index != 3; ++index) {
+    builder.setInsertionPointToEnd(module.getBody());
+    bool counts = index == 2;
+    auto entry = func::FuncOp::create(builder, loc,
+        counts ? "prepare_counts" : index == 0 ? "prepare_sigma_map" : "prepare_epsilon_map",
+        builder.getFunctionType({}, {vector(counts ? Type(builder.getF64Type()) : Type(builder.getI64Type()))}));
+    builder.setInsertionPointToEnd(entry.addEntryBlock());
+    auto values = counts ? buildFrameBatchInitialValues(builder, {2.0})
+        : buildFrameBatchParameterMap(builder, {static_cast<int64_t>(index)}, 2);
+    require(bool(values), values ? "" : llvm::toString(values.takeError()));
+    func::ReturnOp::create(builder, loc, *values);
+  }
+  builder.setInsertionPointToEnd(module.getBody());
+  auto mapped = func::FuncOp::create(builder, loc, "mapped_f64",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getF64Type())}, {}));
+  builder.setInsertionPointToEnd(mapped.addEntryBlock());
+  require(!buildFrameBatchMappedParameters(builder, mapped.getArgument(0),
+      mapped.getArgument(1), mapped.getArgument(2)), "LJ parameter map construction failed");
+  func::ReturnOp::create(builder, loc);
+  builder.setInsertionPointToEnd(module.getBody());
+  auto entry = func::FuncOp::create(builder, loc, "lj_constants",
+      builder.getFunctionType({vector(builder.getF64Type()), vector(builder.getF64Type()),
+          vector(builder.getF64Type()), vector(builder.getI64Type()),
+          vector(builder.getF64Type())}, {}));
+  builder.setInsertionPointToEnd(entry.addEntryBlock());
+  require(!buildFrameBatchLJConstants(builder, entry.getArgument(0), entry.getArgument(1),
+      entry.getArgument(2), entry.getArgument(3), entry.getArgument(4),
+      {1, 2.0, 2.0, 1.0, 64.0, false}), "LJ device constant construction failed");
+  func::ReturnOp::create(builder, loc);
+  require(succeeded(verify(module)), "native LJ correction helper module is invalid");
+  for (Operation &operation : *module.getBody()) {
+    operation.print(llvm::outs());
+    llvm::outs() << "\n";
+  }
+}
+
 int main(int argc, char **argv) {
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--emit-frame-batch-lj-functions") {
+    emitFrameBatchLJFunctions();
+    return 0;
+  }
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--emit-frame-batch-tunable-functions") {
+    emitFrameBatchTunableFunctions();
+    return 0;
+  }
+  checkNativeFrameBatchRows();
   for (bool leapfrog : {false, true})
     for (bool constrained : {false, true})
       for (bool nose : {false, true})
@@ -1803,6 +2070,7 @@ int main(int argc, char **argv) {
   checkNativeTimedStepEntry();
   checkNativeSimpleEntry();
   checkNativeFrameEntry();
+  checkFrameBatchDerivedIR();
   checkDiagonalExports();
   checkFrameEvaluations();
   checkNativeDescentBody();

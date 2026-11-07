@@ -711,6 +711,7 @@ private:
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  LogicalResult inlineFrameReadbacks(func::FuncOp function);
   LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
 
   ModuleOp module;
@@ -8227,6 +8228,105 @@ static void expandPowers(func::FuncOp function) {
   }
 }
 
+/// Device batch parameters are loaded by their consuming kernels, including
+/// kernels on a side stream. Clone their scalar expressions without changing
+/// the f64 operations, and reject a surviving host consumer rather than
+/// reading a device address on the host. Ordinary entries do not use this path.
+static LogicalResult keepFrameParametersOnDevice(func::FuncOp function) {
+  SmallVector<memref::LoadOp> inputs;
+  function.walk([&](memref::LoadOp load) {
+    if (load->hasAttr("mdir.frame_parameter") &&
+        !load->getParentOfType<gpu::LaunchOp>())
+      inputs.push_back(load);
+  });
+  if (inputs.empty())
+    return success();
+  for (memref::LoadOp load : inputs) {
+    if (!function->hasAttr("mdir.frame_batch"))
+      return load.emitOpError()
+             << "a device scalar input requires a frame batch entry";
+    auto space = dyn_cast_or_null<IntegerAttr>(
+        load.getMemRefType().getMemorySpace());
+    if (!space || space.getInt() != 1 || !load.getType().isF64())
+      return load.emitOpError()
+             << "a frame parameter requires an f64 buffer in device memory space 1";
+  }
+  llvm::DenseSet<Operation *> sources;
+  for (memref::LoadOp load : inputs)
+    sources.insert(load);
+  auto isPure = [](Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  };
+  llvm::DenseMap<Value, bool> dependent;
+  std::function<bool(Value)> readsParameter = [&](Value value) {
+    auto found = dependent.find(value);
+    if (found != dependent.end())
+      return found->second;
+    dependent[value] = false;
+    Operation *def = value.getDefiningOp();
+    bool result = sources.contains(def);
+    if (def && isPure(def))
+      for (Value operand : def->getOperands())
+        result |= readsParameter(operand);
+    dependent[value] = result;
+    return result;
+  };
+  SmallVector<gpu::LaunchOp> launches;
+  function.walk([&](gpu::LaunchOp launch) { launches.push_back(launch); });
+  for (gpu::LaunchOp launch : launches) {
+    Region &body = launch.getBody();
+    llvm::SetVector<Value> captured;
+    body.walk([&](Operation *op) {
+      for (Value value : op->getOperands())
+        if (!body.isAncestor(value.getParentRegion()))
+          captured.insert(value);
+    });
+    OpBuilder builder = OpBuilder::atBlockBegin(&body.front());
+    IRMapping mapping;
+    std::function<Value(Value)> clone = [&](Value value) -> Value {
+      if (Value done = mapping.lookupOrNull(value))
+        return done;
+      if (!readsParameter(value))
+        return value;
+      Operation *def = value.getDefiningOp();
+      for (Value operand : def->getOperands())
+        mapping.map(operand, clone(operand));
+      Operation *copy = builder.clone(*def, mapping);
+      copy->removeAttr("mdir.frame_parameter");
+      return copy->getResult(cast<OpResult>(value).getResultNumber());
+    };
+    for (Value value : captured) {
+      if (!readsParameter(value))
+        continue;
+      Value inside = clone(value);
+      value.replaceUsesWithIf(inside, [&](OpOperand &use) {
+        return body.isAncestor(use.getOwner()->getParentRegion());
+      });
+    }
+  }
+  // Remove only the parameter-dependent chains. Ordinary programs and
+  // their host scalar computations do not enter this path.
+  bool erased;
+  do {
+    SmallVector<Operation *> dead;
+    function.walk([&](Operation *op) {
+      if (op->use_empty() && op->getNumResults() &&
+          (sources.contains(op) || isPure(op)) &&
+          llvm::any_of(op->getResults(), readsParameter))
+        dead.push_back(op);
+    });
+    erased = !dead.empty();
+    for (Operation *op : dead) {
+      sources.erase(op);
+      op->erase();
+    }
+  } while (erased);
+  for (Operation *load : sources)
+    return load->emitOpError()
+           << "a frame parameter cannot be consumed on the host";
+  return success();
+}
+
 /// Kernels that take a value the host computes from global sums compute it
 /// themselves from the copy of the sums on the device, so that the host
 /// need not wait for the sums to launch them (D156). The value is a chain
@@ -8235,15 +8335,18 @@ static void expandPowers(func::FuncOp function) {
 /// reading the device's buffer, which the kernel of the reduction wrote
 /// before, in the order of the stream. A group of copies whose loads the
 /// host then no longer needs is removed. The work of a second stream (D87)
-/// is left as it is, since its order relative to the first is the host's.
-static void keepReadbacksOnDevice(func::FuncOp function) {
+/// is left as it is for ordinary programs. Device batches join both queues
+/// after a side-stream reader, before storage assignment's old last use
+/// can release and reuse its source on another stream.
+static LogicalResult keepReadbacksOnDevice(func::FuncOp function) {
+  const bool batch = function->hasAttr("mdir.frame_batch");
   llvm::DenseMap<Value, Value> deviceOf;
   function.walk([&](gpu::MemcpyOp copy) {
     if (copy->hasAttr("mdir.readback"))
       deviceOf[copy.getDst()] = copy.getSrc();
   });
   if (deviceOf.empty())
-    return;
+    return success();
   // The ops of the work of a second stream.
   llvm::DenseSet<Operation *> side;
   function.walk([&](Block *block) {
@@ -8265,7 +8368,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
   auto isSum = [&](Operation *op) {
     auto load = dyn_cast_or_null<memref::LoadOp>(op);
     return load && load->hasAttr("mdir.readback") &&
-           deviceOf.count(load.getMemRef()) && !side.contains(op);
+           deviceOf.count(load.getMemRef()) && (batch || !side.contains(op));
   };
   // Whether `value` is computed by pure ops from at least one load of the
   // sums.
@@ -8279,7 +8382,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
     bool result = false;
     if (isSum(def)) {
       result = true;
-    } else if (def && isPure(def) && !side.contains(def)) {
+    } else if (def && isPure(def) && (batch || !side.contains(def))) {
       for (Value operand : def->getOperands())
         result |= readsSums(operand);
     }
@@ -8289,7 +8392,7 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
 
   SmallVector<gpu::LaunchOp> launches;
   function.walk([&](gpu::LaunchOp launch) {
-    if (!side.contains(launch))
+    if (batch || !side.contains(launch))
       launches.push_back(launch);
   });
   for (gpu::LaunchOp launch : launches) {
@@ -8300,6 +8403,53 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
         if (!body.isAncestor(operand.getParentRegion()))
           captured.insert(operand);
     });
+    bool sideReader = batch && side.contains(launch) &&
+        llvm::any_of(captured, readsSums);
+    if (sideReader) {
+      auto allocation = [](Value value) {
+        while (Operation *op = value.getDefiningOp()) {
+          if (!isa<memref::CastOp, memref::MemorySpaceCastOp,
+                   memref::ReinterpretCastOp, memref::SubViewOp,
+                   memref::ViewOp>(op))
+            break;
+          value = op->getOperand(0);
+        }
+        return value;
+      };
+      llvm::DenseSet<Value> checked;
+      std::function<LogicalResult(Value)> checkLifetime = [&](Value value) -> LogicalResult {
+        if (!readsSums(value) || !checked.insert(value).second)
+          return success();
+        Operation *definition = value.getDefiningOp();
+        if (auto load = dyn_cast<memref::LoadOp>(definition)) {
+          Value source = allocation(deviceOf.lookup(load.getMemRef()));
+          bool released = false;
+          function.walk([&](gpu::DeallocOp release) {
+            if (allocation(release.getMemref()) == source &&
+                (release->getBlock() != launch->getBlock() ||
+                 !launch->isBeforeInBlock(release.getOperation())))
+              released = true;
+          });
+          if (released)
+            return launch.emitOpError(
+                "a side-stream frame readback source may be released before its reader");
+          return success();
+        }
+        for (Value operand : definition->getOperands())
+          if (failed(checkLifetime(operand))) return failure();
+        return success();
+      };
+      for (Value value : captured)
+        if (failed(checkLifetime(value))) return failure();
+    }
+    if (batch && !side.empty() && !side.contains(launch) &&
+        llvm::any_of(captured, readsSums)) {
+      // A device frame reads reciprocal sums on its caller stream. The
+      // ordinary path keeps its existing host copy and stream behavior.
+      // Join by event before borrowing a side stream's reduction buffer.
+      OpBuilder outside(launch);
+      func::CallOp::create(outside, launch.getLoc(), "mdrtSideJoin", TypeRange{}, ValueRange{});
+    }
     OpBuilder builder = OpBuilder::atBlockBegin(&body.front());
     IRMapping mapping;
     std::function<Value(Value)> clone = [&](Value value) -> Value {
@@ -8332,6 +8482,25 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
       value.replaceUsesWithIf(inside, [&](OpOperand &use) {
         return body.isAncestor(use.getOwner()->getParentRegion());
       });
+    }
+    if (sideReader) {
+      // Storage assignment precedes this cloning, so it cannot extend a
+      // pooled source's lifetime to the new side-stream load. Complete
+      // that reader before any following release; reopen the side region
+      // so subsequent work retains its original stream. These are event
+      // dependencies in both directions, not a wait on the host.
+      auto module = function->getParentOfType<ModuleOp>();
+      if (!module.lookupSymbol<func::FuncOp>("mdrtSideJoin")) {
+        OpBuilder declarations(module.getContext());
+        declarations.setInsertionPointToEnd(module.getBody());
+        auto join = func::FuncOp::create(declarations, launch.getLoc(),
+            "mdrtSideJoin", declarations.getFunctionType({}, {}));
+        join.setPrivate();
+      }
+      OpBuilder after(launch);
+      after.setInsertionPointAfter(launch);
+      for (StringRef name : {"mdrtSideEnd", "mdrtSideJoin", "mdrtSideBegin"})
+        func::CallOp::create(after, launch.getLoc(), name, TypeRange{}, ValueRange{});
     }
   }
 
@@ -8370,6 +8539,16 @@ static void keepReadbacksOnDevice(func::FuncOp function) {
           llvm::all_of(op->getUsers(), [](Operation *) { return false; }))
         op->erase();
   }
+  bool escaped = false;
+  if (batch)
+    function.walk([&](memref::LoadOp load) {
+      if (load->hasAttr("mdir.readback") && isa<FloatType>(load.getType()) &&
+          !load->getParentOfType<gpu::LaunchOp>()) {
+        load.emitOpError("device frame result still requires a host readback");
+        escaped = true;
+      }
+    });
+  return failure(escaped);
 }
 
 /// Moves each group of ops that reads global sums back to the host (marked
@@ -8455,6 +8634,81 @@ static void deferReadbacks(func::FuncOp function) {
   for (Operation *op : redundant)
     op->erase();
   function.walk([](Operation *op) { op->removeAttr("mdir.readback"); });
+}
+
+LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
+  if (!function->hasAttr("mdir.frame_batch")) return success();
+  auto numericalCopy = [](gpu::MemcpyOp copy) {
+    auto host = dyn_cast<MemRefType>(copy.getDst().getType());
+    auto device = dyn_cast<MemRefType>(copy.getSrc().getType());
+    return host && device && host.getMemorySpaceAsInt() == 0 &&
+        device.getMemorySpaceAsInt() == 1 && isa<FloatType>(host.getElementType());
+  };
+  SmallVector<func::CallOp> calls;
+  function.walk([&](func::CallOp call) { calls.push_back(call); });
+  for (func::CallOp call : calls) {
+    auto callee = module.lookupSymbol<func::FuncOp>(call.getCallee());
+    if (!callee || callee.isExternal()) continue;
+    bool readsNumbers = false;
+    callee.walk([&](gpu::MemcpyOp copy) { readsNumbers |= numericalCopy(copy); });
+    if (!readsNumbers) continue;
+    if (!llvm::hasSingleElement(callee.getBody()))
+      return call.emitOpError("device frame numerical helper must have one return block");
+    OpBuilder at(call);
+    IRMapping mapping;
+    for (auto [argument, value] : llvm::zip(callee.getArguments(), call.getOperands()))
+      mapping.map(argument, value);
+    SmallVector<gpu::MemcpyOp> readbacks;
+    for (Operation &op : callee.front().without_terminator()) {
+      Operation *copy = at.clone(op, mapping);
+      copy->walk([&](gpu::LaunchOp launch) { bringIn(launch); });
+      copy->walk([&](gpu::MemcpyOp transfer) {
+        if (numericalCopy(transfer)) readbacks.push_back(transfer);
+      });
+    }
+    auto returned = cast<func::ReturnOp>(callee.front().getTerminator());
+    for (auto [old, value] : llvm::zip(call.getResults(), returned.getOperands()))
+      old.replaceAllUsesWith(mapping.lookupOrDefault(value));
+    call.erase();
+    for (gpu::MemcpyOp copy : readbacks) {
+      auto host = cast<MemRefType>(copy.getDst().getType());
+      if (host.getRank() != 1 || !host.hasStaticShape() || host.getNumElements() > 16)
+        return copy.emitOpError("device frame helper has an unsupported numerical readback shape");
+      // A helper's row scratch can be reused by the next evaluation.
+      // Snapshot its small result on the producer stream, into storage
+      // owned by the activation rather than allocated for every frame.
+      OpBuilder entry = OpBuilder::atBlockBegin(&function.front());
+      auto type = MemRefType::get(host.getShape(), host.getElementType(),
+          MemRefLayoutAttrInterface(), entry.getI64IntegerAttr(1));
+      Value stable = gpu::AllocOp::create(entry, copy.getLoc(), type, Type(),
+          ValueRange(), ValueRange(), ValueRange()).getMemref();
+      OpBuilder snapshot(copy);
+      Value count = createIndex(snapshot, copy.getLoc(), host.getNumElements());
+      launchOver(snapshot, copy.getLoc(), count, [&](OpBuilder &write, Value index) {
+        Value value = memref::LoadOp::create(write, copy.getLoc(), copy.getSrc(), index);
+        memref::StoreOp::create(write, copy.getLoc(), value, stable, index);
+      });
+      copy.getSrcMutable().assign(stable);
+      int64_t id = numReadbacks++;
+      auto mark = [&](Operation *op) {
+        op->setAttr("mdir.readback", snapshot.getI64IntegerAttr(id));
+      };
+      mark(copy);
+      for (Value token : copy.getAsyncDependencies())
+        if (auto wait = token.getDefiningOp<gpu::WaitOp>()) mark(wait);
+      for (Operation *user : copy->getUsers())
+        if (isa<gpu::WaitOp>(user)) mark(user);
+      SmallVector<memref::LoadOp> loads;
+      for (Operation *user : copy.getDst().getUsers())
+        if (auto load = dyn_cast<memref::LoadOp>(user)) loads.push_back(load);
+      for (memref::LoadOp load : loads) {
+        mark(load);
+        for (Value index : load.getIndices())
+          if (Operation *definition = index.getDefiningOp()) mark(definition);
+      }
+    }
+  }
+  return success();
 }
 
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
@@ -8647,9 +8901,14 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   neighbors.clear();
 
   // The kernels read tables from their buffers.
+  if (failed(inlineFrameReadbacks(function)))
+    return failure();
   lowerLookups(function);
   expandPowers(function);
-  keepReadbacksOnDevice(function);
+  if (failed(keepFrameParametersOnDevice(function)))
+    return failure();
+  if (failed(keepReadbacksOnDevice(function)))
+    return failure();
   deferReadbacks(function);
 
   releaseStack(function);
@@ -8710,6 +8969,33 @@ LogicalResult Lowering::run() {
   for (func::FuncOp function : functions)
     if (failed(lowerFunction(function)))
       return failure();
+
+  // The frame-copy audit distinguishes typed integer metadata (neighbor
+  // capacity and invalid-coordinate counts) from numerical results. Tag
+  // the next actual copy, without changing its synchronization or data.
+  // Ordinary programs have no batch marker and emit exactly their old IR.
+  bool frameBatch = llvm::any_of(functions, [](func::FuncOp function) {
+    return function->hasAttr("mdir.frame_batch");
+  });
+  if (frameBatch)
+    module.walk([&](gpu::MemcpyOp copy) {
+      auto destination = dyn_cast<MemRefType>(copy.getDst().getType());
+      auto source = dyn_cast<MemRefType>(copy.getSrc().getType());
+      if (!destination || !source || destination.getMemorySpaceAsInt() != 0 ||
+          source.getMemorySpaceAsInt() != 1 || !isa<IntegerType>(destination.getElementType()))
+        return;
+      OpBuilder at(copy);
+      Location loc = copy.getLoc();
+      auto metadata = memref::ExtractStridedMetadataOp::create(at, loc, copy.getDst());
+      Value base = memref::ExtractAlignedPointerAsIndexOp::create(at, loc, copy.getDst());
+      Value width = createIndex(at, loc, (destination.getElementTypeBitWidth() + 7) / 8);
+      Value offset = arith::MulIOp::create(at, loc, metadata.getOffset(), width);
+      Value address = arith::AddIOp::create(at, loc, base, offset);
+      Value pointer = arith::IndexCastOp::create(at, loc, at.getI64Type(), address);
+      func::CallOp::create(at, loc,
+          getOrDeclare("mdrtDeviceAuditMetadataCopy", at.getFunctionType({at.getI64Type()}, {})),
+          ValueRange{pointer});
+    });
 
   // What is left of the semantic dialects are definitions that nothing
   // refers to any more.
@@ -8797,6 +9083,8 @@ public:
     // nvcc makes them by default: the backend fuses only what is marked.
     if (contract)
       getOperation()->walk([](gpu::LaunchOp launch) {
+        if (launch->hasAttr("mdir.frame_host_arithmetic"))
+          return;
         launch.getBody().walk([](arith::ArithFastMathInterface op) {
           arith::FastMathFlags flags = arith::FastMathFlags::none;
           if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())
@@ -8815,6 +9103,11 @@ public:
     // two products, the first operand is fused.
     if (explicitFma)
       getOperation()->walk([](gpu::LaunchOp launch) {
+        // Only the new frame-batch postprocessing kernels carry this mark.
+        // They implement the host entry's chain rule and output arithmetic,
+        // whose separate roundings are part of the entry equivalence gate.
+        if (launch->hasAttr("mdir.frame_host_arithmetic"))
+          return;
         SmallVector<Operation *> sums;
         launch.getBody().walk([&](Operation *op) {
           if (isa<arith::AddFOp, arith::SubFOp>(op))

@@ -77,8 +77,39 @@ static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
                            << ", got " << buffer;
 }
 
+static bool isDeviceFieldBuffer(Type type, FieldType field) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  auto space = buffer ? dyn_cast_or_null<IntegerAttr>(buffer.getMemorySpace())
+                      : IntegerAttr{};
+  return space && space.getInt() == 1 &&
+         canHold(MemRefType::get(buffer.getShape(), buffer.getElementType(),
+                                buffer.getLayout()), field);
+}
+
+static bool isDeviceTableBuffer(Type type, mdir::md::TableType table) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  auto space = buffer ? dyn_cast_or_null<IntegerAttr>(buffer.getMemorySpace())
+                      : IntegerAttr{};
+  if (!space || space.getInt() != 1)
+    return false;
+  Type element = buffer.getElementType();
+  if (element != table.getElementType() &&
+      !(table.getElementType().isF64() && element.isF32()))
+    return false;
+  SmallVector<int64_t> shape(table.getRank(), ShapedType::kDynamic);
+  return buffer == MemRefType::get(shape, element,
+                                   MemRefLayoutAttrInterface(), space);
+}
+
 LogicalResult FromBufferOp::verify() {
+  // Device frame boundaries lend a field directly. Its address space is
+  // explicit in the buffer type; it is not a host pointer to copy.
+  if (auto field = dyn_cast<FieldType>(getResult().getType()))
+    if (isDeviceFieldBuffer(getBuffer().getType(), field))
+      return success();
   if (auto table = dyn_cast<md::TableType>(getResult().getType())) {
+    if (isDeviceTableBuffer(getBuffer().getType(), table))
+      return success();
     if (getBuffer().getType() != getTableBufferType(table))
       return emitOpError() << "expected the buffer of " << table
                            << " to have type " << getTableBufferType(table)
@@ -103,6 +134,16 @@ LogicalResult FromBufferOp::verify() {
 }
 
 LogicalResult ToBufferOp::verify() {
+  if (auto table = dyn_cast<md::TableType>(getField().getType())) {
+    if (getResult().getType() == getTableBufferType(table) ||
+        isDeviceTableBuffer(getResult().getType(), table))
+      return success();
+    return emitOpError() << "expected a buffer for table " << table
+                         << ", got " << getResult().getType();
+  }
+  if (isDeviceFieldBuffer(getResult().getType(),
+                         cast<FieldType>(getField().getType())))
+    return success();
   return verifyBufferType(getOperation(), getResult().getType(),
                           getField().getType());
 }

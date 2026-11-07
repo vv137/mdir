@@ -1,0 +1,8 @@
+# REQUIRES: cuda
+# Development arithmetic preflight: correction-only relative bound 1e-14
+# against the host, and bitwise repeated deterministic device invocations.
+# RUN: rm -f %t.reference.json %t.mlir
+# RUN: %mdir_python %S/Inputs/frame_batch_tail_probe.py emit %t.reference.json > %t.mlir
+# RUN: mdir-opt %t.mlir '--convert-md-exec-to-gpu=deterministic=true explicit-fma=true contract=false' | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | %mdir_python %S/Inputs/frame_batch_tail_probe.py check %t.reference.json

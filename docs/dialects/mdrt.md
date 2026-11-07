@@ -60,6 +60,13 @@ is stored in. `md-exec-assign-precision` gives the field that type.
        : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
 ```
 
+A field may also borrow a buffer in device memory space 1. Storage
+assignment with `memory=device` aliases that buffer without copying,
+freeing, or overwriting it. The caller keeps the buffer alive until
+the work using the field has completed. Storage assignment on the
+host refuses a borrowed device field. Host buffers retain their
+existing copy and ownership rules.
+
 The tuples of a tuple set enter the program in the same way. The buffer
 holds, for each tuple, its members: the places of the particles in
 their fields. The program does not write to the buffer.
@@ -76,6 +83,11 @@ type, `memref<?x?xf64>` for a table of pairs of types.
 %sigma = mdrt.from_buffer %buffer
            : memref<?x?xf64> to !md.table<2, f64, symmetric>
 ```
+
+A table may borrow explicit device memory space 1 without a copy or
+ownership transfer. Its buffer gives the physical width, including
+f32 storage for a logical f64 table. The caller keeps it alive until
+device work completes; it has no implicit host copy for tabulation.
 
 Traits: `AlwaysSpeculatableImplTrait`
 
@@ -357,6 +369,19 @@ type that the field is stored in.
             : !md.field<@atoms, 3 x f64> to memref<?x3xf64>
 ```
 
+A result in explicit device memory space 1 exposes the device storage
+without a host copy. A function-level view retains its storage for the
+activation, which must remain alive until the caller's device work
+completes. A loop-local view permits direct reads and descriptor views
+within that iteration; it cannot escape or pass to an opaque consumer.
+Its storage returns to the loop's pool at the yield. Host storage
+assignment refuses a device result.
+
+A table can also expose its existing buffer. A device table view must
+match the physical storage width and address space exactly; it never
+converts or copies the table. A host view requires an existing host
+buffer. The storage owner must outlive all work using the view.
+
 Traits: `AlwaysSpeculatableImplTrait`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
@@ -367,7 +392,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `field` | A per-particle field |
+| `field` | A per-particle field or A table of parameters, indexed by types |
 
 #### Results:
 

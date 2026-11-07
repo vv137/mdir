@@ -487,6 +487,16 @@ configuration for #138 PR 1. The host form remains the default; this adds
 no Python API, implements no device batch boundary and removes none of
 D373's host staging. The entry and caller that use the mode follow in PR 1.
 
+The implementation of PR 1 is in progress (D[frame-batch-entry]). A private
+DLPack exercise entry now borrows device positions and theta on the
+caller's stream and writes device energy, gradients, parameter rows and
+products. It includes combining rules, PME corrections, general pair-tail
+quadrature and auxiliary outputs. It copies the K by 6 cell metadata to
+the host once per call for validation, as Ruling 20 allows. Its readiness
+gates include independent finite differences and measured zero numerical
+host transfers. It exposes no public batch API and does not yet replace the
+JAX handler's host staging described below.
+
 D371, the design and Ruling 20 on #138: the CPU, on the existing loop of
 frames; and D373, the target `"CUDA"`, which
 takes arrays on a CUDA device through the same loop.

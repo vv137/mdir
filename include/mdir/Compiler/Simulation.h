@@ -126,7 +126,8 @@ public:
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
          CodeStore *store = nullptr, bool frames = false,
-         bool frameProduct = false, bool frameProductPositions = false);
+         bool frameProduct = false, bool frameProductPositions = false,
+         bool deviceBatch = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;
@@ -300,6 +301,10 @@ public:
   /// taken as the simulation kept them, and how many were made. For the
   /// tests and the measurements.
   std::array<int64_t, 3> getStartArguments() const;
+  /// Private measurement of the last device batch's evaluation: generic
+  /// upload/download bytes, then structural/status upload/download bytes.
+  /// Static activation initialization precedes this scope.
+  std::array<uint64_t, 4> getFrameBatchCopyBytes() const { return frameBatchCopyBytes; }
   /// Whether a start hands the entry the arrays of the program and the
   /// conversions that the simulation keeps (the default), or copies and
   /// converts every one anew, as before D258: for the tests,
@@ -384,6 +389,28 @@ public:
                 const std::optional<std::array<double, 6>> &cell,
                 bool gradient, void *positionGradient = nullptr,
                 bool strain = false);
+  /// Internal, contiguous device-buffer contract of the batch entry.
+  /// Pointers remain borrowed until evaluateFrames returns. Theta and the
+  /// energies are f64; positions and their gradient use the state type.
+  /// Cells are K by 6 f64 metadata, on the host unless cellsOnDevice.
+  /// Strain is K by 9 f64. A null optional output is not requested.
+  struct FrameBatch {
+    const void *positions = nullptr;
+    const double *parameters = nullptr, *cells = nullptr;
+    const double *tangent = nullptr, *cotangent = nullptr;
+    double *energies = nullptr, *strain = nullptr, *rows = nullptr;
+    double *jvp = nullptr, *vjp = nullptr;
+    double *aux = nullptr;
+    void *positionGradient = nullptr, *stream = nullptr;
+    int64_t frames = 0, parameterCount = 0;
+    int device = 0;
+    unsigned positionWidth = 0; // 0 selects the state width; otherwise 4 or 8.
+    bool cellsOnDevice = false;
+  };
+  llvm::Error evaluateFrames(const FrameBatch &);
+  /// Auxiliary columns: virial (whole potential only), volume, then the
+  /// observable columns in their established order. Values are f64.
+  std::vector<std::string> getFrameBatchAuxNames() const;
   /// The product of the derivative in the tunables of the energy of a
   /// frame and of its gradient in the positions with the cotangents
   /// `energyCotangent` (g) and `positionCotangent` (3 N numbers in the
@@ -522,6 +549,7 @@ public:
 
 private:
   Simulation() = default;
+  std::array<uint64_t, 4> frameBatchCopyBytes{};
   llvm::Expected<Engine *> getEngine();
   /// The counts of a part: periods (or steps) of the first nest, its plain
   /// steps per period, plain steps after it, a plain step of energy (0 or

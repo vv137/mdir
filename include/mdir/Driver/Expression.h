@@ -158,6 +158,11 @@ public:
                     const llvm::StringMap<mlir::Value> &values,
                     const llvm::StringMap<mlir::Value> &tables,
                     llvm::StringRef termName = {}) const;
+  /// The same cancellation scale as Expression::evaluateMagnitude, for
+  /// device quadrature. Ordinary expression construction is unchanged.
+  mlir::Value buildMagnitude(mlir::OpBuilder &,
+                    const llvm::StringMap<mlir::Value> &values,
+                    const llvm::StringMap<mlir::Value> &tables) const;
 
 private:
   friend class Expression;

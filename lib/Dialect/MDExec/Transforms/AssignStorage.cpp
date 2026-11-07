@@ -74,7 +74,7 @@ struct Scope {
   /// A buffer of a fixed length that has the type of buffers with a row a
   /// particle (the partial sums of `scratch`) is never put in the pool.
   void release(Value buffer) {
-    if (getRoot().fixedLength.contains(buffer))
+    if (pinned.contains(buffer) || getRoot().fixedLength.contains(buffer))
       return;
     pool[{buffer.getType(), getSet(buffer)}].push_back(buffer);
   }
@@ -91,6 +91,9 @@ struct Scope {
   Block *body = nullptr;
 
   llvm::DenseSet<Value> owned;
+  /// Device views keep their storage until this region's readers finish
+  /// issuing work. A loop then returns it to its carried buffer pool.
+  llvm::DenseSet<Value> pinned;
   llvm::MapVector<std::pair<Type, Attribute>, SmallVector<Value, 2>> pool;
   /// The set, of particles or of tuples, whose elements each buffer holds,
   /// by which it is reused: buffers of one type are of one size only within
@@ -1594,6 +1597,12 @@ LogicalResult Assignment::convertYield(scf::YieldOp op, Scope &scope) {
     values.push_back(buffer);
   }
 
+  SmallVector<Value> pinned(scope.pinned.begin(), scope.pinned.end());
+  scope.pinned.clear();
+  for (Value buffer : pinned)
+    if (scope.owns(buffer) && !held.contains(buffer))
+      scope.release(buffer);
+
   // Hand back as many unused buffers as the loop borrowed.
   for (Value extra : scope.extraArguments) {
     SmallVector<Value, 2> &available =
@@ -1638,6 +1647,31 @@ static LogicalResult checkStored(Operation *op, Type field, Type buffer) {
          << "the field has the type " << field
          << ", which is not the type that the buffer stores; run "
             "'md-exec-assign-precision' first";
+}
+
+/// A view made in a loop is a borrow of that iteration's storage. Known
+/// descriptor views and direct reads retain it; yielding it or giving it
+/// to an opaque operation could outlive the iteration's buffer pool.
+static bool deviceViewEscapesRegion(Value view) {
+  SmallVector<Value> pending{view};
+  llvm::DenseSet<Value> visited;
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    if (!visited.insert(value).second)
+      continue;
+    for (Operation *user : value.getUsers()) {
+      if (isa<memref::LoadOp, memref::DimOp>(user))
+        continue;
+      if (isa<memref::CastOp, memref::MemorySpaceCastOp, memref::ViewOp,
+              memref::SubViewOp, memref::ReinterpretCastOp>(user)) {
+        for (Value result : user->getResults())
+          pending.push_back(result);
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 void Assignment::placeTable(OpBuilder &builder, Location loc, Value table,
@@ -1775,6 +1809,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // A table is where the loops are that read it.
     if (isa<md::TableType>(from.getResult().getType())) {
       Value buffer = mapping.lookup(from.getBuffer());
+      if (cast<MemRefType>(buffer.getType()).getMemorySpace()) {
+        if (!onDevice)
+          return op->emitOpError()
+                 << "a borrowed device table requires memory=device";
+        mapping.map(from.getResult(), buffer);
+        return success();
+      }
       hostTables[from.getResult()] = buffer;
       placeTable(builder, op->getLoc(), from.getResult(), buffer);
       return success();
@@ -1795,10 +1836,29 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
             arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
       return success();
     }
-    if (failed(checkStored(op, from.getResult().getType(),
-                           from.getBuffer().getType())))
+    auto inputType = cast<MemRefType>(from.getBuffer().getType());
+    bool deviceInput = bool(inputType.getMemorySpace());
+    if (deviceInput && !onDevice)
+      return op->emitOpError()
+             << "a borrowed device field requires memory=device";
+    Type storedType = deviceInput
+        ? MemRefType::get(inputType.getShape(), inputType.getElementType(),
+                         inputType.getLayout())
+        : inputType;
+    if (failed(checkStored(op, from.getResult().getType(), storedType)))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
+    if (deviceInput) {
+      buffer = tagInputBuffer(builder, op->getLoc(),
+                              getStorageType(from.getResult().getType()),
+                              buffer);
+      // Neither the allocation nor permission to overwrite it belongs to
+      // this scope. A later destination gets its own storage, even when
+      // this is the last use of the borrowed field.
+      bind(from.getResult(), buffer, scope);
+      readOnly.insert(buffer);
+      return success();
+    }
     // A buffer that a call in the body of a loop returns is given anew at
     // every iteration, and may be the same memory each time: the frames of
     // a frame evaluator, which the host hands the entry at a boundary
@@ -1848,12 +1908,51 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
-    if (failed(checkStored(op, to.getField().getType(),
-                           to.getResult().getType())))
+    auto resultType = cast<MemRefType>(to.getResult().getType());
+    bool deviceResult = bool(resultType.getMemorySpace());
+    if (isa<md::TableType>(to.getField().getType())) {
+      if (deviceResult && !onDevice)
+        return op->emitOpError()
+               << "a device table result requires memory=device";
+      Value buffer = deviceResult ? mapping.lookupOrNull(to.getField())
+                                  : hostTables.lookup(to.getField());
+      if (!buffer)
+        return op->emitOpError() << "the table has no buffer in the requested memory space";
+      if (buffer.getType() != resultType)
+        return op->emitOpError()
+               << "the table storage has type " << buffer.getType()
+               << ", which differs from the requested view " << resultType;
+      mapping.map(to.getResult(), buffer);
+      return success();
+    }
+    if (deviceResult && !onDevice)
+      return op->emitOpError()
+             << "a device field result requires memory=device";
+    if (deviceResult && scope.parent &&
+        deviceViewEscapesRegion(to.getResult()))
+      return op->emitOpError()
+             << "a device field view in a loop must be read in that region";
+    Type storedType = deviceResult
+        ? MemRefType::get(resultType.getShape(), resultType.getElementType(),
+                         resultType.getLayout())
+        : resultType;
+    if (failed(checkStored(op, to.getField().getType(), storedType)))
       return failure();
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();
+    if (deviceResult) {
+      // The caller reads this storage directly. Keep it beyond the field's
+      // last use, then let a loop return it to its pool at the yield.
+      if (scope.owns(buffer))
+        scope.pinned.insert(buffer);
+      buffer = eraseSetForHostCall(builder, op->getLoc(), buffer);
+      if (buffer.getType() != resultType)
+        buffer = memref::CastOp::create(builder, op->getLoc(), resultType,
+                                        buffer);
+      mapping.map(to.getResult(), buffer);
+      return success();
+    }
     if (!onDevice) {
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);
@@ -2281,6 +2380,13 @@ static bool usesFields(func::FuncOp function) {
   bool found = false;
   function.walk([&](Operation *op) {
     found |= llvm::any_of(op->getResultTypes(), isField);
+    // Only the new table boundaries extend the selection. Ordinary table
+    // helpers retain their existing conversion path.
+    if (auto from = dyn_cast<mdrt::FromBufferOp>(op))
+      found |= isa<md::TableType>(from.getResult().getType()) &&
+               bool(cast<MemRefType>(from.getBuffer().getType()).getMemorySpace());
+    if (auto to = dyn_cast<mdrt::ToBufferOp>(op))
+      found |= isa<md::TableType>(to.getField().getType());
     found |= isa<BuildNeighborsOp>(op);
     if (auto empty = dyn_cast<EmptyNeighborsOp>(op))
       found |= !empty.isStorageForm();
@@ -2324,6 +2430,10 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
       func::FuncOp::create(function.getLoc(), function.getName(),
                            FunctionType::get(context, inputs, results));
   converted.setSymVisibilityAttr(function.getSymVisibilityAttr());
+  // The new batch entry's device scalar loads are consumed by GPU
+  // lowering after fields have been assigned storage.
+  if (Attribute batch = function->getAttr("mdir.frame_batch"))
+    converted->setAttr("mdir.frame_batch", batch);
   // The attributes of the arguments, among them which are read-only.
   if (ArrayAttr attributes = function.getArgAttrsAttr())
     converted.setArgAttrsAttr(attributes);

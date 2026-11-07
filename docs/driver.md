@@ -1417,6 +1417,38 @@ change `Control::frames` or its existing caller. The separate device batch
 entry and its caller are #138 PR 1's subsequent work; existing generated
 programs remain byte-identical.
 
+D[frame-batch-entry] implements scoped caller streams, borrowed device
+field and table inputs, matching device result views, and device scalar-parameter
+lowering for that entry. Marked scalar expressions execute inside their
+consuming kernels, including side-stream kernels; they cannot be consumed
+on the host. A native K-loop now advances identity-layout position views
+from canonical contiguous bytes and reads the corresponding host cell
+row. Its batch boundary hands over both descriptors at one activation
+boundary, including a device theta descriptor. Resolved maps upload once
+per activation; direct field, tuple and pair-table updates return fresh
+descriptors for field/table imports, keeping derived values after the update.
+The CSR contraction and reference-volume LJ correction constructors are
+implemented. The C++ caller and a private DLPack exercise entry borrow the
+caller stream and device buffers, write energy, position gradients, strain
+and parameter rows, then read the batch status. A two-frame torsion check
+matches 46 host values bitwise in three calls, including a theta update
+without another activation start. Derived updates, general correction
+derivatives and auxiliary outputs are implemented; final-head gates
+precede readiness, with no change to the existing host entry.
+Rows, JVPs and VJPs require `tunable_gradient` at the C++ boundary too.
+Nonfinite tangent and cotangent buffers raise `InputError`; a tangent
+belongs to the batch, and a cotangent error names its frame. Statistics
+readers share the batch mutex. Relocated readback consumers on a side
+stream join both queues before a subsequent release can reuse their
+source. Raw C++ pointers and streams must belong to the current CUDA
+context; querying those handles for a clean refusal is not implemented.
+Its tunable-dependent dispersion/shift correction is independently computed
+in C++ on the host and in a kernel on the device. D[frame-batch-entry]
+requires relative agreement within 1e-14 for energies receiving that
+correction, and bitwise identical repeated deterministic device calls.
+All other shared-program quantities retain their bitwise comparison.
+Device integer powers use multiplication; existing lowering is unchanged.
+
 Exact trial virtual-site placement and force spreading deliberately retain the
 archived entry cell (#722); trial energy evaluation and other gathers retain
 their original cells. Plain energy rows construct no unused virial diagonal;

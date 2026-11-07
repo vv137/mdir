@@ -65,6 +65,7 @@ tools = [
 ]
 if config.mdir_cuda:
     tools.append("mdir-cuda-copy-scope-test")
+    tools.append("mdir-cuda-copy-audit-test")
 llvm_config.add_tool_substitutions(tools, tool_dirs)
 # The headers of MLIR, for mlir-tblgen (test/Docs/dialect-docs.test).
 config.substitutions.append(

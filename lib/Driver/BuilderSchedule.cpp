@@ -290,6 +290,19 @@ llvm::Error Builder::emitEntry() {
     emitRuntimeDeclarations(ir, declarations, true);
     SimpleFrameEntryIRConfig config;
     config.deviceBatch = control.frameMode == Control::FrameMode::DeviceBatch;
+    config.batchOnDevice = control.target == Target::GPU;
+    config.dependent = control.dependentTerms;
+    if (config.deviceBatch && control.frameBatchTunables) {
+      auto parameters = makeFrameBatchParameterPlan(program,
+          *control.frameBatchTunables, control, system, coulombInternal);
+      if (!parameters) return parameters.takeError();
+      auto tails = makeFrameBatchTailPlan(*this, program, *control.frameBatchTunables,
+          parameters->offsets);
+      if (!tails) return tails.takeError();
+      tails->resetCorrections = !parameters->lj.has_value();
+      config.batchTails = std::move(*tails);
+      config.batchParameters = std::move(*parameters);
+    }
     config.branchesStart = branchesStart();
     config.givenForces = branchesStart() && program.takesForces;
     config.timed = control.usesTime;
