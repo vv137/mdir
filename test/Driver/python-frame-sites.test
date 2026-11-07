@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The products of force matching with linear virtual sites
-# (D[force-matching-sites], #771 part 2), on the CPU: OPC of GROMACS, the
+# (D384, #771 part 2), on the CPU: OPC of GROMACS, the
 # product in theta of D381 and the derivative in the positions of D383
 # against central differences of a NumPy Phi and of Phi from the
 # evaluator, and mixed against double,

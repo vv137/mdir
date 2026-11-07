@@ -316,7 +316,7 @@ class FrameEnergies:
         of particle mesh Ewald, the extra points of Amber, placed by the
         directions of their bonds) raises UnsupportedError, naming it.
         Virtual sites take the product in theta, and linear ones the
-        derivative in the positions too (D[force-matching-sites]); the
+        derivative in the positions too (D384); the
         cotangent on a site is not read, its gradient being zero."""
         evaluator = self._evaluator
         if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):

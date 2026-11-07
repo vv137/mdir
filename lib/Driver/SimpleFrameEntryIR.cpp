@@ -118,7 +118,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
     auto storage = cast<MemRefType>(arguments.positions.getType());
     if (product) {
       // The product takes the tangent J Gbar of the placement, and the
-      // variant spreads the forces with J^T (D[force-matching-sites]). The
+      // variant spreads the forces with J^T (D384). The
       // J of the sites of four-site water of Amber, which follow the
       // directions of the bonds, depends on the positions: the derivative
       // in the positions would need its curvature as well.

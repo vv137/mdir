@@ -1,5 +1,5 @@
 """The products of force matching with linear virtual sites
-(D[force-matching-sites], #771 part 2): the product in theta of D381 and the
+(D384, #771 part 2): the product in theta of D381 and the
 derivative in the positions of D383 for OPC water, whose site M is
 x_O + a (x_H1 - x_O) + a (x_H2 - x_O) ([ virtual_sites3 ], function 1, of
 GROMACS), against a NumPy model of the waters.

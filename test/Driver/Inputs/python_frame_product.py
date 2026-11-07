@@ -533,7 +533,7 @@ def run_refusals():
           "same product after them, to the bit")
 
     # Virtual sites: the extra points of Amber take the product in theta
-    # (D[force-matching-sites]); python_frame_sites.py checks its values.
+    # (D384); python_frame_sites.py checks its values.
     opc = root + "/../opc"
     loaded = mdir.load_amber(opc + "/opc.prmtop", opc + "/opc.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()

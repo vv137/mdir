@@ -1,6 +1,6 @@
 # REQUIRES: python-api, parmed
 # The product in theta of force matching with the extra points of Amber
-# (D[force-matching-sites], #771 part 2), on the CPU: OPC from a
+# (D384, #771 part 2), on the CPU: OPC from a
 # prmtop, cut by ParmEd, against a NumPy Phi, the derivative in the
 # positions refused by name; and on rigid waters, the extra point of Amber
 # and the linear site of ParmEd's topology of GROMACS are one place (the

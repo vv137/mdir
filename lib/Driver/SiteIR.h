@@ -22,7 +22,7 @@ struct SiteSpreadInputs {
 struct SiteSpreadResult {
   mlir::Value forces, virial;
 };
-/// The tangent of the placement of the sites (D[force-matching-sites],
+/// The tangent of the placement of the sites (D384,
 /// #771): the derivative of the placement along the tangent, which replaces
 /// the entry of each site of `relation`; for linear sites that of
 /// `(1 - a - b) x_i + a x_j + b x_k`, for those of `amber` that of

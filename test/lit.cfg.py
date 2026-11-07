@@ -116,7 +116,7 @@ if config.mdir_python:
                       capture_output=True).returncode == 0:
         config.available_features.add("openmm")
     # ParmEd, which cuts and converts topologies of Amber in the tests of
-    # the extra points of Amber (D[force-matching-sites]).
+    # the extra points of Amber (D384).
     if subprocess.run([config.mdir_python_executable, "-c", "import parmed"],
                       capture_output=True).returncode == 0:
         config.available_features.add("parmed")

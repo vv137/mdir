@@ -262,7 +262,7 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   `"positions"` is asked; the product in $\boldsymbol\theta$ stays
   available without it. `mdir.torch` does not use it yet (D382 still
   refuses the derivative in the positions).
-- **Virtual sites** (D[force-matching-sites], #771 part 2). With
+- **Virtual sites** (D384, #771 part 2). With
   $\mathbf X$ the places of all particles, the sites placed, and
   $\mathsf J = \partial\mathbf X/\partial\mathbf x$, the gradient is
   $\mathbf G = \mathsf J^{\mathsf T}\,\partial U/\partial\mathbf X$, zero

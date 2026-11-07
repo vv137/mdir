@@ -59,7 +59,7 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
 /// forces of the energy and those of its tangent, through
 /// mdrtWriteFrameProductForces (#771, D383); `spread`, where given, takes
 /// each of them from the places of the virtual sites to their atoms first
-/// (D[force-matching-sites]).
+/// (D384).
 void buildTunableProductOutput(
     mlir::OpBuilder &, const PotentialStateIR &, mlir::Value tangent,
     mlir::Value ids, mlir::ValueRange constants, mlir::ValueRange seeds,
