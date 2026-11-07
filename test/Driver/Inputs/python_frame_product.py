@@ -58,6 +58,14 @@ def cotangents(x, seed=727):
     return rng.normal(size=len(x)), rng.normal(size=x.shape)
 
 
+def product(evaluator, x, g, v):
+    """The product under test, a dict of the names of the tunables to their
+    entries: FrameEnergies.vjp here; python_frame_product_torch.py puts the
+    backward of mdir.torch in its place (D[force-matching-torch])."""
+    out = evaluator.evaluate(x, gradients=("tunables", "positions"))
+    return {name: np.asarray(value) for name, value in out.vjp(g, positions=v).items()}
+
+
 def flat(gradient, names):
     return np.concatenate([np.asarray(gradient[name]) for name in names])
 
@@ -200,7 +208,7 @@ def run_dihedral():
     x = frames(state, spread=0.02)
     g, v = cotangents(x)
     out = evaluator.evaluate(x, gradients=("tunables", "positions"))
-    p = out.vjp(g, positions=v)["k"]
+    p = product(evaluator, x, g, v)["k"]
     entry = np.asarray(program.plan["tunables"][0]["map"])
     top = system.topology
     reference = np.zeros(len(p))
@@ -309,7 +317,7 @@ def run_lj():
     x = frames(state)
     g, v = cotangents(x)
     out = evaluator.evaluate(x, gradients=("tunables", "positions"))
-    p = flat(out.vjp(g, positions=v), order)
+    p = flat(product(evaluator, x, g, v), order)
     # Once compiled, a pass of the product program over the frames.
     started = time.perf_counter()
     out.vjp(g, positions=v)
@@ -436,8 +444,7 @@ def run_charges():
     evaluator = mdir.FrameEvaluator(program)
     x = frames(state, count=2)
     g, v = cotangents(x)
-    out = evaluator.evaluate(x, gradients=("tunables", "positions"))
-    p = out.vjp(g, positions=v)["q"]
+    p = product(evaluator, x, g, v)["q"]
     q = np.asarray(evaluator.tunables["q"])[charge_map]
     box = np.array(state.cell.diagonal)
     n = x.shape[1]
@@ -556,5 +563,6 @@ def run_refusals():
     print("refusals: the charges with particle mesh Ewald are refused, never a zero")
 
 
-{"dihedral": run_dihedral, "lj": run_lj, "charges": run_charges,
- "refusals": run_refusals}[scenario]()
+if __name__ == "__main__":
+    {"dihedral": run_dihedral, "lj": run_lj, "charges": run_charges,
+     "refusals": run_refusals}[scenario]()

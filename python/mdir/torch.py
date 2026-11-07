@@ -110,8 +110,11 @@ def _frame_energies(call: int, gradient: bool, theta: List[Tensor], positions: T
         rows = np.concatenate([out.jacobian[name] for name in record.names], axis=1)
     else:
         rows = np.zeros((out.count, 0))
-        if gradient:
-            record.source, record.version = out._source, out.version
+    # A backward by a second pass, or one with a cotangent on the gradient
+    # in the positions, by the product program (D[force-matching-torch]),
+    # reads the frames again.
+    if gradient and (out.jacobian is None or record.wants[0]):
+        record.source, record.version = out._source, out.version
     device = theta[0].device
     columns = ([out._virial] if evaluator.terms == "all" else []) + [
         out.observables[c] for c in evaluator._columns]
@@ -166,38 +169,57 @@ def _second(what):
     return refuse
 
 
+def _nonzero(tensor):
+    return tensor.numel() and bool(tensor.abs().sum() != 0)
+
+
 @torch.library.custom_op("mdir::frame_vjp", mutates_args=())
 def _frame_vjp(call: int, entries: int, serial: Tensor, energy: Tensor, others: Tensor,
                jacobian: Tensor, gradients: List[Tensor], needed: bool) -> Tensor:
     # `gradients` are the cotangents of the gradients of the energy in the
     # positions, the strain, and the cell, which are outputs as well.
     # Without `needed` no tunable takes a gradient (the backward is that of
-    # the positions or the cell), and the product is not formed.
+    # the positions or the cell), and the product is not formed. A
+    # cotangent on the gradient in the positions takes the product of
+    # force matching (D381) with that of the energy,
+    # in one pass of the product program.
     record = _RECORDS.get(call)
     asked = torch.nonzero(others.abs().sum(dim=0)).flatten().tolist()
     names = record.others if record else [f"column {k}" for k in range(others.shape[1])]
     depends = record.depends if record else {}
     listed = [f"'{names[k]}' (which may read {', '.join(sorted(depends.get(names[k], [])))})"
               for k in asked]
-    listed += [f"the gradient of the energy in {what}"
-               for what, cotangent in zip(("the positions", "the strain", "the cell"), gradients)
-               if cotangent.numel() and bool(cotangent.abs().sum() != 0)]
+    if _nonzero(gradients[1]):
+        listed.append("the gradient of the energy in the strain")
     if listed:
         raise _core.UnsupportedError(
             f"the derivative of the output {', '.join(listed)} in the tunables, the positions, "
             "or the cell is not implemented; it is not zero. Detach the output to leave that "
             "term out of a gradient")
+    # The gradient in the six numbers of the cell is no output: a cotangent
+    # on it comes from a backward of the backward in the cell.
+    if _nonzero(gradients[2]):
+        raise _core.UnsupportedError(
+            "a second derivative of the energy of the frames is not implemented: the derivative "
+            "of the gradient of the energy in the cell was asked for (a backward with "
+            "create_graph=True, a Hessian, or a gradient of a gradient). It is not zero")
     if not needed:
         return energy.new_zeros((entries,))
-    if jacobian.shape[1] == entries:
+    product = _nonzero(gradients[0])
+    if not product and jacobian.shape[1] == entries:
         return energy @ jacobian
     evaluator = record.evaluator() if record else None
     if evaluator is None or record.serial != int(serial) or record.source is None:
         raise _core.SimulationError(
-            "the Jacobian of these frames was not kept (jacobian_bytes), and the evaluator has "
-            "evaluated other frames since: the backward cannot read the frames again")
-    total = evaluator._second_pass(record.source, record.version,
-                                   np.ascontiguousarray(energy.detach().cpu().numpy()))
+            "the backward needs the frames again (the Jacobian was not kept, jacobian_bytes, or "
+            "the gradient in the positions has a cotangent), and the evaluator has evaluated "
+            "other frames since: the backward cannot read the frames again")
+    g = np.ascontiguousarray(energy.detach().to(torch.float64).cpu().numpy())
+    if product:
+        v = np.ascontiguousarray(gradients[0].detach().to(torch.float64).cpu().numpy())
+        total = evaluator._product_pass(record.source, record.version, g, v)
+    else:
+        total = evaluator._second_pass(record.source, record.version, g)
     begins = [evaluator._slices[name] for name in record.names]
     return torch.from_numpy(np.concatenate([total[a:b] for a, b in begins])).to(energy.device)
 
@@ -213,10 +235,11 @@ torch.library.register_autograd("mdir::frame_vjp", _second("the tunables"))
 @torch.library.custom_op("mdir::frame_input_vjp", mutates_args=())
 def _frame_input_vjp(energy: Tensor, gradient: Tensor) -> Tensor:
     # The product of the cotangent of the energies, (K,), with their
-    # gradient in an input, (K, ...): an operation of its own, and not a
-    # multiplication of tensors, so that its derivative is refused. As a
-    # multiplication it would be differentiable in the cotangent alone, and
-    # a second derivative in the input would come out as zero.
+    # gradient in an input, (K, ...): an operation of its own, whose
+    # derivative in `gradient` reaches the operation of the energies, which
+    # gave it as an output: the product of force matching in the tunables
+    # (D[force-matching-torch]), and the refusal of the Hessian in the
+    # positions and of the derivative in the cell.
     return energy.to(gradient.dtype).reshape((-1,) + (1,) * (gradient.dim() - 1)) * gradient
 
 
@@ -225,20 +248,74 @@ def _frame_input_vjp_fake(energy, gradient):
     return gradient.new_empty(gradient.shape)
 
 
-torch.library.register_autograd("mdir::frame_input_vjp", _second("the positions or the cell"))
+def _input_setup(ctx, inputs, output):
+    ctx.save_for_backward(*inputs)
+
+
+def _input_backward(ctx, cotangent):
+    energy, gradient = ctx.saved_tensors
+    shape = (-1,) + (1,) * (gradient.dim() - 1)
+    by_energy = (cotangent * gradient).to(energy.dtype).reshape(len(energy), -1).sum(dim=1)
+    by_gradient = energy.to(gradient.dtype).reshape(shape) * cotangent
+    return by_energy, by_gradient
+
+
+torch.library.register_autograd("mdir::frame_input_vjp", _input_backward,
+                                setup_context=_input_setup)
 
 
 def _setup(ctx, inputs, output):
     call, gradient, theta, positions, cells, tilts = inputs
     ctx.call, ctx.jacobian, ctx.serial = call, output[2], output[3]
     ctx.sizes, ctx.needed = [int(t.shape[0]) for t in theta], gradient
-    ctx.in_positions, ctx.in_cell = output[4], output[6]
-    # The inputs that take a gradient, each with its shape, type, and device.
+    # The gradients of the energy in the positions and the cell are outputs
+    # that the backward uses, so that a backward of the backward reaches
+    # this operation with a cotangent on them.
+    ctx.save_for_backward(output[4], output[6])
+    # The inputs that take a gradient, each with its shape, type, and device,
+    # and the edge of the graph through which a gradient reaches each:
+    # their derivatives in a cotangent on the gradient in the positions (the
+    # Hessian, and the derivative in the cell) are not implemented, and are
+    # refused where the backward needs them.
     ctx.inputs = [(tuple(t.shape), t.dtype, t.device) if t.numel() else None
                   for t in (positions, cells, tilts)]
+    ctx.edges = [torch.autograd.graph.get_gradient_edge(t) if t.numel() and t.requires_grad
+                 else None for t in (positions, cells, tilts)]
+
+
+def _needed(edge):
+    """Whether the backward under way takes a gradient through `edge`.
+
+    It asks the engine of autograd by a private function of PyTorch,
+    `torch._C._will_engine_execute_node` (tested with PyTorch 2.14.1), and
+    fails closed: where the function is missing, raises, or gives no
+    answer, the gradient is taken as needed, and its derivative is refused.
+    The question goes away when the derivative of the gradient in the
+    positions in the positions is formed for every term (#726)."""
+    if edge is None:
+        return False
+    ask = getattr(torch._C, "_will_engine_execute_node", None)
+    if ask is None:
+        return True
+    try:
+        answer = ask(edge.node)
+    except RuntimeError:
+        return True
+    return True if answer is None else bool(answer)
 
 
 def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in_cell):
+    saved_positions, saved_cell = ctx.saved_tensors
+    if _nonzero(in_positions):
+        for what, edge in zip(("the positions (the Hessian)", "the cell", "the cell"),
+                              ctx.edges):
+            if _needed(edge):
+                raise _core.UnsupportedError(
+                    "a second derivative of the energy of the frames is not implemented: the "
+                    f"derivative of the gradient of the energy in the positions, in {what}, was "
+                    "asked for. It is not zero. The derivative in the tunables is given "
+                    "(D[force-matching-torch]): take the gradient in the tunables alone "
+                    "(torch.autograd.grad(loss, theta)), or detach the positions")
     product = _frame_vjp(ctx.call, sum(ctx.sizes), ctx.serial, energy, others, ctx.jacobian,
                          [in_positions, in_strain, in_cell], ctx.needed)
 
@@ -253,9 +330,9 @@ def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in
     positions, cells, tilts = ctx.inputs
     results = [None, None, None]
     if positions is not None:
-        results[0] = of(positions, _frame_input_vjp(energy, ctx.in_positions))
+        results[0] = of(positions, _frame_input_vjp(energy, saved_positions))
     if cells is not None or tilts is not None:
-        by_cell = _frame_input_vjp(energy, ctx.in_cell)
+        by_cell = _frame_input_vjp(energy, saved_cell)
         if cells is not None:
             results[1] = of(cells, by_cell[:, :3])
         if tilts is not None:
@@ -365,7 +442,11 @@ def _begin(evaluator, theta, positions, cells, tilts, gradients):
         record.count = len(positions)
     gradient = torch.is_grad_enabled() and any(t.requires_grad for t in theta.values())
     empty = torch.zeros(0)
-    return number, gradient, [given if takes else empty for given, takes in
+    # A tensor that takes a gradient enters through a view of it, a node of
+    # the graph of its own, so that a backward can ask the engine whether
+    # it will take a gradient through it (_needed), also where the tensor
+    # is a leaf and the backward is torch.autograd.grad.
+    return number, gradient, [given.view_as(given) if takes else empty for given, takes in
                               ((positions, in_positions), (cells, in_cells), (tilts, in_tilts))]
 
 
@@ -413,7 +494,16 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     Where `positions` is one tensor (K, N, 3) that requires a gradient, and
     where `cells` and `tilts` are tensors that do, the energy is
     differentiable in them: the function is U(x, h) at the Cartesian
-    positions given. Second derivatives are refused (`UnsupportedError`).
+    positions given.
+
+    The gradient in the positions, `gradients["positions"]`, and the
+    gradient of `energy` in positions that require a gradient
+    (`torch.autograd.grad(..., create_graph=True)`), are differentiable in
+    `theta`: a loss on the forces trains the tunables, by the product of
+    force matching (D[force-matching-torch], `FrameEnergies.vjp(positions=)`).
+    Their derivatives in the positions (the Hessian) and in the cell, and
+    every other second derivative, are refused (`UnsupportedError`) where a
+    backward needs them.
     """
     number, gradient, inputs = _begin(evaluator, theta, positions, cells, tilts, gradients)
     energy, others, _, _, in_positions, in_strain, _ = _frame_energies(

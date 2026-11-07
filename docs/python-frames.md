@@ -4,8 +4,10 @@ D380 (#726 PR 0) reserves the builder configuration for a
 separate product program, off by default, with cotangents passed through the
 frame boundary. D381 (#726 part B) uses it for the
 product of force matching, `FrameEnergies.vjp(positions=)`
-([below](#the-product-of-force-matching-d381)); the
-adapters (`mdir.jax`, `mdir.torch`) still refuse every second derivative.
+([below](#the-product-of-force-matching-d381)), and
+D[force-matching-torch] (#726 part E) makes it the backward of the
+gradient in the positions in `mdir.torch`; `mdir.jax` still refuses every
+second derivative.
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
@@ -267,11 +269,12 @@ out.gradients                          # "positions" and "strain" where asked, a
 
 **What can be trained.** `energy` is differentiable once, in the tunables
 and, where they are tensors that require a gradient, in the positions and
-the cell ([below](#through-mdirtorchevaluate)). A loss on the forces or on
-the stress can be evaluated, since both are outputs, but it cannot yet
-train the tunables: its derivative in $\boldsymbol\theta$ is a second
-derivative of $U$ (force matching, stage 4 of #138), and asking for it is
-an error, `UnsupportedError`, never a zero.
+the cell ([below](#through-mdirtorchevaluate)). A loss on the forces
+trains the tunables: the gradient in the positions is differentiable in
+`theta` (force matching, D[force-matching-torch], below). A loss on the
+stress can be evaluated, but its derivative in $\boldsymbol\theta$ is not
+implemented, and asking for it is an error, `UnsupportedError`, never a
+zero.
 
 - `theta` is a `dict[str, Tensor]` of float64 tensors of shape `(M,)`, on
   one device, for some or all of the tunables; a tunable that is not named
@@ -309,12 +312,56 @@ an error, `UnsupportedError`, never a zero.
   (D252, [below](#through-mdirtorchevaluate)); frames of an
   iterable carry no graph, and such frames that require a gradient are
   refused (`UnsupportedError`).
-- **No double backward.** Every product of the backward is an operation
-  whose own backward raises `UnsupportedError`, naming the derivative that
-  was asked: a second differentiation is an error, not a silent zero
-  (until D252 it was PyTorch's `RuntimeError` for an
-  operation without a registered derivative). A Hessian in
-  $\boldsymbol\theta$ is out of scope.
+- **Force matching: the gradient in the positions is differentiable in
+  `theta`** (D[force-matching-torch], #726 part E). The gradient
+  $\mathbf G = \partial U/\partial\mathbf x$ is differentiable in `theta`,
+  whether it is the output `gradients["positions"]` or the gradient of
+  `energy` in positions that require one, taken with
+  `torch.autograd.grad(out.energy.sum(), x, create_graph=True)`. Its
+  backward is the product of `FrameEnergies.vjp(positions=)`
+  (D381), which takes the cotangent of the energy in
+  the same pass of the product program:
+
+  ```python
+  x = torch.tensor(frames, requires_grad=True)
+  out = mdir.torch.evaluate(evaluator, theta, x)
+  g, = torch.autograd.grad(out.energy.sum(), x, create_graph=True)   # dU/dx = -F
+  loss = ((-g - f_ref) ** 2).sum(dim=(1, 2)).mean()
+  grads = torch.autograd.grad(loss, list(theta.values()))   # the tunables alone
+  ```
+
+  The product evaluates the frames again, as the second pass does. A
+  backward after the evaluator has evaluated other frames raises
+  `SimulationError`. The frames of an iterable are refused, as for
+  `vjp(positions=)`.
+- **The second derivatives that stay refused.** Every other second
+  derivative raises `UnsupportedError`, naming the derivative that was
+  asked: a second differentiation is an error, not a silent zero (until
+  D252 it was PyTorch's `RuntimeError` for an operation without a
+  registered derivative). The refused ones are:
+  - the derivative of $\mathbf G$ in the positions (the Hessian) and in
+    the cell;
+  - the derivatives of the strain and of the gradient in the cell, in
+    anything;
+  - $\partial^2U/\partial\boldsymbol\theta^2$.
+
+  The Hessian and the derivative in the cell are refused only where the
+  backward takes a gradient through the positions or the cell. The
+  adapter asks the engine of autograd
+  (`torch._C._will_engine_execute_node`, on a view of the positions that
+  the operation takes in place of the tensor given). So
+  `torch.autograd.grad(loss, theta)` is given, while
+  `torch.autograd.grad(loss, x)`, or a `loss.backward()` that reaches a
+  positions tensor requiring a gradient, raises. In the example above, `x`
+  is a leaf that requires a gradient, so `loss.backward()` would raise
+  there. The question uses a private function of PyTorch, tested with
+  PyTorch 2.14.1, and fails closed: where the function is missing or
+  answers nothing, the derivative is refused even for
+  `torch.autograd.grad(loss, theta)`. It goes once the Hessian-vector
+  product in the positions is formed for every term (#726). With
+  `gradients=("positions",)` and positions that take no
+  gradient, `out.gradients["positions"]` takes the place of `g`, and
+  `loss.backward()` is given.
 - One operation at a time on an evaluator, from any thread, with the GIL
   released during the frames; a second call while one runs raises
   `SimulationError` (D196).
@@ -766,7 +813,7 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381) | the adapters (#726 D and E) |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D[force-matching-torch]) | `mdir.jax` (#726 D) |
 | Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of
@@ -1873,21 +1920,24 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
   frame takes the sum over the frames. The gradient in the cell is not
   $\mathsf S$: the strain moves the positions with the cell, and is the
   output `gradients["strain"]`.
-- **The gradients as outputs** depend on `theta` and on the positions,
-  and their derivative, a second derivative of $U$, is not implemented:
-  each has a `grad_fn` whose backward raises `UnsupportedError` when it is
-  given a cotangent that is not zero, as `virial` does (ruling Q5), unless
-  the output is detached; an output that reads no tunable of `theta`, in
-  a call whose positions and cell take no gradient, is a constant without
-  a graph. **A loss on the forces or on the stress can therefore be
-  evaluated, and it cannot yet train the tunables: its derivative in
-  $\boldsymbol\theta$ is force matching, which #138 defers (stage 4, the
-  vector-Jacobian product of the forces in $\boldsymbol\theta$), and it is
-  an error, not a zero.**
-- **Second derivatives are refused with `UnsupportedError`**, for every
-  input: the products of the backward (in `theta`, in the positions, in
-  the cell) are operations whose own backward raises, naming the
-  derivative that is missing. For `theta` this replaces the error of
+- **The gradients as outputs** depend on `theta` and on the positions.
+  The derivative of `gradients["positions"]` in `theta` is the product of
+  force matching (D[force-matching-torch],
+  [above](#the-pytorch-adapter)). Every other derivative of them, a
+  second derivative of $U$, is not implemented. That covers
+  `gradients["strain"]` in anything and `gradients["positions"]` in the
+  positions or the cell. Its backward raises `UnsupportedError` when it
+  is given a cotangent that is not zero, as `virial` does (ruling Q5),
+  unless the output is detached. An output that reads no tunable of
+  `theta`, in a call whose positions and cell take no gradient, is a
+  constant without a graph. **A loss on the forces trains the tunables;
+  a loss on the stress can be evaluated, and its derivative is an error,
+  not a zero.**
+- **The other second derivatives are refused with `UnsupportedError`**:
+  the products of the backward (in `theta`, in the positions, in the
+  cell) are operations whose own backward raises, or reaches the
+  operation of the energies, which raises, naming the derivative that is
+  missing. For `theta` this replaces the error of
   slice 1, PyTorch's `RuntimeError` "Trying to backward through
   mdir.frame_vjp.default but no autograd formula was registered", which
   was a refusal too but said nothing a user of the evaluator could act
