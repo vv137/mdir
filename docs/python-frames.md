@@ -6,8 +6,10 @@ frame boundary. D381 (#726 part B) uses it for the
 product of force matching, `FrameEnergies.vjp(positions=)`
 ([below](#the-product-of-force-matching-d381)), and
 D382 (#726 part E) makes it the backward of the
-gradient in the positions in `mdir.torch`; `mdir.jax` still refuses every
-second derivative.
+gradient in the positions in `mdir.torch`, and D[torch-public-prune]
+(#771 part 4) adds the derivative of that gradient in the positions (D383)
+where a backward takes it; `mdir.jax` still refuses every second
+derivative.
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
@@ -260,8 +262,9 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   tuples, and terms of the absolute positions take it. The reciprocal sum
   of PME and the extra points of Amber (below) raise `UnsupportedError`, naming the term, when
   `"positions"` is asked; the product in $\boldsymbol\theta$ stays
-  available without it. `mdir.torch` does not use it yet (D382 still
-  refuses the derivative in the positions).
+  available without it. `mdir.torch` forms it where a backward takes a
+  gradient in the positions (D[torch-public-prune],
+  [below](#the-pytorch-adapter)).
 - **Virtual sites** (D384, #771 part 2). With
   $\mathbf X$ the places of all particles, the sites placed, and
   $\mathsf J = \partial\mathbf X/\partial\mathbf x$, the gradient is
@@ -390,33 +393,53 @@ zero.
   backward after the evaluator has evaluated other frames raises
   `SimulationError`. The frames of an iterable are refused, as for
   `vjp(positions=)`.
+- **The derivative of $\mathbf G$ in the positions** (D[torch-public-prune],
+  #771 part 4). A backward that takes a gradient in the positions through
+  $\mathbf G$, such as `torch.autograd.grad(loss, x)` or a
+  `loss.backward()` that reaches positions requiring a gradient, gives
+  the derivative in the positions of the product of D383:
+  $g\,\nabla U + \mathsf H\bar{\mathbf G}$, with $g$ and
+  $\bar{\mathbf G}$ the cotangents on the energy and on $\mathbf G$. It is
+  equal to that of `FrameEnergies.vjp(g, positions=Gbar,
+  gradients=("tunables", "positions"))`. A term without a rule for it (the
+  reciprocal sum of PME, the extra points of Amber, D384) raises
+  `UnsupportedError`, naming the term, there alone:
+  `torch.autograd.grad(loss, theta)` and `loss.backward(inputs=theta)` stay
+  given on every system that has the product in $\boldsymbol\theta$. In the
+  example above, `loss.backward()` therefore takes the gradient in `x` as
+  well, and is refused with PME.
+
+  The positions and the cell that take a gradient are nodes of the graph
+  of their own beside that of the tunables. Autograd runs only the nodes on
+  a path to the inputs that a backward takes, so a backward in `theta`
+  alone does not reach them. The autograd notes of PyTorch state this for
+  `torch.autograd.grad` (a node "will not be executed unless there is
+  another input that depends on the gradient result of this Node"), and the
+  tests observe it for `backward(inputs=)` and under `torch.compile`. The
+  result does not depend on it: a node of the positions that ran where it
+  need not would form the same value, or refuse by name. Tunables and
+  positions computed in one compiled region upstream are one node, which a
+  backward in the tunables reaches through the positions as well; with
+  PME, such a backward raises. Where both `theta` and `x` are taken, the
+  two nodes make a pass each, about 1.8 times one pass of `vjp` with both
+  (D[torch-public-prune]). Until that decision, the adapter asked the
+  engine whether it would run the node of the positions, by a private
+  function of PyTorch, and refused the Hessian wherever it was asked
+  (D382).
 - **The second derivatives that stay refused.** Every other second
   derivative raises `UnsupportedError`, naming the derivative that was
   asked: a second differentiation is an error, not a silent zero (until
   D252 it was PyTorch's `RuntimeError` for an operation without a
   registered derivative). The refused ones are:
-  - the derivative of $\mathbf G$ in the positions (the Hessian) and in
-    the cell;
+  - the derivative of $\mathbf G$ in the cell;
   - the derivatives of the strain and of the gradient in the cell, in
     anything;
-  - $\partial^2U/\partial\boldsymbol\theta^2$.
+  - $\partial^2U/\partial\boldsymbol\theta^2$, and the derivative of
+    $\mathsf H\bar{\mathbf G}$, a third derivative.
 
-  The Hessian and the derivative in the cell are refused only where the
-  backward takes a gradient through the positions or the cell. The
-  adapter asks the engine of autograd
-  (`torch._C._will_engine_execute_node`, on a view of the positions that
-  the operation takes in place of the tensor given). So
-  `torch.autograd.grad(loss, theta)` is given, while
-  `torch.autograd.grad(loss, x)`, or a `loss.backward()` that reaches a
-  positions tensor requiring a gradient, raises. In the example above, `x`
-  is a leaf that requires a gradient, so `loss.backward()` would raise
-  there. The question uses a private function of PyTorch, tested with
-  PyTorch 2.14.1, and fails closed: where the function is missing or
-  answers nothing, the derivative is refused even for
-  `torch.autograd.grad(loss, theta)`. It goes once the Hessian-vector
-  product in the positions is formed for every term (#726). With
-  `gradients=("positions",)` and positions that take no
-  gradient, `out.gradients["positions"]` takes the place of `g`, and
+  Each is refused only where the backward takes a gradient through it. With
+  `gradients=("positions",)` and positions that take no gradient,
+  `out.gradients["positions"]` takes the place of `g`, and
   `loss.backward()` is given.
 - One operation at a time on an evaluator, from any thread, with the GIL
   released during the frames; a second call while one runs raises
@@ -425,7 +448,17 @@ zero.
 **The operations** (ruling Q4). `mdir::frame_energies` and `mdir::frame_vjp`
 are `torch.library.custom_op`s; the first has `register_autograd`, whose
 backward calls the second, and both have shape functions
-(`register_fake`). An operation takes tensors and numbers only, so the
+(`register_fake`). The first takes the tunables alone. The positions
+and the cell that take a gradient enter through operations of their own
+that return zeros, added to its outputs (D[torch-public-prune]):
+`mdir::frame_positions`, whose backward forms
+$\mathsf H\bar{\mathbf G}$ by `mdir::frame_hvp`; `mdir::frame_cell`,
+whose backward refuses; and `mdir::frame_energy_in`, added to the energy,
+whose backward is the gradient of the energy in the positions and the cell
+times the cotangent. These are built outside any compiled graph (a
+function marked `torch.compiler.disable`): a compiled region is one node of
+the backward with an edge to every input it takes, which could not be
+pruned. An operation takes tensors and numbers only, so the
 evaluator and the frames of a call are found by a number, that of the
 evaluator, which is the same at every call so that a traced function is not
 traced again; the serial of the call travels as a tensor and tells a
@@ -1979,10 +2012,12 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
 - **The gradients as outputs** depend on `theta` and on the positions.
   The derivative of `gradients["positions"]` in `theta` is the product of
   force matching (D382,
-  [above](#the-pytorch-adapter)). Every other derivative of them, a
-  second derivative of $U$, is not implemented. That covers
+  [above](#the-pytorch-adapter)), and its derivative in the positions
+  is $\mathsf H\bar{\mathbf G}$ where every term has a rule for it
+  (D[torch-public-prune]). Every other derivative of them, a second
+  derivative of $U$, is not implemented. That covers
   `gradients["strain"]` in anything and `gradients["positions"]` in the
-  positions or the cell. Its backward raises `UnsupportedError` when it
+  cell. Its backward raises `UnsupportedError` when it
   is given a cotangent that is not zero, as `virial` does (ruling Q5),
   unless the output is detached. An output that reads no tunable of
   `theta`, in a call whose positions and cell take no gradient, is a

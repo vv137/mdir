@@ -255,4 +255,5 @@ def run_refusals():
           "same to the bit; without it, no positions")
 
 
-{"pairs": run_pairs, "dihedral": run_dihedral, "refusals": run_refusals}[scenario]()
+if __name__ == "__main__":
+    {"pairs": run_pairs, "dihedral": run_dihedral, "refusals": run_refusals}[scenario]()

@@ -21,6 +21,7 @@ Scenarios:
   amber     OPC from a prmtop of Amber, whose extra points follow the
             directions of the bonds: the product in theta against a NumPy
             model, the derivative in the positions refused by name
+  cut       writes the prmtop of the scenario amber into WORK alone
   placement on frames of exactly rigid waters, the extra point of Amber and
             the linear site of GROMACS (ParmEd's conversion, with
             a = d / (2 r_OH cos(theta_HOH / 2))) are one place: the same
@@ -498,13 +499,18 @@ def run_placement():
                energies[0], energies[1], 1e-12 if double else 1e-5)
 
 
-if scenario == "pair":
-    run(2, 4.0, "two OPC waters")
-elif scenario == "box":
-    run(8, 2.0, "eight OPC waters in 2.0 nm")
-elif scenario == "amber":
-    run_amber()
-elif scenario == "placement":
-    run_placement()
-else:
-    raise SystemExit(f"unknown scenario {scenario!r}")
+if __name__ == "__main__":
+    if scenario == "pair":
+        run(2, 4.0, "two OPC waters")
+    elif scenario == "box":
+        run(8, 2.0, "eight OPC waters in 2.0 nm")
+    elif scenario == "amber":
+        run_amber()
+    elif scenario == "placement":
+        run_placement()
+    elif scenario == "cut":
+        # The prmtop of the scenario amber, for an interpreter without
+        # ParmEd (python_frame_hvp_torch.py).
+        amber_subset(40, True)
+    else:
+        raise SystemExit(f"unknown scenario {scenario!r}")
