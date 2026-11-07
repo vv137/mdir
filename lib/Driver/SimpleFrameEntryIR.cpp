@@ -117,15 +117,18 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         MemRefType::get({product ? 3 : 2}, at.getF64Type()));
     auto storage = cast<MemRefType>(arguments.positions.getType());
     if (product) {
-      // Linear sites have a constant Jacobian J: the product takes the
-      // tangent J Gbar and spreads the forces with J^T
-      // (D[force-matching-sites]). The sites of four-site water of Amber
-      // follow the directions of the bonds, and their J does not stay.
-      if (llvm::any_of(config.sites, [](const auto &site) { return site.amber; }))
+      // The product takes the tangent J Gbar of the placement, and the
+      // variant spreads the forces with J^T (D[force-matching-sites]). The
+      // J of the sites of four-site water of Amber, which follow the
+      // directions of the bonds, depends on the positions: the derivative
+      // in the positions would need its curvature as well.
+      if (product->positions &&
+          llvm::any_of(config.sites, [](const auto &site) { return site.amber; }))
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
-            "the product of a frame is not implemented for a program with "
-            "virtual sites placed by the directions of their bonds (the extra "
-            "points of four-site water of Amber) yet; linear sites are (#771)");
+            "the derivative in the positions of the product of a frame is not "
+            "implemented for a program with virtual sites placed by the directions "
+            "of their bonds (the extra points of four-site water of Amber) yet; "
+            "linear sites are, and the product in theta takes both (#771)");
       if (program.reorders)
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
             "the product program of frames keeps the order of the input; "
@@ -198,7 +201,8 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         for (const auto &site : config.sites)
           tangent = buildPlacedSiteTangents(frame,
               {originalParameters[site.relation], physical.positions, cell,
-               originalParameters[site.a], originalParameters[site.b], tangent, {}});
+               originalParameters[site.a], originalParameters[site.b], tangent, {}},
+              site.amber);
         auto spread = [&](OpBuilder &at, Value forces) {
           for (const auto &site : config.sites)
             forces = buildSiteSpread(at,
