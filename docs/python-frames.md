@@ -240,6 +240,28 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   zero: a program with virtual sites; the charges as a field with PME (the
   derivative of the tangent of the reciprocal sum in each charge, D379);
   `terms="dependent"`. The evaluator stays usable after each.
+- **The derivative in the positions** (D[force-matching-hvp], #771 part 1;
+  the maintainer's ruling on PR #772).
+  `vjp(cotangent=None, *, positions=None, gradients=("tunables",))`. With
+  `"positions"` in `gradients`, the result also has `positions`, a
+  `(K, N, 3)` float64 array in the order of the input:
+
+  $$
+  \frac{\partial\Phi_n}{\partial\mathbf x_i} = g_n\frac{\partial U_n}{\partial\mathbf x_i}
+  + \sum_j\frac{\partial^2U_n}{\partial\mathbf x_i\,\partial\mathbf x_j}\,\bar{\mathbf G}_{n,j},
+  $$
+
+  the derivative of the same product in the positions. It comes from the
+  same pass, by a variant of the product program that also asks for the
+  forces of the energy and those of its tangent (the request
+  `tangent_forces`), compiled at the first such call. Without `"positions"`
+  the attribute is `None`, and with `("positions",)` alone the mapping is
+  empty. Pair terms (whose tangent reads the displacement), terms over
+  tuples, and terms of the absolute positions take it. The reciprocal sum
+  of PME and virtual sites raise `UnsupportedError`, naming the term, when
+  `"positions"` is asked; the product in $\boldsymbol\theta$ stays
+  available without it. `mdir.torch` does not use it yet (D382 still
+  refuses the derivative in the positions).
 
 **Validation** (`python-frame-product.test`, `python-frame-product-gpu.test`).
 See the decision for the numbers. The references are: the closed form of

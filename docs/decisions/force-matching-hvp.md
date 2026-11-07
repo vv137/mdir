@@ -36,7 +36,15 @@ The evaluator compiles the variant at the first product that asks for the deriva
 
 ## The interface
 
-To be decided on the PR. See the options there.
+The maintainer ruled on PR #772: option 1 of the three that the draft proposed.
+
+`FrameEnergies.vjp(cotangent=None, *, positions=None, gradients=("tunables",))`. With `"positions"` in `gradients`, the result, a `FrameGradient`, also has `positions`, a `(K, N, 3)` float64 array in the order of the input: $g_n\,\partial U_n/\partial\mathbf x + \mathsf H_n\bar{\mathbf G}_n$, from the same pass as the derivative in $\boldsymbol\theta$.
+
+- Without `"positions"`, `positions` is `None`, and nothing changes from D381.
+- With `("positions",)` alone, the mapping is empty.
+- Without a cotangent on the gradient, the result is $g_n\,\partial U_n/\partial\mathbf x$.
+
+The names follow `gradients=` of `evaluate`. The other options were a method of its own, which costs two passes for both, and a flag, which names one thing where `gradients` names a set. `mdir.torch` keeps the refusal of D382 until part 4.
 
 ## Validation
 
