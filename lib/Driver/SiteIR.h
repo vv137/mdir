@@ -22,6 +22,13 @@ struct SiteSpreadInputs {
 struct SiteSpreadResult {
   mlir::Value forces, virial;
 };
+/// The tangent of the placement of linear sites (D[force-matching-sites],
+/// #771): the derivative of `(1 - a - b) x_i + a x_j + b x_k` along
+/// `tangent`, which replaces the entry of each site of `relation`. A
+/// tangent is no position, so the members are read as they are, never
+/// through the minimum image. `forces` of the inputs holds the tangent;
+/// `virial` is not read.
+mlir::Value buildPlacedSiteTangents(mlir::OpBuilder &, const SiteSpreadInputs &);
 SiteSpreadResult buildSiteSpread(mlir::OpBuilder &, const SiteSpreadInputs &,
                                   bool amber, bool derived,
                                   llvm::StringRef potential);

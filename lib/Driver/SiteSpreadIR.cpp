@@ -118,6 +118,26 @@ Value composeVirial(OpBuilder &builder, ValueRange elements) {
 }
 } // namespace
 
+Value mdir::driver::builder::buildPlacedSiteTangents(OpBuilder &builder,
+                                                    const SiteSpreadInputs &in) {
+  auto loc = builder.getUnknownLoc();
+  Geometry k(builder);
+  // The displacements are gathered as the spread gathers them and not read:
+  // the members' tangents are the field.
+  auto delta = gather(builder, in,
+                      {{displacement, {2, 1}}, {displacement, {3, 1}}}, true);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = kernel(builder, delta.getKernel(), 6, 2)->getArguments();
+    Value toJ = k.sub(args[4], args[3]), toK = k.sub(args[5], args[3]);
+    Value placed = k.add(args[3], buildSitePlacement(builder, false, toJ, toK,
+                                                       args[6], args[7]));
+    Value change = k.sub(placed, args[2]), zero = k.zero();
+    mdir::md::YieldOp::create(builder, loc, ValueRange{change, zero, zero, zero});
+  }
+  return buildAddChange(builder, in.forces, delta.getResult());
+}
+
 SiteSpreadResult mdir::driver::builder::buildSiteSpread(
     OpBuilder &builder, const SiteSpreadInputs &in, bool amber, bool derived,
     llvm::StringRef potential) {

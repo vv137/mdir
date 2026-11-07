@@ -5,6 +5,7 @@
 #include "mlir/IR/ValueRange.h"
 #include "PotentialIR.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -56,13 +57,14 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
 /// of the tangent in one call of mdrtWriteTunableGradient, and the fields
 /// of the energy and then those of the tangent. With `positions`, also the
 /// forces of the energy and those of its tangent, through
-/// mdrtWriteFrameProductForces (#771, D383).
-void buildTunableProductOutput(mlir::OpBuilder &, const PotentialStateIR &,
-                               mlir::Value tangent, mlir::Value ids,
-                               mlir::ValueRange constants,
-                               mlir::ValueRange seeds,
-                               const TunableGradientOutputConfig &,
-                               bool positions = false);
+/// mdrtWriteFrameProductForces (#771, D383); `spread`, where given, takes
+/// each of them from the places of the virtual sites to their atoms first
+/// (D[force-matching-sites]).
+void buildTunableProductOutput(
+    mlir::OpBuilder &, const PotentialStateIR &, mlir::Value tangent,
+    mlir::Value ids, mlir::ValueRange constants, mlir::ValueRange seeds,
+    const TunableGradientOutputConfig &, bool positions = false,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value)> spread = nullptr);
 void buildWriteSolvent(mlir::OpBuilder &, mlir::Value sums);
 mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const PotentialStateIR &,
                                     llvm::ArrayRef<std::string> potentials,

@@ -196,7 +196,8 @@ void mdir::driver::builder::buildTunableGradientOutput(
 void mdir::driver::builder::buildTunableProductOutput(
     OpBuilder &builder, const PotentialStateIR &state, Value tangent,
     Value ids, ValueRange constants, ValueRange seeds,
-    const TunableGradientOutputConfig &config, bool positions) {
+    const TunableGradientOutputConfig &config, bool positions,
+    llvm::function_ref<Value(OpBuilder &, Value)> spread) {
   auto loc = builder.getUnknownLoc();
   OutputBuilder out(builder);
   size_t count = config.scalarArguments.size();
@@ -247,11 +248,15 @@ void mdir::driver::builder::buildTunableProductOutput(
   }
   if (positions) {
     size_t at = 2 * count + 2 * fields;
+    Value forces = result.getResult(at), tangentForces = result.getResult(at + 1);
+    if (spread) {
+      forces = spread(builder, forces);
+      tangentForces = spread(builder, tangentForces);
+    }
     mdir::mdrt::HostCallOp::create(
         builder, loc, TypeRange{},
         FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameProductForces"),
-        ValueRange{result.getResult(at), result.getResult(at + 1), ids}, ValueRange{},
-        UnitAttr{});
+        ValueRange{forces, tangentForces, ids}, ValueRange{}, UnitAttr{});
   }
   for (size_t i = 0; i != 2 * count; ++i)
     out.store(result.getResult(i), memory, ValueRange{out.index(i)});
