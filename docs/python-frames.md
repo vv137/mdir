@@ -260,7 +260,7 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
   the attribute is `None`, and with `("positions",)` alone the mapping is
   empty. Pair terms (whose tangent reads the displacement), terms over
   tuples, and terms of the absolute positions take it. The reciprocal sum
-  of PME and the extra points of Amber (below) raise `UnsupportedError`, naming the term, when
+  of PME raises `UnsupportedError`, naming the term, when
   `"positions"` is asked; the product in $\boldsymbol\theta$ stays
   available without it. `mdir.torch` forms it where a backward takes a
   gradient in the positions (D385,
@@ -286,9 +286,13 @@ grad = out.vjp(positions=-2.0 / len(frames) * (forces - f_ref))   # dL/dG = -dL/
     (`load_amber` of OPC and TIP4P-Ew), follow the directions of the
     bonds, and their $\mathsf J$ depends on the positions. The product in
     $\boldsymbol\theta$ takes them, with $\mathsf J\bar{\mathbf G}$ at the
-    frame. The derivative in the positions would add a term of the
-    curvature of the placement, not formed yet: `"positions"` raises
-    `UnsupportedError`, naming them.
+    frame. The derivative in the positions adds the curvature of the
+    placement (D[force-matching-amber-curvature], #771),
+    $\mathbf C = \partial[(\mathsf J\bar{\mathbf G})\cdot\partial U/\partial\mathbf X]/\partial\mathbf x$
+    at a fixed $\partial U/\partial\mathbf X$, the derivative of the
+    spread $\mathsf J^{\mathsf T}$ along $\bar{\mathbf G}$ with the force on
+    the site held fixed: it does not scale with $g$, and its rows on the
+    sites are zero. The decision gives its rows for the bisector.
   - *The two give different forces on the atoms.* On a water at the
     geometry of the model, the extra point of Amber and the linear site
     with $a = b = d/(2\,r_{\mathrm{OH}}\cos(\theta_{\mathrm{HOH}}/2))$
@@ -402,7 +406,7 @@ zero.
   $\bar{\mathbf G}$ the cotangents on the energy and on $\mathbf G$. It is
   equal to that of `FrameEnergies.vjp(g, positions=Gbar,
   gradients=("tunables", "positions"))`. A term without a rule for it (the
-  reciprocal sum of PME, the extra points of Amber, D384) raises
+  reciprocal sum of PME) raises
   `UnsupportedError`, naming the term, there alone:
   `torch.autograd.grad(loss, theta)` and `loss.backward(inputs=theta)` stay
   given on every system that has the product in $\boldsymbol\theta$. In the

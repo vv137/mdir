@@ -227,11 +227,16 @@ def run_refusals():
     sites = mdir.FrameEvaluator(base.compile_(system, state))
     y = np.array(state.positions)[None]
     out = sites.evaluate(y)
-    base.expect(mdir.UnsupportedError,
-                lambda: out.vjp(np.ones(1), positions=np.ones_like(y),
-                                gradients=("positions",)),
-                "virtual sites")
-    print("refusals: virtual sites are refused, by name")
+    # The extra points of Amber: given since the curvature of their
+    # placement (#771), zero in the rows of the sites.
+    given = np.asarray(out.vjp(np.ones(1), positions=np.ones_like(y),
+                               gradients=("positions",)).positions)
+    rows = np.zeros(y.shape[1], dtype=bool)
+    rows[np.asarray(system.topology.virtual_sites)[:, 0]] = True
+    zero = np.all(given[0] == 0.0, axis=1)
+    assert np.isfinite(given).all() and rows.any()
+    assert np.array_equal(zero, rows), "the zero rows are not those of the sites"
+    print("refusals: the extra points of Amber are given, zero in the rows of the sites")
     # The arguments of vjp.
     system, state = base.torsion_fixture()
     system.tunables = [mdir.Tunable("k", "dihedral_k")]

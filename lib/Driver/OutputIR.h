@@ -59,12 +59,16 @@ void buildTunableGradientOutput(mlir::OpBuilder &, const PotentialStateIR &,
 /// forces of the energy and those of its tangent, through
 /// mdrtWriteFrameProductForces (#771, D383); `spread`, where given, takes
 /// each of them from the places of the virtual sites to their atoms first
-/// (D384).
+/// (D384), and `curvature`, where given, adds to the spread forces of the
+/// tangent the curvature of the placement, from the forces of the energy
+/// before their spread (#771).
 void buildTunableProductOutput(
     mlir::OpBuilder &, const PotentialStateIR &, mlir::Value tangent,
     mlir::Value ids, mlir::ValueRange constants, mlir::ValueRange seeds,
     const TunableGradientOutputConfig &, bool positions = false,
-    llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value)> spread = nullptr);
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value)> spread = nullptr,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value, mlir::Value)>
+        curvature = nullptr);
 void buildWriteSolvent(mlir::OpBuilder &, mlir::Value sums);
 mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const PotentialStateIR &,
                                     llvm::ArrayRef<std::string> potentials,

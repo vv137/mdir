@@ -72,6 +72,60 @@ struct SiteFrame {
     Value owner = k.sub(k.sub(force, first), second);
     return {owner, first, second};
   }
+
+  // The motion of the frame along the tangents dU and dV of the bonds U
+  // and V: du = (dU - u (u . dU)) / |U| and dv alike, ds = du + dv, and
+  // the part of ds across the bisector b = s / |s|, ds - b (b . ds), which
+  // is |s| db. The site moves by a / |s| times it (D384).
+  struct Motion { Value du, dv, ds, bisector, across; };
+  Motion motion(Geometry &k, Value dU, Value dV) {
+    auto unit = [&](Value direction, Value length, Value change) {
+      Value along = k.scale(k.dot(direction, change), direction);
+      return k.div(k.sub(change, along), k.splat(length));
+    };
+    Motion m;
+    m.du = unit(u, lengthU, dU);
+    m.dv = unit(v, lengthV, dV);
+    m.ds = k.add(m.du, m.dv);
+    m.bisector = k.div(sum, k.splat(lengthSum));
+    m.across = k.sub(m.ds, k.scale(k.dot(m.bisector, m.ds), m.bisector));
+    return m;
+  }
+
+  // The derivative of `spread` along dU and dV, the force on the site
+  // held fixed (#771): the curvature of the placement, d/de [J(x + e dx)^T
+  // force]. With b = s / |s|, c = force - b (b . force), and for each bond
+  // f = a / (|U| |s|) (c - u (u . c)), by the product rule
+  //   db = (ds - b (b . ds)) / |s|, d|s| = b . ds, d|U| = u . dU,
+  //   dc = -(db (b . force) + b (db . force)),
+  //   df = -f (d|U| / |U| + d|s| / |s|)
+  //        + a / (|U| |s|) (dc - du (u . c) - u (du . c + u . dc)),
+  // and the owner takes -(df_j + df_k); the site's row is zero.
+  std::array<Value, 3> spreadTangent(Geometry &k, Value force, Value distance,
+                                     Value dU, Value dV) {
+    Motion m = motion(k, dU, dV);
+    Value along = k.dot(force, m.bisector);
+    Value across = k.sub(force, k.scale(along, m.bisector));
+    Value turn = k.div(m.across, k.splat(lengthSum));
+    Value grow = k.div(k.dot(m.bisector, m.ds), lengthSum);
+    Value turned = k.negate(k.add(k.scale(along, turn),
+                                  k.scale(k.dot(turn, force), m.bisector)));
+    auto toHydrogen = [&](Value unit, Value length, Value dUnit, Value dBond) {
+      Value factor = k.div(distance, k.mul(length, lengthSum));
+      Value on = k.dot(across, unit);
+      Value perpendicular = k.sub(across, k.scale(on, unit));
+      Value rate = k.add(k.div(k.dot(unit, dBond), length), grow);
+      Value dFactor = k.negate(k.mul(factor, rate));
+      Value dOn = k.add(k.dot(dUnit, across), k.dot(unit, turned));
+      Value dPerpendicular =
+          k.sub(k.sub(turned, k.scale(on, dUnit)), k.scale(dOn, unit));
+      return k.add(k.scale(dFactor, perpendicular),
+                   k.scale(factor, dPerpendicular));
+    };
+    Value first = toHydrogen(u, lengthU, m.du, dU);
+    Value second = toHydrogen(v, lengthV, m.dv, dV);
+    return {k.negate(k.add(first, second)), first, second};
+  }
 };
 
 using Coordinate = mdir::md::Coordinate;
@@ -86,18 +140,23 @@ Block *kernel(OpBuilder &builder, Region &region, unsigned vectors,
   return builder.createBlock(&region, {}, types, locations);
 }
 
+/// A gather over the sites into the type of `in.forces`, reading the
+/// fields `gathered` (`in.forces` where empty).
 mdir::md::GatherTuplesOp gather(OpBuilder &builder, const SiteSpreadInputs &in,
                                  ArrayRef<Coordinate> coordinates,
-                                 bool parameters) {
+                                 bool parameters, ValueRange gathered = {}) {
   DenseI32ArrayAttr kinds;
   DenseI64ArrayAttr members;
   mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
   SmallVector<Value> fields;
   if (parameters)
     fields = {in.a, in.b};
+  SmallVector<Value> read(gathered.begin(), gathered.end());
+  if (read.empty())
+    read.push_back(in.forces);
   return mdir::md::GatherTuplesOp::create(
       builder, builder.getUnknownLoc(), in.forces.getType(), Type{}, in.relation,
-      in.positions, in.cell, ValueRange{in.forces}, fields, kinds, members);
+      in.positions, in.cell, read, fields, kinds, members);
 }
 
 mdir::md::SumTuplesOp sumVirial(OpBuilder &builder, const SiteSpreadInputs &in,
@@ -137,21 +196,38 @@ Value mdir::driver::builder::buildPlacedSiteTangents(OpBuilder &builder,
       // du = (dU - u (u . dU)) / |U|, and dw = a (ds - b (b . ds)) / |s|
       // with b = s / |s|.
       SiteFrame frame(k, args[0], args[1]);
-      auto unit = [&](Value direction, Value length, Value change) {
-        Value along = k.scale(k.dot(direction, change), direction);
-        return k.div(k.sub(change, along), k.splat(length));
-      };
-      Value ds = k.add(unit(frame.u, frame.lengthU, toJ),
-                       unit(frame.v, frame.lengthV, toK));
-      Value bisector = k.div(frame.sum, k.splat(frame.lengthSum));
-      Value across = k.sub(ds, k.scale(k.dot(bisector, ds), bisector));
-      moved = k.scale(k.div(args[6], frame.lengthSum), across);
+      auto motion = frame.motion(k, toJ, toK);
+      moved = k.scale(k.div(args[6], frame.lengthSum), motion.across);
     } else {
       moved = buildSitePlacement(builder, false, toJ, toK, args[6], args[7]);
     }
     Value placed = k.add(args[3], moved);
     Value change = k.sub(placed, args[2]), zero = k.zero();
     mdir::md::YieldOp::create(builder, loc, ValueRange{change, zero, zero, zero});
+  }
+  return buildAddChange(builder, in.forces, delta.getResult());
+}
+
+Value mdir::driver::builder::buildSiteSpreadCurvature(OpBuilder &builder,
+                                                     const SiteSpreadInputs &in,
+                                                     Value siteForces,
+                                                     Value tangent) {
+  auto loc = builder.getUnknownLoc();
+  Geometry k(builder);
+  // The displacements of the bonds at the frame, the forces on the sites
+  // (of the energy, before their spread), and the tangent of the atoms,
+  // read as it is; the tangent of a site is not read.
+  auto delta = gather(builder, in,
+                      {{displacement, {2, 1}}, {displacement, {3, 1}}}, true,
+                      ValueRange{siteForces, tangent});
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    auto args = kernel(builder, delta.getKernel(), 10, 2)->getArguments();
+    Value dU = k.sub(args[8], args[7]), dV = k.sub(args[9], args[7]);
+    SiteFrame frame(k, args[0], args[1]);
+    auto change = frame.spreadTangent(k, args[2], args[10], dU, dV);
+    mdir::md::YieldOp::create(builder, loc,
+                              ValueRange{k.zero(), change[0], change[1], change[2]});
   }
   return buildAddChange(builder, in.forces, delta.getResult());
 }

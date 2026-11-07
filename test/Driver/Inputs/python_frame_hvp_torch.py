@@ -23,9 +23,9 @@ Scenarios:
          vjp; the forms that take the positions refused, naming the
          reciprocal sum
   amber  OPC from a prmtop of Amber, cut by ParmEd in WORK beforehand
-         (`python_frame_sites.py ROOT cut`, D384): the
-         gradient in theta alone given, against vjp; the forms that take the
-         positions refused, naming the extra points
+         (`python_frame_sites.py ROOT cut`, D384): every form given, the
+         derivative in the positions with the curvature of the placement of
+         the extra points (#771), against vjp
 """
 import sys
 import warnings
@@ -236,8 +236,8 @@ def run_amber():
     system, state, _ = sites.amber_fixture(mdir.load_amber(prmtop, inpcrd))
     evaluator = quiet(lambda: mdir.FrameEvaluator(base.compile_(system, state)))
     x = base.frames(state, count=2, spread=0.004)
-    check_refused("Amber OPC (ACE-ALA-NME and 40 waters), 2 frames", evaluator, x,
-                  "virtual sites placed by the directions of their bonds")
+    check_forms("Amber OPC (ACE-ALA-NME and 40 waters), 2 frames", evaluator, x,
+                1e-14 if base.double else 1e-9)
 
 
 {"forms": run_forms, "pme": run_pme, "amber": run_amber}[scenario]()

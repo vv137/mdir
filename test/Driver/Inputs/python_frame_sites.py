@@ -20,7 +20,10 @@ Scenarios:
             in mixed precision, against double
   amber     OPC from a prmtop of Amber, whose extra points follow the
             directions of the bonds: the product in theta against a NumPy
-            model, the derivative in the positions refused by name
+            model, and the derivative in the positions, with the curvature
+            of the placement (#771), its part of the extra points against
+            NumPy and the whole against differences of Phi from the
+            evaluator
   cut       writes the prmtop of the scenario amber into WORK alone
   placement on frames of exactly rigid waters, the extra point of Amber and
             the linear site of GROMACS (ParmEd's conversion, with
@@ -249,7 +252,8 @@ def run(waters, edge, label):
 # OPC from the prmtop of test/Driver/Inputs/opc, cut by ParmEd to fewer waters:
 # the extra point is x_O + d (u + v) / |u + v|, u and v the unit vectors
 # from O to the hydrogens, which follows their directions. The product in
-# theta takes J Gbar at the frame; the derivative in the positions is refused.
+# theta takes J Gbar at the frame; the derivative in the positions adds the
+# curvature of the placement, as J depends on x.
 
 AMBER_RC = 0.8
 
@@ -433,12 +437,147 @@ def run_amber():
             exact = mdir.FrameEvaluator(base.compile_(system, state, base.target, "Double"))
         base.check(f"{label}: the product in theta in mixed precision against that in double",
                    product, base.flat(exact.evaluate(x).vjp(g, positions=v), order), 1e-5)
-    base.expect(mdir.UnsupportedError,
-                lambda: out.vjp(g, positions=v, gradients=("tunables", "positions")),
-                "virtual sites placed by the directions of their bonds")
-    assert np.array_equal(base.flat(out.vjp(g, positions=v), order), product)
-    print("Amber OPC: the derivative in the positions is refused by name; the product in "
-          "theta stays, to the bit")
+    run_amber_positions(evaluator, system, state, model, theta, order, x, g, v, product, label)
+
+
+def amber_tangent(x, v, sites, distance):
+    """J v of the bisector placement in closed form (D384), so that it is
+    analytic in x and its derivative in x can be taken by a complex step."""
+    tangent = v.astype(np.result_type(x, v))
+    o, h1, h2 = x[sites[:, 1]], x[sites[:, 2]], x[sites[:, 3]]
+    norm = lambda a: np.sqrt((a * a).sum(axis=1))[:, None]
+    dot = lambda a, b: (a * b).sum(axis=1)[:, None]
+    U, V = h1 - o, h2 - o
+    dU, dV = v[sites[:, 2]] - v[sites[:, 1]], v[sites[:, 3]] - v[sites[:, 1]]
+    u, w = U / norm(U), V / norm(V)
+    ds = (dU - u * dot(u, dU)) / norm(U) + (dV - w * dot(w, dV)) / norm(V)
+    s = u + w
+    b = s / norm(s)
+    tangent[sites[:, 0]] = v[sites[:, 1]] + distance / norm(s) * (ds - b * dot(b, ds))
+    return tangent
+
+
+class ExtraPointModel(AmberModel):
+    """The part of U that the extra points take: the Coulomb of the pairs
+    with an extra point, shifted at the cutoff. The rest of U depends on
+    neither the places nor the charge of the extra points, so the derivative
+    in the positions of the rest is that of the evaluator with the charge of
+    the extra points zero."""
+
+    def __init__(self, system, sites, box, distance):
+        super().__init__(system, sites, box, distance)
+        site = np.zeros(system.topology.particle_count, dtype=bool)
+        site[sites[:, 0]] = True
+        keep = site[self.i] | site[self.j]
+        self.i, self.j = self.i[keep], self.j[keep]
+
+    def phi_frame(self, x, theta, g, v):
+        """g U_M + (J v) . dU_M/dX of one frame, complex-analytic in x."""
+        X = amber_place(x, self.sites, self.distance)
+        tangent = amber_tangent(x, v, self.sites, self.distance)
+        q = self.charges(theta)
+        d = X[self.i] - X[self.j]
+        d -= self.box * np.round(d.real / self.box)
+        r = np.sqrt((d * d).sum(axis=1))
+        inside = r.real < AMBER_RC
+        r, d, i, j = r[inside], d[inside], self.i[inside], self.j[inside]
+        qq = F * q[i] * q[j]
+        energy = (qq * (1 / r - 1 / AMBER_RC)).sum()
+        slope = (-qq / r ** 3)[:, None] * d
+        return g * energy + ((tangent[i] - tangent[j]) * slope).sum()
+
+
+def run_amber_positions(evaluator, system, state, model, theta, order, x, g, v, product,
+                        label):
+    """The derivative in the positions with the extra points of Amber (#771):
+    J^T (g dU/dX + H_X J Gbar) and the curvature of the placement, the
+    derivative of J^T along Gbar, the force on the site held fixed."""
+    out = evaluator.evaluate(x, gradients=("tunables", "positions"))
+    result = out.vjp(g, positions=v, gradients=("tunables", "positions"))
+    total, dx = base.flat(result, order), np.asarray(result.positions)
+    assert np.array_equal(total, product), "the variant changed the product in theta"
+    sites = model.sites
+    assert np.array_equal(dx[:, sites[:, 0]], np.zeros_like(dx[:, sites[:, 0]])), \
+        "a site moved Phi"
+    # The cotangent on a site meets a gradient that is zero: it is not read.
+    w = v.copy()
+    w[:, sites[:, 0]] = np.random.default_rng(5).normal(size=w[:, sites[:, 0]].shape)
+    moved = out.vjp(g, positions=w, gradients=("tunables", "positions"))
+    base.check(f"{label}: the product in theta with another cotangent on the sites",
+               base.flat(moved, order), total, 1e-14 if double else 1e-6)
+    base.check(f"{label}: the derivative in the positions with another cotangent on the sites",
+               np.asarray(moved.positions), dx, 1e-14 if double else 1e-6)
+    # The part of the extra points: the derivative less that with their
+    # charge zero, against NumPy by a complex step in x and by Richardson
+    # differences of its Phi.
+    charges = np.array(evaluator.tunables["q"])
+    evaluator.tunables.update({"q": np.array([charges[0], charges[1], 0.0])})
+    rest = evaluator.evaluate(x, gradients=("tunables", "positions"))
+    dx_rest = np.asarray(rest.vjp(g, positions=v, gradients=("tunables", "positions")).positions)
+    evaluator.tunables.update({"q": charges})
+    part = dx - dx_rest
+    m = ExtraPointModel(system, sites, model.box, model.distance)
+    phi = lambda y, n: m.phi_frame(y, theta, g[n], v[n])
+    complex_step = np.zeros_like(x)
+    for n in range(len(x)):
+        for i in range(x.shape[1]):
+            for c in range(3):
+                y = x[n].astype(complex)
+                y[i, c] += 1e-30j
+                complex_step[n, i, c] = phi(y, n).imag / 1e-30
+    tolerance = 1e-8 if double else 2e-5
+    base.check(f"{label}: the derivative in the positions of the part of the extra points "
+               "against a complex step of the NumPy Phi", part, complex_step, tolerance)
+    def central(h):
+        result = np.zeros_like(x)
+        for n in range(len(x)):
+            for i in range(x.shape[1]):
+                for c in range(3):
+                    e = np.zeros_like(x[n])
+                    e[i, c] = h
+                    result[n, i, c] = (phi(x[n] + e, n) - phi(x[n] - e, n)) / (2.0 * h)
+        return result
+    step = 4e-6
+    richardson_numpy = (4.0 * central(0.5 * step) - central(step)) / 3.0
+    base.check(f"{label}: the same against Richardson differences of the NumPy Phi "
+               f"(h = {step:.0e})", part, richardson_numpy, tolerance)
+    if double:
+        base.check(f"{label}: the derivative in the positions against Richardson differences "
+                   f"of Phi from the evaluator (h = {step:.0e})", dx,
+                   batched_richardson(evaluator, x, g, v, step), 1e-7)
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            exact = mdir.FrameEvaluator(base.compile_(system, state, base.target, "Double"))
+        dx_exact = np.asarray(exact.evaluate(x, gradients=("tunables", "positions")).vjp(
+            g, positions=v, gradients=("tunables", "positions")).positions)
+        base.check(f"{label}: the derivative in the positions in mixed precision against that "
+                   "in double", dx, dx_exact, 1e-5)
+    print(f"{label}: the product in theta of the variant equals D381's, to the bit; the rows "
+          "of the sites are zero")
+
+
+def batched_richardson(evaluator, x, g, v, step):
+    """d(g U + v . G)/dx by central differences of the evaluator's energy and
+    gradient, every displaced frame in one call, Richardson-extrapolated
+    from the steps `step` and `step`/2."""
+    count, n = x.shape[0], x.shape[1]
+    def central(h):
+        frames, owner = [], []
+        for k in range(count):
+            for i in range(n):
+                for c in range(3):
+                    for sign in (1.0, -1.0):
+                        y = x[k].copy()
+                        y[i, c] += sign * h
+                        frames.append(y)
+                        owner.append(k)
+        owner = np.array(owner)
+        out = evaluator.evaluate(np.array(frames), gradients=("positions",))
+        values = g[owner] * out.energy + np.einsum(
+            "nij,nij->n", v[owner], np.asarray(out.gradients["positions"]))
+        return ((values[0::2] - values[1::2]) / (2.0 * h)).reshape(x.shape)
+    return (4.0 * central(0.5 * step) - central(step)) / 3.0
 
 
 def run_placement():
