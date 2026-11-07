@@ -1,0 +1,97 @@
+# 2. Equilibration at constant volume: velocities at 300 K, @NVT_STEPS@ steps
+#    of 2 fs of Langevin dynamics, the ions restrained as in stage 1.
+
+[input]
+topology    = "../system.prmtop"
+coordinates = "../system.inpcrd"
+checkpoint  = "min.h5"
+
+[output]
+log                 = "nvt.log"
+observables         = "nvt.obs"
+checkpoint          = "nvt.h5"
+energy_interval     = @NVT_ROWS@
+checkpoint_interval = @NVT_STEPS@
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = @NVT_STEPS@
+seed       = @SEED@
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[thermostat]
+method   = "LANGEVIN"
+friction = 1.0
+
+[[restraints]]
+selection      = ":K+,Cl-"
+force_constant = 10.0
+
+[energy]
+cutoff                 = 9.0
+electrostatics         = "PME"
+coulomb_modifier       = "POTENTIAL_SHIFT"
+lennard_jones_modifier = "NONE"
+dispersion_correction  = "ENERGY_PRESSURE"
+
+# The K-Cl correction, linear in x12 and x6: the pair has C12 (1 + x12) and
+# C6 (1 + x6) of the Lorentz-Berthelot pair of the Joung-Cheatham ions,
+# c12 = 4 eps0 sig0^12 and c6 = 4 eps0 sig0^6 with sig0 = 3.757811 Å and
+# eps0 = 0.0830263 kcal/mol. run.py sets x12 and x6 from sigma'.
+[[energy.pair]]
+name       = "nbfix"
+groups     = [":K+", ":Cl-"]
+expression = "x12*c12/r^12 - x6*c6/r^6"
+@OBSERVE_NBFIX@
+c12 = 2633265.4421778
+c6  = 935.15840794972
+x12 = @X12@
+x6  = @X6@
+
+# Flat-bottom walls on the ions alone (Luo and Roux 2010): the osmotic
+# pressure is (lower.d_z0 - upper.d_z0) / (2 A) for the area A of the cell.
+[[energy.external]]
+name       = "lower"
+selection  = ":K+,Cl-"
+scaling    = "@SCALING@"
+expression = "0.5*k*max(0, z0 - z)^2"
+@OBSERVE_WALL@
+k  = 10.0
+z0 = @ZLO@
+
+[[energy.external]]
+name       = "upper"
+selection  = ":K+,Cl-"
+scaling    = "@SCALING@"
+expression = "0.5*k*max(0, z - z0)^2"
+@OBSERVE_WALL@
+k  = 10.0
+z0 = @ZHI@
+
+# A term of zero strength whose derivative counts the ions in the slab
+# |z - zc| < zw, the bulk of the solution: its concentration.
+[[energy.external]]
+name       = "slab"
+selection  = ":K+,Cl-"
+scaling    = "@SCALING@"
+expression = "s*step(zw - abs(z - zc))"
+@OBSERVE_SLAB@
+s  = 0.0
+zc = @ZC@
+zw = 10.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "@TARGET@"
+precision = "MIXED"
+@THREADS@
