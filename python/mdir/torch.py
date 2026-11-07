@@ -111,7 +111,7 @@ def _frame_energies(call: int, gradient: bool, theta: List[Tensor], positions: T
     else:
         rows = np.zeros((out.count, 0))
     # A backward by a second pass, or one with a cotangent on the gradient
-    # in the positions, by the product program (D[force-matching-torch]),
+    # in the positions, by the product program (D382),
     # reads the frames again.
     if gradient and (out.jacobian is None or record.wants[0]):
         record.source, record.version = out._source, out.version
@@ -238,7 +238,7 @@ def _frame_input_vjp(energy: Tensor, gradient: Tensor) -> Tensor:
     # gradient in an input, (K, ...): an operation of its own, whose
     # derivative in `gradient` reaches the operation of the energies, which
     # gave it as an output: the product of force matching in the tunables
-    # (D[force-matching-torch]), and the refusal of the Hessian in the
+    # (D382), and the refusal of the Hessian in the
     # positions and of the derivative in the cell.
     return energy.to(gradient.dtype).reshape((-1,) + (1,) * (gradient.dim() - 1)) * gradient
 
@@ -314,7 +314,7 @@ def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in
                     "a second derivative of the energy of the frames is not implemented: the "
                     f"derivative of the gradient of the energy in the positions, in {what}, was "
                     "asked for. It is not zero. The derivative in the tunables is given "
-                    "(D[force-matching-torch]): take the gradient in the tunables alone "
+                    "(D382): take the gradient in the tunables alone "
                     "(torch.autograd.grad(loss, theta)), or detach the positions")
     product = _frame_vjp(ctx.call, sum(ctx.sizes), ctx.serial, energy, others, ctx.jacobian,
                          [in_positions, in_strain, in_cell], ctx.needed)
@@ -500,7 +500,7 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     gradient of `energy` in positions that require a gradient
     (`torch.autograd.grad(..., create_graph=True)`), are differentiable in
     `theta`: a loss on the forces trains the tunables, by the product of
-    force matching (D[force-matching-torch], `FrameEnergies.vjp(positions=)`).
+    force matching (D382, `FrameEnergies.vjp(positions=)`).
     Their derivatives in the positions (the Hessian) and in the cell, and
     every other second derivative, are refused (`UnsupportedError`) where a
     backward needs them.

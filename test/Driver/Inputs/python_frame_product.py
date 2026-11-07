@@ -61,7 +61,7 @@ def cotangents(x, seed=727):
 def product(evaluator, x, g, v):
     """The product under test, a dict of the names of the tunables to their
     entries: FrameEnergies.vjp here; python_frame_product_torch.py puts the
-    backward of mdir.torch in its place (D[force-matching-torch])."""
+    backward of mdir.torch in its place (D382)."""
     out = evaluator.evaluate(x, gradients=("tunables", "positions"))
     return {name: np.asarray(value) for name, value in out.vjp(g, positions=v).items()}
 

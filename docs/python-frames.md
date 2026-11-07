@@ -5,7 +5,7 @@ separate product program, off by default, with cotangents passed through the
 frame boundary. D381 (#726 part B) uses it for the
 product of force matching, `FrameEnergies.vjp(positions=)`
 ([below](#the-product-of-force-matching-d381)), and
-D[force-matching-torch] (#726 part E) makes it the backward of the
+D382 (#726 part E) makes it the backward of the
 gradient in the positions in `mdir.torch`; `mdir.jax` still refuses every
 second derivative.
 
@@ -271,7 +271,7 @@ out.gradients                          # "positions" and "strain" where asked, a
 and, where they are tensors that require a gradient, in the positions and
 the cell ([below](#through-mdirtorchevaluate)). A loss on the forces
 trains the tunables: the gradient in the positions is differentiable in
-`theta` (force matching, D[force-matching-torch], below). A loss on the
+`theta` (force matching, D382, below). A loss on the
 stress can be evaluated, but its derivative in $\boldsymbol\theta$ is not
 implemented, and asking for it is an error, `UnsupportedError`, never a
 zero.
@@ -313,7 +313,7 @@ zero.
   iterable carry no graph, and such frames that require a gradient are
   refused (`UnsupportedError`).
 - **Force matching: the gradient in the positions is differentiable in
-  `theta`** (D[force-matching-torch], #726 part E). The gradient
+  `theta`** (D382, #726 part E). The gradient
   $\mathbf G = \partial U/\partial\mathbf x$ is differentiable in `theta`,
   whether it is the output `gradients["positions"]` or the gradient of
   `energy` in positions that require one, taken with
@@ -813,7 +813,7 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D[force-matching-torch]) | `mdir.jax` (#726 D) |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D382) | `mdir.jax` (#726 D) |
 | Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of
@@ -1922,7 +1922,7 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
   output `gradients["strain"]`.
 - **The gradients as outputs** depend on `theta` and on the positions.
   The derivative of `gradients["positions"]` in `theta` is the product of
-  force matching (D[force-matching-torch],
+  force matching (D382,
   [above](#the-pytorch-adapter)). Every other derivative of them, a
   second derivative of $U$, is not implemented. That covers
   `gradients["strain"]` in anything and `gradients["positions"]` in the

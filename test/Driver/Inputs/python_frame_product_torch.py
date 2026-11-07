@@ -1,4 +1,4 @@
-"""Force matching through mdir.torch (D[force-matching-torch], #726 part E):
+"""Force matching through mdir.torch (D382, #726 part E):
 the gradient of a loss on the forces in the tunables, by the backward of
 the gradient of the energy in the positions.
 

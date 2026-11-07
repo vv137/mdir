@@ -1,5 +1,5 @@
 # REQUIRES: python-api, torch
-# Force matching through mdir.torch (D[force-matching-torch], #726 part E),
+# Force matching through mdir.torch (D382, #726 part E),
 # on the CPU. Inputs/python_frame_product_torch.py forms the product of
 # D381 by autograd in its two forms: through the output
 # gradients["positions"], and through the gradient of the energy taken with
