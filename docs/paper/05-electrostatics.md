@@ -66,6 +66,13 @@ mode adds the grid in fixed point at the scale $2^{40}$.
 
 ## 5.2 The reciprocal sum
 
+The approved decomposition for #452 is described in
+[Reciprocal sums as differentiable primitives](../reciprocal-primitives.md),
+D[reciprocal-primitives-design]. It declares the spread/gather transposes
+and the window-curvature terms needed by force matching. This design
+changes no implemented reciprocal method or measured
+performance result.
+
 With the structure factor $S(\mathbf m) = \sum_j q_j e^{2\pi
 i\,\mathbf m\cdot\mathbf x_j}$ over the reciprocal vectors $\mathbf m$ of
 the cell, which for an orthorhombic cell are $m_a = k_a/L_a$ with integer

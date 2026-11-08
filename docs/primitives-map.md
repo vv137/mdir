@@ -218,6 +218,12 @@ which no derivative passes. The reciprocal sum is one op to the derivative
 
 ### 1.4 What the set does not contain
 
+The remaining #452 composition has an approved
+[design and transpose contracts](reciprocal-primitives.md)
+(D[reciprocal-primitives-design]). It includes the
+nonlinear position and cell rules required by charge-field force matching
+and position Hessian-vector products; the proposal implements no new route.
+
 The set had no linear transform until the maintainer's ruling on #452
 (2026-10-19), which adds one with a declared adjoint, the fast Fourier
 transform first: the adjoint of the unnormalized forward transform is the
