@@ -291,6 +291,58 @@ zero, and the written form leaves it out. The two forms agree to the
 rounding, and the derived one is about 1% slower in a step that needs the
 virial.
 
+**The extra point in the template kernel** (a design,
+D[rigid-water-template], #774; Section 4.7). For a rigid water the
+bisector has a constant length on the geometry of the constraints, and the
+same point is the combination
+
+$$
+\mathbf x_s = \mathbf x_o + \alpha(\mathbf d_j + \mathbf d_k), \qquad
+\alpha = \frac{r_{os}}{2r_\mathrm{OH}\cos(\theta_\mathrm{HOH}/2)},
+$$
+
+with a constant $\alpha$ ($0.1477206$ for OPC). Let $\mathcal M$ be the
+manifold of the water's three constraints $\chi_k(\mathbf x) = 0$. On
+$\mathcal M$, $\lVert\mathbf d_j\rVert = \lVert\mathbf d_k\rVert =
+r_\mathrm{OH}$ and the angle between them is $\theta_\mathrm{HOH}$, so the
+sum of the unit vectors of the bonds is $(\mathbf d_j + \mathbf
+d_k)/r_\mathrm{OH}$, of length $2\cos(\theta_\mathrm{HOH}/2)$, and the
+bisector placement $\mathbf p_\mathrm B$ and the linear one $\mathbf
+p_\mathrm A$ give the same point. Two maps equal on $\mathcal M$ have
+equal derivatives along every curve in it: $(J_\mathrm A - J_\mathrm
+B)\mathbf t = 0$ for every $\mathbf t$ in the tangent space $T_{\mathbf
+x}\mathcal M$. For any force $\mathbf f$ on the site, the difference of
+the forces moved to the atoms, $(J_\mathrm A - J_\mathrm B)^\mathsf
+T\mathbf f$, is then orthogonal to $T_{\mathbf x}\mathcal M$, a
+combination of the gradients $\nabla\chi_k$. The correction of a
+constraint step moves each atom along $\nabla\chi_k/m$ at the start of the
+step (Section 6.2) and the projection $\mathcal P_{\mathbf x}$ removes the
+velocity along the same directions, so a force along the $\nabla\chi_k$
+changes only the multipliers $\Lambda_k$, not the positions or the
+velocities that come out: the constrained trajectory is the same in exact
+arithmetic. The gradient of a constraint on a distance has opposite
+halves on its two atoms, so the difference has no total force and no
+torque on the molecule, and the virial of the rigid groups that the
+barostat takes, $\mathsf W_g$, is unchanged; the virial of the forces and
+that of the constraints change by opposite amounts.
+
+The template kernel places the site with $\alpha$, from the three atoms,
+and the design leaves open how it moves the site's force back:
+
+- by the constant transpose of the linear placement, the oxygen taking
+  $(1 - 2\alpha)\mathbf f$ and each hydrogen $\alpha\mathbf f$, the exact
+  gradient of the energy the kernel evaluates at every configuration,
+  with no correction of the virial since the weights sum to 1;
+- or by $J_\mathrm B^\mathsf T$ evaluated with the rigid geometry's
+  constants for the lengths, which equals the bisector's on $\mathcal M$
+  and gives the atom forces of the general path there.
+
+Off $\mathcal M$, at the positions of the input before the first step and
+within the residual of the constraints, the placements and the forces
+differ from those of the general path, so the template agrees with it
+within the error of mixed precision, not bitwise. Force outputs,
+derivatives, and water that is not rigid keep the bisector.
+
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
 followed by the same drift, constraint, and correction, with no second
