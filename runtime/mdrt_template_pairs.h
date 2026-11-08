@@ -214,6 +214,16 @@ void _mlir_ciface_mdrtTemplatePairsArenaView(struct Buffer1 *result,
   result->stride = 1;
 }
 
+void _mlir_ciface_mdrtTemplatePairsCounters(struct Buffer1 *result, int64_t handle) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  result->allocated = pairs->pairs;
+  result->aligned = (void *)((uintptr_t)pairs->pairs +
+      TEMPLATE_PAIR_STAGE_COUNT * sizeof(int32_t));
+  result->offset = 0;
+  result->size = 4;
+  result->stride = 1;
+}
+
 int64_t mdrtTemplatePairsCapacity(int64_t handle) {
   return ((struct TemplatePairs *)(intptr_t)handle)->layout.entries;
 }

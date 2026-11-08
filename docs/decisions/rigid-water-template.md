@@ -597,6 +597,17 @@ groups' hybrid references. An independent lexicographic oracle checks
 repeated-point ties and coordinates that round to the final bin edge.
 The spatial search that consumes these bins is not yet connected.
 
+The search's append primitive ballot-compacts sparse candidate batches
+into chunks of 64, carrying a partial chunk across rounds. Concurrent
+rows reserve chunks with an i64 counter; physical addresses remain wide.
+Capacity overflow skips writes beyond the logical capacity while retaining
+the exact required chunk/entry counts for growth. An entry total outside
+the final i32 domain sets an index flag before compaction. Independent
+row-concatenation fixtures check the ordinary path (1,190 integers), the
+expected capacity flag and untouched tails (1,574), and a preloaded total
+crossing the index bound (14). These test the primitive, not a completed
+spatial search.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

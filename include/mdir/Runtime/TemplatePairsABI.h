@@ -41,6 +41,15 @@ enum MdrtTemplatePairHeader {
   TEMPLATE_PAIR_OUTER_RANGES = 4, TEMPLATE_PAIR_INNER_RANGES = 22,
   TEMPLATE_PAIR_STAGE_COUNT = 40
 };
+/* Four aligned i64 controls occupy header words 40..47. The low word of
+ * the chunk count is also TEMPLATE_PAIR_STAGE_COUNT, after bounds checks. */
+enum MdrtTemplateCounterSlot {
+  TEMPLATE_COUNTER_CHUNKS = 0, TEMPLATE_COUNTER_FLAGS = 1,
+  TEMPLATE_COUNTER_ENTRIES = 2, TEMPLATE_COUNTER_EXTENT = 3
+};
+enum MdrtTemplateBuildFlag {
+  TEMPLATE_BUILD_INDEX_OVERFLOW = 1, TEMPLATE_BUILD_CAPACITY_OVERFLOW = 2
+};
 /* A row is [class, first-unit begin, entry begin, entry count].
  * A work unit is [class, first-unit begin, entry begin, entry end].
  * An entry is [partner unit, lattice-image code, first-unit mask, reserved].

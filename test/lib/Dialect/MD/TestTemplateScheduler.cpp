@@ -1,8 +1,10 @@
 // One-warp execution of the actual source-derived body and scheduler.
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/TemplateBuildKernels.h"
 #include "mdir/Conversion/TemplateSpatialKernels.h"
+#include "mdir/Conversion/TemplateStageKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -395,11 +397,116 @@ struct TestTemplateSpatial
     func::ReturnOp::create(b, loc);
   }
 };
+struct TestTemplateStage
+    : PassWrapper<TestTemplateStage, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateStage)
+  TestTemplateStage() = default;
+  TestTemplateStage(const TestTemplateStage &pass) : PassWrapper(pass) {}
+  Option<int64_t> capacity{*this, "capacity", llvm::cl::desc("Override the logical chunk capacity"),
+                           llvm::cl::init(0)};
+  StringRef getArgument() const final { return "test-md-template-stage"; }
+  StringRef getDescription() const final { return "Outlines sparse candidate batches for the template chunk writer"; }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect, func::FuncDialect, gpu::GPUDialect,
+        memref::MemRefDialect, scf::SCFDialect>();
+  }
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    auto function = module.lookupSymbol<func::FuncOp>("append_seed");
+    if (!function || !function.isExternal() || function.getNumArguments() != 1) {
+      module.emitError("stage fixture expects the append_seed declaration");
+      return signalPassFailure();
+    }
+    Location loc = function.getLoc();
+    Block *entry = function.addEntryBlock();
+    OpBuilder b = OpBuilder::atBlockEnd(entry);
+    Value handle = entry->getArgument(0);
+    Type wide = b.getI64Type();
+    auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
+        MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    auto controls = MemRefType::get({4}, wide, MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    auto call = [&](StringRef name, ValueRange arguments, Type result, bool ciface) -> Value {
+      auto type = b.getFunctionType(arguments.getTypes(), TypeRange{result});
+      auto callee = module.lookupSymbol<func::FuncOp>(name);
+      if (!callee) {
+        OpBuilder symbols(module.getBodyRegion());
+        callee = func::FuncOp::create(symbols, loc, name, type);
+        callee.setPrivate();
+      }
+      assert(callee.getFunctionType() == type);
+      if (ciface) callee->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+      return func::CallOp::create(b, loc, callee, arguments).getResult(0);
+    };
+    auto word = [&](OpBuilder &at, int64_t n) -> Value { return arith::ConstantIntOp::create(at, loc, n, 32); };
+    auto integer = [&](OpBuilder &at, int64_t n) -> Value { return arith::ConstantIntOp::create(at, loc, n, 64); };
+    auto view = [&](int64_t slot) -> Value {
+      return call("mdrtTemplatePairsArenaView", ValueRange{handle, integer(b, slot)}, device, true);
+    };
+    TemplateStageBuffers buffers;
+    buffers.units = view(TEMPLATE_LAYOUT_STAGE_UNITS);
+    buffers.entries = view(TEMPLATE_LAYOUT_STAGE_ENTRIES);
+    buffers.counts = view(TEMPLATE_LAYOUT_BUILD_COUNTS);
+    buffers.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
+    buffers.capacity = capacity ? integer(b, capacity) : call("mdrtTemplatePairsLayoutValue",
+        ValueRange{handle, integer(b, TEMPLATE_LAYOUT_UNITS)}, wide, false);
+    Value rows = call("mdrtTemplatePairsLayoutValue",
+        ValueRange{handle, integer(b, TEMPLATE_LAYOUT_ROWS)}, wide, false);
+    rows = arith::IndexCastOp::create(b, loc, b.getIndexType(), rows);
+    Value block = createIndex(b, loc, 256), one = createIndex(b, loc, 1);
+    Value threads = arith::MulIOp::create(b, loc, rows, createIndex(b, loc, 32));
+    Value grid = arith::DivUIOp::create(b, loc,
+        arith::AddIOp::create(b, loc, threads, createIndex(b, loc, 255)), block);
+    auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
+    OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
+    Value thread = arith::AddIOp::create(k, loc,
+        arith::MulIOp::create(k, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
+    Value row = arith::DivUIOp::create(k, loc, thread, createIndex(k, loc, 32));
+    Value valid = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, row, rows);
+    scf::IfOp::create(k, loc, valid, [&](OpBuilder &at, Location) {
+      buffers.row = arith::IndexCastOp::create(at, loc, at.getI32Type(), row);
+      buffers.lane = arith::IndexCastOp::create(at, loc, at.getI32Type(),
+          arith::RemUIOp::create(at, loc, thread, createIndex(at, loc, 32)));
+      Value wanted = integer(at, 0);
+      for (auto [r, count] : {std::pair{0, 65}, {2, 33}, {3, 1}, {5, 2}})
+        wanted = arith::SelectOp::create(at, loc,
+            arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, buffers.row, word(at, r)),
+            integer(at, count), wanted);
+      auto batches = scf::ForOp::create(at, loc, word(at, 0), word(at, 6), word(at, 1),
+          ValueRange{integer(at, 0), integer(at, -1)},
+          [&](OpBuilder &batch, Location, Value round, ValueRange state) {
+            Value pattern = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ne,
+                arith::RemUIOp::create(batch, loc,
+                    arith::AddIOp::create(batch, loc, buffers.lane, round), word(batch, 3)), word(batch, 0));
+            Value rank = arith::ExtUIOp::create(batch, loc, wide,
+                emitWarpRank(batch, loc, emitWarpBallot(batch, loc, pattern),
+                    emitLanesBelow(batch, loc, buffers.lane)));
+            Value ordinal = arith::AddIOp::create(batch, loc, state[0], rank);
+            Value keep = arith::AndIOp::create(batch, loc, pattern,
+                arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ult, ordinal, wanted));
+            Value n = arith::TruncIOp::create(batch, loc, batch.getI32Type(), ordinal);
+            Value partner = arith::AddIOp::create(batch, loc, word(batch, 1000),
+                arith::AddIOp::create(batch, loc, n,
+                    arith::MulIOp::create(batch, loc, buffers.row, word(batch, 100))));
+            Value record[] = {partner, arith::AddIOp::create(batch, loc, word(batch, 2000), n),
+                arith::AddIOp::create(batch, loc, word(batch, 3000), buffers.row),
+                arith::AddIOp::create(batch, loc, word(batch, 4000), n)};
+            auto next = emitAppendTemplateStage(batch, loc, buffers, {state[0], state[1]}, keep, record);
+            scf::YieldOp::create(batch, loc, ValueRange{next.count, next.chunk});
+          });
+      emitFinishTemplateStage(at, loc, buffers, {batches.getResult(0), batches.getResult(1)});
+      scf::YieldOp::create(at, loc);
+    });
+    gpu::TerminatorOp::create(k, loc);
+    b.setInsertionPointAfter(launch);
+    func::ReturnOp::create(b, loc);
+  }
+};
 } // namespace
 namespace mdir::test {
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
   PassRegistration<TestTemplateCompaction>();
   PassRegistration<TestTemplateSpatial>();
+  PassRegistration<TestTemplateStage>();
 }
 }
