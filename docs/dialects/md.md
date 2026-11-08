@@ -623,6 +623,46 @@ Interfaces: `OpAsmOpInterface`
 
 
 
+### `md.grid_jvp` (::mdir::md::GridJVPOp)
+
+_An explicit derivative request for a structured grid kernel_
+
+Syntax:
+
+```
+operation ::= `md.grid_jvp` $source `wrt` `(` $operand `)` $seed attr-dict `:`
+              qualified(type($source)) `,` qualified(type($seed))
+              `->` qualified(type($result))
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>operand</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | any non-token type |
+| `seed` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.grid_stencil` (::mdir::md::GridStencilOp)
 
 _The discrete support relation of a particle-grid window_
@@ -664,6 +704,46 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `stencil` | A structural particle-grid stencil relation |
+
+
+
+### `md.grid_vjp` (::mdir::md::GridVJPOp)
+
+_An explicit derivative request for a structured grid kernel_
+
+Syntax:
+
+```
+operation ::= `md.grid_vjp` $source `wrt` `(` $operand `)` $seed attr-dict `:`
+              qualified(type($source)) `,` qualified(type($seed))
+              `->` qualified(type($result))
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>operand</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | any non-token type |
+| `seed` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
 
 
 
@@ -769,6 +849,60 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | floating-point or vector of floating-point values of ranks 1 |
+
+
+
+### `md.map_grid` (::mdir::md::MapGridOp)
+
+_Maps one scalar kernel over a real grid or half-spectrum_
+
+Syntax:
+
+```
+operation ::= `md.map_grid` `(` $inputs `)` `grid` `(` $grid `)`
+              `pairing` `(` $pairing `)` attr-dict
+              `:` `(` qualified(type($inputs)) `)` `->` qualified(type($result))
+              $kernel
+```
+
+A pure elementwise map on a static three-dimensional domain. The
+`grid` is the full real extent. With `euclidean` pairing the domain is
+the full grid; with `real_hermitian_half` it is the stored last-axis
+half. Tensor inputs have the domain shape. Uniform f64 scalars and
+vectors are explicit inputs, not captures. The kernel receives a
+vector<3xindex> index and one element per input. Complex elements are
+represented inside the kernel by vector<2xf64> (real, imaginary), so
+the existing real scalar derivative rules apply in both directions.
+It yields one scalar or vector; a vector<2xf64> may form a complex
+output tensor. Every output element is defined in fresh storage.
+
+The pairing describes the domain, not a certificate of Hermitian
+validity. A complex result passed to a backward FFT must independently
+satisfy its boundary-plane conjugacy contract. The selected Gaussian
+chain proves this from its rectangular real influence; arbitrary maps
+are not evidence for a fused reciprocal strategy.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>grid</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
+<tr><td><code>pairing</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `inputs` | variadic of any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | ranked tensor of any non-token type values |
 
 
 
@@ -1360,6 +1494,51 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md.sum_grid` (::mdir::md::SumGridOp)
+
+_Reduces a scalar kernel under the declared grid pairing_
+
+Syntax:
+
+```
+operation ::= `md.sum_grid` `(` $inputs `)` `grid` `(` $grid `)`
+              `pairing` `(` $pairing `)` attr-dict
+              `:` `(` qualified(type($inputs)) `)` `->` qualified(type($result))
+              $kernel
+```
+
+Uses the same domain and kernel arguments as md.map_grid and sums the
+yielded f64 scalar or vector in lexicographic order, last axis fastest.
+With real_hermitian_half, interior last-axis modes have weight two;
+zero and the even-grid Nyquist plane have weight one. There is no FFT
+normalization in this reduction. The reduction starts at zero and
+covers the whole domain. It has ideal additive algebra; an execution
+quantizer or an alternative reduction tree is not implicit.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>grid</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
+<tr><td><code>pairing</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `inputs` | variadic of any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.sum_particles` (::mdir::md::SumParticlesOp)
 
 _Sums a kernel over particles_
@@ -1708,7 +1887,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

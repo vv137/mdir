@@ -509,6 +509,72 @@ class MD_StencilDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
 def MD_StencilJVPOp : MD_StencilDerivativeOp<"stencil_jvp">;
 def MD_StencilVJPOp : MD_StencilDerivativeOp<"stencil_vjp">;
 
+class MD_GridKernelOp<string mnemonic> : MD_Op<mnemonic, [
+    RecursiveMemoryEffects, SingleBlock]> {
+  let arguments = (ins Variadic<AnyType>:$inputs,
+                       DenseI64ArrayAttr:$grid, StrAttr:$pairing);
+  let regions = (region AnyRegion:$kernel);
+  let assemblyFormat = [{
+    `(` $inputs `)` `grid` `(` $grid `)`
+    `pairing` `(` $pairing `)` attr-dict
+    `:` `(` qualified(type($inputs)) `)` `->` qualified(type($result))
+    $kernel
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MD_MapGridOp : MD_GridKernelOp<"map_grid"> {
+  let summary = "Maps one scalar kernel over a real grid or half-spectrum";
+  let description = [{
+    A pure elementwise map on a static three-dimensional domain. The
+    `grid` is the full real extent. With `euclidean` pairing the domain is
+    the full grid; with `real_hermitian_half` it is the stored last-axis
+    half. Tensor inputs have the domain shape. Uniform f64 scalars and
+    vectors are explicit inputs, not captures. The kernel receives a
+    vector<3xindex> index and one element per input. Complex elements are
+    represented inside the kernel by vector<2xf64> (real, imaginary), so
+    the existing real scalar derivative rules apply in both directions.
+    It yields one scalar or vector; a vector<2xf64> may form a complex
+    output tensor. Every output element is defined in fresh storage.
+
+    The pairing describes the domain, not a certificate of Hermitian
+    validity. A complex result passed to a backward FFT must independently
+    satisfy its boundary-plane conjugacy contract. The selected Gaussian
+    chain proves this from its rectangular real influence; arbitrary maps
+    are not evidence for a fused reciprocal strategy.
+  }];
+  let results = (outs AnyRankedTensor:$result);
+}
+
+def MD_SumGridOp : MD_GridKernelOp<"sum_grid"> {
+  let summary = "Reduces a scalar kernel under the declared grid pairing";
+  let description = [{
+    Uses the same domain and kernel arguments as md.map_grid and sums the
+    yielded f64 scalar or vector in lexicographic order, last axis fastest.
+    With real_hermitian_half, interior last-axis modes have weight two;
+    zero and the even-grid Nyquist plane have weight one. There is no FFT
+    normalization in this reduction. The reduction starts at zero and
+    covers the whole domain. It has ideal additive algebra; an execution
+    quantizer or an alternative reduction tree is not implicit.
+  }];
+  let results = (outs AnyType:$result);
+}
+
+class MD_GridDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
+  let summary = "An explicit derivative request for a structured grid kernel";
+  let arguments = (ins AnyType:$source, AnyType:$seed, I64Attr:$operand);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $source `wrt` `(` $operand `)` $seed attr-dict `:`
+    qualified(type($source)) `,` qualified(type($seed))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+def MD_GridJVPOp : MD_GridDerivativeOp<"grid_jvp">;
+def MD_GridVJPOp : MD_GridDerivativeOp<"grid_vjp">;
+
 def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
   let summary = "A value-level linear transform with a declared adjoint";
   let description = [{
@@ -684,7 +750,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["ScatterStencilOp", "GatherStencilOp",
+    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "MapGridOp", "SumGridOp",
                  "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {

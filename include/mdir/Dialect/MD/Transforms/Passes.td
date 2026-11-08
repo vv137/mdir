@@ -5,6 +5,21 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DifferentiateGrid : Pass<"md-differentiate-grid", "::mlir::ModuleOp"> {
+  let summary = "Expands structured grid JVP/VJP requests under their real pairing";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
+def ExpandGridKernels : Pass<"md-expand-grid-kernels", "::mlir::ModuleOp"> {
+  let summary = "Expands structured grid maps and weighted reductions";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::complex::ComplexDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::tensor::TensorDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def DifferentiateStencils : Pass<"md-differentiate-stencils", "::mlir::ModuleOp"> {
   let summary = "Expands explicit stencil JVP/VJP requests and diagnoses active operands";
   let dependentDialects = ["::mlir::arith::ArithDialect",

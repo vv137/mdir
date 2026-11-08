@@ -221,6 +221,11 @@ is needed when the kernels are compiled, not when LLVM is built.
 
 ## 4. `md` ops
 
+Slice 2's [grid composition](reciprocal-grid.md), D[reciprocal-grid], adds
+**md.map_grid** and **md.sum_grid** with explicit real/Hermitian pairings
+and JVP/VJP requests. Their pure kernel and complete coverage precede
+execution strategy selection.
+
 Slice 1 of #452 introduces **md.grid_stencil**, structured scatter/gather,
 their declared linear transposes and JVPs, and the common scalar B-spline
 window. The [contracts and precision table](reciprocal-stencils.md)
