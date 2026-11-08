@@ -586,6 +586,55 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.gather_template_window` (::mdir::md::GatherTemplateWindowOp)
+
+_Scatters the derived site-window forces to real members_
+
+Syntax:
+
+```
+operation ::= `md.gather_template_window` $relation `,` $positions `,` $cell
+              `cutoff` `(` $cutoff `)` `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The force transpose of `md.sum_template_window`, with the same images,
+operands, geometry and per-site cutoff. For M site pairs of arity A,
+its body yields M groups of A force vectors followed by M site
+displacements. Each force group is included only inside that site's
+cutoff. The four-site stored particle is absent: the body's constant
+placement arithmetic supplies rule A's transpose to O, H1 and H2.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.gather_tuples` (::mdir::md::GatherTuplesOp)
 
 _Sums a kernel, per particle, over the tuples it is in_
@@ -1743,6 +1792,76 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.sum_template_window` (::mdir::md::SumTemplateWindowOp)
+
+_Sums a structured site window over covering anchor images_
+
+Syntax:
+
+```
+operation ::= `md.sum_template_window` $relation `,` $positions `,` $cell
+              `cutoff` `(` $cutoff `)` `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The relation is one result of `md.template_pairs`. WW, SW and SS have
+respectively five, three and one displacement arguments: first the
+anchor displacement in the candidate image, then each water's H1-O
+and H2-O displacements in its whole-molecule frame, in tuple order.
+Each gathered field then supplies one value per tuple member.
+
+For M site pairs the body yields M energies followed by M site
+displacements. Each energy is included only where its own displacement
+has length strictly below `cutoff`. The body exposes all placement and
+pair arithmetic. The verifier proves that every yielded displacement
+is the anchor displacement plus supported site offsets: O, H1, H2 or
+alpha*(H1-O + H2-O). A scalar result sums energies; a vector<9xf64>
+result sums the corresponding strain contributions.
+
+The logical reduction enumerates all covering anchor images, as in
+D242, not just the minimum image. `extent` is a checked covering bound
+on each water at the evaluation; it is widened before the first
+constrained evaluation and enforced afterward. Only after that bound
+and the explicit site geometry are proved may lowering use the
+class-segmented pair list. A covering reach below the least cell edge
+and a cutoff below half the cell are required as on the ordinary
+group route. The relation has no hidden real payload.
+
+Force and strain rules differentiate this body's arithmetic, including
+the candidate image in the anchor displacement. They hold the piecewise
+constant membership fixed, as ordinary pair derivatives do. Higher
+derivatives and tunable parameters are not admitted by this reduction.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.sum_tuples` (::mdir::md::SumTuplesOp)
 
 _Sums a kernel over the tuples of a tuple set_
@@ -2046,7 +2165,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumTemplateWindowOp, GatherTemplateWindowOp, ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

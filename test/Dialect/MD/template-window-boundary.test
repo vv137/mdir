@@ -1,0 +1,8 @@
+# RUN: rm -f %t.mlir
+# RUN: %python %S/Inputs/template_window_boundary.py %S/template-window.mlir %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate --test-md-template-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# The independent f64 all-images oracle counts exactly image (1,0,0),
+# with U=0.405 and W_xx=-0.81, rather than losing it at the anchor boundary.
+# Every energy, force and strain component, per image and in total, is
+# checked at the bound declared in the generator and decision before run.
+# CHECK: 1

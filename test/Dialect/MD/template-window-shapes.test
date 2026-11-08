@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/template_window_shapes.py mdir-opt %S/template-window.mlir | FileCheck %s
+# CHECK: template-window shape contracts: 3 passed

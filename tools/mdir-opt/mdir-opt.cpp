@@ -22,6 +22,7 @@
 namespace mdir {
 namespace test {
 void registerTestOutlineKernels();
+void registerTestTemplateWindows();
 void registerTestLoopEffects();
 void registerTestStageAdjoint();
 void registerTestTranspose();
@@ -35,6 +36,7 @@ int main(int argc, char **argv) {
   mdir::registerGpuLowerToNVVMPipeline();
   mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
+  mdir::test::registerTestTemplateWindows();
   mdir::test::registerTestLoopEffects();
   mdir::test::registerTestStageAdjoint();
   mdir::test::registerTestTranspose();

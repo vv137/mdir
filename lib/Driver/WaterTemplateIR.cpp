@@ -1,6 +1,8 @@
 // Straight-line site geometry, kept visible to differentiation and lowering.
 #include "WaterTemplateIR.h"
 #include "mdir/Driver/WaterTemplate.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
@@ -86,7 +88,9 @@ mdir::driver::builder::buildSoluteWaterWindow(
   auto offsets = window.offsets(model, frame);
   llvm::SmallVector<WaterTemplateSitePair, 4> pairs;
   for (unsigned j = 0; j != model.sites; ++j) {
-    bool lj = j == 0 && model.epsilon != 0.0;
+    // A zero O-O epsilon does not prove the O-solute table row is zero:
+    // independently specified cross-type entries still contribute.
+    bool lj = j == 0;
     bool q = model.charges[j] != 0.0;
     if (!lj && !q)
       continue;
@@ -95,4 +99,60 @@ mdir::driver::builder::buildSoluteWaterWindow(
                      window.constant(model.charges[j]), lj, q});
   }
   return pairs;
+}
+
+Value mdir::driver::builder::buildWaterTemplateReduction(
+    OpBuilder &builder, const WaterTemplateModel &model,
+    const WaterTemplateReductionInputs &input,
+    llvm::function_ref<Value(OpBuilder &, const WaterTemplateSitePair &)> pairEnergy) {
+  OpBuilder::InsertionGuard guard(builder);
+  auto loc = builder.getUnknownLoc();
+  unsigned arity = cast<mdir::md::RelationType>(input.relation.getType()).getArity();
+  unsigned coordinates = mdir::md::getTemplateWindowMembers(arity).size();
+  SmallVector<Value> gathered;
+  if (arity != 6) gathered = {input.types, input.charges};
+  auto sum = mdir::md::SumTemplateWindowOp::create(
+      builder, loc, builder.getF64Type(), input.relation, input.positions,
+      input.cell, gathered, APFloat(input.cutoff), APFloat(model.extent),
+      APFloat(model.alpha));
+  Type vector = VectorType::get({3}, builder.getF64Type());
+  SmallVector<Type> arguments(coordinates, vector);
+  if (arity != 6) {
+    arguments.append(arity, builder.getI32Type());
+    arguments.append(arity, builder.getF64Type());
+  }
+  SmallVector<Location> locations(arguments.size(), loc);
+  Block *block = builder.createBlock(&sum.getKernel(), {}, arguments, locations);
+  llvm::SmallVector<WaterTemplateSitePair, 10> pairs;
+  if (arity == 6) {
+    pairs = buildWaterWaterWindow(builder, model, block->getArgument(0),
+        {block->getArgument(1), block->getArgument(2)},
+        {block->getArgument(3), block->getArgument(4)});
+  } else if (arity == 4) {
+    llvm::append_range(pairs, buildSoluteWaterWindow(builder, model,
+        block->getArgument(0), block->getArgument(3), block->getArgument(7),
+        {block->getArgument(1), block->getArgument(2)}));
+  } else {
+    assert(arity == 2);
+    pairs.push_back({block->getArgument(0), block->getArgument(1),
+                     block->getArgument(2), block->getArgument(3),
+                     block->getArgument(4), input.lennardJones, input.coulomb});
+  }
+  SmallVector<Value> energies, displacements;
+  for (auto pair : pairs) {
+    pair.lennardJones &= input.lennardJones;
+    pair.coulomb &= input.coulomb;
+    if (!pair.lennardJones && !pair.coulomb) continue;
+    energies.push_back(pairEnergy(builder, pair));
+    displacements.push_back(pair.displacement);
+  }
+  if (energies.empty()) {
+    builder.setInsertionPoint(sum);
+    Value zero = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+    sum.erase();
+    return zero;
+  }
+  llvm::append_range(energies, displacements);
+  mdir::md::YieldOp::create(builder, loc, energies);
+  return sum.getResult();
 }

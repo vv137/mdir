@@ -4,6 +4,7 @@
 
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace mlir { class OpBuilder; }
 namespace mdir::driver {
@@ -37,6 +38,20 @@ llvm::SmallVector<WaterTemplateSitePair, 4> buildSoluteWaterWindow(
     mlir::OpBuilder &, const WaterTemplateModel &, mlir::Value anchorDisplacement,
     mlir::Value soluteType, mlir::Value soluteCharge,
     const WaterTemplateFrame &);
+
+struct WaterTemplateReductionInputs {
+  mlir::Value relation, positions, cell, types, charges;
+  double cutoff = 0.0;
+  bool lennardJones = true, coulomb = true;
+};
+/// Constructs one class's complete structured reduction. The pair callback
+/// clones the selected scalar pair expression; it does not replace the
+/// placement, cutoff, force or strain rules with an opaque kernel.
+mlir::Value buildWaterTemplateReduction(
+    mlir::OpBuilder &, const WaterTemplateModel &,
+    const WaterTemplateReductionInputs &,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &,
+                                  const WaterTemplateSitePair &)> pairEnergy);
 } // namespace builder
 } // namespace mdir::driver
 #endif

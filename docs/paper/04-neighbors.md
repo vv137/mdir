@@ -1164,6 +1164,15 @@ holds its three atoms. The lists hold every image
 of every pair within their reach while $R + 2r_\mathrm m < \min_a L_a$,
 the condition of D242 with the reach of the water list.
 
+The compiler represents that distinction with `md.sum_template_window`:
+its body exposes every site displacement and energy, with a separate
+cutoff on each site pair. A symbolic affine proof checks the supported
+site offsets before lowering may use the covering bound. Its force and
+strain programs differentiate that same arithmetic, including the
+candidate image's cell contribution. Ordinary `md.sum_tuples` coordinates
+retain their minimum-image semantics; they cannot substitute one anchor
+image for all the images of the window.
+
 ![Which distances the structure tests](figures/rigid-water-members.png)
 
 *Figure 4.1. A pair of OPC waters to scale. Left: in the general

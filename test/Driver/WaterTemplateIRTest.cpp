@@ -3,6 +3,8 @@
 #include "mdir/Driver/WaterTemplate.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -24,7 +26,7 @@ int runWaterTemplateIRTest() {
   mdir::md::registerDerivativeInterfaces(registry);
   MLIRContext context(registry);
   context.loadDialect<arith::ArithDialect, func::FuncDialect,
-                      vector::VectorDialect>();
+                      vector::VectorDialect, mdir::md::MDDialect>();
   OpBuilder builder(&context);
   auto loc = builder.getUnknownLoc();
   auto module = ModuleOp::create(loc);
@@ -62,6 +64,10 @@ int runWaterTemplateIRTest() {
       lj += pair.lennardJones; q += pair.coulomb;
     }
     require(lj == 1 && q == 3, "SW term partition");
+    model.epsilon = 0.0;
+    auto crossOnly = buildSoluteWaterWindow(builder, model, block->getArgument(0),
+        block->getArgument(5), block->getArgument(6), b);
+    require(crossOnly.front().lennardJones, "zero O-O epsilon erased an unproved O-solute row");
     SmallVector<Value> returned;
     for (auto pair : ww) returned.push_back(pair.displacement);
     for (auto pair : sw) returned.push_back(pair.displacement);
@@ -103,6 +109,58 @@ int runWaterTemplateIRTest() {
     }
     func::ReturnOp::create(builder, loc, tangents);
     builder.setInsertionPointAfter(function);
+  }
+  {
+    namespace md = mdir::md;
+    md::ParticleSetOp::create(builder, loc, "atoms");
+    md::TupleSetOp::create(builder, loc, "water", "atoms", 4, md::Orientation::Ordered, true);
+    for (auto [name, arity] : {std::pair<const char *, unsigned>{"ww", 6}, {"sw", 4}, {"ss", 2}})
+      md::TupleSetOp::create(builder, loc, name, "atoms", arity,
+          arity == 2 ? md::Orientation::Unordered : md::Orientation::Ordered, false);
+    auto atoms = FlatSymbolRefAttr::get(&context, "atoms");
+    auto positions = md::FieldType::get(&context, atoms, 3, builder.getF64Type());
+    auto types = md::FieldType::get(&context, atoms, 1, builder.getI32Type());
+    auto charges = md::FieldType::get(&context, atoms, 1, builder.getF64Type());
+    auto domain = [&](StringRef name, unsigned arity) {
+      return md::RelationType::get(&context, atoms, arity,
+          arity == 2 ? md::Orientation::Unordered : md::Orientation::Ordered,
+          FlatSymbolRefAttr::get(&context, name));
+    };
+    SmallVector<Type> arguments{positions, md::CellType::get(&context), types, charges, domain("water", 4)};
+    WaterTemplateModel model;
+    model.sites = 4; model.alpha = 0.125; model.extent = 0.1001;
+    model.charges = {0.0, 0.5, 0.5, -1.0}; model.epsilon = 0.7;
+    for (unsigned mask = 0; mask != 4; ++mask) {
+      auto potential = md::PotentialOp::create(builder, loc,
+          "factory_windows_" + std::to_string(mask),
+          builder.getFunctionType(arguments, {builder.getF64Type()}),
+          StringAttr{}, ArrayAttr{}, ArrayAttr{});
+      SmallVector<Location> locations(arguments.size(), loc);
+      auto *block = builder.createBlock(&potential.getBody(), {}, arguments, locations);
+      auto domains = md::TemplatePairsOp::create(builder, loc, domain("ww", 6),
+          domain("sw", 4), domain("ss", 2), block->getArgument(2),
+          block->getArgument(4), Value());
+      Value total = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
+      for (auto [index, relation] : llvm::enumerate(domains.getResults())) {
+        WaterTemplateReductionInputs input{relation, block->getArgument(0),
+            block->getArgument(1), block->getArgument(2), block->getArgument(3),
+            1.0, bool(mask & 1), bool(mask & 2)};
+        Value term = buildWaterTemplateReduction(builder, model, input,
+            [&](OpBuilder &b, const WaterTemplateSitePair &pair) -> Value {
+              Value square = arith::MulFOp::create(b, loc, pair.displacement, pair.displacement);
+              return vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD, square);
+            });
+        if (auto sum = term.getDefiningOp<md::SumTemplateWindowOp>()) {
+          unsigned expected = index == 0 ? (mask == 3 ? 10 : mask == 2 ? 9 : 1)
+                              : index == 1 ? (mask == 3 ? 4 : mask == 2 ? 3 : 1) : 1;
+          require(sum.getKernel().front().getTerminator()->getNumOperands() == 2 * expected,
+                  "native reduction lost or duplicated a site channel");
+        } else require(mask == 0, "nonempty reduction was erased");
+        total = arith::AddFOp::create(builder, loc, total, term);
+      }
+      md::ReturnOp::create(builder, loc, total);
+      builder.setInsertionPointAfter(potential);
+    }
   }
   require(succeeded(verify(module)), "window IR verification");
   module.print(llvm::outs());
