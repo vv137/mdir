@@ -628,6 +628,88 @@ def compared(label, found, reference, own, theirs, floor):
     assert difference < tolerance, (label, difference, tolerance)
 
 
+def torchpme_reference(system, x, h, q0, spacing, rc=0.8):
+    """dU/dx and dU/d(epsilon) of the Coulomb energy of MDIR's model
+    from torch-pme: its sum over the pairs within the cutoff that are
+    not excluded and its sum of the mesh, less f q_i q_j erf(beta r) / r
+    of the excluded pairs, which the mesh holds, plus the 1-4 pairs
+    (f q_i q_j / (1.2 r), ff14SB). The shift of the direct sum (D210)
+    is a constant of a frame. The distances are functions of the
+    positions and the cell through the image of each pair, and both are
+    deformed by a strain of zero that autograd differentiates in. Also
+    used by python_frame_jvp.py (D[force-matching-forward])."""
+    import torch
+    import torchpme
+    torch.set_default_dtype(torch.float64)
+    top = system.topology
+    n = len(x)
+    graph = {i: set() for i in range(n)}
+    for i, j in top.bonds:
+        graph[int(i)].add(int(j))
+        graph[int(j)].add(int(i))
+    amber = hasattr(top, "residue_names") and "WAT" in set(top.residue_names)
+    excluded, scaled = set(), set()
+    for i in range(n):
+        seen, frontier = {i}, {i}
+        for depth in range(3):
+            frontier = {k for m in frontier for k in graph[m]} - seen
+            seen |= frontier
+            for j in frontier:
+                if j > i:
+                    (scaled if depth == 2 else excluded).add((i, j))
+    if not amber:
+        scaled = set()      # the water of GROMACS: no pair three bonds apart
+
+    def image(d):
+        """The lattice vector, in units of the cell vectors, that brings
+        each difference to its nearest image, for a reduced cell."""
+        k = np.zeros_like(d)
+        for axis in (2, 1, 0):
+            k[:, axis] = -np.round((d + k @ h)[:, axis] / h[axis, axis])
+        return k
+
+    near, shifts = [], []
+    for i in range(n - 1):
+        d = x[i + 1:] - x[i]
+        k = image(d)
+        r = np.sqrt(((d + k @ h) ** 2).sum(axis=1))
+        for j in np.nonzero(r < rc)[0]:
+            pair = (i, i + 1 + int(j))
+            if pair not in excluded and pair not in scaled:
+                near.append(pair)
+                shifts.append(k[j])
+    held =np.array(sorted(excluded | scaled))
+    fourteen = np.array(sorted(scaled)).reshape(-1, 2)
+    held_shift = image(x[held[:, 1]] - x[held[:, 0]])
+    fourteen_shift = image(x[fourteen[:, 1]] - x[fourteen[:, 0]]) if len(fourteen) else None
+    positions = torch.tensor(x, requires_grad=True)
+    strain = torch.zeros(3, 3, requires_grad=True)
+    deform = torch.eye(3) + strain
+    moved, cell = positions @ deform.T, torch.tensor(h) @ deform.T
+    charges = torch.tensor(q0)
+
+    def distances(pairs, shift):
+        pairs = torch.tensor(np.asarray(pairs))
+        d = moved[pairs[:, 1]] - moved[pairs[:, 0]] + torch.tensor(np.asarray(shift)) @ cell
+        return pairs, torch.sqrt((d * d).sum(dim=1))
+
+    product = lambda pairs: charges[pairs[:, 0]] * charges[pairs[:, 1]]
+    near_pairs, near_r = distances(near, shifts)
+    potential = torchpme.CoulombPotential(smearing=1.0 / (np.sqrt(2.0) * BETA),
+                                          prefactor=COULOMB)
+    calculator = torchpme.PMECalculator(potential, mesh_spacing=spacing,
+                                        interpolation_nodes=5)
+    column = charges.unsqueeze(1)
+    energy = (column * calculator(column, cell, moved, near_pairs, near_r)).sum()
+    held_pairs, held_r = distances(held, held_shift)
+    energy = energy - (COULOMB * product(held_pairs) * torch.erf(BETA * held_r) / held_r).sum()
+    if len(fourteen):
+        scaled_pairs, scaled_r = distances(fourteen, fourteen_shift)
+        energy = energy + (COULOMB * product(scaled_pairs) / (1.2 * scaled_r)).sum()
+    g, s = torch.autograd.grad(energy, (positions, strain))
+    return g.numpy(), s.numpy(), len(near)
+
+
 def run_torchpme():
     import torch
     import torchpme
@@ -652,83 +734,6 @@ def run_torchpme():
         s = charged.gradients["strain"][0] - bare.gradients["strain"][0]
         return system, x, vectors(*cell), q0, g, s
 
-    def reference(system, x, h, q0, spacing):
-        """dU/dx and dU/d(epsilon) of the Coulomb energy of MDIR's model
-        from torch-pme: its sum over the pairs within the cutoff that are
-        not excluded and its sum of the mesh, less f q_i q_j erf(beta r) / r
-        of the excluded pairs, which the mesh holds, plus the 1-4 pairs
-        (f q_i q_j / (1.2 r), ff14SB). The shift of the direct sum (D210)
-        is a constant of a frame. The distances are functions of the
-        positions and the cell through the image of each pair, and both are
-        deformed by a strain of zero that autograd differentiates in."""
-        top = system.topology
-        n = len(x)
-        graph = {i: set() for i in range(n)}
-        for i, j in top.bonds:
-            graph[int(i)].add(int(j))
-            graph[int(j)].add(int(i))
-        amber = hasattr(top, "residue_names") and "WAT" in set(top.residue_names)
-        excluded, scaled = set(), set()
-        for i in range(n):
-            seen, frontier = {i}, {i}
-            for depth in range(3):
-                frontier = {k for m in frontier for k in graph[m]} - seen
-                seen |= frontier
-                for j in frontier:
-                    if j > i:
-                        (scaled if depth == 2 else excluded).add((i, j))
-        if not amber:
-            scaled = set()      # the water of GROMACS: no pair three bonds apart
-
-        def image(d):
-            """The lattice vector, in units of the cell vectors, that brings
-            each difference to its nearest image, for a reduced cell."""
-            k = np.zeros_like(d)
-            for axis in (2, 1, 0):
-                k[:, axis] = -np.round((d + k @ h)[:, axis] / h[axis, axis])
-            return k
-
-        near, shifts = [], []
-        for i in range(n - 1):
-            d = x[i + 1:] - x[i]
-            k = image(d)
-            r = np.sqrt(((d + k @ h) ** 2).sum(axis=1))
-            for j in np.nonzero(r < rc)[0]:
-                pair = (i, i + 1 + int(j))
-                if pair not in excluded and pair not in scaled:
-                    near.append(pair)
-                    shifts.append(k[j])
-        held =np.array(sorted(excluded | scaled))
-        fourteen = np.array(sorted(scaled)).reshape(-1, 2)
-        held_shift = image(x[held[:, 1]] - x[held[:, 0]])
-        fourteen_shift = image(x[fourteen[:, 1]] - x[fourteen[:, 0]]) if len(fourteen) else None
-        positions = torch.tensor(x, requires_grad=True)
-        strain = torch.zeros(3, 3, requires_grad=True)
-        deform = torch.eye(3) + strain
-        moved, cell = positions @ deform.T, torch.tensor(h) @ deform.T
-        charges = torch.tensor(q0)
-
-        def distances(pairs, shift):
-            pairs = torch.tensor(np.asarray(pairs))
-            d = moved[pairs[:, 1]] - moved[pairs[:, 0]] + torch.tensor(np.asarray(shift)) @ cell
-            return pairs, torch.sqrt((d * d).sum(dim=1))
-
-        product = lambda pairs: charges[pairs[:, 0]] * charges[pairs[:, 1]]
-        near_pairs, near_r = distances(near, shifts)
-        potential = torchpme.CoulombPotential(smearing=1.0 / (np.sqrt(2.0) * BETA),
-                                              prefactor=COULOMB)
-        calculator = torchpme.PMECalculator(potential, mesh_spacing=spacing,
-                                            interpolation_nodes=5)
-        column = charges.unsqueeze(1)
-        energy = (column * calculator(column, cell, moved, near_pairs, near_r)).sum()
-        held_pairs, held_r = distances(held, held_shift)
-        energy = energy - (COULOMB * product(held_pairs) * torch.erf(BETA * held_r) / held_r).sum()
-        if len(fourteen):
-            scaled_pairs, scaled_r = distances(fourteen, fourteen_shift)
-            energy = energy + (COULOMB * product(scaled_pairs) / (1.2 * scaled_r)).sum()
-        g, s = torch.autograd.grad(energy, (positions, strain))
-        return g.numpy(), s.numpy(), len(near)
-
     def one(kind, points, name):
         system, x, h, q0, g, s = coulomb(points, kind)
         _, _, _, _, g2, s2 = coulomb(2 * points, kind)
@@ -738,8 +743,8 @@ def run_torchpme():
         for m, spacing in zip((points, 2 * points), spacings):
             mesh = [int(k) for k in torchpme.lib.get_ns_mesh(torch.tensor(h), spacing)]
             assert mesh == [m] * 3, (mesh, m)
-        rg, rs, pairs = reference(system, x, h, q0, spacings[0])
-        rg2, rs2, _ = reference(system, x, h, q0, spacings[1])
+        rg, rs, pairs = torchpme_reference(system, x, h, q0, spacings[0])
+        rg2, rs2, _ = torchpme_reference(system, x, h, q0, spacings[1])
         scale_g, scale_s = np.abs(rg).max(), np.abs(rs).max()
         compared(f"{name}, {len(x)} particles, {pairs} pairs: the Coulomb part of G against "
                  f"torch-pme, grid {points}", g, rg, np.abs(g - g2).max() / scale_g,
@@ -1065,17 +1070,18 @@ def run_torch():
     print("torch passed")
 
 
-if scenario in ("finite", "prolate"):
-    run_finite()
-elif scenario == "torch":
-    run_torch()
-elif scenario == "torchpme":
-    run_torchpme()
-elif scenario == "openmm":
-    run_openmm()
-elif scenario == "special":
-    run_special()
-elif scenario == "interface":
-    run_interface()
-else:
-    raise SystemExit(f"unknown scenario {scenario}")
+if __name__ == "__main__":
+    if scenario in ("finite", "prolate"):
+        run_finite()
+    elif scenario == "torch":
+        run_torch()
+    elif scenario == "torchpme":
+        run_torchpme()
+    elif scenario == "openmm":
+        run_openmm()
+    elif scenario == "special":
+        run_special()
+    elif scenario == "interface":
+        run_interface()
+    else:
+        raise SystemExit(f"unknown scenario {scenario}")

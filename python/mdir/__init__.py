@@ -33,4 +33,4 @@ def _publish():
 _publish()
 del _publish
 
-from ._frames import FrameEnergies, FrameEvaluator, FrameGradient  # noqa: E402,F401
+from ._frames import FrameEnergies, FrameEvaluator, FrameGradient, FrameTangent  # noqa: E402,F401

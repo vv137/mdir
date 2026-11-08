@@ -232,6 +232,26 @@ class FrameGradient(Mapping):
         return f"FrameGradient(version={self.version}, {list(self._values)})"
 
 
+class FrameTangent:
+    """The tangent of the outputs of `FrameEvaluator.evaluate` along a
+    tangent of the tunables, what `FrameEnergies.jvp` returns (#726,
+    D[force-matching-forward]): `energy`, the tangent of the energies (K,)
+    float64 in kJ/mol per unit of the tunable times the unit of the
+    tangent, with what the host adds to the energy; `gradients`, a
+    read-only mapping, with "positions" where it was asked: the tangent of
+    the gradients in the positions (K, N, 3) float64, in the order of the
+    input; and `version`, that of the values of the tunables."""
+
+    def __init__(self, energy, gradients, version):
+        self.energy = _frozen(energy)
+        self.gradients = MappingProxyType({name: _frozen(a) for name, a in gradients.items()})
+        self.version = version
+
+    def __repr__(self):
+        return (f"FrameTangent(count={len(self.energy)}, version={self.version}, "
+                f"gradients={list(self.gradients)})")
+
+
 def _frozen(array):
     array.setflags(write=False)
     return array
@@ -368,6 +388,56 @@ class FrameEnergies:
             for name, (begin, end) in evaluator._slices.items()}
         return FrameGradient(values, self.zero, self.version, dx)
 
+    def jvp(self, tangent, *, gradients=("positions",)):
+        """The tangent of the outputs of `evaluate` along `tangent`, a
+        mapping of names of the tunables to arrays of the shapes of their
+        values (a name left out is zero): a `FrameTangent` with `energy`,
+        sum_m dU_n/dtheta_m tangent_m (K,), and, with "positions" in
+        `gradients`, gradients["positions"], sum_m d2U_n/dx dtheta_m
+        tangent_m (K, N, 3) float64, forward mode in the tunables of the
+        gradient in the positions (#726, D[force-matching-forward]).
+
+        The tangent of the gradient is formed by a pass of a product program
+        of the evaluator over the frames, compiled at the first such call;
+        that pass gives the tangent of the energy too. With `gradients=()`
+        there is no such pass: the energy alone, from the kept Jacobian or a
+        second pass. The frames and the values of the tunables are those of
+        `evaluate`, as for `vjp`. Virtual sites take it as their atoms do."""
+        evaluator = self._evaluator
+        if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):
+            raise _core.InputError("jvp: gradients is a tuple of names among 'positions'; "
+                                   f"found {gradients!r}")
+        names = tuple(dict.fromkeys(gradients))
+        for name in names:
+            if name != "positions":
+                raise _core.InputError(f"jvp: gradients names 'positions'; found {name!r}")
+        if not self._gradient:
+            raise _core.InputError("these frames were evaluated without 'tunables' in gradients")
+        if not isinstance(tangent, Mapping):
+            raise _core.InputError("jvp: the tangent is a mapping of names of the tunables to "
+                                   "arrays of the shapes of their values")
+        flat = np.zeros(evaluator._entries)
+        for name, value in tangent.items():
+            if name not in evaluator._slices:
+                raise _core.InputError(f"jvp: '{name}' is not a tunable of the program; the "
+                                       f"tunables are {list(evaluator._slices)}")
+            begin, end = evaluator._slices[name]
+            v = np.asarray(_array(value, f"tangent['{name}']"), dtype=np.float64)
+            if v.shape != (end - begin,):
+                raise _core.InputError(f"jvp: expected a tangent of '{name}' of shape "
+                                       f"({end - begin},); found {v.shape}")
+            if not np.all(np.isfinite(v)):
+                raise _core.InputError(f"jvp: the tangent of '{name}' is not finite")
+            flat[begin:end] = v
+        if "positions" in names:
+            energy, dx = evaluator._direction_pass(self._source, self.version, flat)
+            return FrameTangent(energy, {"positions": dx}, self.version)
+        if self._rows is not None:
+            energy = self._rows @ flat
+        else:
+            energy = evaluator._tangent_pass(self._source, self.version, flat, self.count)
+        return FrameTangent(np.ascontiguousarray(energy, dtype=np.float64), {}, self.version)
+
     def __repr__(self):
         return (f"FrameEnergies(count={self.count}, version={self.version}, "
                 f"jacobian={'kept' if self._rows is not None else 'not kept'})")
@@ -411,6 +481,9 @@ class FrameEvaluator:
         # The product program that also gives the derivative in the
         # positions (#771), compiled at the first such product.
         self._product_positions = None
+        # The product program of forward mode in the tunables (#726,
+        # D[force-matching-forward]), compiled at the first such call.
+        self._product_direction = None
         # A simulation whose entry is a loop over frames: the frames of
         # every call are evaluated in one activation of it.
         self._simulation = _core.Simulation(program, _frames=True)
@@ -472,6 +545,73 @@ class FrameEvaluator:
             raise _core.InputError(f"vjp: the frames gave another number of frames in the second "
                                    f"pass than the {len(cotangent)} of the first")
         return total
+
+    def _tangent_pass(self, source, version, tangent, count):
+        """The products of the rows of the frames `source` with `tangent`,
+        (K,), by evaluating them again, as `_second_pass`."""
+        if self.tunables.version != version:
+            raise _core.SimulationError(
+                "the Jacobian of these frames was not kept (jacobian_bytes), and the values of "
+                f"the tunables changed since they were evaluated (version {version}, now "
+                f"{self.tunables.version}): a second pass would differentiate another potential")
+        parts, at = [], 0
+        for x, cells, tilts in source.batches():
+            rows = self._simulation._evaluate_frames(x, *self._cells(x, cells, tilts), True, at)[4]
+            parts.append(rows @ tangent)
+            at += len(x)
+        if at != count:
+            raise _core.InputError(f"jvp: the frames gave another number of frames in the second "
+                                   f"pass than the {count} of the first")
+        return np.concatenate(parts) if parts else np.zeros(0)
+
+    def _direction_pass(self, source, version, tangent):
+        """Forward mode in the tunables over the frames `source`, evaluated
+        at the version `version`, along `tangent` (entries,): the tangents of
+        the energies (K,) and of their gradients in the positions (K, N, 3),
+        by the product program of forward mode (#726,
+        D[force-matching-forward]), a simulation of its own compiled at the
+        first call, at the values of the tunables of the evaluator."""
+        if self.terms != "all":
+            raise _core.UnsupportedError(
+                "the tangent of the gradients in the positions is not given by a frame "
+                "evaluator with terms='dependent': its gradients are not those of the "
+                "potential energy")
+        if not source.reusable:
+            raise _core.InputError(
+                "jvp: the tangent of the gradients in the positions evaluates the frames "
+                "again, and an iterator gives them once: give a sequence")
+        if self.tunables.version != version:
+            raise _core.SimulationError(
+                f"jvp: the values of the tunables changed since these frames were evaluated "
+                f"(version {version}, now {self.tunables.version}): the tangent would "
+                "differentiate another potential")
+        if self._product_direction is None:
+            try:
+                self._product_direction = _core.Simulation(
+                    self.program, _frames=True, _frame_product=True,
+                    _frame_product_direction=True)
+            except (_core.InputError, _core.CompileError) as error:
+                raise _core.UnsupportedError(
+                    "forward mode in the tunables of the gradients in the positions is not "
+                    f"formed for this program: {error}") from None
+        product = self._product_direction
+        changes = {}
+        for name in self._slices:
+            value = np.ascontiguousarray(self.tunables[name])
+            if value.tobytes() != np.ascontiguousarray(product.tunables[name]).tobytes():
+                changes[name] = value
+        if changes:
+            product.tunables.update(changes)
+        energies, gradients, at = [], [], 0
+        for x, cells, tilts in source.batches():
+            u, dx = product._evaluate_frame_directions(
+                x, *self._cells(x, cells, tilts), np.ascontiguousarray(tangent), at)
+            energies.append(u)
+            gradients.append(dx)
+            at += len(x)
+        if not energies:
+            return np.zeros(0), np.zeros((0, self._particles, 3))
+        return np.concatenate(energies), np.concatenate(gradients)
 
     def _product_pass(self, source, version, energy, position, positions=False):
         """The sum over the frames `source`, evaluated at the version

@@ -69,6 +69,19 @@ void buildTunableProductOutput(
     llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value)> spread = nullptr,
     llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value, mlir::Value)>
         curvature = nullptr);
+/// Forward mode in the tunables of a frame (#726,
+/// D[force-matching-forward]): the derivative Psi of @tunable along
+/// `numbers`, one direction for each slot of `config.scalarArguments`, and
+/// `fields`, one for each field of `config.fieldArguments`, handed over as
+/// the one scalar of mdrtWriteTunableGradient, and its forces -dPsi/dx,
+/// through mdrtWriteFrameProductForces as both of its fields; `spread`,
+/// where given, takes them from the places of the virtual sites to their
+/// atoms first (D384).
+void buildTunableDirectionOutput(
+    mlir::OpBuilder &, const PotentialStateIR &, mlir::ValueRange numbers,
+    mlir::ValueRange fields, mlir::Value ids, mlir::ValueRange constants,
+    mlir::ValueRange seeds, const TunableGradientOutputConfig &,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value)> spread = nullptr);
 void buildWriteSolvent(mlir::OpBuilder &, mlir::Value sums);
 mlir::Value buildTermEnergyBuffer(mlir::OpBuilder &, const PotentialStateIR &,
                                     llvm::ArrayRef<std::string> potentials,

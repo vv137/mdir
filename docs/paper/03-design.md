@@ -1523,7 +1523,28 @@ frames, compiled at the first product, which evaluates no energy
 on the volume and $\boldsymbol\theta$ alone, so at a fixed cell it enters
 the product only through the cotangent of the energy, $g_n\,\partial
 c/\partial\boldsymbol\theta$, and the host applies $g_n$ with the chain
-rule. The gradient in the cell is formed
+rule. Forward mode in $\boldsymbol\theta$ of the gradient in the
+positions is the transpose of that product, and the same commutation
+gives it as a gradient: $\sum_m(\partial^2U/\partial\mathbf x_i\,
+\partial\theta_m)\,\dot\theta_m = \partial\dot U_{\boldsymbol\theta}/
+\partial\mathbf x_i$, so it is the gradient in the positions of one more
+potential, $\dot U_{\boldsymbol\theta}$, which `md-differentiate` builds
+from the sums of $U$ as it builds $\dot U_{\mathbf x}$, and whose forces
+the existing rules give. The host maps $\dot{\boldsymbol\theta}$ to
+directions of the values of the program by the transpose of the chain rule
+of D230. Each sum that reads a directed value gathers its direction as
+well, and a reciprocal sum gives $\tfrac12[E(\mathbf q+\dot{\mathbf q}) -
+E(\mathbf q-\dot{\mathbf q})]$, exactly, two sums for any number of
+directed entries, because $\dot{\boldsymbol\theta}$ combines them into one
+direction $\dot{\mathbf q}$ before the mesh is formed. The tangent of the
+energy adds $\dot{\boldsymbol\theta}\cdot\partial c/\partial
+\boldsymbol\theta$, which the gradient does not see at a fixed cell. The
+two modes then satisfy $\dot{\boldsymbol\theta}\cdot\sum_n[g_n\,\partial
+U_n/\partial\boldsymbol\theta + \partial\dot U_{\mathbf x,n}/\partial
+\boldsymbol\theta] = \sum_n[g_n\dot U_{\boldsymbol\theta,n} +
+\dot{\mathbf x}_n\cdot\partial\dot U_{\boldsymbol\theta,n}/\partial
+\mathbf x]$ plus the constant term, an identity that the tests check to
+the rounding (D[force-matching-forward]). The gradient in the cell is formed
 for each frame by one routine, which the PyTorch adapter uses as well, so
 the two adapters, a batch of frames and each frame alone, and a compiled
 call and an uncompiled one give the same numbers to the bit. On a CUDA

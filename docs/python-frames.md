@@ -319,6 +319,39 @@ faster: the energy of D210 is that of `@tunable`, which is evaluated with
 its derivative at every frame (measured: 1.047 ms against 1.050 ms per
 frame on the dipeptide).
 
+### Forward mode in the tunables (D[force-matching-forward])
+
+#726, part F; the maintainer's ruling on PR #778.
+`FrameEnergies.jvp(tangent, *, gradients=("positions",))`. `tangent` maps
+names of the tunables to arrays of the shapes of their values; a name left
+out is zero. It returns a `FrameTangent`, the tangent of the outputs of
+`evaluate` in their structure:
+
+- `energy`, $\dot U_n = \sum_m\partial U_n/\partial\theta_m\,\dot\theta_m$, `(K,)` float64, with what the host adds to the energy;
+- `gradients["positions"]`, $\dot{\mathbf G}_{n,i} = \sum_m\partial^2U_n/\partial\mathbf x_i\,\partial\theta_m\,\dot\theta_m$, `(K, N, 3)` float64 in the order of the input, where `gradients` names it;
+- `version`, that of the values of the tunables.
+
+$\dot{\mathbf G}_n$ is the gradient in the positions of
+$\Psi_n = \sum_s\dot b_s\,\partial U_n/\partial b_s$, the derivative of
+`@tunable` along directions $\dot b_s$ of its values. The host maps
+$\dot{\boldsymbol\theta}$ to them by the transpose of the chain rule of
+D230; `md-differentiate` forms $\Psi$ and its forces (the requests
+`direction` and `direction_forces`, [ops.md](ops.md) Section 4.10). It is
+the transpose of the product above:
+$\dot{\boldsymbol\theta}\cdot\mathbf p(g, \bar{\mathbf G}) = \sum_n[g_n\dot U_n + \bar{\mathbf G}_n\cdot\dot{\mathbf G}_n]$.
+
+```python
+out = evaluator.evaluate(frames, gradients=("tunables", "positions"))
+t = out.jvp({"epsilon": d_epsilon})
+dforces = -t.gradients["positions"]           # the tangent of the forces
+```
+
+- **One pass.** A third program of frames, the product program of forward mode (`Control::frameProductDirection`), compiled at the first call that asks for `"positions"`, in a simulation of its own, gives both tangents in one pass over the frames. It evaluates no energy. With `gradients=()` there is no such pass: the tangent of the energy is the Jacobian times the tangent, kept or by a second pass.
+- **One tangent a call.** `jacfwd` over $M$ entries is $M$ calls; a gradient in many tunables is the reverse product's job.
+- **The frames again**, as for `vjp`: a sequence, at the values of the tunables of `evaluate`.
+- **Coverage.** Pairs (per-type $\sigma$, $\epsilon$, NBFIX, constants of pair terms, the charges under a cutoff), tuples (`dihedral_k`), terms of the positions, virtual sites (linear ones and the extra points of Amber: their placement does not depend on $\boldsymbol\theta$, so $\dot{\mathbf G}$ is the spread of that of the places), and **the charges with PME**, per particle or tied, which the reverse product does not take yet: the reciprocal sum along a direction $\dot{\mathbf q}$ of the charges is $\tfrac12[E(\mathbf q+\dot{\mathbf q})-E(\mathbf q-\dot{\mathbf q})]$, exactly, two sums with their forces for any number of entries.
+- **Refused**, with `UnsupportedError` at the first call, never a zero: what `md-differentiate` refuses along directions (a learned stage, a reciprocal sum with a list whose charges are directed, a potential on domains); `terms="dependent"`. The tangent is checked (names, shapes, finite values).
+
 ### The PyTorch adapter
 
 ```python
@@ -922,7 +955,7 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D382) | `mdir.jax` (#726 D) |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D382); its product with a tangent of $\boldsymbol\theta$, `jvp(tangent)` (D[force-matching-forward]) | `mdir.jax` (#726 D, #750); forward AD of `mdir.torch`, to be refused by name (#777) |
 | Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of

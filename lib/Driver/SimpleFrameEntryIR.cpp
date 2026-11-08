@@ -411,7 +411,19 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
       }
       // The forces of the energy and of its tangent (#771): the types of
       // those that mdrtWriteFrameForces takes.
-      if (product->positions && !module.lookupSymbol("mdrtWriteFrameProductForces")) {
+      // Forward mode in the tunables (#726): the directions of the slots
+      // and the fields, which the host gives at each frame.
+      if (product->direction && !module.lookupSymbol("mdrtFrameDirection")) {
+        OpBuilder top(entry);
+        auto declaration = func::FuncOp::create(top, loc, "mdrtFrameDirection",
+            top.getFunctionType({top.getI64Type(),
+                                 MemRefType::get({ShapedType::kDynamic}, top.getF64Type())},
+                                {}));
+        declaration.setPrivate();
+        declaration->setAttr("llvm.emit_c_interface", top.getUnitAttr());
+      }
+      if ((product->positions || product->direction) &&
+          !module.lookupSymbol("mdrtWriteFrameProductForces")) {
         auto forces = module.lookupSymbol<func::FuncOp>("mdrtWriteFrameForces");
         if (!forces)
           return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -484,6 +496,64 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         if (llvm::Error error = buildFrameBatchEvaluation(frame, program, config,
                 physical, state, *batchPoint, complete, scale))
           return std::move(error);
+        return SmallVector<Value>{};
+      }
+      if (product && product->direction) {
+        // Forward mode in the tunables (#726, D[force-matching-forward]):
+        // the directions of the slots, then of each field in the order of
+        // the input, in f64, from the host; the derivative of @tunable
+        // along them and its forces, spread from the sites to their atoms.
+        const auto &gradient = *config.output.gradient;
+        auto values = MemRefType::get({ShapedType::kDynamic}, frame.getF64Type());
+        size_t slots = gradient.output.scalarArguments.size();
+        Value particles = memref::DimOp::create(frame, loc, inputPositions, 0);
+        SmallVector<Value> numbers, fields;
+        if (slots) {
+          Value size = arith::ConstantIndexOp::create(frame, loc, slots);
+          Value buffer = memref::AllocOp::create(frame, loc, values, ValueRange{size});
+          Value part = arith::ConstantIntOp::create(frame, loc, -1, 64);
+          func::CallOp::create(frame, loc, "mdrtFrameDirection", TypeRange{},
+                               ValueRange{part, buffer});
+          for (size_t i = 0; i != slots; ++i) {
+            Value index = arith::ConstantIndexOp::create(frame, loc, i);
+            numbers.push_back(memref::LoadOp::create(frame, loc, buffer, index));
+          }
+          memref::DeallocOp::create(frame, loc, buffer);
+        }
+        for (size_t c = 0; c != gradient.output.fieldArguments.size(); ++c) {
+          Value buffer = memref::AllocOp::create(frame, loc, values, ValueRange{particles});
+          Value part = arith::ConstantIntOp::create(frame, loc, c, 64);
+          func::CallOp::create(frame, loc, "mdrtFrameDirection", TypeRange{},
+                               ValueRange{part, buffer});
+          fields.push_back(buildEntryField(frame, buffer, 1, false));
+        }
+        auto spread = [&](OpBuilder &at, Value forces) {
+          for (const auto &site : config.sites)
+            forces = buildSiteSpread(at,
+                {state.fields[site.relation], state.positions, state.cell,
+                 state.fields[site.a], state.fields[site.b], forces, {}},
+                site.amber, site.derived, site.potential).forces;
+          return forces;
+        };
+        auto iteration = buildEntryLoop(frame, "frame direction", zero, one, one, {},
+            [&](OpBuilder &body, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          SmallVector<Value> constants, seeds;
+          for (unsigned slot : gradient.constants) constants.push_back(startValues[slot]);
+          if (gradient.seeds) seeds.assign(gradient.seeds, state.fields[*gradient.seedField]);
+          buildTunableDirectionOutput(body, state, numbers, fields, physical.identities,
+              constants, seeds, gradient.output,
+              config.sites.empty() ? llvm::function_ref<Value(OpBuilder &, Value)>() : spread);
+          return SmallVector<Value>{};
+        });
+        if (!iteration) return iteration.takeError();
+        (*iteration)->setAttr("mdrt.segment", frame.getUnitAttr());
+        if (llvm::Error error = checkFrameEvaluation(*iteration->getOperation()))
+          return std::move(error);
+        // Each imported buffer is released through its field, so that the
+        // storage of the program does not take it as scratch before.
+        for (Value field : fields)
+          memref::DeallocOp::create(frame, loc, mdir::mdrt::ToBufferOp::create(
+              frame, loc, values, field));
         return SmallVector<Value>{};
       }
       if (product) {

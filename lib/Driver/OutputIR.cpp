@@ -267,6 +267,48 @@ void mdir::driver::builder::buildTunableProductOutput(
   out.write("mdrtWriteTunableGradient", memory, {});
 }
 
+void mdir::driver::builder::buildTunableDirectionOutput(
+    OpBuilder &builder, const PotentialStateIR &state, ValueRange numbers,
+    ValueRange fields, Value ids, ValueRange constants, ValueRange seeds,
+    const TunableGradientOutputConfig &config,
+    llvm::function_ref<Value(OpBuilder &, Value)> spread) {
+  auto loc = builder.getUnknownLoc();
+  OutputBuilder out(builder);
+  SmallVector<Value> values = potentialArguments(state);
+  llvm::append_range(values, constants);
+  llvm::append_range(values, seeds);
+  // The directed arguments in increasing order, with their directions.
+  SmallVector<std::pair<int64_t, Value>> directed;
+  for (auto [argument, direction] : llvm::zip(config.scalarArguments, numbers))
+    directed.emplace_back(argument, direction);
+  for (auto [argument, direction] : llvm::zip(config.fieldArguments, fields))
+    directed.emplace_back(argument, direction);
+  llvm::sort(directed, [](const auto &a, const auto &b) { return a.first < b.first; });
+  SmallVector<int64_t> arguments;
+  for (auto &[argument, direction] : directed) {
+    arguments.push_back(argument);
+    values.push_back(direction);
+  }
+  SmallVector<Type> types{builder.getF64Type(), values[0].getType()};
+  auto result = mdir::md::EvaluateOp::create(
+      builder, loc, types, FlatSymbolRefAttr::get(builder.getContext(), "tunable"),
+      values, builder.getDenseI32ArrayAttr({int32_t(mdir::md::Request::Direction),
+                                            int32_t(mdir::md::Request::DirectionForces)}),
+      builder.getDenseI64ArrayAttr({-1, -1}), builder.getDenseI64ArrayAttr(arguments));
+  Value forces = result.getResult(1);
+  if (spread)
+    forces = spread(builder, forces);
+  // The host keeps the negatives of both fields: the gradient of Psi in
+  // the positions, the tangent of the gradient of the energy.
+  mdir::mdrt::HostCallOp::create(
+      builder, loc, TypeRange{},
+      FlatSymbolRefAttr::get(builder.getContext(), "mdrtWriteFrameProductForces"),
+      ValueRange{forces, forces, ids}, ValueRange{}, UnitAttr{});
+  Value memory = out.allocate({1});
+  out.store(result.getResult(0), memory, ValueRange{out.index(0)});
+  out.write("mdrtWriteTunableGradient", memory, {});
+}
+
 void mdir::driver::builder::buildWriteSolvent(OpBuilder &builder, Value sums) {
   auto loc = builder.getUnknownLoc();
   Value full = vector::ExtractOp::create(builder, loc, sums, int64_t{0});

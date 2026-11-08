@@ -1552,7 +1552,8 @@ PYBIND11_MODULE(_core, m) {
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache,
                      std::optional<std::string> checkpoint, bool stage, bool append,
-                     bool frames, bool frameProduct, bool frameProductPositions) {
+                     bool frames, bool frameProduct, bool frameProductPositions,
+                     bool frameProductDirection) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
       if (!checkpoint && stage)
@@ -1594,7 +1595,8 @@ PYBIND11_MODULE(_core, m) {
         py::gil_scoped_release release;
         created.emplace(compiler::Simulation::create(*prepared, useCache,
                                                      program->code.get(), frames,
-                                                     frameProduct, frameProductPositions));
+                                                     frameProduct, frameProductPositions,
+                                                     false, frameProductDirection));
       }
       PySimulation result;
       result.program = std::move(program);
@@ -1620,7 +1622,11 @@ PYBIND11_MODULE(_core, m) {
        // With `_frame_product`, the product program that also gives the
        // derivative of the product in the positions (#771,
        // D383); private to `mdir.FrameEvaluator`.
-       py::arg("_frame_product_positions") = false)
+       py::arg("_frame_product_positions") = false,
+       // With `_frame_product`, the product program of forward mode in the
+       // tunables (#726, D[force-matching-forward]); private to
+       // `mdir.FrameEvaluator`.
+       py::arg("_frame_product_direction") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;
       {
@@ -2044,6 +2050,87 @@ PYBIND11_MODULE(_core, m) {
       return py::object(py::make_tuple(summed, derivatives));
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("energy"),
        py::arg("position"), py::arg("first") = 0, py::arg("positions_derivative") = false)
+    // Forward mode in the tunables (#726, D[force-matching-forward]),
+    // of the product program of forward mode: `positions` (k, N, 3) float64
+    // in the order of the input, `cells` and `tilts` (k, 3) or None, and the
+    // tangent of the entries of all tunables in their order, `tangent`
+    // (entries,) float64; `first` is the index of the first frame, for the
+    // messages. Returns the tangents of the energies (k,) and of their
+    // gradients in the positions (k, N, 3), float64.
+    .def("_evaluate_frame_directions", [](py::object self,
+                                          py::array_t<double, py::array::c_style> positions,
+                                          py::object cellsGiven, py::object tiltsGiven,
+                                          py::array_t<double, py::array::c_style> tangent,
+                                          int64_t first) {
+      auto &s = self.cast<PySimulation &>();
+      compiler::Simulation &sim = *s.simulation;
+      const auto &set = sim.getTunables();
+      size_t count = sim.getParticleCount();
+      if (positions.ndim() != 3 || static_cast<size_t>(positions.shape(1)) != count ||
+          positions.shape(2) != 3)
+        throw InputError("frames: expected positions of shape (K, " + std::to_string(count) +
+                         ", 3)");
+      size_t frames = positions.shape(0);
+      std::optional<py::array_t<double, py::array::c_style>> cells, tilts;
+      if (!cellsGiven.is_none()) {
+        cells = cellsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (cells->ndim() != 2 || static_cast<size_t>(cells->shape(0)) != frames ||
+            cells->shape(1) != 3)
+          throw InputError("frames: expected cells of shape (K, 3)");
+      }
+      if (!tiltsGiven.is_none()) {
+        tilts = tiltsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (tilts->ndim() != 2 || static_cast<size_t>(tilts->shape(0)) != frames ||
+            tilts->shape(1) != 3)
+          throw InputError("frames: expected tilts of shape (K, 3)");
+      }
+      size_t entries = 0;
+      for (const auto &entry : set.tunables) entries += entry.entries;
+      if (tangent.ndim() != 1 || static_cast<size_t>(tangent.shape(0)) != entries)
+        throw InputError("frames: expected a tangent of shape (" + std::to_string(entries) +
+                         ",)");
+      std::vector<std::vector<double>> split;
+      const double *d = tangent.data();
+      for (const auto &entry : set.tunables) {
+        split.emplace_back(d, d + entry.entries);
+        d += entry.entries;
+      }
+      py::array_t<double> energies(static_cast<py::ssize_t>(frames));
+      py::array_t<double> gradients({static_cast<py::ssize_t>(frames),
+                                     static_cast<py::ssize_t>(count), py::ssize_t(3)});
+      double *u = energies.mutable_data(), *dx = gradients.mutable_data();
+      const double *x = positions.data();
+      const double *c = cells ? cells->data() : nullptr, *t = tilts ? tilts->data() : nullptr;
+      std::optional<llvm::Error> error;
+      size_t at = 0;
+      {
+        py::gil_scoped_release release;
+        for (; at != frames && !error; ++at) {
+          std::optional<std::array<double, 6>> cell;
+          if (c)
+            cell = {c[3 * at], c[3 * at + 1], c[3 * at + 2],
+                    t ? t[3 * at] : 0.0, t ? t[3 * at + 1] : 0.0, t ? t[3 * at + 2] : 0.0};
+          auto result = sim.evaluateFrameDirection(x + 3 * count * at, cell, split,
+                                                   dx + 3 * count * at);
+          if (!result) { error.emplace(result.takeError()); break; }
+          u[at] = *result;
+        }
+      }
+      if (error) {
+        std::string where = "frame " + std::to_string(first + static_cast<int64_t>(at)) + ": ";
+        try {
+          raise(std::move(*error));
+        } catch (const UnsupportedError &e) {
+          throw UnsupportedError(where + e.what());
+        } catch (const SimulationError &e) {
+          throw SimulationError(where + e.what());
+        } catch (const InputError &e) {
+          throw InputError(where + e.what());
+        }
+      }
+      return py::make_tuple(energies, gradients);
+    }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("tangent"),
+       py::arg("first") = 0)
     .def_property_readonly("_particle_count", [](PySimulation &s) {
       return s.simulation->getParticleCount();
     })

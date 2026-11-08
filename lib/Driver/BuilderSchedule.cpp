@@ -177,7 +177,8 @@ llvm::Error Builder::emitEntry() {
         // Requests 0/1 select forces/virial; result 0 holds positions.
         // The product entry takes g in request 2 and returns G's cotangent
         // as buffer 1, without adding a topology field.
-        gradient.product = EntryGradientProductIR{2, 1, control.frameProductPositions};
+        gradient.product = EntryGradientProductIR{2, 1, control.frameProductPositions,
+                                                  control.frameProductDirection};
       auto startSlot = [&](StringRef name) -> unsigned {
         auto found = llvm::find_if(program.startValues,
             [&](const auto &value) { return value.name == name; });
