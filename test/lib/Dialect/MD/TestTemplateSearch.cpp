@@ -57,9 +57,18 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     auto view = [&](int64_t slot) -> Value {
       return call("mdrtTemplatePairsArenaView", ValueRange{handle, integer(slot)}, device, true);
     };
+    auto transfer = [&](Value to, Value from) {
+      Type token = gpu::AsyncTokenType::get(b.getContext());
+      Value ready = gpu::WaitOp::create(b, loc, token, ValueRange()).getAsyncToken();
+      Value done = gpu::MemcpyOp::create(b, loc, token, ValueRange{ready}, to, from).getAsyncToken();
+      gpu::WaitOp::create(b, loc, Type(), ValueRange{done});
+    };
     TemplateSearchBuffers v;
     v.spatial.points = entry->getArgument(1);
-    v.spatial.places = entry->getArgument(2);
+    v.spatial.places = view(TEMPLATE_LAYOUT_SPATIAL_PLACES);
+    // Retain the fixture's observable inverse-map buffer, while testing
+    // the same arena-owned workspace used by the production refresh.
+    transfer(v.spatial.places, entry->getArgument(2));
     v.cell = entry->getArgument(3);
     v.spatial.waterActive = entry->getArgument(4);
     v.spatial.atomActive = entry->getArgument(5);
@@ -67,23 +76,15 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.atoms = layout(TEMPLATE_LAYOUT_ATOMS);
     v.spatial.columnsX = createIndex(b, loc, 3);
     v.spatial.columnsY = createIndex(b, loc, 2);
-    v.spatial.scanBlocks = createIndex(b, loc, 1);
+    v.spatial.scanBlocks = layout(TEMPLATE_LAYOUT_SCAN_BLOCKS);
     v.spatial.order = call("mdrtTemplatePairsOrder", ValueRange{handle}, device, true);
-    Value size = arith::AddIOp::create(b, loc, v.spatial.waters, v.spatial.atoms);
-    SmallVector<Value> owned;
-    auto allocate = [&](Value n) -> Value {
-      Value result = gpu::AllocOp::create(b, loc, device, Type(), ValueRange(),
-                                          ValueRange{n}, ValueRange()).getMemref();
-      owned.push_back(result);
-      return result;
-    };
-    v.spatial.keys = allocate(size);
-    v.spatial.zKeys = allocate(size);
-    v.spatial.items = allocate(size);
-    v.spatial.counts = allocate(createIndex(b, loc, 12));
-    v.spatial.starts = allocate(createIndex(b, loc, 13));
-    v.spatial.cursors = allocate(createIndex(b, loc, 12));
-    v.spatial.scanScratch = allocate(createIndex(b, loc, 1));
+    v.spatial.keys = view(TEMPLATE_LAYOUT_SPATIAL_KEYS);
+    v.spatial.zKeys = view(TEMPLATE_LAYOUT_SPATIAL_Z_KEYS);
+    v.spatial.items = view(TEMPLATE_LAYOUT_SPATIAL_ITEMS);
+    v.spatial.counts = view(TEMPLATE_LAYOUT_SPATIAL_COUNTS);
+    v.spatial.starts = view(TEMPLATE_LAYOUT_SPATIAL_STARTS);
+    v.spatial.cursors = view(TEMPLATE_LAYOUT_SPATIAL_CURSORS);
+    v.spatial.scanScratch = view(TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
     v.build.rows = layout(TEMPLATE_LAYOUT_ROWS);
     v.build.unitCapacity = layout(TEMPLATE_LAYOUT_UNITS);
     v.build.outerRows = view(TEMPLATE_LAYOUT_OUTER_ROWS);
@@ -100,11 +101,7 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.extent = createReal(b, loc, b.getF64Type(), 18.0 / 128);
     emitTemplateSpatialOrder(b, loc, v.spatial);
     emitSearchTemplatePairs(b, loc, v);
-    for (Value buffer : owned) {
-      Value generic = memref::MemorySpaceCastOp::create(b, loc,
-          MemRefType::get({ShapedType::kDynamic}, b.getI32Type()), buffer);
-      gpu::DeallocOp::create(b, loc, Type(), ValueRange(), generic);
-    }
+    transfer(entry->getArgument(2), v.spatial.places);
     func::ReturnOp::create(b, loc);
   }
 };

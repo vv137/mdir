@@ -174,6 +174,15 @@ int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   case TEMPLATE_LAYOUT_BUILD_WORK_COUNTS: return layout->buildWorkCounts;
   case TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS: return layout->buildWorkOffsets;
   case TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH: return layout->buildScanScratch;
+  case TEMPLATE_LAYOUT_SPATIAL_KEYS: return layout->spatialKeys;
+  case TEMPLATE_LAYOUT_SPATIAL_Z_KEYS: return layout->spatialZKeys;
+  case TEMPLATE_LAYOUT_SPATIAL_ITEMS: return layout->spatialItems;
+  case TEMPLATE_LAYOUT_SPATIAL_PLACES: return layout->spatialPlaces;
+  case TEMPLATE_LAYOUT_SPATIAL_COUNTS: return layout->spatialCounts;
+  case TEMPLATE_LAYOUT_SPATIAL_STARTS: return layout->spatialStarts;
+  case TEMPLATE_LAYOUT_SPATIAL_CURSORS: return layout->spatialCursors;
+  case TEMPLATE_LAYOUT_SPATIAL_BINS: return layout->spatialBins;
+  case TEMPLATE_LAYOUT_SCAN_BLOCKS: return layout->scanBlocks;
   default:
     fprintf(stderr, "mdrt: invalid template layout slot\n");
     abort();
@@ -202,6 +211,13 @@ void _mlir_ciface_mdrtTemplatePairsArenaView(struct Buffer1 *result,
   case TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS:
   case TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS: size = layout->rows + 1; break;
   case TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH: size = layout->scanBlocks; break;
+  case TEMPLATE_LAYOUT_SPATIAL_KEYS:
+  case TEMPLATE_LAYOUT_SPATIAL_Z_KEYS:
+  case TEMPLATE_LAYOUT_SPATIAL_ITEMS:
+  case TEMPLATE_LAYOUT_SPATIAL_PLACES: size = layout->waters + layout->atoms; break;
+  case TEMPLATE_LAYOUT_SPATIAL_COUNTS:
+  case TEMPLATE_LAYOUT_SPATIAL_CURSORS: size = layout->spatialBins; break;
+  case TEMPLATE_LAYOUT_SPATIAL_STARTS: size = layout->spatialBins + 1; break;
   default:
     fprintf(stderr, "mdrt: template layout slot is not an arena view\n");
     abort();

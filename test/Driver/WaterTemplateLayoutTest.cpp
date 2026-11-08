@@ -28,7 +28,7 @@ int runWaterTemplateLayoutTest() {
         for (int64_t i = 0; i < atoms; i += 16) rows += 2;
         requireLayout(layout.rows == rows, "partial class cluster lost");
         struct View { int64_t begin, count; };
-        std::array<View, 14> views = {{{0, 48},
+        std::array<View, 21> views = {{{0, 48},
             {layout.outerRows, rows * 4}, {layout.innerRows, rows * 4},
             {layout.outerUnits, layout.units * 4},
             {layout.innerUnits, layout.units * 4},
@@ -40,7 +40,14 @@ int runWaterTemplateLayoutTest() {
             {layout.buildEntryOffsets, rows + 1},
             {layout.buildWorkCounts, rows},
             {layout.buildWorkOffsets, rows + 1},
-            {layout.buildScanScratch, layout.scanBlocks}}};
+            {layout.buildScanScratch, layout.scanBlocks},
+            {layout.spatialKeys, waters + atoms},
+            {layout.spatialZKeys, waters + atoms},
+            {layout.spatialItems, waters + atoms},
+            {layout.spatialPlaces, waters + atoms},
+            {layout.spatialCounts, layout.spatialBins},
+            {layout.spatialStarts, layout.spatialBins + 1},
+            {layout.spatialCursors, layout.spatialBins}}};
         int64_t end = 0;
         for (View view : views) {
           requireLayout(view.begin == end,
@@ -49,7 +56,10 @@ int runWaterTemplateLayoutTest() {
         }
         requireLayout(end == layout.words, "allocation omits a view's tail");
         requireLayout(layout.stageUnits % 4 == 0 && layout.stageEntries % 4 == 0 &&
-                      layout.scanBlocks * 1024 >= rows && layout.scanBlocks >= 1,
+                      layout.scanBlocks * 1024 >= rows && layout.scanBlocks >= 1 &&
+                      layout.scanBlocks * 1024 >= layout.spatialBins &&
+                      layout.spatialBins >= 12 &&
+                      layout.spatialBins >= 4 * ((waters + atoms + 63) / 64),
                       "record alignment or row-scan capacity differs");
         // Worst fragmentation puts one partial block in each row before
         // filling any row. Check that packing the remaining entries into
@@ -67,6 +77,12 @@ int runWaterTemplateLayoutTest() {
         ++checked;
       }
   MdrtTemplatePairLayout layout;
+  requireLayout(mdrtTemplatePairLayout(16384, 0, 1, &layout) &&
+                layout.scanBlocks == 1 && layout.spatialBins == 1024,
+                "exact spatial scan boundary rounded up");
+  requireLayout(mdrtTemplatePairLayout(16385, 0, 1, &layout) &&
+                layout.scanBlocks == 2 && layout.spatialBins == 1028,
+                "spatial scan scratch lost its partial block");
   requireLayout(!mdrtTemplatePairLayout(-1, 0, 0, &layout) &&
                 !mdrtTemplatePairLayout(0, -1, 0, &layout) &&
                 !mdrtTemplatePairLayout(0, 0, -1, &layout) &&
