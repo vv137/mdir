@@ -2,9 +2,9 @@
 
 Recorded at its merge.
 
-**Forward-mode AD through the operations of `mdir.torch` is refused by name: a tangent of `torch.func.jvp`, `jacfwd`, or `torch.autograd.forward_ad` that reaches an operation, on an argument of `evaluate` or on a cotangent of a backward, raises `UnsupportedError` ("forward mode ... is not implemented; reverse mode (torch.autograd.grad / backward) is"), naming the tensor that carries it; it never gives a zero.**
+**Forward-mode AD through the operations of `mdir.torch` is refused by name: a tangent of `torch.func.jvp`, `jacfwd`, or `torch.autograd.forward_ad` that reaches an operation, on an argument of `evaluate` or on a cotangent of a backward, raises `UnsupportedError` ("forward mode ... is not implemented; reverse mode (torch.autograd.grad / backward) is"), naming the tensor that carries it; it never gives a zero. `FrameEvaluator.evaluate` refuses frames that carry such a tangent. The transforms of `torch.func` are not supported through `mdir.torch`, with PyTorch's own error; `torch.autograd` is.**
 
-Issue #777. The maintainer ruled on PR #778 (2026-11-08): forward mode in `mdir.torch` is refused by name in this separate fix; forward mode itself is built only if asked.
+Issue #777. The maintainer ruled on PR #778 (2026-11-08): forward mode in `mdir.torch` is refused by name in this separate fix; forward mode itself is built only if asked. On PR #779 (2026-11-08) the maintainer ruled that PyTorch's error for the transforms of `torch.func` stands, and that frames given as dual tensors are refused in this PR, in `_array` of `mdir._frames`.
 
 ## The defect
 
@@ -26,7 +26,8 @@ The expected tangent, $\sum_n\partial U_n/\partial\boldsymbol\theta\cdot\dot{\bo
 
 The tangent is detected where a tensor enters an operation, by the public `torch.autograd.forward_ad.unpack_dual(t).tangent is not None`:
 
-- in `evaluate` (its first function, `_begin`), on every tensor of `theta` and on the positions, the cells, and the tilts where they are tensors or lists or tuples of tensors, whether or not they require a gradient (forward mode runs without one);
+- in `evaluate` (its first function, `_begin`), on every tensor of `theta` and on the positions, the cells, and the tilts where they are tensors or lists or tuples of tensors, whether or not they require a gradient (forward mode runs without one); and on the first frame of another iterable (an iterator gives it back in front of the rest, by `itertools.chain`);
+- in `_array` of `mdir._frames`, where a frame or a cell is read into an array: the frames of an iterable, read inside an operation, and every call of `FrameEvaluator.evaluate`. PyTorch is looked at there only where it is imported already;
 - in each backward of the operations (`mdir::frame_energies`, `frame_positions`, `frame_cell`, `frame_energy_in`, `frame_input_vjp`), on its cotangents: forward over reverse, a dual cotangent of a backward, would otherwise go through the backward without its tangent.
 
 Probes on PyTorch 2.14.1 showed that the dual is visible at those two places and nowhere else: the body of a custom operation runs below the key of autograd, where the dispatcher has taken the tangent off. Inside `torch.func.jvp` the arguments are wrapped tensors of functorch, and `unpack_dual` at the current level gives their tangent all the same; under `vmap` of `jvp` too. Under `torch.compile` the functions of the adapter that check the arguments are outside the compiled graph (`torch.compiler.disable`, D385), and the check sees the dual there.
@@ -39,9 +40,15 @@ Other mechanisms were set aside:
 - A `torch.autograd.Function` with a `jvp` that raises would make the operation transparent to `torch.compile`, which keeps a custom operation opaque (D252).
 - Refusing wherever a dual level is active (`torch.autograd.forward_ad._current_level`, or the interpreters of `torch._C._functorch`) reads private state, which D385 removed from the adapter, and refuses a `jvp` whose tangent does not reach the operations. Such a `jvp` (in a number that multiplies the energy) is given, and is tested.
 
+Inside an operation the tangent of `torch.func.jvp` is no longer seen: the wrapper of functorch is taken off there, and `unpack_dual` gives none, while the dual numbers of `torch.autograd.forward_ad` are still seen. The frames of an iterable are read inside `mdir::frame_energies`, so `evaluate` looks at their first frame before the operation, where the wrapper is seen.
+
+## The transforms of `torch.func`
+
+The transforms of `torch.func` are not supported through `mdir.torch`; `torch.autograd` is. `torch.func.grad`, `jacrev`, `hessian`, `jacfwd(jacrev(...))`, and `jvp(grad(...))` stop at their reverse level, before any tangent reaches the operations, in PyTorch's `RuntimeError` for an `autograd.Function` that does not override `setup_context`. That was so before this decision; it is an error, never a zero, and the adapter does not wrap it: telling the reverse transforms from forward mode would need private state of PyTorch or the text of the error. Forward mode by `jvp` and `jacfwd` is refused by name as above.
+
 ## What stays
 
-`torch.func.hessian`, `jacfwd(jacrev(...))`, and `jvp(grad(...))`, and `torch.func.grad` and `jacrev` alone, stop at their reverse level, before any tangent reaches the operations, in PyTorch's `RuntimeError` for an `autograd.Function` without the support of `torch.func` (it must override `setup_context`). That was so before this decision; it is no zero. The transforms of reverse mode of `torch.func` are not supported by `mdir.torch`, and refusing them by name is a separate question (open below).
+An iterable whose first frame carries no tangent and a later one a tangent of `torch.func.jvp`, through `mdir.torch.evaluate`, is read without that tangent: inside the operation it is not seen. With `torch.autograd.forward_ad` such a frame is refused where it is read.
 
 `evaluate` keeps its signature. No key of a control file changes.
 
@@ -51,15 +58,13 @@ Other mechanisms were set aside:
 
 | Check | Result |
 |---|---|
-| 22 forms: `jvp` in `theta`, the positions, the cells, the tilts, and of `gradients["positions"]`; `jvp` and `forward_ad` in the positions as a list of frames, `forward_ad` in the cells as a tuple; `jacfwd` in `theta`, the positions, and of `gradients["positions"]`; `vmap` of `jvp`; `forward_ad` in `theta`, the positions, the cells, the tilts, and of `gradients["positions"]`; `forward_ad` over `autograd.grad` with `create_graph=True`; a dual cotangent through the energy and through the gradient in the positions; `jvp` and `forward_ad` under `torch.compile` (aot_eager) | each raises `UnsupportedError` with "forward mode", the text above, and the name of the tensor |
+| 28 forms: `jvp` in `theta`, the positions, the cells, the tilts, and of `gradients["positions"]`; `jvp` and `forward_ad` in the positions as a list of frames, `forward_ad` in the cells as a tuple; `jvp` and `forward_ad` in the positions as a generator of frames, `forward_ad` in the cells of a generator of frames with their cells; `FrameEvaluator.evaluate` of dual positions as an array and as a generator, and of dual cells; `jacfwd` in `theta`, the positions, and of `gradients["positions"]`; `vmap` of `jvp`; `forward_ad` in `theta`, the positions, the cells, the tilts, and of `gradients["positions"]`; `forward_ad` over `autograd.grad` with `create_graph=True`; a dual cotangent through the energy and through the gradient in the positions; `jvp` and `forward_ad` under `torch.compile` (aot_eager) | each raises `UnsupportedError` with "forward mode", the text above, and the name of the tensor |
 | `torch.func.hessian` in `theta` and in the positions | PyTorch's `RuntimeError`, never a zero |
 | a `jvp` whose tangent does not reach the operations | the energy, to the bit |
 | after the refusals, the gradients of reverse mode in `theta`, the positions, and the cell, and of a loss on the forces in `theta` | equal to those before, to the bit |
 
-The script fails at its first form with the adapter of before this decision (a tangent of 0, no error). The existing tests of `mdir.torch` pass unchanged.
+The script fails at its first form with the adapter of before this decision (a tangent of 0, no error). The existing tests of `mdir.torch` and of the frame evaluator (`python-frames.test`) pass unchanged.
 
 ## Open
 
-- Whether the transforms of reverse mode of `torch.func` (`grad`, `jacrev`, `hessian`) should be refused by name, `UnsupportedError`, in place of PyTorch's `RuntimeError`. Without a private function of PyTorch the adapter would have to recognize that error by its text.
-- Frames given as an iterable other than a list or a tuple (a generator) are not looked at, since the adapter does not consume them: a dual tensor among them is read without its tangent, by `_array` of `mdir._frames`, which refuses only tensors that require a gradient. A check there would cover `FrameEvaluator.evaluate` as well; it is outside the files of this fix.
 - Forward mode itself (#726 part F) is built only if the maintainer asks.

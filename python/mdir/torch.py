@@ -78,6 +78,35 @@ def _refuse_forward(what, *tensors):
                 "zero")
 
 
+def _first_frame(positions):
+    """Refuses a tangent on the first frame of an iterable of frames, and
+    returns the frames. The frames of an iterable are read inside an
+    operation, where the tangent of `torch.func.jvp` is no longer seen, so
+    the first is looked at here; an iterator gives it back in front of the
+    rest. A later frame with a tangent of `torch.autograd.forward_ad` is
+    refused where it is read (`_frames._array`)."""
+    if (isinstance(positions, (Tensor, np.ndarray, list, tuple)) or positions is None or
+            hasattr(positions, "positions") or hasattr(positions, "__array__") or
+            not hasattr(positions, "__iter__")):
+        return positions
+    iterator = iter(positions)
+    end = object()
+    first = next(iterator, end)
+    if iterator is positions and first is not end:
+        positions = itertools.chain([first], iterator)
+    if first is end:
+        return positions
+    if hasattr(first, "positions"):
+        parts = (first.positions, getattr(first, "cell", None))
+    elif isinstance(first, (tuple, list)) and len(first) == 2:
+        parts = tuple(first)
+    else:
+        parts = (first, None)
+    _refuse_forward("the positions", parts[0])
+    _refuse_forward("the cells", parts[1])
+    return positions
+
+
 def _cell_gradient(positions, cells, tilts, gradient, strain):
     """The gradient of the energy of each frame in the six numbers of its
     cell at fixed Cartesian positions, (K, 6): the diagonal a_x, b_y, c_z,
@@ -535,6 +564,7 @@ def _begin(evaluator, theta, positions, cells, tilts, gradients):
         raise _core.InputError("mdir.torch.evaluate: the tensors of theta are on one device")
     for given, name in ((positions, "the positions"), (cells, "the cells"), (tilts, "the tilts")):
         _refuse_forward(name, given)
+    positions = _first_frame(positions)
     # "tunables" names what autograd decides here: the derivative in `theta`
     # is kept where a tensor of it requires a gradient.
     asked = tuple(name for name in _frames._named(gradients) if name != "tunables")

@@ -8,13 +8,16 @@ On the torsion fixtures of python_frame_product.py with dihedral_k tunable,
 two frames in a cubic cell: torch.func.jvp, jacfwd, and the dual numbers
 of torch.autograd.forward_ad, with the tangent on theta, on the positions,
 on the cells, and on the tilts; of the energy and of the output
-gradients["positions"]; positions and cells given as a list or a tuple of
-frames; vmap of jvp; forward over reverse (a dual input
+gradients["positions"]; positions and cells given as a list, a tuple, or a
+generator of frames; FrameEvaluator.evaluate of dual positions and cells,
+as arrays and as a generator; vmap of jvp; forward over reverse (a dual input
 to a backward with create_graph=True, and a dual cotangent of a backward,
 through the energy and through the gradient in the positions); under
 torch.compile (aot_eager). torch.func.hessian stops at its reverse level,
 in a RuntimeError of PyTorch (an autograd.Function without the support of
-functorch), before any tangent: it is no zero either. A jvp whose tangent
+functorch), before any tangent: the transforms of torch.func are not
+supported through mdir.torch (torch.autograd is), and that error stands;
+it is no zero either. A jvp whose tangent
 does not reach the operations gives its value. Then the same evaluator
 gives the same gradients of reverse mode as before the refusals, to the
 bit.
@@ -140,6 +143,19 @@ FORMS = [
      lambda: dual(lambda p: energy(k0, [p[0], p[1]]), x)),
     ("forward_ad in the cells as a tuple of frames", "the cells",
      lambda: dual(lambda c: energy(k0, x, (c, c)), cells)),
+    ("torch.func.jvp in the positions as a generator of frames", "positions",
+     lambda: torch.func.jvp(lambda p: energy(k0, (f for f in p)), (x,), (ones(x),))),
+    ("forward_ad in the positions as a generator of frames", "positions",
+     lambda: dual(lambda p: energy(k0, (f for f in p)), x)),
+    ("forward_ad in the cells as a generator of frames with their cells", "cells",
+     lambda: dual(lambda c: energy(k0, ((f, c) for f in x)), cells)),
+    ("FrameEvaluator.evaluate of dual positions", "positions",
+     lambda: dual(lambda p: torch.from_numpy(evaluator.evaluate(p).energy), x)),
+    ("FrameEvaluator.evaluate of dual positions as a generator", "positions",
+     lambda: dual(lambda p: torch.from_numpy(evaluator.evaluate(f for f in p).energy), x)),
+    ("FrameEvaluator.evaluate of dual cells", "cells",
+     lambda: dual(lambda c: torch.from_numpy(evaluator.evaluate(x.cpu().numpy(), c).energy),
+                  cells)),
     ("forward_ad over torch.autograd.grad with create_graph=True", "theta['k']", over_reverse),
     ("a dual cotangent of a backward through the energy", "a cotangent of the outputs",
      dual_cotangent_energy),
