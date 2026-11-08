@@ -19,6 +19,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include <map>
 
 using namespace mlir;
 using namespace mdir::md;
@@ -3198,6 +3199,437 @@ PotentialOp TangentBuilder::build(Operation *after) {
 }
 
 //===----------------------------------------------------------------------===//
+// The derivative of a potential along directions of its arguments
+// (D[force-matching-forward])
+//===----------------------------------------------------------------------===//
+//
+// From a potential U(x, c, θ...) and directions of some of its arguments,
+// numbers ḃ_n and fields of the particles ȧ, the potential
+//
+//   Ψ(x, c, θ..., ḃ..., ȧ...) = Σ_n ḃ_n ∂U/∂b_n + Σ_i ȧ_i ∂U/∂a_i,
+//
+// the derivative in λ at λ = 0 of U(b + λ ḃ, a + λ ȧ), with the directions
+// its last arguments. Its forces are −Σ_n ∂²U/∂x_i ∂b_n · ḃ_n: forward mode
+// in the arguments of the gradient in the positions, the transpose of the
+// product of D376 (#726, part F). Each sum that reads a directed argument
+// becomes a sum of the same structure that gathers the directions of the
+// fields it gathers as well, and whose kernel yields its derivative along
+// them; a sum that reads none has no term, which the activity proof states.
+// A reciprocal sum, whose energy is a quadratic form of its charges, gives
+// ½ [E(c + ċ) − E(c − ċ)] exactly: two reciprocal sums, whatever the number
+// of directed arguments.
+
+namespace {
+
+class DirectionBuilder {
+public:
+  DirectionBuilder(PotentialOp potential, StringRef name,
+                   ArrayRef<int64_t> directed)
+      : potential(potential), name(name), directed(directed),
+        builder(potential.getContext()), loc(potential.getLoc()) {}
+
+  /// The potential Ψ, placed after `after`, or a null op after a
+  /// diagnostic.
+  PotentialOp build(Operation *after);
+
+private:
+  LogicalResult refuse(Value value, const ActivityResult &verdict);
+  /// Sets `tangent` to the derivative along the directions of the field
+  /// `field`, a field of its type, or to null if it does not depend on them.
+  LogicalResult fieldTangent(Value field, Value &tangent);
+  /// The derivative along the directions of the value `value` of a kernel in
+  /// `block`: through the numbers that the kernel takes from outside, and
+  /// through each argument of `seeds` along its tangent, also an argument.
+  LogicalResult kernelDirection(Block &block, Value value,
+                                ArrayRef<std::pair<Value, Value>> seeds,
+                                Value &total);
+  LogicalResult sumDirection(Operation *op, Value &tangent);
+  LogicalResult reciprocalDirection(ReciprocalOp op, Value value,
+                                    Value &tangent);
+
+  PotentialOp potential;
+  StringRef name;
+  ArrayRef<int64_t> directed;
+  OpBuilder builder;
+  Location loc;
+  Block *body = nullptr;
+  Value lambda;
+  std::unique_ptr<ActivityAnalysis> activity;
+  llvm::DenseMap<Value, Value> fieldTangents;
+};
+
+} // namespace
+
+LogicalResult DirectionBuilder::refuse(Value value,
+                                       const ActivityResult &verdict) {
+  Operation *op = value.getDefiningOp();
+  Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc()
+                : op                     ? op->getLoc()
+                                         : value.getLoc();
+  if (verdict.dependence == Activity::Unknown)
+    return emitError(at) << "cannot prove that this value does not depend on "
+                            "the directed arguments: "
+                         << verdict.reason;
+  if (op)
+    return emitError(at) << "'" << op->getName()
+                         << "' depends on the directed arguments and has no "
+                            "rule for its derivative along them";
+  return emitError(at) << "a block argument depends on the directed "
+                          "arguments and has no rule for its derivative";
+}
+
+LogicalResult
+DirectionBuilder::kernelDirection(Block &block, Value value,
+                                  ArrayRef<std::pair<Value, Value>> seeds,
+                                  Value &total) {
+  total = Value();
+  OpBuilder kernel(block.getTerminator());
+  ScalarEmitter emit(kernel, loc);
+  // Through the values that the kernel takes from outside: those numbers
+  // are b + λ ḃ until the end of the construction.
+  ScalarDerivative::LeafHandler leaf = [&](Value leafValue,
+                                           Value &tangent) -> LogicalResult {
+    tangent = Value();
+    ActivityResult verdict = activity->classify(leafValue);
+    if (verdict.dependence == Activity::Inactive)
+      return success();
+    return refuse(leafValue, verdict);
+  };
+  ScalarDerivative outside(kernel, lambda, leaf);
+  if (failed(outside.get(value, total)))
+    return failure();
+  // Through the values of the gathered fields.
+  for (auto [argument, seed] : seeds) {
+    ScalarDerivative derivative(kernel, argument, nullptr, seed);
+    Value slope;
+    if (failed(derivative.get(value, slope)))
+      return failure();
+    total = emit.add(total, slope);
+  }
+  return success();
+}
+
+LogicalResult DirectionBuilder::fieldTangent(Value field, Value &tangent) {
+  tangent = Value();
+  auto found = fieldTangents.find(field);
+  if (found != fieldTangents.end()) {
+    tangent = found->second;
+    return success();
+  }
+  ActivityResult verdict = activity->classify(field);
+  if (verdict.dependence == Activity::Inactive)
+    return success();
+  auto map = field.getDefiningOp<MapParticlesOp>();
+  if (!map || verdict.dependence == Activity::Unknown)
+    return refuse(field, verdict);
+  if (map->walk([](ApplyStageOp) { return WalkResult::interrupt(); })
+          .wasInterrupted())
+    return map.emitOpError() << "applies a learned stage, whose derivative "
+                                "along the directed arguments is not formed";
+  SmallVector<std::pair<unsigned, Value>> active;
+  for (auto [place, gathered] : llvm::enumerate(map.getGathered())) {
+    Value inner;
+    if (failed(fieldTangent(gathered, inner)))
+      return failure();
+    if (inner)
+      active.emplace_back(place, inner);
+  }
+  auto copy = cast<MapParticlesOp>(builder.clone(*map));
+  Block &block = copy.getKernel().front();
+  SmallVector<std::pair<Value, Value>> seeds;
+  for (auto [place, inner] : active) {
+    copy.getGatheredMutable().append(inner);
+    Type type = cast<FieldType>(inner.getType()).getKernelValueType();
+    seeds.emplace_back(block.getArgument(place), block.addArgument(type, loc));
+  }
+  Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
+  Value total;
+  if (failed(kernelDirection(block, value, seeds, total)))
+    return failure();
+  if (!total) {
+    copy->erase();
+    fieldTangents[field] = Value();
+    return success();
+  }
+  setYield(block, total);
+  eraseDeadOps(block);
+  tangent = copy.getResult();
+  fieldTangents[field] = tangent;
+  return success();
+}
+
+LogicalResult DirectionBuilder::sumDirection(Operation *op, Value &tangent) {
+  tangent = Value();
+  if (op->walk([](ApplyStageOp) { return WalkResult::interrupt(); })
+          .wasInterrupted())
+    return op->emitOpError() << "applies a learned stage, whose derivative "
+                                "along the directed arguments is not formed";
+  if (!op->getResult(0).getType().isF64())
+    return op->emitOpError() << "cannot form the derivative along the "
+                                "directed arguments of a sum whose result "
+                                "is not f64";
+  OperandRange gathered = isa<SumRelationOp>(op)
+                              ? cast<SumRelationOp>(op).getGathered()
+                          : isa<SumTuplesOp>(op)
+                              ? cast<SumTuplesOp>(op).getGathered()
+                              : cast<SumParticlesOp>(op).getGathered();
+  // The gathered fields follow the relation, the positions, and the cell.
+  unsigned begin = isa<SumParticlesOp>(op) ? 0 : 3;
+  unsigned end = begin + gathered.size();
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (operand.getOperandNumber() >= begin && operand.getOperandNumber() < end)
+      continue;
+    ActivityResult verdict = activity->classify(operand.get());
+    if (verdict.dependence != Activity::Inactive)
+      return op->emitOpError()
+             << "takes operand " << operand.getOperandNumber()
+             << ", which depends on the directed arguments, other than as "
+                "a field of the particles that its kernel gathers; its "
+                "derivative along them is not formed";
+  }
+  SmallVector<std::pair<unsigned, Value>> active;
+  for (auto [place, field] : llvm::enumerate(gathered)) {
+    Value inner;
+    if (failed(fieldTangent(field, inner)))
+      return failure();
+    if (inner)
+      active.emplace_back(place, inner);
+  }
+  Operation *copy = builder.clone(*op);
+  Block &block = copy->getRegion(0).front();
+  SmallVector<std::pair<Value, Value>> seeds;
+  unsigned count = gathered.size();
+  for (auto [place, inner] : active) {
+    Type type = cast<FieldType>(inner.getType()).getKernelValueType();
+    if (auto sum = dyn_cast<SumRelationOp>(copy)) {
+      // Two values of each gathered field, at i and at j, after those of
+      // the fields before it.
+      sum.getGatheredMutable().append(inner);
+      seeds.emplace_back(block.getArgument(2 + 2 * place),
+                         block.addArgument(type, loc));
+      seeds.emplace_back(block.getArgument(3 + 2 * place),
+                         block.addArgument(type, loc));
+    } else if (auto sum = dyn_cast<SumTuplesOp>(copy)) {
+      // One value for each member, before the fields of the tuples.
+      unsigned arity = sum.getArity();
+      unsigned first = sum.getCoordinates().size();
+      sum.getGatheredMutable().append(inner);
+      for (unsigned member = 0; member != arity; ++member)
+        seeds.emplace_back(
+            block.getArgument(first + place * arity + member),
+            block.insertArgument(first + count * arity + member, type, loc));
+    } else {
+      cast<SumParticlesOp>(copy).getGatheredMutable().append(inner);
+      seeds.emplace_back(block.getArgument(place),
+                         block.addArgument(type, loc));
+    }
+    ++count;
+  }
+  Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
+  Value total;
+  if (failed(kernelDirection(block, value, seeds, total)))
+    return failure();
+  if (!total) {
+    copy->erase();
+    return success();
+  }
+  setYield(block, total);
+  eraseDeadOps(block);
+  if (auto sum = dyn_cast<SumRelationOp>(copy))
+    sum.setExchangeBasis(ExchangeBasis::Derived);
+  tangent = copy->getResult(0);
+  return success();
+}
+
+LogicalResult DirectionBuilder::reciprocalDirection(ReciprocalOp reciprocal,
+                                                    Value value,
+                                                    Value &tangent) {
+  tangent = Value();
+  if (value != reciprocal.getEnergy())
+    return reciprocal.emitOpError()
+           << "the derivative along the directed arguments of the forces, "
+              "the virial, or the potential of a reciprocal sum is not "
+              "formed; that of its energy is";
+  for (OpOperand &operand : reciprocal->getOpOperands()) {
+    if (operand.get() == reciprocal.getCharges())
+      continue;
+    ActivityResult verdict = activity->classify(operand.get());
+    if (verdict.dependence != Activity::Inactive)
+      return refuse(operand.get(), verdict);
+  }
+  Value charges = reciprocal.getCharges();
+  Value direction;
+  if (failed(fieldTangent(charges, direction)))
+    return failure();
+  if (!direction)
+    return success();
+  // E(c) = ½ cᵀ A c, so that ċᵀ A c = ½ [E(c + ċ) − E(c − ċ)] exactly.
+  Type type = cast<FieldType>(charges.getType()).getKernelValueType();
+  Value energies[2];
+  for (int k = 0; k != 2; ++k) {
+    OperationState state(loc, MapParticlesOp::getOperationName());
+    state.addOperands({charges, direction});
+    state.addRegion();
+    state.addTypes(charges.getType());
+    Operation *map = builder.create(state);
+    Block *block = new Block();
+    map->getRegion(0).push_back(block);
+    Value c = block->addArgument(type, loc);
+    Value dc = block->addArgument(type, loc);
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    ScalarEmitter emit(kernel, loc);
+    YieldOp::create(kernel, loc,
+                    ValueRange{k == 0 ? emit.add(c, dc) : emit.sub(c, dc)});
+    auto copy = cast<ReciprocalOp>(builder.clone(*reciprocal));
+    copy.getChargesMutable().assign(map->getResult(0));
+    energies[k] = copy.getEnergy();
+  }
+  ScalarEmitter emit(builder, loc);
+  tangent = emit.scale(0.5, emit.sub(energies[0], energies[1]));
+  return success();
+}
+
+PotentialOp DirectionBuilder::build(Operation *after) {
+  if (potential.isExternal()) {
+    potential.emitOpError()
+        << "cannot form the derivative along directions of a declaration";
+    return PotentialOp();
+  }
+  if (!llvm::hasSingleElement(potential.getBody())) {
+    potential.emitOpError() << "cannot form the derivative along directions "
+                               "of a body with more than one block";
+    return PotentialOp();
+  }
+  FunctionType type = potential.getFunctionType();
+  if (type.getNumInputs() < 2 || !isa<FieldType>(type.getInput(0)) ||
+      type.getNumResults() != 1 || !type.getResult(0).isF64()) {
+    potential.emitOpError() << "cannot form the derivative along directions "
+                               "of a potential that does not take the "
+                               "positions first and return one f64";
+    return PotentialOp();
+  }
+  SmallVector<Type> inputs(type.getInputs());
+  for (int64_t argument : directed)
+    inputs.push_back(type.getInput(argument));
+
+  OperationState state(loc, PotentialOp::getOperationName());
+  state.addAttribute(PotentialOp::getSymNameAttrName(state.name),
+                     builder.getStringAttr(name));
+  state.addAttribute(
+      PotentialOp::getFunctionTypeAttrName(state.name),
+      TypeAttr::get(builder.getFunctionType(inputs, type.getResults())));
+  state.addRegion();
+  builder.setInsertionPointAfter(after);
+  auto result = cast<PotentialOp>(builder.create(state));
+  IRMapping mapping;
+  potential.getBody().cloneInto(&result.getBody(), mapping);
+  body = &result.getBody().front();
+  SmallVector<Value> directions;
+  for (int64_t argument : directed)
+    directions.push_back(body->addArgument(type.getInput(argument), loc));
+  auto fail = [&]() {
+    result.erase();
+    return PotentialOp();
+  };
+
+  if (llvm::any_of(*body, [](Operation &op) {
+        return isa_and_nonnull<md_dist::MDDistDialect>(op.getDialect());
+      })) {
+    potential.emitOpError() << "cannot form the derivative along directions "
+                               "of a potential on domains (D276)";
+    return fail();
+  }
+  // The truncation is part of the energy of a pair.
+  for (Operation &op : llvm::make_early_inc_range(*body))
+    if (auto sum = dyn_cast<SumRelationOp>(&op))
+      if (failed(expandTruncation(sum)))
+        return fail();
+
+  // The arguments b + λ ḃ and a + λ ȧ in place of b and a, for the
+  // construction alone.
+  lambda = body->addArgument(builder.getF64Type(), loc);
+  builder.setInsertionPointToStart(body);
+  SmallVector<std::pair<Value, Value>> restore;
+  SmallVector<Operation *> shifts;
+  for (auto [argument, direction] : llvm::zip(directed, directions)) {
+    Value value = body->getArgument(argument);
+    Value shifted;
+    if (value.getType().isF64()) {
+      Operation *product =
+          arith::MulFOp::create(builder, loc, lambda, direction);
+      Operation *sum = arith::AddFOp::create(builder, loc, value,
+                                             product->getResult(0));
+      shifted = sum->getResult(0);
+      shifts.append({sum, product});
+    } else {
+      Type kernelType = cast<FieldType>(value.getType()).getKernelValueType();
+      OperationState mapState(loc, MapParticlesOp::getOperationName());
+      mapState.addOperands({value, direction});
+      mapState.addRegion();
+      mapState.addTypes(value.getType());
+      Operation *map = builder.create(mapState);
+      Block *block = new Block();
+      map->getRegion(0).push_back(block);
+      Value a = block->addArgument(kernelType, loc);
+      Value da = block->addArgument(kernelType, loc);
+      OpBuilder kernel = OpBuilder::atBlockEnd(block);
+      ScalarEmitter emit(kernel, loc);
+      YieldOp::create(kernel, loc, ValueRange{emit.add(a, emit.mul(lambda, da))});
+      shifted = map->getResult(0);
+      fieldTangents[shifted] = direction;
+      shifts.push_back(map);
+    }
+    Operation *owner = shifted.getDefiningOp();
+    value.replaceUsesWithIf(shifted, [&](OpOperand &use) {
+      return use.getOwner() != owner;
+    });
+    restore.emplace_back(shifted, value);
+  }
+
+  auto oldReturn = cast<ReturnOp>(body->getTerminator());
+  Value energy = oldReturn.getOperand(0);
+  builder.setInsertionPoint(oldReturn);
+  activity = std::make_unique<ActivityAnalysis>(lambda);
+  activity->addKnownBlock(body);
+  auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
+    tangent = Value();
+    ActivityResult verdict = activity->classify(value);
+    if (verdict.dependence == Activity::Inactive)
+      return success();
+    Operation *op = value.getDefiningOp();
+    if (verdict.dependence == Activity::Active && op) {
+      if (isa<SumRelationOp, SumTuplesOp, SumParticlesOp>(op))
+        return sumDirection(op, tangent);
+      if (auto reciprocal = dyn_cast<ReciprocalOp>(op))
+        return reciprocalDirection(reciprocal, value, tangent);
+    }
+    return refuse(value, verdict);
+  };
+  ScalarDerivative derivative(builder, lambda, leaf);
+  Value psi;
+  if (failed(derivative.get(energy, psi)))
+    return fail();
+  if (!psi)
+    psi = ScalarEmitter(builder, loc).constant(0.0, builder.getF64Type());
+  ReturnOp::create(builder, loc, ValueRange{psi});
+  oldReturn.erase();
+
+  // At λ = 0 the shifted arguments are the arguments.
+  for (auto [shifted, value] : restore)
+    shifted.replaceAllUsesWith(value);
+  for (Operation *op : shifts)
+    op->erase();
+  if (!lambda.use_empty()) {
+    potential.emitOpError() << "the derivative along directions kept a use "
+                               "of its parameter of construction";
+    return fail();
+  }
+  body->eraseArgument(cast<BlockArgument>(lambda).getArgNumber());
+  eraseDeadOps(*body);
+  return result;
+}
+
+//===----------------------------------------------------------------------===//
 // The function
 //===----------------------------------------------------------------------===//
 
@@ -3236,8 +3668,10 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     case Request::Tangent:
     case Request::TangentDerivative:
     case Request::TangentForces:
-      // The pass asks the tangent potential for these, as its energy, its
-      // derivatives, and its forces.
+    case Request::Direction:
+    case Request::DirectionForces:
+      // The pass asks the tangent potential, or that along directions, for
+      // these, as its energy, its derivatives, and its forces.
       potential.emitOpError()
           << "a request of the tangent reached the derivative of a potential";
       return FunctionOp();
@@ -3355,6 +3789,8 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     case Request::Tangent:
     case Request::TangentDerivative:
     case Request::TangentForces:
+    case Request::Direction:
+    case Request::DirectionForces:
       llvm_unreachable("refused when the result types were formed");
     }
     if (failed(status))
@@ -3410,6 +3846,12 @@ public:
         evaluate.emitOpError() << "'" << evaluate.getCallee()
                                << "' does not name a potential";
         return signalPassFailure();
+      }
+
+      if (evaluate.hasDirection()) {
+        if (failed(emitDirection(module, evaluate, potential)))
+          return signalPassFailure();
+        continue;
       }
 
       if (!evaluate.hasTangent()) {
@@ -3476,6 +3918,8 @@ public:
     // from them, which hold copies of their bodies.
     for (PotentialOp tangent : tangents)
       tangent.erase();
+    for (auto &entry : directionOf)
+      entry.second.erase();
     // The mark of the tangent of a reciprocal sum is internal to the pass.
     module->walk([](Operation *op) { op->removeAttr(kReciprocalTangent); });
   }
@@ -3542,8 +3986,82 @@ private:
     return tangent;
   }
 
+  /// The requests of U and those along the directions, the energy and the
+  /// forces of the potential Ψ along them, each in one call, in place of
+  /// `evaluate` (D[force-matching-forward]).
+  LogicalResult emitDirection(ModuleOp module, EvaluateOp evaluate,
+                              PotentialOp potential) {
+    SmallVector<int32_t> kinds[2];
+    SmallVector<int64_t> arguments[2];
+    SmallVector<Type> types[2];
+    SmallVector<unsigned> places[2];
+    for (auto [index, kind] : llvm::enumerate(evaluate.getRequestKinds())) {
+      auto request = static_cast<Request>(kind);
+      unsigned part = 0;
+      if (request == Request::Direction) {
+        part = 1;
+        request = Request::Energy;
+      } else if (request == Request::DirectionForces) {
+        part = 1;
+        request = Request::Forces;
+      }
+      kinds[part].push_back(static_cast<int32_t>(request));
+      arguments[part].push_back(evaluate.getRequestArguments()[index]);
+      types[part].push_back(evaluate.getResult(index).getType());
+      places[part].push_back(index);
+    }
+    SmallVector<Value> results(evaluate.getNumResults());
+    if (!kinds[0].empty()) {
+      Operation *call =
+          emitCall(evaluate, potential, kinds[0], arguments[0],
+                   evaluate.getPotentialOperands(), types[0]);
+      if (!call)
+        return failure();
+      for (auto [k, place] : llvm::enumerate(places[0]))
+        results[place] = call->getResult(k);
+    }
+    ArrayRef<int64_t> directed = *evaluate.getDirections();
+    std::string name = (potential.getSymName() + ".direction").str();
+    for (int64_t argument : directed)
+      name += "_" + std::to_string(argument);
+    PotentialOp along;
+    auto found = directionOf.find(name);
+    if (found != directionOf.end()) {
+      along = found->second;
+    } else {
+      if (SymbolTable::lookupSymbolIn(module, name)) {
+        potential.emitOpError() << "the name '" << name
+                                << "' is needed for the derivative of the "
+                                   "potential along directions, but is taken";
+        return failure();
+      }
+      Operation *last = potential;
+      std::string prefix = (potential.getSymName() + ".").str();
+      while (Operation *next = last->getNextNode()) {
+        auto generated = dyn_cast<FunctionOp>(next);
+        if (!generated || !generated.getSymName().starts_with(prefix))
+          break;
+        last = next;
+      }
+      along = DirectionBuilder(potential, name, directed).build(last);
+      if (!along)
+        return failure();
+      directionOf.insert({name, along});
+    }
+    Operation *call = emitCall(evaluate, along, kinds[1], arguments[1],
+                               evaluate.getOperands(), types[1]);
+    if (!call)
+      return failure();
+    for (auto [k, place] : llvm::enumerate(places[1]))
+      results[place] = call->getResult(k);
+    evaluate->replaceAllUsesWith(results);
+    evaluate.erase();
+    return success();
+  }
+
   llvm::DenseMap<Operation *, PotentialOp> tangentOf;
   SmallVector<PotentialOp> tangents;
+  std::map<std::string, PotentialOp> directionOf;
 };
 } // namespace
 

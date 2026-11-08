@@ -163,6 +163,66 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
         memref::DeallocOp::create(b, loc, mdir::mdrt::ToBufferOp::create(b, loc, bufferType, shifted));
       continue;
     }
+    if (request == Request::Direction || request == Request::DirectionForces) {
+      // Central differences along the directions of the arguments at the
+      // fixed step h: of the energy for Ψ, and of the forces for its forces
+      // −∂Ψ/∂x_i, which is the derivative of F_i along the directions
+      // (D[force-matching-forward]).
+      ArrayRef<int64_t> directed = *source.getDirections();
+      ValueRange directions = source.getOperands().take_back(directed.size());
+      Value h = constant(b, step);
+      auto valueType = MemRefType::get({ShapedType::kDynamic}, b.getF64Type());
+      Value values[2];
+      SmallVector<Value> imported;
+      for (int sign : {1, -1}) {
+        Value delta = constant(b, sign * step);
+        auto shifted = inputs;
+        for (auto [argument, direction] : llvm::zip(directed, directions)) {
+          Value value = inputs[argument];
+          if (value.getType().isF64()) {
+            shifted[argument] = arith::AddFOp::create(b, loc, value,
+                arith::MulFOp::create(b, loc, delta, direction));
+            continue;
+          }
+          Value base = mdir::mdrt::ToBufferOp::create(b, loc, valueType, value);
+          Value along = mdir::mdrt::ToBufferOp::create(b, loc, valueType, direction);
+          Value size = memref::DimOp::create(b, loc, base, zero);
+          Value buffer = memref::AllocOp::create(b, loc, valueType, ValueRange{size});
+          auto loop = scf::ForOp::create(b, loc, zero, size, one);
+          OpBuilder at = OpBuilder::atBlockTerminator(loop.getBody());
+          Value i = loop.getInductionVar();
+          Value a = memref::LoadOp::create(at, loc, base, ValueRange{i});
+          Value da = memref::LoadOp::create(at, loc, along, ValueRange{i});
+          memref::StoreOp::create(at, loc,
+              arith::AddFOp::create(at, loc, a, arith::MulFOp::create(at, loc, delta, da)),
+              buffer, ValueRange{i});
+          shifted[argument] = mdir::mdrt::FromBufferOp::create(b, loc, value.getType(), buffer);
+          imported.push_back(shifted[argument]);
+        }
+        values[sign == 1 ? 0 : 1] = request == Request::Direction
+            ? energy(b, source, shifted)
+            : this->request(b, source, shifted, Request::Forces, -1, inputs[0].getType());
+      }
+      if (request == Request::Direction) {
+        compare(b, loc, analytic, values[0], values[1], h, prefix + "direction");
+      } else {
+        Value exact = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, analytic);
+        Value plus = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, values[0]);
+        Value minus = mdir::mdrt::ToBufferOp::create(b, loc, bufferType, values[1]);
+        auto particles = scf::ForOp::create(b, loc, zero, count, one);
+        OpBuilder particle = OpBuilder::atBlockTerminator(particles.getBody());
+        auto components = scf::ForOp::create(particle, loc, zero, three, one);
+        OpBuilder at = OpBuilder::atBlockTerminator(components.getBody());
+        SmallVector<Value, 2> indices{particles.getInductionVar(), components.getInductionVar()};
+        compare(at, loc, memref::LoadOp::create(at, loc, exact, indices),
+                memref::LoadOp::create(at, loc, plus, indices),
+                memref::LoadOp::create(at, loc, minus, indices), h,
+                prefix + "direction force component");
+      }
+      for (Value field : imported)
+        memref::DeallocOp::create(b, loc, mdir::mdrt::ToBufferOp::create(b, loc, valueType, field));
+      continue;
+    }
     if (request == Request::Derivative) {
       int64_t index = source.getRequestArguments()[resultIndex];
       Value value = inputs[index];

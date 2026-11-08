@@ -187,7 +187,8 @@ static ParseResult parseRequests(OpAsmParser &parser,
     if (!kind)
       return parser.emitError(loc)
              << "expected 'energy', 'forces', 'virial', 'derivative', "
-                "'tangent', 'tangent_derivative', or 'tangent_forces', got '"
+                "'tangent', 'tangent_derivative', 'tangent_forces', "
+                "'direction', or 'direction_forces', got '"
              << keyword << "'";
 
     int64_t argument = -1;
@@ -1330,8 +1331,19 @@ bool EvaluateOp::hasTangent() {
   });
 }
 
+bool EvaluateOp::hasDirection() {
+  return llvm::any_of(getRequestKinds(), [](int32_t kind) {
+    auto request = static_cast<Request>(kind);
+    return request == Request::Direction || request == Request::DirectionForces;
+  });
+}
+
 OperandRange EvaluateOp::getPotentialOperands() {
   OperandRange operands = getOperands();
+  if (hasDirection()) {
+    size_t count = getDirections() ? getDirections()->size() : 0;
+    return operands.drop_back(std::min<size_t>(count, operands.size()));
+  }
   return hasTangent() ? operands.drop_back() : operands;
 }
 
@@ -1351,7 +1363,45 @@ LogicalResult EvaluateOp::verify() {
     return emitOpError()
            << "expected at least 2 operands, a position field and a cell";
 
-  // The arguments of the potential, without the tangent.
+  if (hasDirection() && hasTangent())
+    return emitOpError() << "expected the requests of a direction and those "
+                            "of the tangent in separate ops";
+  if (getDirections() && !hasDirection())
+    return emitOpError() << "expected 'directions' only with a request "
+                            "'direction' or 'direction_forces'";
+  if (hasDirection()) {
+    if (!getDirections() || getDirections()->empty())
+      return emitOpError() << "expected 'directions' to name at least one "
+                              "argument with a request of a direction";
+    ArrayRef<int64_t> directions = *getDirections();
+    if (getNumOperands() < directions.size() + 2)
+      return emitOpError() << "expected the arguments of the potential and "
+                           << directions.size() << " directions";
+    int64_t count = getNumOperands() - directions.size();
+    for (auto [k, argument] : llvm::enumerate(directions)) {
+      if (argument < 2 || argument >= count ||
+          (k != 0 && argument <= directions[k - 1]))
+        return emitOpError()
+               << "expected 'directions' to name arguments from 2 to "
+               << count - 1 << " in increasing order, got " << argument;
+      Type type = getOperand(argument).getType();
+      auto field = dyn_cast<FieldType>(type);
+      bool isField = field && field.getNumComponents() == 1 &&
+                     field.getElementType().isF64();
+      if (!type.isF64() && !isField)
+        return emitOpError()
+               << "expected a direction of an argument of type f64 or a "
+                  "field of f64 with one component, but argument "
+               << argument << " has type " << type;
+      Type given = getOperand(count + k).getType();
+      if (given != type)
+        return emitOpError() << "expected the direction of argument "
+                             << argument << " to have its type " << type
+                             << ", got " << given;
+    }
+  }
+
+  // The arguments of the potential, without the tangent or the directions.
   unsigned potentialArguments = getPotentialOperands().size();
   if (hasTangent()) {
     if (potentialArguments < 2)
@@ -1371,10 +1421,12 @@ LogicalResult EvaluateOp::verify() {
     switch (static_cast<Request>(kinds[i])) {
     case Request::Energy:
     case Request::Tangent:
+    case Request::Direction:
       expected = builder.getF64Type();
       break;
     case Request::Forces:
     case Request::TangentForces:
+    case Request::DirectionForces:
       expected = getOperand(0).getType();
       break;
     case Request::Virial:
@@ -1435,12 +1487,19 @@ LogicalResult EvaluateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!potential)
     return emitOpError() << "'" << getCallee()
                          << "' does not name a potential";
-  if (!hasTangent())
+  if (!hasTangent() && !hasDirection())
     return verifyCallOperands(getOperation(), potential.getFunctionType());
-  // The tangent follows the arguments of the potential.
+  // The tangent, or the directions, follow the arguments of the potential.
   FunctionType type = potential.getFunctionType();
   SmallVector<Type> inputs(type.getInputs());
-  inputs.push_back(getOperands().back().getType());
+  if (hasDirection()) {
+    ArrayRef<int64_t> directions = *getDirections();
+    for (int64_t argument : directions)
+      if (argument < static_cast<int64_t>(type.getNumInputs()))
+        inputs.push_back(type.getInput(argument));
+  } else {
+    inputs.push_back(getOperands().back().getType());
+  }
   return verifyCallOperands(
       getOperation(), FunctionType::get(getContext(), inputs, type.getResults()));
 }
