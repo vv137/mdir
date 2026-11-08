@@ -6,6 +6,8 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
+#include <optional>
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -59,6 +61,49 @@ static Value materializeWindowValue(OpBuilder &builder, Value value,
   return mapping.lookup(value);
 }
 } // namespace
+
+unsigned mdir::kernels::mapTemplateSiteOffsets(
+    mdir::md_exec::TemplateForOp loop, unsigned tag, ValueRange sites,
+    IRMapping &mapping) {
+  assert(tag < 3 && sites.size() <= (tag == 0 ? 2u : tag == 1 ? 1u : 0u));
+  Block &source = loop->getRegion(tag).front();
+  unsigned bound = 0;
+  for (auto [site, cached] : llvm::enumerate(sites)) {
+    unsigned first = 1 + 2 * site;
+    Value h1 = source.getArgument(first), h2 = source.getArgument(first + 1);
+    auto type = cast<VectorType>(h1.getType());
+    APFloat alpha = FloatAttr::get(type.getElementType(),
+        loop.getAlpha().convertToDouble()).getValue();
+    auto isWeight = [&](Value value) {
+      std::optional<APFloat> literal;
+      if (auto broadcast = value.getDefiningOp<vector::BroadcastOp>()) {
+        FloatAttr scalar;
+        if (matchPattern(broadcast.getSource(), m_Constant(&scalar)))
+          literal = scalar.getValue();
+      } else {
+        DenseFPElementsAttr dense;
+        if (matchPattern(value, m_Constant(&dense)) && dense.isSplat())
+          literal = dense.getSplatValue<APFloat>();
+      }
+      return literal && literal->bitwiseIsEqual(alpha);
+    };
+    for (Operation &op : source) {
+      auto product = dyn_cast<arith::MulFOp>(&op);
+      if (!product || product.getType() != cached.getType()) continue;
+      for (unsigned side = 0; side != 2; ++side) {
+        auto sum = product->getOperand(side).getDefiningOp<arith::AddFOp>();
+        if (!sum || !isWeight(product->getOperand(1 - side))) continue;
+        if ((sum.getLhs() == h1 && sum.getRhs() == h2) ||
+            (sum.getLhs() == h2 && sum.getRhs() == h1)) {
+          mapping.map(product.getResult(), cached);
+          ++bound;
+          break;
+        }
+      }
+    }
+  }
+  return bound;
+}
 
 TemplateContribution mdir::kernels::emitTemplateWindowContributions(
     OpBuilder &builder, Location loc, mdir::md_exec::TemplateForOp loop,
@@ -129,6 +174,25 @@ namespace {
 static Value word(OpBuilder &builder, Location loc, int64_t value) {
   return arith::ConstantIntOp::create(builder, loc, value, 32);
 }
+// Keep one anchor and reusable local geometry per unit. This has exactly
+// the source window's subtraction/addition/multiplication order. The image
+// shift affects the anchor displacement only, never these local offsets.
+static SmallVector<Value, 4> prepareTemplateFrame(
+    OpBuilder &builder, Location loc, ValueRange frame, bool hasSite, double alpha) {
+  if (frame.size() == 1) return {frame.front()};
+  assert(frame.size() == 3);
+  SmallVector<Value, 4> prepared{frame[0],
+      arith::SubFOp::create(builder, loc, frame[1], frame[0]),
+      arith::SubFOp::create(builder, loc, frame[2], frame[0])};
+  if (hasSite) {
+    auto type = cast<VectorType>(frame[0].getType());
+    Value weight = arith::ConstantOp::create(builder, loc,
+        DenseElementsAttr::get(type, FloatAttr::get(type.getElementType(), alpha)));
+    prepared.push_back(arith::MulFOp::create(builder, loc, weight,
+        arith::AddFOp::create(builder, loc, prepared[1], prepared[2])));
+  }
+  return prepared;
+}
 static Value shuffle(OpBuilder &builder, Location loc, Value value,
                      Value source, gpu::ShuffleMode mode) {
   auto scalar = [&](Value x) -> Value {
@@ -150,7 +214,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
     OpBuilder &builder, Location loc, const TemplateUnit &unit,
     llvm::function_ref<TemplatePartner(OpBuilder &, Value)> loadPartner,
     llvm::function_ref<TemplateContribution(OpBuilder &, ValueRange,
-                                            ValueRange, ValueRange)> evaluate,
+                                            ValueRange, ValueRange, ValueRange)> evaluate,
     llvm::function_ref<void(OpBuilder &, ValueRange)> writeFirst,
     llvm::function_ref<void(OpBuilder &, Value, ValueRange)> writeSecond) {
   unsigned ni = unit.kind == TemplatePairClass::WaterWater ? 3 : 1;
@@ -158,6 +222,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   assert(unit.first.size() == ni);
   Type forceType = unit.first.front().getType();
   assert(cast<VectorType>(forceType).getElementType().isF32());
+  auto firstFrame = prepareTemplateFrame(builder, loc, unit.first,
+                                         unit.hasSite, unit.alpha);
   unsigned fi = unit.forces ? ni : 0, fj = unit.forces ? nj : 0;
   SmallVector<Type> resultTypes(fi + fj, forceType);
   llvm::append_range(resultTypes, unit.sumTypes);
@@ -179,11 +245,14 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         Value safe = arith::SelectOp::create(batch, loc, has, entry, unit.begin);
         TemplatePartner partner = loadPartner(batch, safe);
         assert(partner.frame.size() == nj);
+        auto secondFrame = prepareTemplateFrame(batch, loc, partner.frame,
+                                                unit.hasSite, unit.alpha);
+        unsigned frameSize = secondFrame.size();
         Value mask = arith::SelectOp::create(batch, loc, has, partner.mask, word(batch, loc, 0));
-        unsigned shiftAt = nj + partner.parameters.size();
+        unsigned shiftAt = frameSize + partner.parameters.size();
         unsigned maskAt = shiftAt + 1, fjAt = maskAt + 1, fiAt = fjAt + fj;
         unsigned sumsAt = fiAt + fi;
-        SmallVector<Value> carried(partner.frame.begin(), partner.frame.end());
+        SmallVector<Value> carried(secondFrame.begin(), secondFrame.end());
         llvm::append_range(carried, partner.parameters);
         carried.append({partner.shift, mask});
         for (unsigned i = 0; i != fj; ++i) carried.push_back(createZero(batch, loc, forceType));
@@ -195,13 +264,24 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                   arith::ShRUIOp::create(turn, loc, state[maskAt], u), word(turn, loc, 1));
               Value paired = arith::CmpIOp::create(turn, loc, arith::CmpIPredicate::ne,
                                                    bit, word(turn, loc, 0));
+              paired = arith::AndIOp::create(turn, loc, paired, unit.firstValid);
               auto contribution = scf::IfOp::create(turn, loc, paired,
                   [&](OpBuilder &body, Location) {
-                    SmallVector<Value> second(state.take_front(nj));
-                    auto coordinates = emitTemplateWindowCoordinates(body, loc, unit.kind,
-                        unit.first, second, state[shiftAt]);
+                    Value shiftedAnchor = arith::AddFOp::create(body, loc,
+                        state[0], state[shiftAt]);
+                    SmallVector<Value> coordinates{arith::SubFOp::create(
+                        body, loc, firstFrame[0], shiftedAnchor)};
+                    SmallVector<Value> sites;
+                    if (ni == 3) {
+                      coordinates.append({firstFrame[1], firstFrame[2]});
+                      if (unit.hasSite) sites.push_back(firstFrame[3]);
+                    }
+                    if (nj == 3) {
+                      coordinates.append({state[1], state[2]});
+                      if (unit.hasSite) sites.push_back(state[3]);
+                    }
                     auto result = evaluate(body, coordinates, unit.parameters,
-                        state.slice(nj, partner.parameters.size()));
+                        state.slice(frameSize, partner.parameters.size()), sites);
                     assert(result.firstForces.size() == fi && result.secondForces.size() == fj &&
                            result.sums.size() == unit.sumTypes.size());
                     SmallVector<Value> values(result.firstForces.begin(), result.firstForces.end());

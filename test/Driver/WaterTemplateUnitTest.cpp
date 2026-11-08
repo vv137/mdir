@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/IR/Matchers.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -22,8 +23,8 @@ int runWaterTemplateUnitIRTest() {
   builder.setInsertionPointToEnd(module.getBody());
   auto vec = VectorType::get({3}, builder.getF32Type());
   auto tensor = VectorType::get({9}, builder.getF64Type());
-  const char *names[] = {"ww", "sw", "ss", "energy"};
-  for (unsigned k = 0; k != 4; ++k) {
+  const char *names[] = {"ww", "sw", "ss", "energy", "three"};
+  for (unsigned k = 0; k != 5; ++k) {
     auto kind = static_cast<TemplatePairClass>(k < 3 ? k : 0);
     unsigned ni = kind == TemplatePairClass::WaterWater ? 3 : 1;
     unsigned nj = kind == TemplatePairClass::SoluteSolute ? 1 : 3;
@@ -52,6 +53,8 @@ int runWaterTemplateUnitIRTest() {
     unit.parameters.assign(args.begin() + 4 + ni, args.begin() + 6 + ni);
     unit.forces = k != 3;
     unit.sumTypes = {builder.getF64Type(), tensor};
+    unit.hasSite = k != 2 && k != 4;
+    unit.alpha = 0.75;
     auto result = emitTemplateClassUnit(builder, loc, unit,
         [&](OpBuilder &, Value) {
           TemplatePartner partner;
@@ -59,7 +62,9 @@ int runWaterTemplateUnitIRTest() {
           partner.parameters = {args[6 + ni + nj], args[7 + ni + nj]};
           partner.shift = args[8 + ni + nj]; partner.mask = args[9 + ni + nj];
           return partner;
-        }, [&](OpBuilder &body, ValueRange coordinates, ValueRange, ValueRange) {
+        }, [&](OpBuilder &body, ValueRange coordinates, ValueRange, ValueRange,
+               ValueRange sites) {
+          assert(sites.size() == (k == 2 || k == 4 ? 0u : k == 1 ? 1u : 2u));
           // A synthetic typed contribution tests scheduling, not a second
           // physical expression. Production supplies the differentiated body.
           Value d = coordinates.front();
@@ -84,6 +89,32 @@ int runWaterTemplateUnitIRTest() {
           func::CallOp::create(body, loc, writeJ.getSymName(), TypeRange{}, values);
         });
     func::ReturnOp::create(builder, loc, result);
+    unsigned firstSites = 0, partnerSites = 0;
+    bool repeatedSite = false;
+    function.walk([&](arith::MulFOp product) {
+      bool site = false;
+      for (Value operand : product->getOperands()) {
+        DenseFPElementsAttr literal;
+        site |= matchPattern(operand, m_Constant(&literal)) && literal.isSplat() &&
+                literal.getSplatValue<APFloat>().convertToDouble() == 0.75;
+      }
+      if (!site) return;
+      if (auto parent = product->getParentOfType<scf::ForOp>()) {
+        APInt step;
+        repeatedSite |= !matchPattern(parent.getStep(), m_ConstantInt(&step)) ||
+                        step.getSExtValue() != 32;
+        ++partnerSites;
+      } else {
+        ++firstSites;
+      }
+    });
+    unsigned expectedFirst = unit.hasSite && ni == 3 ? 1 : 0;
+    unsigned expectedPartner = unit.hasSite && nj == 3 ? 1 : 0;
+    if (repeatedSite || firstSites != expectedFirst || partnerSites != expectedPartner) {
+      llvm::errs() << "formed-site geometry repeated in the rotation or missing\n";
+      module.erase();
+      return 1;
+    }
     builder.setInsertionPointAfter(function);
   }
   if (failed(verify(module))) { module.erase(); return 1; }
