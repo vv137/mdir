@@ -91,6 +91,49 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md.bspline_window` (::mdir::md::BSplineWindowOp)
+
+_The product of three cardinal B-spline windows_
+
+Syntax:
+
+```
+operation ::= `md.bspline_window` $distance `order` `(` $order `)` attr-dict `:` type($distance)
+```
+
+The product of cardinal B-splines of the given order at three support
+distances. Each factor has support [0, order]. This one scalar body is
+shared by spreading and gathering. Expansion exposes arithmetic before
+scalar differentiation; periodic enumeration is not part of this body.
+The initial curvature contract is order four.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>order</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `distance` | vector of 64-bit float values of length 3 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `weight` | 64-bit float |
+
+
+
 ### `md.call` (::mdir::md::CallOp)
 
 _Calls a function or a potential_
@@ -461,6 +504,53 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.gather_stencil` (::mdir::md::GatherStencilOp)
+
+_A complete pure particle-grid stencil reduction_
+
+Syntax:
+
+```
+operation ::= `md.gather_stencil` $stencil `,` $positions `,` $cell `,` $data $kernel attr-dict `:`
+              qualified(type($stencil)) `,` qualified(type($positions)) `,`
+              qualified(type($data)) `->` qualified(type($result))
+```
+
+The relation enumerates every particle and its periodic support once.
+The kernel takes a three-component f64 support distance and yields
+one f64 window weight. It has no dynamic captures or effects; immutable
+literal constants may be hoisted. Multiplication
+by the data operand and addition over entries are the declared linear
+structure, outside the weight kernel. Scatter defines a fresh full
+grid, including zeros; gather defines every particle row, including
+zeros. There is no amplitude-dependent list or hidden active payload.
+
+Positions and cell must be the exact operands of the relation
+constructor. The data operand is the only declared linear operand.
+The transpose swaps scatter and gather and clones the same weight
+body. Position and cell derivatives require an explicit rule or a
+named diagnostic; the structural relation never proves them inactive.
+These reference operations do not select a device execution strategy.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `stencil` | A structural particle-grid stencil relation |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `data` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.gather_tuples` (::mdir::md::GatherTuplesOp)
 
 _Sums a kernel, per particle, over the tuples it is in_
@@ -530,6 +620,50 @@ Interfaces: `OpAsmOpInterface`
 | :----: | ----------- |
 | `result` | field at the reference precision, with elements of type f64, i32, or i64 |
 | `failed` | 1-bit signless integer |
+
+
+
+### `md.grid_stencil` (::mdir::md::GridStencilOp)
+
+_The discrete support relation of a particle-grid window_
+
+Syntax:
+
+```
+operation ::= `md.grid_stencil` $positions `,` $cell attr-dict `:` qualified(type($positions))
+              `->` qualified(type($stencil))
+```
+
+Associates a structural stencil relation with its explicit positions
+and cell. The result describes the periodically wrapped support
+indices, not a dense assignment matrix or stored window weights.
+Continuous operands must remain visible to structured consumers;
+differentiation of the weights is separate from integer enumeration.
+
+This is the semantic relation of #452. It is not selected by the
+ordinary reciprocal route. The structured consumers and their declared
+linear derivatives are defined below. An opt-in reciprocal execution
+chain follows in slice 2; unsupported continuous derivatives are named
+diagnostics until their rules are admitted.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `positions` | A per-particle field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `stencil` | A structural particle-grid stencil relation |
 
 
 
@@ -1030,6 +1164,53 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md.scatter_stencil` (::mdir::md::ScatterStencilOp)
+
+_A complete pure particle-grid stencil reduction_
+
+Syntax:
+
+```
+operation ::= `md.scatter_stencil` $stencil `,` $positions `,` $cell `,` $data $kernel attr-dict `:`
+              qualified(type($stencil)) `,` qualified(type($positions)) `,`
+              qualified(type($data)) `->` qualified(type($result))
+```
+
+The relation enumerates every particle and its periodic support once.
+The kernel takes a three-component f64 support distance and yields
+one f64 window weight. It has no dynamic captures or effects; immutable
+literal constants may be hoisted. Multiplication
+by the data operand and addition over entries are the declared linear
+structure, outside the weight kernel. Scatter defines a fresh full
+grid, including zeros; gather defines every particle row, including
+zeros. There is no amplitude-dependent list or hidden active payload.
+
+Positions and cell must be the exact operands of the relation
+constructor. The data operand is the only declared linear operand.
+The transpose swaps scatter and gather and clones the same weight
+body. Position and cell derivatives require an explicit rule or a
+named diagnostic; the structural relation never proves them inactive.
+These reference operations do not select a device execution strategy.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `stencil` | A structural particle-grid stencil relation |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `data` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.stage` (::mdir::md::StageOp)
 
 _Declares a neural stage and binds its bodies_
@@ -1082,6 +1263,100 @@ Interfaces: `SymbolUserOpInterface`, `Symbol`
 <tr><td><code>forward</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
 <tr><td><code>vjp</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
 </table>
+
+
+
+### `md.stencil_jvp` (::mdir::md::StencilJVPOp)
+
+_An explicit operand derivative request of a stencil operation_
+
+Syntax:
+
+```
+operation ::= `md.stencil_jvp` $source `wrt` `(` $operand `)` $seed attr-dict `:`
+              qualified(type($source)) `,` qualified(type($seed))
+              `->` qualified(type($result))
+```
+
+The source is the result of a structured scatter or gather. Operand
+numbers are 0 (relation), 1 (positions), 2 (cell), and 3 (amplitudes
+or grid). The seed is a tangent for JVP and a result cotangent for VJP.
+md-differentiate-stencils expands supported linear requests and refuses
+unsupported continuous requests by operand name. A cell tangent or
+cotangent has type vector<9xf64>. No request changes ordinary PME.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>operand</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | any non-token type |
+| `seed` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
+### `md.stencil_vjp` (::mdir::md::StencilVJPOp)
+
+_An explicit operand derivative request of a stencil operation_
+
+Syntax:
+
+```
+operation ::= `md.stencil_vjp` $source `wrt` `(` $operand `)` $seed attr-dict `:`
+              qualified(type($source)) `,` qualified(type($seed))
+              `->` qualified(type($result))
+```
+
+The source is the result of a structured scatter or gather. Operand
+numbers are 0 (relation), 1 (positions), 2 (cell), and 3 (amplitudes
+or grid). The seed is a tangent for JVP and a result cotangent for VJP.
+md-differentiate-stencils expands supported linear requests and refuses
+unsupported continuous requests by operand name. A cell tangent or
+cotangent has type vector<9xf64>. No request changes ordinary PME.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>operand</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `source` | any non-token type |
+| `seed` | any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
 
 
 
@@ -1433,7 +1708,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 
@@ -1555,6 +1830,39 @@ execution level, where the precision policy assigns it.
 | elementType | `::mlir::Type` |  |
 | irreps | `::llvm::ArrayRef<int64_t>` |  |
 | componentMajor | `bool` |  |
+
+### GridStencilType
+
+_A structural particle-grid stencil relation_
+
+Syntax:
+
+```
+!md.grid_stencil<
+  ::mlir::FlatSymbolRefAttr,   # particleSet
+  ::mlir::DenseI64ArrayAttr,   # shape
+  unsigned,   # order
+  ::mlir::StringAttr   # window
+>
+```
+
+A relation from a named particle set to a static three-dimensional
+periodic grid. The window and support order are structural. The first
+window is bspline, with order 2 through 8 and each grid extent at least
+the order, so a particle's wrapped support indices are distinct.
+
+The relation carries indices only. Positions, cell, local coordinates,
+and window values remain explicit operands and arithmetic of consumers;
+an index relation never proves their derivatives inactive. Part of #452.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| particleSet | `::mlir::FlatSymbolRefAttr` |  |
+| shape | `::mlir::DenseI64ArrayAttr` |  |
+| order | `unsigned` |  |
+| window | `::mlir::StringAttr` |  |
 
 ### RelationType
 

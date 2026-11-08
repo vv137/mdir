@@ -129,6 +129,31 @@ def MD_RelationType : MD_Type<"Relation", "relation"> {
   let genVerifyDecl = 1;
 }
 
+def MD_GridStencilType : MD_Type<"GridStencil", "grid_stencil"> {
+  let summary = "A structural particle-grid stencil relation";
+  let description = [{
+    A relation from a named particle set to a static three-dimensional
+    periodic grid. The window and support order are structural. The first
+    window is bspline, with order 2 through 8 and each grid extent at least
+    the order, so a particle's wrapped support indices are distinct.
+
+    The relation carries indices only. Positions, cell, local coordinates,
+    and window values remain explicit operands and arithmetic of consumers;
+    an index relation never proves their derivatives inactive. Part of #452.
+  }];
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$particleSet,
+    "::mlir::DenseI64ArrayAttr":$shape,
+    "unsigned":$order,
+    "::mlir::StringAttr":$window
+  );
+  let assemblyFormat = [{
+    `<` $particleSet `,` $shape `,` `order` `(` $order `)`
+    `,` `window` `(` $window `)` `>`
+  }];
+  let genVerifyDecl = 1;
+}
+
 def MD_EdgesType : MD_Type<"Edges", "edges"> {
   let summary = "The directed pairs of images within a cutoff";
   let description = [{

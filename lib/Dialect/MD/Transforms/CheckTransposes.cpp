@@ -29,7 +29,7 @@ namespace {
 /// Whether `op` moves or reduces the values of fields, so that an adjoint
 /// passes through it: an op of the structure.
 static bool isOfTheStructure(Operation *op) {
-  return isa<LinearTransformOp, SumRelationOp, GatherRelationOp,
+  return isa<ScatterStencilOp, GatherStencilOp, LinearTransformOp, SumRelationOp, GatherRelationOp,
              SumTuplesOp, GatherTuplesOp,
              SumParticlesOp, MapParticlesOp, md_dist::HaloCopyOp,
              md_dist::HaloSumOp, md_dist::DistributeOp, md_dist::CollectOp,

@@ -37,6 +37,7 @@
 //                                             read
 
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
+#include "mdir/Dialect/MD/Transforms/Stencils.h"
 
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -76,6 +77,30 @@ struct LinearTransformAdjoint
         b, op->getLoc(), transform.getInput().getType(), adjoint,
         transform.getKindAttr(), transform.getAdjointAttr(),
         transform.getDirectionAttr(), transform.getPairingAttr());
+  }
+};
+
+template <typename Op>
+struct StencilAdjoint : AdjointOpInterface::ExternalModel<StencilAdjoint<Op>, Op> {
+  bool isLinearOperand(Operation *, unsigned index) const { return index == 3; }
+  bool isKernelOperand(Operation *, unsigned index) const {
+    return index == 1 || index == 2;
+  }
+  Value emitTranspose(Operation *op, OpBuilder &b, unsigned index,
+                      Value adjoint, Value partner) const {
+    if (index != 3 || partner ||
+        adjoint.getType() != op->getResult(0).getType()) {
+      op->emitOpError("expected the amplitude/grid operand and one result cotangent");
+      return {};
+    }
+    return md::cloneStencil(b, op, adjoint, true);
+  }
+  Operation *createTranspose(Operation *op, OpBuilder &, Location, unsigned index,
+                             ValueRange, md::Exchange, TypeRange, bool,
+                             md::TransposeKernel &) const {
+    op->emitOpError() << "unsupported stencil VJP for active "
+                     << (index == 1 ? "positions" : "cell") << " operand";
+    return nullptr;
   }
 };
 
@@ -700,6 +725,8 @@ void mdir::md::registerAdjointInterfaces(DialectRegistry &registry) {
       });
   registry.addExtension(+[](MLIRContext *context, md::MDDialect *) {
     md::LinearTransformOp::attachInterface<LinearTransformAdjoint>(*context);
+    md::ScatterStencilOp::attachInterface<StencilAdjoint<md::ScatterStencilOp>>(*context);
+    md::GatherStencilOp::attachInterface<StencilAdjoint<md::GatherStencilOp>>(*context);
     md::SumRelationOp::attachInterface<SumRelationTranspose>(*context);
     md::GatherRelationOp::attachInterface<GatherRelationTranspose>(*context);
     md::SumTuplesOp::attachInterface<SumTuplesTranspose>(*context);

@@ -411,6 +411,104 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
 // Particle mesh Ewald
 //===----------------------------------------------------------------------===//
 
+def MD_GridStencilOp : MD_Op<"grid_stencil", [Pure]> {
+  let summary = "The discrete support relation of a particle-grid window";
+  let description = [{
+    Associates a structural stencil relation with its explicit positions
+    and cell. The result describes the periodically wrapped support
+    indices, not a dense assignment matrix or stored window weights.
+    Continuous operands must remain visible to structured consumers;
+    differentiation of the weights is separate from integer enumeration.
+
+    This is the semantic relation of #452. It is not selected by the
+    ordinary reciprocal route. The structured consumers and their declared
+    linear derivatives are defined below. An opt-in reciprocal execution
+    chain follows in slice 2; unsupported continuous derivatives are named
+    diagnostics until their rules are admitted.
+  }];
+  let arguments = (ins MD_FieldType:$positions, MD_CellType:$cell);
+  let results = (outs MD_GridStencilType:$stencil);
+  let assemblyFormat = [{
+    $positions `,` $cell attr-dict `:` qualified(type($positions))
+    `->` qualified(type($stencil))
+  }];
+  let hasVerifier = 1;
+}
+
+def MD_BSplineWindowOp : MD_Op<"bspline_window", [Pure]> {
+  let summary = "The product of three cardinal B-spline windows";
+  let description = [{
+    The product of cardinal B-splines of the given order at three support
+    distances. Each factor has support [0, order]. This one scalar body is
+    shared by spreading and gathering. Expansion exposes arithmetic before
+    scalar differentiation; periodic enumeration is not part of this body.
+    The initial curvature contract is order four.
+  }];
+  let arguments = (ins VectorOfLengthAndType<[3], [F64]>:$distance,
+                       I64Attr:$order);
+  let results = (outs F64:$weight);
+  let assemblyFormat = "$distance `order` `(` $order `)` attr-dict `:` type($distance)";
+  let hasVerifier = 1;
+}
+
+class MD_StencilApplyOp<string mnemonic> : MD_Op<mnemonic, [
+    RecursiveMemoryEffects, SingleBlock]> {
+  let summary = "A complete pure particle-grid stencil reduction";
+  let description = [{
+    The relation enumerates every particle and its periodic support once.
+    The kernel takes a three-component f64 support distance and yields
+    one f64 window weight. It has no dynamic captures or effects; immutable
+    literal constants may be hoisted. Multiplication
+    by the data operand and addition over entries are the declared linear
+    structure, outside the weight kernel. Scatter defines a fresh full
+    grid, including zeros; gather defines every particle row, including
+    zeros. There is no amplitude-dependent list or hidden active payload.
+
+    Positions and cell must be the exact operands of the relation
+    constructor. The data operand is the only declared linear operand.
+    The transpose swaps scatter and gather and clones the same weight
+    body. Position and cell derivatives require an explicit rule or a
+    named diagnostic; the structural relation never proves them inactive.
+    These reference operations do not select a device execution strategy.
+  }];
+  let arguments = (ins MD_GridStencilType:$stencil,
+                       MD_ReferenceFieldType:$positions,
+                       MD_CellType:$cell, AnyType:$data);
+  let results = (outs AnyType:$result);
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    $stencil `,` $positions `,` $cell `,` $data $kernel attr-dict `:`
+    qualified(type($stencil)) `,` qualified(type($positions)) `,`
+    qualified(type($data)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+def MD_ScatterStencilOp : MD_StencilApplyOp<"scatter_stencil">;
+def MD_GatherStencilOp : MD_StencilApplyOp<"gather_stencil">;
+
+class MD_StencilDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
+  let summary = "An explicit operand derivative request of a stencil operation";
+  let description = [{
+    The source is the result of a structured scatter or gather. Operand
+    numbers are 0 (relation), 1 (positions), 2 (cell), and 3 (amplitudes
+    or grid). The seed is a tangent for JVP and a result cotangent for VJP.
+    md-differentiate-stencils expands supported linear requests and refuses
+    unsupported continuous requests by operand name. A cell tangent or
+    cotangent has type vector<9xf64>. No request changes ordinary PME.
+  }];
+  let arguments = (ins AnyType:$source, AnyType:$seed, I64Attr:$operand);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $source `wrt` `(` $operand `)` $seed attr-dict `:`
+    qualified(type($source)) `,` qualified(type($seed))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+def MD_StencilJVPOp : MD_StencilDerivativeOp<"stencil_jvp">;
+def MD_StencilVJPOp : MD_StencilDerivativeOp<"stencil_vjp">;
+
 def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
   let summary = "A value-level linear transform with a declared adjoint";
   let description = [{
@@ -586,7 +684,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["SumRelationOp", "GatherRelationOp", "SumTuplesOp",
+    ParentOneOf<["ScatterStencilOp", "GatherStencilOp",
+                 "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {
   let summary = "Yields the value of a kernel";

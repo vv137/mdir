@@ -5,6 +5,18 @@
 
 include "mlir/Pass/PassBase.td"
 
+def DifferentiateStencils : Pass<"md-differentiate-stencils", "::mlir::ModuleOp"> {
+  let summary = "Expands explicit stencil JVP/VJP requests and diagnoses active operands";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
+def ExpandStencilWindows : Pass<"md-expand-stencil-windows", "::mlir::ModuleOp"> {
+  let summary = "Exposes the common cardinal B-spline arithmetic";
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def ExpandTruncation : Pass<"md-expand-truncation", "::mlir::ModuleOp"> {
   let summary = "Expands truncation attributes into kernels";
   let description = [{
