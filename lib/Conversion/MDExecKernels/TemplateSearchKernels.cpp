@@ -181,10 +181,19 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
           Value minimum = arith::NegFOp::create(search, loc,
               emitWarpReduce(search, loc, arith::NegFOp::create(search, loc, minInput), Combiner::Max));
           Value maximum = emitWarpReduce(search, loc, maxInput, Combiner::Max);
-          Value multiplier = arith::SelectOp::create(search, loc, ww, real(search, 2),
-              arith::SelectOp::create(search, loc, sw, real(search, 1), real(search, 0)));
-          Value reach = arith::AddFOp::create(search, loc, v.baseReach,
-              arith::MulFOp::create(search, loc, multiplier, v.extent));
+          Value reach;
+          if (v.reaches) {
+            Value wwReach = vector::ExtractOp::create(search, loc, v.reaches, 0);
+            Value swReach = vector::ExtractOp::create(search, loc, v.reaches, 1);
+            Value ssReach = vector::ExtractOp::create(search, loc, v.reaches, 2);
+            reach = arith::SelectOp::create(search, loc, ww, wwReach,
+                arith::SelectOp::create(search, loc, sw, swReach, ssReach));
+          } else {
+            Value multiplier = arith::SelectOp::create(search, loc, ww, real(search, 2),
+                arith::SelectOp::create(search, loc, sw, real(search, 1), real(search, 0)));
+            reach = arith::AddFOp::create(search, loc, v.baseReach,
+                arith::MulFOp::create(search, loc, multiplier, v.extent));
+          }
           Value reach2 = arith::MulFOp::create(search, loc, reach, reach);
           Value widths = isTriclinic(v.cell) ? emitFaceWidths(search, loc, v.cell) : v.cell;
           Value radius = arith::DivFOp::create(search, loc,

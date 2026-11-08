@@ -707,6 +707,25 @@ gives the later runtime policy an explicit constraint event instead of
 inferring one from a tuple name. The function-level history that observes
 those events, including across a fresh list, remains to be connected.
 
+The validity emitters use a conservative lower bound on Cartesian cell
+deformation: the least edge ratio for rectangular cells, and the inverse
+map's induced one/infinity-norm bound for tilted cells, with rounding
+guards and exact identity handling. Each mobility group's half-margin is
+the minimum over its incident classes. Each class margin is capped at its
+fresh-build margin, so resetting SW's cell/reach cannot reduce an inactive
+group's allowance, including during expansion. The build and validity
+share the same actual per-class reach values and addition order.
+
+Ten analytical cell cases pass 20 interval predicates: identity is exact,
+and other results stay below the mathematical norm bound and within
+1e-11 of it. Four analytical group cases and two partial-SW resets pass
+20 more predicates; ten exact boolean displacement cases include negative
+and zero margins, both cells and an unwrapped whole-cell jump that must
+invalidate. Projection and squared-distance arithmetic have conservative
+rounding guards. These are validity-primitive checks, not physical force
+tolerances or completed native scheduling. The explicit-reach cold search
+also matches all 1,979 expected memberships in both cells exactly.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
@@ -723,6 +742,7 @@ per-pair device work.
 |---|---|---|
 | Source positions and lattice shift before packing | f64 | f64 |
 | Reference epochs and packing shifts | f64 reference positions and cells | f64 fractions, integer-valued f64 packing cells, class cells and actual reaches |
+| Validity deformation and displacement | f64 integrator/reference arithmetic | f64 guarded inverse-cell norm bound, incident-class margins and anchor displacement |
 | Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
 | Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |

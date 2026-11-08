@@ -9,6 +9,7 @@ namespace mdir::kernels {
 struct TemplateRefreshInputs {
   mlir::Value handle, points, cell, baseReach, extent;
   mlir::Value columnsX, columnsY, waterActive, atomActive;
+  mlir::Value reaches;
 };
 /// One combined sort/search and compaction for an already stale list.
 /// This is a cold build operation, not a per-step validity check: its

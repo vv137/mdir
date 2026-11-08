@@ -11,6 +11,10 @@ struct TemplateSearchBuffers {
   /// Current reduced cell, base reach (cutoff + skin), and covering extent,
   /// all f64. The caller proves baseReach+2*extent < every cell diagonal.
   mlir::Value cell, baseReach, extent;
+  /// Optional actual WW/SW/SS reaches in vector<3xf64>, already formed in
+  /// the same addition order as their validity margins. Empty uses the
+  /// base reach plus covering extent, as in the isolated search fixtures.
+  mlir::Value reaches;
 };
 /// Search each active class row once, with explicit periodic images and
 /// per-entry masks. Inactive rows copy retained outer records instead.
