@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir
+# RUN: %python %S/Inputs/template_runtime_oracle.py %S/../Conversion/MDExecToGPU/template-for.mlir %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Runtime views plus production TemplateFor dispatch/reduction, with a
+# seeded exact pair. This does not claim search or validity validation.
+# CHECK: 0.25

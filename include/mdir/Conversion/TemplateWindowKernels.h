@@ -73,6 +73,25 @@ struct TemplateUnit {
   bool hasSite = false;
   double alpha = 0.0;
 };
+/// Borrowed views of the one pair arena and the fixed-size unit state.
+/// `work` indexes four-word work records at `workOffset`; entries are
+/// four-word records at `entryOffset`. `order` holds padded water places
+/// followed by padded atom places, with -1 in empty lanes. Its nonempty
+/// values name fixed water units [0,W) or atom units [W,W+A). `members`
+/// maps packed real-site rows to the original particle indices. `frames`
+/// holds those rows' f32 coordinates, already whole and shifted in f64.
+struct TemplateWorkBuffers {
+  mlir::Value pairs, workOffset, entryOffset, order, members, frames, waters, cell;
+  bool hasSite = false;
+};
+/// Execute an arena work record through its uniformly tagged class and
+/// actual source-derived body. Every lane participates, including padding.
+/// Returns each lane's global-sum contributions; the caller owns their
+/// warp/block reduction. Forces accumulate directly at original particles.
+llvm::SmallVector<mlir::Value, 2> emitTemplateWorkUnit(
+    mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
+    const TemplateWorkBuffers &, mlir::Value work, mlir::Value lane,
+    const mlir::IRMapping &captures);
 /// Runs a block of entries of one segment. A partner's frame, mask, scalar
 /// parameters and accumulated forces rotate through its half warp together.
 /// A lane holds one of 16 I units, repeated in the other half; those halves

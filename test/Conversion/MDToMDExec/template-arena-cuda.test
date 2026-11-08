@@ -1,0 +1,8 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.mlir %t.input.mlir
+# RUN: %python %S/../../Integration/Inputs/template_scheduler_oracle.py %S/template-execution-site.mlir %t.input.mlir --rotated
+# RUN: mdir-opt %t.input.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed '--test-md-template-scheduler=arena rotate-frames' | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# The physical arena adapter includes all three uniformly tagged branches.
+# Device-free serialization precedes the independent GPU oracle.
+# CHECK: llvm.func @template_scheduler_probe

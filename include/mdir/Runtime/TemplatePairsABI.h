@@ -12,11 +12,22 @@
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
 #define MDRT_TEMPLATE_PAIR_ENTRY_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_ENTRIES 64
+#define MDRT_TEMPLATE_IMAGE_BITS 10
+#define MDRT_TEMPLATE_IMAGE_OFFSET 512
+#define MDRT_TEMPLATE_IMAGE_MASK 1023
 
 enum MdrtTemplateMetadataSlot {
   TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,
   TEMPLATE_SS_ROWS = 2, TEMPLATE_SS_NEIGHBORS = 3,
   TEMPLATE_METADATA_SLOTS = 4
+};
+enum MdrtTemplateLayoutSlot {
+  TEMPLATE_LAYOUT_WATERS = 0, TEMPLATE_LAYOUT_ATOMS = 1,
+  TEMPLATE_LAYOUT_ROWS = 2, TEMPLATE_LAYOUT_ENTRIES = 3,
+  TEMPLATE_LAYOUT_UNITS = 4, TEMPLATE_LAYOUT_OUTER_ROWS = 5,
+  TEMPLATE_LAYOUT_INNER_ROWS = 6, TEMPLATE_LAYOUT_OUTER_UNITS = 7,
+  TEMPLATE_LAYOUT_INNER_UNITS = 8, TEMPLATE_LAYOUT_OUTER_ENTRIES = 9,
+  TEMPLATE_LAYOUT_INNER_ENTRIES = 10
 };
 
 /* Header ranges are [row begin/end, entry begin/end, work begin/end].
@@ -29,7 +40,9 @@ enum MdrtTemplatePairHeader {
 /* A row is [class, first-unit begin, entry begin, entry count].
  * A work unit is [class, first-unit begin, entry begin, entry end].
  * An entry is [partner unit, lattice-image code, first-unit mask, reserved].
- * The first-unit mask has 16 bits; the final first cluster can be partial. */
+ * The first-unit mask has 16 bits; the final first cluster can be partial.
+ * Image components occupy ten bits each, x first, with offset 512. They
+ * shift the already packed partner frame, independently of its winding. */
 struct MdrtTemplatePairLayout {
   int64_t waters, atoms, rows, entries, units;
   int64_t outerRows, innerRows, outerUnits, innerUnits;
