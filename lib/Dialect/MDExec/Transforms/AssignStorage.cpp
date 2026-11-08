@@ -160,6 +160,9 @@ private:
                                unsigned position);
   LogicalResult convertTupleFor(TupleForOp op, Scope &scope,
                                 unsigned position);
+  LogicalResult convertSegmentedBuild(BuildSegmentedPairsOp op, Scope &scope);
+  LogicalResult convertTemplateFor(TemplateForOp op, Scope &scope,
+                                    unsigned position);
   LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
   LogicalResult convertBuildTriplets(BuildTripletsOp op, Scope &scope);
   LogicalResult convertBuildEdges(BuildEdgesOp op, Scope &scope);
@@ -1069,6 +1072,85 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
 //===----------------------------------------------------------------------===//
 // Incidence structures
 //===----------------------------------------------------------------------===//
+
+LogicalResult Assignment::convertSegmentedBuild(BuildSegmentedPairsOp op, Scope &scope) {
+  if (isa<MemRefType>(op.getPositions().getType()))
+    return op.emitOpError("is in the storage form already");
+  Value universe, positions;
+  if (failed(getBuffer(op.getUniverse(), scope, universe)) ||
+      failed(getBuffer(op.getPositions(), scope, positions))) return failure();
+  Value molecules = mapping.lookupOrNull(op.getMolecules());
+  if (!molecules) return op.emitOpError("template molecules have no member buffer");
+  Value excluded;
+  if (op.getExcluded()) {
+    excluded = mapping.lookupOrNull(op.getExcluded());
+    if (!excluded) return op.emitOpError("template exclusions have no member buffer");
+  }
+  auto list = BuildSegmentedPairsOp::create(scope.builder, op.getLoc(),
+      op.getResult().getType(), universe, molecules, excluded, positions,
+      mapping.lookup(op.getCell()), op.getCutoffAttr(), op.getSkinAttr(),
+      op.getExtentAttr(), op.getAlphaAttr());
+  mapping.map(op.getResult(), list.getResult());
+  return success();
+}
+
+LogicalResult Assignment::convertTemplateFor(TemplateForOp op, Scope &scope,
+                                             unsigned position) {
+  if (op.isStorageForm()) return op.emitOpError("is in the storage form already");
+  Value list = mapping.lookupOrNull(op.getList()), positions;
+  if (!list) return op.emitOpError("the class-segmented list has no storage");
+  if (failed(getBuffer(op.getPositions(), scope, positions))) return failure();
+  SmallVector<Value> ins, outs, reductions;
+  for (Value field : op.getIns()) {
+    Value buffer;
+    if (failed(getBuffer(field, scope, buffer))) return failure();
+    ins.push_back(buffer);
+  }
+  SmallVector<Value> reads(op.getIns());
+  reads.push_back(op.getPositions());
+  for (Value destination : op.getOuts()) {
+    Value buffer;
+    bool accumulates;
+    if (failed(chooseDestination(op, destination, reads, false, scope,
+                                 position, buffer, accumulates))) return failure();
+    // This kernel scatters to members, so its destination must be
+    // initialized even where no segment contributes to a particle.
+    if (!accumulates)
+      fillZeros(scope.builder, op.getLoc(), buffer, cast<md::FieldType>(destination.getType()));
+    outs.push_back(buffer);
+  }
+  SmallVector<Type> types;
+  for (Value value : op.getReduce()) {
+    reductions.push_back(mapping.lookup(value));
+    types.push_back(value.getType());
+  }
+  SmallVector<Value> scratch;
+  if (failed(getScratch(op, types, op.getPositions().getType(), scope, scratch)))
+    return failure();
+  auto loop = TemplateForOp::create(scope.builder, op.getLoc(), types,
+      list, positions, mapping.lookup(op.getCell()), ins, outs, reductions,
+      scratch, op.getPairsAttr(), op.getCutoffAttr(), op.getExtentAttr(), op.getAlphaAttr());
+  for (NamedAttribute attribute : op->getDiscardableAttrs())
+    loop->setAttr(attribute.getName(), attribute.getValue());
+  for (unsigned tag = 0; tag != 3; ++tag) {
+    Block &source = op->getRegion(tag).front();
+    auto *target = new Block();
+    loop->getRegion(tag).push_back(target);
+    IRMapping local = mapping;
+    for (BlockArgument argument : source.getArguments())
+      local.map(argument, target->addArgument(argument.getType(), argument.getLoc()));
+    OpBuilder kernel = OpBuilder::atBlockEnd(target);
+    for (Operation &nested : source) kernel.clone(nested, local);
+  }
+  for (Value buffer : scratch) scope.release(buffer);
+  for (unsigned i = 0; i != outs.size(); ++i) {
+    buffers[op.getResult(i)] = outs[i];
+    scope.owned.insert(outs[i]);
+  }
+  for (unsigned i = 0; i != types.size(); ++i)
+    mapping.map(op.getResult(outs.size() + i), loop.getResult(i));
+  return success();
+}
 
 LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
                                                 Scope &scope) {
@@ -2243,6 +2325,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertPairFor(loop, scope, position);
   if (auto loop = dyn_cast<TupleForOp>(op))
     return convertTupleFor(loop, scope, position);
+  if (auto list = dyn_cast<BuildSegmentedPairsOp>(op))
+    return convertSegmentedBuild(list, scope);
+  if (auto loop = dyn_cast<TemplateForOp>(op))
+    return convertTemplateFor(loop, scope, position);
   if (auto build = dyn_cast<BuildIncidenceOp>(op))
     return convertBuildIncidence(build, scope);
   if (auto triplets = dyn_cast<BuildTripletsOp>(op))

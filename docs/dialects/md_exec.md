@@ -311,6 +311,64 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_exec.build_segmented_pairs` (::mdir::md_exec::BuildSegmentedPairsOp)
+
+_Builds one class-segmented list from proved template membership_
+
+Syntax:
+
+```
+operation ::= `md_exec.build_segmented_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($universe)) `,` qualified(type($molecules)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The molecule members are disjoint O-H-H[-site] tuples. The complement
+of those members in `universe` is the atom class. Only SS uses
+`excluded`. The physical representation has one pair allocation,
+compacted WW/SW/SS ranges, one spatial search/sort and two mobility
+groups. The water covering reaches add twice `extent` for WW and
+once for SW; SS keeps the ordinary reach. `extent` includes the formed
+site, with initial widening and subsequent enforcement as specified
+by the template contract. Lowering must preserve all covering images.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with two mobility groups |
+
+
+
 ### `md_exec.build_triplets` (::mdir::md_exec::BuildTripletsOp)
 
 _Finds the triplets centered on each particle_
@@ -1746,6 +1804,74 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_exec.template_for` (::mdir::md_exec::TemplateForOp)
+
+_Executes explicit window bodies over the three list segments_
+
+Syntax:
+
+```
+operation ::= `md_exec.template_for` $list `,` $positions `,` $cell
+              (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+              (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+              (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+              (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+              `pairs` $pairs `cutoff` `(` $cutoff `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              `water` $water `mixed` $mixed `atoms` $atoms attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+              (`->` qualified(type($results))^)?
+```
+
+A fused launch has one uniformly tagged class per warp. The three
+bodies are WW, SW and SS, with the image-aware displacement signatures
+of `md.sum_template_window`, followed by each input field's member
+values. No minimum-image substitution is made for the candidate image.
+
+`pairs` has three rows of N counts, where N is the number of `outs`
+plus `reduce` values. In each body, for each destination or reduction
+in order, M is its count in that row: yield M groups of member force
+vectors for a destination, or M values for a reduction, followed by M
+site displacements. Zero denotes no contribution from that class.
+Each contribution uses its own site cutoff. An inactive body may yield
+nothing; later fusion combines compatible bodies and destinations.
+Scalar expressions, forces and strain come from the structured MD
+reduction, not a second physical expression in the scheduler.
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>pairs</code></td><td>::mlir::DenseI32ArrayAttr</td><td>i32 dense array attribute</td></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | One class-segmented pair list with two mobility groups |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+| `ins` | variadic of A per-particle field or buffer of a field |
+| `outs` | variadic of A per-particle field or buffer of a field |
+| `reduce` | variadic of any non-token type |
+| `scratch` | variadic of buffer with one value per particle |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of any non-token type |
+
+
+
 ### `md_exec.tuple_for` (::mdir::md_exec::TupleForOp)
 
 _Runs a kernel over the tuples of each particle_
@@ -1872,7 +1998,7 @@ Syntax:
 operation ::= `md_exec.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, TabulateOp, TupleForOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, TabulateOp, TupleForOp, TemplateForOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

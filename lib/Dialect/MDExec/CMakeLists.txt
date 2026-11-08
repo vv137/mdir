@@ -9,6 +9,7 @@ add_mlir_dialect_library(MDIRMDExec
   Scatter.cpp
   StorageSet.cpp
   Transfers.cpp
+  TemplateWindows.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MDExec

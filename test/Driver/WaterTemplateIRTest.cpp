@@ -22,6 +22,7 @@ using namespace mdir::driver::builder;
 static void require(bool condition, const char *message) {
   if (!condition) { llvm::errs() << message << '\n'; std::exit(1); }
 }
+void appendWaterTemplatePackingTests(OpBuilder &);
 
 int runWaterTemplateIRTest() {
   DialectRegistry registry;
@@ -207,6 +208,7 @@ int runWaterTemplateIRTest() {
     func::ReturnOp::create(builder, loc);
     builder.setInsertionPointAfter(main);
   }
+  appendWaterTemplatePackingTests(builder);
   require(succeeded(verify(module)), "window IR verification");
   module.print(llvm::outs());
   module.erase();

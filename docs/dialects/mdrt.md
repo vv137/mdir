@@ -523,6 +523,30 @@ Syntax:
 | :-------: | :-------: | ----------- |
 | particleSet | `::mlir::FlatSymbolRefAttr` |  |
 
+### SegmentedPairsType
+
+_One class-segmented pair list with two mobility groups_
+
+Syntax:
+
+```
+!mdrt.segmented_pairs<
+  ::mlir::FlatSymbolRefAttr   # particleSet
+>
+```
+
+One allocation holds the WW, SW and SS class-pair ranges and the outer
+and inner partitions. Offsets and counts describe its ranges; it is
+not three independently allocated or independently sorted lists.
+Water anchors and atoms supply two mobility tests. A segment refreshes
+when either participating mobility group requires it.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| particleSet | `::mlir::FlatSymbolRefAttr` |  |
+
 ## Enums
 
 ### CoordinateKind

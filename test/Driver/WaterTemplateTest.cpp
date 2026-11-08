@@ -48,9 +48,12 @@ static WaterTemplatePlan match(const System &s, const Control &c = {}) {
   return std::move(*plan);
 }
 int runWaterTemplateIRTest();
+int runWaterTemplateUnitIRTest();
 int main(int argc, char **argv) {
   if (argc == 2 && std::strcmp(argv[1], "--window-ir") == 0)
     return runWaterTemplateIRTest();
+  if (argc == 2 && std::strcmp(argv[1], "--unit-ir") == 0)
+    return runWaterTemplateUnitIRTest();
   if (argc == 2) {
     auto c = readControl(argv[1]);
     if (!c) { llvm::errs() << llvm::toString(c.takeError()) << '\n'; return 1; }

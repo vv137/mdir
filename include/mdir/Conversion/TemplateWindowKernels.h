@@ -1,0 +1,65 @@
+// Scalar pieces shared by packing and the class-segmented fused kernel.
+#ifndef MDIR_CONVERSION_TEMPLATEWINDOWKERNELS_H
+#define MDIR_CONVERSION_TEMPLATEWINDOWKERNELS_H
+#include "mlir/IR/Builders.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include <array>
+namespace mdir::kernels {
+enum class TemplatePairClass { WaterWater, SoluteWater, SoluteSolute };
+
+/// Whole-molecule O/H/H positions and the group's lattice shift have the
+/// state's precision. Add that shift before narrowing, as in D95: narrowing
+/// an unwrapped position first can erase its local geometry. No stored
+/// extra point is loaded or packed.
+std::array<mlir::Value, 3> emitPackTemplateFrame(
+    mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> whole,
+    mlir::Value latticeShift, mlir::Type packedReal);
+
+/// Image-aware anchor displacement followed by whole-molecule H-O offsets,
+/// in the order of md.sum_template_window. A water frame has O/H/H values;
+/// an atom frame has one. The partner image shifts its anchor, not its
+/// reusable local geometry. All arithmetic has the packed positions' type.
+llvm::SmallVector<mlir::Value, 5> emitTemplateWindowCoordinates(
+    mlir::OpBuilder &, mlir::Location, TemplatePairClass,
+    llvm::ArrayRef<mlir::Value> first, llvm::ArrayRef<mlir::Value> second,
+    mlir::Value partnerShift);
+
+struct TemplatePartner {
+  llvm::SmallVector<mlir::Value, 3> frame;
+  llvm::SmallVector<mlir::Value, 3> parameters;
+  mlir::Value shift, mask;
+};
+struct TemplateContribution {
+  llvm::SmallVector<mlir::Value, 3> firstForces, secondForces;
+  llvm::SmallVector<mlir::Value, 2> sums;
+};
+struct TemplateUnit {
+  TemplatePairClass kind;
+  /// i32 lane and entry bounds. The caller assigns one class uniformly
+  /// to each warp, supplies uniform begin/end bounds, and keeps all 32
+  /// lanes active through its shuffles.
+  mlir::Value lane, begin, end, firstValid;
+  llvm::SmallVector<mlir::Value, 3> first;
+  llvm::SmallVector<mlir::Value, 3> parameters;
+  bool forces = true;
+  llvm::SmallVector<mlir::Type, 2> sumTypes;
+};
+/// Runs a block of entries of one segment. A partner's frame, mask, scalar
+/// parameters and accumulated forces rotate through its half warp together.
+/// A lane holds one of 16 I units, repeated in the other half; those halves
+/// are combined before the single I write. Each valid J entry is written
+/// once, after the rotation. Callbacks supply the actual scalar body and
+/// atomic destinations; no pair expression is embedded in this scheduler.
+/// The evaluation callback may run divergently and must not use warp
+/// collectives; the scheduler owns all warp communication.
+llvm::SmallVector<mlir::Value, 2> emitTemplateClassUnit(
+    mlir::OpBuilder &, mlir::Location, const TemplateUnit &,
+    llvm::function_ref<TemplatePartner(mlir::OpBuilder &, mlir::Value)> loadPartner,
+    llvm::function_ref<TemplateContribution(mlir::OpBuilder &,
+        mlir::ValueRange, mlir::ValueRange, mlir::ValueRange)> evaluate,
+    llvm::function_ref<void(mlir::OpBuilder &, mlir::ValueRange)> writeFirst,
+    llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
+                            mlir::ValueRange)> writeSecond);
+}
+#endif

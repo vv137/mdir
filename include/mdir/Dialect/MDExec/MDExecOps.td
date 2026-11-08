@@ -81,6 +81,86 @@ def MDExec_EmptyOp : MDExec_Op<"empty", [Pure]> {
 // Spatial structures
 //===----------------------------------------------------------------------===//
 
+def MDExec_BuildSegmentedPairsOp : MDExec_Op<"build_segmented_pairs", [Pure]> {
+  let summary = "Builds one class-segmented list from proved template membership";
+  let description = [{
+    The molecule members are disjoint O-H-H[-site] tuples. The complement
+    of those members in `universe` is the atom class. Only SS uses
+    `excluded`. The physical representation has one pair allocation,
+    compacted WW/SW/SS ranges, one spatial search/sort and two mobility
+    groups. The water covering reaches add twice `extent` for WW and
+    once for SW; SS keeps the ordinary reach. `extent` includes the formed
+    site, with initial widening and subsequent enforcement as specified
+    by the template contract. Lowering must preserve all covering images.
+  }];
+  let arguments = (ins MDExec_FieldOrBuffer:$universe,
+      MDExec_RelationOrMembers:$molecules,
+      Optional<MDExec_RelationOrMembers>:$excluded,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $universe `,` $molecules (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    `at` `(` $positions `,` $cell `)`
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+    `:` qualified(type($universe)) `,` qualified(type($molecules)) `,`
+    qualified(type($positions)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_TemplateForOp : MDExec_Op<"template_for", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Executes explicit window bodies over the three list segments";
+  let description = [{
+    A fused launch has one uniformly tagged class per warp. The three
+    bodies are WW, SW and SS, with the image-aware displacement signatures
+    of `md.sum_template_window`, followed by each input field's member
+    values. No minimum-image substitution is made for the candidate image.
+
+    `pairs` has three rows of N counts, where N is the number of `outs`
+    plus `reduce` values. In each body, for each destination or reduction
+    in order, M is its count in that row: yield M groups of member force
+    vectors for a destination, or M values for a reduction, followed by M
+    site displacements. Zero denotes no contribution from that class.
+    Each contribution uses its own site cutoff. An inactive body may yield
+    nothing; later fusion combines compatible bodies and destinations.
+    Scalar expressions, forces and strain come from the structured MD
+    reduction, not a second physical expression in the scheduler.
+  }];
+  let arguments = (ins MDRT_SegmentedPairsType:$list,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      Variadic<MDExec_FieldOrBuffer>:$ins,
+      Variadic<MDExec_FieldOrBuffer>:$outs,
+      Variadic<AnyType>:$reduce, Variadic<MDExec_Scratch>:$scratch,
+      DenseI32ArrayAttr:$pairs, F64Attr:$cutoff,
+      F64Attr:$extent, F64Attr:$alpha);
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$water,
+                        SizedRegion<1>:$mixed, SizedRegion<1>:$atoms);
+  let assemblyFormat = [{
+    $list `,` $positions `,` $cell
+    (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+    (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+    (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    `pairs` $pairs `cutoff` `(` $cutoff `)`
+    `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+    `water` $water `mixed` $mixed `atoms` $atoms attr-dict
+    `:` qualified(type($list)) `,` qualified(type($positions))
+    (`->` qualified(type($results))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
 def MDExec_BuildCellsOp : MDExec_Op<"build_cells", [Pure]> {
   let summary = "Bins particles into cells";
   let description = [{
@@ -885,7 +965,7 @@ def MDExec_JoinOp : MDExec_Op<"join"> {
 
 def MDExec_YieldOp : MDExec_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["PairForOp", "ParticleForOp", "TabulateOp", "TupleForOp"]>
+    ParentOneOf<["PairForOp", "ParticleForOp", "TabulateOp", "TupleForOp", "TemplateForOp"]>
   ]> {
   let summary = "Yields the contributions of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
