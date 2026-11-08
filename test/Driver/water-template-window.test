@@ -1,0 +1,20 @@
+# RUN: mdir-water-template-test --window-ir | FileCheck %s
+# RUN: mdir-water-template-test --window-ir | mdir-opt --canonicalize | FileCheck %s --check-prefix=TRANSPOSE
+# The native test checks the structural LJ/q counts and dynamic solute
+# operands, then prints all displacements so that geometry remains live.
+# CHECK-LABEL: func.func @three_site_window
+# CHECK-NOT: vector.broadcast
+# CHECK: return
+# TRANSPOSE-LABEL: func.func @constant_transpose
+# TRANSPOSE-DAG: %[[O:.*]] = arith.constant dense<7.500000e-01> : vector<3xf64>
+# TRANSPOSE-DAG: %[[H:.*]] = arith.constant dense<1.250000e-01> : vector<3xf64>
+# TRANSPOSE-DAG: %[[MO:.*]] = arith.constant dense<-7.500000e-01> : vector<3xf64>
+# TRANSPOSE-DAG: %[[MH:.*]] = arith.constant dense<-1.250000e-01> : vector<3xf64>
+# TRANSPOSE: return %[[O]], %[[H]], %[[H]], %[[MO]], %[[MH]], %[[MH]]
+# CHECK-LABEL: func.func @four_site_window
+# CHECK: arith.constant 1.250000e-01 : f64
+# CHECK: vector.broadcast
+# CHECK: arith.addf
+# CHECK: arith.mulf
+# CHECK: arith.subf
+# CHECK: return

@@ -59,9 +59,10 @@ add_llvm_executable(mdir-neighbor-count-test Driver/NeighborCountTest.cpp)
 llvm_update_compile_flags(mdir-neighbor-count-test)
 target_link_libraries(mdir-neighbor-count-test PRIVATE MDIRDriver)
 
-add_llvm_executable(mdir-water-template-test Driver/WaterTemplateTest.cpp)
+add_llvm_executable(mdir-water-template-test Driver/WaterTemplateTest.cpp
+  Driver/WaterTemplateIRTest.cpp)
 llvm_update_compile_flags(mdir-water-template-test)
-target_link_libraries(mdir-water-template-test PRIVATE MDIRDriver)
+target_link_libraries(mdir-water-template-test PRIVATE MDIRDriver MDIRMDTransforms)
 
 add_llvm_executable(mdir-influence-test Driver/InfluenceTest.cpp)
 llvm_update_compile_flags(mdir-influence-test)

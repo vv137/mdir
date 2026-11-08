@@ -1044,7 +1044,9 @@ about 60% of the saving was in the pair kernel and 40% in the lists; in a
 solvated protein the solute's lists and the packing of the waters take
 part of it back.
 
-For $P$ particle classes, $P(P+1)/2$ unordered class-pair segments, including
+The **class-segmented pair list** is one buffer of cluster pairs divided
+into segments by class-pair tag: WW, SW and SS here. For $P$ particle
+classes, $P(P+1)/2$ unordered class-pair segments, including
 self-pairs, occupy ranges of one buffer, compacted by tag with offsets.
 There are $C\le P$ displacement tests, one per mobility group; the number
 of classes does not set the number of tests. Water anchors and atoms give

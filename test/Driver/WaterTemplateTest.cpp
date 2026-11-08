@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 
 using namespace mdir::driver;
 
@@ -46,7 +47,10 @@ static WaterTemplatePlan match(const System &s, const Control &c = {}) {
   if (!plan) { llvm::errs() << llvm::toString(plan.takeError()) << '\n'; std::exit(1); }
   return std::move(*plan);
 }
+int runWaterTemplateIRTest();
 int main(int argc, char **argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--window-ir") == 0)
+    return runWaterTemplateIRTest();
   if (argc == 2) {
     auto c = readControl(argv[1]);
     if (!c) { llvm::errs() << llvm::toString(c.takeError()) << '\n'; return 1; }

@@ -64,6 +64,7 @@ add_mlir_library(MDIRDriver
   TermModel.cpp
   StagedModelIR.cpp
   SiteIR.cpp
+  WaterTemplateIR.cpp
   SiteSpreadIR.cpp
   ConstraintIR.cpp
   CouplingIR.cpp
