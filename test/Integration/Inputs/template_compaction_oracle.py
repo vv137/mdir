@@ -7,6 +7,12 @@ or spatial search are claimed by this integer arena-layout fixture.
 import pathlib
 import sys
 
+mode = sys.argv[2] if len(sys.argv) == 3 else ''
+assert mode in ('', '--append', '--append-overflow', '--append-index-overflow')
+append = bool(mode)
+overflow = mode == '--append-overflow'
+index_overflow = mode == '--append-index-overflow'
+
 counts = [65, 0, 33, 1, 0, 2]
 chunks = [(3, 0, 1), (0, 1, 1), (5, 0, 2), (2, 0, 33), (0, 0, 64)]
 offsets = [0]
@@ -40,6 +46,11 @@ lines.append('memref.global "private" constant @water : memref<17x4xi32> = dense
 expected = {'rows': rows, 'units': units, 'entries': entries, 'counts': counts,
             'offsets': offsets, 'works': works,
             'work_counts': [(n + 63) // 64 for n in counts], 'ranges': ranges}
+total = sum(counts) + ((1 << 31) - 1 if index_overflow else 0)
+signed_low = (total & 0xffffffff) - (1 << 32) if total & (1 << 31) else total
+expected['controls'] = [5, 0, 2 if overflow else 1 if index_overflow else 0, 0,
+                        signed_low, total >> 32, 0, 0]
+expected['sentinel'] = [-777]
 for name, data in expected.items():
     lines.append(f'memref.global "private" constant @{name} : memref<{len(data)}xi32> = dense<{data}>')
 lines.extend(['func.func private @compact_seed(!list)',
@@ -51,6 +62,8 @@ lines.extend(['func.func private @compact_seed(!list)',
               'func.func private @mdrtDeviceActivationEnter(!llvm.ptr)',
               'func.func private @mdrtDeviceActivationClose(!llvm.ptr)',
               'func.func private @printI64(i64)', 'func.func private @printNewline()'])
+if append:
+    lines.append('func.func private @append_seed(!list)')
 lines.append(r'''
 func.func @expect(%view: memref<?xi32, 1>, %ref: memref<?xi32>, %start: index, %padding: i1) -> i1 {
   %c0 = arith.constant 0 : index
@@ -145,33 +158,43 @@ def store(where, offset, value):
 
 
 stage_units, stage_entries, row_counts = base(11), base(12), base(13)
-store('%c0', 40, len(chunks))
-for chunk, (row, ordinal, count) in enumerate(chunks):
-    for column, value in enumerate([row, count, ordinal, 0]):
-        store(stage_units, 4 * chunk + column, value)
-    for entry in range(count):
-        for column, value in enumerate(record(row, 64 * ordinal + entry)):
-            store(stage_entries, 4 * (64 * chunk + entry) + column, value)
-for row, count in enumerate(counts):
-    store(row_counts, row, count)
+if append:
+    for control in range(40, 48):
+        store('%c0', control, (1 << 31) - 1 if index_overflow and control == 44 else 0)
+else:
+    store('%c0', 40, len(chunks))
+    for chunk, (row, ordinal, count) in enumerate(chunks):
+        for column, value in enumerate([row, count, ordinal, 0]):
+            store(stage_units, 4 * chunk + column, value)
+        for entry in range(count):
+            for column, value in enumerate(record(row, 64 * ordinal + entry)):
+                store(stage_entries, 4 * (64 * chunk + entry) + column, value)
+    for row, count in enumerate(counts):
+        store(row_counts, row, count)
 lines.extend(['  %ready = gpu.wait async',
               '  %done = gpu.memcpy async [%ready] %arena, %host : memref<?xi32, 1>, memref<?xi32>',
-              '  gpu.wait [%done]', '  memref.dealloc %host : memref<?xi32>',
-              '  func.call @compact_seed(%list) : (!list) -> ()'])
+              '  gpu.wait [%done]', '  memref.dealloc %host : memref<?xi32>'])
+if append:
+    lines.append('  func.call @append_seed(%list) : (!list) -> ()')
+if not overflow and not index_overflow:
+    lines.append('  func.call @compact_seed(%list) : (!list) -> ()')
 good = emit('arith.constant true')
-header_done = False
-for slot, name, padding in [(5, 'rows', False), (6, 'rows', False),
-                             (7, 'units', True), (8, 'units', True),
-                             (9, 'entries', True), (10, 'entries', True),
-                             (13, 'counts', False), (14, 'offsets', False),
-                             (15, 'work_counts', False), (16, 'works', False),
-                             (None, 'ranges', False), (None, 'ranges', False)]:
+checks = [(5, 'rows', False, 0), (6, 'rows', False, 0),
+          (7, 'units', True, 0), (8, 'units', True, 0),
+          (9, 'entries', True, 0), (10, 'entries', True, 0),
+          (13, 'counts', False, 0), (14, 'offsets', False, 0),
+          (15, 'work_counts', False, 0), (16, 'works', False, 0),
+          (None, 'ranges', False, 4), (None, 'ranges', False, 22)]
+if append:
+    checks.append((None, 'controls', False, 40))
+if overflow or index_overflow:
+    checks = [(13, 'counts', False, 0), (None, 'controls', False, 40)]
+if overflow:
+    checks += [(11, 'sentinel', True, 8), (12, 'sentinel', True, 512)]
+for slot, name, padding, start in checks:
     if slot is None:
-        start = 22 if header_done else 4
-        header_done = True
         view = '%arena'
     else:
-        start = 0
         s = emit(f'arith.constant {slot} : i64')
         view = emit(f'func.call @mdrtTemplatePairsArenaView(%list, {s}) : (!list, i64) -> memref<?xi32, 1>')
     size = len(expected[name])

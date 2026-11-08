@@ -1,0 +1,12 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.mlir %t.overflow.input.mlir %t.index.input.mlir
+# RUN: %python %S/../../Integration/Inputs/template_compaction_oracle.py %t.input.mlir --append
+# RUN: mdir-opt %t.input.mlir --test-md-template-stage --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_compaction_oracle.py %t.overflow.input.mlir --append-overflow
+# RUN: mdir-opt %t.overflow.input.mlir --test-md-template-stage=capacity=2 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_compaction_oracle.py %t.index.input.mlir --append-index-overflow
+# RUN: mdir-opt %t.index.input.mlir --test-md-template-stage --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK: llvm.func @append_seed
