@@ -38,6 +38,10 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
     if (tuple.isStorageForm())
       return std::nullopt;
     outs = tuple.getOuts();
+  } else if (auto window = dyn_cast<TemplateForOp>(loop)) {
+    if (window.isStorageForm())
+      return std::nullopt;
+    outs = window.getOuts();
   } else {
     return std::nullopt;
   }
@@ -52,6 +56,8 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
 static MutableOperandRange getOutsMutable(Operation *loop) {
   if (auto pair = dyn_cast<PairForOp>(loop))
     return pair.getOutsMutable();
+  if (auto window = dyn_cast<TemplateForOp>(loop))
+    return window.getOutsMutable();
   return cast<TupleForOp>(loop).getOutsMutable();
 }
 
@@ -222,6 +228,64 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
 /// in one destination, and the chain adds it once. A loop with one
 /// destination less writes one field less, and may then accumulate onto
 /// another (accumulateOnce). Returns true if it merged two.
+// Template outputs retain independent site cutoffs. Merging destinations
+// concatenates their pair contributions and displacement lists; it does
+// not form a new pair expression or move arithmetic across a cutoff.
+static void mergeOuts(TemplateForOp loop, unsigned into, unsigned from) {
+  OpBuilder builder(loop);
+  Location loc = loop.getLoc();
+  unsigned outs = loop.getOuts().size();
+  unsigned columns = outs + loop.getReduce().size();
+  SmallVector<Value> destinations(loop.getOuts());
+  Value dropped = destinations[from];
+  destinations.erase(destinations.begin() + from);
+  SmallVector<Type> types(loop.getResultTypes());
+  types.erase(types.begin() + from);
+  SmallVector<int32_t> pairs;
+  for (unsigned tag = 0; tag != 3; ++tag)
+    for (unsigned column = 0; column != columns; ++column) {
+      if (column == from) continue;
+      int32_t count = loop.getPairs()[tag * columns + column];
+      if (column == into) count += loop.getPairs()[tag * columns + from];
+      pairs.push_back(count);
+    }
+  auto merged = TemplateForOp::create(
+      builder, loc, types, loop.getList(), loop.getPositions(), loop.getCell(),
+      loop.getIns(), destinations, loop.getReduce(), loop.getScratch(),
+      builder.getDenseI32ArrayAttr(pairs), loop.getCutoffAttr(),
+      loop.getExtentAttr(), loop.getAlphaAttr());
+  constexpr unsigned arities[] = {6, 4, 2};
+  for (unsigned tag = 0; tag != 3; ++tag) {
+    Region &region = merged->getRegion(tag);
+    region.takeBody(loop->getRegion(tag));
+    Operation *yield = region.front().getTerminator();
+    SmallVector<ValueRange> contributions, displacements;
+    unsigned offset = 0;
+    for (unsigned column = 0; column != columns; ++column) {
+      unsigned count = loop.getPairs()[tag * columns + column];
+      unsigned values = count * (column < outs ? arities[tag] : 1);
+      contributions.push_back(yield->getOperands().slice(offset, values));
+      displacements.push_back(yield->getOperands().slice(offset + values, count));
+      offset += values + count;
+    }
+    SmallVector<Value> operands;
+    for (unsigned column = 0; column != columns; ++column) {
+      if (column == from) continue;
+      llvm::append_range(operands, contributions[column]);
+      if (column == into) llvm::append_range(operands, contributions[from]);
+      llvm::append_range(operands, displacements[column]);
+      if (column == into) llvm::append_range(operands, displacements[from]);
+    }
+    yield->setOperands(operands);
+  }
+  for (unsigned i = 0; i != loop.getNumResults(); ++i)
+    if (i != from)
+      loop.getResult(i).replaceAllUsesWith(merged.getResult(i < from ? i : i - 1));
+  loop.erase();
+  if (Operation *zeros = dropped.getDefiningOp(); zeros && zeros->use_empty())
+    zeros->erase();
+}
+
 static bool mergeOnce(ParticleForOp op) {
   Block &kernel = op.getKernel().front();
   for (Chain &chain : getChains(op)) {
@@ -249,6 +313,8 @@ static bool mergeOnce(ParticleForOp op) {
       kernel.eraseArgument(after);
       if (pair)
         mergeOuts(pair, a->out, b->out);
+      else if (auto window = dyn_cast<TemplateForOp>(a->loop))
+        mergeOuts(window, a->out, b->out);
       else
         mergeOuts(cast<TupleForOp>(a->loop), a->out, b->out);
       return true;

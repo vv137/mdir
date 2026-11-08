@@ -1,0 +1,3 @@
+# RUN: mdir-water-template-test --layout | FileCheck %s
+# CHECK: template allocation: 216 layouts; invalid domains refused; wide offsets preserved
+# CHECK: template membership: real units, EP exclusion and strides passed

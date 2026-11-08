@@ -5,6 +5,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include <array>
+namespace mlir { class IRMapping; }
+namespace mdir::md_exec { class TemplateForOp; }
 namespace mdir::kernels {
 enum class TemplatePairClass { WaterWater, SoluteWater, SoluteSolute };
 
@@ -34,6 +36,13 @@ struct TemplateContribution {
   llvm::SmallVector<mlir::Value, 3> firstForces, secondForces;
   llvm::SmallVector<mlir::Value, 2> sums;
 };
+/// Emit one class's actual scalar/derived body with an independent guard
+/// for every yielded site displacement. Arguments and captures are mapped
+/// by the caller. At most one force destination remains after accumulation;
+/// energy and strain reductions retain their declared types.
+TemplateContribution emitTemplateWindowContributions(
+    mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
+    unsigned tag, mlir::IRMapping &);
 struct TemplateUnit {
   TemplatePairClass kind;
   /// i32 lane and entry bounds. The caller assigns one class uniformly

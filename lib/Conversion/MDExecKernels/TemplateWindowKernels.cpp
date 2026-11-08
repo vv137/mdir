@@ -1,9 +1,11 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/IRMapping.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -39,6 +41,88 @@ SmallVector<Value, 5> mdir::kernels::emitTemplateWindowCoordinates(
     coordinates.push_back(sub(second[2], second[0]));
   }
   return coordinates;
+}
+
+namespace {
+static Value materializeWindowValue(OpBuilder &builder, Value value,
+                                    Block &source, IRMapping &mapping) {
+  if (Value known = mapping.lookupOrNull(value)) return known;
+  Operation *definition = value.getDefiningOp();
+  if (!definition || definition->getBlock() != &source) return value;
+  // A structured scalar expression can capture another value of the
+  // window in a nested region without listing it as a direct operand.
+  definition->walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands())
+      materializeWindowValue(builder, operand, source, mapping);
+  });
+  builder.clone(*definition, mapping);
+  return mapping.lookup(value);
+}
+} // namespace
+
+TemplateContribution mdir::kernels::emitTemplateWindowContributions(
+    OpBuilder &builder, Location loc, mdir::md_exec::TemplateForOp loop,
+    unsigned tag, IRMapping &mapping) {
+  assert(tag < 3 && loop.getOuts().size() <= 1);
+  constexpr unsigned first[] = {3, 1, 1};
+  constexpr unsigned second[] = {3, 3, 1};
+  unsigned arity = first[tag] + second[tag];
+  unsigned outs = loop.getOuts().size();
+  unsigned columns = outs + loop.getReduce().size();
+  Block &source = loop->getRegion(tag).front();
+  Operation *yield = source.getTerminator();
+  auto zero = [&](Type type) -> Value {
+    return arith::ConstantOp::create(builder, loc, builder.getZeroAttr(type));
+  };
+  TemplateContribution result;
+  if (outs) {
+    Type force = mdir::md_exec::getKernelValueType(loop.getOuts()[0].getType());
+    result.firstForces.assign(first[tag], zero(force));
+    result.secondForces.assign(second[tag], zero(force));
+  }
+  for (Value initial : loop.getReduce()) result.sums.push_back(zero(initial.getType()));
+  unsigned offset = 0;
+  for (unsigned column = 0; column != columns; ++column) {
+    bool scatter = column < outs;
+    unsigned stride = scatter ? arity : 1;
+    unsigned pairs = loop.getPairs()[tag * columns + column];
+    for (unsigned pair = 0; pair != pairs; ++pair) {
+      Value displacement = materializeWindowValue(builder,
+          yield->getOperand(offset + stride * pairs + pair), source, mapping);
+      Value square = arith::MulFOp::create(builder, loc, displacement, displacement);
+      Value r2 = vector::ReductionOp::create(builder, loc, vector::CombiningKind::ADD, square);
+      double cutoff = loop.getCutoff().convertToDouble();
+      Value cutoff2 = arith::ConstantOp::create(builder, loc,
+          FloatAttr::get(r2.getType(), cutoff * cutoff));
+      Value inside = arith::CmpFOp::create(builder, loc,
+          arith::CmpFPredicate::OLT, r2, cutoff2);
+      auto guarded = scf::IfOp::create(builder, loc, inside,
+          [&](OpBuilder &body, Location) {
+            IRMapping local = mapping;
+            SmallVector<Value> values;
+            for (unsigned member = 0; member != stride; ++member)
+              values.push_back(materializeWindowValue(body,
+                  yield->getOperand(offset + pair * stride + member), source, local));
+            scf::YieldOp::create(body, loc, values);
+          }, [&](OpBuilder &body, Location) {
+            SmallVector<Value> values;
+            for (unsigned member = 0; member != stride; ++member) {
+              Type type = yield->getOperand(offset + pair * stride + member).getType();
+              values.push_back(arith::ConstantOp::create(body, loc, body.getZeroAttr(type)));
+            }
+            scf::YieldOp::create(body, loc, values);
+          });
+      for (unsigned member = 0; member != stride; ++member) {
+        Value *destination = !scatter ? &result.sums[column - outs]
+            : member < first[tag] ? &result.firstForces[member]
+                                 : &result.secondForces[member - first[tag]];
+        *destination = arith::AddFOp::create(builder, loc, *destination,
+                                             guarded.getResult(member));
+      }
+    }
+    offset += pairs * (stride + 1);
+  }
+  return result;
 }
 
 namespace {
