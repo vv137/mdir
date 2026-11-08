@@ -3,6 +3,7 @@ add_mlir_library(MDIRTestPasses
   TestOutlineKernels.cpp
   TestTemplateWindows.cpp
   TestExecTemplateWindows.cpp
+  TestTemplateScheduler.cpp
   TestLoopEffects.cpp
   TestStageAdjoint.cpp
   TestTranspose.cpp
@@ -15,6 +16,9 @@ add_mlir_library(MDIRTestPasses
   MDIRMDTransforms
   MDIRMDExecKernels
   MLIRFuncDialect
+  MLIRGPUDialect
+  MLIRLLVMDialect
+  MLIRMemRefDialect
   MLIRIR
   MLIRPass
   )

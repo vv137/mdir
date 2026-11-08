@@ -897,6 +897,10 @@ execution body's site guards pass the same isolated all-images f64
 oracle as the semantic reduction. Physical device-list generation,
 validity integration and end-to-end measurements remain in progress;
 the prototype's performance numbers are not implementation results.
+An isolated execution of the actual warp scheduler and derived body on an
+RTX 5090 also passed an exact dyadic force/energy/virial oracle, with
+partial batches, exclusion masks and differing water orientations. This
+checks scheduling and cached geometry, not a physical-system trajectory.
 
 In an aqueous system most pairs within $r_c$ are pairs of water sites:
 93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166

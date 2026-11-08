@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.mlir
+# RUN: %python %S/Inputs/template_scheduler_oracle.py %S/../Conversion/MDToMDExec/template-execution-site.mlir %t.mlir --rotated --summary
+# RUN: mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler=rotate-frames | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Distinct dyadic quarter-turns make cached local geometry vary with each
+# partner. All 469 force/energy/virial checks have predeclared zero tolerance.
+# CHECK: 1

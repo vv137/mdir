@@ -1,0 +1,11 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.mlir %t.input.mlir %t.rotated.input.mlir
+# RUN: %python %S/../../Integration/Inputs/template_scheduler_oracle.py %S/template-execution-site.mlir %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_scheduler_oracle.py %S/template-execution-site.mlir %t.rotated.input.mlir --rotated
+# RUN: mdir-opt %t.rotated.input.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler=rotate-frames | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# Device-free PTX serialization catches lowering gaps before the device
+# oracle executes. Actual numerical coverage is in the GPU fixture.
+# CHECK: llvm.func @template_scheduler_probe

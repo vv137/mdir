@@ -564,6 +564,25 @@ per-pair device work.
 | Per-pair virial products | f32 | f32 |
 | Energy and virial sums | f64 | f64 |
 
+An isolated one-warp device fixture executes the actual derived WW body
+and scheduler with 13 valid first waters in a padded cluster of 16,
+35 partner entries, exclusion masks and explicit image shifts. Its
+independent quadratic oracle uses dyadic positions and coefficients;
+all 469 force/energy/virial values must agree exactly. Both the common
+orientation and distinct quarter-turn orientations passed their first
+RTX 5090 execution. The latter makes each cached site's value depend on
+its own partner and checks off-diagonal strain as well.
+
+| Frames | Reference energy | Reference virial xx | Reference virial xy | Largest reference force component | Largest difference |
+|---|---|---|---|---|---|
+| Common orientation | 37.024810791015625 | -74.04962158203125 | 0 | 9.099609375 | 0 |
+| Distinct quarter-turns | 37.713287353515625 | -74.35430908203125 | 0.545654296875 | 9.52734375 | 0 |
+
+The common-orientation fixture also passed memcheck, racecheck and
+synccheck: zero errors or hazards. This isolated device execution does
+not validate spatial list generation, the physical PME system, dynamics
+or performance; their gates above remain required.
+
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and
 the remap of SW entries after a water build; the fused kernel and its register budget;
