@@ -11,6 +11,15 @@ the transpose identity. Each check prints the relative error and then 1 if
 it is within the tolerance of the program.
 
   direction_pme.py IN.mlir OUT.mlir
+
+  direction_pme.py IN.mlir OUT.mlir fd
+
+With `fd`, OUT.mlir keeps of `main` the inputs and the three evaluations of
+Psi alone, for a run under md-check-derivatives, which then checks
+`direction` and `direction_forces` by central differences along the
+directions. The energy and the forces are quadratic in the charges and
+linear in eps, so that the differences are exact but for the rounding at
+any step.
 """
 import sys
 
@@ -18,6 +27,11 @@ BLOCK = """  // Forward mode: Psi along lambda (a number), along q0 (a field, wi
   // direction w, the same change of the charges), and along lambda and eps of @both.
   %one = arith.constant 1.0 : f64
   %mark = arith.constant -726.0 : f64
+  %fc0 = arith.constant 0 : index
+  %fc1 = arith.constant 1 : index
+  %fc3 = arith.constant 3 : index
+  %fcn = arith.constant 10 : index
+  %fzero = arith.constant 0.0 : f64
   call @printF64(%mark) : (f64) -> ()
   call @printNewline() : () -> ()
   %deps = arith.constant 0.7 : f64
@@ -34,8 +48,8 @@ BLOCK = """  // Forward mode: Psi along lambda (a number), along q0 (a field, wi
   %b1 = mdrt.to_buffer %fpsi1 : !vec to memref<?x3xf64>
   %b2 = mdrt.to_buffer %fpsi2 : !vec to memref<?x3xf64>
   %b3 = mdrt.to_buffer %fpsi3 : !vec to memref<?x3xf64>
-  %r:3 = scf.for %i = %c0 to %cn step %c1 iter_args(%a1 = %zero, %a2 = %zero, %a3 = %zero) -> (f64, f64, f64) {
-    %in:3 = scf.for %k = %c0 to %c3 step %c1 iter_args(%e1 = %a1, %e2 = %a2, %e3 = %a3) -> (f64, f64, f64) {
+  %r:3 = scf.for %i = %fc0 to %fcn step %fc1 iter_args(%a1 = %fzero, %a2 = %fzero, %a3 = %fzero) -> (f64, f64, f64) {
+    %in:3 = scf.for %k = %fc0 to %fc3 step %fc1 iter_args(%e1 = %a1, %e2 = %a2, %e3 = %a3) -> (f64, f64, f64) {
       %tk = memref.load %tt[%i, %k] : memref<?x3xf64>
       %f1 = memref.load %b1[%i, %k] : memref<?x3xf64>
       %f2 = memref.load %b2[%i, %k] : memref<?x3xf64>
@@ -63,5 +77,13 @@ BLOCK = """  // Forward mode: Psi along lambda (a number), along q0 (a field, wi
 with open(sys.argv[1]) as stream:
     program = stream.read()
 end = program.rindex("  return\n}")
+block = BLOCK
+if len(sys.argv) > 3 and sys.argv[3] == "fd":
+    # The evaluations of Psi, without the comparisons; and none of the
+    # program's own, whose tangents in the positions want a smaller step.
+    block = BLOCK[:BLOCK.index("  %tt = mdrt.to_buffer")]
+    end_inputs = program.index("  %u, %p, ")
+    program = program[:end_inputs] + program[end:]
+    end = end_inputs
 with open(sys.argv[2], "w") as stream:
-    stream.write(program[:end] + BLOCK + program[end:])
+    stream.write(program[:end] + block + program[end:])

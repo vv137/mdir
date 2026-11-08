@@ -3463,6 +3463,15 @@ LogicalResult DirectionBuilder::reciprocalDirection(ReciprocalOp reciprocal,
     return failure();
   if (!direction)
     return success();
+  // The list of D262 holds the particles whose charge can be nonzero; a
+  // direction may give a charge to the others, which the list would drop.
+  // The builder gives no list where a charge is tunable.
+  if (reciprocal.getListed())
+    return reciprocal.emitOpError()
+           << "spreads a list of particles (D262), and its charges depend on "
+              "the directed arguments, which may give a charge to a "
+              "particle outside the list; the derivative along them is "
+              "formed without a list";
   // E(c) = ½ cᵀ A c, so that ċᵀ A c = ½ [E(c + ċ) − E(c − ċ)] exactly.
   Type type = cast<FieldType>(charges.getType()).getKernelValueType();
   Value energies[2];

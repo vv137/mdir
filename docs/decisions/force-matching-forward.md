@@ -74,7 +74,8 @@ for each, after the arguments of the potential: its direction, of the type of
 the argument. The requests of a direction and those of the tangent of D376 are
 not mixed in one op. The values of the existing requests (0 to 6) are
 unchanged, and so are the builders of the op without directions, so a program
-without the new requests is printed and lowered as before.
+without the new requests is expected to be printed and lowered as before (the
+builder-equivalence corpus is in the validation plan).
 
 `md-differentiate` builds $\Psi$ as `md.potential @<name>.direction_<n>...`,
 with the potential's arguments then the directions, once for each set of
@@ -98,8 +99,11 @@ over that term alone.
 Refused, by name: a value without a derivative rule, a learned stage, a
 directed operand of a sum other than a gathered field of the particles (a
 field of the tuples), a field computed other than by a map, the forces, the
-virial, or the potential of a reciprocal sum along the directions, and a
-potential on domains.
+virial, or the potential of a reciprocal sum along the directions, a
+reciprocal sum with the list of D262 whose charges depend on the directions
+(a direction may give a charge to a particle outside the list; the builder
+gives no list where a charge is tunable, so the frame programs have none
+there), and a potential on domains.
 
 `md-check-derivatives` checks `direction` against central differences of
 the energy along the directions, and `direction_forces` against central
@@ -177,13 +181,27 @@ of 48 × 54 × 48, order 8, $\mathbf q = \mathbf q_0 + \lambda\mathbf w$):
 | $-\mathbf t\cdot\mathbf F_\Psi$ along $\lambda$ and the $\epsilon$ of a pair term | $\partial\Phi/\partial\lambda + \dot\epsilon\,\partial\Phi/\partial\epsilon$ | $1.1\times10^{-15}$ | $9.3\times10^{-11}$ |
 
 The zeros are exact: both sides are the same half difference of the same two
-reciprocal sums.
+reciprocal sums, so these rows check the construction, not the rule. The
+rule is checked by central differences under `md-check-derivatives`, on the
+same program with the three evaluations of $\Psi$ alone: $E$ and $\mathbf F$
+are quadratic in the charges and linear in $\epsilon$, so the differences are
+exact but for the rounding at any step. At the step 0.1, `direction` and
+every component of `direction_forces` agree within $10^{-9}+10^{-8}\lvert\cdot\rvert$
+(a RUN line of the test); at $10^{-2}$ the largest difference is
+$3.6\times10^{-8}$ relative, and at $10^{-4}$ $2.0\times10^{-7}$, the rounding
+of the mesh divided by the step.
 
 `test/Integration/direction-gpu.test` runs both on the RTX 5090 in double:
 pending; the numbers follow in a comment.
 
 No existing test changes: the tests of `test/Dialect/MD` and
 `test/Integration` pass on the CPU (95 passed, 32 unsupported for the device).
+
+Not in the prototype: a FileCheck test of the construction
+(`differentiate-direction.mlir`, as D376's `differentiate-tangent.mlir`), the
+refusals (`differentiate-direction-invalid.mlir`), and the negative cases of
+the verifier (`invalid.mlir`: requests of a direction and of the tangent in
+one op, `directions` without a request, out of order, or of a wrong type).
 
 ## Validation plan (after the ruling)
 
