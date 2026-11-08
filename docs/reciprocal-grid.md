@@ -196,3 +196,31 @@ Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the
 final clean head. The device sanitizer tier applies if device code
 changes. Complete-chain numerical gates precede admission of the route.
+
+The maintainer authorized the scalar weighted map and refined the rule to
+allow corrections confined to code added by this PR. The amplitude-VJP
+branch now uses its own scalar `MapParticles` kernel; the old vector helper
+is unchanged. Its build passed. The focused batch had three passes and one
+new-harness failure: the rectangular-proof mutation replaced a local SSA
+name across function scopes. Restricting that replacement to the potential
+passed the refusal fixture 1/1, including its positive control and all 19
+negative mutations. The admitted evaluator, ordinary bare-stencil refusal
+and existing tangent fixtures passed in the preceding batch.
+
+A compiled evaluator comparison with outer weight 2.5 passed 1/1 against
+the same independent direct-DFT and affine-strain oracle and predeclared
+bounds. It checks weighted grid energy, forces, direct charge-field VJP
+and every virial component. These results still admit no Mixed or resident
+GPU route.
+
+The new exact-input legacy Double CPU comparison has not reached numerical
+execution. Its initial run failed 0/1 while the legacy template parser
+loaded the LLVM dialect during pass execution. Adding the interface
+attribute to the new fixture's printer declaration preloaded the dialect,
+but the next run failed 0/1 at an unavailable C-interface printer symbol.
+The attribute has now been moved to the fixture's defined entry point;
+that last fixture correction is untested. No pre-existing compiler or
+runtime code was changed. Development is stopped for a ruling on another
+legacy-fixture run after these two failures. No numerical mismatch or
+intermittent failure was retried, and final compatibility gates remain
+pending.

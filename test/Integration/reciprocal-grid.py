@@ -52,7 +52,7 @@ def oracle(x, h, q, moduli):
     return energy, force, potential
 
 
-def expected():
+def expected(evaluator=False):
     x, h, q, moduli = inputs()
     energy, force, potential = oracle(x, h, q, moduli)
     strain = np.empty((3, 3))
@@ -66,10 +66,11 @@ def expected():
             ep = oracle(x @ plus, h @ plus, q, moduli)[0]
             em = oracle(x @ minus, h @ minus, q, moduli)[0]
             strain[b, a] = -(ep-em)/(2*step)
-    return np.concatenate(([energy], force.ravel(), strain.ravel(), potential))
+    values = np.concatenate(([energy], force.ravel(), strain.ravel(), potential))
+    return 2.5*values if evaluator else values
 
 
-def emit():
+def emit(evaluator=False):
     x_type = '!md.field<@atoms, 3 x f64>'
     q_type = '!md.field<@atoms, f64>'
     m_type = '!md.table<2, f64>'
@@ -78,7 +79,20 @@ def emit():
              f'  %u, %f, %w, %p = md.reciprocal %x, %q, %h, %m grid({list(GRID)}) order(4) beta({BETA}) coulomb({COULOMB}) : {x_type}, {q_type}, {m_type} -> f64, {x_type}, vector<9xf64>, {q_type}',
              f'  md.return %u, %f, %w, %p : f64, {x_type}, vector<9xf64>, {q_type}',
              '}', 'func.func private @mdrtPrintFFTValue(f64)',
-             'func.func @main() {']
+             'func.func @main() attributes {llvm.emit_c_interface} {']
+    if evaluator:
+        lines[1:5] = [
+            f'md.potential @energy(%x: {x_type}, %h: !md.cell, %q: {q_type}, %m: {m_type}) -> f64 {{',
+            f'  %u, %f, %w = md.reciprocal %x, %q, %h, %m grid({list(GRID)}) order(4) beta({BETA}) coulomb({COULOMB}) : {x_type}, {q_type}, {m_type} -> f64, {x_type}, vector<9xf64>',
+            '  %weight = arith.constant 2.5 : f64',
+            '  %weighted = arith.mulf %weight, %u : f64',
+            '  md.return %weighted : f64',
+            '}',
+            f'md.function @evaluate(%x: {x_type}, %q: {q_type}, %h: !md.cell, %m: {m_type}) -> (f64, {x_type}, vector<9xf64>, {q_type}) {{',
+            f'  %u, %f, %w, %p = md.evaluate @energy(%x, %h, %q, %m) request [energy, forces, virial, derivative(2)] : ({x_type}, !md.cell, {q_type}, {m_type}) -> (f64, {x_type}, vector<9xf64>, {q_type})',
+            f'  md.return %u, %f, %w, %p : f64, {x_type}, vector<9xf64>, {q_type}',
+            '}',
+        ]
     serial = 0
 
     def name():
@@ -143,9 +157,9 @@ def emit():
     print('\n'.join(lines))
 
 
-def check():
+def check(evaluator=False):
     actual = np.asarray([float(word) for word in sys.stdin.read().split()])
-    wanted = expected()
+    wanted = expected(evaluator)
     assert actual.shape == wanted.shape, (actual.shape, wanted.shape)
     errors = np.abs(actual-wanted)
     bounds = VALUE_ATOL+VALUE_RTOL*np.abs(wanted)
@@ -160,5 +174,7 @@ def check():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['emit', 'check'])
+    parser.add_argument('--evaluator', action='store_true',
+                        help='check the non-unit-weighted potential evaluator')
     args = parser.parse_args()
-    emit() if args.command == 'emit' else check()
+    emit(args.evaluator) if args.command == 'emit' else check(args.evaluator)

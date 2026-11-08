@@ -2747,7 +2747,23 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
         ReciprocalGridDerivative *grid;
         if (failed(getGridTerms(root, grid)))
           return failure();
-        terms.push_back(scaleField(grid->chargeGradient, weight));
+        if (isOne(weight)) {
+          terms.push_back(grid->chargeGradient);
+          continue;
+        }
+        OperationState state(loc, MapParticlesOp::getOperationName());
+        state.addOperands(grid->chargeGradient);
+        state.addRegion();
+        state.addTypes(fieldType);
+        Operation *map = builder.create(state);
+        Block *block = new Block();
+        map->getRegion(0).push_back(block);
+        block->addArgument(builder.getF64Type(), loc);
+        OpBuilder kernel = OpBuilder::atBlockEnd(block);
+        ScalarEmitter emit(kernel, loc);
+        YieldOp::create(kernel, loc,
+                        ValueRange{emit.mul(weight, block->getArgument(0))});
+        terms.push_back(map->getResult(0));
       }
       if (admitted)
         continue;

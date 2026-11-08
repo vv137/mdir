@@ -69,7 +69,9 @@ def main():
     checked = re.search(r'^\s*(%\w+) = md.checked_rectangular_cell (%\w+)\n', expanded, re.M)
     assert checked
     unchecked = expanded[:checked.start()]+'\n'+expanded[checked.end():]
-    unchecked = re.sub(re.escape(checked[1])+r'(?![\w#])', checked[2], unchecked)
+    potential_end = unchecked.index('md.function @caller')
+    unchecked = (re.sub(re.escape(checked[1])+r'(?![\w#])', checked[2],
+                        unchecked[:potential_end])+unchecked[potential_end:])
     reject('rectangular proof', unchecked,
            'reciprocal grid composition requires the checked rectangular-cell precondition')
     reject('matrix provenance', expanded.replace('arith.constant 0.000000e+00 : f64',

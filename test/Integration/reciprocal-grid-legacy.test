@@ -1,0 +1,6 @@
+# The unchanged legacy Double CPU route on the exact independent-oracle inputs.
+# The same fixed grid-only energy/force/charge/strain bounds apply.
+# RUN: rm -f %t.mlir %t.values
+# RUN: %mdir_python %S/reciprocal-grid.py emit > %t.mlir
+# RUN: mdir-opt %t.mlir --md-inline --convert-md-to-md-exec %md_exec_passes | mlir-opt %lower_loops_to_llvm --convert-ub-to-llvm --reconcile-unrealized-casts | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt > %t.values
+# RUN: %mdir_python %S/reciprocal-grid.py check < %t.values
