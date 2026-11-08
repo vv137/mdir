@@ -4,8 +4,9 @@
 #include "mlir/IR/Builders.h"
 namespace mdir::kernels {
 struct TemplateSpatialBuffers {
-  /// Canonical fractional reference points, fixed unit IDs [0,W+A).
-  /// The caller proves finite components in [0,1) before calling.
+  /// Finite fractional references in nearby unit-local lattice frames,
+  /// fixed unit IDs [0,W+A). Wrapping for keys happens in f64; the original
+  /// coordinates remain available to the covering search and its images.
   mlir::Value points, keys, zKeys, counts, starts, cursors, items, scanScratch;
   mlir::Value order, places;
   /// Index sizes, positive column dimensions and enough scan blocks for
@@ -16,8 +17,8 @@ struct TemplateSpatialBuffers {
   mlir::Value waterActive, atomActive;
 };
 /// Sort once with class-prefixed x-y serpentine columns, then z keys and
-/// fixed-ID ties. Key arithmetic is f32 after narrowing canonical reference
-/// coordinates. Padding occurs only between the two classes; each class
+/// fixed-ID ties. Key arithmetic is f32 after wrapping reference coordinates
+/// in f64. Padding occurs only between the two classes; each class
 /// is cut into consecutive clusters of sixteen real units.
 void emitTemplateSpatialOrder(mlir::OpBuilder &, mlir::Location,
                                const TemplateSpatialBuffers &);

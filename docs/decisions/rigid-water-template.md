@@ -587,8 +587,8 @@ and production dispatch to the exact energy $1/4$. These remain isolated
 compaction tests until the actual spatial search and validity are wired.
 
 The shared spatial-order emitter uses class-prefixed x-y serpentine
-columns, then z keys with fixed-unit-ID ties. Canonical reference points
-narrow to f32 for key arithmetic, as the legacy mixed group ordering
+columns, then z keys with fixed-unit-ID ties. Reference fractions wrap
+in f64 before narrowing to f32 for key arithmetic, as the legacy mixed group ordering
 does. Each class is cut into consecutive groups of sixteen, with padding
 at the class boundary. Rebuilding one mobility group leaves the other's
 padded order and inverse map untouched, while the search bins retain both
@@ -630,6 +630,14 @@ sort/search/staging/compaction emitters. Native refresh ownership, extent
 handling, displacement validity, fused pruning and physical dynamics
 remain separate gates.
 
+Reference points may retain independent nearby whole-cell frames. Only
+the bin keys wrap; the search compensates each partner's integer frame
+in its encoded image, preserving the actual packed geometry. The image
+payload is checked before writing. Independent-frame fixtures pass both
+cells, including retained inactive rows, with zero missing, extra or
+duplicate unit/image memberships. These checks do not recanonicalize
+the per-step packed frame or change the source site cutoff.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
@@ -645,7 +653,7 @@ per-pair device work.
 | Operation | Legacy mixed pair kernel | Template mixed pieces |
 |---|---|---|
 | Source positions and lattice shift before packing | f64 | f64 |
-| Spatial-order key arithmetic | f32 on wrapped points | f32 on canonical fractional reference points; i32 class/column/z keys |
+| Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
 | Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
 | Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |

@@ -268,15 +268,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                             Value imageComponents[] = {arith::SIToFPOp::create(zloop, loc, zloop.getF64Type(), sx),
                                 arith::SIToFPOp::create(zloop, loc, zloop.getF64Type(), sy), zReal};
                             Value image = vector::FromElementsOp::create(zloop, loc, pointType, imageComponents);
-                            Value code = integer(zloop, loc, 0);
                             Value imageIntegers[] = {sx, sy, sz};
-                            for (unsigned axis = 0; axis != 3; ++axis)
-                              code = arith::OrIOp::create(zloop, loc, code,
-                                  arith::ShLIOp::create(zloop, loc,
-                                      arith::AddIOp::create(zloop, loc, imageIntegers[axis],
-                                          integer(zloop, loc, MDRT_TEMPLATE_IMAGE_OFFSET)),
-                                      integer(zloop, loc, MDRT_TEMPLATE_IMAGE_BITS * axis)));
-                            Value imageCode = arith::TruncIOp::create(zloop, loc, zloop.getI32Type(), code);
                             return forState(zloop, loc, firstCandidate, lastCandidate, ix(zloop, 32), stateZ,
                                 [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
                                   Value position = arith::AddIOp::create(batch, loc, cursor, laneIndex);
@@ -287,7 +279,30 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                   Value partnerIndex = asIndex(batch, loc, partner);
                                   Value partnerPlace = asIndex(batch, loc, load(batch, loc, v.spatial.places, partnerIndex));
                                   Value partnerPoint = loadElement(batch, loc, v.spatial.points, partnerIndex);
-                                  Value shifted = arith::AddFOp::create(batch, loc, partnerPoint, image);
+                                  SmallVector<Value, 3> wrappedPartner;
+                                  Value code = integer(batch, loc, 0);
+                                  Value imageFits = boolean(batch, true);
+                                  for (unsigned axis = 0; axis != 3; ++axis) {
+                                    Value coordinate = component(batch, partnerPoint, axis);
+                                    Value frame = math::FloorOp::create(batch, loc, coordinate);
+                                    wrappedPartner.push_back(arith::SubFOp::create(batch, loc, coordinate, frame));
+                                    Value offset = arith::SubIOp::create(batch, loc, imageIntegers[axis],
+                                        arith::FPToSIOp::create(batch, loc, batch.getI64Type(), frame));
+                                    Value lower = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::sge,
+                                        offset, integer(batch, loc, -MDRT_TEMPLATE_IMAGE_OFFSET));
+                                    Value upper = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::slt,
+                                        offset, integer(batch, loc, MDRT_TEMPLATE_IMAGE_OFFSET));
+                                    imageFits = arith::AndIOp::create(batch, loc, imageFits,
+                                        arith::AndIOp::create(batch, loc, lower, upper));
+                                    code = arith::OrIOp::create(batch, loc, code,
+                                        arith::ShLIOp::create(batch, loc,
+                                            arith::AddIOp::create(batch, loc, offset,
+                                                integer(batch, loc, MDRT_TEMPLATE_IMAGE_OFFSET)),
+                                            integer(batch, loc, MDRT_TEMPLATE_IMAGE_BITS * axis)));
+                                  }
+                                  Value imageCode = arith::TruncIOp::create(batch, loc, batch.getI32Type(), code);
+                                  Value normalizedPartner = vector::FromElementsOp::create(batch, loc, pointType, wrappedPartner);
+                                  Value shifted = arith::AddFOp::create(batch, loc, normalizedPartner, image);
                                   Value mask = word(batch, loc, 0);
                                   for (unsigned i = 0; i != 16; ++i) {
                                     Value pointI = shuffle(batch, loc, firstPoint, i);
@@ -350,6 +365,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                   }
                                   Value keep = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ne,
                                                                        mask, word(batch, loc, 0));
+                                  Value badImage = arith::AndIOp::create(batch, loc, keep,
+                                      arith::XOrIOp::create(batch, loc, imageFits, boolean(batch, true)));
+                                  scf::IfOp::create(batch, loc, badImage, [&](OpBuilder &bad, Location) {
+                                    memref::AtomicRMWOp::create(bad, loc, arith::AtomicRMWKind::ori,
+                                        integer(bad, loc, TEMPLATE_BUILD_INDEX_OVERFLOW), v.counters,
+                                        ValueRange{ix(bad, TEMPLATE_COUNTER_FLAGS)});
+                                    scf::YieldOp::create(bad, loc);
+                                  });
+                                  keep = arith::AndIOp::create(batch, loc, keep, imageFits);
                                   Value fields[] = {partner, imageCode, mask, word(batch, loc, 0)};
                                   return emitAppendTemplateStage(batch, loc, stage, state, keep, fields);
                                 });

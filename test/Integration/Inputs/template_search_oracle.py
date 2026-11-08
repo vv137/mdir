@@ -8,6 +8,7 @@ ties on the dyadic grid. Candidate membership is compared exactly.
 import argparse
 import itertools
 import json
+import math
 import pathlib
 import struct
 
@@ -17,6 +18,7 @@ generate = sub.add_parser('generate')
 generate.add_argument('program', type=pathlib.Path)
 generate.add_argument('reference', type=pathlib.Path)
 generate.add_argument('--triclinic', action='store_true')
+generate.add_argument('--reframed', action='store_true')
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -29,7 +31,7 @@ def f32(x):
 
 def sorted_units(points, waters):
     def key(i):
-        x, y, z = (f32(v) for v in points[i])
+        x, y, z = (f32(v - math.floor(v)) for v in points[i])
         cx, cy = min(int(f32(3 * x)), 2), min(int(f32(2 * y)), 1)
         column = 2 * cx + (1 - cy if cx % 2 else cy)
         return (i >= waters, column, min(int(f32((1 << 21) * z)), (1 << 21) - 1), i)
@@ -50,7 +52,9 @@ def expected_pairs(points, waters, atoms, tilted):
             indices = ((waters + i, waters + j) for i, j in itertools.combinations(range(atoms), 2)
                        if (i, j) not in exclusions)
         for i, j in indices:
-            for image in itertools.product((-1, 0, 1), repeat=3):
+            center = [math.floor(points[i][k]) - math.floor(points[j][k]) for k in range(3)]
+            for offset in itertools.product((-1, 0, 1), repeat=3):
+                image = tuple(center[k] + offset[k] for k in range(3))
                 d = [points[i][k] - (points[j][k] + image[k]) for k in range(3)]
                 cart = ((2 * d[0] + d[1]) + .5 * d[2], 2 * d[1] + d[2], 2 * d[2]) if tilted else tuple(2 * v for v in d)
                 r2 = sum(v * v for v in cart)
@@ -146,6 +150,20 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
             order[start:start + count] = sorted_ids[offset:offset + count]
     pairs, gap = expected_pairs(points, waters, atoms, args.triclinic)
     phases.append({'active': active, 'points': [row[:] for row in points], 'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
+if args.reframed:
+    for i, point in enumerate(points):
+        for axis in range(3):
+            point[axis] += (i + 2 * axis) % 3 - 1
+    phases = []
+    order = [-1] * len(order)
+    for active in [(True, True), (False, False)]:
+        if active[0]:
+            ids = sorted_units(points, waters)
+            order[:waters] = ids[:waters]
+            order[water_places:water_places + atoms] = ids[waters:]
+        pairs, gap = expected_pairs(points, waters, atoms, args.triclinic)
+        phases.append({'active': active, 'points': [row[:] for row in points],
+                       'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
 cell = [2., 2., 2., 1., .5, 1.] if args.triclinic else [2., 2., 2.]
 args.reference.write_text(json.dumps({'waters': waters, 'atoms': atoms, 'cell': cell, 'phases': phases}))
 
@@ -201,9 +219,21 @@ func.func @controls(%list: !list) -> memref<4xi64> {
   gpu.wait [%done]
   %flags = memref.load %host[%c1] : memref<4xi64>
   %good = arith.cmpi eq, %flags, %zero : i64
-  cf.assert %good, "unexpected search build flag"
   %entries = memref.load %host[%c2] : memref<4xi64>
   %capacity = func.call @mdrtTemplatePairsLayoutValue(%list, %s3) : (!list, i64) -> i64
+  %bad = arith.cmpi ne, %flags, %zero : i64
+  scf.if %bad {
+    %marker = arith.constant 917033 : i64
+    func.call @printI64(%marker) : (i64) -> ()
+    func.call @printNewline() : () -> ()
+    func.call @printI64(%flags) : (i64) -> ()
+    func.call @printNewline() : () -> ()
+    func.call @printI64(%entries) : (i64) -> ()
+    func.call @printNewline() : () -> ()
+    func.call @printI64(%capacity) : (i64) -> ()
+    func.call @printNewline() : () -> ()
+  }
+  cf.assert %good, "unexpected search build flag"
   %fits = arith.cmpi ule, %entries, %capacity : i64
   cf.assert %fits, "search fixture preallocation is insufficient"
   return %host : memref<4xi64>
@@ -331,5 +361,5 @@ for phase, ref in enumerate(phases):
     lines.append(f'  memref.dealloc {controls} : memref<4xi64>')
 lines.extend(['  func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()', '  return', '}'])
 args.program.write_text('\n'.join(lines) + '\n')
-print('reference:', 'triclinic' if args.triclinic else 'orthorhombic',
+print('reference:', 'triclinic' if args.triclinic else 'orthorhombic', 'reframed' if args.reframed else 'canonical',
       [len(phase['pairs']) for phase in phases], 'minimum r2 gap', min(phase['minimum_r2_gap'] for phase in phases))
