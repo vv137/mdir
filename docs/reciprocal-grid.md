@@ -224,3 +224,24 @@ runtime code was changed. Development is stopped for a ruling on another
 legacy-fixture run after these two failures. No numerical mismatch or
 intermittent failure was retried, and final compatibility gates remain
 pending.
+
+The maintainer authorized one more legacy-fixture run and clarified that
+the repeated-point stop means the same error at the same stage. With the
+committed entry-point attribute placement, the legacy Double CPU fixture
+passed 1/1. It differs from the direct-DFT oracle by at most
+$1.45\,10^{-10}$ in energy, $1.42\,10^{-10}$ in force,
+$1.50\,10^{-10}$ in charge potential and $4.67\,10^{-9}$ in the
+all-component strain finite difference. On those exact inputs, the new
+chain differs from legacy by at most $1.45\,10^{-10}$ in energy,
+$1.42\,10^{-10}$ in force, $1.50\,10^{-10}$ in charge potential and
+$1.96\,10^{-10}$ in virial. All use the existing value and strain bounds.
+The weighted evaluator's errors are $1.99\,10^{-13}$ in energy,
+$2.46\,10^{-13}$ in force, $4.55\,10^{-13}$ in charge potential and
+$1.12\,10^{-8}$ in the all-component strain finite difference.
+
+The explicitly selected route is an f64 CPU reference composition.
+Resident placement, Mixed arithmetic and fused execution remain slice 5;
+the precision table above describes this distinction before any timing.
+The ordinary route is not selected or changed, and no device emitter or
+runtime kernel is changed by this slice. Final compatibility results are
+recorded on the PR at the clean tested head.
