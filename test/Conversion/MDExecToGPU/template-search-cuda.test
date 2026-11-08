@@ -1,0 +1,9 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.reference.json %t.mlir %t.tilt.input.mlir %t.tilt.reference.json
+# RUN: %python %S/../../Integration/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_search_oracle.py generate %t.tilt.input.mlir %t.tilt.reference.json --triclinic
+# RUN: mdir-opt %t.tilt.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK: llvm.func @search_seed

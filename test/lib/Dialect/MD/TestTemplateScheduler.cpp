@@ -503,10 +503,12 @@ struct TestTemplateStage
 };
 } // namespace
 namespace mdir::test {
+void registerTestTemplateSearch();
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
   PassRegistration<TestTemplateCompaction>();
   PassRegistration<TestTemplateSpatial>();
   PassRegistration<TestTemplateStage>();
+  registerTestTemplateSearch();
 }
 }
