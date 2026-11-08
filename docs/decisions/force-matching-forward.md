@@ -2,9 +2,6 @@
 
 Recorded 2026-11-08.
 
-*Draft: the design and an IR prototype, for the maintainer's ruling on the
-questions at the end.*
-
 **Forward mode in the tunables of the gradient in the positions,
 $\dot{\mathbf G} = (\partial^2U/\partial\mathbf x\,\partial\boldsymbol\theta)\,\dot{\boldsymbol\theta}$,
 is the gradient in the positions of one potential, the derivative of $U$
@@ -14,10 +11,14 @@ builds from the sums of $U$ as D376 builds the tangent in the positions,
 and whose forces the existing `forces` request gives; `md.evaluate` asks for
 it with the requests `direction` and `direction_forces` and the attribute
 `directions`. The host maps $\dot{\boldsymbol\theta}$ to the directions
-$\dot b_s$ by the transpose of the chain rule of D230.**
+$\dot b_s$ by the transpose of the chain rule of D230, a third program of
+frames gives $\Psi$ and its forces, and `FrameEnergies.jvp(tangent)` returns
+the tangents of the energies and of their gradients in the positions.**
 
 Part F of the design on #726 (Ruling 21, Q6: forward mode in θ of the
-forces is refused until this part). It is the transpose of D381's product
+forces is refused until this part), with the maintainer's ruling on PR
+#778 (the interface as proposed, the one line of a frozen file in this PR,
+one tangent a call, the adapters apart). It is the transpose of D381's product
 and builds on D376 (the tangent in the IR), D379 (the reciprocal sum), D381
 (the product program), and D383/D384 (the forces of a constructed potential,
 the spread of the sites).
@@ -63,7 +64,7 @@ for every $g$, $\bar{\mathbf G}$, $\dot{\boldsymbol\theta}$ (gate 3 of the
 design, $10^{-12}$ relative in `double`). The term in $g$ holds only with the
 host part of $\dot U_n$; the gate takes $g\ne0$.
 
-## The IR (prototyped in this PR)
+## The IR
 
 `md.evaluate` takes two more requests, `direction` ($\Psi$, `f64`) and
 `direction_forces` ($-\partial\Psi/\partial\mathbf x_i$, of the type of the
@@ -110,45 +111,81 @@ the energy along the directions, and `direction_forces` against central
 differences of the forces along them, each component on its own: the finite
 differences of $\mathbf G$ in $\boldsymbol\theta$.
 
-## The frame evaluator (proposed; after the ruling)
+## The frame evaluator
 
-- **A variant of the product program** (D381), selected by `Control::frameProductDirection` (no control-file key), compiled at the first forward product in a simulation of its own, as D383's variant is. Its boundary returns, as buffer 1, the directions in place of $\bar{\mathbf G}$: the numbers of the slots of D230, then the fields of the seeds and the charges, $N$ values each, in f64. Each frame evaluates `@tunable` with `direction` and `direction_forces`, `directions` naming every slot and field, and hands $\Psi_n$ to `mdrtWriteTunableGradient` and $-\dot{\mathbf G}_n$ to `mdrtWriteFrameProductForces`. It evaluates no energy.
-- **The host** maps $\dot{\boldsymbol\theta}$ to the directions by the exact transpose of `applyTunableChainRule`: a slot takes $\dot\theta$ of the entry its map names, a site of a field takes it at its particle, a row of a table adds $\mathrm{scale}\cdot\dot\theta$ at every particle of its type. It adds $\dot{\boldsymbol\theta}\cdot\partial U^{\mathrm{host}}/\partial\boldsymbol\theta$ at the volume of each frame to $\Psi_n$, the same constants of D230 that the reverse product weights by $g$.
-- **Virtual sites.** The placement $\mathbf x_{\mathrm{site}} = \mathbf s(\mathbf x_{\mathrm{atoms}})$ does not depend on $\boldsymbol\theta$, so $\dot{\mathbf G}_{\mathrm{atoms}} = \mathsf J^{\mathsf T}\dot{\mathbf G}_{\mathrm{sites}}$ exactly, by the spread of D298 that the forces take (D384). For the extra points of Amber $\mathsf J$ depends on the positions, but no term in $\partial\mathsf J/\partial\mathbf x$ arises, unlike D387: the derivative is in $\boldsymbol\theta$, not in $\mathbf x$. Both kinds are covered; the entry at a site is zero.
-- **Selecting the variant needs one line of a frozen file** (the builder freeze; see Q2): in `lib/Driver/BuilderSchedule.cpp`, line 180,
+**The interface.** `FrameEnergies.jvp(tangent, *, gradients=("positions",))`.
+`tangent` maps names of the tunables to arrays of the shapes of their
+values; a name left out is zero, a name that is not a tunable, a shape, and
+a value that is not finite are refused. It returns a `FrameTangent`:
+`energy`, $\dot U_n$ `(K,)` float64 with what the host adds to the energy;
+`gradients["positions"]`, $\dot{\mathbf G}_n$ `(K, N, 3)` float64 in the
+order of the input, where `gradients` names it; and `version`. With
+`gradients=()` there is no pass of the product program: $\dot U$ is the
+Jacobian times the tangent, kept or by a second pass. One tangent a call:
+`jacfwd` over $M$ entries is $M$ calls, and a gradient in many tunables is
+the job of the reverse product (Q3 of the ruling). The frames are evaluated
+again, so they must be a sequence, at the values of the tunables of
+`evaluate`, as for `vjp`. The names follow `FrameEnergies` and `vjp`.
 
-  ```cpp
-  gradient.product = EntryGradientProductIR{2, 1, control.frameProductPositions};
-  ```
+**The program.** A third program of frames, the product program of forward
+mode, selected by `Control::frameProductDirection` (no control-file key),
+which `Simulation::create` sets only with `frameProduct` and without
+`frameProductPositions`. The evaluator compiles it at the first `jvp` that asks
+for `"positions"`, in a simulation of its own, and gives it its values of the
+tunables where their bits differ. Its boundary is that of D381; the
+cotangent it hands over is zeros and not read. At each frame the entry takes
+the directions from the host, the numbers of the slots and then one field of
+$N$ values for each field of the gradient, in f64, through
+`mdrtFrameDirection`. It evaluates `@tunable` once with `direction` and
+`direction_forces`, `directions` naming every slot and field, spreads the
+forces from the virtual sites to their atoms (D384), and hands $\Psi_n$ to
+`mdrtWriteTunableGradient` and the forces to `mdrtWriteFrameProductForces`.
+It evaluates no energy.
 
-  becomes
+**The host** maps $\dot{\boldsymbol\theta}$ to the directions by the exact
+transpose of `applyTunableChainRule` (`transposeTunableChainRule`): a slot
+takes $\dot\theta$ of the entry its map names; a site of a field takes it at
+its particle; a row of a table adds its scale times $\dot\theta$ of its entry
+at every particle of its type. It adds
+$\dot{\boldsymbol\theta}\cdot\partial U^{\mathrm{host}}/\partial\boldsymbol\theta$
+at the volume of each frame to $\Psi_n$, the chain rule of the constants
+alone, the same constants that the reverse product weights by $g$.
 
-  ```cpp
-  gradient.product = EntryGradientProductIR{2, 1, control.frameProductPositions,
-                                            control.frameProductDirection};
-  ```
+**Virtual sites.** The placement $\mathbf X = \mathbf s(\mathbf x)$ does not
+depend on $\boldsymbol\theta$, so
+$\dot{\mathbf G} = \mathsf J^{\mathsf T}\,\partial\Psi/\partial\mathbf X$
+exactly, by the spread that the forces take. For the extra points of Amber
+$\mathsf J$ depends on the positions, but no term in
+$\partial\mathsf J/\partial\mathbf x$ arises, unlike D387: the derivative is
+in $\boldsymbol\theta$. Both kinds are taken; the rows of the sites are zero.
 
-  with a field `direction` (default false) in `EntryGradientProductIR` (`lib/Driver/EntryOutputIR.h`, not frozen) and the member in `include/mdir/Driver/Control.h`. No program without the flag changes. This is the same kind of line as D383's exception.
+**The one line of a frozen file**, by the maintainer's one-time exception on
+PR #778: in `lib/Driver/BuilderSchedule.cpp`, the statement that fills
+`EntryGradientOutputIR::product` passes `control.frameProductDirection` as the
+new field `direction` of `EntryGradientProductIR` (`lib/Driver/EntryOutputIR.h`,
+default false); the member is in `include/mdir/Driver/Control.h`. It is the
+only change to a frozen file. No program without the flag changes.
 
 ## Coverage
 
 | Term | Tunables | Forward mode |
 |---|---|---|
-| Pairs | per-type σ, ε (seeds), NBFIX pairs, constants of pair terms, charges under a Coulomb cutoff | the pair sum along the directions; prototyped |
-| Tuples | parameters of tuple terms by their seeds, `dihedral_k` | the tuple sum along the seeds at their members; prototyped |
-| Terms of the positions | their constants and fields | prototyped |
-| PME | charges, tied or by a map | two reciprocal sums with their forces for all entries; prototyped (a number and a field) |
-| Linear sites, extra points of Amber | as their atoms | $\mathsf J^{\mathsf T}\dot{\mathbf G}_{\mathrm{sites}}$ (proposed) |
+| Pairs | per-type σ, ε (seeds), NBFIX pairs, constants of pair terms, the charges under a Coulomb cutoff | the pair sum along the directions |
+| Tuples | parameters of tuple terms by their seeds, `dihedral_k` | the tuple sum along the seeds at their members |
+| Terms of the positions | their constants and fields | the same |
+| PME | the charges, per particle or tied | two reciprocal sums with their forces for all entries; the reverse product of D381 does not take them yet |
+| Linear sites, extra points of Amber | as their atoms | the spread of $\partial\Psi/\partial\mathbf X$ |
 | LJPME with tunables | — | refused, as D213 |
 | Positional intermediate fields, learned stages, domains | — | refused by name |
 | The cell (stress) | — | refused, until PR G |
+| `terms="dependent"` | — | refused, as for `vjp` |
 
 ## The adapters
 
-- **`mdir.torch`: forward AD is not formed, and today it is silently zero.** `torch.library.custom_op` with `register_autograd` registers a backward only; PyTorch 2.14.1 has no registration of a JVP for a custom op. Measured on a frame evaluator of propane in water with `epsilon_pair` as a tunable: `torch.func.jvp` of `mdir.torch.evaluate(...).energy` in the tunable returns a tangent of 0, and `torch.autograd.forward_ad` returns `None`, both without an error, where $\sum_n\partial U_n/\partial\boldsymbol\theta\cdot\dot{\boldsymbol\theta} = 6.99\times10^{6}$; the same holds for `gradients["positions"]`. That breaks the refusal matrix of #726 ("never a zero"); it is an existing defect, reported as #777, not fixed here. A forward mode of `mdir.torch` would need a `torch.autograd.Function` with a `jvp`, which `torch.compile` does not keep opaque as it does the custom op (D252). Not in this PR.
-- **`mdir.jax`**: `mdir_frames_theta_tangent` with a nonzero $\dot{\mathbf G}$ wanted, through the JVP rule of Ruling 20, is part of the JAX rules of #750 (PR D of the design). This PR gives the evaluator call that its implementation and lowering need (Q4).
+- **`mdir.torch`: forward AD is not formed, and on `main` it is silently zero.** `torch.library.custom_op` with `register_autograd` registers a backward only; PyTorch 2.14.1 has no registration of a JVP for a custom op. Measured on a frame evaluator of propane in water with `epsilon_pair` as a tunable: `torch.func.jvp` of `mdir.torch.evaluate(...).energy` in the tunable returns a tangent of 0, and `torch.autograd.forward_ad` returns `None`, both without an error, where $\sum_n\partial U_n/\partial\boldsymbol\theta\cdot\dot{\boldsymbol\theta} = 6.99\times10^{6}$; the same holds for `gradients["positions"]`. That breaks the refusal matrix of #726 ("never a zero"); it is an existing defect, reported as #777, and fixed apart by a refusal by name (the ruling, Q4). A forward mode of `mdir.torch` would need a `torch.autograd.Function` with a `jvp`, which `torch.compile` does not keep opaque as it does the custom op (D252); it is built only if asked for.
+- **`mdir.jax`**: `mdir_frames_theta_tangent` with a nonzero $\dot{\mathbf G}$ wanted, through the JVP rule of Ruling 20, is part of the JAX rules of #750 (PR D of the design). It calls the path of this decision.
 
-## Validation of the prototype
+## Validation: the IR
 
 `test/Integration/direction.mlir` (CPU, double): the model of D376's
 `tangent.mlir`, six particles in a periodic cube with a pair across its
@@ -202,25 +239,60 @@ $5.3\times10^{-16}$.
 No existing test changes: the tests of `test/Dialect/MD` and
 `test/Integration` pass on the CPU (95 passed, 32 unsupported for the device).
 
-Not in the prototype: a FileCheck test of the construction
-(`differentiate-direction.mlir`, as D376's `differentiate-tangent.mlir`), the
-refusals (`differentiate-direction-invalid.mlir`), and the negative cases of
-the verifier (`invalid.mlir`: requests of a direction and of the tangent in
-one op, `directions` without a request, out of order, or of a wrong type).
+The construction by FileCheck (`test/Dialect/MD/Transforms/differentiate-direction.mlir`):
+the pair sum gathering the direction of the charges with the derivative along
+the number, the forces, the term that reads no directed argument absent, the
+two reciprocal sums at the shifted charges, and no potential along
+directions left. The refusals (`differentiate-direction-invalid.mlir`: a
+listed reciprocal sum, the forces of a reciprocal sum along the directions)
+and the verifier (`test/Dialect/MD/invalid.mlir`: `directions` missing,
+without a request, out of order, of a wrong type, and mixed with the
+tangent).
 
-## Validation plan (after the ruling)
+## Validation: the frame evaluator
 
-- Gate 3 at the evaluator: $\dot{\boldsymbol\theta}\cdot\mathbf p(g,\bar{\mathbf G}) = \sum_n[g_n\dot U_n + \bar{\mathbf G}_n\cdot\dot{\mathbf G}_n]$ to $10^{-12}$ relative in double, with $g\ne0$, on the scenarios of D381 (LJ with per-type σ, ε and NBFIX, Coulomb cutoff with tied charges, `dihedral_k` on the D372 fixtures), PME charges, and the sites of D384.
-- Finite differences of $\mathbf G$ in $\boldsymbol\theta$ (Ridders, the first step as in D371's tests), $10^{-6}$ of the largest entry.
-- NumPy references for LJ, NBFIX, Coulomb, `dihedral_k` ($\dot{\mathbf G}$ in closed form), $10^{-10}$ relative in double; torch-pme for the PME charges, `torch.autograd.grad` of $\dot{\boldsymbol\theta}\cdot\partial E/\partial\mathbf q$ in the positions, with the tolerance set from the accuracy of both meshes.
-- CPU and RTX 5090, mixed and double; mixed against double from measurement, starting at $10^{-5}$ of the largest entry (Q9 of Ruling 21).
-- The refusals by name, and the evaluator unchanged after each.
-- Nothing else changes: the builder-equivalence corpus N of N, the order matrix (all three sections), five checkpoints bitwise against a clean `main` tree, the full suite; the device code of existing programs does not change, so a memcheck of the new kernels alone (a lightweight scenario).
-- E3 of the design (the restriction of a tunable to its sites) applies to forward mode as to the product: recorded with the plain path.
+`test/Driver/python-frame-jvp.test` (CPU), `python-frame-jvp-gpu.test`
+(RTX 5090), `python-frame-jvp-amber{,-gpu}.test` (ParmEd), and
+`python-frame-jvp-torchpme{,-gpu}.test` run `Inputs/python_frame_jvp.py`.
+Each scenario takes a random tangent of all its tunables, scaled by their
+values. The table gives the difference of the tangent of the gradient,
+$\dot{\mathbf G}$, of the largest entry:
 
-## Questions for the maintainer
+| Scenario, reference | CPU double | CPU mixed | GPU double | GPU mixed |
+|---|---|---|---|---|
+| `dihedral_k` (D372 fixtures, 3 frames): the closed form, $\sum_r\dot k_r\nabla[1+\cos(n_r\phi_r-\delta_r)]$ by dual numbers | 6.4e-16 | 1.2e-6 | 9.5e-16 | 1.2e-6 |
+| per-type (geometric) and pair σ, ε with a pair set apart by NBFIX (propane and water, 224 atoms, 3 frames): a NumPy sum of the forces of the Lennard-Jones, differentiated in θ by a complex step | 3.8e-15 | 1.5e-6 | 3.2e-15 | 1.9e-6 |
+| the charges tied in 25 entries under a Coulomb cutoff (dipeptide in water, 1,168 atoms, 2 frames): a NumPy sum of the forces of the shifted Coulomb and the 1-4 pairs | 1.1e-15 | 9.5e-7 | 1.1e-15 | 9.5e-7 |
+| eight OPC waters with a linear site, σ, ε, and the charges: central differences in θ of the gradient of the NumPy model of D384 (Richardson, $h = 10^{-4}$) | 4.4e-12 | 3.8e-7 | 3.9e-12 | 3.3e-7 |
+| the charges with PME, per particle (1,168 entries): the half difference of $\mathbf G$ at $\mathbf q\pm\dot{\mathbf q}$, exact for a quadratic | 6.9e-16 | 4.3e-7 | 2.5e-16 | 3.5e-7 |
+| the same, tied in 25 entries | 6.0e-16 | 3.4e-7 | 4.0e-16 | 3.7e-7 |
 
-- **Q1. The Python API.** Proposed: `FrameEnergies.jvp(tangent, *, gradients=("positions",))`, with `tangent` a mapping of the names of `evaluator.tunables` to arrays of their shapes (a name left out is zero), returning a `FrameTangent` with `energy`, $\dot U_n$ $(K,)$ float64, and `gradients["positions"]`, $\dot{\mathbf G}$ $(K, N, 3)$ float64 in the order of the input, with `version`: the tangent of the outputs of `evaluate`, in their structure. With `gradients=()` the energy alone, from the kept Jacobian ($\mathsf J\dot{\boldsymbol\theta}$) or the second pass, with no product pass. The frames and the values of the tunables are those of `evaluate`, as for `vjp`. Alternatives: a method of `FrameEvaluator` that takes the frames again (rejected: `vjp` sets the precedent of the frames held by `FrameEnergies`), or a keyword of `vjp` (rejected: a JVP is not a VJP).
-- **Q2. The frozen line.** The one line of `lib/Driver/BuilderSchedule.cpp` above, in this PR as D383's was, or by the builder's owner?
-- **Q3. Several tangents.** One $\dot{\boldsymbol\theta}$ a call in v1, so that `jacfwd` over $M$ entries is $M$ passes over the frames; or a leading axis of $P$ tangents, $P$ potentials $\Psi$ in one program (compiled for each $P$)?
-- **Q4. The adapters.** `mdir.jax` forward mode of the forces with #750 (PR D), on this evaluator call; `mdir.torch` forward AD refused by name now, in a fix of its own (#777), and formed later only if asked?
+Tolerances: 1e-10 against the NumPy and closed forms, 1e-8 against the
+differences of the model, 1e-12 against the half differences, in double;
+2e-5 in mixed.
+
+- **The transpose identity** (gate 3), $\dot{\boldsymbol\theta}\cdot\mathbf p(g,\bar{\mathbf G}) = \sum_n[g_n\dot U_n + \bar{\mathbf G}_n\cdot\dot{\mathbf G}_n]$ with random $g\ne0$ and $\bar{\mathbf G}$, relative, double (CPU, GPU): `dihedral_k` 1.4e-14, 1.4e-14 (the sum cancels to $-0.2587$ from terms whose magnitudes sum to about $5\times10^{2}$: 7.6e-18 of that sum); σ, ε 3.8e-16, 1.9e-16 (the dispersion correction and its shift estimate in $\dot U$); the charges 1.2e-15, 2.6e-15; linear sites 1.3e-15, 1.5e-15; the extra points of Amber (ACE-ALA-NME and waters, 182 particles) 4.2e-16, 4.2e-16. Tolerance 1e-12. In mixed, of the sum of the magnitudes of the terms: at most 5.6e-8 (σ, ε, CPU), tolerance 1e-5. With PME the reverse product is not formed (D381), so the identity is not checked there.
+- **Central differences of $\mathbf G$ in $\boldsymbol\theta$** along the tangent, by Ridders' method with the first step of D371's tests, in double: at most 1.5e-13 of the largest entry without PME (the extra points of Amber, GPU) and 3.7e-10 with it (CPU and GPU), tolerance 1e-6.
+- **The tangent of the energy** against the rows of the Jacobian times the tangent: at most 1.1e-14 in double without PME; with PME 4.0e-11, the rows taking the potential of the mesh at the particles (D231) and the tangent two sums of the mesh, each with the rounding of the mesh (tolerance 1e-9); in mixed at most 3.5e-6 (tolerance 1e-5). With `gradients=()`, the same to the bit.
+- **Mixed against double** on the same frames, $\dot{\mathbf G}$: at most 6.7e-6 (the extra points of Amber, CPU) of the largest entry, within 1e-5, the starting tolerance of Ruling 21 (Q9).
+- **torch-pme** (Loche et al., J. Chem. Phys. 162, 142501 (2025)), the dipeptide in water with the charges of every particle, PME at $\beta = 3.5$ nm⁻¹: $\dot{\mathbf G}$ against the half difference of torch-pme's gradient (its sum of the mesh, the pairs within the cutoff, less the excluded pairs that the mesh holds, plus the 1-4 pairs, written in PyTorch), at the grids 64 and 128, 8.8e-5 and 7.9e-6 of the largest entry in double (8.8e-5 and 8.4e-6 in mixed, the same on the CPU and the RTX 5090). With twice the points MDIR changes by 6.8e-5 and torch-pme by 8.0e-5, and the tolerance is three times their sum, 4.5e-4, as `python-frame-gradients-torchpme.test` sets it.
+- **The refusals:** a tangent that is not a mapping, a name that is not a tunable, a shape, a value that is not finite, a name of `gradients` other than `"positions"`, frames given once, values changed since the frames were evaluated, and `terms="dependent"`. A name left out is zero, and the evaluator gives the same tangent after them, to the bit.
+
+Counts of the new tests: `differentiate-direction.mlir` failed once on a
+pattern of FileCheck and `differentiate-direction-invalid.mlir` once on the
+text of the refusal of the forces of a reciprocal sum (it is refused as a
+value without a rule); `python_frame_jvp.py` failed once in mixed precision,
+on the transpose identity of `dihedral_k` taken relative to its cancelling sum
+(1.8e-5); it is now taken relative to the sum of the magnitudes of the terms
+in mixed. Each was fixed and passed on its next run.
+
+## Nothing else changes
+
+Programs without the flag are unchanged, against `main` 6fc773a8 built in a
+tree of its own, at the head d1fb4517 (the commits after it change only
+tests and text; `main` gained only text since):
+
+- The builder-equivalence corpus (`scripts/builder-equivalence/check.py compare`, the module and the lowered program, raw and printed, the CPU and GPU targets, both kinds of program, with the Amber suite): 1046 cases of 262 control files identical, 458 of them stopping with the same error in both.
+- The order matrix (`scripts/builder-equivalence/order.py`): 560 cases identical, in its three sections: exact pair lists 480 (68 with the same error), padded 40 (20), searched 40 (20).
+- Five checkpoints (JAC NVE, Factor IX NPT, and Cellulose NVE of the Amber suite, 200 steps each; the ala3 minimization; argon, 200 steps, on the GPU), in deterministic mode with the compile cache off, each tree's own executable in one job on the RTX 5090: every dataset of the final checkpoint identical to the bit, 5 of 5.
+- The device code of existing programs does not change, so the sanitizer tier was not run. A memcheck of the new kernels alone (compute-sanitizer, `--tool memcheck --error-exitcode 1`, its own log file, a timeout of 30 minutes, RTX 5090): one forward pass of the frame evaluator on the torsion fixtures and on propane and water (the pair kernels along σ and ε), in double and mixed, 0 errors (exit status 0, 7 s each); the reciprocal sums along directions on the program of `direction-pme.test`, 0 errors (exit status 0). The same pass with the charges of the dipeptide under PME in the evaluator did not finish within the timeout under the sanitizer and is not counted.

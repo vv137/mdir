@@ -41,4 +41,4 @@
 # PME: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against the half difference
 # DOUBLE: [[MODE]]: {{.*}}: the same against central differences of the gradient in theta along the tangent (Ridders)
 # MIXED: [[MODE]]: {{.*}}: the tangent of the gradient in mixed precision against that in double
-# REFUSED: refusals: a tangent that is not a mapping, a name that is not a tunable, a shape, a value that is not finite, the names of gradients, frames given once, and values changed since the frames were evaluated are refused; a name left out is zero; the evaluator gives the same tangent after them, to the bit
+# REFUSED: refusals: a tangent that is not a mapping, a name that is not a tunable, a shape, a value that is not finite, the names of gradients, frames given once, and values changed since the frames were evaluated are refused, and the tangent of the gradient with terms='dependent'; a name left out is zero; the evaluator gives the same tangent after them, to the bit

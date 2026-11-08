@@ -525,10 +525,14 @@ def run_refusals():
     assert not np.asarray(evaluator.evaluate(x).jvp({}).gradients["positions"]).any()
     again = evaluator.evaluate(x).jvp(tangent)
     assert np.array_equal(np.asarray(again.gradients["positions"]), first)
+    dependent = mdir.FrameEvaluator(base.compile_(system, state), terms="dependent")
+    expect(mdir.UnsupportedError, lambda: dependent.evaluate(x).jvp(tangent),
+           "terms='dependent'")
     print("refusals: a tangent that is not a mapping, a name that is not a tunable, a shape, a "
           "value that is not finite, the names of gradients, frames given once, and values "
-          "changed since the frames were evaluated are refused; a name left out is zero; the "
-          "evaluator gives the same tangent after them, to the bit")
+          "changed since the frames were evaluated are refused, and the tangent of the gradient "
+          "with terms='dependent'; a name left out is zero; the evaluator gives the same "
+          "tangent after them, to the bit")
 
 
 if __name__ == "__main__":
