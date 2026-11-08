@@ -1,0 +1,4 @@
+# REQUIRES: cuda
+# RUN: mdir-opt %S/template-metadata.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Exact integer metadata, including static views after a pair-arena growth.
+# CHECK: 1

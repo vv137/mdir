@@ -6,12 +6,18 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 1
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 2
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
 #define MDRT_TEMPLATE_PAIR_ENTRY_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_ENTRIES 64
+
+enum MdrtTemplateMetadataSlot {
+  TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,
+  TEMPLATE_SS_ROWS = 2, TEMPLATE_SS_NEIGHBORS = 3,
+  TEMPLATE_METADATA_SLOTS = 4
+};
 
 /* Header ranges are [row begin/end, entry begin/end, work begin/end].
  * Within each partition, ranges are ordered WW, SW, SS. */

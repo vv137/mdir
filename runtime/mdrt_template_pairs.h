@@ -2,11 +2,14 @@
  * These functions belong only to the new template route. */
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Runtime/TemplateMembership.h"
+#include "mdir/Runtime/TemplateExclusions.h"
 
 struct TemplatePairs {
   struct MdrtTemplatePairLayout layout;
   void *pairs;
-  void *members;
+  void *metadata;
+  int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
+  int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
 };
 
 static void allocateTemplatePairs(struct TemplatePairs *pairs) {
@@ -30,7 +33,8 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
 /* The compiler passes host members, already renumbered like the state.
  * Upload once at initialization, never at a step's refresh. */
 int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
-    struct Buffer2 *members, int64_t particles, int64_t entries) {
+    struct Buffer2 *members, int64_t particles, int64_t entries,
+    struct Buffer2 *excluded) {
   int64_t waters = members->sizes[0], sites = members->sizes[1];
   if (particles < 0 || particles > INT32_MAX || waters < 0 ||
       (sites != 3 && sites != 4) || waters > particles / sites) {
@@ -47,27 +51,62 @@ int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
     fprintf(stderr, "mdrt: invalid or overlapping template membership\n");
     abort();
   }
+  struct MdrtTemplateExclusions graph = {0};
+  if (excluded->sizes[0] < 0 || excluded->sizes[1] != 2 ||
+      !mdrtTemplateExclusions(particles, waters, sites, host, excluded->sizes[0],
+          excluded->sizes[0] ? (const int32_t *)excluded->aligned + excluded->offset : NULL,
+          excluded->strides[0], excluded->strides[1], &graph)) {
+    fprintf(stderr, "mdrt: invalid template solute exclusion graph\n");
+    abort();
+  }
   int64_t handle = createTemplatePairs(waters, atoms, entries);
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
-  allocationTag = "template pairs: fixed real-unit membership";
-  pairs->members = mgpuMemAlloc((uint64_t)(count ? count : 1) * sizeof(int32_t),
-                               NULL, false);
+  int64_t sizes[TEMPLATE_METADATA_SLOTS] = {count, particles, atoms + 1, graph.count};
+  int64_t words = 0;
+  for (int slot = 0; slot != TEMPLATE_METADATA_SLOTS; ++slot) {
+    pairs->metadataOffsets[slot] = words;
+    pairs->metadataSizes[slot] = sizes[slot];
+    words += sizes[slot];
+  }
+  int32_t *metadata = malloc((size_t)words * sizeof(int32_t));
+  if (!metadata) {
+    fprintf(stderr, "mdrt: out of host memory for template metadata\n");
+    abort();
+  }
+  if (count) memcpy(metadata, host, (size_t)count * sizeof(int32_t));
+  int32_t *slots = metadata + pairs->metadataOffsets[TEMPLATE_PARTICLE_SLOTS];
+  for (int64_t p = 0; p < particles; ++p) slots[p] = -1;
+  for (int64_t row = 0; row < count; ++row) slots[host[row]] = (int32_t)row;
+  memcpy(metadata + pairs->metadataOffsets[TEMPLATE_SS_ROWS], graph.rows,
+          (size_t)(atoms + 1) * sizeof(int32_t));
+  if (graph.count)
+    memcpy(metadata + pairs->metadataOffsets[TEMPLATE_SS_NEIGHBORS], graph.neighbors,
+            (size_t)graph.count * sizeof(int32_t));
+  allocationTag = "template pairs: fixed topology metadata";
+  pairs->metadata = mgpuMemAlloc((uint64_t)words * sizeof(int32_t), NULL, false);
   allocationTag = NULL;
   /* Synchronous only at initialization: the temporary host memory can be
    * released immediately, with no outstanding borrowed source. */
-  if (count)
-    check(cuMemcpyHtoD((CUdeviceptr)pairs->members, host,
-                       (size_t)count * sizeof(int32_t)), "cuMemcpyHtoD");
+  check(cuMemcpyHtoD((CUdeviceptr)pairs->metadata, metadata,
+                     (size_t)words * sizeof(int32_t)), "cuMemcpyHtoD");
+  free(metadata);
+  mdrtFreeTemplateExclusions(&graph);
   free(host);
   return handle;
 }
 
-void _mlir_ciface_mdrtTemplatePairsMembers(struct Buffer1 *result, int64_t handle) {
+void _mlir_ciface_mdrtTemplatePairsMetadata(struct Buffer1 *result, int64_t handle,
+                                          int64_t slot) {
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
-  result->allocated = pairs->members;
-  result->aligned = pairs->members;
+  if (slot < 0 || slot >= TEMPLATE_METADATA_SLOTS) {
+    fprintf(stderr, "mdrt: invalid template metadata slot\n");
+    abort();
+  }
+  result->allocated = pairs->metadata;
+  result->aligned = (void *)((uintptr_t)pairs->metadata +
+      (uint64_t)pairs->metadataOffsets[slot] * sizeof(int32_t));
   result->offset = 0;
-  result->size = 3 * pairs->layout.waters + pairs->layout.atoms;
+  result->size = pairs->metadataSizes[slot];
   result->stride = 1;
 }
 

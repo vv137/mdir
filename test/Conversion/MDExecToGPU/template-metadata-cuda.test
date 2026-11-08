@@ -1,0 +1,5 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.mlir
+# RUN: mdir-opt %S/../../Integration/template-metadata.mlir --convert-md-exec-to-gpu --verify-each | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK: llvm.func @main

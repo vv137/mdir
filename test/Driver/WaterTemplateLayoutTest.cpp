@@ -1,6 +1,7 @@
 // Check physical layout boundaries without allocating device memory.
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Runtime/TemplateMembership.h"
+#include "mdir/Runtime/TemplateExclusions.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
 #include <cstdlib>
@@ -84,8 +85,37 @@ int runWaterTemplateLayoutTest() {
   requireLayout(!mdrtTemplateMembership(10, 2, 4, members, 4, 1, units, 8) &&
                 !mdrtTemplateMembership(8, 1, 3, strided, 6, 2, units, 7),
                 "overlapping membership or short destination admitted");
+  MdrtTemplateExclusions graph{};
+  const int32_t exclusions[] = {4, 2, 5, 9, 9, 5, 6, 8, 5, 5};
+  requireLayout(mdrtTemplateExclusions(10, 2, 4, expected, 5, exclusions, 2, 1, &graph) &&
+                graph.atoms == 2 && graph.count == 2 &&
+                graph.rows[0] == 0 && graph.rows[1] == 1 && graph.rows[2] == 2 &&
+                graph.neighbors[0] == 1 && graph.neighbors[1] == 0,
+                "SS graph retained water edges or duplicate directions");
+  mdrtFreeTemplateExclusions(&graph);
+  const int32_t atoms[] = {0, 1, 2, 3, 4, 5, 6, 7};
+  const int32_t stridedEdges[] = {7, 1, -1, 2, 5, -1, 1, 0, -1,
+                                 1, 7, -1, 5, 2, -1, 4, 4, -1};
+  requireLayout(mdrtTemplateExclusions(8, 0, 3, atoms, 6, stridedEdges, 3, 1, &graph),
+                "strided SS graph refused");
+  constexpr int32_t expectedRows[] = {0, 1, 3, 4, 4, 4, 5, 5, 6};
+  constexpr int32_t expectedNeighbors[] = {1, 0, 7, 5, 2, 1};
+  requireLayout(graph.count == 6, "SS graph has the wrong number of neighbors");
+  for (unsigned i = 0; i != 9; ++i)
+    requireLayout(graph.rows[i] == expectedRows[i], "SS CSR row boundary differs");
+  for (unsigned i = 0; i != 6; ++i)
+    requireLayout(graph.neighbors[i] == expectedNeighbors[i], "SS neighbors are not sorted");
+  mdrtFreeTemplateExclusions(&graph);
+  const int32_t badEdge[] = {0, 8};
+  requireLayout(!mdrtTemplateExclusions(8, 0, 3, atoms, 1, badEdge, 2, 1, &graph),
+                "out-of-domain SS endpoint admitted");
+  requireLayout(mdrtTemplateExclusions(0, 0, 3, nullptr, 0, nullptr, 0, 0, &graph) &&
+                graph.atoms == 0 && graph.count == 0 && graph.rows[0] == 0,
+                "empty SS graph failed");
+  mdrtFreeTemplateExclusions(&graph);
   llvm::outs() << "template allocation: " << checked
                << " layouts; invalid domains refused; wide offsets preserved\n"
                << "template membership: real units, EP exclusion and strides passed\n";
+  llvm::outs() << "template exclusions: SS CSR, deduplication and empty domains passed\n";
   return 0;
 }

@@ -5847,8 +5847,8 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   OpBuilder builder(op);
   auto universe = dyn_cast<MemRefType>(op.getUniverse().getType());
   auto members = dyn_cast<MemRefType>(op.getMolecules().getType());
-  if (!universe || !isDeviceType(universe) || !members || isDeviceType(members))
-    return op.emitOpError("expected device universe and host template membership");
+  if (!universe || !isDeviceType(universe) || !members)
+    return op.emitOpError("expected device universe and buffered template membership");
   Type wide = builder.getI64Type();
   Value waters = memref::DimOp::create(builder, loc, op.getMolecules(),
                                       createIndex(builder, loc, 0));
@@ -5863,11 +5863,40 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   auto makeWide = [&](Value value) -> Value {
     return arith::IndexCastOp::create(builder, loc, wide, value);
   };
+  auto hostType = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                                 builder.getI32Type());
+  SmallVector<Value> copied;
+  auto onHost = [&](Value buffer) -> Value {
+    auto type = cast<MemRefType>(buffer.getType());
+    if (!isDeviceType(type))
+      return memref::CastOp::create(builder, loc, hostType, buffer);
+    SmallVector<Value> sizes;
+    for (unsigned dimension = 0; dimension != 2; ++dimension)
+      sizes.push_back(memref::DimOp::create(builder, loc, buffer,
+                                           createIndex(builder, loc, dimension)));
+    Value host = memref::AllocOp::create(builder, loc, hostType, sizes);
+    auto deviceType = MemRefType::get(hostType.getShape(), builder.getI32Type(),
+        MemRefLayoutAttrInterface(), type.getMemorySpace());
+    Value view = memref::CastOp::create(builder, loc, deviceType, buffer);
+    createTransfer(builder, loc, host, view);
+    copied.push_back(host);
+    return host;
+  };
+  Value hostMembers = onHost(op.getMolecules());
+  Value excluded = op.getExcluded();
+  if (!excluded)
+    excluded = memref::AllocaOp::create(builder, loc,
+        MemRefType::get({0, 2}, builder.getI32Type()));
+  Value hostExcluded = onHost(excluded);
+  // A universal rank-two descriptor supports either model and every
+  // particle-set tag with one runtime declaration. Device member buffers
+  // are read back only here, at initialization outside the step loop.
   func::FuncOp create = getOrDeclare("mdrtTemplatePairsCreateMembers",
-      builder.getFunctionType({members, wide, wide}, {wide}));
+      builder.getFunctionType({hostType, wide, wide, hostType}, {wide}));
   create->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   Value handle = func::CallOp::create(builder, loc, create,
-      ValueRange{op.getMolecules(), makeWide(particles), makeWide(estimate)}).getResult(0);
+      ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded}).getResult(0);
+  for (Value host : copied) memref::DeallocOp::create(builder, loc, host);
   templatePairs[handle] = {handle, waters, atoms, op.getMolecules(), op.getExcluded()};
   module->setAttr("mdrt.template_pairs_abi",
                   builder.getI32IntegerAttr(MDRT_TEMPLATE_PAIRS_ABI_VERSION));

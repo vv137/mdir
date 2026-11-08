@@ -539,6 +539,16 @@ points belong to water but never enter the atom complement. A growth
 discards every class range, so the subsequent build must rebuild all
 classes. No growth work occurs on a refresh that fits.
 
+Fixed topology metadata occupies a separate immutable slab: real-unit
+membership, the original-particle-to-packed-slot map, and a sorted
+symmetric CSR graph for solute exclusions. Duplicate and reversed edges
+are collapsed; water exclusions never enter that graph. Initialization
+accepts host or already-buffered device topology, with any device-to-host
+copy confined to initialization. Borrowed metadata views survive pair
+arena growth. An exact integer GPU fixture checks all four views before
+and after growth and through both initialization paths; it does not
+validate spatial search or refresh.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
