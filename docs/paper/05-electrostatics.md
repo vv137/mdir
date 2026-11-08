@@ -73,6 +73,11 @@ and the window-curvature terms needed by force matching. This design
 changes no implemented reciprocal method or measured
 performance result.
 
+Slice 1 of #452 starts with a checked structural particle-grid relation,
+D[reciprocal-stencils] ([implementation record](../reciprocal-stencils.md)).
+Structured spreading/gathering and their derivative rules remain in
+progress; this checkpoint changes no reciprocal execution or measured rate.
+
 With the structure factor $S(\mathbf m) = \sum_j q_j e^{2\pi
 i\,\mathbf m\cdot\mathbf x_j}$ over the reciprocal vectors $\mathbf m$ of
 the cell, which for an orthorhombic cell are $m_a = k_a/L_a$ with integer

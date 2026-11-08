@@ -8,6 +8,8 @@
 #include "mlir/IR/Operation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
+#include <limits>
+
 using namespace mlir;
 using namespace mdir::md;
 
@@ -227,6 +229,31 @@ RelationType::verify(function_ref<InFlightDiagnostic()> emitError,
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
+
+LogicalResult GridStencilType::verify(
+    function_ref<InFlightDiagnostic()> emitError,
+    FlatSymbolRefAttr particleSet, DenseI64ArrayAttr shape, unsigned order,
+    StringAttr window) {
+  if (!particleSet)
+    return emitError() << "expected a particle set for the grid stencil";
+  if (!shape || shape.size() != 3)
+    return emitError() << "expected three grid stencil extents";
+  if (!window || window.getValue() != "bspline")
+    return emitError() << "expected grid stencil window 'bspline'";
+  if (order < 2 || order > 8)
+    return emitError() << "expected grid stencil order from 2 through 8";
+  int64_t points = 1;
+  for (int64_t extent : shape.asArrayRef()) {
+    if (extent < order || extent > std::numeric_limits<int32_t>::max())
+      return emitError()
+             << "expected each grid stencil extent from its order through "
+                "the 32-bit limit";
+    if (points > std::numeric_limits<int64_t>::max() / extent)
+      return emitError() << "grid stencil point count overflows i64";
+    points *= extent;
+  }
+  return success();
+}
 
 void MDDialect::registerTypes() {
   addTypes<

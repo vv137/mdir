@@ -620,6 +620,19 @@ LogicalResult GatherRelationOp::verifyRegions() {
 // ReciprocalOp
 //===----------------------------------------------------------------------===//
 
+LogicalResult GridStencilOp::verify() {
+  if (!isPositionField(getPositions().getType()))
+    return emitOpError() << "expected positions with three f64 components";
+  auto positions = cast<FieldType>(getPositions().getType());
+  auto stencil = cast<GridStencilType>(getStencil().getType());
+  if (positions.getParticleSet() != stencil.getParticleSet())
+    return emitOpError() << "stencil and positions must name the same particle set";
+  if (!SymbolTable::lookupNearestSymbolFrom<ParticleSetOp>(
+          *this, stencil.getParticleSet()))
+    return emitOpError() << "expected a declared particle set for the stencil";
+  return success();
+}
+
 LogicalResult LinearTransformOp::verify() {
   if (getKind() != "fft3d")
     return emitOpError() << "expected a supported transform kind, got '"

@@ -221,6 +221,12 @@ is needed when the kernels are compiled, not when LLVM is built.
 
 ## 4. `md` ops
 
+The implementation draft of #452 introduces the structural
+particle-grid relation and its constructor, **md.grid_stencil**.
+Its [checkpoint and remaining contracts](reciprocal-stencils.md)
+(D[reciprocal-stencils]) keep continuous operands explicit; structured
+spread/gather, their transposes and JVPs, and execution remain pending.
+
 ### 4.1 Summary
 
 The reference of every op is [dialects/md.md](dialects/md.md).

@@ -533,6 +533,48 @@ Interfaces: `OpAsmOpInterface`
 
 
 
+### `md.grid_stencil` (::mdir::md::GridStencilOp)
+
+_The discrete support relation of a particle-grid window_
+
+Syntax:
+
+```
+operation ::= `md.grid_stencil` $positions `,` $cell attr-dict `:` qualified(type($positions))
+              `->` qualified(type($stencil))
+```
+
+Associates a structural stencil relation with its explicit positions
+and cell. The result describes the periodically wrapped support
+indices, not a dense assignment matrix or stored window weights.
+Continuous operands must remain visible to structured consumers;
+differentiation of the weights is separate from integer enumeration.
+
+This is the semantic relation of #452. It is not selected by the
+ordinary reciprocal route. Structured scatter/gather, their derivative
+rules, and execution lowering are subsequent parts of slice 1.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `positions` | A per-particle field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `stencil` | A structural particle-grid stencil relation |
+
+
+
 ### `md.linear_transform` (::mdir::md::LinearTransformOp)
 
 _A value-level linear transform with a declared adjoint_
@@ -1555,6 +1597,39 @@ execution level, where the precision policy assigns it.
 | elementType | `::mlir::Type` |  |
 | irreps | `::llvm::ArrayRef<int64_t>` |  |
 | componentMajor | `bool` |  |
+
+### GridStencilType
+
+_A structural particle-grid stencil relation_
+
+Syntax:
+
+```
+!md.grid_stencil<
+  ::mlir::FlatSymbolRefAttr,   # particleSet
+  ::mlir::DenseI64ArrayAttr,   # shape
+  unsigned,   # order
+  ::mlir::StringAttr   # window
+>
+```
+
+A relation from a named particle set to a static three-dimensional
+periodic grid. The window and support order are structural. The first
+window is bspline, with order 2 through 8 and each grid extent at least
+the order, so a particle's wrapped support indices are distinct.
+
+The relation carries indices only. Positions, cell, local coordinates,
+and window values remain explicit operands and arithmetic of consumers;
+an index relation never proves their derivatives inactive. Part of #452.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| particleSet | `::mlir::FlatSymbolRefAttr` |  |
+| shape | `::mlir::DenseI64ArrayAttr` |  |
+| order | `unsigned` |  |
+| window | `::mlir::StringAttr` |  |
 
 ### RelationType
 

@@ -411,6 +411,28 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
 // Particle mesh Ewald
 //===----------------------------------------------------------------------===//
 
+def MD_GridStencilOp : MD_Op<"grid_stencil", [Pure]> {
+  let summary = "The discrete support relation of a particle-grid window";
+  let description = [{
+    Associates a structural stencil relation with its explicit positions
+    and cell. The result describes the periodically wrapped support
+    indices, not a dense assignment matrix or stored window weights.
+    Continuous operands must remain visible to structured consumers;
+    differentiation of the weights is separate from integer enumeration.
+
+    This is the semantic relation of #452. It is not selected by the
+    ordinary reciprocal route. Structured scatter/gather, their derivative
+    rules, and execution lowering are subsequent parts of slice 1.
+  }];
+  let arguments = (ins MD_FieldType:$positions, MD_CellType:$cell);
+  let results = (outs MD_GridStencilType:$stencil);
+  let assemblyFormat = [{
+    $positions `,` $cell attr-dict `:` qualified(type($positions))
+    `->` qualified(type($stencil))
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
   let summary = "A value-level linear transform with a declared adjoint";
   let description = [{
