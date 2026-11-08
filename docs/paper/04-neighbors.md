@@ -881,3 +881,184 @@ and under stochastic cell rescaling, through the builds that these cause
 barostat). With the exact list the step of 12,288 atoms on an RTX 4090
 takes 6.10 s against 6.70 s with the search; MDIR's list costs about 1 ms a
 step at every size measured (`docs/metatomic-ml1.md`, Section 12.8).
+
+## 4.7 Rigid water as a unit
+
+*A design, D[rigid-water-template] (#774), not yet implemented. The
+measurements in this section are those of a prototype outside the
+repository (RTX 4090, mixed precision, against `main` with the groups of
+Section 4.4); the implementation's replace them.*
+
+In an aqueous system most pairs within $r_c$ are pairs of water sites:
+93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166
+waters), against 4.1% between solute and water and 2.3% within the
+solute. The structures of Sections 4.3 to 4.5 treat every site as a
+particle: a molecule of OPC is four members of a list, four positions
+tested for displacement, and 16 pairs of sites with every other molecule,
+each reading its charges and types. When the water is rigid, its geometry
+and its parameters are known when the program is compiled, and the
+molecule can be the unit of the structure instead.
+
+**The template.** A water *matches* the template of a model when its
+atoms come in the model's order (O, H, H, and for four sites the extra
+point), with the model's charges and Lennard-Jones types, three distance
+constraints that hold it rigid, and for four sites the extra point of
+Amber's definition (Section 6.1). The waters that match form the set
+$\mathcal T$; every other particle, solute and ions, is in $\mathcal S$
+and stays a particle of its own. In the first version only the oxygen of
+a template carries Lennard-Jones; a model whose hydrogens carry it, such
+as CHARMM's TIP3P, does not match and runs as today.
+
+**The bound.** Let the anchor of a molecule $A\in\mathcal T$ be its oxygen,
+$\mathbf x_{o(A)}$, and its extent
+$\varrho_A = \max_{a\in A}\lVert\mathbf x_a - \mathbf x_{o(A)}\rVert$,
+the extra point included. On the rigid geometry the extent is
+$\max(r_\mathrm{OH}, r_{os})$, the length of the O–H constraint or the
+distance of the extra point from the oxygen; the program takes
+$r_\mathrm m$ as that plus a margin $\delta_\mathrm m$ for the residual of
+the constraints. For OPC the hydrogens set it, $0.8724$ Å, and for TIP3P
+$0.9572$ Å.
+
+**Proposition.** Let $\varrho_A, \varrho_B \le r_\mathrm m$. For sites
+$a\in A$ and $b\in B$,
+
+$$
+\lVert\mathbf x_a - \mathbf x_b\rVert_\text{mi} \;\ge\;
+\lVert\mathbf x_{o(A)} - \mathbf x_{o(B)}\rVert_\text{mi} - 2r_\mathrm m ,
+$$
+
+and for a particle $i\in\mathcal S$,
+$\lVert\mathbf x_i - \mathbf x_b\rVert_\text{mi} \ge
+\lVert\mathbf x_i - \mathbf x_{o(B)}\rVert_\text{mi} - r_\mathrm m$.
+
+*Proof.* Let $\mathbf n$ be the image of the pair of sites that attains
+the minimum. The same image of the anchors satisfies, by the triangle
+inequality,
+$\lVert\mathbf x_{o(A)} - \mathbf x_{o(B)} + \mathbf nH\rVert \le
+\lVert\mathbf x_a - \mathbf x_b + \mathbf nH\rVert + \varrho_A +
+\varrho_B$, and the minimum image of the anchors is no longer than that
+image. The second bound is the same with $\varrho_A = 0$. $\blacksquare$
+
+Every pair of sites within $r_c$ therefore belongs to a pair of molecules
+whose anchors are within $r_c + 2r_\mathrm m$. A list of the pairs of
+anchors is then a structure in the sense of Section 4.1 with the cutoff
+$r_c + 2r_\mathrm m$ and the reach $R + 2r_\mathrm m$, and the theorem of
+Section 4.1 applies to it as it stands, with $d$ the largest displacement
+of an anchor since the build:
+
+$$
+2d \le \min(\mathbf m)\,(R + 2r_\mathrm m) - (r_c + 2r_\mathrm m) .
+$$
+
+The list of pairs between $\mathcal S$ and $\mathcal T$ takes $r_c +
+r_\mathrm m$ and $R + r_\mathrm m$, with $d$ over the particles of
+$\mathcal S$ and the anchors; the pairs within $\mathcal S$ are the
+structure of Section 4.4. The inner lists of the dual list (Section 4.5)
+take $R_\text{in}$ for $R$ in each. In the cell of the build every
+condition is the half-skin test $d \le s/2$; under a scaling the margin is
+$(1 - \min(\mathbf m))(R + 2r_\mathrm m)$ instead of $(1 -
+\min(\mathbf m))R$. The proposition needs the extents at the positions of
+the step, not only at the build. The constraints keep them to their
+residual, but the positions of the input are not constrained before the
+first step (Section 6.2); the program therefore tests the extent of each
+water in the same loop as the displacement of its anchor, where the thread
+that constrains a water holds its three atoms. The lists hold every image
+of every pair within their reach while $R + 2r_\mathrm m < \min_a L_a$,
+the condition of D242 with the reach of the water list.
+
+![Which distances the structure tests](figures/rigid-water-members.png)
+
+*Figure 4.1. A pair of OPC waters to scale. Left: in the general
+structure every site is a member, and all 16 pairs of sites are
+candidates. Right: the oxygens are the only members; every site lies
+within $r_\mathrm m$ of its oxygen, so a list of the oxygens within $R +
+2r_\mathrm m$ holds every pair of sites within $R$. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**The cutoff stays a cutoff of sites.** The structure only lists pairs of
+molecules. The terms are still evaluated per pair of sites with $r < r_c$,
+so the energy is that of Section 5, unchanged. Cutting by the distance of
+the anchors instead would take or leave whole molecules at the boundary.
+That is a molecular cutoff, a different model
+[[Steinbach1994]](references.md#steinbach1994), and the structure does not
+use it.
+
+**The choice of anchor.** The oxygen is the anchor. The midpoint of the
+two hydrogens gives a smaller sphere, 0.686 Å for OPC: for an obtuse
+H–O–H angle the hydrogens are the ends of a diameter of the smallest
+sphere that holds the molecule. Measured on the prototype, the two
+anchors cost the same per step: the oxygen gives fewer builds and the
+midpoint a faster kernel. The oxygen needs no derived point.
+
+**The kernel.** The pairs of molecules run in the layout of the groups of
+Section 4.4, with a molecule in place of a particle. Water clusters hold
+16 molecules, and a lane holds one of them: its three atom positions, its
+extra point, formed once from them (Section 6.1), and its force
+accumulators. The partner molecules of a block of entries rotate through
+the half-warp by shuffles, so a partner's sites are formed once per entry
+and serve the 16 molecules of the cluster; the partner's forces are added
+up in registers along the rotation and written once per entry, and the
+cluster's once per block, with one atomic addition per atom. Because the
+template is fixed when the program is compiled:
+
+- the charge products and the Lennard-Jones coefficients are constants,
+  and nothing is read from the tables of types;
+- only the terms that are not zero are formed. For OPC the oxygen carries
+  no charge and only the oxygen carries Lennard-Jones, so a pair of
+  molecules has 9 Coulomb terms and 1 Lennard-Jones term, against 16
+  general pairs of sites (Figure 4.2);
+- two different molecules have no excluded pair, so no exclusion is
+  tested: the check is removed by the structure. The validity of each
+  entry and the cutoff of each pair of sites remain.
+
+Related kernels for water on a GPU take one thread per molecule with the 9
+pairs of sites of three-site water unrolled
+[[Ruymgaart2012]](references.md#ruymgaart2012), or place the extra point
+of TIP4P once per molecule and store it, keeping its force per oxygen for
+a second kernel to spread [[Nikolskiy2020]](references.md#nikolskiy2020).
+A prototype of one thread per pair of molecules, with global atomic
+additions, was 7 to 10 times slower than the loop of Section 4.4 on the
+same boxes; the gain needs the reuse of the warp.
+
+![Work for one pair of waters](figures/rigid-water-pair-work.png)
+
+*Figure 4.2. The pairs of sites of two waters. The general loop forms
+every pair and reads its parameters; the template forms only the terms
+that are not zero, with constant parameters. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**The lists.** The anchors are a quarter of OPC's particles and a third of
+TIP3P's, and they move less than the hydrogens, whose librations dominate
+the test of displacement. For ubiquitin with OPC the prototype built the
+water lists about every 55 steps and pruned them every 8.5, where the
+groups of Section 4.4 build every 20.7 steps and prune every 2.8. The
+solute keeps lists of its own, tested on its particles and on the anchors,
+so that its faster atoms do not set the pace of the water lists; they
+were built every 38 to 43 steps and pruned every 3. In the water boxes
+about 60% of the saving was in the pair kernel and 40% in the lists; in a
+solvated protein the solute's lists and the packing of the waters take
+part of it back.
+
+**One launch.** The pairs of clusters are of three classes: water–water,
+solute–water, and solute–solute. The last two are few, and launched apart
+their kernels are bound by latency: for ubiquitin the prototype took
+87.8 µs a step for the short-range path with three launches and 68.0 µs
+with one launch over the three classes, a class per warp.
+
+![The lists and the launch](figures/rigid-water-lists.png)
+
+*Figure 4.3. One spatial sort into water and solute clusters, two lists
+tested at their own pace, and one launch over the three classes of
+cluster pairs, with the shares of the pairs within $r_c$ and the
+prototype's cadences and times for ubiquitin with OPC. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**What it gives.** Composed from the prototype's path and `main`'s other
+kernels, a step of ubiquitin with OPC takes 0.907 of `main`'s time; an
+OPC box of 16,329 waters 0.776, and one of 4,200 waters 0.833. TIP3P boxes
+take 0.920 and 0.898, but ubiquitin with TIP3P 1.015, where the solute's
+lists use up the saving of the kernel: the choice `water.template`
+(Appendix A, once implemented) therefore decides per system by a declared
+rule, and keeps the general path where the template does not pay. The
+order of the sums differs from that of the general path, so the
+deterministic mode keeps the general path.

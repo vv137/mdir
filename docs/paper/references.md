@@ -475,6 +475,13 @@ equivariant representations for large-scale atomistic dynamics," *Nat.
 Commun.* **14**, 579 (2023).
 [doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
 
+### Nikolskiy2020
+
+V. Nikolskiy, V. Stegailov, "GPU acceleration of four-site water models
+in LAMMPS," in *Parallel Computing: Technology Trends*, Advances in
+Parallel Computing **36** (IOS Press, 2020), pp. 565–573.
+[doi:10.3233/APC200086](https://doi.org/10.3233/APC200086)
+
 ### NocedalWright2006
 
 J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
@@ -564,6 +571,13 @@ and TPUs through XLA, under the MIT license. No paper;
 M. Reinecke, "pocketfft," a library of fast Fourier transforms in C,
 Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 [gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
+
+### Ruymgaart2012
+
+A. P. Ruymgaart, R. Elber, "Revisiting molecular dynamics on a CPU/GPU
+system: water kernel and SHAKE parallelization," *J. Chem. Theory Comput.*
+**8**, 4624–4636 (2012).
+[doi:10.1021/ct300324k](https://doi.org/10.1021/ct300324k)
 
 ### Ryckaert1977
 
