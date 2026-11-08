@@ -232,6 +232,41 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md.checked_rectangular_cell` (::mdir::md::CheckedRectangularCellOp)
+
+_A checked rectangular-cell precondition for the selected chain_
+
+Syntax:
+
+```
+operation ::= `md.checked_rectangular_cell` $input attr-dict
+```
+
+Returns the same periodic cell. The selected rectangular reciprocal
+chain requires finite positive diagonal lengths and zero tilts.
+Reference materialization checks those conditions and fails by name
+otherwise. This operation is not speculatable and is not a certificate
+that permits a fused or resident execution strategy. It changes no
+cell and does not select a default route.
+
+Interfaces: `InferTypeOpInterface`, `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `input` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A simulation cell |
+
+
+
 ### `md.disjoint_union` (::mdir::md::DisjointUnionOp)
 
 _Declares that tuple sets share no particle_
@@ -1274,6 +1309,67 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md.reduce_stencil` (::mdir::md::ReduceStencilOp)
+
+_Reduces an explicit kernel over every entry of a grid stencil_
+
+Syntax:
+
+```
+operation ::= `md.reduce_stencil` $stencil `,` $positions `,` $cell
+              `particles` `(` $particles `)` `grids` `(` $grids `)`
+              `uniforms` `(` $uniforms `)`
+              `destination` `(` $destination `)` $kernel attr-dict `:`
+              qualified(type($stencil)) `,` qualified(type($positions)) `,`
+              `(` qualified(type($particles)) `)` `,` `(` type($grids) `)` `,`
+              `(` type($uniforms) `)`
+              `->` qualified(type($result))
+```
+
+The explicit structured form of assignment/interpolation and their
+kernel derivatives. Every entry of the same indices-only relation is
+visited. The kernel receives the continuous support distance, the
+particle's Cartesian position, the row-cell matrix as vector<9xf64>,
+then one value of each particle and grid input. It yields an f64 scalar
+or vector. All inputs, including geometry, remain explicit.
+
+`destination("grid")` defines a fresh complete tensor, initialized to
+zero and summed at wrapped indices. `destination("particles")` defines
+every particle row, including zeros. `destination("sum")` is a global
+sum, particles in ascending order and the local last axis fastest.
+There are no lists, quantizers, in-place updates or hidden payloads.
+A pure straight-line kernel may contain the common B-spline body or
+its declared scalar derivatives; no second spline formula is implied.
+Higher derivatives require their own validated rules.
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>destination</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `stencil` | A structural particle-grid stencil relation |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `particles` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+| `grids` | variadic of ranked tensor of any non-token type values |
+| `uniforms` | variadic of any non-token type |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.return` (::mdir::md::ReturnOp)
 
 _Returns from a potential or a function_
@@ -1887,7 +1983,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

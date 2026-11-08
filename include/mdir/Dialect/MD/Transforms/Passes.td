@@ -11,6 +11,17 @@ def DifferentiateGrid : Pass<"md-differentiate-grid", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def ExpandReciprocal : Pass<"md-expand-reciprocal", "::mlir::ModuleOp"> {
+  let summary = "Selects the rectangular Gaussian reciprocal chain in primitives";
+  let options = [ListOption<"functions", "functions", "std::string",
+    "Expand reciprocal operations only in these named functions (empty selects all)">];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::complex::ComplexDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def ExpandGridKernels : Pass<"md-expand-grid-kernels", "::mlir::ModuleOp"> {
   let summary = "Expands structured grid maps and weighted reductions";
   let dependentDialects = ["::mlir::arith::ArithDialect",
@@ -22,6 +33,8 @@ def ExpandGridKernels : Pass<"md-expand-grid-kernels", "::mlir::ModuleOp"> {
 
 def DifferentiateStencils : Pass<"md-differentiate-stencils", "::mlir::ModuleOp"> {
   let summary = "Expands explicit stencil JVP/VJP requests and diagnoses active operands";
+  let options = [Option<"geometry", "geometry", "bool", "false",
+    "Select explicit continuous stencil geometry rules under development">];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::vector::VectorDialect"];
 }
@@ -29,6 +42,24 @@ def DifferentiateStencils : Pass<"md-differentiate-stencils", "::mlir::ModuleOp"
 def ExpandStencilWindows : Pass<"md-expand-stencil-windows", "::mlir::ModuleOp"> {
   let summary = "Exposes the common cardinal B-spline arithmetic";
   let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
+def ExpandStencilReductions : Pass<"md-expand-stencil-reductions", "::mlir::ModuleOp"> {
+  let summary = "Exposes stencil assignment/interpolation as explicit entry kernels";
+  let dependentDialects = ["::mlir::arith::ArithDialect"];
+}
+
+def MaterializeStencilValues : Pass<"md-materialize-stencil-values", "::mlir::ModuleOp"> {
+  let summary = "Materializes explicit stencil reductions as reference tensors and loops";
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mdir::mdrt::MDRTDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::cf::ControlFlowDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::tensor::TensorDialect",
                            "::mlir::vector::VectorDialect"];
 }
 

@@ -70,6 +70,41 @@ comparison. The completed chain must record its actual types and bounds
 before execution is admitted; a reference f64 chain must not be presented
 as matching the legacy Mixed execution types.
 
+The explicit stencil materialization and geometry fixture fixes its bounds
+before execution: absolute $2\,10^{-11}$ plus relative $2\,10^{-12}$ for
+primal assignment/interpolation and position/cell JVPs and VJPs, and
+absolute $5\,10^{-8}$ for central differences. Its reference forms the
+full assignment matrix independently from periodic images of the
+truncated-power cardinal window. Zero amplitudes, signed inputs, wrapping
+and both rectangular and skew cells are included. The development-only
+`geometry=true` option on `md-differentiate-stencils` selects the new
+geometry rules; the existing default named refusals remain unchanged.
+The first compiled run passed all 1,056 primal/JVP/VJP values, with
+maximum absolute error $1.84\,10^{-15}$ and central-difference discrepancy
+$2.93\,10^{-10}$. The eight geometry request expansions and the existing
+default refusal fixture passed 2/2. The execution form is a reference
+traversal with explicit host buffers, not a new resident GPU strategy.
+
+## Stopped development checkpoint
+
+The selected-chain implementation is not admitted. Its first build had
+one deterministic typed-initializer-list compile error; one correction
+and controlled rebuild passed. The new selection fixture then failed
+0/1 because the provenance checker used an integer-zero matcher for
+floating matrix entries. One correction changed that matcher to the
+floating-zero matcher. The controlled rerun also failed 0/1, now at the
+activity check of the independent charge argument.
+
+Development stopped under
+[Ruling 13](https://github.com/vv137/mdir/pull/719#issuecomment-6576511036):
+if the controlled rerun fails, stop. No chain numerical comparison or
+final compatibility gate has run. Static inspection identifies a
+non-owning `ValueRange` initialized from a temporary initializer list in
+the activity loop as a lifetime hazard under C++17. The proposed
+correction is an owning `SmallVector<Value>`; it has not been applied or
+tested. The stopped source is retained for review. Ordinary PME and
+D389 remain unchanged.
+
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the
 final clean head. The device sanitizer tier applies if device code

@@ -8,6 +8,9 @@ namespace mdir::md {
 void registerGridDerivatives(mlir::DialectRegistry &registry);
 // Grid complex scalars use two real components in structured kernels.
 mlir::Type getGridKernelType(mlir::Type element);
+mlir::Operation *createGridKernel(mlir::OpBuilder &builder, mlir::Location loc,
+    bool sum, mlir::Type result, mlir::ValueRange inputs,
+    mlir::DenseI64ArrayAttr grid, mlir::StringAttr pairing);
 // Transposes the kernel linearization under the declared domain pairing.
 mlir::FailureOr<mlir::Value> differentiateGridKernel(
     mlir::OpBuilder &builder, mlir::Operation *source, unsigned operand,

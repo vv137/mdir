@@ -57,10 +57,19 @@ Operation *gridOperation(OpBuilder &b, Location loc, bool sum,
 }
 }
 
+Operation *mdir::md::createGridKernel(OpBuilder &b, Location loc, bool sum,
+    Type result, ValueRange inputs, DenseI64ArrayAttr grid, StringAttr pairing) {
+  return gridOperation(b, loc, sum, result, inputs, grid, pairing);
+}
+
 FailureOr<Value> mdir::md::differentiateGridKernel(
     OpBuilder &b, Operation *source, unsigned operand,
     Value seed, bool reverse) {
   Location loc = source->getLoc();
+  if (isa<TableType>(source->getOperand(operand).getType())) {
+    source->emitOpError("unsupported structured grid derivative for active table operand");
+    return failure();
+  }
   bool inputTensor = isa<RankedTensorType>(source->getOperand(operand).getType());
   bool sum = reverse ? !inputTensor : isa<SumGridOp>(source);
   Type result = reverse ? source->getOperand(operand).getType()

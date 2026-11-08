@@ -212,6 +212,21 @@ def MD_TriclinicCellOp : MD_Op<"triclinic_cell", [Pure]> {
   let assemblyFormat = "$lx `,` $ly `,` $lz `,` $bx `,` $cx `,` $cy attr-dict";
 }
 
+def MD_CheckedRectangularCellOp : MD_Op<"checked_rectangular_cell", [MemoryEffects<[]>]> {
+  let summary = "A checked rectangular-cell precondition for the selected chain";
+  let description = [{
+    Returns the same periodic cell. The selected rectangular reciprocal
+    chain requires finite positive diagonal lengths and zero tilts.
+    Reference materialization checks those conditions and fails by name
+    otherwise. This operation is not speculatable and is not a certificate
+    that permits a fused or resident execution strategy. It changes no
+    cell and does not select a default route.
+  }];
+  let arguments = (ins MD_CellType:$input);
+  let results = (outs MD_CellType:$result);
+  let assemblyFormat = "$input attr-dict";
+}
+
 //===----------------------------------------------------------------------===//
 // Relations
 //===----------------------------------------------------------------------===//
@@ -509,6 +524,48 @@ class MD_StencilDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
 def MD_StencilJVPOp : MD_StencilDerivativeOp<"stencil_jvp">;
 def MD_StencilVJPOp : MD_StencilDerivativeOp<"stencil_vjp">;
 
+def MD_ReduceStencilOp : MD_Op<"reduce_stencil", [
+    RecursiveMemoryEffects, SingleBlock, AttrSizedOperandSegments]> {
+  let summary = "Reduces an explicit kernel over every entry of a grid stencil";
+  let description = [{
+    The explicit structured form of assignment/interpolation and their
+    kernel derivatives. Every entry of the same indices-only relation is
+    visited. The kernel receives the continuous support distance, the
+    particle's Cartesian position, the row-cell matrix as vector<9xf64>,
+    then one value of each particle and grid input. It yields an f64 scalar
+    or vector. All inputs, including geometry, remain explicit.
+
+    `destination("grid")` defines a fresh complete tensor, initialized to
+    zero and summed at wrapped indices. `destination("particles")` defines
+    every particle row, including zeros. `destination("sum")` is a global
+    sum, particles in ascending order and the local last axis fastest.
+    There are no lists, quantizers, in-place updates or hidden payloads.
+    A pure straight-line kernel may contain the common B-spline body or
+    its declared scalar derivatives; no second spline formula is implied.
+    Higher derivatives require their own validated rules.
+  }];
+  let arguments = (ins MD_GridStencilType:$stencil,
+                       MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_ReferenceFieldType>:$particles,
+                       Variadic<AnyRankedTensor>:$grids,
+                       Variadic<AnyType>:$uniforms,
+                       StrAttr:$destination);
+  let results = (outs AnyType:$result);
+  let regions = (region AnyRegion:$kernel);
+  let assemblyFormat = [{
+    $stencil `,` $positions `,` $cell
+    `particles` `(` $particles `)` `grids` `(` $grids `)`
+    `uniforms` `(` $uniforms `)`
+    `destination` `(` $destination `)` $kernel attr-dict `:`
+    qualified(type($stencil)) `,` qualified(type($positions)) `,`
+    `(` qualified(type($particles)) `)` `,` `(` type($grids) `)` `,`
+    `(` type($uniforms) `)`
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
 class MD_GridKernelOp<string mnemonic> : MD_Op<mnemonic, [
     RecursiveMemoryEffects, SingleBlock]> {
   let arguments = (ins Variadic<AnyType>:$inputs,
@@ -750,7 +807,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "MapGridOp", "SumGridOp",
+    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
                  "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {

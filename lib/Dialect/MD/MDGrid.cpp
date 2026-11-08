@@ -16,6 +16,8 @@ static bool realValue(Type type) {
 }
 
 static Type kernelType(Type type) {
+  if (auto table = dyn_cast<TableType>(type))
+    return table.getElementType().isF64() ? type : Type();
   if (auto tensor = dyn_cast<RankedTensorType>(type))
     type = tensor.getElementType();
   if (auto complex = dyn_cast<ComplexType>(type))

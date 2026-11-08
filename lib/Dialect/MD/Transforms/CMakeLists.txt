@@ -15,6 +15,10 @@ add_mlir_dialect_library(MDIRMDTransforms
   ScalarDerivative.cpp
   Stencils.cpp
   GridKernels.cpp
+  StencilGeometry.cpp
+  StencilValues.cpp
+  ReciprocalGrid.cpp
+  ExpandReciprocal.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MD/Transforms
@@ -32,6 +36,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   MDIRMDRT
   MLIRFuncDialect
   MLIRComplexDialect
+  MLIRControlFlowDialect
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
