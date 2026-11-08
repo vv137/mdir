@@ -640,8 +640,10 @@ Continuous operands must remain visible to structured consumers;
 differentiation of the weights is separate from integer enumeration.
 
 This is the semantic relation of #452. It is not selected by the
-ordinary reciprocal route. Structured scatter/gather, their derivative
-rules, and execution lowering are subsequent parts of slice 1.
+ordinary reciprocal route. The structured consumers and their declared
+linear derivatives are defined below. An opt-in reciprocal execution
+chain follows in slice 2; unsupported continuous derivatives are named
+diagnostics until their rules are admitted.
 
 Traits: `AlwaysSpeculatableImplTrait`
 
