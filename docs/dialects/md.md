@@ -1817,6 +1817,66 @@ Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.template_pairs` (::mdir::md::TemplatePairsOp)
+
+_Partitions pair work into water, mixed and atom classes_
+
+Syntax:
+
+```
+operation ::= `md.template_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `)`)? attr-dict
+              `:` functional-type(operands, results)
+```
+
+The molecules are disjoint ordered O-H-H or O-H-H-site tuples of one
+template. The scalar i32 field `universe` supplies the particle set's
+cardinality; its values are not read. Its complement after removing all
+molecule members is the solute class, including ions and unmatched sites.
+
+The results are named logical tuple domains that persist throughout the
+run, independent of positions and list storage. WW contains one ordered
+six-member tuple (O,H,H,O,H,H) for
+every pair of distinct waters, oriented by their oxygen identities.
+SW contains (solute,O,H,H) for every solute-water pair. SS contains the
+unordered solute pairs, with `excluded` removed. Waters must have no
+intermolecular exclusions and all their internal pairs excluded; the
+topology matcher establishes those preconditions.
+
+A four-site molecule's stored site is absent from the result tuples.
+Its position and transpose for the short-range terms are explicit
+arithmetic in the structured tuple kernel, not active payload hidden
+in the relation. Other consumers retain the stored site.
+
+These relations have no implicit spatial cutoff. The structured site
+kernels state their own cutoffs. A physical finite list is selected
+only after proving that support and its molecular covering bound.
+Execution keeps the three class-pair segments in one buffer and two
+mobility-group tests; a segment is not a separate kernel or list.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `SymbolUserOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `molecules` | A set of tuples of distinct particles |
+| `excluded` | A set of tuples of distinct particles |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `water_water` | A set of tuples of distinct particles |
+| `solute_water` | A set of tuples of distinct particles |
+| `solute_solute` | A set of tuples of distinct particles |
+
+
+
 ### `md.triclinic_cell` (::mdir::md::TriclinicCellOp)
 
 _A periodic cell of three lattice vectors_

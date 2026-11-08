@@ -182,7 +182,7 @@ The two rules therefore have different validation targets.
 manifold and not for (A); *dynamical equivalence* under rigid constraints
 holds for both. The gates of each are under Gates below.
 
-### 4. The cluster pair lists
+### 4. The class-segmented pair list
 
 One spatial sort per kind, with the same keys: water clusters of 16 whole
 molecules, sorted by their anchors, and solute clusters of 16 particles,
@@ -194,7 +194,8 @@ tagged:
 - **SS**, solute cluster × solute particle, each unordered pair once, with
   the excluded pairs cleared from the masks at the build as in D89.
 
-The three class-pair segments are ranges of one buffer, compacted by tag,
+The class-segmented pair list is one buffer of cluster pairs. Its three
+class-pair segments are ranges of that buffer, compacted by tag,
 with one offset per segment. The spatial search and sort run once. A warp
 stays within one segment in the fused launch, so its tag branch is uniform.
 Two mobility groups set the displacement-test cadences: water anchors,
@@ -439,6 +440,23 @@ All seven recommendations were accepted on #795:
    mismatch counts.
 
 ## Left to the implementation
+
+The initial structural domain, `md.template_pairs`, partitions WW, SW and
+SS without hiding continuous data. The native window arithmetic forms
+each site from an explicit anchor image and whole-molecule offsets; its
+constant transpose is derived by the scalar derivative rules. Neither is
+dispatched by the ordinary builder yet.
+
+The image-aware reduction remains a design question on #795. Ordinary
+`md.sum_tuples` takes minimum-image coordinates independently, so a window
+formed from its single oxygen displacement cannot stand for every anchor
+image in the covering reach. Selecting just that image could omit a site
+pair across a periodic boundary. The proposed dedicated window reduction
+would enumerate the covering images, expose the site arithmetic and site
+cutoffs, and derive forces and strain from those explicit displacements.
+It needs new derivative admission rules; no existing classification or
+refusal has been changed. No restriction to half-cell covering reaches is
+proposed.
 
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and

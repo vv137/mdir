@@ -243,6 +243,7 @@ The reference of every op is [dialects/md.md](dialects/md.md).
 | `md.potential` | Defines a potential energy function. |
 | `md.function` | Defines any other pure function of fields. |
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
+| [`md.template_pairs`](dialects/md.md#mdtemplate_pairs-mdirmdtemplatepairsop) | Partitions fixed matched-water membership into named WW, SW and SS logical domains. Geometry and per-site cutoffs remain explicit in the structured kernels; physical class segments share one buffer and mobility-group tests (D[rigid-water-template]). |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
 | `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D288). |

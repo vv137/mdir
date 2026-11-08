@@ -273,6 +273,49 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MD_TemplatePairsOp : MD_Op<"template_pairs", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Partitions pair work into water, mixed and atom classes";
+  let description = [{
+    The molecules are disjoint ordered O-H-H or O-H-H-site tuples of one
+    template. The scalar i32 field `universe` supplies the particle set's
+    cardinality; its values are not read. Its complement after removing all
+    molecule members is the solute class, including ions and unmatched sites.
+
+    The results are named logical tuple domains that persist throughout the
+    run, independent of positions and list storage. WW contains one ordered
+    six-member tuple (O,H,H,O,H,H) for
+    every pair of distinct waters, oriented by their oxygen identities.
+    SW contains (solute,O,H,H) for every solute-water pair. SS contains the
+    unordered solute pairs, with `excluded` removed. Waters must have no
+    intermolecular exclusions and all their internal pairs excluded; the
+    topology matcher establishes those preconditions.
+
+    A four-site molecule's stored site is absent from the result tuples.
+    Its position and transpose for the short-range terms are explicit
+    arithmetic in the structured tuple kernel, not active payload hidden
+    in the relation. Other consumers retain the stored site.
+
+    These relations have no implicit spatial cutoff. The structured site
+    kernels state their own cutoffs. A physical finite list is selected
+    only after proving that support and its molecular covering bound.
+    Execution keeps the three class-pair segments in one buffer and two
+    mobility-group tests; a segment is not a separate kernel or list.
+  }];
+  let arguments = (ins MD_ReferenceFieldType:$universe,
+                       MD_RelationType:$molecules,
+                       Optional<MD_RelationType>:$excluded);
+  let results = (outs MD_RelationType:$water_water,
+                      MD_RelationType:$solute_water,
+                      MD_RelationType:$solute_solute);
+  let assemblyFormat = [{
+    $universe `,` $molecules (`exclude` `(` $excluded^ `)`)? attr-dict
+    `:` functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_TripletsOp : MD_Op<"triplets", [Pure]> {
   let summary = "Derives the triplets centered on each particle from pairs";
   let description = [{

@@ -31,7 +31,7 @@ struct WaterTemplatePlan {
   std::map<std::string, size_t> mismatches;
   size_t candidates = 0;
 
-  /// WW, SW and SS are ranges in one buffer, not independent lists.
+  /// The class-segmented pair list holds WW, SW and SS in one buffer.
   /// Refresh a segment when either participating mobility group needs it:
   /// bit 0 is anchors and bit 1 atoms. Thus adding atom classes does not
   /// add a displacement test (P(P+1)/2 segments, C <= P tests).
