@@ -237,10 +237,12 @@ block of 64 entries as the groups do (`emitGroupPairKernel`):
   1 Lennard-Jones term.
 
 SW lanes hold a solute particle and rotate molecules; SS lanes are the
-general group kernel. The pair expression is the existing
-`md.sum_relation` specialized, not a hand-written kernel; the new pieces
-are a relation kind (the pairs of template instances) and its
-specialization (#774, "Built from primitives").
+general group kernel. The pair expression is cloned from the existing
+scalar primary-pair body, with its actual tables and parameters. The
+image-aware `md.sum_template_window` exposes the geometry and per-site
+cutoffs; its first force and strain rules differentiate that arithmetic.
+The physical specialization uses the class-segmented pair list (#774,
+"Built from primitives").
 
 The kernel reads the waters packed by molecule in f32, in the frames of
 D95, and writes their forces back: a pack and an unpack each step, which
@@ -444,8 +446,11 @@ All seven recommendations were accepted on #795:
 The initial structural domain, `md.template_pairs`, partitions WW, SW and
 SS without hiding continuous data. The native window arithmetic forms
 each site from an explicit anchor image and whole-molecule offsets; its
-constant transpose is derived by the scalar derivative rules. Neither is
-dispatched by the ordinary builder yet.
+constant transpose is derived by the scalar derivative rules. `ON` now
+constructs these windows through the native nonbonded adapter and reuses
+the scalar primary-pair expressions. GPU list lowering remains in
+implementation. `AUTO` stays general until the required end-to-end runs
+establish its particle-count floor.
 
 The maintainer authorized the dedicated image-aware reduction on #795.
 Ordinary `md.sum_tuples` takes minimum-image coordinates independently, so a window
@@ -470,6 +475,16 @@ and 0.1 nm water extent, and checks the neighboring-image pair explicitly.
 That isolated quadratic probe passed for all 27 images and their totals:
 energy 0.405, virial xx -0.81, with only the neighboring image contributing.
 This does not validate the physical pair kernel or the GPU list lowering.
+
+An implementation admission question is pending on #795. The new window
+verifier currently limits $\alpha$ to $[0,1/2]$, while the topology matcher
+admits rigid four-site geometries outside that interval: for example
+$r_\mathrm{OH}=0.1$ nm, $r_\mathrm{HH}=0.16$ nm and
+$r_{os}=0.09$ nm give $\alpha=0.75$. The proposed correction is to admit
+finite nonnegative weights and test the formed site's extent where its
+bound cannot be inferred from the two O–H extents. This changes an
+admission/refusal, so it awaits the maintainer's ruling under the stop rule;
+no numerical bound or existing ordinary-path classification is changed.
 
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and
