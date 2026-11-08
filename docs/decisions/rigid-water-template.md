@@ -658,6 +658,18 @@ writer arithmetic nor ordinary lowering changed. The other new exact or
 tight f64 fixtures also serialize diagnostics as integer bit patterns,
 with their original in-program comparisons and bounds unchanged.
 
+The cold-refresh orchestrator now joins shared spatial ordering, search,
+capacity handling and compaction. It reads controls only during an actual
+build, before compaction, and sizes a required growth from the exact
+entry total. Growth reacquires all arena views and prepares both mobility
+groups before rebuilding all classes; another overflow is fatal. Two
+independent coverage fixtures start undersized and require automatic
+growth, then exercise both single-group refreshes and retained inactive
+rows. Both cell types match all 1,979 expected unit/image memberships
+with zero missing pairs, extras or duplicates. The native refresh's
+selection by fused validity and its reference-epoch preparation remain
+to be connected; this is not a per-step rebuild policy.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

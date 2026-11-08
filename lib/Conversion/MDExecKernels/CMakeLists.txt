@@ -14,6 +14,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   TemplateStageKernels.cpp
   TemplateSearchKernels.cpp
   TemplateParticleKernels.cpp
+  TemplateRefreshKernels.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion
@@ -26,6 +27,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   MDIRMDExec
   MDIRMDRT
   MLIRArithDialect
+  MLIRControlFlowDialect
   MLIRFuncDialect
   MLIRGPUDialect
   MLIRIR

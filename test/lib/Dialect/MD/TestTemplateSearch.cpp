@@ -1,8 +1,10 @@
 // Test-only workspace owner around the actual combined search emitter.
 #include "mdir/Conversion/TemplateSearchKernels.h"
+#include "mdir/Conversion/TemplateRefreshKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -16,10 +18,14 @@ using namespace mdir::kernels;
 namespace {
 struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateSearch)
+  TestTemplateSearch() = default;
+  TestTemplateSearch(const TestTemplateSearch &pass) : PassWrapper(pass) {}
+  Option<bool> refresh{*this, "refresh", llvm::cl::desc("Use the shared cold refresh and automatic arena growth"),
+                        llvm::cl::init(false)};
   StringRef getArgument() const final { return "test-md-template-search"; }
   StringRef getDescription() const final { return "Outlines the combined periodic template bin search"; }
   void getDependentDialects(DialectRegistry &r) const override {
-    r.insert<arith::ArithDialect, func::FuncDialect, gpu::GPUDialect,
+    r.insert<arith::ArithDialect, cf::ControlFlowDialect, func::FuncDialect, gpu::GPUDialect,
         math::MathDialect, memref::MemRefDialect, scf::SCFDialect, vector::VectorDialect>();
   }
   void runOnOperation() final {
@@ -76,6 +82,20 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.atoms = layout(TEMPLATE_LAYOUT_ATOMS);
     v.spatial.columnsX = createIndex(b, loc, 3);
     v.spatial.columnsY = createIndex(b, loc, 2);
+    if (refresh) {
+      TemplateRefreshInputs input{handle, v.spatial.points, v.cell,
+          createReal(b, loc, b.getF64Type(), 99.0 / 128),
+          createReal(b, loc, b.getF64Type(), 18.0 / 128),
+          v.spatial.columnsX, v.spatial.columnsY,
+          v.spatial.waterActive, v.spatial.atomActive};
+      // The fixture supplies the already prepared hybrid references.
+      // A real owner refreshes its requested reference epochs here.
+      emitRefreshTemplatePairArena(b, loc, module, input,
+          [](OpBuilder &, Value, Value) {});
+      transfer(entry->getArgument(2), view(TEMPLATE_LAYOUT_SPATIAL_PLACES));
+      func::ReturnOp::create(b, loc);
+      return;
+    }
     v.spatial.scanBlocks = layout(TEMPLATE_LAYOUT_SCAN_BLOCKS);
     v.spatial.order = call("mdrtTemplatePairsOrder", ValueRange{handle}, device, true);
     v.spatial.keys = view(TEMPLATE_LAYOUT_SPATIAL_KEYS);
