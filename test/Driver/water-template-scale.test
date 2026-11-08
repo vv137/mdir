@@ -1,0 +1,7 @@
+# The actual cell-deformation emitter, with dynamic cell arguments: ten
+# analytical cases (20 interval predicates), including identity, uniform
+# and anisotropic strain, both shear signs, coupled tilts and inverse maps.
+# Identity is exact; other bounds are no larger than the mathematical
+# induced-norm bound and within 1e-11 below it, declared before execution.
+# All failure diagnostics serialize f64 as integer bit patterns.
+# RUN: mdir-water-template-test --validity-ir | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_scale_main --entry-point-result=void --shared-libs=%mlir_c_runner_utils

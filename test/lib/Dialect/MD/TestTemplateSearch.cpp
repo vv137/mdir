@@ -88,6 +88,9 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
           createReal(b, loc, b.getF64Type(), 18.0 / 128),
           v.spatial.columnsX, v.spatial.columnsY,
           v.spatial.waterActive, v.spatial.atomActive};
+      input.reaches = arith::ConstantOp::create(b, loc,
+          DenseElementsAttr::get(VectorType::get({3}, b.getF64Type()),
+              ArrayRef<double>{135.0 / 128, 117.0 / 128, 99.0 / 128}));
       // The fixture supplies the already prepared hybrid references.
       // A real owner refreshes its requested reference epochs here.
       emitRefreshTemplatePairArena(b, loc, module, input,

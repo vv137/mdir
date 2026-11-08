@@ -1,0 +1,4 @@
+# Ten exact boolean cases: below/above a margin, negative/zero margins,
+# both cells, retained negative fractions and an unwrapped full-cell jump.
+# A winding jump must invalidate; there is no minimum-image substitution.
+# RUN: mdir-water-template-test --validity-ir | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_motion_main --entry-point-result=void --shared-libs=%mlir_c_runner_utils
