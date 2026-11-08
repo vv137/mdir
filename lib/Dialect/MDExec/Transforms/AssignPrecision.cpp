@@ -190,6 +190,7 @@ private:
   void rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
                    unsigned perField, ValueRange parameters = {},
                    unsigned perOut = 1);
+  void rewriteTemplateLoop(TemplateForOp loop);
 
   void markBoundary(Value field, Type element, Operation *op) {
     boundaries.push_back({field, element, op});
@@ -217,6 +218,7 @@ private:
 
   SmallVector<PairForOp> pairLoops;
   SmallVector<TupleForOp> tupleLoops;
+  SmallVector<TemplateForOp> templateLoops;
   SmallVector<ParticleForOp> particleLoops;
   func::ReturnOp firstReturn;
 };
@@ -254,6 +256,8 @@ static bool isDestinationUse(OpOperand &use) {
   if (auto loop = dyn_cast<PairForOp>(use.getOwner()))
     return isOut(loop.getOuts());
   if (auto loop = dyn_cast<TupleForOp>(use.getOwner()))
+    return isOut(loop.getOuts());
+  if (auto loop = dyn_cast<TemplateForOp>(use.getOwner()))
     return isOut(loop.getOuts());
   if (auto loop = dyn_cast<ParticleForOp>(use.getOwner()))
     return isOut(loop.getOuts());
@@ -389,6 +393,18 @@ LogicalResult Assigner::collect(Operation *op) {
       if (isRealField(field.getType()))
         find(field);
     tupleLoops.push_back(loop);
+    return success();
+  }
+  if (auto loop = dyn_cast<TemplateForOp>(op)) {
+    if (failed(checkForm(loop)))
+      return failure();
+    positions.push_back(loop.getPositions());
+    collectLoop(loop, forces);
+    templateLoops.push_back(loop);
+    return success();
+  }
+  if (auto build = dyn_cast<BuildSegmentedPairsOp>(op)) {
+    positions.push_back(build.getPositions());
     return success();
   }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
@@ -657,6 +673,108 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
   }
 }
 
+void Assigner::rewriteTemplateLoop(TemplateForOp loop) {
+  Location loc = loop.getLoc();
+  OpBuilder before(loop);
+  unsigned outs = loop.getOuts().size();
+  unsigned columns = outs + loop.getReduce().size();
+  for (unsigned i = 0; i != outs; ++i) {
+    Value destination = loop.getOuts()[i];
+    Type type = loop.getResult(i).getType();
+    if (destination.getType() == type)
+      continue;
+    Operation *definition = destination.getDefiningOp();
+    assert((definition && isa<EmptyOp, ZerosOp>(definition)));
+    Value fresh = isa<EmptyOp>(definition)
+                      ? Value(EmptyOp::create(before, loc, type))
+                      : Value(ZerosOp::create(before, loc, type));
+    loop.getOutsMutable()[i].set(fresh);
+    if (definition->use_empty())
+      definition->erase();
+  }
+  for (unsigned i = 0; i != loop.getReduce().size(); ++i) {
+    Value init = loop.getReduce()[i];
+    Type outside = init.getType();
+    Type inside = withReal(outside, policy.accumulator);
+    if (inside == outside)
+      continue;
+    loop.getReduceMutable()[i].set(createCast(before, loc, init, inside));
+    Value result = loop.getResult(outs + i);
+    result.setType(inside);
+    OpBuilder after(loop.getContext());
+    after.setInsertionPointAfter(loop);
+    Value converted = createCast(after, loc, result, outside);
+    result.replaceAllUsesExcept(converted, converted.getDefiningOp());
+  }
+  constexpr unsigned arities[] = {6, 4, 2};
+  constexpr unsigned geometry[] = {5, 3, 1};
+  for (unsigned tag = 0; tag != 3; ++tag) {
+    Region &region = loop->getRegion(tag);
+    Block &kernel = region.front();
+    for (BlockArgument argument : kernel.getArguments())
+      argument.setType(withReal(argument.getType(), policy.kernel));
+    DenseMap<Value, Value> captured;
+    region.walk([&](Operation *nested) {
+      for (OpOperand &operand : nested->getOpOperands()) {
+        Value value = operand.get();
+        if (region.isAncestor(value.getParentRegion()) ||
+            !isRealLike(value.getType()))
+          continue;
+        Value &converted = captured[value];
+        if (!converted) {
+          Type type = withReal(value.getType(), policy.kernel);
+          if (auto constant = value.getDefiningOp<arith::ConstantOp>())
+            converted = arith::ConstantOp::create(
+                before, constant.getLoc(), type,
+                convertConstant(constant.getValue(), type));
+          else
+            converted = createCast(before, loc, value, type);
+        }
+        operand.set(converted);
+      }
+      for (Value result : nested->getResults())
+        result.setType(withReal(result.getType(), policy.kernel));
+      for (Region &inner : nested->getRegions())
+        for (Block &block : inner)
+          for (BlockArgument argument : block.getArguments())
+            argument.setType(withReal(argument.getType(), policy.kernel));
+      if (auto constant = dyn_cast<arith::ConstantOp>(nested))
+        if (isRealLike(constant.getType()))
+          constant.setValueAttr(
+              convertConstant(constant.getValue(), constant.getType()));
+    });
+    OpBuilder entry(&kernel, kernel.begin());
+    unsigned argument = geometry[tag];
+    for (Value field : loop.getIns()) {
+      Type stored = cast<FieldType>(field.getType()).getKernelValueType();
+      for (unsigned member = 0; member != arities[tag]; ++member) {
+        BlockArgument value = kernel.getArgument(argument++);
+        Type computed = value.getType();
+        if (stored == computed)
+          continue;
+        value.setType(stored);
+        Value converted = createCast(entry, loc, value, computed);
+        value.replaceAllUsesExcept(converted, converted.getDefiningOp());
+      }
+    }
+    Operation *yield = kernel.getTerminator();
+    OpBuilder exit(yield);
+    unsigned operand = 0;
+    for (unsigned column = 0; column != columns; ++column) {
+      unsigned count = loop.getPairs()[tag * columns + column];
+      Type expected = loop.getResult(column).getType();
+      if (auto field = dyn_cast<FieldType>(expected))
+        expected = field.getKernelValueType();
+      unsigned contributions = count * (column < outs ? arities[tag] : 1);
+      for (unsigned i = 0; i != contributions; ++i, ++operand)
+        yield->setOperand(operand,
+                         createCast(exit, loc, yield->getOperand(operand), expected));
+      // Site displacements stay in kernel precision; they are not sums.
+      operand += count;
+    }
+  }
+}
+
 void Assigner::apply() {
   for (Value field : fields)
     field.setType(
@@ -671,6 +789,8 @@ void Assigner::apply() {
                 /*perOut=*/loop.getArity());
   for (ParticleForOp loop : particleLoops)
     rewriteLoop(loop, policy.integrator, /*numGeometry=*/0, /*perField=*/1);
+  for (TemplateForOp loop : templateLoops)
+    rewriteTemplateLoop(loop);
 
   // The signature follows the arguments and the returned values.
   FunctionType type = function.getFunctionType();

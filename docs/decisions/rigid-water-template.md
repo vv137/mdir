@@ -491,6 +491,26 @@ $9/512$ for aligned or perpendicular O–H offsets at $\alpha=3/4$;
 the offsets have length $1/8$. These isolated f64 checks require exact
 agreement and do not replace the physical-system numerical bounds.
 
+The execution representation now gives the three classes one
+`!mdrt.segmented_pairs` value. `md_exec.build_segmented_pairs` declares its
+membership and bounds; `md_exec.template_for` holds three tagged scalar
+bodies, with per-output site-pair counts. Conversion shares the list
+between energy, force and strain reductions. Buffer assignment initializes
+scatter destinations and preserves explicit memory effects. Mixed
+precision assignment keeps source positions in f64, class coordinates and
+pair arithmetic in f32, forces in f32, and energy/strain reductions in f64.
+These execution-IR checks do not establish persistent-list or device
+lowering correctness.
+
+The isolated packing emitter adds the lattice shift to whole-molecule
+positions before narrowing, without loading a stored extra point. Its
+exact dyadic probe uses a large common translation that would erase local
+geometry if narrowed first. The warp scheduler rotates a partner's frame,
+parameters, mask and force accumulator together through 16 half-warp
+turns, then writes each partner once. It combines the two copies of each
+first unit before writing. Its structural tests cover WW, SW, SS and
+energy-only bodies; physical GPU validation remains outstanding.
+
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and
 the remap of SW entries after a water build; the fused kernel and its register budget;

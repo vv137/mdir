@@ -1,0 +1,32 @@
+# Device-free construction verifies the class arities, loop-carried partner
+# state, partial-batch mask, and callback signatures. Numerical GPU coverage
+# belongs to the complete list/kernel gates, not this structural fixture.
+# RUN: mdir-water-template-test --unit-ir | mdir-opt --verify-each | FileCheck %s
+# CHECK-LABEL: func.func @unit_ww(
+# CHECK: scf.for
+# CHECK: arith.select
+# CHECK: scf.for
+# CHECK: scf.if
+# CHECK: gpu.shuffle idx
+# CHECK: call @unit_ww_second
+# CHECK: gpu.shuffle xor
+# CHECK: call @unit_ww_first
+# CHECK: return
+# CHECK-LABEL: func.func @unit_sw(
+# CHECK: gpu.shuffle idx
+# CHECK: call @unit_sw_second
+# CHECK: gpu.shuffle xor
+# CHECK: call @unit_sw_first
+# CHECK: return
+# CHECK-LABEL: func.func @unit_ss(
+# CHECK: gpu.shuffle idx
+# CHECK: call @unit_ss_second
+# CHECK: gpu.shuffle xor
+# CHECK: call @unit_ss_first
+# CHECK: return
+# CHECK-LABEL: func.func @unit_energy(
+# CHECK: gpu.shuffle idx
+# CHECK-NOT: gpu.shuffle xor
+# CHECK-NOT: call @unit_energy_first
+# CHECK-NOT: call @unit_energy_second
+# CHECK: return

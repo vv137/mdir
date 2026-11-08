@@ -884,7 +884,7 @@ step at every size measured (`docs/metatomic-ml1.md`, Section 12.8).
 
 ## 4.7 Rigid water as a unit
 
-*A design, D[rigid-water-template] (#774), not yet implemented. The
+*D[rigid-water-template] (#774), implementation in progress. The
 measurements in this section are those of a prototype outside the
 repository (RTX 4090, mixed precision, against `main` with the groups of
 Section 4.4); the implementation's replace them.*

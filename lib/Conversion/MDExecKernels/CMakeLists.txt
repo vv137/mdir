@@ -7,6 +7,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   ReductionEmitter.cpp
   ScatterEmitter.cpp
   SinglePassScan.cpp
+  TemplateWindowKernels.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion

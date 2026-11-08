@@ -1,0 +1,14 @@
+# f64 whole-molecule positions receive their lattice shift before f32
+# narrowing. At 2^30, this preserves local offsets of 1/8 exactly; narrowing
+# first would erase them. All nine WW/SW/SS coordinates are also checked
+# against independent exact dyadic answers, with a nonzero partner image.
+# RUN: mdir-water-template-test --window-ir | FileCheck %s
+# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_pack_main --entry-point-result=void
+# CHECK-LABEL: func.func @pack_template_frame
+# CHECK: %[[A:.*]] = arith.addf {{.*}} : vector<3xf64>
+# CHECK-NEXT: arith.truncf %[[A]] : vector<3xf64> to vector<3xf32>
+# CHECK: %[[B:.*]] = arith.addf {{.*}} : vector<3xf64>
+# CHECK-NEXT: arith.truncf %[[B]] : vector<3xf64> to vector<3xf32>
+# CHECK: %[[C:.*]] = arith.addf {{.*}} : vector<3xf64>
+# CHECK-NEXT: arith.truncf %[[C]] : vector<3xf64> to vector<3xf32>
+# CHECK: return
