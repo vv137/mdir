@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --triclinic --reframed
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# The same frame invariance and retained-row checks in a reduced tilted cell.

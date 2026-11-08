@@ -12,6 +12,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -370,7 +371,7 @@ struct TestTemplateSpatial
   StringRef getDescription() const final { return "Outlines the shared template spatial order"; }
   void getDependentDialects(DialectRegistry &r) const override {
     r.insert<arith::ArithDialect, func::FuncDialect, gpu::GPUDialect,
-        memref::MemRefDialect, scf::SCFDialect, vector::VectorDialect>();
+        memref::MemRefDialect, scf::SCFDialect, vector::VectorDialect, math::MathDialect>();
   }
   void runOnOperation() final {
     auto function = getOperation().lookupSymbol<func::FuncOp>("spatial_probe");

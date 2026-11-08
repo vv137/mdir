@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --reframed
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# Each unit chooses its own nearby whole-cell frame. Keys wrap in f64;
+# encoded partner images must retain the actual reference-frame geometry.
