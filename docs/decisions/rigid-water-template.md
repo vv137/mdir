@@ -502,6 +502,14 @@ pair arithmetic in f32, forces in f32, and energy/strain reductions in f64.
 These execution-IR checks do not establish persistent-list or device
 lowering correctness.
 
+Compatible template loops now fuse their three tagged bodies, preserving
+destination and reduction order. Template-list reuse makes initialization
+separate from refresh: the state is carried through nested step/output
+loops, while segments and fresh step loops reset it. Refresh declares two
+mobility-group references and outer/inner margins; its physical device
+implementation is still pending. Focused checks cover those reset
+boundaries and the combined fusion, precision and storage pipeline.
+
 The isolated packing emitter adds the lattice shift to whole-molecule
 positions before narrowing, without loading a stored extra point. Its
 exact dyadic probe uses a large common translation that would erase local

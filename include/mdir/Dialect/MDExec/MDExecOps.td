@@ -110,6 +110,64 @@ def MDExec_BuildSegmentedPairsOp : MDExec_Op<"build_segmented_pairs", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDExec_EmptySegmentedPairsOp : MDExec_Op<"empty_segmented_pairs", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "An unbuilt class-segmented list with fixed membership";
+  let description = [{
+    Owns one persistent allocation with WW/SW/SS outer and inner ranges.
+    No configuration is valid until the first refresh. Membership and
+    covering bounds are invariant for this allocation; refreshes change
+    its two mobility-group references, ranges and packing in place.
+    Moving this initialization out of a step loop does not move a build:
+    the first refresh still builds at the first evaluated configuration.
+  }];
+  let arguments = (ins MDExec_FieldOrBuffer:$universe,
+      MDExec_RelationOrMembers:$molecules,
+      Optional<MDExec_RelationOrMembers>:$excluded,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $universe `,` $molecules
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+    `:` qualified(type($universe)) `,` qualified(type($molecules))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
+    AllTypesMatch<["list", "result"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Refreshes the two mobility groups of one segmented list";
+  let description = [{
+    Tests the anchor and atom groups once each. A water-group rebuild
+    refreshes WW and SW; an atom-group rebuild refreshes SW and SS. The
+    combined spatial sort/search retains the class ranges in one pair
+    allocation. The inner ranges are pruned from the outer ranges with
+    the same group dependencies. `prune_skin` is smaller than `skin`,
+    or equal to it when no separate inner margin is requested.
+
+    The result continues the input list's storage and references. In
+    value form the result makes that dependency explicit; in storage
+    form the operation reads and writes the list in place.
+  }];
+  let arguments = (ins MDRT_SegmentedPairsType:$list,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$prune_skin,
+      F64Attr:$extent, F64Attr:$alpha);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $list `at` `(` $positions `,` $cell `)`
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `prune_skin` `(` $prune_skin `)`
+    `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+    `:` qualified(type($list)) `,` qualified(type($positions))
+  }];
+  let hasVerifier = 1;
+}
+
 def MDExec_TemplateForOp : MDExec_Op<"template_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {

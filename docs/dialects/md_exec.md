@@ -596,6 +596,56 @@ Interfaces: `MemoryEffectOpInterface`
 
 
 
+### `md_exec.empty_segmented_pairs` (::mdir::md_exec::EmptySegmentedPairsOp)
+
+_An unbuilt class-segmented list with fixed membership_
+
+Syntax:
+
+```
+operation ::= `md_exec.empty_segmented_pairs` $universe `,` $molecules
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($universe)) `,` qualified(type($molecules))
+              `->` qualified(type($result))
+```
+
+Owns one persistent allocation with WW/SW/SS outer and inner ranges.
+No configuration is valid until the first refresh. Membership and
+covering bounds are invariant for this allocation; refreshes change
+its two mobility-group references, ranges and packing in place.
+Moving this initialization out of a step loop does not move a build:
+the first refresh still builds at the first evaluated configuration.
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with two mobility groups |
+
+
+
 ### `md_exec.join` (::mdir::md_exec::JoinOp)
 
 _Waits for the op that runs beside the ops before it_
@@ -1530,6 +1580,60 @@ Interfaces: `MemoryEffectOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `result` | A physical neighbor structure |
+
+
+
+### `md_exec.refresh_segmented_pairs` (::mdir::md_exec::RefreshSegmentedPairsOp)
+
+_Refreshes the two mobility groups of one segmented list_
+
+Syntax:
+
+```
+operation ::= `md_exec.refresh_segmented_pairs` $list `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `prune_skin` `(` $prune_skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+```
+
+Tests the anchor and atom groups once each. A water-group rebuild
+refreshes WW and SW; an atom-group rebuild refreshes SW and SS. The
+combined spatial sort/search retains the class ranges in one pair
+allocation. The inner ranges are pruned from the outer ranges with
+the same group dependencies. `prune_skin` is smaller than `skin`,
+or equal to it when no separate inner margin is requested.
+
+The result continues the input list's storage and references. In
+value form the result makes that dependency explicit; in storage
+form the operation reads and writes the list in place.
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>prune_skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | One class-segmented pair list with two mobility groups |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with two mobility groups |
 
 
 
