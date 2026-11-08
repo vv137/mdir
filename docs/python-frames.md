@@ -488,8 +488,9 @@ zero.
   the tensor that carries it:
   - `torch.func.jvp`, `jacfwd`, and the dual numbers of
     `torch.autograd.forward_ad`, with the tangent on `theta`, the
-    positions, the cells, or the tilts, of `energy` and of
-    `gradients["positions"]`, under `vmap` and `torch.compile` too;
+    positions, the cells, or the tilts (one tensor, or a list or a tuple
+    of frames), of `energy` and of `gradients["positions"]`, under `vmap`
+    and `torch.compile` too;
   - forward over reverse: a dual input to a backward with
     `create_graph=True`, and a dual cotangent of a backward.
 
@@ -497,6 +498,9 @@ zero.
   `torch.autograd.forward_ad.unpack_dual`: in `evaluate` for its
   arguments, and in each backward for its cotangents. Outside a dual level
   that function returns at once, so reverse mode is unchanged, to the bit.
+  Frames of an iterable of another kind (a generator) are not looked at:
+  they carry no graph, and a dual tensor among them is still read without
+  its tangent.
   A tangent that does not reach the operations (a `jvp` in a number that
   multiplies the energy) is given. `torch.func.hessian`, and `torch.func.grad`
   and `jacrev` alone, stop before any tangent in PyTorch's `RuntimeError` for

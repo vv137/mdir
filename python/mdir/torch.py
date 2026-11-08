@@ -63,9 +63,14 @@ def _refuse_forward(what, *tensors):
     The tangent is seen where the tensor enters, by the public
     `torch.autograd.forward_ad.unpack_dual`, at the dual level of
     `torch.autograd.forward_ad` or of `torch.func.jvp`; outside any dual
-    level it returns at once."""
+    level it returns at once. Frames given as a list or a tuple of tensors
+    are looked at one by one; an iterable of another kind is not consumed
+    here, and its tensors are refused when they are read (`_array`) only
+    where they require a gradient."""
     for tensor in tensors:
-        if isinstance(tensor, Tensor) and _forward_ad.unpack_dual(tensor).tangent is not None:
+        if isinstance(tensor, (list, tuple)):
+            _refuse_forward(what, *tensor)
+        elif isinstance(tensor, Tensor) and _forward_ad.unpack_dual(tensor).tangent is not None:
             raise _core.UnsupportedError(
                 f"forward mode through mdir.torch.evaluate (torch.func.jvp, jacfwd, or "
                 f"torch.autograd.forward_ad, here a tangent on {what}) is not implemented; "

@@ -8,7 +8,8 @@ On the torsion fixtures of python_frame_product.py with dihedral_k tunable,
 two frames in a cubic cell: torch.func.jvp, jacfwd, and the dual numbers
 of torch.autograd.forward_ad, with the tangent on theta, on the positions,
 on the cells, and on the tilts; of the energy and of the output
-gradients["positions"]; vmap of jvp; forward over reverse (a dual input
+gradients["positions"]; positions and cells given as a list or a tuple of
+frames; vmap of jvp; forward over reverse (a dual input
 to a backward with create_graph=True, and a dual cotangent of a backward,
 through the energy and through the gradient in the positions); under
 torch.compile (aot_eager). torch.func.hessian stops at its reverse level,
@@ -133,6 +134,12 @@ FORMS = [
     ("forward_ad in the tilts", "the tilts",
      lambda: dual(lambda t: energy(k0, x, cells, t), tilts)),
     ("forward_ad of gradients['positions'] in theta", "theta['k']", lambda: dual(gradient, k0)),
+    ("torch.func.jvp in the positions as a list of frames", "the positions",
+     lambda: torch.func.jvp(lambda p: energy(k0, [p[0], p[1]]), (x,), (ones(x),))),
+    ("forward_ad in the positions as a list of frames", "the positions",
+     lambda: dual(lambda p: energy(k0, [p[0], p[1]]), x)),
+    ("forward_ad in the cells as a tuple of frames", "the cells",
+     lambda: dual(lambda c: energy(k0, x, (c, c)), cells)),
     ("forward_ad over torch.autograd.grad with create_graph=True", "theta['k']", over_reverse),
     ("a dual cotangent of a backward through the energy", "a cotangent of the outputs",
      dual_cotangent_energy),

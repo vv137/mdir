@@ -4,7 +4,8 @@
 # precision, Inputs/python_frames_torch_forward.py: torch.func.jvp,
 # jacfwd, and torch.autograd.forward_ad, with the tangent on theta, the
 # positions, the cells, and the tilts, of the energy and of
-# gradients["positions"]; vmap of jvp; forward over reverse; under
+# gradients["positions"], the frames as one tensor or as a list or a tuple;
+# vmap of jvp; forward over reverse; under
 # torch.compile. Each raises UnsupportedError naming forward mode and the
 # tensor of the tangent, never a zero; torch.func.hessian stops in PyTorch's
 # RuntimeError at its reverse level; a jvp whose tangent does not reach the
@@ -13,7 +14,7 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %torch_python %S/Inputs/python_frames_torch_forward.py %S/Inputs/dipeptide GPU Double %t/double | FileCheck %s -DMODE="GPU Double"
 # RUN: %torch_python %S/Inputs/python_frames_torch_forward.py %S/Inputs/dipeptide GPU Mixed %t/mixed | FileCheck %s -DMODE="GPU Mixed"
-# CHECK: [[MODE]]: refused, UnsupportedError naming forward mode and the tensor of the tangent, never a zero: 19 forms
+# CHECK: [[MODE]]: refused, UnsupportedError naming forward mode and the tensor of the tangent, never a zero: 22 forms
 # CHECK: [[MODE]]: torch.func.hessian in theta and in the positions: RuntimeError of PyTorch at its reverse level, never a zero
 # CHECK: [[MODE]]: a jvp whose tangent does not reach the operations gives the energy, to the bit
 # CHECK: [[MODE]]: after the refusals, the gradients of reverse mode in theta, the positions, the cell, and of a loss on the forces in theta, to the bit: True
