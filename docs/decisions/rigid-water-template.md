@@ -699,6 +699,14 @@ three-site and four-site water in both cell types. All 1,264 scalar bit
 patterns match exactly, including 3/4-weight formed-site extents, retained
 inactive views and new packing frames at an outer-build face crossing.
 
+The native template step marks its matched-water position-constraint
+operations with reserved provenance, `md.template_constraint_epoch`.
+Conversion, tuple fusion, destination merging and storage preserve it;
+ordinary gathers and ordinary native programs receive no marker. This
+gives the later runtime policy an explicit constraint event instead of
+inferring one from a tuple name. The function-level history that observes
+those events, including across a fresh list, remains to be connected.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

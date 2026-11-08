@@ -8,6 +8,7 @@
 
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -1055,6 +1056,8 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
           cast<mdrt::IncidenceType>(op.getIncidence().getType()).getTupleSet())
     loop->setAttr("md_exec.tuple_set", tupleSet);
   algebra::carry(op, loop);
+  if (auto epoch = op->getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+    loop->setAttr(md::kTemplateConstraintEpoch, epoch);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);

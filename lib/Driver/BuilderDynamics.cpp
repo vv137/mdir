@@ -156,6 +156,8 @@ llvm::Error Builder::emitPrograms() {
         const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });
         constraintGroups.push_back({relationSlot(set), 3, {fieldSlot(set, "doh"), fieldSlot(set, "dhh")},
             {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}}, config, true, control.precision == Precision::Double});
+        if (control.waterTemplate == WaterTemplateChoice::On)
+          constraintGroups.back().position.templateWaterEpoch = true;
       }
       for (const Program::TupleSet *set : shakeSets) {
         DescentConstraintGroupIR group{relationSlot(*set), set->arity, {}, {}, config, false, false};

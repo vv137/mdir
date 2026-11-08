@@ -48,12 +48,16 @@ on = emit('on', base + '\n[performance]\n"water.template" = "ON"\n')
 for operation in ('md.template_pairs', 'md.sum_template_window', 'template_water'):
     if operation not in on:
         raise SystemExit(f'ON did not construct {operation}')
+if 'md.template_constraint_epoch' not in on:
+    raise SystemExit('ON did not record native rigid-water constraint provenance')
 derived = subprocess.run([opt, str(work / 'on.mlir'), '--md-differentiate', '--verify-each'],
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 if derived.returncode:
     raise SystemExit(f'ON first derivatives: {derived.stderr}')
 if 'md.gather_template_window' not in derived.stdout:
     raise SystemExit('ON did not derive the native template force window')
+if 'md.template_constraint_epoch' not in derived.stdout:
+    raise SystemExit('differentiation lost native rigid-water constraint provenance')
 (work / 'on-derived.mlir').write_text(derived.stdout)
 off = emit('off', base + '\n[performance]\n"water.template" = "OFF"\n')
 auto = emit('auto', base)
@@ -61,4 +65,6 @@ if off != auto:
     raise SystemExit('ordinary OFF/AUTO programs differ')
 if 'md.sum_template_window' in off or 'template_water' in off:
     raise SystemExit('ordinary program acquired a template window')
+if 'md.template_constraint_epoch' in off:
+    raise SystemExit('ordinary program acquired template constraint provenance')
 print('native water-template ON constructed and differentiated; ordinary OFF/AUTO programs identical')
