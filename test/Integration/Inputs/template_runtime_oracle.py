@@ -96,4 +96,20 @@ func.func @main() {
   return
 }
 '''
+if len(sys.argv) == 4:
+    assert sys.argv[3] == '--staged'
+    runtime = runtime.replace('arith.constant 8 : i64', 'arith.constant 11 : i64')
+    runtime = runtime.replace('arith.constant 10 : i64', 'arith.constant 12 : i64')
+    runtime = runtime.replace('%c39 = arith.constant 39', '%c39 = arith.constant 40')
+    runtime = runtime.replace('memref.store %zero, %host[%w1]', 'memref.store %one, %host[%w1]')
+    runtime = runtime.replace('memref.store %one, %host[%w3]', 'memref.store %zero, %host[%w3]')
+    runtime = runtime.replace('  %n = memref.dim %pairs', '''  %s13 = arith.constant 13 : i64
+  %co = func.call @mdrtTemplatePairsLayoutValue(%list, %s13) : (!list, i64) -> i64
+  %count_offset = arith.index_cast %co : i64 to index
+  %n = memref.dim %pairs''')
+    runtime = runtime.replace('  %oh = memref.get_global', '''  memref.store %one, %host[%count_offset] : memref<?xi32>
+  %oh = memref.get_global''')
+    runtime = runtime.replace('  memref.dealloc %host : memref<?xi32>', '''  memref.dealloc %host : memref<?xi32>
+  func.call @compact_seed(%list) : (!list) -> ()''')
+    runtime += '\nfunc.func private @compact_seed(!list)\n'
 pathlib.Path(sys.argv[2]).write_text(source + runtime)

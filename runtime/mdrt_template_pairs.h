@@ -167,10 +167,51 @@ int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   case TEMPLATE_LAYOUT_INNER_UNITS: return layout->innerUnits;
   case TEMPLATE_LAYOUT_OUTER_ENTRIES: return layout->outerEntries;
   case TEMPLATE_LAYOUT_INNER_ENTRIES: return layout->innerEntries;
+  case TEMPLATE_LAYOUT_STAGE_UNITS: return layout->stageUnits;
+  case TEMPLATE_LAYOUT_STAGE_ENTRIES: return layout->stageEntries;
+  case TEMPLATE_LAYOUT_BUILD_COUNTS: return layout->buildCounts;
+  case TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS: return layout->buildEntryOffsets;
+  case TEMPLATE_LAYOUT_BUILD_WORK_COUNTS: return layout->buildWorkCounts;
+  case TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS: return layout->buildWorkOffsets;
+  case TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH: return layout->buildScanScratch;
   default:
     fprintf(stderr, "mdrt: invalid template layout slot\n");
     abort();
   }
+}
+
+/* Zero-offset views let shared scan emitters use their ordinary identity
+ * memref descriptors. The aligned pointer includes the arena's physical
+ * offset; all such offsets are computed in i64. Reacquire after growth. */
+void _mlir_ciface_mdrtTemplatePairsArenaView(struct Buffer1 *result,
+                                           int64_t handle, int64_t slot) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  struct MdrtTemplatePairLayout *layout = &pairs->layout;
+  int64_t offset = mdrtTemplatePairsLayoutValue(handle, slot), size = 0;
+  switch (slot) {
+  case TEMPLATE_LAYOUT_OUTER_ROWS:
+  case TEMPLATE_LAYOUT_INNER_ROWS: size = 4 * layout->rows; break;
+  case TEMPLATE_LAYOUT_OUTER_UNITS:
+  case TEMPLATE_LAYOUT_INNER_UNITS:
+  case TEMPLATE_LAYOUT_STAGE_UNITS: size = 4 * layout->units; break;
+  case TEMPLATE_LAYOUT_OUTER_ENTRIES:
+  case TEMPLATE_LAYOUT_INNER_ENTRIES: size = 4 * layout->entries; break;
+  case TEMPLATE_LAYOUT_STAGE_ENTRIES: size = 4 * 64 * layout->units; break;
+  case TEMPLATE_LAYOUT_BUILD_COUNTS:
+  case TEMPLATE_LAYOUT_BUILD_WORK_COUNTS: size = layout->rows; break;
+  case TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS:
+  case TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS: size = layout->rows + 1; break;
+  case TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH: size = layout->scanBlocks; break;
+  default:
+    fprintf(stderr, "mdrt: template layout slot is not an arena view\n");
+    abort();
+  }
+  result->allocated = pairs->pairs;
+  result->aligned = (void *)((uintptr_t)pairs->pairs +
+                             (uint64_t)offset * sizeof(int32_t));
+  result->offset = 0;
+  result->size = size;
+  result->stride = 1;
 }
 
 int64_t mdrtTemplatePairsCapacity(int64_t handle) {

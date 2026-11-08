@@ -21,7 +21,11 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
   };
   auto index = [&](OpBuilder &at, Value value) -> Value {
     if (value.getType().isIndex()) return value;
-    return arith::IndexCastOp::create(at, loc, at.getIndexType(), value);
+    // Padding between the two classes can put a place just above 2^31,
+    // even though every original unit ID fits a nonnegative signed i32.
+    // Places are unsigned payload indices; -1 membership sentinels have
+    // already been replaced with a safe unit before they reach this cast.
+    return arith::IndexCastUIOp::create(at, loc, at.getIndexType(), value);
   };
   auto record = [&](OpBuilder &at, Value offset, Value row, unsigned column) -> Value {
     Value address = arith::AddIOp::create(at, loc, offset,

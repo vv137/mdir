@@ -573,6 +573,19 @@ reducer. A seeded one-pair runtime fixture checks the complete allocation,
 view, launch and reduction path against the exact energy $1/4$; search and
 validity are still separate gates.
 
+The same arena also contains build staging and row-scan scratch. A spatial
+search can emit chunks once, then compact them by fixed row/class order
+without repeating its candidate search or allocating a second pair list.
+Physical staging addresses use i64 even when a chunk's index fits i32.
+The compactor uses the existing device scans and initializes the inner
+view with the full outer blocks; pruning subsequently shortens those
+blocks in the fused loop. An integer oracle independently concatenates
+rows for all three classes, including empty rows and a 65-entry row, with
+staging chunks supplied out of order. Its 1,182 exact checks include
+unchanged capacity tails. A separate seeded pair passes through compaction
+and production dispatch to the exact energy $1/4$. These remain isolated
+compaction tests until the actual spatial search and validity are wired.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
