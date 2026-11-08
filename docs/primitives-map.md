@@ -220,7 +220,7 @@ which no derivative passes. The reciprocal sum is one op to the derivative
 
 The remaining #452 composition has an approved
 [design and transpose contracts](reciprocal-primitives.md)
-(D[reciprocal-primitives-design]). It includes the
+(D388). It includes the
 nonlinear position and cell rules required by charge-field force matching
 and position Hessian-vector products; the proposal implements no new route.
 

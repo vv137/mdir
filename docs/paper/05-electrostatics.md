@@ -68,7 +68,7 @@ mode adds the grid in fixed point at the scale $2^{40}$.
 
 The approved decomposition for #452 is described in
 [Reciprocal sums as differentiable primitives](../reciprocal-primitives.md),
-D[reciprocal-primitives-design]. It declares the spread/gather transposes
+D388. It declares the spread/gather transposes
 and the window-curvature terms needed by force matching. This design
 changes no implemented reciprocal method or measured
 performance result.

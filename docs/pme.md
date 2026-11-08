@@ -13,7 +13,7 @@ The keys in brackets are those of [references.md](references.md).
 ## 1. The sum
 
 The approved [reciprocal-primitives design](reciprocal-primitives.md)
-(D[reciprocal-primitives-design], #452) states the spread/gather transposes,
+(D388, #452) states the spread/gather transposes,
 FFT pairing, influence derivatives, and force-product contracts. Its
 implementation is staged; this document's routes and numerical methods remain
 in use.

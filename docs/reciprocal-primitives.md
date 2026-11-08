@@ -1,7 +1,7 @@
 # Reciprocal sums as differentiable primitives
 
 Status: design approved for [#452](https://github.com/vv137/mdir/issues/452),
-D[reciprocal-primitives-design], by the
+D388, by the
 [maintainer's ruling](https://github.com/vv137/mdir/pull/781#issuecomment-6716738603)
 on 2026-11-08, including the additions in Section 7.
 This document records the remaining composition. D306, D319, D341, and
