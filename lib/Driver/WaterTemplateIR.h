@@ -6,7 +6,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
-namespace mlir { class OpBuilder; }
+namespace mlir { class OpBuilder; class Block; }
 namespace mdir::driver {
 struct WaterTemplateModel;
 namespace builder {
@@ -17,6 +17,7 @@ namespace builder {
 struct WaterTemplateSitePair {
   mlir::Value displacement, typeI, typeJ, chargeI, chargeJ;
   bool lennardJones = false, coulomb = false;
+  mlir::Value alchemicalI, alchemicalJ;
 };
 
 /// O-relative H1 and H2 displacements in one whole molecule. Geometry is
@@ -43,6 +44,7 @@ struct WaterTemplateReductionInputs {
   mlir::Value relation, positions, cell, types, charges;
   double cutoff = 0.0;
   bool lennardJones = true, coulomb = true;
+  mlir::Value alchemical;
 };
 /// Constructs one class's complete structured reduction. The pair callback
 /// clones the selected scalar pair expression; it does not replace the
@@ -52,6 +54,11 @@ mlir::Value buildWaterTemplateReduction(
     const WaterTemplateReductionInputs &,
     llvm::function_ref<mlir::Value(mlir::OpBuilder &,
                                   const WaterTemplateSitePair &)> pairEnergy);
+/// Reuses the existing scalar primary-pair body. Fixed template arguments
+/// replace its gathered values; captured mixing tables and parameters keep
+/// their actual SSA values. No alternate LJ/Coulomb expression is written.
+mlir::Value cloneWaterTemplatePairEnergy(
+    mlir::OpBuilder &, mlir::Block &, const WaterTemplateSitePair &);
 } // namespace builder
 } // namespace mdir::driver
 #endif

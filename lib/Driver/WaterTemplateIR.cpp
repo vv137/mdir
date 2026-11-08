@@ -5,7 +5,9 @@
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 #include <array>
 
 using namespace mlir;
@@ -111,6 +113,7 @@ Value mdir::driver::builder::buildWaterTemplateReduction(
   unsigned coordinates = mdir::md::getTemplateWindowMembers(arity).size();
   SmallVector<Value> gathered;
   if (arity != 6) gathered = {input.types, input.charges};
+  if (arity != 6 && input.alchemical) gathered.push_back(input.alchemical);
   auto sum = mdir::md::SumTemplateWindowOp::create(
       builder, loc, builder.getF64Type(), input.relation, input.positions,
       input.cell, gathered, APFloat(input.cutoff), APFloat(model.extent),
@@ -120,6 +123,7 @@ Value mdir::driver::builder::buildWaterTemplateReduction(
   if (arity != 6) {
     arguments.append(arity, builder.getI32Type());
     arguments.append(arity, builder.getF64Type());
+    if (input.alchemical) arguments.append(arity, builder.getF64Type());
   }
   SmallVector<Location> locations(arguments.size(), loc);
   Block *block = builder.createBlock(&sum.getKernel(), {}, arguments, locations);
@@ -139,10 +143,17 @@ Value mdir::driver::builder::buildWaterTemplateReduction(
                      block->getArgument(4), input.lennardJones, input.coulomb});
   }
   SmallVector<Value> energies, displacements;
+  Value unperturbed;
+  if (input.alchemical)
+    unperturbed = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
   for (auto pair : pairs) {
     pair.lennardJones &= input.lennardJones;
     pair.coulomb &= input.coulomb;
     if (!pair.lennardJones && !pair.coulomb) continue;
+    if (input.alchemical) {
+      pair.alchemicalI = arity == 6 ? unperturbed : block->getArgument(coordinates + 2 * arity);
+      pair.alchemicalJ = arity == 2 ? block->getArgument(coordinates + 2 * arity + 1) : unperturbed;
+    }
     energies.push_back(pairEnergy(builder, pair));
     displacements.push_back(pair.displacement);
   }
@@ -155,4 +166,21 @@ Value mdir::driver::builder::buildWaterTemplateReduction(
   llvm::append_range(energies, displacements);
   mdir::md::YieldOp::create(builder, loc, energies);
   return sum.getResult();
+}
+
+Value mdir::driver::builder::cloneWaterTemplatePairEnergy(
+    OpBuilder &builder, Block &source, const WaterTemplateSitePair &pair) {
+  auto loc = builder.getUnknownLoc();
+  assert(source.getNumArguments() == (pair.alchemicalI ? 8u : 6u));
+  Value squares = arith::MulFOp::create(builder, loc, pair.displacement, pair.displacement);
+  Value r2 = vector::ReductionOp::create(builder, loc, vector::CombiningKind::ADD, squares);
+  Value r = math::SqrtOp::create(builder, loc, r2);
+  SmallVector<Value> arguments{r, pair.displacement, pair.typeI, pair.typeJ,
+                               pair.chargeI, pair.chargeJ};
+  if (pair.alchemicalI) arguments.append({pair.alchemicalI, pair.alchemicalJ});
+  IRMapping mapping;
+  for (auto [old, value] : llvm::zip_equal(source.getArguments(), arguments))
+    mapping.map(old, value);
+  for (Operation &operation : source.without_terminator()) builder.clone(operation, mapping);
+  return mapping.lookupOrDefault(source.getTerminator()->getOperand(0));
 }
