@@ -12,6 +12,12 @@ The keys in brackets are those of [references.md](references.md).
 
 ## 1. The sum
 
+The proposed [reciprocal-primitives design](reciprocal-primitives.md)
+(D[reciprocal-primitives-design], #452) states the spread/gather transposes,
+FFT pairing, influence derivatives, and force-product contracts. It awaits
+a ruling; this document's implemented routes and numerical methods remain
+in use.
+
 The Coulomb energy of a periodic system of point charges is split by the
 Ewald sum [[Ewald1921]](references.md#ewald1921) with a splitting
 parameter $\beta$, in the units of MDIR with $f$ the Coulomb constant
