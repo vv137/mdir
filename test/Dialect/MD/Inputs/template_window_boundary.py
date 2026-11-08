@@ -23,7 +23,7 @@ vec = 'vector<3xf64>'
 tensor = 'vector<9xf64>'
 argument_types = ', '.join([vec] * 5)
 force_types = ', '.join([vec] * 6)
-lines = [text, 'func.func private @printF64(f64)',
+lines = [text, 'func.func private @printI64(i64)',
          'func.func private @printNewline()',
          f'func.func private @window_energy({argument_types}) -> f64',
          f'func.func private @window_forces({argument_types}) -> ({force_types})',
@@ -61,7 +61,8 @@ def check(actual, reference):
     bad = emit(f'arith.cmpf ogt, {absolute}, {bound} : f64')
     lines.append(f'  scf.if {bad} {{')
     for value in (actual, ref, absolute, bound):
-        lines.append(f'    func.call @printF64({value}) : (f64) -> ()')
+        bits = emit(f'arith.bitcast {value} : f64 to i64')
+        lines.append(f'    func.call @printI64({bits}) : (i64) -> ()')
         lines.append('    func.call @printNewline() : () -> ()')
     lines.append('  }')
 
@@ -120,9 +121,8 @@ for image in itertools.product(range(-1, 2), repeat=3):
 assert inside_images == [(1, 0, 0)], inside_images
 for value, reference in zip(total, reference_total):
     check(value, reference)
-one, zero = scalar(1.0), scalar(0.0)
-flag = emit(f'arith.select {good}, {one}, {zero} : f64')
-lines.extend([f'  func.call @printF64({flag}) : (f64) -> ()',
+flag = emit(f'arith.extui {good} : i1 to i64')
+lines.extend([f'  func.call @printI64({flag}) : (i64) -> ()',
               '  func.call @printNewline() : () -> ()',
               f'  cf.assert {good}, "template-window numerical mismatch"',
               '  return', '}'])

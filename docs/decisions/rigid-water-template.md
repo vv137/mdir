@@ -647,11 +647,16 @@ body for O/H/H under one thread, loading all three members before storing
 any output. Its callback receives the final values for packing and
 validity without a cross-thread position read. Unmatched atoms and stored
 extra points retain their scalar updates. Native writer selection is not
-yet connected. Its first device validation is stopped: 323 of 1,059
-reported values differ from the exact dyadic oracle, and all decimal
-values equal that oracle rounded to six significant digits. Decimal
-serialization is suspected, but exact device bits have not been checked;
-this is not a passing numerical gate. No numerical rerun has been made.
+yet connected. Its first device validation reported 323 of 1,059 values
+different from the exact dyadic oracle, with every decimal value equal
+to that oracle rounded to six significant digits. Work stopped, and the
+maintainer authorized a fixture-only change to exact-bit serialization
+and one controlled comparison. That comparison passed: all 966 f64 values
+are bitwise identical and all 93 integer visit counts equal one. The
+bound remains zero, including the signs of floating zeros; neither the
+writer arithmetic nor ordinary lowering changed. The other new exact or
+tight f64 fixtures also serialize diagnostics as integer bit patterns,
+with their original in-program comparisons and bounds unchanged.
 
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this

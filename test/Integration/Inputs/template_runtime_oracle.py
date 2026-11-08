@@ -22,7 +22,7 @@ func.func private @mdrtTemplatePairsLayoutValue(!list, i64) -> i64
 func.func private @mdrtDeviceActivationOpen() -> !llvm.ptr
 func.func private @mdrtDeviceActivationEnter(!llvm.ptr)
 func.func private @mdrtDeviceActivationClose(!llvm.ptr)
-func.func private @printF64(f64)
+func.func private @printI64(i64)
 func.func private @printNewline()
 func.func @seed_template(%list: !list) {
   %c0 = arith.constant 0 : index
@@ -89,7 +89,8 @@ func.func @main() {
       : (memref<?xi32, 1>, memref<?x4xi32>, memref<?x3xf64, 1>, !md.cell, memref<?xf64, 1>, memref<?xf64, 1>) -> f64
   %ref = arith.constant 0.25 : f64
   %same = arith.cmpf oeq, %energy, %ref : f64
-  func.call @printF64(%energy) : (f64) -> ()
+  %bits = arith.bitcast %energy : f64 to i64
+  func.call @printI64(%bits) : (i64) -> ()
   func.call @printNewline() : () -> ()
   cf.assert %same, "production template energy differs from exact 1/4 oracle"
   func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()

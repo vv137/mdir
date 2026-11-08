@@ -66,7 +66,7 @@ if args.summary:
 
 lines = [args.source.read_text(),
          'func.func private @template_scheduler_probe(memref<153x3xf32>, memref<32x10xf64>)',
-         'func.func private @printF64(f64)', 'func.func private @printI64(i64)',
+         'func.func private @printI64(i64)',
          'func.func private @printNewline()', 'func.func @main() {']
 counter = 0
 
@@ -115,7 +115,8 @@ def check(actual, expected, real, number):
                   '    func.call @printNewline() : () -> ()'])
     for value in (actual, ref):
         shown = emit(f'arith.extf {value} : f32 to f64') if real == 'f32' else value
-        lines.extend([f'    func.call @printF64({shown}) : (f64) -> ()',
+        bits = emit(f'arith.bitcast {shown} : f64 to i64')
+        lines.extend([f'    func.call @printI64({bits}) : (i64) -> ()',
                       '    func.call @printNewline() : () -> ()'])
     lines.append('  }')
 
@@ -134,9 +135,8 @@ for column, expected in enumerate(totals):
                   '    %next = arith.addf %sum, %part : f64',
                   '    scf.yield %next : f64', '  }'])
     check(name, expected, 'f64', 459 + column)
-one_real = emit('arith.constant 1.0 : f64')
-flag = emit(f'arith.select {good}, {one_real}, {widezero} : f64')
-lines.extend([f'  func.call @printF64({flag}) : (f64) -> ()',
+flag = emit(f'arith.extui {good} : i1 to i64')
+lines.extend([f'  func.call @printI64({flag}) : (i64) -> ()',
               '  func.call @printNewline() : () -> ()',
               f'  cf.assert {good}, "template scheduler numerical mismatch"',
               f'  memref.dealloc {force} : memref<153x3xf32>',

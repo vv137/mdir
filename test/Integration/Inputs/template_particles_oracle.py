@@ -6,6 +6,7 @@ is reused to obtain the updated coordinates or velocities.
 """
 import json
 import pathlib
+import struct
 import sys
 
 waters, atoms = 19, 17
@@ -29,9 +30,19 @@ audit = [updated[p] for p in members]
 expected = [a for table in (updated, velocity, audit, reduced) for row in table for a in row] + [1] * n
 
 if sys.argv[1] == 'check':
-    got = [float(word) for word in pathlib.Path(sys.argv[2]).read_text().split()]
-    assert len(got) == len(expected), (len(got), len(expected))
-    errors = [(i, a, b) for i, (a, b) in enumerate(zip(got, expected)) if a != b]
+    words = [int(word) for word in pathlib.Path(sys.argv[2]).read_text().split()]
+    assert len(words) == len(expected), (len(words), len(expected))
+    floating = len(expected) - n
+    errors = []
+    for i, (word, reference) in enumerate(zip(words, expected)):
+        if i < floating:
+            bits = (word & ((1 << 64) - 1)).to_bytes(8, 'big')
+            wanted = struct.pack('>d', reference)
+            if bits != wanted:
+                errors.append((i, struct.unpack('>d', bits)[0], reference,
+                               bits.hex(), wanted.hex()))
+        elif word != reference:
+            errors.append((i, word, reference))
     assert not errors, {'count': len(errors), 'first': errors[:8]}
     print(f'complete-frame writer: {len(expected)} exact values; every particle visited once; extra points updated but not packed')
     raise SystemExit(0)
@@ -72,7 +83,6 @@ func.func @writer_source(%x: memref<?x3xf64, 1>, %v: memref<?x3xf64, 1>,
   } -> f64, i1
   return
 }
-func.func private @printF64(f64)
 func.func private @printI64(i64)
 func.func private @printNewline()
 func.func @dump(%device: memref<?x?xf64, 1>) {
@@ -87,7 +97,8 @@ func.func @dump(%device: memref<?x?xf64, 1>) {
   scf.for %i = %c0 to %n step %c1 {
     scf.for %j = %c0 to %m step %c1 {
       %value = memref.load %host[%i, %j] : memref<?x?xf64>
-      func.call @printF64(%value) : (f64) -> ()
+      %bits = arith.bitcast %value : f64 to i64
+      func.call @printI64(%bits) : (i64) -> ()
       func.call @printNewline() : () -> ()
     }
   }
