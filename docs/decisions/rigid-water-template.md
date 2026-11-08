@@ -595,7 +595,7 @@ padded order and inverse map untouched, while the search bins retain both
 groups' hybrid references. An independent lexicographic oracle checks
 996 integer values over all four group-activity combinations, including
 repeated-point ties and coordinates that round to the final bin edge.
-The spatial search that consumes these bins is not yet connected.
+The production refresh that owns these bins is not yet connected.
 
 The search's append primitive ballot-compacts sparse candidate batches
 into chunks of 64, carrying a partial chunk across rounds. Concurrent
@@ -606,7 +606,29 @@ the final i32 domain sets an index flag before compaction. Independent
 row-concatenation fixtures check the ordinary path (1,190 integers), the
 expected capacity flag and untouched tails (1,574), and a preloaded total
 crossing the index bound (14). These test the primitive, not a completed
-spatial search.
+production refresh.
+
+The combined bin-search emitter visits covering images in one kernel over
+the fixed class rows. It searches active rows once and copies retained
+outer records for inactive rows through the same chunk writer. WW and SS
+use unique-pair ownership; only SS consults the fixed exclusion graph.
+Outward column/z-key guards cover f32 key rounding, while the covering
+distance predicate uses f64 reference geometry. Its independent oracle
+enumerates all pairs and all covering images, without bins or chunks.
+Both cells pass all four activity phases with zero missing pairs, extra
+pairs or duplicates, including partial clusters and explicit images at a
+reach beyond half an edge:
+
+| Cell | Both rebuilt, WW/SW/SS | Atoms rebuilt | Waters rebuilt | Neither rebuilt |
+|---|---|---|---|---|
+| Orthorhombic | 86/132/25 | 86/98/25 | 86/144/25 | 86/144/25 |
+| Reduced triclinic | 86/108/32 | 86/99/32 | 86/169/32 | 86/169/32 |
+
+These are 1,979 exact unit/image pair memberships over eight phases, with
+predeclared reaches 135/128, 117/128 and 99/128. They validate the combined
+sort/search/staging/compaction emitters. Native refresh ownership, extent
+handling, displacement validity, fused pruning and physical dynamics
+remain separate gates.
 
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
@@ -624,6 +646,7 @@ per-pair device work.
 |---|---|---|
 | Source positions and lattice shift before packing | f64 | f64 |
 | Spatial-order key arithmetic | f32 on wrapped points | f32 on canonical fractional reference points; i32 class/column/z keys |
+| Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
 | Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
 | Squared distance and site cutoff | f32 | f32 |
