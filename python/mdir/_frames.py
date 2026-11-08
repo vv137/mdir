@@ -235,7 +235,7 @@ class FrameGradient(Mapping):
 class FrameTangent:
     """The tangent of the outputs of `FrameEvaluator.evaluate` along a
     tangent of the tunables, what `FrameEnergies.jvp` returns (#726,
-    D[force-matching-forward]): `energy`, the tangent of the energies (K,)
+    D389): `energy`, the tangent of the energies (K,)
     float64 in kJ/mol per unit of the tunable times the unit of the
     tangent, with what the host adds to the energy; `gradients`, a
     read-only mapping, with "positions" where it was asked: the tangent of
@@ -395,7 +395,7 @@ class FrameEnergies:
         sum_m dU_n/dtheta_m tangent_m (K,), and, with "positions" in
         `gradients`, gradients["positions"], sum_m d2U_n/dx dtheta_m
         tangent_m (K, N, 3) float64, forward mode in the tunables of the
-        gradient in the positions (#726, D[force-matching-forward]).
+        gradient in the positions (#726, D389).
 
         The tangent of the gradient is formed by a pass of a product program
         of the evaluator over the frames, compiled at the first such call;
@@ -482,7 +482,7 @@ class FrameEvaluator:
         # positions (#771), compiled at the first such product.
         self._product_positions = None
         # The product program of forward mode in the tunables (#726,
-        # D[force-matching-forward]), compiled at the first such call.
+        # D389), compiled at the first such call.
         self._product_direction = None
         # A simulation whose entry is a loop over frames: the frames of
         # every call are evaluated in one activation of it.
@@ -569,7 +569,7 @@ class FrameEvaluator:
         at the version `version`, along `tangent` (entries,): the tangents of
         the energies (K,) and of their gradients in the positions (K, N, 3),
         by the product program of forward mode (#726,
-        D[force-matching-forward]), a simulation of its own compiled at the
+        D389), a simulation of its own compiled at the
         first call, at the values of the tunables of the evaluator."""
         if self.terms != "all":
             raise _core.UnsupportedError(

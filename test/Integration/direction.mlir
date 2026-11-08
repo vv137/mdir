@@ -1,5 +1,5 @@
 // Forward mode in the arguments of the gradient in the positions
-// (D[force-matching-forward], #726): the potential Psi along directions of
+// (D389, #726): the potential Psi along directions of
 // the arguments, a number of a pair term, a field of charges, the constant of
 // a dihedral, and a constant of a term of the positions, with its energy and
 // forces, compiled and run on the CPU. Checked by central differences along

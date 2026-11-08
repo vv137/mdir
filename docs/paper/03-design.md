@@ -1544,7 +1544,7 @@ U_n/\partial\boldsymbol\theta + \partial\dot U_{\mathbf x,n}/\partial
 \boldsymbol\theta] = \sum_n[g_n\dot U_{\boldsymbol\theta,n} +
 \dot{\mathbf x}_n\cdot\partial\dot U_{\boldsymbol\theta,n}/\partial
 \mathbf x]$ plus the constant term, an identity that the tests check to
-the rounding (D[force-matching-forward]). The gradient in the cell is formed
+the rounding (D389). The gradient in the cell is formed
 for each frame by one routine, which the PyTorch adapter uses as well, so
 the two adapters, a batch of frames and each frame alone, and a compiled
 call and an uncompiled one give the same numbers to the bit. On a CUDA

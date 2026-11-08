@@ -684,6 +684,7 @@ specification follow those made with it.
 | [D386](decisions/D386.md) | Part of #138, PR 1 of its accepted section 6. | 2026-11-06 |
 | [D387](decisions/D387.md) | The derivative in the positions of the product of force matching (D383) takes the extra points of Amber, whose $\mathsf J$ depends on the positions, by the curvature of their placement: the derivative of the spread $\mathsf J^{\mathsf T}$ along the cotangent, the force of the energy on the site held fixed, added to the spread forces of the tangent. | 2026-11-07 |
 | [D388](decisions/D388.md) | The reciprocal chain uses structured particle-grid spread and gather with declared transposes, while its window and influence kernels retain the position, charge, and cell derivatives needed by force matching. | 2026-11-08 |
+| [D389](decisions/D389.md) | **Forward mode in the tunables of the gradient in the positions, $\dot{\mathbf G} = (\partial^2U/\partial\mathbf x\,\partial\boldsymbol\theta)\,\dot{\boldsymbol\theta}$, is the gradient in the positions of one potential, the derivative of $U$ along directions of its arguments, $\Psi = \sum_s\dot b_s\,\partial U/\partial b_s$, which `md-differentiate` builds from the sums of $U$ as D376 builds the tangent in the positions, and whose forces the existing `forces` request gives; `md.evaluate` asks for it with the requests `direction` and `direction_forces` and the attribute `directions`. | 2026-11-08 |
 <!-- end decisions-table -->
 
 

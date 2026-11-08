@@ -319,7 +319,7 @@ faster: the energy of D210 is that of `@tunable`, which is evaluated with
 its derivative at every frame (measured: 1.047 ms against 1.050 ms per
 frame on the dipeptide).
 
-### Forward mode in the tunables (D[force-matching-forward])
+### Forward mode in the tunables (D389)
 
 #726, part F; the maintainer's ruling on PR #778.
 `FrameEnergies.jvp(tangent, *, gradients=("positions",))`. `tangent` maps
@@ -955,7 +955,7 @@ which the bound does not limit.
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
 | $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
-| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D382); its product with a tangent of $\boldsymbol\theta$, `jvp(tangent)` (D[force-matching-forward]) | `mdir.jax` (#726 D, #750); forward AD of `mdir.torch`, to be refused by name (#777) |
+| The derivative of the forces in $\boldsymbol\theta$ | its product with a cotangent on $\partial U/\partial\mathbf x$, `vjp(positions=)` (D381); through `mdir.torch`, the backward of the gradient in the positions in `theta` (D382); its product with a tangent of $\boldsymbol\theta$, `jvp(tangent)` (D389) | `mdir.jax` (#726 D, #750); forward AD of `mdir.torch`, to be refused by name (#777) |
 | Other second derivatives, the derivative of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | the stress: #726 G with M2b-3 |
 
 `depends[name]` is built from the plan of the program. A column of

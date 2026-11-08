@@ -1,5 +1,5 @@
 # Forward mode in the tunables of the frame evaluator, FrameEnergies.jvp
-# (D[force-matching-forward], #726), on the CPU: the tangents of
+# (D389, #726), on the CPU: the tangents of
 # the energies and of their gradients in the positions against closed forms,
 # NumPy sums differentiated in theta, and exact half differences; the
 # transpose identity with the product of D381; in double, central

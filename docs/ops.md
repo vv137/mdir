@@ -494,7 +494,7 @@ $$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 | `tangent` | `f64` | $\Phi = \sum_i \mathbf t_i\cdot\partial U/\partial\mathbf x_i$, the derivative of $U$ along the tangent $\mathbf t$ of the positions at a fixed cell (D376) |
 | `tangent_derivative(n)` | as `derivative(n)` | $\partial\Phi/\partial\theta_n$ or $\partial\Phi/\partial a_i$ at fixed $\mathbf t$: the mixed derivative $\sum_i\mathbf t_i\cdot\partial^2U/\partial\mathbf x_i\,\partial\theta_n$ (D376) |
 | `tangent_forces` | Position field type | $-\partial\Phi/\partial\mathbf x_i$ at fixed $\mathbf t$: minus the Hessian of $U$ times the tangent, $-\sum_j\partial^2U/\partial\mathbf x_i\,\partial\mathbf x_j\,\mathbf t_j$ (D383). The forces of the tangent of a pair term take the derivative of its kernel in the displacement as well; the tangent of a reciprocal sum is refused |
-| `direction` | `f64` | $\Psi = \sum_n\dot b_n\,\partial U/\partial b_n + \sum_i\dot a_i\,\partial U/\partial a_i$, the derivative of $U$ along directions of the arguments that `directions` names (D[force-matching-forward]) |
+| `direction` | `f64` | $\Psi = \sum_n\dot b_n\,\partial U/\partial b_n + \sum_i\dot a_i\,\partial U/\partial a_i$, the derivative of $U$ along directions of the arguments that `directions` names (D389) |
 | `direction_forces` | Position field type | $-\partial\Psi/\partial\mathbf x_i$: minus the mixed derivative $\sum_n\partial^2U/\partial\mathbf x_i\,\partial b_n\,\dot b_n$, forward mode in the arguments of the gradient in the positions. A reciprocal sum takes $\tfrac12[E(\mathbf c+\dot{\mathbf c}) - E(\mathbf c-\dot{\mathbf c})]$, two sums for all the directions |
 
 With a request of the tangent, the op takes one operand after the

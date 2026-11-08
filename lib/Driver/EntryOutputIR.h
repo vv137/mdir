@@ -11,7 +11,7 @@ struct EntryGradientProductIR {
   bool positions = false;
   // Whether the product entry gives instead forward mode in the tunables:
   // the derivative of @tunable along the directions of its slots and
-  // fields, and its forces (#726, D[force-matching-forward]).
+  // fields, and its forces (#726, D389).
   bool direction = false;
 };
 struct EntryGradientOutputIR {

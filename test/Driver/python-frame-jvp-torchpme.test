@@ -1,5 +1,5 @@
 # Forward mode in the tunables of the frame evaluator with particle mesh
-# Ewald (D[force-matching-forward], #726): the tangent of the gradient in
+# Ewald (D389, #726): the tangent of the gradient in
 # the positions in the charges of every particle against torch-pme (Loche
 # et al., J. Chem. Phys. 162, 142501 (2025)), the half difference of its
 # gradient at the charges shifted by the tangent and back (exact: quadratic

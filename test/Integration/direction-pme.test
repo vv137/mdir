@@ -1,4 +1,4 @@
-# Forward mode in the arguments of a reciprocal sum (D[force-matching-forward],
+# Forward mode in the arguments of a reciprocal sum (D389,
 # #726), on the CPU: Psi along lambda, along the field q0, and along lambda
 # and a constant of a pair term, against dE/dlambda (D161) and the
 # derivative of the tangent of D379 (the transpose identity), in double and

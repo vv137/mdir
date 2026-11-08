@@ -1,5 +1,5 @@
 """Forward mode in the tunables of the frame evaluator,
-`FrameEnergies.jvp(tangent)` (D[force-matching-forward], #726): the tangent
+`FrameEnergies.jvp(tangent)` (D389, #726): the tangent
 of the energies, dU_n/dtheta . tangent, and of their gradients in the
 positions, d2U_n/dx dtheta . tangent, against independent references.
 

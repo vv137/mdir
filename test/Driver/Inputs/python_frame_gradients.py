@@ -637,7 +637,7 @@ def torchpme_reference(system, x, h, q0, spacing, rc=0.8):
     is a constant of a frame. The distances are functions of the
     positions and the cell through the image of each pair, and both are
     deformed by a strain of zero that autograd differentiates in. Also
-    used by python_frame_jvp.py (D[force-matching-forward])."""
+    used by python_frame_jvp.py (D389)."""
     import torch
     import torchpme
     torch.set_default_dtype(torch.float64)

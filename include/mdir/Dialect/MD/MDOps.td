@@ -1016,7 +1016,7 @@ def MD_EvaluateOp : MD_Op<"evaluate", [
     | `tangent` | `f64` | `Φ = Σ_i t_i · ∂U/∂x_i`, the derivative of `U` along the tangent `t` of the positions |
     | `tangent_derivative(n)` | as `derivative(n)` | `∂Φ/∂θ_n` or `∂Φ/∂a_i`: the mixed derivative `Σ_i t_i · ∂²U/∂x_i ∂θ_n` (D376) |
     | `tangent_forces` | Type of the position field | `−∂Φ/∂x_i`: minus the Hessian of `U` times the tangent, `−Σ_j ∂²U/∂x_i ∂x_j · t_j` (D383) |
-    | `direction` | `f64` | `Ψ = Σ_n ḃ_n ∂U/∂b_n + Σ_i ȧ_i ∂U/∂a_i`, the derivative of `U` along directions of the arguments named by `directions` (D[force-matching-forward]) |
+    | `direction` | `f64` | `Ψ = Σ_n ḃ_n ∂U/∂b_n + Σ_i ȧ_i ∂U/∂a_i`, the derivative of `U` along directions of the arguments named by `directions` (D389) |
     | `direction_forces` | Type of the position field | `−∂Ψ/∂x_i`: minus the mixed derivative `Σ_n ∂²U/∂x_i ∂b_n · ḃ_n`, forward mode in the arguments of the gradient in the positions |
 
     With a `tangent` request, the op takes one operand more than the

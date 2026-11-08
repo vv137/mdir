@@ -438,7 +438,7 @@ public:
                        const double *positionCotangent,
                        double *positionDerivative = nullptr);
   /// Forward mode in the tunables at a frame (#726,
-  /// D[force-matching-forward]), of a simulation created with `frames`,
+  /// D389), of a simulation created with `frames`,
   /// `frameProduct`, and `frameProductDirection`: for a tangent of the
   /// entries of the tunables, `tangent` (one vector for each tunable, of
   /// its entries), the tangent of the energy, which it returns, and that of

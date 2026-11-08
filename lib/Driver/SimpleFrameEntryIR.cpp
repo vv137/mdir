@@ -499,7 +499,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleFrameEntry(
         return SmallVector<Value>{};
       }
       if (product && product->direction) {
-        // Forward mode in the tunables (#726, D[force-matching-forward]):
+        // Forward mode in the tunables (#726, D389):
         // the directions of the slots, then of each field in the order of
         // the input, in f64, from the host; the derivative of @tunable
         // along them and its forces, spread from the sites to their atoms.

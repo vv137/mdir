@@ -70,7 +70,7 @@ void buildTunableProductOutput(
     llvm::function_ref<mlir::Value(mlir::OpBuilder &, mlir::Value, mlir::Value)>
         curvature = nullptr);
 /// Forward mode in the tunables of a frame (#726,
-/// D[force-matching-forward]): the derivative Psi of @tunable along
+/// D389): the derivative Psi of @tunable along
 /// `numbers`, one direction for each slot of `config.scalarArguments`, and
 /// `fields`, one for each field of `config.fieldArguments`, handed over as
 /// the one scalar of mdrtWriteTunableGradient, and its forces -dPsi/dx,

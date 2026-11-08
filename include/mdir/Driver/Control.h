@@ -232,7 +232,7 @@ struct Control {
   /// With frameProduct, the product program gives forward mode in the
   /// tunables instead: the derivative of the energy along directions of
   /// its values and its gradient in the positions (#726,
-  /// D[force-matching-forward]). Internal only; no control-file key sets it.
+  /// D389). Internal only; no control-file key sets it.
   bool frameProductDirection = false;
   enum class TunableKind {
     Charge,

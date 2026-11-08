@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
 // What the derivative along directions of the arguments does not take
-// (D[force-matching-forward]), each refused by name, never a zero.
+// (D389), each refused by name, never a zero.
 
 !vec = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>

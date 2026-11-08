@@ -1624,7 +1624,7 @@ PYBIND11_MODULE(_core, m) {
        // D383); private to `mdir.FrameEvaluator`.
        py::arg("_frame_product_positions") = false,
        // With `_frame_product`, the product program of forward mode in the
-       // tunables (#726, D[force-matching-forward]); private to
+       // tunables (#726, D389); private to
        // `mdir.FrameEvaluator`.
        py::arg("_frame_product_direction") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
@@ -2050,7 +2050,7 @@ PYBIND11_MODULE(_core, m) {
       return py::object(py::make_tuple(summed, derivatives));
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("energy"),
        py::arg("position"), py::arg("first") = 0, py::arg("positions_derivative") = false)
-    // Forward mode in the tunables (#726, D[force-matching-forward]),
+    // Forward mode in the tunables (#726, D389),
     // of the product program of forward mode: `positions` (k, N, 3) float64
     // in the order of the input, `cells` and `tilts` (k, 3) or None, and the
     // tangent of the entries of all tunables in their order, `tangent`

@@ -3200,7 +3200,7 @@ PotentialOp TangentBuilder::build(Operation *after) {
 
 //===----------------------------------------------------------------------===//
 // The derivative of a potential along directions of its arguments
-// (D[force-matching-forward])
+// (D389)
 //===----------------------------------------------------------------------===//
 //
 // From a potential U(x, c, θ...) and directions of some of its arguments,
@@ -3997,7 +3997,7 @@ private:
 
   /// The requests of U and those along the directions, the energy and the
   /// forces of the potential Ψ along them, each in one call, in place of
-  /// `evaluate` (D[force-matching-forward]).
+  /// `evaluate` (D389).
   LogicalResult emitDirection(ModuleOp module, EvaluateOp evaluate,
                               PotentialOp potential) {
     SmallVector<int32_t> kinds[2];

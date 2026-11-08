@@ -398,7 +398,7 @@ struct compiler::Activation {
   std::unique_ptr<HostBuffer<2>> frameCotangent;
   double frameEnergyCotangent = 0.0;
   /// Of a product program of forward mode (#726,
-  /// D[force-matching-forward]): the directions of the slots, then those
+  /// D389): the directions of the slots, then those
   /// of each field of the gradient, N values each, in f64, which the entry
   /// takes at each frame through mdrtFrameDirection.
   std::vector<double> frameDirections;
@@ -532,7 +532,7 @@ _mlir_ciface_mdrtFrameProductBoundary(FrameProductBuffers *buffers,
   for (size_t k = 0; k != 3; ++k)
     asks->data[asks->offset + k * asks->strides[0]] = values[k];
 }
-/// The directions of forward mode (#726, D[force-matching-forward]):
+/// The directions of forward mode (#726, D389):
 /// those of the slots for `part` -1, those of field `part` otherwise, into
 /// `values`, whose size the entry gives.
 extern "C" void

@@ -167,7 +167,7 @@ LogicalResult CheckDerivatives::instrument(EvaluateOp source) {
       // Central differences along the directions of the arguments at the
       // fixed step h: of the energy for Ψ, and of the forces for its forces
       // −∂Ψ/∂x_i, which is the derivative of F_i along the directions
-      // (D[force-matching-forward]).
+      // (D389).
       ArrayRef<int64_t> directed = *source.getDirections();
       ValueRange directions = source.getOperands().take_back(directed.size());
       Value h = constant(b, step);

@@ -1,5 +1,5 @@
 """Forward mode in the arguments of a reciprocal sum
-(D[force-matching-forward], #726).
+(D389, #726).
 
 Appends to the program that tangent_pme.py writes the potential Psi along
 directions of its arguments, with its forces: along lambda (a number that

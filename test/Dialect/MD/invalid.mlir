@@ -432,7 +432,7 @@ md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
 }
 
 // A request of a direction names the directed arguments
-// (D[force-matching-forward]).
+// (D389).
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
     -> f64 {
   // expected-error@+1 {{expected 'directions' to name at least one argument with a request of a direction}}

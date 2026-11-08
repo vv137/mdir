@@ -1,5 +1,5 @@
 # The tests of direction.mlir and direction-pme.test on a GPU, in double
-# precision (D[force-matching-forward], #726). The values are printed for the
+# precision (D389, #726). The values are printed for the
 # record.
 #
 # REQUIRES: cuda, python-api

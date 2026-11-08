@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-differentiate | FileCheck %s
 
 // The derivative of a potential along directions of its arguments and its
-// forces (D[force-matching-forward], #726): the pair sum gathers the
+// forces (D389, #726): the pair sum gathers the
 // direction of the charges beside them and yields the derivative of its
 // kernel along the number and along the values at both ends; a term that
 // reads no directed argument has no term; the reciprocal sum takes two sums
