@@ -3,6 +3,7 @@ add_mlir_dialect_library(MDIRMD
   MDDialect.cpp
   MDExchange.cpp
   MDOps.cpp
+  MDStencils.cpp
   MDTypes.cpp
 
   ADDITIONAL_HEADER_DIRS

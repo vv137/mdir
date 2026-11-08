@@ -15,7 +15,8 @@ class CheckDerivativeCoverage : public impl::CheckDerivativeCoverageBase<CheckDe
     getOperation()->walk([&](PotentialOp potential) {
       potential.walk([&](Operation *op) {
         if (op == potential || isa<ReturnOp, YieldOp>(op) ||
-            isa<NeighborhoodOp, SumRelationOp, GatherRelationOp, SumTuplesOp,
+            isa<GridStencilOp, ScatterStencilOp, GatherStencilOp,
+                NeighborhoodOp, SumRelationOp, GatherRelationOp, SumTuplesOp,
                 GatherTuplesOp, SumParticlesOp, MapParticlesOp, ReciprocalOp,
                 OrthorhombicCellOp, TriclinicCellOp, TripletsOp>(op) ||
             op->getName().getStringRef() == "md_exec.cell_edges")

@@ -397,6 +397,16 @@ interactions," *J. Chem. Phys.* **69**, 1352–1360 (1978).
 Used for: the step of Brownian dynamics without hydrodynamic
 interactions, `integrator = "BROWNIAN"` (D163b).
 
+### deBoor2001
+
+C. de Boor, *A Practical Guide to Splines*, revised edition,
+Applied Mathematical Sciences **27**, Springer, New York (2001).
+ISBN 978-0-387-95366-3.
+[Publisher record](https://link.springer.com/book/9780387953663)
+
+Used for: the common cardinal B-spline recurrence and independent
+truncated-power reference for particle-grid windows (D[reciprocal-stencils]).
+
 ### Essmann1995
 
 U. Essmann, L. Perera, M. L. Berkowitz, T. Darden, H. Lee, L. G. Pedersen,

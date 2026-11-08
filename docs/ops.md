@@ -221,11 +221,12 @@ is needed when the kernels are compiled, not when LLVM is built.
 
 ## 4. `md` ops
 
-The implementation draft of #452 introduces the structural
-particle-grid relation and its constructor, **md.grid_stencil**.
-Its [checkpoint and remaining contracts](reciprocal-stencils.md)
-(D[reciprocal-stencils]) keep continuous operands explicit; structured
-spread/gather, their transposes and JVPs, and execution remain pending.
+Slice 1 of #452 introduces **md.grid_stencil**, structured scatter/gather,
+their declared linear transposes and JVPs, and the common scalar B-spline
+window. The [contracts and precision table](reciprocal-stencils.md)
+(D[reciprocal-stencils]) keep continuous operands explicit and refuse
+unsupported position/cell derivatives by name. The opt-in reciprocal
+execution chain follows in slice 2.
 
 ### 4.1 Summary
 

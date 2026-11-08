@@ -3,6 +3,7 @@
 // The derivative rules are those of docs/ops.md, Section 5.4.
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/Transforms/Stencils.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
@@ -641,6 +642,7 @@ struct StageRule
 } // namespace
 
 void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
+  registerStencilDerivatives(registry);
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     attachRules<arith::ConstantOp, arith::AddFOp, arith::SubFOp,
                 arith::MulFOp, arith::DivFOp, arith::NegFOp,

@@ -13,6 +13,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   Inline.cpp
   OwnerComputes.cpp
   ScalarDerivative.cpp
+  Stencils.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MD/Transforms

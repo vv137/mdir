@@ -36,7 +36,8 @@ static auto isKernelOp = [](Operation *op) {
   };
   // Ops over particles, tuples, or pairs whose kernels the pass knows.
 static auto isSumOp = [](Operation *op) {
-    return isa<SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
+    return isa<ScatterStencilOp, GatherStencilOp,
+               SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
                SumParticlesOp, MapParticlesOp, mdir::md_dist::SumPairsOp,
                mdir::md_dist::GatherPairsOp, mdir::md_dist::SumParticlesOp,
                mdir::md_dist::MapParticlesOp>(op);
@@ -77,7 +78,8 @@ ActivityResult ActivityAnalysis::classify(Value value) {
         verdict = {Activity::Unknown,
                    "it is an argument of a block whose meaning the pass does "
                    "not know"};
-    } else if (isDistributed(op) && isStructural(value.getType())) {
+    } else if (isa<GridStencilType>(value.getType()) ||
+               (isDistributed(op) && isStructural(value.getType()))) {
       // Inactive: structure, not a value.
     } else {
       bool distributed = isDistributed(op);

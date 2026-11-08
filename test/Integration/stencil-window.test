@@ -1,0 +1,8 @@
+# The compiled common body is compared with the independent truncated-power
+# definition, including its first derivatives, support joins and wrapping.
+# Bounds are declared in stencil-window.py before any comparison.
+# RUN: %python %S/stencil-window.py generate %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate-stencils --md-expand-stencil-windows --canonicalize | mlir-opt %lower_loops_to_llvm | mlir-translate --mlir-to-llvmir | llc -filetype=obj -relocation-model=pic -o %t.o
+# RUN: cc -shared %t.o -o %t.so
+# RUN: %python %S/stencil-window.py check %t.so > %t.report
+# RUN: cat %t.report

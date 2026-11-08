@@ -73,10 +73,12 @@ and the window-curvature terms needed by force matching. This design
 changes no implemented reciprocal method or measured
 performance result.
 
-Slice 1 of #452 starts with a checked structural particle-grid relation,
+Slice 1 of #452 provides a checked structural particle-grid relation,
 D[reciprocal-stencils] ([implementation record](../reciprocal-stencils.md)).
-Structured spreading/gathering and their derivative rules remain in
-progress; this checkpoint changes no reciprocal execution or measured rate.
+Structured spreading and gathering share a window body and declare their
+linear transposes and JVPs. Position and cell requests without a rule fail
+by operand name. This semantic slice changes no reciprocal execution or
+measured rate; the opt-in chain follows in slice 2.
 
 With the structure factor $S(\mathbf m) = \sum_j q_j e^{2\pi
 i\,\mathbf m\cdot\mathbf x_j}$ over the reciprocal vectors $\mathbf m$ of

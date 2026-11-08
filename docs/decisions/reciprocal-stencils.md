@@ -4,11 +4,14 @@ Recorded at its merge.
 
 **Introduce structured particle-grid stencils with explicit continuous operands as the first slice of the approved reciprocal-primitives design.**
 
-Status: implementation draft, part of #452. The current checkpoint
-provides the structural relation type and its constructor/verifier;
-structured spread/gather, transposes, JVPs, and execution remain pending.
-[The implementation record](../reciprocal-stencils.md) distinguishes those
-parts and gives the preliminary precision table and remaining gates.
+Part of #452, slice 1 of the approved contracts. The structural relation
+and structured spread/gather keep continuous inputs explicit. Linear
+transposes and JVPs clone the same scalar window body; active positions
+and cell receive named refusals until their composed rules are admitted.
+The order-four scalar window has forward and reverse derivatives through
+the existing scalar rules. [The implementation record](../reciprocal-stencils.md)
+states exact coverage, effects, bounds, the precision table against legacy
+and the slice-specific gates. It makes no new-route GPU or performance claim.
 
 Positions and cell remain explicit. Integer support metadata does not
 prove continuous operands inactive. No ordinary PME route or #778 forward
