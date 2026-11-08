@@ -1200,6 +1200,17 @@ Used for: Allegro, the example of a strictly local learned potential, and
 the model of ML1 (docs/metatomic-ml1.md), which the `nequip` package's ASE
 calculator evaluates as its reference.
 
+### Nikolskiy2020
+
+V. Nikolskiy, V. Stegailov, "GPU acceleration of four-site water models
+in LAMMPS," in *Parallel Computing: Technology Trends*, Advances in
+Parallel Computing **36** (IOS Press, 2020), pp. 565–573.
+[doi:10.3233/APC200086](https://doi.org/10.3233/APC200086)
+
+Used for: the extra point of TIP4P placed once per molecule and stored,
+its force kept per oxygen and spread by a second kernel; the related work
+of the rigid-water template kernel (D[rigid-water-template], #774).
+
 ### Nose1984
 
 S. Nosé, "A molecular dynamics method for simulations in the canonical
@@ -1369,6 +1380,17 @@ Comput.* **9**, 3084–3095 (2013).
 Used for: cpptraj, the program of analysis of the comparisons of
 `scripts/benchmarks/mdbench/structure.py`, and one of those compared in the
 roadmap (Section 8).
+
+### Ruymgaart2012
+
+A. P. Ruymgaart, R. Elber, "Revisiting molecular dynamics on a CPU/GPU
+system: water kernel and SHAKE parallelization," *J. Chem. Theory Comput.*
+**8**, 4624–4636 (2012).
+[doi:10.1021/ct300324k](https://doi.org/10.1021/ct300324k)
+
+Used for: a GPU kernel of three-site water, one thread per molecule with an
+oxygen–oxygen cutoff and the nine site pairs unrolled; the related work of
+the rigid-water template kernel (D[rigid-water-template], #774).
 
 ### Ryckaert1977
 
