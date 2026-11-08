@@ -5,8 +5,11 @@
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MDRT/MDRTDialect.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -210,7 +213,8 @@ Value kernelValue(OpBuilder &b, Location loc, Value value,
   return element;
 }
 
-Value evaluate(OpBuilder &b, Operation *op, ValueRange xyz) {
+Value evaluate(OpBuilder &b, Operation *op, ValueRange xyz,
+               const llvm::DenseMap<Value, Value> &tables) {
   Location loc = op->getLoc();
   Block &block = op->getRegion(0).front();
   IRMapping mapping;
@@ -218,9 +222,24 @@ Value evaluate(OpBuilder &b, Operation *op, ValueRange xyz) {
       b, loc, VectorType::get({3}, b.getIndexType()), xyz));
   for (auto [input, argument] : llvm::zip(op->getOperands(),
                                         block.getArguments().drop_front()))
-    mapping.map(argument, kernelValue(b, loc, input, xyz));
-  for (Operation &inner : block.without_terminator())
-    b.clone(inner, mapping);
+    mapping.map(argument, tables.count(input) ? tables.lookup(input)
+                                             : kernelValue(b, loc, input, xyz));
+  for (Operation &inner : block.without_terminator()) {
+    if (auto lookup = dyn_cast<LookupOp>(inner)) {
+      SmallVector<Value> indices;
+      for (Value index : lookup.getIndices()) {
+        Value value = mapping.lookupOrDefault(index);
+        if (!value.getType().isIndex())
+          value = arith::IndexCastOp::create(b, loc, b.getIndexType(), value);
+        indices.push_back(value);
+      }
+      Value table = mapping.lookupOrDefault(lookup.getTable());
+      Value loaded = memref::LoadOp::create(b, loc, table, indices);
+      mapping.map(lookup.getResult(), loaded);
+    } else {
+      b.clone(inner, mapping);
+    }
+  }
   return mapping.lookupOrDefault(block.getTerminator()->getOperand(0));
 }
 
@@ -235,6 +254,15 @@ class ExpandGridKernels
     for (Operation *op : operations) {
       OpBuilder b(op);
       Location loc = op->getLoc();
+      // Expose existing host table storage once, outside the generated loop.
+      // Kernel lookups become ordinary reads; no semantic table operation
+      // reaches storage assignment and no ownership changes hands here.
+      llvm::DenseMap<Value, Value> tables;
+      for (Value input : op->getOperands())
+        if (auto table = dyn_cast<TableType>(input.getType()))
+          if (!tables.count(input))
+            tables[input] = mdir::mdrt::ToBufferOp::create(
+                b, loc, mdir::mdrt::getTableBufferType(table), input);
       auto grid = op->getAttrOfType<DenseI64ArrayAttr>("grid").asArrayRef();
       bool half = op->getAttrOfType<StringAttr>("pairing").getValue()
                       == "real_hermitian_half";
@@ -246,7 +274,7 @@ class ExpandGridKernels
         auto type = cast<RankedTensorType>(op->getResult(0).getType());
         result = tensor::GenerateOp::create(b, loc, type, ValueRange(),
             [&](OpBuilder &inner, Location where, ValueRange xyz) {
-              Value value = evaluate(inner, op, xyz);
+              Value value = evaluate(inner, op, xyz, tables);
               if (isa<ComplexType>(type.getElementType())) {
                 Value real = vector::ExtractOp::create(inner, where, value, 0);
                 Value imag = vector::ExtractOp::create(inner, where, value, 1);
@@ -266,7 +294,7 @@ class ExpandGridKernels
               Value rem = arith::RemUIOp::create(inner, where, i, plane);
               Value y = arith::DivUIOp::create(inner, where, rem, last);
               Value z = arith::RemUIOp::create(inner, where, rem, last);
-              Value value = evaluate(inner, op, ValueRange{x, y, z});
+              Value value = evaluate(inner, op, ValueRange{x, y, z}, tables);
               if (half) {
                 Value first = arith::CmpIOp::create(inner, where,
                     arith::CmpIPredicate::eq, z, index(inner, where, 0));

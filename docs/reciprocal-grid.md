@@ -54,14 +54,14 @@ The generated-dialect and fixture-cleanup checks passed 2/2.
 
 ## Precision record before chain admission
 
-| Operation | Legacy Mixed | Legacy Double | Current slice-2 foundation |
+| Operation | Legacy Mixed | Legacy Double | Current f64 CPU reference |
 |---|---|---|---|
-| Position loads and fractional coordinates | f64, scaled local fraction narrowed to f32 | f64 | No assignment executor added yet |
-| Window weights | f32 | f64 | D390 semantic f64 window unchanged |
-| Assigned grid | f32 or deterministic i64 at scale $2^{40}$, converted to f32 | f64 or the same deterministic scale, converted to f64 | No grid assignment executor added yet |
-| FFT | complex f32 | complex f64 | Existing typed value bridge unchanged |
-| Influence map | f32 after f64 edge-table construction | f64 | Generic reference kernel uses f64; chain not admitted yet |
-| Gathered potential and forces | f32 local arithmetic, requested field conversion | f64 | No gather executor added yet |
+| Position loads and fractional coordinates | f64, scaled local fraction narrowed to f32 | f64 | f64 host views and fractional coordinates |
+| Window weights | f32 | f64 | f64 common scalar body |
+| Assigned grid | f32 or deterministic i64 at scale $2^{40}$, converted to f32 | f64 or the same deterministic scale, converted to f64 | f64 ordered ideal sum, no quantized path |
+| FFT | complex f32 | complex f64 | complex f64 through the existing CPU value bridge |
+| Influence map | f32 after f64 edge-table construction | f64 | f64 explicit Gaussian scalar kernel |
+| Gathered potential and forces | f32 local arithmetic, requested field conversion | f64 | f64 host sums and fields |
 | Grid map arithmetic | f32 spectral products | f64 | f64 scalar or real components of complex f64 |
 | Spectral reduction | local arithmetic follows execution precision; row and final sums f64 | f64 | Explicit sequential f64 reference sum |
 
@@ -145,6 +145,32 @@ obtain an explicit table buffer view, and materialize kernel lookups as
 buffer loads before storage assignment. Do not broaden storage assignment
 to admit arbitrary semantic lookup operations. That correction is not
 applied, and no further fixture run has been made.
+
+The maintainer authorized the table materializer and a narrower rule for
+new-path compilation/lowering gaps. Uniform tables now expose explicit
+buffer views and kernel lookups become buffer loads. The build passed.
+Its affected-fixture run failed 0/1 at a new point: deallocation encountered
+an unlowered `md_exec.particle_for` region. Correcting only the fixture's
+pass order to lower execution loops before deallocation passed 1/1.
+There was no repeated numerical comparison after a mismatch.
+
+The complete CPU grid reference yielded energy 55.1125753975. Absolute
+errors against the independent direct DFT and dense window were
+$7.11\,10^{-14}$ for energy, $9.77\,10^{-14}$ for force components and
+$1.85\,10^{-13}$ for charge potential. The maximum all-component virial
+central-difference discrepancy was $4.47\,10^{-9}$. All predeclared bounds
+passed. This remains a grid-only f64 CPU reference, not a Mixed or
+resident GPU execution claim.
+
+The evaluator-boundary fixture passed 1/1 by verifying the current named
+refusal when this composition reaches `md.evaluate`. Integrating its
+proved grid roots into the shared `md-differentiate` pass is the next
+required step. It has not been changed: the revised ruling requires a
+stop before shared-pass or refusal changes. The proposed integration
+reuses the tested reverse graph for first derivatives of explicitly
+selected Gaussian roots, preserves default and unsupported stencil
+refusals, and leaves D389's forward tangent alone. Final compatibility,
+admitted-precision and device gates remain outstanding.
 
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the

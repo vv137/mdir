@@ -587,8 +587,11 @@ def MD_MapGridOp : MD_GridKernelOp<"map_grid"> {
     A pure elementwise map on a static three-dimensional domain. The
     `grid` is the full real extent. With `euclidean` pairing the domain is
     the full grid; with `real_hermitian_half` it is the stored last-axis
-    half. Tensor inputs have the domain shape. Uniform f64 scalars and
-    vectors are explicit inputs, not captures. The kernel receives a
+    half. Tensor inputs have the domain shape. Uniform f64 scalars,
+    vectors and reference tables are explicit inputs, not captures. A
+    table stays a table argument in semantic IR; materialization exposes
+    its existing buffer and replaces kernel lookups with buffer loads.
+    The kernel receives a
     vector<3xindex> index and one element per input. Complex elements are
     represented inside the kernel by vector<2xf64> (real, imaginary), so
     the existing real scalar derivative rules apply in both directions.

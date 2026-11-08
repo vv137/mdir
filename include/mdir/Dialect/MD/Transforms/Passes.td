@@ -24,8 +24,10 @@ def ExpandReciprocal : Pass<"md-expand-reciprocal", "::mlir::ModuleOp"> {
 
 def ExpandGridKernels : Pass<"md-expand-grid-kernels", "::mlir::ModuleOp"> {
   let summary = "Expands structured grid maps and weighted reductions";
-  let dependentDialects = ["::mlir::arith::ArithDialect",
+  let dependentDialects = ["::mdir::mdrt::MDRTDialect",
+                           "::mlir::arith::ArithDialect",
                            "::mlir::complex::ComplexDialect",
+                           "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
                            "::mlir::tensor::TensorDialect",
                            "::mlir::vector::VectorDialect"];
