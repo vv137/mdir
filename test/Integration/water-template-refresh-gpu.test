@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --refresh
+# RUN: mdir-opt %t.input.mlir --test-md-template-search=refresh --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# Starts with an undersized arena; the refresh must size it automatically,
+# then preserve each group's inactive order and rows in subsequent phases.
