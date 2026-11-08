@@ -192,7 +192,12 @@ $3.6\times10^{-8}$ relative, and at $10^{-4}$ $2.0\times10^{-7}$, the rounding
 of the mesh divided by the step.
 
 `test/Integration/direction-gpu.test` runs both on the RTX 5090 in double:
-pending; the numbers follow in a comment.
+the identity on the pairs, tuples, and the term of the positions to
+$3.3\times10^{-16}$ relative ($-10.7583$ on both sides); with PME, $\Psi$
+along $\lambda$ and along $\mathbf q_0$ equal to $\partial E/\partial\lambda$
+to the bit, $-\mathbf t\cdot\mathbf F_\Psi$ against $\partial\Phi/\partial\lambda$
+to $7.9\times10^{-16}$ for both, and with the pair $\epsilon$ to
+$5.3\times10^{-16}$.
 
 No existing test changes: the tests of `test/Dialect/MD` and
 `test/Integration` pass on the CPU (95 passed, 32 unsupported for the device).
