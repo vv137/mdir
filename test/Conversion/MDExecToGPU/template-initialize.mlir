@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --convert-md-exec-to-gpu --verify-each | FileCheck %s --implicit-check-not=md_exec.empty_segmented_pairs --implicit-check-not='!mdrt.segmented_pairs'
 md.particle_set @atoms
 !list = !mdrt.segmented_pairs<@atoms>
-// CHECK: mdrt.template_pairs_abi = 2 : i32
+// CHECK: mdrt.template_pairs_abi = 3 : i32
 // CHECK-LABEL: func.func @initialize
 // CHECK-SAME: -> i64
 // CHECK: memref.dim

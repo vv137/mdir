@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# All three classes, a 65-entry row, empty rows, out-of-order staging
+# chunks, and untouched capacity tails. Every integer must match exactly.
+# CHECK: 1

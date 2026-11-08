@@ -1,6 +1,7 @@
 // One-warp execution of the actual source-derived body and scheduler.
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/TemplateBuildKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -287,7 +288,82 @@ struct TestTemplateScheduler
       if (isa<mdir::md::MDDialect>(op.getDialect())) op.erase();
   }
 };
+struct TestTemplateCompaction
+    : PassWrapper<TestTemplateCompaction, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateCompaction)
+  StringRef getArgument() const final { return "test-md-template-compaction"; }
+  StringRef getDescription() const final { return "Outlines the physical template chunk compactor"; }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect, func::FuncDialect, gpu::GPUDialect,
+        memref::MemRefDialect, scf::SCFDialect>();
+  }
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    auto function = module.lookupSymbol<func::FuncOp>("compact_seed");
+    if (!function || !function.isExternal() || function.getNumArguments() != 1) {
+      module.emitError("compaction fixture expects a compact_seed declaration");
+      return signalPassFailure();
+    }
+    Location loc = function.getLoc();
+    Block *entry = function.addEntryBlock();
+    OpBuilder b = OpBuilder::atBlockEnd(entry);
+    Value handle = entry->getArgument(0);
+    Type wide = b.getI64Type();
+    auto device = MemRefType::get({ShapedType::kDynamic}, b.getI32Type(),
+        MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    auto call = [&](StringRef name, ValueRange arguments, Type result, bool ciface) -> Value {
+      auto type = b.getFunctionType(arguments.getTypes(), TypeRange{result});
+      auto callee = module.lookupSymbol<func::FuncOp>(name);
+      if (!callee) {
+        OpBuilder symbols(module.getBodyRegion());
+        callee = func::FuncOp::create(symbols, loc, name, type);
+        callee.setPrivate();
+      }
+      assert(callee.getFunctionType() == type);
+      if (ciface) callee->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+      return func::CallOp::create(b, loc, callee, arguments).getResult(0);
+    };
+    auto constant = [&](int64_t value) -> Value {
+      return arith::ConstantIntOp::create(b, loc, value, 64);
+    };
+    auto layout = [&](int64_t slot) -> Value {
+      Value result = call("mdrtTemplatePairsLayoutValue", ValueRange{handle, constant(slot)}, wide, false);
+      return arith::IndexCastOp::create(b, loc, b.getIndexType(), result);
+    };
+    auto view = [&](int64_t slot) -> Value {
+      return call("mdrtTemplatePairsArenaView", ValueRange{handle, constant(slot)}, device, true);
+    };
+    TemplateBuildBuffers buffers;
+    buffers.arena = call("mdrtTemplatePairsBuffer", ValueRange{handle}, device, true);
+    buffers.stageUnits = view(TEMPLATE_LAYOUT_STAGE_UNITS);
+    buffers.stageEntries = view(TEMPLATE_LAYOUT_STAGE_ENTRIES);
+    buffers.counts = view(TEMPLATE_LAYOUT_BUILD_COUNTS);
+    buffers.entryOffsets = view(TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS);
+    buffers.workCounts = view(TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);
+    buffers.workOffsets = view(TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS);
+    buffers.scanScratch = view(TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
+    buffers.outerRows = view(TEMPLATE_LAYOUT_OUTER_ROWS);
+    buffers.innerRows = view(TEMPLATE_LAYOUT_INNER_ROWS);
+    buffers.outerUnits = view(TEMPLATE_LAYOUT_OUTER_UNITS);
+    buffers.innerUnits = view(TEMPLATE_LAYOUT_INNER_UNITS);
+    buffers.outerEntries = view(TEMPLATE_LAYOUT_OUTER_ENTRIES);
+    buffers.innerEntries = view(TEMPLATE_LAYOUT_INNER_ENTRIES);
+    buffers.waters = layout(TEMPLATE_LAYOUT_WATERS);
+    buffers.atoms = layout(TEMPLATE_LAYOUT_ATOMS);
+    buffers.rows = layout(TEMPLATE_LAYOUT_ROWS);
+    buffers.unitCapacity = layout(TEMPLATE_LAYOUT_UNITS);
+    buffers.scanBlocks = arith::MaxUIOp::create(b, loc,
+        arith::DivUIOp::create(b, loc,
+            arith::AddIOp::create(b, loc, buffers.rows, createIndex(b, loc, 1023)),
+            createIndex(b, loc, 1024)), createIndex(b, loc, 1));
+    emitCompactTemplatePairs(b, loc, buffers);
+    func::ReturnOp::create(b, loc);
+  }
+};
 } // namespace
 namespace mdir::test {
-void registerTestTemplateScheduler() { PassRegistration<TestTemplateScheduler>(); }
+void registerTestTemplateScheduler() {
+  PassRegistration<TestTemplateScheduler>();
+  PassRegistration<TestTemplateCompaction>();
+}
 }
