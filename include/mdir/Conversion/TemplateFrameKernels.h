@@ -1,0 +1,24 @@
+// Whole-frame snapshots at a stale outer-list rebuild.
+#ifndef MDIR_CONVERSION_TEMPLATEFRAMEKERNELS_H
+#define MDIR_CONVERSION_TEMPLATEFRAMEKERNELS_H
+#include "mlir/IR/Builders.h"
+namespace mdir::kernels {
+struct TemplateFrameBuffers {
+  mlir::Value positions, members, frames;
+  mlir::Value outerReference, packingCells, currentPoints, counters;
+  mlir::Value waters, atoms, cell, inverse;
+  bool hasSite = false;
+  double alpha = 0;
+};
+/// Prepare only the requested mobility groups at an outer build. Choose
+/// their new retained shifts, recover whole waters before f32 packing,
+/// and publish outer/current fractional anchors. Inactive views remain
+/// untouched. A cold control reset and unsigned max of nonnegative f64
+/// extent bits publish the measured squared extent in counter 3; this is
+/// zero if no water was requested. The caller checks finiteness and either
+/// widens an initial build or enforces the post-constraint bound. No such
+/// measurement/readback belongs to the per-step position writer.
+void emitSnapshotTemplateFrames(mlir::OpBuilder &, mlir::Location,
+    const TemplateFrameBuffers &, mlir::Value waterActive, mlir::Value atomActive);
+}
+#endif

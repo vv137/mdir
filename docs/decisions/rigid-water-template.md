@@ -687,6 +687,18 @@ growth: 180 bitwise f64 comparisons, the dimensions and a stable-address
 check. This establishes ownership and retained-frame arithmetic, not the
 native epoch updates or complete dynamics.
 
+The cold snapshot emitter chooses packing cells and updates outer/current
+fractions only for requested mobility groups. It reconstructs independent
+hydrogen images before packing real sites; stored extra-point coordinates
+are never read. An unsigned maximum of nonnegative f64 extent bits records
+the measured squared extent, including the formed site where required.
+The owner must use that measurement for initial widening or a
+post-constraint check; those native policies remain to be connected.
+An independent rational-geometry oracle checks four activity phases for
+three-site and four-site water in both cell types. All 1,264 scalar bit
+patterns match exactly, including 3/4-weight formed-site extents, retained
+inactive views and new packing frames at an outer-build face crossing.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
