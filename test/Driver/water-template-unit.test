@@ -30,3 +30,9 @@
 # CHECK-NOT: call @unit_energy_first
 # CHECK-NOT: call @unit_energy_second
 # CHECK: return
+# CHECK-LABEL: func.func @unit_three(
+# CHECK: gpu.shuffle idx
+# CHECK: call @unit_three_second
+# CHECK: gpu.shuffle xor
+# CHECK: call @unit_three_first
+# CHECK: return

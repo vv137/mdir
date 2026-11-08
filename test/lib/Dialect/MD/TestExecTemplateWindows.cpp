@@ -16,6 +16,10 @@ namespace {
 struct TestExecTemplateWindows
     : PassWrapper<TestExecTemplateWindows, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestExecTemplateWindows)
+  TestExecTemplateWindows() = default;
+  TestExecTemplateWindows(const TestExecTemplateWindows &pass) : PassWrapper(pass) {}
+  Option<bool> cacheSites{*this, "cache-sites",
+      llvm::cl::desc("Reuse prepared formed-site geometry"), llvm::cl::init(false)};
   StringRef getArgument() const final { return "test-md-exec-template-windows"; }
   StringRef getDescription() const final {
     return "Outlines execution template windows with their actual site guards";
@@ -69,6 +73,19 @@ struct TestExecTemplateWindows
       unsigned index = 0;
       for (Value value : body.getArguments()) mapping.map(value, entry->getArgument(index++));
       for (Value value : captures) mapping.map(value, entry->getArgument(index++));
+      if (cacheSites) {
+        auto vector = cast<VectorType>(entry->getArgument(1).getType());
+        Value weight = arith::ConstantOp::create(builder, op.getLoc(),
+            DenseElementsAttr::get(vector, FloatAttr::get(vector.getElementType(),
+                op.getAlpha().convertToDouble())));
+        SmallVector<Value> sites;
+        for (unsigned first : {1u, 3u})
+          sites.push_back(arith::MulFOp::create(builder, op.getLoc(), weight,
+              arith::AddFOp::create(builder, op.getLoc(),
+                  entry->getArgument(first), entry->getArgument(first + 1))));
+        unsigned bound = mdir::kernels::mapTemplateSiteOffsets(op, 0, sites, mapping);
+        function->setAttr("test.cached_sites", builder.getI32IntegerAttr(bound));
+      }
       auto contribution = mdir::kernels::emitTemplateWindowContributions(
           builder, op.getLoc(), op, 0, mapping);
       SmallVector<Value> values(contribution.firstForces.begin(), contribution.firstForces.end());

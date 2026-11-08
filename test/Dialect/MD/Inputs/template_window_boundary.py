@@ -4,12 +4,20 @@ The energy is 1/2 r^2 inside the 1 nm site cutoff, zero outside. Its closed
 forms are F_Ha=-d, F_Hb=d and W=-d outer d. All other atom forces vanish.
 Bounds, declared before the first execution: 2e-13 * max(1, abs(reference))
 for every energy, force and virial component, per image and in total.
+With --site-alpha the interacting points are formed from actual world
+positions; the constant-transpose coefficients are (1-2*alpha, alpha,
+alpha) for each molecule, with opposite force signs for its partner.
 """
 import itertools
+import argparse
 import pathlib
-import sys
 
-source, destination = map(pathlib.Path, sys.argv[1:])
+parser = argparse.ArgumentParser()
+parser.add_argument('source', type=pathlib.Path)
+parser.add_argument('destination', type=pathlib.Path)
+parser.add_argument('--site-alpha', type=float)
+args = parser.parse_args()
+source, destination = args.source, args.destination
 text = source.read_text()
 vec = 'vector<3xf64>'
 tensor = 'vector<9xf64>'
@@ -61,6 +69,15 @@ def check(actual, reference):
 # Real positions, not anchor-relative coordinates, define the oracle.
 oa, ob = (1.1, 0.0, 0.0), (0.0, 0.0, 0.0)
 ha, hb = (1.2, 0.0, 0.0), (-0.1, 0.0, 0.0)
+weights = (0.0, 1.0, 0.0)
+if args.site_alpha is not None:
+    alpha = args.site_alpha
+    ha2, hb2 = (1.072, 0.096, 0.0), (0.028, 0.096, 0.0)
+    ha = tuple(oa[k] + alpha * ((ha[k] - oa[k]) + (ha2[k] - oa[k]))
+               for k in range(3))
+    hb = tuple(ob[k] + alpha * ((hb[k] - ob[k]) + (hb2[k] - ob[k]))
+               for k in range(3))
+    weights = (1.0 - 2.0 * alpha, alpha, alpha)
 # Both second hydrogens are 0.1 nm from O and 0.16 nm from H1.
 a1 = vector((0.1, 0.0, 0.0))
 a2 = vector((-0.028, 0.096, 0.0))
@@ -78,9 +95,10 @@ for image in itertools.product(range(-1, 2), repeat=3):
     if inside:
         inside_images.append(image)
         reference[0] = 0.5 * sum(v * v for v in d)
-        for k in range(3):
-            reference[1 + 3 + k] = -d[k]  # H1 of A, tuple member 1
-            reference[1 + 12 + k] = d[k]  # H1 of B, tuple member 4
+        for atom, weight in enumerate(weights):
+            for k in range(3):
+                reference[1 + 3 * atom + k] = -weight * d[k]
+                reference[1 + 3 * (atom + 3) + k] = weight * d[k]
         reference[19:] = [-d[a] * d[b] for a in range(3) for b in range(3)]
     base = vector(tuple(oa[k] - (ob[k] + shift[k]) for k in range(3)))
     arguments = ', '.join((base, a1, a2, b1, b2))

@@ -519,6 +519,18 @@ turns, then writes each partner once. It combines the two copies of each
 first unit before writing. Its structural tests cover WW, SW, SS and
 energy-only bodies; physical GPU validation remains outstanding.
 
+The scheduler prepares local O–H offsets once for the first unit, and
+once per loaded partner before its 16-turn rotation. A four-site model
+also prepares the formed-site offset there and rotates it with the
+partner. Exact typed `alpha*(H1+H2)` source expressions bind to those
+cached offsets; no alternate placement or force formula is introduced.
+Three-site models emit no formed-site products. Structural checks verify
+the products lie outside the rotation. An independent $\alpha=0.75$
+all-images f64 probe checks the cached energy, constant-transpose forces
+and strain at the same bound above; the transpose coefficients are
+$(-0.5, 0.75, 0.75)$. Its expected neighboring-image energy is 0.492032
+and virial xx is -0.984064.
+
 The physical allocation has one flat integer payload containing the outer
 and inner rows, work units and pair records for all classes. The shared
 compiler/runtime layout uses i64 physical offsets and bounded i32 payload

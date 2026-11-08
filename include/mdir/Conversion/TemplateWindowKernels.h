@@ -43,6 +43,10 @@ struct TemplateContribution {
 TemplateContribution emitTemplateWindowContributions(
     mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
     unsigned tag, mlir::IRMapping &);
+/// Bind only exact typed alpha*(H1+H2) expressions to the prepared site
+/// offsets. This is common-expression reuse, not another placement rule.
+unsigned mapTemplateSiteOffsets(mdir::md_exec::TemplateForOp, unsigned tag,
+    mlir::ValueRange sites, mlir::IRMapping &);
 struct TemplateUnit {
   TemplatePairClass kind;
   /// i32 lane and entry bounds. The caller assigns one class uniformly
@@ -53,6 +57,8 @@ struct TemplateUnit {
   llvm::SmallVector<mlir::Value, 3> parameters;
   bool forces = true;
   llvm::SmallVector<mlir::Type, 2> sumTypes;
+  bool hasSite = false;
+  double alpha = 0.0;
 };
 /// Runs a block of entries of one segment. A partner's frame, mask, scalar
 /// parameters and accumulated forces rotate through its half warp together.
@@ -62,11 +68,14 @@ struct TemplateUnit {
 /// atomic destinations; no pair expression is embedded in this scheduler.
 /// The evaluation callback may run divergently and must not use warp
 /// collectives; the scheduler owns all warp communication.
+/// The fourth evaluation range holds cached formed-site offsets: first
+/// then second for WW, second for SW, none for SS or three-site models.
 llvm::SmallVector<mlir::Value, 2> emitTemplateClassUnit(
     mlir::OpBuilder &, mlir::Location, const TemplateUnit &,
     llvm::function_ref<TemplatePartner(mlir::OpBuilder &, mlir::Value)> loadPartner,
     llvm::function_ref<TemplateContribution(mlir::OpBuilder &,
-        mlir::ValueRange, mlir::ValueRange, mlir::ValueRange)> evaluate,
+        mlir::ValueRange, mlir::ValueRange, mlir::ValueRange,
+        mlir::ValueRange)> evaluate,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::ValueRange)> writeFirst,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
                             mlir::ValueRange)> writeSecond);
