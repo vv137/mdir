@@ -960,9 +960,12 @@ $(1 - \min(\mathbf m))(R + 2r_\mathrm m)$ instead of $(1 -
 \min(\mathbf m))R$. The proposition needs the extents at the positions of
 the step, not only at the build. The constraints keep them to their
 residual, but the positions of the input are not constrained before the
-first step (Section 6.2); the program therefore tests the extent of each
-water in the same loop as the displacement of its anchor, where the thread
-that constrains a water holds its three atoms. The lists hold every image
+first step (Section 6.2). The program therefore measures the extents at
+each build, where the packing reads every molecule whole, and takes the
+larger of $r_\mathrm m$ and the largest extent for that build; between
+builds it tests the extent of each water in the same loop as the
+displacement of its anchor, where the thread that constrains a water
+holds its three atoms. The lists hold every image
 of every pair within their reach while $R + 2r_\mathrm m < \min_a L_a$,
 the condition of D242 with the reach of the water list.
 
