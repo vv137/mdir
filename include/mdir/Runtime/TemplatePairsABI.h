@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 3
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 4
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -30,7 +30,12 @@ enum MdrtTemplateLayoutSlot {
   TEMPLATE_LAYOUT_INNER_ENTRIES = 10, TEMPLATE_LAYOUT_STAGE_UNITS = 11,
   TEMPLATE_LAYOUT_STAGE_ENTRIES = 12, TEMPLATE_LAYOUT_BUILD_COUNTS = 13,
   TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS = 14, TEMPLATE_LAYOUT_BUILD_WORK_COUNTS = 15,
-  TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS = 16, TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH = 17
+  TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS = 16, TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH = 17,
+  TEMPLATE_LAYOUT_SPATIAL_KEYS = 18, TEMPLATE_LAYOUT_SPATIAL_Z_KEYS = 19,
+  TEMPLATE_LAYOUT_SPATIAL_ITEMS = 20, TEMPLATE_LAYOUT_SPATIAL_PLACES = 21,
+  TEMPLATE_LAYOUT_SPATIAL_COUNTS = 22, TEMPLATE_LAYOUT_SPATIAL_STARTS = 23,
+  TEMPLATE_LAYOUT_SPATIAL_CURSORS = 24, TEMPLATE_LAYOUT_SPATIAL_BINS = 25,
+  TEMPLATE_LAYOUT_SCAN_BLOCKS = 26
 };
 
 /* Header ranges are [row begin/end, entry begin/end, work begin/end].
@@ -65,6 +70,8 @@ struct MdrtTemplatePairLayout {
   int64_t outerEntries, innerEntries, words;
   int64_t stageUnits, stageEntries, buildCounts, buildEntryOffsets;
   int64_t buildWorkCounts, buildWorkOffsets, buildScanScratch, scanBlocks;
+  int64_t spatialKeys, spatialZKeys, spatialItems, spatialPlaces;
+  int64_t spatialCounts, spatialStarts, spatialCursors, spatialBins;
 };
 
 /* All payload indices fit signless i32. Padded class places use unsigned
@@ -102,9 +109,23 @@ static inline int mdrtTemplatePairLayout(
   layout->buildWorkCounts = layout->buildEntryOffsets + layout->rows + 1;
   layout->buildWorkOffsets = layout->buildWorkCounts + layout->rows;
   layout->buildScanScratch = layout->buildWorkOffsets + layout->rows + 1;
-  layout->scanBlocks = (layout->rows + 1023) / 1024;
+  /* The grid builder uses at most four times ceil(units / 64) bins.
+   * Twelve bins also permit a small non-square grid without a separate
+   * allocation. Both scans share scratch, at distinct stages of a build. */
+  layout->spatialBins = 4 * ((waters + atoms + 63) / 64);
+  if (layout->spatialBins < 12) layout->spatialBins = 12;
+  int64_t scanSize = layout->rows > layout->spatialBins
+                        ? layout->rows : layout->spatialBins;
+  layout->scanBlocks = (scanSize + 1023) / 1024;
   if (!layout->scanBlocks) layout->scanBlocks = 1;
-  layout->words = layout->buildScanScratch + layout->scanBlocks;
+  layout->spatialKeys = layout->buildScanScratch + layout->scanBlocks;
+  layout->spatialZKeys = layout->spatialKeys + waters + atoms;
+  layout->spatialItems = layout->spatialZKeys + waters + atoms;
+  layout->spatialPlaces = layout->spatialItems + waters + atoms;
+  layout->spatialCounts = layout->spatialPlaces + waters + atoms;
+  layout->spatialStarts = layout->spatialCounts + layout->spatialBins;
+  layout->spatialCursors = layout->spatialStarts + layout->spatialBins + 1;
+  layout->words = layout->spatialCursors + layout->spatialBins;
   return 1;
 }
 #endif

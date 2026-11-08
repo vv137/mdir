@@ -573,9 +573,13 @@ reducer. A seeded one-pair runtime fixture checks the complete allocation,
 view, launch and reduction path against the exact energy $1/4$; search and
 validity are still separate gates.
 
-The same arena also contains build staging and row-scan scratch. A spatial
+The same arena also contains build staging, spatial keys, sorted unit IDs,
+inverse places, bin counts/offsets/cursors, and shared scan scratch. A spatial
 search can emit chunks once, then compact them by fixed row/class order
 without repeating its candidate search or allocating a second pair list.
+The bin budget is at least twelve and otherwise four times the number of
+64-unit groups. Scan scratch covers both fixed rows and bins; all borrowed
+arena views must be reacquired after growth.
 Physical staging addresses use i64 even when a chunk's index fits i32.
 The compactor uses the existing device scans and initializes the inner
 view with the full outer blocks; pruning subsequently shortens those

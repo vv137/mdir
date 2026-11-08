@@ -6,4 +6,8 @@
 # RUN: %python %S/../../Integration/Inputs/template_search_oracle.py generate %t.tilt.input.mlir %t.tilt.reference.json --triclinic --reframed
 # RUN: mdir-opt %t.tilt.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
 # RUN: FileCheck %s < %t.mlir
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy
 # CHECK: llvm.func @search_seed
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy
