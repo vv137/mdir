@@ -423,3 +423,86 @@ md.function @chebyshev_empty(%y: f64) -> f64 {
   %s = md.chebyshev %y [] : f64
   md.return %s : f64
 }
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// A request of a direction names the directed arguments
+// (D[force-matching-forward]).
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  // expected-error@+1 {{expected 'directions' to name at least one argument with a request of a direction}}
+  %d = md.evaluate @u(%x, %cell, %a) request [direction]
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// Directions only with a request of a direction.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %da: f64) -> f64 {
+  // expected-error@+1 {{expected 'directions' only with a request 'direction' or 'direction_forces'}}
+  %d = md.evaluate @u(%x, %cell, %a, %da) request [energy] {directions = array<i64: 2>}
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, f64) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+                %b: f64) -> f64 {
+  md.return %a : f64
+}
+
+// The directed arguments in increasing order.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %b: f64, %da: f64, %db: f64) -> f64 {
+  // expected-error@+1 {{expected 'directions' to name arguments from 2 to 3 in increasing order, got 2}}
+  %d = md.evaluate @u(%x, %cell, %a, %b, %db, %da) request [direction]
+      {directions = array<i64: 3, 2>}
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, f64, f64, f64) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// A direction has the type of its argument.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %da: !md.field<@atoms, f64>) -> f64 {
+  // expected-error@+1 {{expected the direction of argument 2 to have its type 'f64', got '!md.field<@atoms, f64>'}}
+  %d = md.evaluate @u(%x, %cell, %a, %da) request [direction] {directions = array<i64: 2>}
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, !md.field<@atoms, f64>) -> f64
+  md.return %d : f64
+}
+
+// -----
+
+md.potential @u(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
+    -> f64 {
+  md.return %a : f64
+}
+
+// The requests of a direction and of the tangent in separate ops.
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64,
+               %da: f64) -> (f64, f64) {
+  // expected-error@+1 {{expected the requests of a direction and those of the tangent in separate ops}}
+  %d, %t = md.evaluate @u(%x, %cell, %a, %da) request [direction, tangent]
+      {directions = array<i64: 2>}
+      : (!md.field<@atoms, 3 x f64>, !md.cell, f64, f64) -> (f64, f64)
+  md.return %d, %t : f64, f64
+}
