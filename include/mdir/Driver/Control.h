@@ -229,6 +229,11 @@ struct Control {
   /// the product in the positions, the Hessian-vector product (#771,
   /// D383). Internal only; no control-file key sets it.
   bool frameProductPositions = false;
+  /// With frameProduct, the product program gives forward mode in the
+  /// tunables instead: the derivative of the energy along directions of
+  /// its values and its gradient in the positions (#726,
+  /// D[force-matching-forward]). Internal only; no control-file key sets it.
+  bool frameProductDirection = false;
   enum class TunableKind {
     Charge,
     Sigma,

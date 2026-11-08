@@ -127,7 +127,7 @@ public:
   create(const model::PreparedModel &prepared, bool cache = true,
          CodeStore *store = nullptr, bool frames = false,
          bool frameProduct = false, bool frameProductPositions = false,
-         bool deviceBatch = false);
+         bool deviceBatch = false, bool frameProductDirection = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;
@@ -437,6 +437,23 @@ public:
                        double energyCotangent,
                        const double *positionCotangent,
                        double *positionDerivative = nullptr);
+  /// Forward mode in the tunables at a frame (#726,
+  /// D[force-matching-forward]), of a simulation created with `frames`,
+  /// `frameProduct`, and `frameProductDirection`: for a tangent of the
+  /// entries of the tunables, `tangent` (one vector for each tunable, of
+  /// its entries), the tangent of the energy, which it returns, and that of
+  /// its gradient in the positions, 3 N numbers in the order of the input
+  /// that it writes to `gradientTangent`. The host maps the tangent to
+  /// directions of the values of the program by the transpose of the chain
+  /// rule of D230, the program evaluates the derivative of @tunable along
+  /// them and its forces, and the host adds to the first what it adds to
+  /// the energy, which does not depend on the positions at a fixed cell.
+  /// The checks and the failures are those of `evaluateFrameProduct`.
+  llvm::Expected<double>
+  evaluateFrameDirection(const double *positions,
+                         const std::optional<std::array<double, 6>> &cell,
+                         const std::vector<std::vector<double>> &tangent,
+                         double *gradientTangent);
   size_t getParticleCount() const { return system.getNumParticles(); }
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
@@ -602,6 +619,12 @@ private:
   applyTunableChainRule(const std::vector<double> &scalars,
                         const std::vector<std::vector<double>> &fields,
                         double volume, double constants);
+  /// The transpose of `applyTunableChainRule` without the constants: the
+  /// directions of the slots, `scalars`, and of the fields of the gradient,
+  /// `fields`, N values each, of a tangent of the entries of the tunables.
+  void transposeTunableChainRule(const std::vector<std::vector<double>> &tangent,
+                                 std::vector<double> &scalars,
+                                 std::vector<std::vector<double>> &fields);
   /// Begins an activation of the entry from the state of the host
   /// (`%first_call` as given) and runs it to the end of its start.
   llvm::Error startActivation(int64_t firstCall);
