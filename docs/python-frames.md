@@ -154,7 +154,10 @@ that is not reduced, a pairlist distance above half of the least of the
 diagonal; a name of `gradients` that is not one of the three, or
 `gradients` that is not a tuple of names. With `UnsupportedError`: positions or cells that require a gradient (a PyTorch tensor with
 `requires_grad`), which the arrays of `evaluate` do not carry and which is
-not zero (`mdir.torch.evaluate` takes them); `"positions"` or `"strain"`
+not zero (`mdir.torch.evaluate` takes them); positions or cells, of an array
+or of the frames of an iterable, that carry a tangent of forward mode
+(`torch.func.jvp`, `torch.autograd.forward_ad`), which is not implemented
+(D[torch-forward-refusal]); `"positions"` or `"strain"`
 from an evaluator of the dependent terms. A
 frame whose evaluation fails (two particles at one place, a neighbor
 structure that overflows) raises `SimulationError` naming the frame. After
@@ -478,6 +481,40 @@ zero.
   `gradients=("positions",)` and positions that take no gradient,
   `out.gradients["positions"]` takes the place of `g`, and
   `loss.backward()` is given.
+- **Forward mode is refused** (D[torch-forward-refusal], #777). The
+  operations have a backward alone (`register_autograd`), and PyTorch
+  2.14.1 then carries no tangent through them and raises nothing: before
+  this decision a `torch.func.jvp` gave a tangent of 0 and
+  `torch.autograd.forward_ad` one of `None`, silently. Now a tangent that
+  reaches an operation raises `UnsupportedError`, "forward mode ... is not
+  implemented; reverse mode (torch.autograd.grad / backward) is", naming
+  the tensor that carries it:
+  - `torch.func.jvp`, `jacfwd`, and the dual numbers of
+    `torch.autograd.forward_ad`, with the tangent on `theta`, the
+    positions, the cells, or the tilts (one tensor, or a list, a tuple, or
+    another iterable of frames), of `energy` and of
+    `gradients["positions"]`, under `vmap` and `torch.compile` too;
+  - forward over reverse: a dual input to a backward with
+    `create_graph=True`, and a dual cotangent of a backward.
+
+  The tangent is seen where a tensor enters an operation, by the public
+  `torch.autograd.forward_ad.unpack_dual`: in `evaluate` for its
+  arguments, and in each backward for its cotangents; and where a frame is
+  read into an array (`FrameEvaluator.evaluate` as well), for the frames
+  of an iterable. Inside an operation the tangent of `torch.func.jvp` is
+  no longer seen, so `evaluate` looks at the first frame of an iterable
+  itself (an iterator gives it back in front of the rest); a later frame
+  with a tangent of `torch.func.jvp` alone, after a first without one, is
+  read without it. Outside a dual level `unpack_dual` returns at once, so
+  reverse mode is unchanged, to the bit. A tangent that does not reach the
+  operations (a `jvp` in a number that multiplies the energy) is given.
+- **The transforms of `torch.func` are not supported through
+  `mdir.torch`; `torch.autograd` is** (D[torch-forward-refusal]).
+  `torch.func.grad`, `jacrev`, `hessian`, `jacfwd(jacrev)`, and
+  `jvp(grad)` fail with PyTorch's own `RuntimeError` (an
+  `autograd.Function` that does not override `setup_context`) before any
+  tangent reaches the operations: an error, never a zero, which the adapter
+  does not wrap. Forward mode by `jvp` and `jacfwd` is refused as above.
 - One operation at a time on an evaluator, from any thread, with the GIL
   released during the frames; a second call while one runs raises
   `SimulationError` (D196).

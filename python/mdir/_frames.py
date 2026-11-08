@@ -6,6 +6,7 @@ A fit by reweighting (Thaler and Zavadlav, Nat. Commun. 12, 6884 (2021))
 needs U and dU/dtheta at frames sampled at other values of theta; the
 weights and the loss stay in the framework.
 """
+import sys
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -39,7 +40,18 @@ def _array(source, name):
     already. A tensor that requires a gradient is refused here: the
     evaluator returns arrays, which carry no graph, and a gradient left out
     is not zero. `mdir.torch.evaluate` differentiates in the positions and
-    the cell given as tensors (D252)."""
+    the cell given as tensors (D252). A tensor that carries a tangent of
+    forward mode is refused too (D[torch-forward-refusal]): the arrays
+    carry no tangent, and one left out is not zero. PyTorch is looked at
+    only where it is imported already, by its public `unpack_dual`."""
+    torch = sys.modules.get("torch")
+    if (torch is not None and isinstance(source, torch.Tensor) and
+            torch.autograd.forward_ad.unpack_dual(source).tangent is not None):
+        raise _core.UnsupportedError(
+            f"{name} carry a tangent of forward mode (torch.func.jvp, jacfwd, or "
+            "torch.autograd.forward_ad), which the arrays of the frame evaluator do not carry: "
+            "forward mode is not implemented; reverse mode (torch.autograd.grad / backward) "
+            "is, through mdir.torch.evaluate. The tangent would not be zero")
     if getattr(source, "requires_grad", False):
         raise _core.UnsupportedError(
             f"{name} require a gradient, which the arrays of FrameEvaluator.evaluate do not "
