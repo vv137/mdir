@@ -25,11 +25,14 @@ ss = text[:start] + '''    %zero = arith.constant dense<0.0> : vector<3xf64>
 ''' + text[end:]
 ss = ss.replace(signature, '^bb0(%base: vector<3xf64>):')
 ss = ss.replace('md.sum_template_window %ww,', 'md.sum_template_window %ss,').replace('} : !ww, !x', '} : !ss, !x')
+wide = (text[:start] + ep + text[end:]).replace('0.125', '0.75')
 for name, mutation in [('WW extra point', text[:start] + ep + text[end:]),
+                       ('former alpha bound', text.replace('alpha(0.125)', 'alpha(0.75)')),
+                       ('WW alpha 0.75', wide),
                        ('SW', sw), ('SS', ss)]:
     result = subprocess.run([tool, '-', '--md-differentiate', '--verify-each'],
                             input=mutation, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     if result.returncode:
         raise SystemExit(f'{name}: {result.stderr}')
-print('template-window shape contracts: 3 passed')
+print('template-window shape contracts: 5 passed')
