@@ -26,6 +26,13 @@
 namespace mdir {
 namespace md {
 
+// Diagnostic provenance, not permission to differentiate or fuse. Scalar
+// expansion must not erase the cell-activity boundary of a window.
+inline constexpr llvm::StringLiteral kStencilWindowActivityAttrName =
+    "md.stencil_window_activity";
+mlir::LogicalResult verifyStencilWindowActivityAttribute(
+    mlir::Operation *op, mlir::Attribute value);
+
 inline constexpr llvm::StringLiteral kStageRowsAttrName = "md.stage_rows";
 
 /// Static row count retained when a stage body is bufferized.

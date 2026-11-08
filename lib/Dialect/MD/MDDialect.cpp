@@ -19,6 +19,8 @@ void MDDialect::initialize() {
 
 LogicalResult MDDialect::verifyOperationAttribute(Operation *op,
                                                   NamedAttribute attr) {
+  if (attr.getName() == kStencilWindowActivityAttrName)
+    return verifyStencilWindowActivityAttribute(op, attr.getValue());
   if (attr.getName() == kStageRowsAttrName)
     return verifyStageRowsAttribute(op, attr.getValue());
   if (attr.getName() == kStageBodyAttrName)

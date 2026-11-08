@@ -7,6 +7,7 @@
 #include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/Truncation.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
+#include "mdir/Dialect/MD/Transforms/Stencils.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
@@ -3747,6 +3748,12 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       llvm::is_contained(kinds, static_cast<int32_t>(Request::Forces));
   requestVirial =
       llvm::is_contained(kinds, static_cast<int32_t>(Request::Virial));
+  if (requestVirial && body->getNumArguments() > 1 &&
+      isa<CellType>(body->getArgument(1).getType()) &&
+      failed(checkStencilVirialActivity(
+          function, body->getArgument(1), energy,
+          potential->getAttrOfType<LocationAttr>(kStencilWindowActivityAttrName))))
+    return fail();
   bool needsPositions = llvm::any_of(kinds, [](int32_t kind) {
     auto request = static_cast<Request>(kind);
     return request == Request::Forces || request == Request::Virial;

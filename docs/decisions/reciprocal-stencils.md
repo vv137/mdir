@@ -10,6 +10,10 @@ transposes and JVPs clone the same scalar window body; active positions
 and cell receive named refusals until their composed rules are admitted.
 The order-four scalar window has forward and reverse derivatives through
 the existing scalar rules. [The implementation record](../reciprocal-stencils.md)
+also records the ordinary evaluator's cell-activity guard: an unsupported
+virial composition must not become zero when another position field is
+used. The guard is limited to compositions containing the new primitives.
+The record
 states exact coverage, effects, bounds, the precision table against legacy
 and the slice-specific gates. It makes no new-route GPU or performance claim.
 

@@ -27,8 +27,9 @@ executor. Position and cell are not hidden in the relation's payload.
 
 **md.scatter_stencil** and **md.gather_stencil** are structured pure
 reductions. Their one-block weight kernel takes a vector of three f64
-support distances and yields one f64 weight. It cannot capture values,
-hold effects, or contain nested control flow. Positions and cell must be
+support distances and yields one f64 weight. It cannot capture dynamic
+inputs, hold effects, or contain nested control flow. Proven immutable
+literal constants may hoist during canonicalization. Positions and cell must be
 the exact operands of the relation constructor, not merely values of
 matching types. Particle-set identity and the full grid shape are checked.
 
@@ -60,6 +61,16 @@ structured JVP/VJP requests deliberately fail with diagnostics naming
 the operand and derivative direction. They are never silently zero,
 including when the same operand also chooses support indices. The
 adjoint interface marks them as kernel operands, not structural inputs.
+The ordinary evaluator also refuses a virial composition containing these
+operations when the energy's cell activity is active or unproven. Checking
+only uses of the primary position field would miss a stencil built from
+another field. Proven cell inactivity remains admissible; no continuous
+dependency is discarded by omission.
+Scalar expansion preserves diagnostic provenance on the potential as
+**md.stencil_window_activity**, so lowering the scalar spelling or
+canonicalizing a local JVP cannot erase this refusal boundary. The
+attribute is a source location on **md.potential**, verified as such;
+it grants no derivative or fusion capability.
 Composed position, cell and influence derivatives are prerequisites of
 the slice-2 chain and slice-3 products before those routes are admitted.
 

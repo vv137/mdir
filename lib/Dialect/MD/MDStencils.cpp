@@ -1,9 +1,18 @@
 // Structural assignment and interpolation contracts (Essmann et al., 1995).
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 using namespace mlir;
 using namespace mdir::md;
+
+LogicalResult mdir::md::verifyStencilWindowActivityAttribute(
+    Operation *op, Attribute value) {
+  if (!isa<PotentialOp>(op) || !isa<LocationAttr>(value))
+    return op->emitError(
+        "expected stencil window diagnostic provenance as a location on md.potential");
+  return success();
+}
 
 LogicalResult BSplineWindowOp::verify() {
   if (getOrder() < 2 || getOrder() > 8)
@@ -51,9 +60,14 @@ static LogicalResult verifyStencilKernel(Operation *op) {
     for (Value operand : inner.getOperands()) {
       auto arg = dyn_cast<BlockArgument>(operand);
       if ((arg && arg.getOwner() != &body) ||
-          (!arg && operand.getDefiningOp()->getBlock() != &body))
+          (!arg && operand.getDefiningOp()->getBlock() != &body)) {
+        Attribute literal;
+        if (matchPattern(operand, m_Constant(&literal)) &&
+            isMemoryEffectFree(operand.getDefiningOp()))
+          continue;
         return op->emitOpError(
             "window kernel cannot capture values; continuous inputs must be explicit");
+      }
     }
     if (auto window = dyn_cast<BSplineWindowOp>(inner))
       if (window.getOrder() != stencil.getOrder())

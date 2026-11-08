@@ -457,7 +457,8 @@ class MD_StencilApplyOp<string mnemonic> : MD_Op<mnemonic, [
   let description = [{
     The relation enumerates every particle and its periodic support once.
     The kernel takes a three-component f64 support distance and yields
-    one f64 window weight. It has no captures or effects. Multiplication
+    one f64 window weight. It has no dynamic captures or effects; immutable
+    literal constants may be hoisted. Multiplication
     by the data operand and addition over entries are the declared linear
     structure, outside the weight kernel. Scatter defines a fresh full
     grid, including zeros; gather defines every particle row, including

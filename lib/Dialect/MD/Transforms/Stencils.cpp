@@ -2,6 +2,7 @@
 // Cox-de Boor recurrence [deBoor2001], docs/references.md.
 #include "mdir/Dialect/MD/Transforms/Stencils.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
+#include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
@@ -13,6 +14,40 @@
 
 using namespace mlir;
 using namespace mdir::md;
+
+LogicalResult mdir::md::checkStencilVirialActivity(Operation *function,
+                                                 Value cell, Value energy,
+                                                 LocationAttr expandedWindow) {
+  Operation *stencil = nullptr;
+  Operation *window = nullptr;
+  function->walk([&](Operation *op) {
+    if (!window && isa<BSplineWindowOp>(op))
+      window = op;
+    if (!isa<ScatterStencilOp, GatherStencilOp>(op))
+      return WalkResult::advance();
+    stencil = op;
+    return WalkResult::interrupt();
+  });
+  if (!stencil)
+    stencil = window;
+  if (!stencil && !expandedWindow)
+    return success();
+  ActivityAnalysis activity(cell);
+  auto dependence = activity.classify(energy);
+  if (dependence.dependence == Activity::Inactive)
+    return success();
+  auto diagnose = [&]() -> InFlightDiagnostic {
+    if (stencil)
+      return stencil->emitOpError();
+    return emitError(Location(expandedWindow));
+  };
+  if (dependence.dependence == Activity::Unknown)
+    return diagnose()
+           << "cannot prove inactive cell operand in ordinary stencil virial "
+              "composition: " << dependence.reason;
+  return diagnose()
+         << "unsupported stencil VJP for active cell operand in ordinary virial composition";
+}
 
 Value mdir::md::cloneStencil(OpBuilder &b, Operation *source, Value data,
                              bool transpose) {
@@ -35,6 +70,18 @@ namespace {
 // At every recursion level the interval predicates are structural; smooth
 // first/second derivatives at the order-four joins follow from the polynomial.
 Value emitWindow(OpBuilder &b, BSplineWindowOp op) {
+  // A later ordinary virial request still needs a cell rule even if this
+  // spelling is replaced with arithmetic or removed after a scalar JVP.
+  for (Operation *owner = b.getInsertionBlock()->getParentOp(); owner;
+       owner = owner->getParentOp()) {
+    if (auto potential = dyn_cast<PotentialOp>(owner)) {
+      if (!potential->hasAttr(kStencilWindowActivityAttrName))
+        potential->setAttr(kStencilWindowActivityAttrName, op.getLoc());
+      break;
+    }
+    if (isa<FunctionOpInterface>(owner))
+      break;
+  }
   Location loc = op.getLoc();
   ScalarEmitter e(b, loc);
   Value product = e.constant(1, b.getF64Type());
