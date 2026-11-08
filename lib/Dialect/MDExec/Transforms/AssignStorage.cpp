@@ -2288,6 +2288,12 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
 
+  // The semantic FFT bridge already owns explicit buffers. Preserve that
+  // verified operation; generic cloning still rejects fields and runtime
+  // structures and does not transfer ownership.
+  if (isa<LinearTransformOp>(op))
+    return convertGeneric(op, scope);
+
   // Ops on cells hold no fields, and are copied as they are.
   bool isCell = isa<md::OrthorhombicCellOp, md::TriclinicCellOp, CellEdgesOp,
                     CellNumbersOp>(op);

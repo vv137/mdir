@@ -133,6 +133,19 @@ through its existing generic path, without relaxing field or ownership
 checks. This change is not applied. The passing owning-range correction
 and unchanged activity classification are retained.
 
+The maintainer authorized admitting the already-buffered FFT through
+`convertGeneric`. That narrow change rebuilt successfully. Its one
+authorized fixture rerun failed 0/1 before numerical execution, now because
+storage assignment encounters `md.lookup` inside an expanded grid loop.
+The generic path's field/runtime-structure refusal, ownership and activity
+classification are unchanged. Development stopped again as ruled.
+
+The proposed next correction belongs in the new grid materializer:
+obtain an explicit table buffer view, and materialize kernel lookups as
+buffer loads before storage assignment. Do not broaden storage assignment
+to admit arbitrary semantic lookup operations. That correction is not
+applied, and no further fixture run has been made.
+
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the
 final clean head. The device sanitizer tier applies if device code
