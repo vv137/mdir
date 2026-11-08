@@ -224,7 +224,7 @@ is needed when the kernels are compiled, not when LLVM is built.
 Slice 1 of #452 introduces **md.grid_stencil**, structured scatter/gather,
 their declared linear transposes and JVPs, and the common scalar B-spline
 window. The [contracts and precision table](reciprocal-stencils.md)
-(D[reciprocal-stencils]) keep continuous operands explicit and refuse
+(D390) keep continuous operands explicit and refuse
 unsupported position/cell derivatives by name. The opt-in reciprocal
 execution chain follows in slice 2.
 

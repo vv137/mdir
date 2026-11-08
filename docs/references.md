@@ -405,7 +405,7 @@ ISBN 978-0-387-95366-3.
 [Publisher record](https://link.springer.com/book/9780387953663)
 
 Used for: the common cardinal B-spline recurrence and independent
-truncated-power reference for particle-grid windows (D[reciprocal-stencils]).
+truncated-power reference for particle-grid windows (D390).
 
 ### Essmann1995
 

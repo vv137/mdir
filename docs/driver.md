@@ -91,7 +91,7 @@ must use the same choice. It is included in the checkpoint fingerprint.
 ### 1.1 Keywords
 
 The [particle-grid stencil primitives](reciprocal-stencils.md),
-D[reciprocal-stencils], adds compiler IR only. It introduces no control
+D390, adds compiler IR only. It introduces no control
 keyword or selector and leaves ordinary PME execution unchanged.
 
 The keywords of every table, their values, their defaults, and the

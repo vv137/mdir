@@ -7,7 +7,7 @@ in the positions and the cell, where they are tensors that require a
 gradient, through the gradients of the energy that the evaluator gives
 (D252). The operation is a `torch.library.custom_op` with
 `register_autograd`, so that it is opaque to `torch.compile`; it has no
-rule of forward mode, which is refused by name (D[torch-forward-refusal]).
+rule of forward mode, which is refused by name (D391).
 Importing this module imports torch; `import mdir` does not.
 """
 import itertools
@@ -57,7 +57,7 @@ class _Record:
 
 def _refuse_forward(what, *tensors):
     """Refuses a tangent of forward-mode AD on a tensor that enters an
-    operation (D[torch-forward-refusal], #777). The operations have a
+    operation (D391, #777). The operations have a
     backward alone (`register_autograd`), and PyTorch gives no tangent
     through them and raises nothing: the tangent would be a silent zero.
     The tangent is seen where the tensor enters, by the public
@@ -698,7 +698,7 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     Forward mode is not implemented: a tangent of `torch.func.jvp`,
     `jacfwd`, or `torch.autograd.forward_ad` on an argument, or on a
     cotangent of a backward, raises UnsupportedError, naming forward mode
-    and the tensor; it is not zero (D[torch-forward-refusal]).
+    and the tensor; it is not zero (D391).
     """
     number, gradient, inputs = _begin(evaluator, theta, positions, cells, tilts, gradients)
     energy, others, _, serial, in_positions, in_strain, in_cell = _frame_energies(

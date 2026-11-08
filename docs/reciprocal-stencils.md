@@ -1,6 +1,6 @@
 # Particle-grid stencil primitives: slice 1
 
-D[reciprocal-stencils], part of #452. The contracts and additional
+D390, part of #452. The contracts and additional
 requirements are approved by
 [the ruling on #781](https://github.com/vv137/mdir/pull/781#issuecomment-6716738603).
 

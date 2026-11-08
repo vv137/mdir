@@ -157,7 +157,7 @@ diagonal; a name of `gradients` that is not one of the three, or
 not zero (`mdir.torch.evaluate` takes them); positions or cells, of an array
 or of the frames of an iterable, that carry a tangent of forward mode
 (`torch.func.jvp`, `torch.autograd.forward_ad`), which is not implemented
-(D[torch-forward-refusal]); `"positions"` or `"strain"`
+(D391); `"positions"` or `"strain"`
 from an evaluator of the dependent terms. A
 frame whose evaluation fails (two particles at one place, a neighbor
 structure that overflows) raises `SimulationError` naming the frame. After
@@ -481,7 +481,7 @@ zero.
   `gradients=("positions",)` and positions that take no gradient,
   `out.gradients["positions"]` takes the place of `g`, and
   `loss.backward()` is given.
-- **Forward mode is refused** (D[torch-forward-refusal], #777). The
+- **Forward mode is refused** (D391, #777). The
   operations have a backward alone (`register_autograd`), and PyTorch
   2.14.1 then carries no tangent through them and raises nothing: before
   this decision a `torch.func.jvp` gave a tangent of 0 and
@@ -509,7 +509,7 @@ zero.
   reverse mode is unchanged, to the bit. A tangent that does not reach the
   operations (a `jvp` in a number that multiplies the energy) is given.
 - **The transforms of `torch.func` are not supported through
-  `mdir.torch`; `torch.autograd` is** (D[torch-forward-refusal]).
+  `mdir.torch`; `torch.autograd` is** (D391).
   `torch.func.grad`, `jacrev`, `hessian`, `jacfwd(jacrev)`, and
   `jvp(grad)` fail with PyTorch's own `RuntimeError` (an
   `autograd.Function` that does not override `setup_context`) before any

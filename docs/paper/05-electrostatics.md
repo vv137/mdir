@@ -74,7 +74,7 @@ changes no implemented reciprocal method or measured
 performance result.
 
 Slice 1 of #452 provides a checked structural particle-grid relation,
-D[reciprocal-stencils] ([implementation record](../reciprocal-stencils.md)).
+D390 ([implementation record](../reciprocal-stencils.md)).
 Structured spreading and gathering share a window body and declare their
 linear transposes and JVPs. Position and cell requests without a rule fail
 by operand name. This semantic slice changes no reciprocal execution or

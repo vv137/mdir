@@ -1,5 +1,5 @@
 # REQUIRES: python-api, torch
-# Forward-mode AD through mdir.torch is refused (D[torch-forward-refusal],
+# Forward-mode AD through mdir.torch is refused (D391,
 # #777), on the CPU, in double and mixed
 # precision, Inputs/python_frames_torch_forward.py: torch.func.jvp,
 # jacfwd, and torch.autograd.forward_ad, with the tangent on theta, the

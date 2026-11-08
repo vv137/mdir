@@ -1,4 +1,4 @@
-"""Forward-mode AD through mdir.torch is refused (D[torch-forward-refusal],
+"""Forward-mode AD through mdir.torch is refused (D391,
 #777): every tangent that reaches an operation of mdir.torch raises
 UnsupportedError, naming forward mode, and never gives a zero.
 

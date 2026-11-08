@@ -41,7 +41,7 @@ def _array(source, name):
     evaluator returns arrays, which carry no graph, and a gradient left out
     is not zero. `mdir.torch.evaluate` differentiates in the positions and
     the cell given as tensors (D252). A tensor that carries a tangent of
-    forward mode is refused too (D[torch-forward-refusal]): the arrays
+    forward mode is refused too (D391): the arrays
     carry no tangent, and one left out is not zero. PyTorch is looked at
     only where it is imported already, by its public `unpack_dual`."""
     torch = sys.modules.get("torch")
