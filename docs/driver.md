@@ -90,7 +90,7 @@ must use the same choice. It is included in the checkpoint fingerprint.
 
 ### 1.1 Keywords
 
-The [grid composition](reciprocal-grid.md), D[reciprocal-grid], is compiler
+The [grid composition](reciprocal-grid.md), D392, is compiler
 development IR and introduces no control-file key or default-route change.
 
 The [particle-grid stencil primitives](reciprocal-stencils.md),

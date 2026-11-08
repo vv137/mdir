@@ -74,7 +74,7 @@ changes no implemented reciprocal method or measured
 performance result.
 
 The [slice-2 implementation record](../reciprocal-grid.md),
-D[reciprocal-grid], begins the structured grid maps and paired reductions.
+D392, begins the structured grid maps and paired reductions.
 Their explicit scalar kernels retain the energy's spectral pairing rather
 than changing it to a particle reduction. Admission of a reciprocal chain
 requires its separate primal and derivative gates.

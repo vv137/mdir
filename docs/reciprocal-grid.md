@@ -1,6 +1,6 @@
 # Reciprocal grid composition: slice 2
 
-D[reciprocal-grid], part of #452, implements the second slice of
+D392, part of #452, implements the second slice of
 [the approved design](reciprocal-primitives.md). D390 supplies the
 assignment relation, structured spread/gather and common scalar window.
 
