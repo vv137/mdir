@@ -1,0 +1,6 @@
+# Selected Gaussian grid energy, forces, charge field and all strain components
+# versus a dense window/direct-DFT oracle. Bounds precede the first comparison.
+# RUN: rm -f %t.mlir %t.values
+# RUN: %mdir_python %S/reciprocal-grid.py emit > %t.mlir
+# RUN: mdir-opt %t.mlir --md-expand-reciprocal=functions=evaluate --md-inline --md-expand-stencil-reductions --md-materialize-stencil-values --md-expand-stencil-windows --md-expand-grid-kernels --convert-linear-transform-values --convert-md-to-md-exec --md-exec-assign-algebra --md-exec-assign-storage --one-shot-bufferize --buffer-deallocation-pipeline --convert-linalg-to-loops --convert-md-exec-to-loops --convert-complex-to-llvm | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt > %t.values
+# RUN: %mdir_python %S/reciprocal-grid.py check < %t.values

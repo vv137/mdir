@@ -109,6 +109,30 @@ review. Development resumes from this passed focused checkpoint;
 the route is not admitted until its remaining gates pass. Ordinary PME
 and D389 remain unchanged.
 
+Before the first complete grid comparison, the independent dense-window
+and direct-DFT fixture declares absolute $2\,10^{-9}$ plus relative
+$2\,10^{-11}$ bounds on grid energy, forces and charge potential, and
+absolute $2\,10^{-6}$ on all nine virial components against simultaneous
+affine position/cell central differences. It checks the grid contribution
+alone, without self, background or excluded-pair corrections. The initial
+execution uses the explicit f64 host reference and the existing FFT bridge;
+no Mixed or resident route is admitted by that test.
+
+The first end-to-end fixture run failed before execution because it placed
+raw buffer imports inside activity analysis. Moving the fixture to an
+explicit `md.function` input boundary preserves independent field arguments;
+the function is expanded before `md-inline`. The classification rule is
+unchanged. The one controlled rerun also failed before execution: storage
+assignment rejects the already-buffered `md_exec.linear_transform` emitted
+by the existing FFT value bridge. Both runs had 0 passed and 1 failed;
+no energy, force, charge or strain comparison executed.
+
+Development is stopped again under Ruling 13. The proposed next change is
+to let storage assignment clone the already-buffered linear transform
+through its existing generic path, without relaxing field or ownership
+checks. This change is not applied. The passing owning-range correction
+and unchanged activity classification are retained.
+
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the
 final clean head. The device sanitizer tier applies if device code
