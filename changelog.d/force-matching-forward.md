@@ -1,0 +1,3 @@
+### Added
+
+- **Forward mode in the arguments of a potential: the requests `direction` and `direction_forces` of `md.evaluate`** (D[force-matching-forward], #726). `md-differentiate` builds the derivative of a potential along directions of the arguments that the attribute `directions` names, $\Psi = \sum_s\dot b_s\,\partial U/\partial b_s$, from the sums of $U$, with its forces $-\partial\Psi/\partial\mathbf x = -(\partial^2U/\partial\mathbf x\,\partial\mathbf b)\,\dot{\mathbf b}$, the transpose of the product of D376. A reciprocal sum takes two sums for all the directions together. `md-check-derivatives` checks both by central differences along the directions.
