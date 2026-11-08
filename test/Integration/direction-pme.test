@@ -1,0 +1,25 @@
+# Forward mode in the arguments of a reciprocal sum (D[force-matching-forward],
+# #726), on the CPU: Psi along lambda, along the field q0, and along lambda
+# and a constant of a pair term, against dE/dlambda (D161) and the
+# derivative of the tangent of D379 (the transpose identity), in double and
+# mixed precision. Inputs/direction_pme.py appends the checks to the program
+# of Inputs/tangent_pme.py.
+#
+# REQUIRES: python-api
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/tangent_pme.py 1e-12 %t/base.mlir
+# RUN: %mdir_python %S/Inputs/direction_pme.py %t/base.mlir %t/double.mlir
+# RUN: mdir-opt %t/double.mlir %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm --convert-ub-to-llvm --reconcile-unrealized-casts \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# The checks of forward mode follow a mark, -726, after those of the
+# program against the Ewald sum, which are not read here (the tolerance
+# 1e-12 given to the script is that of forward mode, below the accuracy of
+# the mesh). Each prints the relative error and then 1 within 1e-12.
+# CHECK: {{^-726$}}
+# CHECK-COUNT-5: {{^}}{{[0-9.e+-]+}}{{$}}{{[[:space:]]+}}1{{$}}
