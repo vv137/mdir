@@ -85,7 +85,7 @@ $2.93\,10^{-10}$. The eight geometry request expansions and the existing
 default refusal fixture passed 2/2. The execution form is a reference
 traversal with explicit host buffers, not a new resident GPU strategy.
 
-## Stopped development checkpoint
+## Stopped checkpoint and authorized resumption
 
 The selected-chain implementation is not admitted. Its first build had
 one deterministic typed-initializer-list compile error; one correction
@@ -101,9 +101,13 @@ if the controlled rerun fails, stop. No chain numerical comparison or
 final compatibility gate has run. Static inspection identifies a
 non-owning `ValueRange` initialized from a temporary initializer list in
 the activity loop as a lifetime hazard under C++17. The proposed
-correction is an owning `SmallVector<Value>`; it has not been applied or
-tested. The stopped source is retained for review. Ordinary PME and
-D389 remain unchanged.
+correction was an owning `SmallVector<Value>`. The maintainer authorized
+that narrow change on #792. Its rebuild passed, and the one authorized
+selection-test rerun passed 1/1. The classification rule is unchanged.
+The earlier stopped source and both failure counts remain recorded for
+review. Development resumes from this passed focused checkpoint;
+the route is not admitted until its remaining gates pass. Ordinary PME
+and D389 remain unchanged.
 
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the

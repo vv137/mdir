@@ -169,7 +169,8 @@ FailureOr<ReciprocalGridGraph> mdir::md::inspectReciprocalGrid(SumGridOp root) {
     root.emitOpError("reciprocal assignment requires the common order-four cardinal window");
     return failure();
   }
-  for (Value variable : ValueRange{graph.assignment.getPositions(), checked.getInput()}) {
+  SmallVector<Value> geometryVariables{graph.assignment.getPositions(), checked.getInput()};
+  for (Value variable : geometryVariables) {
     ActivityAnalysis activity(variable);
     if (activity.classify(graph.assignment.getData()).dependence != Activity::Inactive) {
       root.emitOpError("position/cell-dependent assignment amplitudes require an upstream derivative rule");
