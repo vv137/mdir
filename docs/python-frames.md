@@ -478,6 +478,31 @@ zero.
   `gradients=("positions",)` and positions that take no gradient,
   `out.gradients["positions"]` takes the place of `g`, and
   `loss.backward()` is given.
+- **Forward mode is refused** (D[torch-forward-refusal], #777). The
+  operations have a backward alone (`register_autograd`), and PyTorch
+  2.14.1 then carries no tangent through them and raises nothing: before
+  this decision a `torch.func.jvp` gave a tangent of 0 and
+  `torch.autograd.forward_ad` one of `None`, silently. Now a tangent that
+  reaches an operation raises `UnsupportedError`, "forward mode ... is not
+  implemented; reverse mode (torch.autograd.grad / backward) is", naming
+  the tensor that carries it:
+  - `torch.func.jvp`, `jacfwd`, and the dual numbers of
+    `torch.autograd.forward_ad`, with the tangent on `theta`, the
+    positions, the cells, or the tilts, of `energy` and of
+    `gradients["positions"]`, under `vmap` and `torch.compile` too;
+  - forward over reverse: a dual input to a backward with
+    `create_graph=True`, and a dual cotangent of a backward.
+
+  The tangent is seen where a tensor enters an operation, by the public
+  `torch.autograd.forward_ad.unpack_dual`: in `evaluate` for its
+  arguments, and in each backward for its cotangents. Outside a dual level
+  that function returns at once, so reverse mode is unchanged, to the bit.
+  A tangent that does not reach the operations (a `jvp` in a number that
+  multiplies the energy) is given. `torch.func.hessian`, and `torch.func.grad`
+  and `jacrev` alone, stop before any tangent in PyTorch's `RuntimeError` for
+  an `autograd.Function` without the support of `torch.func`: the
+  transforms of `torch.func` other than forward mode are not supported, and
+  they give no zero either.
 - One operation at a time on an evaluator, from any thread, with the GIL
   released during the frames; a second call while one runs raises
   `SimulationError` (D196).

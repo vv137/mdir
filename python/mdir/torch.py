@@ -6,8 +6,9 @@ tunables `theta` through the vector-Jacobian product of the evaluator, and
 in the positions and the cell, where they are tensors that require a
 gradient, through the gradients of the energy that the evaluator gives
 (D252). The operation is a `torch.library.custom_op` with
-`register_autograd`, so that it is opaque to `torch.compile`. Importing
-this module imports torch; `import mdir` does not.
+`register_autograd`, so that it is opaque to `torch.compile`; it has no
+rule of forward mode, which is refused by name (D[torch-forward-refusal]).
+Importing this module imports torch; `import mdir` does not.
 """
 import itertools
 import weakref
@@ -15,6 +16,7 @@ from typing import List, Tuple
 
 import numpy as np
 import torch
+import torch.autograd.forward_ad as _forward_ad
 from torch import Tensor
 
 from . import _core, _frames
@@ -51,6 +53,24 @@ class _Record:
         # The gradients that the caller named, and whether the positions or
         # the cell of the call take a gradient.
         self.asked, self.differentiated = (), False
+
+
+def _refuse_forward(what, *tensors):
+    """Refuses a tangent of forward-mode AD on a tensor that enters an
+    operation (D[torch-forward-refusal], #777). The operations have a
+    backward alone (`register_autograd`), and PyTorch gives no tangent
+    through them and raises nothing: the tangent would be a silent zero.
+    The tangent is seen where the tensor enters, by the public
+    `torch.autograd.forward_ad.unpack_dual`, at the dual level of
+    `torch.autograd.forward_ad` or of `torch.func.jvp`; outside any dual
+    level it returns at once."""
+    for tensor in tensors:
+        if isinstance(tensor, Tensor) and _forward_ad.unpack_dual(tensor).tangent is not None:
+            raise _core.UnsupportedError(
+                f"forward mode through mdir.torch.evaluate (torch.func.jvp, jacfwd, or "
+                f"torch.autograd.forward_ad, here a tangent on {what}) is not implemented; "
+                "reverse mode (torch.autograd.grad / backward) is. The tangent would not be "
+                "zero")
 
 
 def _cell_gradient(positions, cells, tilts, gradient, strain):
@@ -254,6 +274,7 @@ def _input_setup(ctx, inputs, output):
 
 
 def _input_backward(ctx, cotangent):
+    _refuse_forward("the cotangent of a gradient of the energy", cotangent)
     energy, gradient = ctx.saved_tensors
     shape = (-1,) + (1,) * (gradient.dim() - 1)
     by_energy = (cotangent * gradient).to(energy.dtype).reshape(len(energy), -1).sum(dim=1)
@@ -275,6 +296,8 @@ def _backward(ctx, energy, others, jacobian, serial, in_positions, in_strain, in
     # The tunables alone: the gradient in the positions and the cell is
     # that of the nodes of their own, which the engine runs only where the
     # backward takes it.
+    _refuse_forward("a cotangent of the outputs", energy, others, jacobian, in_positions,
+                    in_strain, in_cell)
     product = _frame_vjp(ctx.call, sum(ctx.sizes), ctx.serial, energy, others, ctx.jacobian,
                          [in_positions, in_strain, in_cell], ctx.needed)
     return None, None, list(torch.split(product, ctx.sizes))
@@ -350,6 +373,7 @@ def _shaped(given, values):
 
 
 def _positions_backward(ctx, others, gradient, strain, cell):
+    _refuse_forward("a cotangent of the outputs", others, gradient, strain, cell)
     _refuse_outputs(ctx.call, others, strain, cell)
     if not _nonzero(gradient):
         # The first backward of a force (a zero cotangent on the gradient).
@@ -383,6 +407,7 @@ def _cell_setup(ctx, inputs, output):
 
 
 def _cell_backward(ctx, others, gradient, strain, cell):
+    _refuse_forward("a cotangent of the outputs", others, gradient, strain, cell)
     _refuse_outputs(ctx.call, others, strain, cell)
     if _nonzero(gradient):
         raise _core.UnsupportedError(
@@ -421,6 +446,7 @@ def _energy_in_setup(ctx, inputs, output):
 
 
 def _energy_in_backward(ctx, energy):
+    _refuse_forward("the cotangent of the energy", energy)
     gradient, cell = ctx.saved_tensors
     positions, cells, tilts = ctx.inputs
     results = [None, None, None]
@@ -499,8 +525,11 @@ def _begin(evaluator, theta, positions, cells, tilts, gradients):
             raise _core.InputError(f"theta['{name}']: expected a float64 tensor of shape "
                                    f"({end - begin},)")
         devices.add(tensor.device)
+        _refuse_forward(f"theta['{name}']", tensor)
     if len(devices) != 1:
         raise _core.InputError("mdir.torch.evaluate: the tensors of theta are on one device")
+    for given, name in ((positions, "the positions"), (cells, "the cells"), (tilts, "the tilts")):
+        _refuse_forward(name, given)
     # "tunables" names what autograd decides here: the derivative in `theta`
     # is kept where a tensor of it requires a gradient.
     asked = tuple(name for name in _frames._named(gradients) if name != "tunables")
@@ -630,6 +659,11 @@ def evaluate(evaluator, theta, positions, cells=None, tilts=None, *, gradients=(
     where a backward needs them. The positions and the cell are nodes of
     the graph of their own beside that of `theta`, so that a backward that
     takes the gradient in `theta` alone does not reach them.
+
+    Forward mode is not implemented: a tangent of `torch.func.jvp`,
+    `jacfwd`, or `torch.autograd.forward_ad` on an argument, or on a
+    cotangent of a backward, raises UnsupportedError, naming forward mode
+    and the tensor; it is not zero (D[torch-forward-refusal]).
     """
     number, gradient, inputs = _begin(evaluator, theta, positions, cells, tilts, gradients)
     energy, others, _, serial, in_positions, in_strain, in_cell = _frame_energies(

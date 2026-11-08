@@ -1,0 +1,3 @@
+### Fixed
+
+- **Forward-mode AD through `mdir.torch` is refused by name, not a silent zero** (D[torch-forward-refusal], #777): a tangent of `torch.func.jvp`, `jacfwd`, or `torch.autograd.forward_ad` on `theta`, the positions, the cells, the tilts, or a cotangent of a backward raises `UnsupportedError` ("forward mode ... is not implemented; reverse mode (torch.autograd.grad / backward) is"), where it gave a tangent of 0 or `None`. Reverse mode is unchanged, to the bit ([docs/python-frames.md](docs/python-frames.md)).
