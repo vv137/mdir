@@ -112,10 +112,10 @@ def grid(x0, y0, sites, cells, cs=34, title="", note=""):
             x, y = x0 + 20 + cs * j, y0 + cs * i
             fill = {"both": "#cfe0f5", "coul": "#cfe0f5", "lj": "#fde2cf", "none": "#ffffff", "full": "#e6e9ed"}[kind]
             out.append(f'<rect x="{x}" y="{y}" width="{cs-2}" height="{cs-2}" rx="3" fill="{fill}" stroke="{FAINT}"/>')
-            lab = {"both": "C+LJ", "coul": "C", "lj": "LJ", "none": "", "full": "C+LJ"}[kind]
+            lab = {"both": "q+LJ", "coul": "q", "lj": "LJ", "none": "", "full": "q+LJ"}[kind]
             col = {"both": ACC, "coul": ACC, "lj": ACC2, "none": MUTED, "full": MUTED}[kind]
             if kind == "both":
-                out.append(t(x + cs / 2 - 1, y + cs / 2 + 4, "C", 11, fill=ACC, weight="bold"))
+                out.append(t(x + cs / 2 - 1, y + cs / 2 + 4, "q", 11, fill=ACC, weight="bold"))
                 out.append(t(x + cs / 2 - 1, y + cs / 2 + 14, "LJ", 9, fill=ACC2, weight="bold"))
             elif lab:
                 out.append(t(x + cs / 2 - 1, y + cs / 2 + 4, lab, 10 if kind == "full" else 11, fill=col, weight="bold"))
@@ -178,16 +178,16 @@ def fig3():
         body.append(f'<circle cx="{x}" cy="{y}" r="5" fill="#ffffff" stroke="{INK}"/>')
     body.append(f'<circle cx="205" cy="325" r="5" fill="#8b5cf6" stroke="{INK}"/>')
     body.append(t(190, 329, "K⁺", 10, "end", MUTED))
-    # column 2: two lists
+    # column 2: one buffer, two mobility-group cadences
     body.append(box(300, 60, 250, 300, "#f6f8fa"))
-    body.append(t(425, 82, "two lists", 13, weight="bold"))
+    body.append(t(425, 82, "one buffer, two cadences", 12, weight="bold"))
     body.append(box(320, 100, 210, 110, "#ffffff"))
-    body.append(t(425, 120, "water list (WW)", 12, weight="bold", fill=ACC))
+    body.append(t(425, 120, "WW segment", 12, weight="bold", fill=ACC))
     body.append(t(425, 140, "tested on the oxygens only", 11, fill=MUTED))
     body.append(t(425, 165, "built every ~55 steps", 12))
     body.append(t(425, 184, "pruned every ~8.5 steps", 12))
     body.append(box(320, 225, 210, 115, "#ffffff"))
-    body.append(t(425, 245, "solute lists (SW, SS)", 12, weight="bold", fill=ACC2))
+    body.append(t(425, 245, "SW and SS segments", 12, weight="bold", fill=ACC2))
     body.append(t(425, 265, "tested on oxygens and atoms", 11, fill=MUTED))
     body.append(t(425, 290, "built every ~40 steps", 12))
     body.append(t(425, 309, "pruned every ~3 steps", 12))

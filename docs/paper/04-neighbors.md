@@ -1209,9 +1209,11 @@ template is fixed when the program is compiled:
   tested: the check is removed by the structure. The validity of each
   entry and the cutoff of each pair of sites remain.
 
-Related kernels for water on a GPU take one thread per molecule with the 9
-pairs of sites of three-site water unrolled
-[[Ruymgaart2012]](references.md#ruymgaart2012), or place the extra point
+Water-specific kernels and water-index lists were used by
+[[Ruymgaart2012]](references.md#ruymgaart2012), with one thread per molecule
+and the nine pairs of three-site water unrolled. Their SI, Appendix C,
+applies an oxygen–oxygen cutoff to all nine pairs: a molecular cutoff,
+a different model from the site cutoff retained here. Other kernels place the extra point
 of TIP4P once per molecule and store it, keeping its force per oxygen for
 a second kernel to spread [[Nikolskiy2020]](references.md#nikolskiy2020).
 A prototype of one thread per pair of molecules, with global atomic
@@ -1237,6 +1239,15 @@ about 60% of the saving was in the pair kernel and 40% in the lists; in a
 solvated protein the solute's lists and the packing of the waters take
 part of it back.
 
+For $P$ particle classes, $P(P+1)/2$ unordered class-pair segments, including
+self-pairs, occupy ranges of one buffer, compacted by tag with offsets.
+There are $C\le P$ displacement tests, one per mobility group; the number
+of classes does not set the number of tests. Water anchors and atoms give
+two tests even with four classes (water, solute, ions, perturbed atoms)
+and ten segments. Segment $(a,b)$ refreshes at the faster participating
+cadence. The spatial search and sort run once. A segment without a measured
+specialization gain uses the general path in the same launch.
+
 **One launch.** The pairs of clusters are of three classes: water–water,
 solute–water, and solute–solute. The last two are few, and launched apart
 their kernels are bound by latency: for ubiquitin the prototype took
@@ -1245,10 +1256,10 @@ with one launch over the three classes, a class per warp.
 
 ![The lists and the launch](figures/rigid-water-lists.png)
 
-*Figure 4.3. One spatial sort into water and solute clusters, two lists
-tested at their own pace, and one launch over the three classes of
-cluster pairs, with the shares of the pairs within $r_c$ and the
-prototype's cadences and times for ubiquitin with OPC. (From
+*Figure 4.3. Target layout: one spatial sort into water and solute clusters,
+three class-pair segments in one buffer, two displacement-test cadences,
+and one launch. The pair shares within $r_c$, cadences and times are the
+prototype's for ubiquitin with OPC. (From
 `scripts/paper/plot-rigid-water.py`.)*
 
 **What it gives.** Composed from the prototype's path and `main`'s other

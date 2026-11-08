@@ -116,6 +116,7 @@ add_mlir_library(MDIRDriver
   ModelTerm.cpp
   ModelFingerprint.cpp
   NeighborCount.cpp
+  WaterTemplate.cpp
   Tunables.cpp
   Output.cpp
   ProgramModule.cpp

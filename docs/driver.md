@@ -98,6 +98,15 @@ No new keyword is introduced.
 The [grid composition](reciprocal-grid.md), D392, is compiler
 development IR and introduces no control-file key or default-route change.
 
+The same-accuracy execution choice `[performance]`
+`"water.template" = "AUTO" | "ON" | "OFF"` belongs to
+D[rigid-water-template]. Its implementation is in progress; its accepted
+contract is in the [decision](decisions/rigid-water-template.md).
+The quoted dotted name is one key, not a nested TOML table. It is part of
+the execution fingerprint. The numerical model and topology site definition
+are preserved; deterministic, double, CPU and derivative programs retain
+the general path, with a named refusal for `ON`.
+
 The [particle-grid stencil primitives](reciprocal-stencils.md),
 D390, adds compiler IR only. It introduces no control
 keyword or selector and leaves ordinary PME execution unchanged.
@@ -707,7 +716,7 @@ run, an entry each, in three groups:
 |---|---|
 | physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, a floating-point number as the shortest text of its double, so that `9` and `9.0` are one value, and an integer exactly: below $2^{53}$ in magnitude as the text of its double, from $2^{53}$ on with all its digits, D347, and a value that names a choice in its documented spelling, #702); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
 | coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
-| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
+| execution | Every key of `[execution]` and `[performance]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
 
 A value longer than 160 characters is recorded as its SHA-256. The
 entries are the keys as written, not the values the driver resolves: a

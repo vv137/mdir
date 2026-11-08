@@ -50,6 +50,7 @@ tools = [
     "mdir-opt",
     "mdir-model-test",
     "mdir-dihedral-tunables-test",
+    "mdir-water-template-test",
     "mdir-output-rows-test",
     "mdir-prolate-test",
     "mdir-influence-test",
