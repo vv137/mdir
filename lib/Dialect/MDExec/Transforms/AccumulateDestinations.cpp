@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -128,6 +129,8 @@ static void mergeOuts(TupleForOp loop, unsigned into, unsigned from) {
       /*overwrite=*/DenseBoolArrayAttr(), loop.getDisjointAttr(),
       // Chosen later, for the loop as it is then (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr());
+  if (auto epoch = loop->getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+    merged->setAttr(md::kTemplateConstraintEpoch, epoch);
   merged.getKernel().takeBody(loop.getKernel());
 
   // Each member takes the sum of its two contributions, in the destination

@@ -6,6 +6,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MD/MDTypes.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -637,6 +638,10 @@ static void fuse(TupleForOp first, TupleForOp second) {
       /*overwrite=*/DenseBoolArrayAttr(), first.getDisjointAttr(),
       // Chosen later, for the fused loop (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr());
+
+  if (first->getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch) ||
+      second->getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+    fused->setAttr(md::kTemplateConstraintEpoch, builder.getUnitAttr());
 
   // The arguments of a kernel: its displacements, its values of fields,
   // and its parameters.

@@ -421,6 +421,10 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
       // Chosen on a device (md-exec-choose-scatter, D285).
       /*scatter=*/md_exec::ScatterAttr());
 
+  if constexpr (std::is_same_v<OpTy, md::GatherTuplesOp>)
+    if (auto epoch = op->template getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+      loop->setAttr(md::kTemplateConstraintEpoch, epoch);
+
   Block &source = op.getKernel().front();
   Type vector = VectorType::get({3}, builder.getF64Type());
   SmallVector<Type> arguments(displacements.size(), vector);

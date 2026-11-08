@@ -2,10 +2,16 @@
 #ifndef MDIR_DIALECT_MD_MDTEMPLATEWINDOW_H
 #define MDIR_DIALECT_MD_MDTEMPLATEWINDOW_H
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/IR/Value.h"
 #include <array>
 namespace mlir { class OpBuilder; class Location; }
 namespace mdir::md {
+/// Native-builder proof that this operation applies the matched waters'
+/// position constraints. Carried through execution lowering so a fresh
+/// pair list cannot reset the run's post-constraint extent provenance.
+inline constexpr llvm::StringLiteral kTemplateConstraintEpoch =
+    "md.template_constraint_epoch";
 /// (positive member, negative member), with the anchor image in the first
 /// coordinate. Remaining coordinates are whole-molecule H-O offsets.
 llvm::SmallVector<std::array<unsigned, 2>, 5>

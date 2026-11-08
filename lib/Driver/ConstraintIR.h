@@ -59,6 +59,8 @@ struct ConstraintPositionInputs {
 struct ConstraintPositionConfig {
   bool withFailure, analytic;
   double tolerance, analyticTolerance;
+  /// Native template route only: these constraints cover its matched waters.
+  bool templateWaterEpoch = false;
 };
 struct ConstraintPositionResult {
   mlir::Value change, failed;
