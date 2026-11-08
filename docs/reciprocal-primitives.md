@@ -1,8 +1,10 @@
 # Reciprocal sums as differentiable primitives
 
-Status: proposed design for [#452](https://github.com/vv137/mdir/issues/452),
-D[reciprocal-primitives-design]; awaiting the maintainer's ruling.
-This document proposes the remaining composition. D306, D319, D341, and
+Status: design approved for [#452](https://github.com/vv137/mdir/issues/452),
+D[reciprocal-primitives-design], by the
+[maintainer's ruling](https://github.com/vv137/mdir/pull/781#issuecomment-6716738603)
+on 2026-11-08, including the additions in Section 7.
+This document records the remaining composition. D306, D319, D341, and
 D360 already supply the FFT operations, their adjoints, and storage.
 It adds no implementation or numerical result.
 
@@ -80,11 +82,11 @@ to legacy boundary-mode treatment needs a separate numerical decision.
 
 ## 3. Semantic operations and their transposes
 
-Proposed operation names are part of the design question, not implemented
-syntax. Use a particle-grid stencil relation and structured kernels rather
+The operation names below are approved design, not implemented syntax.
+Use a particle-grid stencil relation and structured kernels rather
 than a new opaque PME call with another handwritten force result.
 
-| Proposed semantic operation | Contract | Declared transpose |
+| Semantic operation (approved design) | Contract | Declared transpose |
 |---|---|---|
 | **md.grid_stencil** | A typed relation between a named particle set and a static periodic grid; support order and window are explicit. Entries identify particle and wrapped grid index. Continuous local coordinates remain separate SSA operands of the weight kernel. | Integer index enumeration is structural; derivatives flow through the explicit continuous operands, not a cotangent of an integer relation. |
 | **md.scatter_stencil** | A pure scatter-sum value onto a fresh grid. Its scalar/vector kernel reads the relation's local coordinates and particle operands. | A gather over the same entries, with the reverse derivative of that same kernel. In the amplitude alone this is $A^{\mathsf T}$. |
@@ -143,7 +145,10 @@ windows receive a named diagnostic.
 ## 4. C(ii), HVP-3, and strain
 
 This section states the consumers' contracts before choosing an emitter.
-It does not add a new evaluator API. At fixed independent charges,
+It does not add a new evaluator API. The forward tangent of #778 retains
+its two reciprocal sums along the direction. A possible migration to this
+chain's JVP is decided by measurement in slice 3, not by this design or
+slices 1 and 2. At fixed independent charges,
 $\partial U_{\mathrm{rec}}/\partial\mathbf x_i
 =q_i\sum_k\varphi_k\nabla_{\mathbf x_i}a_{ki}$; forces have the negative
 sign. Position-dependent charges require their upstream chain rule, or a
@@ -207,9 +212,12 @@ exact numerical adjoint identity for a quantizer or differentiate integer
 rounding as if it were the physical model.
 
 Reuse the existing mixed/double type boundaries and f64 energy and
-derivative reductions. An operation-by-operation precision audit precedes
-performance conclusions. No promotion of the entire chain to f64 is
-hidden in a Mixed result.
+derivative reductions. Every implementation slice provides a precision
+table comparing the new and legacy routes: positions as loaded, window
+weights, assigned grid, FFT, influence, gathered potential, forces, and
+each accumulator. State every difference before any performance conclusion;
+compare timings only between routes of the same types. No promotion of
+the entire chain to f64 is hidden in a Mixed result.
 
 The execution forms declare operand effects, indexed accumulation, row
 coverage, and reduction algebra through D342/D301 and the existing effects
@@ -233,6 +241,9 @@ Each implementation slice is a draft PR and keeps its own scope and gates.
 3. Compose C(ii) and HVP-3, including both terms in each formula above and
    the existing site derivatives. Remove a refusal only for the tested
    supported subset. Existing scalar derivative paths remain available.
+   Measure and seek a decision in this slice on whether #778's forward
+   tangent should migrate from its existing two-sum construction to the
+   JVP route; it remains unchanged until that decision.
 4. Cover triclinic Gaussian PME, P3M's supported cells, prolate windows, and
    LJ-PME's coefficient fields and zero mode in separately gated slices.
    Preserve listed-particle semantics: a zero charge can still have a
@@ -271,11 +282,24 @@ Validation is specified before implementation measurements:
   transforms, transfers, and scratch; inspect plans and lifetimes.
   No slowdown or overlap claim follows from removing an opaque IR node.
 
-## 7. Requested ruling
+## 7. Maintainer's ruling
 
-Approve or redirect: (1) the structured particle-grid relation and
-spread/gather transpose pair; (2) explicit nonlinear-operand and
-higher-derivative rules, required before C(ii)/HVP-3 support; (3) the staged
-coverage and opt-in rollout while retaining existing strategies; and
-(4) the compatibility, quantization, and performance gates above.
-Implementation waits for this ruling.
+The [2026-11-08 ruling](https://github.com/vv137/mdir/pull/781#issuecomment-6716738603)
+approves all four contracts: the structured particle-grid relation and
+spread/gather transpose pair; explicit nonlinear and higher-derivative
+rules before C(ii)/HVP-3; staged coverage and opt-in rollout; and the
+compatibility, quantization, and performance gates in Section 6.
+Order-four B-splines are the first curvature case, both terms of each
+product remain required, and D387's placement curvature stays separate.
+
+The ruling adds two requirements:
+
+- Each implementation slice gives the new-versus-legacy precision table
+  listed in Section 5 before any performance conclusion; any difference
+  is stated and timings compare routes of the same types.
+- #778's forward tangent keeps its two reciprocal sums. Whether to migrate
+  it to the JVP route is decided in slice 3 by measurement.
+
+Implementation proceeds in the slices of Section 6. The ordinary
+reciprocal route and its strategies remain the default; changing that
+default requires a ruling of its own.

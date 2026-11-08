@@ -1,3 +1,3 @@
 ### Added
 
-- Propose the reciprocal sum as differentiable primitives, with declared spread/gather transposes and the contracts needed for charge-field force matching and position Hessian-vector products; execution remains unchanged (D[reciprocal-primitives-design], #452).
+- Document the approved design for reciprocal primitives, with declared spread/gather transposes, force-matching derivative contracts, and per-slice precision comparisons; execution remains unchanged (D[reciprocal-primitives-design], #452).

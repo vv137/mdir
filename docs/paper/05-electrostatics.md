@@ -66,11 +66,11 @@ mode adds the grid in fixed point at the scale $2^{40}$.
 
 ## 5.2 The reciprocal sum
 
-The proposed decomposition for #452 is described in
+The approved decomposition for #452 is described in
 [Reciprocal sums as differentiable primitives](../reciprocal-primitives.md),
 D[reciprocal-primitives-design]. It declares the spread/gather transposes
-and the window-curvature terms needed by force matching. The proposal is
-awaiting a ruling and changes no implemented reciprocal method or measured
+and the window-curvature terms needed by force matching. This design
+changes no implemented reciprocal method or measured
 performance result.
 
 With the structure factor $S(\mathbf m) = \sum_j q_j e^{2\pi
