@@ -316,11 +316,20 @@ operation ::= `md.evaluate` $callee `(` $operands `)`
 | `tangent` | `f64` | `Φ = Σ_i t_i · ∂U/∂x_i`, the derivative of `U` along the tangent `t` of the positions |
 | `tangent_derivative(n)` | as `derivative(n)` | `∂Φ/∂θ_n` or `∂Φ/∂a_i`: the mixed derivative `Σ_i t_i · ∂²U/∂x_i ∂θ_n` (D376) |
 | `tangent_forces` | Type of the position field | `−∂Φ/∂x_i`: minus the Hessian of `U` times the tangent, `−Σ_j ∂²U/∂x_i ∂x_j · t_j` (D383) |
+| `direction` | `f64` | `Ψ = Σ_n ḃ_n ∂U/∂b_n + Σ_i ȧ_i ∂U/∂a_i`, the derivative of `U` along directions of the arguments named by `directions` (D[force-matching-forward]) |
+| `direction_forces` | Type of the position field | `−∂Ψ/∂x_i`: minus the mixed derivative `Σ_n ∂²U/∂x_i ∂b_n · ḃ_n`, forward mode in the arguments of the gradient in the positions |
 
 With a `tangent` request, the op takes one operand more than the
 potential, the last: the tangent `t`, a field of the type of the
 positions. The tangent is held fixed: `tangent_derivative(n)` is the
 derivative of `Φ` in argument `n` of the potential at fixed `t`.
+
+With a `direction` request, the attribute `directions` names arguments
+of the potential, in increasing order, each a number (`f64`) or a field
+of the particles with one component of `f64`, and the op takes one
+operand more for each, after the arguments of the potential: its
+direction, of the type of the argument. The requests of a direction and
+those of the tangent are not mixed in one op.
 
 The op does not survive semantic differentiation, which replaces it with
 a call to a generated `md.function`.
@@ -344,6 +353,7 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>callee</code></td><td>::mlir::FlatSymbolRefAttr</td><td>flat symbol reference attribute</td></tr>
 <tr><td><code>request_kinds</code></td><td>::mlir::DenseI32ArrayAttr</td><td>i32 dense array attribute</td></tr>
 <tr><td><code>request_arguments</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
+<tr><td><code>directions</code></td><td>::mlir::DenseI64ArrayAttr</td><td>i64 dense array attribute</td></tr>
 </table>
 
 #### Operands:
@@ -1687,6 +1697,8 @@ _Quantity requested from a potential_
 | Tangent | `4` | tangent |
 | TangentDerivative | `5` | tangent_derivative |
 | TangentForces | `6` | tangent_forces |
+| Direction | `7` | direction |
+| DirectionForces | `8` | direction_forces |
 
 ### Truncation
 

@@ -2169,6 +2169,8 @@ _Quantity requested from a potential_
 | Tangent | `4` | tangent |
 | TangentDerivative | `5` | tangent_derivative |
 | TangentForces | `6` | tangent_forces |
+| Direction | `7` | direction |
+| DirectionForces | `8` | direction_forces |
 
 ### Truncation
 
