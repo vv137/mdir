@@ -8,6 +8,7 @@
 #include "mdir/Runtime/TemplatePairsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
@@ -316,6 +317,8 @@ private:
   };
   llvm::DenseMap<Value, TemplatePairState> templatePairs;
   LogicalResult lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp op);
+  LogicalResult lowerTemplateFor(md_exec::TemplateForOp op);
+  LogicalResult getTemplateState(Operation *op, Value value, TemplatePairState &state);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
@@ -5907,6 +5910,119 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   return success();
 }
 
+LogicalResult Lowering::getTemplateState(Operation *op, Value value,
+                                        TemplatePairState &state) {
+  llvm::DenseSet<Value> seen;
+  while (seen.insert(value).second) {
+    if (auto found = templatePairs.find(value); found != templatePairs.end()) {
+      state = found->second;
+      return success();
+    }
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto loop = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
+      if (!loop || argument.getArgNumber() == 0) break;
+      value = loop.getInitArgs()[argument.getArgNumber() - 1];
+    } else if (auto loop = value.getDefiningOp<scf::ForOp>()) {
+      value = loop.getInitArgs()[cast<OpResult>(value).getResultNumber()];
+    } else if (auto refresh = value.getDefiningOp<md_exec::RefreshSegmentedPairsOp>()) {
+      value = refresh->getOperand(0);
+    } else break;
+  }
+  return op->emitOpError("template list has no initializer in this function");
+}
+
+LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
+  if (op.getOuts().size() > 1)
+    return op.emitOpError("requires destination accumulation before template GPU lowering");
+  if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
+    return failure();
+  TemplatePairState state;
+  // Opaque host states have already become i64: use the raw operand.
+  if (failed(getTemplateState(op, op->getOperand(0), state))) return failure();
+  Location loc = op.getLoc();
+  OpBuilder b(op);
+  Type wide = b.getI64Type();
+  auto indexBuffer = getDeviceType({ShapedType::kDynamic}, b.getI32Type());
+  auto framesType = getDeviceType({ShapedType::kDynamic, 3}, b.getF32Type());
+  Value handle = op->getOperand(0);
+  auto view = [&](StringRef name, MemRefType type) -> Value {
+    auto getter = getOrDeclare(name, b.getFunctionType({wide}, {type}));
+    getter->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+    return func::CallOp::create(b, loc, getter, ValueRange{handle}).getResult(0);
+  };
+  auto layout = [&](int64_t slot) -> Value {
+    auto getter = getOrDeclare("mdrtTemplatePairsLayoutValue",
+        b.getFunctionType({wide, wide}, {wide}));
+    Value which = arith::ConstantIntOp::create(b, loc, slot, 64);
+    Value value = func::CallOp::create(b, loc, getter, ValueRange{handle, which}).getResult(0);
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), value);
+  };
+  auto metadata = getOrDeclare("mdrtTemplatePairsMetadata",
+      b.getFunctionType({wide, wide}, {indexBuffer}));
+  metadata->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+  Value members = func::CallOp::create(b, loc, metadata,
+      ValueRange{handle, arith::ConstantIntOp::create(b, loc, TEMPLATE_MEMBERS, 64)}).getResult(0);
+  Value pairs = view("mdrtTemplatePairsBuffer", indexBuffer);
+  Value order = view("mdrtTemplatePairsOrder", indexBuffer);
+  Value frames = view("mdrtTemplatePairsFrames", framesType);
+  Value workOffset = layout(TEMPLATE_LAYOUT_INNER_UNITS);
+  Value entryOffset = layout(TEMPLATE_LAYOUT_INNER_ENTRIES);
+  Value capacity = layout(TEMPLATE_LAYOUT_UNITS);
+  Value waters = arith::IndexCastOp::create(b, loc, b.getI32Type(), state.waters);
+  Value particles = createSize(b, loc, op.getPositions());
+  // Scratch has a row per original particle. Stride over arbitrarily many
+  // records with at most that many warps, rather than sizing scratch by a
+  // data-dependent list count or reading that count back to the host.
+  Value warps = arith::MinUIOp::create(b, loc, capacity, particles);
+  Value one = createIndex(b, loc, 1), warp32 = createIndex(b, loc, 32);
+  Value launched = arith::MaxUIOp::create(b, loc, warps, one);
+  Value threads = arith::MulIOp::create(b, loc, launched, warp32);
+  Value block = createIndex(b, loc, blockSize);
+  Value grid = createGroups(b, loc, threads, blockSize);
+  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
+  OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value thread = arith::AddIOp::create(k, loc,
+      arith::MulIOp::create(k, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
+  Value warp = arith::DivUIOp::create(k, loc, thread, warp32);
+  Value lane = arith::IndexCastOp::create(k, loc, k.getI32Type(),
+      arith::RemUIOp::create(k, loc, thread, warp32));
+  Value valid = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, warp, warps);
+  Value end = arith::IndexCastOp::create(k, loc, k.getIndexType(),
+      memref::LoadOp::create(k, loc, pairs,
+          ValueRange{createIndex(k, loc, TEMPLATE_PAIR_INNER_RANGES + 17)}));
+  Value start = arith::SelectOp::create(k, loc, valid, warp, end);
+  SmallVector<Value> zeros;
+  for (Value initial : op.getReduce()) zeros.push_back(createZero(k, loc, initial.getType()));
+  bool hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
+  TemplateWorkBuffers buffers{pairs, workOffset, entryOffset, order, members,
+                               frames, waters, op.getCellMutable().get(), hasSite};
+  auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
+      [&](OpBuilder &body, Location, Value record, ValueRange previous) {
+        IRMapping captures;
+        auto contributions = emitTemplateWorkUnit(body, loc, op, buffers, record, lane, captures);
+        SmallVector<Value> next;
+        for (auto [sum, value] : llvm::zip(previous, contributions))
+          next.push_back(arith::AddFOp::create(body, loc, sum, value));
+        scf::YieldOp::create(body, loc, next);
+      });
+  SmallVector<Value> totals;
+  for (Value contribution : work.getResults())
+    totals.push_back(emitWarpReduce(k, loc, contribution, kernels::Combiner::Add));
+  if (!totals.empty()) {
+    Value leader = arith::AndIOp::create(k, loc, valid,
+        arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq, lane,
+                              arith::ConstantIntOp::create(k, loc, 0, 32)));
+    scf::IfOp::create(k, loc, leader, [&](OpBuilder &body, Location) {
+      for (auto [i, total] : llvm::enumerate(totals))
+        storeElement(body, loc, total, op.getScratch()[2 * i], warp);
+      scf::YieldOp::create(body, loc);
+    });
+  }
+  gpu::TerminatorOp::create(k, loc);
+  bringIn(launch);
+  return finishSums(op, b, op.getReduce(), op.getScratch(), warps);
+}
+
 void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -8087,7 +8203,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "'md-exec-assign-storage' with 'memory=device'";
   }
 
-  if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
+  if (auto loop = dyn_cast<md_exec::TemplateForOp>(op)) {
+    if (failed(lowerTemplateFor(loop))) return failure();
+  } else if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())
       return op->emitOpError()
              << "is not in the storage form; run 'md-exec-assign-storage' "
@@ -8924,6 +9042,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   findOnceRuns(function);
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
+    if (op->getParentOfType<md_exec::TemplateForOp>())
+      continue;
     if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
             parent))
       continue;

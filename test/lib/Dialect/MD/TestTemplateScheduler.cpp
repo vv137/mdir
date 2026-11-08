@@ -2,6 +2,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -29,6 +30,8 @@ struct TestTemplateScheduler
   TestTemplateScheduler(const TestTemplateScheduler &pass) : PassWrapper(pass) {}
   Option<bool> rotateFrames{*this, "rotate-frames",
       llvm::cl::desc("Use different dyadic quarter-turn frames per unit"), llvm::cl::init(false)};
+  Option<bool> arena{*this, "arena",
+      llvm::cl::desc("Read physical work records, unit order and packed frames"), llvm::cl::init(false)};
   StringRef getArgument() const final { return "test-md-template-scheduler"; }
   StringRef getDescription() const final {
     return "Executes the derived WW window with padded I units and a partial J batch";
@@ -145,7 +148,83 @@ struct TestTemplateScheduler
       loop.emitError("scheduler fixture expects constant scalar captures");
       return signalPassFailure();
     }
-    auto result = emitTemplateClassUnit(k, loc, unit,
+    SmallVector<Value, 2> result;
+    SmallVector<Value> arenaAllocations;
+    if (arena) {
+      // Fixed data only seeds the physical adapter; the same independent
+      // world-position oracle checks its outputs. No build or search is
+      // claimed by this isolated record-consumption fixture.
+      OpBuilder setup(launch);
+      auto hostWords = MemRefType::get({144}, b.getI32Type());
+      auto hostOrder = MemRefType::get({16}, b.getI32Type());
+      auto hostMembers = MemRefType::get({153}, b.getI32Type());
+      auto hostFrames = MemRefType::get({153, 3}, f32);
+      Value pairHost = memref::AllocOp::create(setup, loc, hostWords);
+      Value orderHost = memref::AllocOp::create(setup, loc, hostOrder);
+      Value memberHost = memref::AllocOp::create(setup, loc, hostMembers);
+      Value frameHost = memref::AllocOp::create(setup, loc, hostFrames);
+      auto put = [&](Value buffer, unsigned at, int32_t value) {
+        memref::StoreOp::create(setup, loc, word(setup, value), buffer,
+                                ValueRange{createIndex(setup, loc, at)});
+      };
+      put(pairHost, 0, 0); put(pairHost, 1, 0);
+      put(pairHost, 2, 0); put(pairHost, 3, 35);
+      for (unsigned j = 0; j != 35; ++j) {
+        unsigned mask = 0;
+        for (unsigned i = 0; i != 16; ++i) if ((i + j) % 3) mask |= 1 << i;
+        put(pairHost, 4 + 4 * j, 16 + j);
+        put(pairHost, 5 + 4 * j,
+            (MDRT_TEMPLATE_IMAGE_OFFSET + (j % 5 == 0)) |
+            (MDRT_TEMPLATE_IMAGE_OFFSET << MDRT_TEMPLATE_IMAGE_BITS) |
+            (MDRT_TEMPLATE_IMAGE_OFFSET << (2 * MDRT_TEMPLATE_IMAGE_BITS)));
+        put(pairHost, 6 + 4 * j, mask);
+        put(pairHost, 7 + 4 * j, 0);
+      }
+      for (unsigned i = 0; i != 16; ++i) put(orderHost, i, i < 13 ? i : -1);
+      for (unsigned i = 0; i != 153; ++i) put(memberHost, i, i);
+      scf::ForOp::create(setup, loc, createIndex(setup, loc, 0),
+          createIndex(setup, loc, 51), createIndex(setup, loc, 1), ValueRange(),
+          [&](OpBuilder &body, Location, Value i, ValueRange) {
+            Value initial = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,
+                i, createIndex(body, loc, 16));
+            auto positions = scf::IfOp::create(body, loc, initial,
+                [&](OpBuilder &inside, Location) {
+                  Value u = arith::IndexCastOp::create(inside, loc, inside.getI32Type(), i);
+                  scf::YieldOp::create(inside, loc, frame(inside, u, false));
+                }, [&](OpBuilder &inside, Location) {
+                  Value u = arith::IndexCastOp::create(inside, loc, inside.getI32Type(),
+                      arith::SubIOp::create(inside, loc, i, createIndex(inside, loc, 16)));
+                  scf::YieldOp::create(inside, loc, frame(inside, u, true));
+                });
+            for (unsigned site = 0; site != 3; ++site)
+              storeElement(body, loc, positions.getResult(site), frameHost,
+                  arith::AddIOp::create(body, loc,
+                      arith::MulIOp::create(body, loc, i, createIndex(body, loc, 3)),
+                      createIndex(body, loc, site)));
+            scf::YieldOp::create(body, loc);
+          });
+      auto upload = [&](Value host) -> Value {
+        auto hostType = cast<MemRefType>(host.getType());
+        auto device = MemRefType::get(hostType.getShape(), hostType.getElementType(),
+            MemRefLayoutAttrInterface(), setup.getI64IntegerAttr(1));
+        Value buffer = gpu::AllocOp::create(setup, loc, device, Type(), ValueRange(),
+                                            ValueRange(), ValueRange()).getMemref();
+        transfer(setup, loc, buffer, host);
+        memref::DeallocOp::create(setup, loc, host);
+        arenaAllocations.push_back(buffer);
+        return buffer;
+      };
+      Value pairs = upload(pairHost), order = upload(orderHost);
+      Value members = upload(memberHost), frames = upload(frameHost);
+      TemplateWorkBuffers buffers{pairs, createIndex(k, loc, 0), createIndex(k, loc, 4),
+          order, members, frames, word(k, 51),
+          arith::ConstantOp::create(k, loc,
+              DenseElementsAttr::get(VectorType::get({3}, f64), ArrayRef<double>{2, 2, 2})), true};
+      IRMapping mapped = captures;
+      mapped.map(loop.getOuts()[0], forces);
+      result = emitTemplateWorkUnit(k, loc, loop, buffers, word(k, 0), lane, mapped);
+    } else {
+      result = emitTemplateClassUnit(k, loc, unit,
         [&](OpBuilder &body, Value partner) {
           TemplatePartner loaded;
           loaded.frame = frame(body, partner, true);
@@ -181,6 +260,7 @@ struct TestTemplateScheduler
             emitAtomicAdd(body, loc, force, forces,
                 index(body, arith::AddIOp::create(body, loc, base, word(body, site))));
         });
+    }
     Value row = index(k, lane);
     memref::StoreOp::create(k, loc, result[0], sums, ValueRange{row, createIndex(k, loc, 0)});
     for (unsigned c = 0; c != 9; ++c)
@@ -195,6 +275,12 @@ struct TestTemplateScheduler
     Value plainSums = memref::MemorySpaceCastOp::create(b, loc, hostSums, sums);
     gpu::DeallocOp::create(b, loc, Type(), ValueRange(), plainForces);
     gpu::DeallocOp::create(b, loc, Type(), ValueRange(), plainSums);
+    for (Value buffer : arenaAllocations) {
+      auto device = cast<MemRefType>(buffer.getType());
+      auto host = MemRefType::get(device.getShape(), device.getElementType());
+      Value generic = memref::MemorySpaceCastOp::create(b, loc, host, buffer);
+      gpu::DeallocOp::create(b, loc, Type(), ValueRange(), generic);
+    }
     func::ReturnOp::create(b, loc);
     loop->getParentOfType<func::FuncOp>().erase();
     for (Operation &op : llvm::make_early_inc_range(module))

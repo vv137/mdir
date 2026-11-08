@@ -556,6 +556,23 @@ not a minimum-image substitute for the enumerated molecule-pair images.
 Exact dyadic fixtures cover both cell representations, independently
 wrapped hydrogens, face crossings, and large unwrapped coordinates.
 
+The physical work-record adapter reads the padded unit order, real-site
+particle mapping and packed frames, decodes the partner's lattice image,
+and dispatches the three source bodies through a warp-uniform class tag.
+Input fields follow the same real-site mapping; force atomics target the
+original particles. An isolated seeded-record GPU fixture uses the
+rotated-frame oracle below, with exact equality for all 469 values. It
+tests record consumption, not list generation or validity.
+
+Production GPU lowering uses activation-owned padded-order and packed-frame
+views that survive pair-arena growth. It launches at most one warp per
+original particle and strides over the device-resident work count, so its
+sum scratch retains its fixed particle capacity and no work-count readback
+is needed. The three classes share that launch and the existing global-sum
+reducer. A seeded one-pair runtime fixture checks the complete allocation,
+view, launch and reduction path against the exact energy $1/4$; search and
+validity are still separate gates.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

@@ -8,6 +8,7 @@ struct TemplatePairs {
   struct MdrtTemplatePairLayout layout;
   void *pairs;
   void *metadata;
+  void *order, *frames;
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
 };
@@ -26,6 +27,15 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
     abort();
   }
   allocateTemplatePairs(pairs);
+  int64_t places = ((waters + 15) / 16 + (atoms + 15) / 16) * 16;
+  allocationTag = "template pairs: padded unit order";
+  pairs->order = mgpuMemAlloc((uint64_t)(places ? places : 1) * sizeof(int32_t),
+                              NULL, false);
+  allocationTag = "template pairs: packed real-site frames";
+  int64_t rows = 3 * waters + atoms;
+  pairs->frames = mgpuMemAlloc((uint64_t)(rows ? rows : 1) * 3 * sizeof(float),
+                               NULL, false);
+  allocationTag = NULL;
   recordCallHandle(pairs);
   return (int64_t)(intptr_t)pairs;
 }
@@ -117,6 +127,50 @@ void _mlir_ciface_mdrtTemplatePairsBuffer(struct Buffer1 *result, int64_t handle
   result->offset = 0;
   result->size = pairs->layout.words;
   result->stride = 1;
+}
+
+/* These fixed-size mutable views belong to the activation, like metadata;
+ * growing the pair arena never relocates them. A build writes the order,
+ * and packing at the position writer writes the frames. */
+void _mlir_ciface_mdrtTemplatePairsOrder(struct Buffer1 *result, int64_t handle) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  result->allocated = result->aligned = pairs->order;
+  result->offset = 0;
+  result->size = ((pairs->layout.waters + 15) / 16 +
+                   (pairs->layout.atoms + 15) / 16) * 16;
+  result->stride = 1;
+}
+
+void _mlir_ciface_mdrtTemplatePairsFrames(struct Buffer2 *result, int64_t handle) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  result->allocated = result->aligned = pairs->frames;
+  result->offset = 0;
+  result->sizes[0] = 3 * pairs->layout.waters + pairs->layout.atoms;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}
+
+/* Host allocation constants only: no device readback or synchronization. */
+int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
+  struct MdrtTemplatePairLayout *layout =
+      &((struct TemplatePairs *)(intptr_t)handle)->layout;
+  switch (slot) {
+  case TEMPLATE_LAYOUT_WATERS: return layout->waters;
+  case TEMPLATE_LAYOUT_ATOMS: return layout->atoms;
+  case TEMPLATE_LAYOUT_ROWS: return layout->rows;
+  case TEMPLATE_LAYOUT_ENTRIES: return layout->entries;
+  case TEMPLATE_LAYOUT_UNITS: return layout->units;
+  case TEMPLATE_LAYOUT_OUTER_ROWS: return layout->outerRows;
+  case TEMPLATE_LAYOUT_INNER_ROWS: return layout->innerRows;
+  case TEMPLATE_LAYOUT_OUTER_UNITS: return layout->outerUnits;
+  case TEMPLATE_LAYOUT_INNER_UNITS: return layout->innerUnits;
+  case TEMPLATE_LAYOUT_OUTER_ENTRIES: return layout->outerEntries;
+  case TEMPLATE_LAYOUT_INNER_ENTRIES: return layout->innerEntries;
+  default:
+    fprintf(stderr, "mdrt: invalid template layout slot\n");
+    abort();
+  }
 }
 
 int64_t mdrtTemplatePairsCapacity(int64_t handle) {
