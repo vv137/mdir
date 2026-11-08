@@ -670,6 +670,23 @@ with zero missing pairs, extras or duplicates. The native refresh's
 selection by fused validity and its reference-epoch preparation remain
 to be connected; this is not a per-step rebuild policy.
 
+Packing-cell coordinates are integer-valued f64 values chosen at the
+outer build. The retained-frame emitter reconstructs O/H/H and applies
+those coordinates to the current cell before narrowing. A central-image
+face crossing therefore keeps the frame of existing entry images, and a
+cell change scales the shift rather than reusing its old Cartesian value.
+Four independent dyadic CPU cases check all 72 packed, fractional, shift
+and cached-cell components exactly, with independently imaged hydrogens.
+
+Outer/inner reference fractions, retained packing cells, current points,
+the three class cells for both epochs, and their actual build reaches
+have fixed f64 views independent of pair-arena capacity. The stored reach
+can retain the initial-input extent widening in the validity theorem.
+An isolated runtime fixture checks all seven views before and after pair
+growth: 180 bitwise f64 comparisons, the dimensions and a stable-address
+check. This establishes ownership and retained-frame arithmetic, not the
+native epoch updates or complete dynamics.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
@@ -685,6 +702,7 @@ per-pair device work.
 | Operation | Legacy mixed pair kernel | Template mixed pieces |
 |---|---|---|
 | Source positions and lattice shift before packing | f64 | f64 |
+| Reference epochs and packing shifts | f64 reference positions and cells | f64 fractions, integer-valued f64 packing cells, class cells and actual reaches |
 | Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
 | Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |

@@ -31,6 +31,23 @@ PreparedTemplateFrame emitPrepareTemplateFrame(
     mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
     mlir::Value cell, mlir::Value inverse, mlir::Type packedReal);
 
+/// Fractional coordinates in the reduced cell, in state precision. This
+/// does not wrap: reference epochs and covering images retain their frame.
+mlir::Value emitTemplateFractional(mlir::OpBuilder &, mlir::Location,
+    mlir::Value position, mlir::Value cell, mlir::Value inverse);
+/// Integer-valued fractional shift chosen at an outer-group build. It
+/// reproduces the sequential c/b/a central-image convention in D95, and
+/// remains fixed until that group's next outer build. Under a barostat,
+/// apply it to the current cell, never reuse its old Cartesian value.
+mlir::Value emitTemplatePackingCells(mlir::OpBuilder &, mlir::Location,
+    mlir::Value anchor, mlir::Value cell, mlir::Value inverse);
+/// Reconstruct whole O/H/H but retain the outer build's packing cells.
+/// In particular a face crossing does not change an existing entry image.
+PreparedTemplateFrame emitRetainedTemplateFrame(
+    mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
+    mlir::Value cell, mlir::Value inverse, mlir::Value packingCells,
+    mlir::Type packedReal);
+
 /// Image-aware anchor displacement followed by whole-molecule H-O offsets,
 /// in the order of md.sum_template_window. A water frame has O/H/H values;
 /// an atom frame has one. The partner image shifts its anchor, not its

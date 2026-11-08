@@ -151,4 +151,98 @@ void appendWaterTemplatePackingTests(OpBuilder &builder) {
   }
   func::ReturnOp::create(builder, loc);
   builder.setInsertionPointAfter(prepareMain);
+
+  // Retained build frames must survive a central-image face crossing and
+  // scale their integer shift with a changed cell. These dynamic helpers
+  // exercise the production scalar emitters without decimal serialization.
+  for (bool tilted : {false, true}) {
+    Type cellType = VectorType::get({tilted ? 6 : 3}, builder.getF64Type());
+    auto choose = func::FuncOp::create(builder, loc,
+        tilted ? "choose_template_cells_tilted" : "choose_template_cells_orthogonal",
+        builder.getFunctionType({wide, cellType}, {wide}));
+    auto *entry = choose.addEntryBlock();
+    builder.setInsertionPointToEnd(entry);
+    Value cell = entry->getArgument(1);
+    Value cells = emitTemplatePackingCells(builder, loc, entry->getArgument(0),
+        cell, createInverse(builder, loc, cell));
+    func::ReturnOp::create(builder, loc, cells);
+    builder.setInsertionPointAfter(choose);
+    auto retain = func::FuncOp::create(builder, loc,
+        tilted ? "retain_template_tilted" : "retain_template_orthogonal",
+        builder.getFunctionType({wide, wide, wide, cellType, wide},
+                                 {narrow, narrow, narrow, wide, wide}));
+    entry = retain.addEntryBlock();
+    builder.setInsertionPointToEnd(entry);
+    cell = entry->getArgument(3);
+    Value inverse = createInverse(builder, loc, cell);
+    SmallVector<Value> positions(entry->getArguments().take_front(3));
+    auto retained = emitRetainedTemplateFrame(builder, loc, positions, cell,
+        inverse, entry->getArgument(4), builder.getF32Type());
+    Value anchor = arith::AddFOp::create(builder, loc, positions[0], retained.latticeShift);
+    Value fractional = emitTemplateFractional(builder, loc, anchor, cell, inverse);
+    func::ReturnOp::create(builder, loc, ValueRange{retained.packed[0], retained.packed[1],
+        retained.packed[2], fractional, retained.latticeShift});
+    builder.setInsertionPointAfter(retain);
+  }
+  auto retainMain = func::FuncOp::create(builder, loc, "water_retained_main",
+                                         builder.getFunctionType({}, {}));
+  builder.setInsertionPointToEnd(retainMain.addEntryBlock());
+  auto checkWide = [&](Value actual, std::array<double, 3> expected) {
+    for (unsigned axis = 0; axis != 3; ++axis) {
+      Value component = vector::ExtractOp::create(builder, loc, actual, axis);
+      Value reference = createReal(builder, loc, builder.getF64Type(), expected[axis]);
+      Value same = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OEQ,
+                                         component, reference);
+      cf::AssertOp::create(builder, loc, same, "retained template fractional frame mismatch");
+    }
+  };
+  for (bool tilted : {false, true}) {
+    auto makeCell = [&](double scale) -> Value {
+      SmallVector<double> edges{4 * scale, 4 * scale, 4 * scale};
+      if (tilted) edges.append({scale, .5 * scale, scale});
+      return arith::ConstantOp::create(builder, loc,
+          DenseElementsAttr::get(VectorType::get({int64_t(edges.size())},
+              builder.getF64Type()), ArrayRef<double>(edges)));
+    };
+    // Independently choose an exact winding (17,-9,5). Matrix products in
+    // this generator form inputs only, never the tested helper's result.
+    auto translate = [&](std::array<double, 3> winding, double scale) {
+      return std::array<double, 3>{
+        scale * (4 * winding[0] + (tilted ? winding[1] + .5 * winding[2] : 0)),
+        scale * (4 * winding[1] + (tilted ? winding[2] : 0)),
+        scale * 4 * winding[2]};
+    };
+    auto offset = translate({17, -9, 5}, 1);
+    Value initial = vector({offset[0] + 1.9375, offset[1] + .25, offset[2] + .25});
+    Value cells = func::CallOp::create(builder, loc,
+        tilted ? "choose_template_cells_tilted" : "choose_template_cells_orthogonal",
+        TypeRange{wide}, ValueRange{initial, makeCell(1)}).getResult(0);
+    for (double scale : {1.0, 2.0}) {
+      checkWide(cells, {-17, 9, -5});
+      offset = translate({17, -9, 5}, scale);
+      std::array<double, 3> expected{2.0625 * scale, .25 * scale, .25 * scale};
+      std::array<double, 3> oxygen;
+      for (unsigned k = 0; k != 3; ++k) oxygen[k] = offset[k] + expected[k];
+      auto image1 = translate({0, 1, -1}, scale);
+      auto image2 = translate({1, 0, 1}, scale);
+      std::array<double, 3> hydrogen1, hydrogen2;
+      for (unsigned k = 0; k != 3; ++k) {
+        hydrogen1[k] = oxygen[k] + image1[k] + (k == 0 ? .125 : 0);
+        hydrogen2[k] = oxygen[k] + image2[k] + (k == 1 ? .125 : 0);
+      }
+      auto call = func::CallOp::create(builder, loc,
+          tilted ? "retain_template_tilted" : "retain_template_orthogonal",
+          TypeRange{narrow, narrow, narrow, wide, wide},
+          ValueRange{vector(oxygen), vector(hydrogen1), vector(hydrogen2), makeCell(scale), cells});
+      check(call.getResult(0), expected);
+      auto h1 = expected, h2 = expected;
+      h1[0] += .125; h2[1] += .125;
+      check(call.getResult(1), h1); check(call.getResult(2), h2);
+      checkWide(call.getResult(3), tilted ? std::array<double, 3>{.49609375, .046875, .0625}
+                                         : std::array<double, 3>{.515625, .0625, .0625});
+      checkWide(call.getResult(4), {-offset[0], -offset[1], -offset[2]});
+    }
+  }
+  func::ReturnOp::create(builder, loc);
+  builder.setInsertionPointAfter(retainMain);
 }
