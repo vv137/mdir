@@ -172,6 +172,26 @@ selected Gaussian roots, preserves default and unsupported stencil
 refusals, and leaves D389's forward tangent alone. Final compatibility,
 admitted-precision and device gates remain outstanding.
 
+The maintainer authorized that shared evaluator integration. The proved-root
+dispatch now uses the existing graph proof, checks direct potential geometry
+and closed intermediate uses, and applies the outer energy weight to the
+reverse results. The build passed. Its one affected focused run had two
+passes and two failures: existing bare-stencil virial refusals and the
+existing tangent tests passed, while the two new evaluator fixtures hit
+the same vector-type assertion in the direct amplitude-field derivative.
+The negative mutation matrix stopped at its positive admission preflight;
+its negative cases have not run.
+
+Static inspection identifies the new scalar amplitude VJP's use of the
+existing vector-only `scaleField` helper: its broadcast requires a vector,
+but the charge-gradient element is f64. Development stopped as the ruling
+requires after the failed affected run. The proposed correction is a scalar
+weighted map confined to the new amplitude-VJP branch, following the
+existing scalar reciprocal-field derivative pattern. The shared helper,
+classification, tolerances and old refusals would remain unchanged. That
+correction is not applied; no second focused run or numerical rerun has
+been performed.
+
 Final compatibility gates are a corpus against an archived PR base,
 the order matrix, five bitwise checkpoints and both D309 shards at the
 final clean head. The device sanitizer tier applies if device code

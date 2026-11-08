@@ -1,0 +1,2 @@
+# Proved roots are admitted; every boundary mutation is refused by name.
+# RUN: %mdir_python %S/reciprocal-grid-refusals.py mdir-opt %S/../Dialect/MD/reciprocal-grid-evaluate.mlir

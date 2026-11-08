@@ -8,6 +8,7 @@
 #include "mdir/Dialect/MD/Transforms/Truncation.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/Stencils.h"
+#include "mdir/Dialect/MD/Transforms/ReciprocalGrid.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
@@ -20,6 +21,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/DenseSet.h"
 #include <map>
 
 using namespace mlir;
@@ -94,6 +96,10 @@ private:
 
   LogicalResult buildForces(Value &forces);
   LogicalResult buildVirial(Value &virial);
+  LogicalResult collectGridRoots();
+  LogicalResult getGridTerms(SumGridOp root, ReciprocalGridDerivative *&terms);
+  bool isGridGeometryUse(Operation *op, unsigned operand);
+  bool hasCompleteGridVirialCoverage();
 
   //===--------------------------------------------------------------------===//
   // Intermediate fields
@@ -286,6 +292,10 @@ private:
   SmallVector<SumParticlesOp> particleSums;
   /// Reciprocal sums, which yield their own forces and virial.
   SmallVector<ReciprocalOp> reciprocals;
+  SmallVector<SumGridOp> gridRoots;
+  llvm::DenseMap<Operation *, ReciprocalGridGraph> gridGraphs;
+  llvm::DenseMap<Operation *, ReciprocalGridDerivative> gridTerms;
+  llvm::DenseSet<Operation *> gridGeometry;
   /// The ops of the body of the potential, in order, before any derivative
   /// added its own. Every other op of the body was added by a derivative
   /// (the forces, the virial, the derivative in a number or in a field): a
@@ -300,6 +310,97 @@ private:
 //===----------------------------------------------------------------------===//
 // Helpers
 //===----------------------------------------------------------------------===//
+
+LogicalResult DerivativeBuilder::collectGridRoots() {
+  for (Operation *op : potentialOps) {
+    auto root = dyn_cast<SumGridOp>(op);
+    if (!root || root.getInputs().size() != 2)
+      continue;
+    auto product = root.getInputs()[1].getDefiningOp<MapGridOp>();
+    if (!product || (!product->hasAttr(kReciprocalBeta) &&
+                     !product->hasAttr(kReciprocalCoulomb)))
+      continue;
+    auto graph = inspectReciprocalGrid(root);
+    if (failed(graph))
+      return failure();
+    auto checked = graph->assignment.getCell().getDefiningOp<CheckedRectangularCellOp>();
+    if (graph->assignment.getPositions() != body->getArgument(0) ||
+        checked.getInput() != body->getArgument(1))
+      return root.emitOpError(
+          "unsupported reciprocal grid evaluator geometry: expected the potential's direct positions and cell");
+    gridRoots.push_back(root);
+    gridGraphs[root] = *graph;
+  }
+  if (gridRoots.empty())
+    return success();
+
+  llvm::DenseSet<Operation *> covered;
+  llvm::DenseSet<Value> rootResults;
+  for (SumGridOp root : gridRoots) {
+    auto &graph = gridGraphs.find(root)->second;
+    covered.insert(graph.order.begin(), graph.order.end());
+    rootResults.insert(root.getResult());
+    auto assignment = graph.assignment;
+    gridGeometry.insert(assignment);
+    gridGeometry.insert(assignment.getStencil().getDefiningOp());
+    covered.insert(assignment.getStencil().getDefiningOp());
+    covered.insert(assignment.getCell().getDefiningOp());
+    // The matrix proof establishes this exact constructor and its extracts.
+    // Keep its active intermediate values inside the proved component too.
+    Operation *matrix = graph.matrix.getDefiningOp();
+    covered.insert(matrix);
+    for (Value input : matrix->getOperands()) {
+      auto extract = input.getDefiningOp<vector::ExtractOp>();
+      if (!extract)
+        continue; // The remaining operands are proved literal zeros.
+      covered.insert(extract);
+      covered.insert(extract.getSource().getDefiningOp());
+    }
+  }
+  for (Operation *op : covered)
+    for (Value result : op->getResults()) {
+      if (rootResults.contains(result))
+        continue; // Scalar outer weighting is handled by getWeight.
+      for (Operation *user : result.getUsers())
+        if (!covered.contains(user))
+          return user->emitOpError(
+              "unsupported reciprocal grid evaluator composition: unproved use escapes the spectral graph");
+    }
+  return success();
+}
+
+bool DerivativeBuilder::isGridGeometryUse(Operation *op, unsigned operand) {
+  return gridGeometry.contains(op) &&
+         ((isa<GridStencilOp>(op) && operand == 0) ||
+          (isa<ScatterStencilOp>(op) && operand == 1));
+}
+
+bool DerivativeBuilder::hasCompleteGridVirialCoverage() {
+  if (gridRoots.empty() || potential->hasAttr(kStencilWindowActivityAttrName))
+    return false;
+  bool complete = true;
+  function.walk([&](Operation *op) {
+    if (isa<ScatterStencilOp, GatherStencilOp>(op) && !gridGeometry.contains(op))
+      complete = false;
+    if (isa<BSplineWindowOp>(op) && !gridGeometry.contains(op->getParentOp()))
+      complete = false;
+  });
+  return complete;
+}
+
+LogicalResult DerivativeBuilder::getGridTerms(
+    SumGridOp root, ReciprocalGridDerivative *&terms) {
+  auto found = gridTerms.find(root);
+  if (found != gridTerms.end()) {
+    terms = &found->second;
+    return success();
+  }
+  auto reversed = reverseReciprocalGrid(builder, root);
+  if (failed(reversed))
+    return failure();
+  terms = &gridTerms.try_emplace(root, *reversed).first->second;
+  return success();
+}
 
 /// Replaces the value that the kernel in `block` yields, then removes what
 /// the kernel no longer needs.
@@ -317,7 +418,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp, GatherRelationOp>(user) &&
                   index == 1) ||
-                 isa<SumParticlesOp>(user);
+                 isa<SumParticlesOp>(user) || isGridGeometryUse(user, index);
     if (!known)
       return user->emitError()
              << "cannot differentiate with respect to the positions through "
@@ -1232,6 +1333,18 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
 
   SmallVector<Value> terms;
+  for (SumGridOp root : gridRoots) {
+    Value weight;
+    if (failed(getWeight(root.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    ReciprocalGridDerivative *grid;
+    if (failed(getGridTerms(root, grid)))
+      return failure();
+    ScalarEmitter emit(builder, loc);
+    terms.push_back(scaleField(grid->positionGradient, emit.neg(weight)));
+  }
   for (SumRelationOp sum : sums) {
     Value weight;
     if (failed(getWeight(sum.getResult(), weight)))
@@ -1467,6 +1580,18 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
 
   ScalarEmitter outer(builder, loc);
   Value total;
+  for (SumGridOp root : gridRoots) {
+    Value weight;
+    if (failed(getWeight(root.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    ReciprocalGridDerivative *grid;
+    if (failed(getGridTerms(root, grid)))
+      return failure();
+    Value broadcast = vector::BroadcastOp::create(builder, loc, virialType, weight);
+    total = outer.add(total, outer.mul(broadcast, grid->virial));
+  }
   for (SumRelationOp sum : sums) {
     Value weight;
     if (failed(getWeight(sum.getResult(), weight)))
@@ -2604,6 +2729,29 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
              << ", a field, within another op, and has no rule for the "
                 "derivative in it";
   for (Operation *user : users) {
+    if (auto scatter = dyn_cast<ScatterStencilOp>(user)) {
+      bool admitted = false;
+      for (SumGridOp root : gridRoots) {
+        auto &graph = gridGraphs.find(root)->second;
+        if (graph.assignment != scatter)
+          continue;
+        if (scatter.getData() != parameter)
+          return scatter.emitOpError(
+              "unsupported reciprocal grid field derivative other than its direct amplitude operand");
+        admitted = true;
+        Value weight;
+        if (failed(getWeight(root.getResult(), weight)))
+          return failure();
+        if (!weight)
+          continue;
+        ReciprocalGridDerivative *grid;
+        if (failed(getGridTerms(root, grid)))
+          return failure();
+        terms.push_back(scaleField(grid->chargeGradient, weight));
+      }
+      if (admitted)
+        continue;
+    }
     // The places of the field among the fields that the op gathers.
     SmallVector<unsigned, 2> places;
     ValueRange gathered;
@@ -3748,8 +3896,11 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       llvm::is_contained(kinds, static_cast<int32_t>(Request::Forces));
   requestVirial =
       llvm::is_contained(kinds, static_cast<int32_t>(Request::Virial));
+  if (failed(collectGridRoots()))
+    return fail();
   if (requestVirial && body->getNumArguments() > 1 &&
       isa<CellType>(body->getArgument(1).getType()) &&
+      !hasCompleteGridVirialCoverage() &&
       failed(checkStencilVirialActivity(
           function, body->getArgument(1), energy,
           potential->getAttrOfType<LocationAttr>(kStencilWindowActivityAttrName))))
