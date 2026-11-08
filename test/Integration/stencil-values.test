@@ -1,0 +1,6 @@
+# Explicit structured stencil traversal, common window derivatives, and a
+# dense independent periodic-image reference on rectangular and skew cells.
+# RUN: rm -f %t.mlir %t.values
+# RUN: %mdir_python %S/stencil-values.py emit > %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate-stencils=geometry=true --md-expand-stencil-reductions --md-materialize-stencil-values --md-expand-stencil-windows --md-exec-assign-storage --one-shot-bufferize --buffer-deallocation-pipeline --convert-linalg-to-loops --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt > %t.values
+# RUN: %mdir_python %S/stencil-values.py check < %t.values

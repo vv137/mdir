@@ -1,0 +1,18 @@
+# D[reciprocal-grid]
+
+Recorded at its merge.
+
+**Expose grid maps and reductions and the selected rectangular Gaussian reciprocal chain.**
+
+Part of #452, slice 2 of [D388](../reciprocal-primitives.md). D390 supplies
+the structured assignment relation and common window. This slice adds
+structured grid maps and reductions and the compiler development pass
+`md-expand-reciprocal`. The selected chain retains the unnormalized FFT
+pairing and spectral energy reduction. Its position, charge and strain
+results must be validated before execution is admitted. Unsupported
+subsets receive named diagnostics.
+
+There are no new control-file keys, environment variables, file formats or
+overwrite policies. Ordinary PME and D389's two-reciprocal-sum forward
+tangent remain unchanged. The execution record and precision comparison
+are in [reciprocal-grid.md](../reciprocal-grid.md).

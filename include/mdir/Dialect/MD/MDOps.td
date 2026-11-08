@@ -212,6 +212,21 @@ def MD_TriclinicCellOp : MD_Op<"triclinic_cell", [Pure]> {
   let assemblyFormat = "$lx `,` $ly `,` $lz `,` $bx `,` $cx `,` $cy attr-dict";
 }
 
+def MD_CheckedRectangularCellOp : MD_Op<"checked_rectangular_cell", [MemoryEffects<[]>]> {
+  let summary = "A checked rectangular-cell precondition for the selected chain";
+  let description = [{
+    Returns the same periodic cell. The selected rectangular reciprocal
+    chain requires finite positive diagonal lengths and zero tilts.
+    Reference materialization checks those conditions and fails by name
+    otherwise. This operation is not speculatable and is not a certificate
+    that permits a fused or resident execution strategy. It changes no
+    cell and does not select a default route.
+  }];
+  let arguments = (ins MD_CellType:$input);
+  let results = (outs MD_CellType:$result);
+  let assemblyFormat = "$input attr-dict";
+}
+
 //===----------------------------------------------------------------------===//
 // Relations
 //===----------------------------------------------------------------------===//
@@ -509,6 +524,117 @@ class MD_StencilDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
 def MD_StencilJVPOp : MD_StencilDerivativeOp<"stencil_jvp">;
 def MD_StencilVJPOp : MD_StencilDerivativeOp<"stencil_vjp">;
 
+def MD_ReduceStencilOp : MD_Op<"reduce_stencil", [
+    RecursiveMemoryEffects, SingleBlock, AttrSizedOperandSegments]> {
+  let summary = "Reduces an explicit kernel over every entry of a grid stencil";
+  let description = [{
+    The explicit structured form of assignment/interpolation and their
+    kernel derivatives. Every entry of the same indices-only relation is
+    visited. The kernel receives the continuous support distance, the
+    particle's Cartesian position, the row-cell matrix as vector<9xf64>,
+    then one value of each particle and grid input. It yields an f64 scalar
+    or vector. All inputs, including geometry, remain explicit.
+
+    `destination("grid")` defines a fresh complete tensor, initialized to
+    zero and summed at wrapped indices. `destination("particles")` defines
+    every particle row, including zeros. `destination("sum")` is a global
+    sum, particles in ascending order and the local last axis fastest.
+    There are no lists, quantizers, in-place updates or hidden payloads.
+    A pure straight-line kernel may contain the common B-spline body or
+    its declared scalar derivatives; no second spline formula is implied.
+    Higher derivatives require their own validated rules.
+  }];
+  let arguments = (ins MD_GridStencilType:$stencil,
+                       MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_ReferenceFieldType>:$particles,
+                       Variadic<AnyRankedTensor>:$grids,
+                       Variadic<AnyType>:$uniforms,
+                       StrAttr:$destination);
+  let results = (outs AnyType:$result);
+  let regions = (region AnyRegion:$kernel);
+  let assemblyFormat = [{
+    $stencil `,` $positions `,` $cell
+    `particles` `(` $particles `)` `grids` `(` $grids `)`
+    `uniforms` `(` $uniforms `)`
+    `destination` `(` $destination `)` $kernel attr-dict `:`
+    qualified(type($stencil)) `,` qualified(type($positions)) `,`
+    `(` qualified(type($particles)) `)` `,` `(` type($grids) `)` `,`
+    `(` type($uniforms) `)`
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+class MD_GridKernelOp<string mnemonic> : MD_Op<mnemonic, [
+    RecursiveMemoryEffects, SingleBlock]> {
+  let arguments = (ins Variadic<AnyType>:$inputs,
+                       DenseI64ArrayAttr:$grid, StrAttr:$pairing);
+  let regions = (region AnyRegion:$kernel);
+  let assemblyFormat = [{
+    `(` $inputs `)` `grid` `(` $grid `)`
+    `pairing` `(` $pairing `)` attr-dict
+    `:` `(` qualified(type($inputs)) `)` `->` qualified(type($result))
+    $kernel
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MD_MapGridOp : MD_GridKernelOp<"map_grid"> {
+  let summary = "Maps one scalar kernel over a real grid or half-spectrum";
+  let description = [{
+    A pure elementwise map on a static three-dimensional domain. The
+    `grid` is the full real extent. With `euclidean` pairing the domain is
+    the full grid; with `real_hermitian_half` it is the stored last-axis
+    half. Tensor inputs have the domain shape. Uniform f64 scalars,
+    vectors and reference tables are explicit inputs, not captures. A
+    table stays a table argument in semantic IR; materialization exposes
+    its existing buffer and replaces kernel lookups with buffer loads.
+    The kernel receives a
+    vector<3xindex> index and one element per input. Complex elements are
+    represented inside the kernel by vector<2xf64> (real, imaginary), so
+    the existing real scalar derivative rules apply in both directions.
+    It yields one scalar or vector; a vector<2xf64> may form a complex
+    output tensor. Every output element is defined in fresh storage.
+
+    The pairing describes the domain, not a certificate of Hermitian
+    validity. A complex result passed to a backward FFT must independently
+    satisfy its boundary-plane conjugacy contract. The selected Gaussian
+    chain proves this from its rectangular real influence; arbitrary maps
+    are not evidence for a fused reciprocal strategy.
+  }];
+  let results = (outs AnyRankedTensor:$result);
+}
+
+def MD_SumGridOp : MD_GridKernelOp<"sum_grid"> {
+  let summary = "Reduces a scalar kernel under the declared grid pairing";
+  let description = [{
+    Uses the same domain and kernel arguments as md.map_grid and sums the
+    yielded f64 scalar or vector in lexicographic order, last axis fastest.
+    With real_hermitian_half, interior last-axis modes have weight two;
+    zero and the even-grid Nyquist plane have weight one. There is no FFT
+    normalization in this reduction. The reduction starts at zero and
+    covers the whole domain. It has ideal additive algebra; an execution
+    quantizer or an alternative reduction tree is not implicit.
+  }];
+  let results = (outs AnyType:$result);
+}
+
+class MD_GridDerivativeOp<string mnemonic> : MD_Op<mnemonic, [Pure]> {
+  let summary = "An explicit derivative request for a structured grid kernel";
+  let arguments = (ins AnyType:$source, AnyType:$seed, I64Attr:$operand);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $source `wrt` `(` $operand `)` $seed attr-dict `:`
+    qualified(type($source)) `,` qualified(type($seed))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+def MD_GridJVPOp : MD_GridDerivativeOp<"grid_jvp">;
+def MD_GridVJPOp : MD_GridDerivativeOp<"grid_vjp">;
+
 def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
   let summary = "A value-level linear transform with a declared adjoint";
   let description = [{
@@ -684,7 +810,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["ScatterStencilOp", "GatherStencilOp",
+    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
                  "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {

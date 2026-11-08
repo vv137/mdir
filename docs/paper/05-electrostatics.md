@@ -73,6 +73,12 @@ and the window-curvature terms needed by force matching. This design
 changes no implemented reciprocal method or measured
 performance result.
 
+The [slice-2 implementation record](../reciprocal-grid.md),
+D[reciprocal-grid], begins the structured grid maps and paired reductions.
+Their explicit scalar kernels retain the energy's spectral pairing rather
+than changing it to a particle reduction. Admission of a reciprocal chain
+requires its separate primal and derivative gates.
+
 Slice 1 of #452 provides a checked structural particle-grid relation,
 D390 ([implementation record](../reciprocal-stencils.md)).
 Structured spreading and gathering share a window body and declare their

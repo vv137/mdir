@@ -89,6 +89,103 @@ LogicalResult GatherStencilOp::verifyRegions() {
   return verifyStencilKernel(*this);
 }
 
+static bool stencilValue(Type type) {
+  if (type.isF64())
+    return true;
+  auto vector = dyn_cast<VectorType>(type);
+  return vector && vector.getRank() == 1 && !vector.isScalable() &&
+         vector.getElementType().isF64();
+}
+
+LogicalResult ReduceStencilOp::verify() {
+  auto relation = getStencil().getDefiningOp<GridStencilOp>();
+  if (!relation || relation.getPositions() != getPositions() ||
+      relation.getCell() != getCell())
+    return emitOpError("expected the relation constructor's exact positions and cell operands");
+  auto stencil = cast<GridStencilType>(getStencil().getType());
+  auto shape = stencil.getShape().asArrayRef();
+  for (Value particle : getParticles()) {
+    auto field = cast<FieldType>(particle.getType());
+    if (field.getParticleSet() != stencil.getParticleSet() ||
+        !field.getElementType().isF64())
+      return emitOpError("particle inputs must be f64 fields of the stencil's particle set");
+  }
+  for (Value value : getGrids()) {
+    auto grid = cast<RankedTensorType>(value.getType());
+    if (grid.getShape() != shape || !stencilValue(grid.getElementType()))
+      return emitOpError("grid inputs must have the complete real stencil shape");
+  }
+  for (Value value : getUniforms())
+    if (!stencilValue(value.getType()))
+      return emitOpError("uniform inputs must be explicit real f64 scalars or vectors");
+  Type result = getResult().getType();
+  if (getDestination() == "grid") {
+    auto grid = dyn_cast<RankedTensorType>(result);
+    if (!grid || grid.getShape() != shape || !stencilValue(grid.getElementType()))
+      return emitOpError("grid destination requires a complete real stencil-shaped tensor");
+  } else if (getDestination() == "particles") {
+    auto field = dyn_cast<FieldType>(result);
+    if (!field || field.getParticleSet() != stencil.getParticleSet() ||
+        !field.getElementType().isF64())
+      return emitOpError("particle destination requires a complete f64 field of the stencil's set");
+  } else if (getDestination() == "sum") {
+    if (!stencilValue(result))
+      return emitOpError("sum destination requires a real f64 scalar or vector");
+  } else {
+    return emitOpError("expected destination grid, particles or sum");
+  }
+  if (getOperation()->hasAttr("listed") || getOperation()->hasAttr("coverage") ||
+      getOperation()->hasAttr("algebra"))
+    return emitOpError("full coverage and ideal additive algebra cannot be overridden");
+  return success();
+}
+
+LogicalResult ReduceStencilOp::verifyRegions() {
+  Block &block = getKernel().front();
+  SmallVector<Type> arguments{
+      VectorType::get({3}, Float64Type::get(getContext())),
+      VectorType::get({3}, Float64Type::get(getContext())),
+      VectorType::get({9}, Float64Type::get(getContext()))};
+  for (Value field : getParticles())
+    arguments.push_back(cast<FieldType>(field.getType()).getKernelValueType());
+  for (Value grid : getGrids())
+    arguments.push_back(cast<RankedTensorType>(grid.getType()).getElementType());
+  for (Value uniform : getUniforms())
+    arguments.push_back(uniform.getType());
+  if (block.getArgumentTypes() != TypeRange(arguments))
+    return emitOpError("expected distance, position, row-cell matrix and explicit input kernel arguments");
+  Type result = getResult().getType();
+  if (auto field = dyn_cast<FieldType>(result))
+    result = field.getKernelValueType();
+  else if (auto tensor = dyn_cast<RankedTensorType>(result))
+    result = tensor.getElementType();
+  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  if (!yield || yield.getValues().size() != 1 ||
+      yield.getValues()[0].getType() != result)
+    return emitOpError("expected one kernel value matching the destination element");
+  for (Operation &inner : block) {
+    if (inner.getNumRegions() || !isMemoryEffectFree(&inner))
+      return emitOpError("stencil reduction kernel must be straight-line and effect-free");
+    for (Value value : inner.getOperands()) {
+      if (auto arg = dyn_cast<BlockArgument>(value)) {
+        if (arg.getOwner() == &block)
+          continue;
+      } else if (value.getDefiningOp()->getBlock() == &block) {
+        continue;
+      }
+      Attribute literal;
+      if (matchPattern(value, m_Constant(&literal)) &&
+          isMemoryEffectFree(value.getDefiningOp()))
+        continue;
+      return emitOpError("stencil reduction kernel cannot capture dynamic values");
+    }
+    if (auto window = dyn_cast<BSplineWindowOp>(inner))
+      if (window.getOrder() != cast<GridStencilType>(getStencil().getType()).getOrder())
+        return emitOpError("window and stencil support orders must agree");
+  }
+  return success();
+}
+
 static LogicalResult verifyRequest(Operation *op, bool reverse) {
   Operation *source = op->getOperand(0).getDefiningOp();
   if (!isa_and_nonnull<ScatterStencilOp, GatherStencilOp, BSplineWindowOp>(source))

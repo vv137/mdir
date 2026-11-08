@@ -1,6 +1,7 @@
 // Cardinal assignment windows and their declared linear structure.
 // Cox-de Boor recurrence [deBoor2001], docs/references.md.
 #include "mdir/Dialect/MD/Transforms/Stencils.h"
+#include "mdir/Dialect/MD/Transforms/StencilGeometry.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
@@ -168,6 +169,10 @@ namespace mdir::md {
 namespace {
 class DifferentiateStencils
     : public impl::DifferentiateStencilsBase<DifferentiateStencils> {
+public:
+  using impl::DifferentiateStencilsBase<DifferentiateStencils>::DifferentiateStencilsBase;
+
+private:
   void runOnOperation() final {
     SmallVector<Operation *> requests;
     getOperation()->walk([&](Operation *op) {
@@ -194,6 +199,13 @@ class DifferentiateStencils
           }
           result = cotangents.front();
         }
+      } else if (geometry && (operand == 1 || operand == 2)) {
+        auto differentiated = differentiateStencilGeometry(
+            b, source, operand, seed, reverse);
+        if (failed(differentiated)) {
+          signalPassFailure(); return;
+        }
+        result = *differentiated;
       } else if (operand != 3) {
         request->emitOpError() << "unsupported stencil "
             << (reverse ? "VJP" : "JVP") << " for active "

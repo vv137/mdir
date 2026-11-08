@@ -4,6 +4,7 @@
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 #include "mdir/Dialect/MD/Transforms/Stencils.h"
+#include "mdir/Dialect/MD/Transforms/GridKernels.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
@@ -643,6 +644,7 @@ struct StageRule
 
 void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
   registerStencilDerivatives(registry);
+  registerGridDerivatives(registry);
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     attachRules<arith::ConstantOp, arith::AddFOp, arith::SubFOp,
                 arith::MulFOp, arith::DivFOp, arith::NegFOp,

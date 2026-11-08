@@ -1,0 +1,6 @@
+# Compiled real/complex maps, paired reductions, JVPs and VJPs against NumPy.
+# Bounds are fixed in grid-kernels.py before execution. Odd and even grids.
+# RUN: rm -f %t.mlir %t.values
+# RUN: %mdir_python %S/grid-kernels.py emit > %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate-grid --md-expand-grid-kernels --one-shot-bufferize --buffer-deallocation-pipeline --convert-linalg-to-loops --convert-complex-to-llvm | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt > %t.values
+# RUN: %mdir_python %S/grid-kernels.py check < %t.values
