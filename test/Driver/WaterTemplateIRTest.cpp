@@ -7,6 +7,7 @@
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -29,7 +30,7 @@ int runWaterTemplateIRTest() {
   mdir::md::registerDerivativeInterfaces(registry);
   MLIRContext context(registry);
   context.loadDialect<arith::ArithDialect, func::FuncDialect,
-                      vector::VectorDialect, cf::ControlFlowDialect,
+                      vector::VectorDialect, cf::ControlFlowDialect, math::MathDialect,
                       mdir::md::MDDialect>();
   OpBuilder builder(&context);
   auto loc = builder.getUnknownLoc();
