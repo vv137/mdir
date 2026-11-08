@@ -642,6 +642,17 @@ cells, including retained inactive rows, with zero missing, extra or
 duplicate unit/image memberships. These checks do not recanonicalize
 the per-step packed frame or change the source site cutoff.
 
+A complete-frame particle-writer emitter evaluates the original scalar
+body for O/H/H under one thread, loading all three members before storing
+any output. Its callback receives the final values for packing and
+validity without a cross-thread position read. Unmatched atoms and stored
+extra points retain their scalar updates. Native writer selection is not
+yet connected. Its first device validation is stopped: 323 of 1,059
+reported values differ from the exact dyadic oracle, and all decimal
+values equal that oracle rounded to six significant digits. Decimal
+serialization is suspected, but exact device bits have not been checked;
+this is not a passing numerical gate. No numerical rerun has been made.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

@@ -13,6 +13,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   TemplateSpatialKernels.cpp
   TemplateStageKernels.cpp
   TemplateSearchKernels.cpp
+  TemplateParticleKernels.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion
