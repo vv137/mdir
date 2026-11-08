@@ -353,6 +353,11 @@ def MD_SumTemplateWindowOp : MD_TemplateWindowOp<"sum_template_window"> {
     alpha*(H1-O + H2-O). A scalar result sums energies; a vector<9xf64>
     result sums the corresponding strain contributions.
 
+    `alpha` is finite and nonnegative, with no upper bound. The extent
+    includes the formed site. At compile time, alpha <= 1/2 proves that
+    the two O-H extents also cover that site; otherwise the extent check
+    evaluates its distance explicitly.
+
     The logical reduction enumerates all covering anchor images, as in
     D242, not just the minimum image. `extent` is a checked covering bound
     on each water at the evaluation; it is widened before the first

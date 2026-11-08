@@ -969,6 +969,13 @@ holds its three atoms. The lists hold every image
 of every pair within their reach while $R + 2r_\mathrm m < \min_a L_a$,
 the condition of D242 with the reach of the water list.
 
+For finite nonnegative $\alpha\le1/2$, the triangle inequality bounds
+$\lVert\alpha(\mathbf d_j+\mathbf d_k)\rVert$ by the larger O–H extent,
+so two squared distances suffice for that check. For larger weights the
+check also takes the formed site's squared extent. The compiler chooses
+between these cases; the larger-weight case adds no per-step work to
+models whose two O–H extents prove coverage.
+
 The compiler represents that distinction with `md.sum_template_window`:
 its body exposes every site displacement and energy, with a separate
 cutoff on each site pair. A symbolic affine proof checks the supported

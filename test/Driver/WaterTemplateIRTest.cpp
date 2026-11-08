@@ -8,10 +8,12 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdlib>
+#include <tuple>
 
 using namespace mlir;
 using namespace mdir::driver;
@@ -26,7 +28,8 @@ int runWaterTemplateIRTest() {
   mdir::md::registerDerivativeInterfaces(registry);
   MLIRContext context(registry);
   context.loadDialect<arith::ArithDialect, func::FuncDialect,
-                      vector::VectorDialect, mdir::md::MDDialect>();
+                      vector::VectorDialect, cf::ControlFlowDialect,
+                      mdir::md::MDDialect>();
   OpBuilder builder(&context);
   auto loc = builder.getUnknownLoc();
   auto module = ModuleOp::create(loc);
@@ -128,7 +131,7 @@ int runWaterTemplateIRTest() {
     };
     SmallVector<Type> arguments{positions, md::CellType::get(&context), types, charges, domain("water", 4)};
     WaterTemplateModel model;
-    model.sites = 4; model.alpha = 0.125; model.extent = 0.1001;
+    model.sites = 4; model.alpha = 0.75; model.extent = 0.1001;
     model.charges = {0.0, 0.5, 0.5, -1.0}; model.epsilon = 0.7;
     for (unsigned mask = 0; mask != 4; ++mask) {
       auto potential = md::PotentialOp::create(builder, loc,
@@ -161,6 +164,48 @@ int runWaterTemplateIRTest() {
       md::ReturnOp::create(builder, loc, total);
       builder.setInsertionPointAfter(potential);
     }
+  }
+  {
+    auto vec = VectorType::get({3}, builder.getF64Type());
+    for (auto [name, alpha, sites] : {
+        std::tuple<const char *, double, unsigned>{"extent_half", 0.5, 4},
+        {"extent_threequarters", 0.75, 4}, {"extent_three_site", 0.75, 3}}) {
+      auto function = func::FuncOp::create(builder, loc, name,
+          builder.getFunctionType({vec, vec}, {builder.getF64Type()}));
+      auto *entry = function.addEntryBlock();
+      builder.setInsertionPointToEnd(entry);
+      WaterTemplateModel model;
+      model.sites = sites; model.alpha = alpha;
+      Value extent2 = buildWaterTemplateExtentSquared(builder, model,
+          {entry->getArgument(0), entry->getArgument(1)});
+      func::ReturnOp::create(builder, loc, extent2);
+      builder.setInsertionPointAfter(function);
+    }
+    auto main = func::FuncOp::create(builder, loc, "water_extent_main",
+                                     builder.getFunctionType({}, {}));
+    builder.setInsertionPointToEnd(main.addEntryBlock());
+    Value h = arith::ConstantOp::create(builder, loc,
+        DenseElementsAttr::get(vec, ArrayRef<double>{0.125, 0.0, 0.0}));
+    Value turned = arith::ConstantOp::create(builder, loc,
+        DenseElementsAttr::get(vec, ArrayRef<double>{0.0, 0.125, 0.0}));
+    // Independent exact dyadic answers: aligned H offsets give O-H^2=1/64
+    // and the alpha=.75 site's squared extent 9/256. For perpendicular
+    // offsets its squared extent is 9/512. Every arithmetic value is exact.
+    auto checkExtent = [&](StringRef name, Value second, double reference) {
+      Value actual = func::CallOp::create(builder, loc, name,
+          TypeRange{builder.getF64Type()}, ValueRange{h, second}).getResult(0);
+      Value expected = arith::ConstantOp::create(builder, loc,
+                                                 builder.getF64FloatAttr(reference));
+      Value equal = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OEQ,
+                                          actual, expected);
+      cf::AssertOp::create(builder, loc, equal, "water-template extent mismatch");
+    };
+    checkExtent("extent_half", h, 1.0 / 64.0);
+    checkExtent("extent_threequarters", h, 9.0 / 256.0);
+    checkExtent("extent_threequarters", turned, 9.0 / 512.0);
+    checkExtent("extent_three_site", h, 1.0 / 64.0);
+    func::ReturnOp::create(builder, loc);
+    builder.setInsertionPointAfter(main);
   }
   require(succeeded(verify(module)), "window IR verification");
   module.print(llvm::outs());

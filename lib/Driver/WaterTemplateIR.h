@@ -26,6 +26,13 @@ struct WaterTemplateSitePair {
 /// whose transpose is rule A of D[rigid-water-template].
 struct WaterTemplateFrame { mlir::Value h1, h2; };
 
+/// Maximum squared distance of any formed site from its oxygen. For
+/// nonnegative alpha <= 1/2, the triangle inequality proves the two O-H
+/// extents cover the extra point; otherwise its squared extent is emitted
+/// as well. This distinction is made when constructing the program.
+mlir::Value buildWaterTemplateExtentSquared(
+    mlir::OpBuilder &, const WaterTemplateModel &, const WaterTemplateFrame &);
+
 /// anchorDisplacement is x_Oa - image(x_Ob). The list lowering supplies
 /// every candidate anchor image within the covering reach. This routine
 /// neither takes a new minimum image nor substitutes an oxygen cutoff.

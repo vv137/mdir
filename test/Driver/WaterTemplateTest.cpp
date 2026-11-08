@@ -61,6 +61,16 @@ int main(int argc, char **argv) {
   }
   unsigned cases = 0;
   {
+    auto s = input(1, 0);
+    s.topology->virtualSites[0].a = 0.09;
+    auto p = match(s);
+    require(p.instances.size() == 1 && p.model.sites == 4 &&
+            std::abs(p.model.alpha - 0.75) < 1e-15 &&
+            std::abs(p.model.extent - 0.1001) < 1e-15,
+            "alpha 0.75 topology and formed-site covering bound");
+    ++cases;
+  }
+  {
     auto p = match(input());
     require(p.candidates == 3 && p.instances.size() == 2 && p.model.sites == 4 && p.solute.size() == 4,
             "predominant template or solute partition");

@@ -260,8 +260,10 @@ step; the implementation does not.
 
 The covering bound also needs $\varrho_A \le r_\mathrm m$ at the current
 positions. The proposal is to test it in the same fused loop, by the
-thread that constrains the molecule, which holds its three atoms: two
-squared distances and a comparison per water. Before the first step no
+thread that constrains the molecule, which holds its three atoms. For
+$0\le\alpha\le1/2$, two squared O–H distances cover the formed site by
+the triangle inequality. For larger weights the check includes that site's
+squared extent as well, a distinction made at compile time. Before the first step no
 constraint has run, since the positions of the input are not constrained
 (as in sander): there the extents are measured at the build, by the
 packing, which reads each molecule whole, and the water list takes
@@ -476,15 +478,18 @@ That isolated quadratic probe passed for all 27 images and their totals:
 energy 0.405, virial xx -0.81, with only the neighboring image contributing.
 This does not validate the physical pair kernel or the GPU list lowering.
 
-An implementation admission question is pending on #795. The new window
-verifier currently limits $\alpha$ to $[0,1/2]$, while the topology matcher
-admits rigid four-site geometries outside that interval: for example
+The maintainer admitted every finite nonnegative $\alpha$ on #795, with
+no upper bound of $1/2$. The topology matcher admits, for example,
 $r_\mathrm{OH}=0.1$ nm, $r_\mathrm{HH}=0.16$ nm and
-$r_{os}=0.09$ nm give $\alpha=0.75$. The proposed correction is to admit
-finite nonnegative weights and test the formed site's extent where its
-bound cannot be inferred from the two O–H extents. This changes an
-admission/refusal, so it awaits the maintainer's ruling under the stop rule;
-no numerical bound or existing ordinary-path classification is changed.
+$r_{os}=0.09$ nm, which give $\alpha=0.75$. The formed site's extent is
+tested wherever its bound cannot be inferred from the two O–H extents.
+For $\alpha\le 1/2$, the triangle inequality proves that the two O–H
+extents cover it, so those models keep the two-distance check. This
+distinction is made at compile time. Exact dyadic extent probes have
+predeclared squared extents $1/64$ for $\alpha=1/2$, and $9/256$ or
+$9/512$ for aligned or perpendicular O–H offsets at $\alpha=3/4$;
+the offsets have length $1/8$. These isolated f64 checks require exact
+agreement and do not replace the physical-system numerical bounds.
 
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and

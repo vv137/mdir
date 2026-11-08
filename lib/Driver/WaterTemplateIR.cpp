@@ -56,6 +56,13 @@ struct WindowBuilder {
 };
 } // namespace
 
+Value mdir::driver::builder::buildWaterTemplateExtentSquared(
+    OpBuilder &builder, const WaterTemplateModel &model,
+    const WaterTemplateFrame &frame) {
+  return mdir::md::emitTemplateExtentSquared(builder, builder.getUnknownLoc(),
+      model.alpha, model.sites == 4, frame.h1, frame.h2);
+}
+
 llvm::SmallVector<WaterTemplateSitePair, 10>
 mdir::driver::builder::buildWaterWaterWindow(
     OpBuilder &builder, const WaterTemplateModel &model, Value base,

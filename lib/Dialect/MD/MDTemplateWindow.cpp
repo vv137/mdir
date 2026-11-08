@@ -20,6 +20,25 @@ mdir::md::getTemplateWindowMembers(unsigned arity) {
   return {{0, 1}};
 }
 
+Value mdir::md::emitTemplateExtentSquared(OpBuilder &builder, Location loc,
+    double alpha, bool hasSite, Value h1, Value h2) {
+  auto squared = [&](Value displacement) -> Value {
+    Value squares = arith::MulFOp::create(builder, loc, displacement, displacement);
+    return vector::ReductionOp::create(builder, loc, vector::CombiningKind::ADD, squares);
+  };
+  Value largest = arith::MaximumFOp::create(builder, loc, squared(h1), squared(h2));
+  if (hasSite && alpha > 0.5) {
+    auto vector = cast<VectorType>(h1.getType());
+    Value scalar = arith::ConstantOp::create(builder, loc,
+        FloatAttr::get(vector.getElementType(), alpha));
+    Value weight = vector::BroadcastOp::create(builder, loc, vector, scalar);
+    Value sum = arith::AddFOp::create(builder, loc, h1, h2);
+    Value site = arith::MulFOp::create(builder, loc, weight, sum);
+    largest = arith::MaximumFOp::create(builder, loc, largest, squared(site));
+  }
+  return largest;
+}
+
 namespace {
 // Symbolic affine proof, not a tolerance-based numerical classification.
 // Only literal scalar weights and zero vector constants may enter it.
@@ -86,8 +105,8 @@ template <typename Op> static LogicalResult verifyOperands(Op op, bool gather) {
     if (!std::isfinite(value) || value <= 0.0)
       return op.emitOpError("expected positive finite cutoff and extent");
   double alpha = op.getAlpha().convertToDouble();
-  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 0.5)
-    return op.emitOpError("expected a finite template alpha between zero and one half");
+  if (!std::isfinite(alpha) || alpha < 0.0)
+    return op.emitOpError("expected a finite nonnegative template alpha");
   Type result = op.getResult().getType();
   if (gather) {
     if (result != op.getPositions().getType())
