@@ -24,6 +24,24 @@ std::array<Value, 3> mdir::kernels::emitPackTemplateFrame(
   return packed;
 }
 
+PreparedTemplateFrame mdir::kernels::emitPrepareTemplateFrame(
+    OpBuilder &builder, Location loc, ArrayRef<Value> positions,
+    Value cell, Value inverse, Type packedReal) {
+  assert(positions.size() == 3);
+  PreparedTemplateFrame result;
+  result.whole[0] = positions[0];
+  for (unsigned site = 1; site != 3; ++site) {
+    Value raw = arith::SubFOp::create(builder, loc, positions[site], positions[0]);
+    Value local = emitMinimumImage(builder, loc, raw, cell, inverse);
+    result.whole[site] = arith::AddFOp::create(builder, loc, positions[0], local);
+  }
+  Value anchor = emitMinimumImage(builder, loc, positions[0], cell, inverse);
+  result.latticeShift = arith::SubFOp::create(builder, loc, anchor, positions[0]);
+  result.packed = emitPackTemplateFrame(builder, loc, result.whole,
+                                        result.latticeShift, packedReal);
+  return result;
+}
+
 SmallVector<Value, 5> mdir::kernels::emitTemplateWindowCoordinates(
     OpBuilder &builder, Location loc, TemplatePairClass kind,
     ArrayRef<Value> first, ArrayRef<Value> second, Value shift) {

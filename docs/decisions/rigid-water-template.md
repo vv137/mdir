@@ -549,6 +549,13 @@ arena growth. An exact integer GPU fixture checks all four views before
 and after growth and through both initialization paths; it does not
 validate spatial search or refresh.
 
+Whole-frame preparation recovers each hydrogen's image relative to its
+oxygen in f64, shifts the entire frame into the oxygen's central cell in
+f64, and then narrows it. It uses the small intramolecular covering bound,
+not a minimum-image substitute for the enumerated molecule-pair images.
+Exact dyadic fixtures cover both cell representations, independently
+wrapped hydrogens, face crossings, and large unwrapped coordinates.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and

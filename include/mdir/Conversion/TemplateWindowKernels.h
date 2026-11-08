@@ -18,6 +18,19 @@ std::array<mlir::Value, 3> emitPackTemplateFrame(
     mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> whole,
     mlir::Value latticeShift, mlir::Type packedReal);
 
+struct PreparedTemplateFrame {
+  std::array<mlir::Value, 3> whole, packed;
+  mlir::Value latticeShift;
+};
+/// Recover both hydrogen images relative to the oxygen in state precision,
+/// then shift the whole molecule into the anchor's central cell before
+/// narrowing. The returned shift is also in state precision. This uses
+/// the proved small O-H extent, never a minimum-image shortcut for a
+/// molecule-pair window. Both admitted cell representations are supported.
+PreparedTemplateFrame emitPrepareTemplateFrame(
+    mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
+    mlir::Value cell, mlir::Value inverse, mlir::Type packedReal);
+
 /// Image-aware anchor displacement followed by whole-molecule H-O offsets,
 /// in the order of md.sum_template_window. A water frame has O/H/H values;
 /// an atom frame has one. The partner image shifts its anchor, not its
