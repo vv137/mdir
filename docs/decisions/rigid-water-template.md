@@ -249,8 +249,13 @@ step; the implementation does not.
 The covering bound also needs $\varrho_A \le r_\mathrm m$ at the current
 positions. The proposal is to test it in the same fused loop, by the
 thread that constrains the molecule, which holds its three atoms: two
-squared distances and a comparison per water. A molecule beyond
-$r_\mathrm m$ fails the test (open choice 5 below asks what follows).
+squared distances and a comparison per water. Before the first step no
+constraint has run, since the positions of the input are not constrained
+(as in sander): there the extents are measured at the build, by the
+packing, which reads each molecule whole, and the water list takes
+$\max(r_\mathrm m, \max_A\varrho_A)$ for that build. Between builds the
+constraint step tests them. A molecule beyond $r_\mathrm m$ after a
+constraint step fails the test (open choice 5 below asks what follows).
 
 ### 7. Selection: the execution choice `water.template`
 
