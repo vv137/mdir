@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 4
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 5
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -20,6 +20,17 @@ enum MdrtTemplateMetadataSlot {
   TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,
   TEMPLATE_SS_ROWS = 2, TEMPLATE_SS_NEIGHBORS = 3,
   TEMPLATE_METADATA_SLOTS = 4
+};
+/* Fixed-size f64 views, independent of pair-arena capacity. Every view
+ * has three columns. A class cell occupies two rows (ax,by,cz,bx,cx,cy),
+ * with the second row unused for an orthorhombic cell. */
+enum MdrtTemplateFrameSlot {
+  TEMPLATE_FRAME_OUTER_REFERENCE = 0, TEMPLATE_FRAME_INNER_REFERENCE = 1,
+  TEMPLATE_FRAME_PACKING_CELLS = 2, TEMPLATE_FRAME_CURRENT_POINTS = 3,
+  TEMPLATE_FRAME_OUTER_CELLS = 4, TEMPLATE_FRAME_INNER_CELLS = 5,
+  /* Two rows of actual build reaches: outer WW/SW/SS, then inner. This
+   * retains an initial-input extent widening in the validity theorem. */
+  TEMPLATE_FRAME_REACHES = 6, TEMPLATE_FRAME_SLOTS = 7
 };
 enum MdrtTemplateLayoutSlot {
   TEMPLATE_LAYOUT_WATERS = 0, TEMPLATE_LAYOUT_ATOMS = 1,

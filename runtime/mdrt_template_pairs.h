@@ -9,6 +9,8 @@ struct TemplatePairs {
   void *pairs;
   void *metadata;
   void *order, *frames;
+  void *frameState;
+  int64_t frameOffsets[TEMPLATE_FRAME_SLOTS], frameRows[TEMPLATE_FRAME_SLOTS];
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
 };
@@ -35,6 +37,15 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
   int64_t rows = 3 * waters + atoms;
   pairs->frames = mgpuMemAlloc((uint64_t)(rows ? rows : 1) * 3 * sizeof(float),
                                NULL, false);
+  int64_t units = waters + atoms, frameWords = 0;
+  for (int slot = 0; slot != TEMPLATE_FRAME_SLOTS; ++slot) {
+    pairs->frameOffsets[slot] = frameWords;
+    pairs->frameRows[slot] = slot < TEMPLATE_FRAME_OUTER_CELLS ? units
+        : slot == TEMPLATE_FRAME_REACHES ? 2 : 6;
+    frameWords += 3 * pairs->frameRows[slot];
+  }
+  allocationTag = "template pairs: reference epochs and retained packing cells";
+  pairs->frameState = mgpuMemAlloc((uint64_t)frameWords * sizeof(double), NULL, false);
   allocationTag = NULL;
   recordCallHandle(pairs);
   return (int64_t)(intptr_t)pairs;
@@ -146,6 +157,25 @@ void _mlir_ciface_mdrtTemplatePairsFrames(struct Buffer2 *result, int64_t handle
   result->allocated = result->aligned = pairs->frames;
   result->offset = 0;
   result->sizes[0] = 3 * pairs->layout.waters + pairs->layout.atoms;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}
+
+/* Reference epochs and packing-cell coordinates do not move on pair
+ * capacity growth. Only a requested mobility-group rebuild updates them. */
+void _mlir_ciface_mdrtTemplatePairsFrameState(struct Buffer2 *result,
+                                             int64_t handle, int64_t slot) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  if (slot < 0 || slot >= TEMPLATE_FRAME_SLOTS) {
+    fprintf(stderr, "mdrt: invalid template frame-state slot\n");
+    abort();
+  }
+  result->allocated = pairs->frameState;
+  result->aligned = (void *)((uintptr_t)pairs->frameState +
+      (uint64_t)pairs->frameOffsets[slot] * sizeof(double));
+  result->offset = 0;
+  result->sizes[0] = pairs->frameRows[slot];
   result->sizes[1] = 3;
   result->strides[0] = 3;
   result->strides[1] = 1;

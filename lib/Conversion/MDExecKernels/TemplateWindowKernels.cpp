@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -39,6 +40,64 @@ PreparedTemplateFrame mdir::kernels::emitPrepareTemplateFrame(
   result.latticeShift = arith::SubFOp::create(builder, loc, anchor, positions[0]);
   result.packed = emitPackTemplateFrame(builder, loc, result.whole,
                                         result.latticeShift, packedReal);
+  return result;
+}
+
+Value mdir::kernels::emitTemplateFractional(OpBuilder &b, Location loc,
+    Value position, Value cell, Value inverse) {
+  if (!isTriclinic(cell))
+    return arith::MulFOp::create(b, loc, position, inverse);
+  auto component = [&](Value v, int64_t axis) -> Value {
+    return vector::ExtractOp::create(b, loc, v, axis);
+  };
+  auto mul = [&](Value a, Value c) -> Value { return arith::MulFOp::create(b, loc, a, c); };
+  auto sub = [&](Value a, Value c) -> Value { return arith::SubFOp::create(b, loc, a, c); };
+  Value z = mul(component(position, 2), component(inverse, 2));
+  Value y = mul(sub(component(position, 1), mul(component(cell, 5), z)), component(inverse, 1));
+  Value x = mul(sub(sub(component(position, 0), mul(component(cell, 4), z)),
+                    mul(component(cell, 3), y)), component(inverse, 0));
+  return vector::FromElementsOp::create(b, loc, position.getType(), ValueRange{x, y, z});
+}
+
+Value mdir::kernels::emitTemplatePackingCells(OpBuilder &b, Location loc,
+    Value anchor, Value cell, Value inverse) {
+  if (!isTriclinic(cell))
+    return arith::NegFOp::create(b, loc, math::RoundEvenOp::create(b, loc,
+        arith::MulFOp::create(b, loc, anchor, inverse)));
+  auto component = [&](Value v, int64_t axis) -> Value {
+    return vector::ExtractOp::create(b, loc, v, axis);
+  };
+  Value raw[] = {component(anchor, 0), component(anchor, 1), component(anchor, 2)};
+  Value shift[3];
+  for (int axis = 2; axis >= 0; --axis) {
+    Value count = math::RoundEvenOp::create(b, loc,
+        arith::MulFOp::create(b, loc, raw[axis], component(inverse, axis)));
+    shift[axis] = arith::NegFOp::create(b, loc, count);
+    // Only the not-yet-reduced Cartesian components are needed to choose
+    // the remaining lattice coordinates. The layout is ax,by,cz,bx,cx,cy.
+    for (int row = 0; row < axis; ++row) {
+      int column = axis == 2 ? 4 + row : 3;
+      raw[row] = arith::SubFOp::create(b, loc, raw[row],
+          arith::MulFOp::create(b, loc, count, component(cell, column)));
+    }
+  }
+  return vector::FromElementsOp::create(b, loc, anchor.getType(),
+                                        ValueRange{shift[0], shift[1], shift[2]});
+}
+
+PreparedTemplateFrame mdir::kernels::emitRetainedTemplateFrame(
+    OpBuilder &b, Location loc, ArrayRef<Value> positions, Value cell,
+    Value inverse, Value packingCells, Type packedReal) {
+  assert(positions.size() == 3);
+  PreparedTemplateFrame result;
+  result.whole[0] = positions[0];
+  for (unsigned site = 1; site != 3; ++site) {
+    Value displacement = arith::SubFOp::create(b, loc, positions[site], positions[0]);
+    result.whole[site] = arith::AddFOp::create(b, loc, positions[0],
+        emitMinimumImage(b, loc, displacement, cell, inverse));
+  }
+  result.latticeShift = emitLatticeShift(b, loc, packingCells, cell);
+  result.packed = emitPackTemplateFrame(b, loc, result.whole, result.latticeShift, packedReal);
   return result;
 }
 

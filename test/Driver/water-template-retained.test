@@ -1,0 +1,5 @@
+# A fixed outer-build lattice shift survives a central-image face crossing
+# and scales with the current cell. Independent H images are reconstructed
+# before narrowing. Four dyadic cases cover both cell kinds and a changed
+# cell, with 72 exact packed/fractional/shift/cached-cell component checks.
+# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_retained_main --entry-point-result=void
