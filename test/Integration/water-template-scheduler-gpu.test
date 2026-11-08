@@ -1,0 +1,15 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.mlir %t.lowered.mlir
+# RUN: %python %S/Inputs/template_scheduler_oracle.py %S/../Conversion/MDToMDExec/template-execution-site.mlir %t.mlir --summary
+# RUN: mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# All 469 dyadic E/F/W checks, including padded destinations, are exact.
+# This is the first-run bound of this isolated scheduler fixture. A
+# numerical mismatch stops work; it is never retried to obtain a pass.
+# CHECK: 1
+# RUN: %if compute-sanitizer %{ mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler | mlir-opt %lower_gpu_to_llvm > %t.lowered.mlir %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t.lowered.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=MEMCHECK %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool racecheck --error-exitcode 1 mlir-runner %t.lowered.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=RACECHECK %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool synccheck --error-exitcode 1 mlir-runner %t.lowered.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=SYNCCHECK %}
+# MEMCHECK: ERROR SUMMARY: 0 errors
+# RACECHECK: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+# SYNCCHECK: ERROR SUMMARY: 0 errors
