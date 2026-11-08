@@ -4,4 +4,5 @@
 # RUN: mdir-opt %t.input.mlir --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
 # One exact pair goes through staging, class compaction, runtime views,
 # production dispatch and reduction. Records are seeded, not searched.
-# CHECK: 0.25
+# Exact f64 bits of the independently asserted energy 1/4.
+# CHECK: 4598175219545276416
