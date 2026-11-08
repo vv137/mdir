@@ -1,0 +1,6 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_spatial_oracle.py %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --test-md-template-spatial | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK: llvm.func @spatial_probe

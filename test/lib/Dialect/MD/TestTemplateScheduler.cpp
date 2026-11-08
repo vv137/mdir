@@ -2,6 +2,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/TemplateBuildKernels.h"
+#include "mdir/Conversion/TemplateSpatialKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -360,10 +361,45 @@ struct TestTemplateCompaction
     func::ReturnOp::create(b, loc);
   }
 };
+struct TestTemplateSpatial
+    : PassWrapper<TestTemplateSpatial, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateSpatial)
+  StringRef getArgument() const final { return "test-md-template-spatial"; }
+  StringRef getDescription() const final { return "Outlines the shared template spatial order"; }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect, func::FuncDialect, gpu::GPUDialect,
+        memref::MemRefDialect, scf::SCFDialect, vector::VectorDialect>();
+  }
+  void runOnOperation() final {
+    auto function = getOperation().lookupSymbol<func::FuncOp>("spatial_probe");
+    if (!function || !function.isExternal() || function.getNumArguments() != 16) {
+      getOperation().emitError("spatial fixture expects the sixteen-argument spatial_probe declaration");
+      return signalPassFailure();
+    }
+    Block *entry = function.addEntryBlock();
+    OpBuilder b = OpBuilder::atBlockEnd(entry);
+    Location loc = function.getLoc();
+    TemplateSpatialBuffers v;
+    Value *buffers[] = {&v.points, &v.keys, &v.zKeys, &v.counts, &v.starts,
+                       &v.cursors, &v.items, &v.scanScratch, &v.order, &v.places,
+                       &v.waters, &v.atoms, &v.columnsX, &v.columnsY,
+                       &v.waterActive, &v.atomActive};
+    for (auto [i, value] : llvm::enumerate(buffers)) *value = entry->getArgument(i);
+    Value bins = arith::MulIOp::create(b, loc, createIndex(b, loc, 2),
+        arith::MulIOp::create(b, loc, v.columnsX, v.columnsY));
+    v.scanBlocks = arith::MaxUIOp::create(b, loc,
+        arith::DivUIOp::create(b, loc,
+            arith::AddIOp::create(b, loc, bins, createIndex(b, loc, 1023)),
+            createIndex(b, loc, 1024)), createIndex(b, loc, 1));
+    emitTemplateSpatialOrder(b, loc, v);
+    func::ReturnOp::create(b, loc);
+  }
+};
 } // namespace
 namespace mdir::test {
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
   PassRegistration<TestTemplateCompaction>();
+  PassRegistration<TestTemplateSpatial>();
 }
 }
