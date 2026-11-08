@@ -36,7 +36,8 @@ static auto isKernelOp = [](Operation *op) {
   };
   // Ops over particles, tuples, or pairs whose kernels the pass knows.
 static auto isSumOp = [](Operation *op) {
-    return isa<ReduceStencilOp, MapGridOp, SumGridOp, ScatterStencilOp, GatherStencilOp,
+    return isa<SumTemplateWindowOp, GatherTemplateWindowOp,
+               ReduceStencilOp, MapGridOp, SumGridOp, ScatterStencilOp, GatherStencilOp,
                SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
                SumParticlesOp, MapParticlesOp, mdir::md_dist::SumPairsOp,
                mdir::md_dist::GatherPairsOp, mdir::md_dist::SumParticlesOp,

@@ -447,16 +447,29 @@ each site from an explicit anchor image and whole-molecule offsets; its
 constant transpose is derived by the scalar derivative rules. Neither is
 dispatched by the ordinary builder yet.
 
-The image-aware reduction remains a design question on #795. Ordinary
-`md.sum_tuples` takes minimum-image coordinates independently, so a window
+The maintainer authorized the dedicated image-aware reduction on #795.
+Ordinary `md.sum_tuples` takes minimum-image coordinates independently, so a window
 formed from its single oxygen displacement cannot stand for every anchor
 image in the covering reach. Selecting just that image could omit a site
-pair across a periodic boundary. The proposed dedicated window reduction
-would enumerate the covering images, expose the site arithmetic and site
-cutoffs, and derive forces and strain from those explicit displacements.
-It needs new derivative admission rules; no existing classification or
-refusal has been changed. No restriction to half-cell covering reaches is
-proposed.
+pair across a periodic boundary. The dedicated window reduction enumerates
+the covering images, exposes the site arithmetic and site cutoffs, and
+derives forces and strain from those explicit displacements. Its verifier
+proves each yielded site displacement is the anchor displacement plus
+supported affine offsets. The cutoff emitter guards the pair arithmetic
+with actual control flow.
+Its new derivative admission is limited to that reduction; existing
+classifications and refusals remain unchanged. No restriction to half-cell
+covering reaches is introduced. Before performance measurements, the
+isolated f64 reduction is checked against an independent all-images oracle.
+For the quadratic boundary probe, energy, every real-atom force component
+and every virial component must agree within
+$2\times10^{-13}\max(1,\lvert\mathrm{reference}\rvert)$. This is a
+roundoff check of the reduction, not a replacement for the mixed-precision
+physical-system bounds above. The probe uses a 2.2 nm edge, 1 nm site cutoff
+and 0.1 nm water extent, and checks the neighboring-image pair explicitly.
+That isolated quadratic probe passed for all 27 images and their totals:
+energy 0.405, virial xx -0.81, with only the neighboring image contributing.
+This does not validate the physical pair kernel or the GPU list lowering.
 
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and

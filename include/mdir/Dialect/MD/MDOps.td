@@ -316,6 +316,71 @@ def MD_TemplatePairsOp : MD_Op<"template_pairs", [
   let hasVerifier = 1;
 }
 
+// An image-aware reduction is distinct from the minimum-image tuple ops.
+class MD_TemplateWindowOp<string mnemonic> : MD_Op<mnemonic, [
+    RecursiveMemoryEffects, SingleBlock]> {
+  let arguments = (ins MD_RelationType:$relation,
+                       MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_ReferenceFieldType>:$gathered,
+                       F64Attr:$cutoff, F64Attr:$extent, F64Attr:$alpha);
+  let results = (outs AnyType:$result);
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    $relation `,` $positions `,` $cell
+    `cutoff` `(` $cutoff `)` `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+    (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+    $kernel attr-dict `:` qualified(type($relation)) `,`
+    qualified(type($positions)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MD_SumTemplateWindowOp : MD_TemplateWindowOp<"sum_template_window"> {
+  let summary = "Sums a structured site window over covering anchor images";
+  let description = [{
+    The relation is one result of `md.template_pairs`. WW, SW and SS have
+    respectively five, three and one displacement arguments: first the
+    anchor displacement in the candidate image, then each water's H1-O
+    and H2-O displacements in its whole-molecule frame, in tuple order.
+    Each gathered field then supplies one value per tuple member.
+
+    For M site pairs the body yields M energies followed by M site
+    displacements. Each energy is included only where its own displacement
+    has length strictly below `cutoff`. The body exposes all placement and
+    pair arithmetic. The verifier proves that every yielded displacement
+    is the anchor displacement plus supported site offsets: O, H1, H2 or
+    alpha*(H1-O + H2-O). A scalar result sums energies; a vector<9xf64>
+    result sums the corresponding strain contributions.
+
+    The logical reduction enumerates all covering anchor images, as in
+    D242, not just the minimum image. `extent` is a checked covering bound
+    on each water at the evaluation; it is widened before the first
+    constrained evaluation and enforced afterward. Only after that bound
+    and the explicit site geometry are proved may lowering use the
+    class-segmented pair list. A covering reach below the least cell edge
+    and a cutoff below half the cell are required as on the ordinary
+    group route. The relation has no hidden real payload.
+
+    Force and strain rules differentiate this body's arithmetic, including
+    the candidate image in the anchor displacement. They hold the piecewise
+    constant membership fixed, as ordinary pair derivatives do. Higher
+    derivatives and tunable parameters are not admitted by this reduction.
+  }];
+}
+
+def MD_GatherTemplateWindowOp : MD_TemplateWindowOp<"gather_template_window"> {
+  let summary = "Scatters the derived site-window forces to real members";
+  let description = [{
+    The force transpose of `md.sum_template_window`, with the same images,
+    operands, geometry and per-site cutoff. For M site pairs of arity A,
+    its body yields M groups of A force vectors followed by M site
+    displacements. Each force group is included only inside that site's
+    cutoff. The four-site stored particle is absent: the body's constant
+    placement arithmetic supplies rule A's transpose to O, H1 and H2.
+  }];
+}
+
 def MD_TripletsOp : MD_Op<"triplets", [Pure]> {
   let summary = "Derives the triplets centered on each particle from pairs";
   let description = [{
@@ -853,7 +918,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
+    ParentOneOf<["SumTemplateWindowOp", "GatherTemplateWindowOp",
+                 "ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
                  "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {
