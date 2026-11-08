@@ -5,6 +5,7 @@
 
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Runtime/GroupsABI.h"
+#include "mdir/Runtime/TemplatePairsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
@@ -309,6 +310,12 @@ private:
   LogicalResult lowerFunction(func::FuncOp function);
   void releaseStack(func::FuncOp function);
   LogicalResult lowerOp(Operation *op);
+
+  struct TemplatePairState {
+    Value handle, waters, atoms, members, excluded;
+  };
+  llvm::DenseMap<Value, TemplatePairState> templatePairs;
+  LogicalResult lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp op);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
@@ -5835,6 +5842,42 @@ static bool feedsEdges(Value value) {
   return false;
 }
 
+LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  auto universe = dyn_cast<MemRefType>(op.getUniverse().getType());
+  auto members = dyn_cast<MemRefType>(op.getMolecules().getType());
+  if (!universe || !isDeviceType(universe) || !members || isDeviceType(members))
+    return op.emitOpError("expected device universe and host template membership");
+  Type wide = builder.getI64Type();
+  Value waters = memref::DimOp::create(builder, loc, op.getMolecules(),
+                                      createIndex(builder, loc, 0));
+  Value particles = memref::DimOp::create(builder, loc, op.getUniverse(),
+                                         createIndex(builder, loc, 0));
+  Value sites = createIndex(builder, loc, members.getDimSize(1));
+  Value atoms = arith::SubIOp::create(builder, loc, particles,
+      arith::MulIOp::create(builder, loc, waters, sites));
+  Value estimate = arith::MaxUIOp::create(builder, loc,
+      arith::AddIOp::create(builder, loc, waters, atoms),
+      createIndex(builder, loc, 1));
+  auto makeWide = [&](Value value) -> Value {
+    return arith::IndexCastOp::create(builder, loc, wide, value);
+  };
+  func::FuncOp create = getOrDeclare("mdrtTemplatePairsCreateMembers",
+      builder.getFunctionType({members, wide, wide}, {wide}));
+  create->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  Value handle = func::CallOp::create(builder, loc, create,
+      ValueRange{op.getMolecules(), makeWide(particles), makeWide(estimate)}).getResult(0);
+  templatePairs[handle] = {handle, waters, atoms, op.getMolecules(), op.getExcluded()};
+  module->setAttr("mdrt.template_pairs_abi",
+                  builder.getI32IntegerAttr(MDRT_TEMPLATE_PAIRS_ABI_VERSION));
+  // The new opaque state is represented by its runtime handle on the host.
+  // Its raw result has already become i64 with the enclosing signatures.
+  op->getResult(0).replaceAllUsesWith(handle);
+  lowered.push_back(op);
+  return success();
+}
+
 void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -7993,6 +8036,11 @@ LogicalResult Lowering::lowerOp(Operation *op) {
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
 
+  // Template membership stays on the host for one-time initialization;
+  // this new route has its own host/device contract.
+  if (auto empty = dyn_cast<md_exec::EmptySegmentedPairsOp>(op))
+    return lowerEmptyTemplatePairs(empty);
+
   // The members of tuples are on the host, and the incidence structure is
   // built there.
   if (isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect()) &&
@@ -8715,6 +8763,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({getCellSize()}, Float64Type::get(context));
   auto convertType = [&](Type type) -> Type {
+    if (isa<mdrt::SegmentedPairsType>(type))
+      return IntegerType::get(context, 64);
     return isa<md::CellType>(type) ? box : type;
   };
 
@@ -8755,6 +8805,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     return failure();
 
   current = function;
+  templatePairs.clear();
   cells.clear();
   resultCells.clear();
   nextResult.clear();
@@ -8899,6 +8950,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     op->erase();
   lowered.clear();
   neighbors.clear();
+  templatePairs.clear();
 
   // The kernels read tables from their buffers.
   if (failed(inlineFrameReadbacks(function)))

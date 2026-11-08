@@ -61,7 +61,7 @@ target_link_libraries(mdir-neighbor-count-test PRIVATE MDIRDriver)
 
 add_llvm_executable(mdir-water-template-test Driver/WaterTemplateTest.cpp
   Driver/WaterTemplateIRTest.cpp Driver/WaterTemplatePackingTest.cpp
-  Driver/WaterTemplateUnitTest.cpp)
+  Driver/WaterTemplateUnitTest.cpp Driver/WaterTemplateLayoutTest.cpp)
 llvm_update_compile_flags(mdir-water-template-test)
 target_link_libraries(mdir-water-template-test PRIVATE MDIRDriver MDIRMDTransforms MDIRMDExecKernels)
 

@@ -519,6 +519,39 @@ turns, then writes each partner once. It combines the two copies of each
 first unit before writing. Its structural tests cover WW, SW, SS and
 energy-only bodies; physical GPU validation remains outstanding.
 
+The physical allocation has one flat integer payload containing the outer
+and inner rows, work units and pair records for all classes. The shared
+compiler/runtime layout uses i64 physical offsets and bounded i32 payload
+indices. Initialization uploads real-unit membership once: stored extra
+points belong to water but never enter the atom complement. A growth
+discards every class range, so the subsequent build must rebuild all
+classes. No growth work occurs on a refresh that fits.
+
+The execution-body emitter retains independent site guards and the actual
+scalar/derived expressions. A second test-only outliner checks this
+emitter against the same independent 27-image f64 quadratic oracle and
+the same predeclared bound as the semantic reduction. This remains an
+isolated body test, not physical-system or device-list validation.
+
+The current pair-arithmetic precision comparison is below. It describes
+the execution IR and isolated packing/scheduler emitters; complete device
+integration and measurements are still pending. Compile-time folding of
+water coefficients is the rounding difference accepted above, not f64
+per-pair device work.
+
+| Operation | Legacy mixed pair kernel | Template mixed pieces |
+|---|---|---|
+| Source positions and lattice shift before packing | f64 | f64 |
+| Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
+| Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
+| Squared distance and site cutoff | f32 | f32 |
+| Charge products | f32 from loaded parameters | Water constants may fold in f64 at compile time, then narrow to f32; dynamic solute products are f32 |
+| LJ and erfc/exp arithmetic | f32; existing approximation under `fast_math` | f32; the same approximation pass visits the three new bodies |
+| Per-pair and per-thread real-atom forces | f32 | f32 |
+| Force destination | f32 | f32; final device atomic destinations still to be wired |
+| Per-pair virial products | f32 | f32 |
+| Energy and virial sums | f64 | f64 |
+
 The relation kind of template instances and its specialization in the
 builder; the packing and its frames; the segmented dual-list buffer and
 the remap of SW entries after a water build; the fused kernel and its register budget;

@@ -49,7 +49,10 @@ static WaterTemplatePlan match(const System &s, const Control &c = {}) {
 }
 int runWaterTemplateIRTest();
 int runWaterTemplateUnitIRTest();
+int runWaterTemplateLayoutTest();
 int main(int argc, char **argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--layout") == 0)
+    return runWaterTemplateLayoutTest();
   if (argc == 2 && std::strcmp(argv[1], "--window-ir") == 0)
     return runWaterTemplateIRTest();
   if (argc == 2 && std::strcmp(argv[1], "--unit-ir") == 0)

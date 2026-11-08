@@ -1670,6 +1670,8 @@ static void releaseGroups(struct Groups *groups) {
   }
 }
 
+#include "mdrt_template_pairs.h"
+
 /* A structure with room for `places` places (a multiple of 16) and
    `blocks` blocks. The lowering asks for one block a group: the first build
    counts the blocks it needs, and its growth sizes the pool

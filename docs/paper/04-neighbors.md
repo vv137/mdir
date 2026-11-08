@@ -889,6 +889,15 @@ measurements in this section are those of a prototype outside the
 repository (RTX 4090, mixed precision, against `main` with the groups of
 Section 4.4); the implementation's replace them.*
 
+The current implementation has the structured site windows and their
+derived forces/strain, whole-molecule packing, a rotating warp scheduler,
+and execution IR for one persistent class-segmented list. The shared
+allocation layout and initialization are checked independently, and the
+execution body's site guards pass the same isolated all-images f64
+oracle as the semantic reduction. Physical device-list generation,
+validity integration and end-to-end measurements remain in progress;
+the prototype's performance numbers are not implementation results.
+
 In an aqueous system most pairs within $r_c$ are pairs of water sites:
 93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166
 waters), against 4.1% between solute and water and 2.3% within the

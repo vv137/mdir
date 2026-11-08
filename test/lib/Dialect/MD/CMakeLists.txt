@@ -2,6 +2,7 @@
 add_mlir_library(MDIRTestPasses
   TestOutlineKernels.cpp
   TestTemplateWindows.cpp
+  TestExecTemplateWindows.cpp
   TestLoopEffects.cpp
   TestStageAdjoint.cpp
   TestTranspose.cpp
@@ -12,6 +13,7 @@ add_mlir_library(MDIRTestPasses
   MDIRMD
   MDIRMDExec
   MDIRMDTransforms
+  MDIRMDExecKernels
   MLIRFuncDialect
   MLIRIR
   MLIRPass

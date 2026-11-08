@@ -140,6 +140,11 @@ public:
       // constraints keep their arithmetic (D112).
       if (auto tuple = dyn_cast<TupleForOp>(op); tuple && tuple.getDisjoint())
         return;
+      if (auto window = dyn_cast<TemplateForOp>(op)) {
+        for (Region &region : window->getRegions())
+          kernels.push_back(&region);
+        return;
+      }
       if (isa<PairForOp, TupleForOp>(op))
         kernels.push_back(&op->getRegion(0));
     });

@@ -22,6 +22,7 @@ namespace mdir {
 namespace test {
 void registerTestOutlineKernels();
 void registerTestTemplateWindows();
+void registerTestExecTemplateWindows();
 void registerTestLoopEffects();
 void registerTestStageAdjoint();
 void registerTestTranspose();
@@ -36,6 +37,7 @@ int main(int argc, char **argv) {
   mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
   mdir::test::registerTestTemplateWindows();
+  mdir::test::registerTestExecTemplateWindows();
   mdir::test::registerTestLoopEffects();
   mdir::test::registerTestStageAdjoint();
   mdir::test::registerTestTranspose();
