@@ -1,0 +1,42 @@
+# Forward mode in the tunables of the frame evaluator, FrameEnergies.jvp
+# (D[force-matching-forward], #726), on a GPU: the tangents of
+# the energies and of their gradients in the positions against closed forms,
+# NumPy sums differentiated in theta, and exact half differences; the
+# transpose identity with the product of D381; in double, central
+# differences of the gradient in theta (Ridders); in mixed, against double.
+# Inputs/python_frame_jvp.py says what each scenario checks.
+#
+# REQUIRES: cuda, python-api
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide dihedral GPU Double %t/dihedral-Double | FileCheck %s --check-prefixes=DIHEDRAL,DOUBLE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide dihedral GPU Mixed %t/dihedral-Mixed | FileCheck %s --check-prefixes=DIHEDRAL,MIXED -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide lj GPU Double %t/lj-Double | FileCheck %s --check-prefixes=LJ,DOUBLE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide lj GPU Mixed %t/lj-Mixed | FileCheck %s --check-prefixes=LJ,MIXED -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide charges GPU Double %t/charges-Double | FileCheck %s --check-prefixes=CHARGES,DOUBLE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide charges GPU Mixed %t/charges-Mixed | FileCheck %s --check-prefixes=CHARGES,MIXED -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide sites GPU Double %t/sites-Double | FileCheck %s --check-prefixes=SITES,DOUBLE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide sites GPU Mixed %t/sites-Mixed | FileCheck %s --check-prefixes=SITES,MIXED -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide pme GPU Double %t/pme-Double | FileCheck %s --check-prefixes=PME,DOUBLE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_jvp.py %S/Inputs/dipeptide pme GPU Mixed %t/pme-Mixed | FileCheck %s --check-prefixes=PME,MIXED -DMODE="GPU Mixed"
+
+# DIHEDRAL: [[MODE]]: dihedral_k, 3 frames: the tangent of the energy against the rows
+# DIHEDRAL: [[MODE]]: dihedral_k, 3 frames: the tangent of the gradient in the positions against the closed form
+# DIHEDRAL: [[MODE]]: dihedral_k, 3 frames: the transpose identity
+# LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart, 3 frames: the tangent of the energy against the rows
+# LJ: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against a NumPy sum of the forces of the Lennard-Jones
+# LJ: [[MODE]]: {{.*}}: the transpose identity
+# CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, 2 frames: the tangent of the energy
+# CHARGES: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against a NumPy sum of the forces of the shifted Coulomb
+# CHARGES: [[MODE]]: {{.*}}: the transpose identity
+# SITES: [[MODE]]: eight OPC waters in 2.0 nm, a linear site: the tangent of the energy
+# SITES: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against central differences in theta of the gradient of the NumPy model
+# SITES: [[MODE]]: {{.*}}: the transpose identity
+# AMBER: [[MODE]]: Amber OPC (ACE-ALA-NME and waters, 182 particles), the extra points: the tangent of the energy
+# AMBER: [[MODE]]: {{.*}}: the transpose identity
+# PME: [[MODE]]: the charges with PME, per particle, 1168 entries, 2 frames: the tangent of the energy
+# PME: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against the half difference
+# PME: [[MODE]]: the charges with PME, tied in 25 entries, 2 frames: the tangent of the energy
+# PME: [[MODE]]: {{.*}}: the tangent of the gradient in the positions against the half difference
+# DOUBLE: [[MODE]]: {{.*}}: the same against central differences of the gradient in theta along the tangent (Ridders)
+# MIXED: [[MODE]]: {{.*}}: the tangent of the gradient in mixed precision against that in double
