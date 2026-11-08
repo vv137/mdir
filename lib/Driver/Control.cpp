@@ -3017,7 +3017,7 @@ Error Reader::read(const toml::table &root) {
            "dynamics",
            "minimize",
            "ensemble", "thermostat", "barostat",
-           "boundary", "execution", "constraints", "restraints"},
+           "boundary", "execution", "constraints", "restraints", "performance"},
           {}))
     return error;
 
@@ -3223,6 +3223,18 @@ Error Reader::read(const toml::table &root) {
     if (Error error = readExecution(*table))
       return error;
 
+  if (Error error = getTable("performance", /*required=*/false, table))
+    return error;
+  if (table) {
+    if (Error error = checkKeywords(*table, "performance", {"water.template"}))
+      return error;
+    if (Error error = readChoice<WaterTemplateChoice>(
+            *table, "water.template", control.waterTemplate,
+            {{"AUTO", WaterTemplateChoice::Auto},
+             {"ON", WaterTemplateChoice::On},
+             {"OFF", WaterTemplateChoice::Off}}))
+      return error;
+  }
   return validateControl(control, path);
 }
 

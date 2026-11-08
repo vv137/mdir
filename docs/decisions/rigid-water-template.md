@@ -4,12 +4,12 @@ Recorded at its merge.
 
 **Propose a rigid-water template for the short-range pairs on a device in mixed precision: waters that match a template become units anchored at their oxygen, listed by a covering bound on the anchors, evaluated by one warp-cooperative fused kernel over water–water, solute–water, and solute–solute cluster pairs with the template's parameters as constants and the extra point formed in the kernel, under an execution choice `water.template` (`AUTO`, `ON`, `OFF`).**
 
-Status: proposed; awaiting a ruling on #774. Part of #774 (the
-implementation closes it). The choices still open are listed under
-[Open choices](#open-choices) and asked on the PR.
+Status: design accepted on #795; implementation in progress. This decision
+closes #774 when its implementation gates pass. The seven accepted choices
+are recorded under [Maintainer's ruling](#maintainers-ruling).
 
-This is a documentation-only design. It adds no operation, lowering,
-control-file key, output format, default, or numerical result. The
+The existing measurements below are those of the prototype, not validation
+of the implementation. The
 derivation is in Section 4.7 of the white paper and the paragraph on the
 template's extra point in Section 6.1; this file states what is decided,
 why, and the gates.
@@ -145,8 +145,8 @@ never loaded or stored for the short-range pairs. The definition of the
 site in the topology is kept (#774): force outputs, derivatives, and every
 path outside the template still use the bisector.
 
-How the site's force goes to the three atoms is open, between two rules
-(white paper, Section 6.1):
+The maintainer chose rule (A) for dynamics (white paper, Section 6.1).
+Rule (B), used by the prototype, is described for comparison:
 
 - **(A) The constant transpose of the linear placement.** The oxygen takes
   $(1 - 2\alpha)\mathbf f$ and each hydrogen $\alpha\mathbf f$. These are the
@@ -194,13 +194,22 @@ tagged:
 - **SS**, solute cluster × solute particle, each unordered pair once, with
   the excluded pairs cleared from the masks at the build as in D89.
 
-There are two lists, each a dual list (D114) with exact tests: the water
-list, tested on the anchors alone, and the solute lists (SW and SS), tested
-on the solute particles and the anchors. The water list is then rebuilt at
-the anchors' pace, not at the pace of the solute's hydrogens. The pruning
-of the solute lists is folded into the pruning in the loop (D284) rather
-than run as a launch of its own, which the prototype did not do (6.5 µs a
-step there).
+The three class-pair segments are ranges of one buffer, compacted by tag,
+with one offset per segment. The spatial search and sort run once. A warp
+stays within one segment in the fused launch, so its tag branch is uniform.
+Two mobility groups set the displacement-test cadences: water anchors,
+and atoms. WW follows the anchors; SW and SS follow the faster participating
+group. Each cadence keeps the outer and pruned references of D114.
+The pruning of the solute segments is folded into the pruning in the loop
+(D284), rather than the separate launch of the prototype.
+
+For $P$ particle classes there are $P(P+1)/2$ unordered class-pair segments,
+including self-pairs, but only $C\le P$ displacement tests, one per mobility
+group, and one storage buffer. Four classes (water, solute, ions and
+perturbed atoms) give ten segments and still two tests when only water
+uses anchors. Segment $(a,b)$ refreshes at the faster participating cadence.
+Segments without a measured specialization gain retain the general path
+inside the same launch; a segment is not a separate kernel.
 
 Only intramolecular pairs of a water are excluded, and two different
 molecules have none, so the WW and SW work has no exclusion check: it is
@@ -255,7 +264,7 @@ constraint has run, since the positions of the input are not constrained
 packing, which reads each molecule whole, and the water list takes
 $\max(r_\mathrm m, \max_A\varrho_A)$ for that build. Between builds the
 constraint step tests them. A molecule beyond $r_\mathrm m$ after a
-constraint step fails the test (open choice 5 below asks what follows).
+constraint step stops the run, as the maintainer ruled below.
 
 ### 7. Selection: the execution choice `water.template`
 
@@ -273,7 +282,7 @@ declared with the choice and set by the implementation's end-to-end
 measurements; `mdir tune` (#790) may pick per system. It must be able to
 choose the general path where the template does not pay: stage 2 measured
 ubiquitin with TIP3P at 1.015 times `main`'s step. The proposed first rule
-is in open choice 4.
+is recorded in the maintainer's ruling below.
 
 The record of the choice follows #790: `mdir check`, the log, and the run
 manifest state the value, its source (`AUTO`, tune, or given), and what the
@@ -405,30 +414,41 @@ measurements replace them.
    #738's boxes, ubiquitin, and the Amber suite, where no system may be
    slower under `AUTO`.
 
-## Open choices
+## Maintainer's ruling
 
-Asked on the PR with a recommendation each:
+All seven recommendations were accepted on #795:
 
-1. The spreading rule of the extra point, (A) or (B).
-2. The list test fused into the integrator, or a separate test as in the
-   prototype.
-3. Where `water.template` lives before #790's table exists.
-4. `AUTO`'s first rule.
-5. The margin $\delta_\mathrm m$, and what follows an extent beyond
-   $r_\mathrm m$.
-6. Force outputs at a step that writes them, under rule (A).
-7. The models of the first version.
+1. Constant-transpose spreading (A) for dynamics; deterministic mode keeps
+   the general path.
+2. The validity test is fused into the integrator, with solute pruning in
+   the existing pruning loop.
+3. `[performance]` `"water.template" = "AUTO"`, `"ON"` or `"OFF"`, in the
+   same-accuracy class. `ON` is refused on the CPU, in double precision or
+   deterministic mode.
+4. Initially `AUTO` selects four-site models only; end-to-end measurements
+   set the particle-count floor. Three-site models remain general under
+   `AUTO` until measurements justify selecting them.
+5. The margin is $10^{-3}$ Å. A first-evaluation extent excess widens the
+   reach; an excess after a constraint step stops the run.
+6. Written forces use the bisector transpose for that evaluation.
+   Derivative paths remain general and refuse `ON` by name. Tunable water
+   parameters likewise remain general; runtime template parameters and
+   their derivatives are an unscheduled follow-up to #774.
+7. The first-version scope is the oxygen-only-LJ three- and four-site
+   models above, one predominant template per program, with reported
+   mismatch counts.
 
 ## Left to the implementation
 
 The relation kind of template instances and its specialization in the
-builder; the packing and its frames; the two dual lists and the remap of
-SW entries after a water build; the fused kernel and its register budget;
+builder; the packing and its frames; the segmented dual-list buffer and
+the remap of SW entries after a water build; the fused kernel and its register budget;
 the extent check; the record of the choice; the end-to-end measurements
 that set `AUTO`'s rule; Section 10's numbers. Related work:
-[[Ruymgaart2012]](../references.md#ruymgaart2012) (one thread per three-site
-water, an oxygen–oxygen cutoff, the 9 site pairs unrolled; no virtual
-sites, no generated code) and
+[[Ruymgaart2012]](../references.md#ruymgaart2012) (water-specific kernels and
+water-index lists; SI Appendix C applies an oxygen–oxygen molecular cutoff
+to all nine site pairs, a different model from this decision's site cutoff;
+no virtual sites or generated code) and
 [[Nikolskiy2020]](../references.md#nikolskiy2020) (TIP4P on a GPU: the
 virtual charge placed once per molecule and stored, its force spread by a
 second kernel).

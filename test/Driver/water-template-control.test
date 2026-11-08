@@ -1,0 +1,15 @@
+# The quoted dotted key lives directly in [performance], not [execution]
+# and not a nested TOML table. Only the declared choices are accepted.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/argon/argon.toml %t/run.toml
+# RUN: mdir-water-template-test %t/run.toml | FileCheck %s --check-prefix=AUTO
+# RUN: printf '\n[performance]\n"water.template" = "off"\n' >> %t/run.toml
+# RUN: mdir-water-template-test %t/run.toml | FileCheck %s --check-prefix=OFF
+# RUN: sed 's/"off"/"on"/' %t/run.toml > %t/on.toml
+# RUN: mdir-water-template-test %t/on.toml | FileCheck %s --check-prefix=ON
+# RUN: sed 's/"off"/"invalid"/' %t/run.toml > %t/invalid.toml
+# RUN: not mdir-water-template-test %t/invalid.toml 2>&1 | FileCheck %s --check-prefix=INVALID
+# AUTO: water.template = AUTO
+# OFF: water.template = OFF
+# ON: water.template = ON
+# INVALID: expected one of AUTO, ON, OFF for 'water.template', got 'invalid'
