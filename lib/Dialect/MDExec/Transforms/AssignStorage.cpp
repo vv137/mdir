@@ -2327,6 +2327,39 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertTupleFor(loop, scope, position);
   if (auto list = dyn_cast<BuildSegmentedPairsOp>(op))
     return convertSegmentedBuild(list, scope);
+  if (auto empty = dyn_cast<EmptySegmentedPairsOp>(op)) {
+    if (isa<MemRefType>(empty.getUniverse().getType()))
+      return empty.emitOpError("is in the storage form already");
+    Value universe;
+    if (failed(getBuffer(empty.getUniverse(), scope, universe)))
+      return failure();
+    Value molecules = mapping.lookupOrNull(empty.getMolecules());
+    Value excluded = empty.getExcluded()
+                         ? mapping.lookupOrNull(empty.getExcluded()) : Value();
+    if (!molecules || (empty.getExcluded() && !excluded))
+      return empty.emitOpError("template membership has no member buffer");
+    auto list = EmptySegmentedPairsOp::create(
+        builder, op->getLoc(), empty.getResult().getType(), universe,
+        molecules, excluded, empty.getCutoffAttr(), empty.getSkinAttr(),
+        empty.getExtentAttr(), empty.getAlphaAttr());
+    mapping.map(empty.getResult(), list.getResult());
+    return success();
+  }
+  if (auto refresh = dyn_cast<RefreshSegmentedPairsOp>(op)) {
+    if (isa<MemRefType>(refresh.getPositions().getType()))
+      return refresh.emitOpError("is in the storage form already");
+    Value positions;
+    if (failed(getBuffer(refresh.getPositions(), scope, positions)))
+      return failure();
+    auto next = RefreshSegmentedPairsOp::create(
+        builder, op->getLoc(), refresh.getResult().getType(),
+        mapping.lookup(refresh.getList()), positions,
+        mapping.lookup(refresh.getCell()), refresh.getCutoffAttr(),
+        refresh.getSkinAttr(), refresh.getPruneSkinAttr(),
+        refresh.getExtentAttr(), refresh.getAlphaAttr());
+    mapping.map(refresh.getResult(), next.getResult());
+    return success();
+  }
   if (auto loop = dyn_cast<TemplateForOp>(op))
     return convertTemplateFor(loop, scope, position);
   if (auto build = dyn_cast<BuildIncidenceOp>(op))

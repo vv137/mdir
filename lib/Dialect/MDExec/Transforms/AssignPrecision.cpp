@@ -407,6 +407,10 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(build.getPositions());
     return success();
   }
+  if (auto refresh = dyn_cast<RefreshSegmentedPairsOp>(op)) {
+    positions.push_back(refresh.getPositions());
+    return success();
+  }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
     if (failed(checkForm(loop)))
       return failure();

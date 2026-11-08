@@ -828,6 +828,119 @@ static bool fuseOnce(Block &block) {
   return false;
 }
 
+/// The template route keeps all class bodies in one loop. Fuse only its
+/// value form: no mutation can then be hidden behind an operand.
+static bool fuseTemplateLoopsOnce(Block &block) {
+  SmallVector<TemplateForOp> loops;
+  for (Operation &op : block)
+    if (auto loop = dyn_cast<TemplateForOp>(&op))
+      if (!loop.isStorageForm())
+        loops.push_back(loop);
+  for (auto [index, first] : llvm::enumerate(loops)) {
+    for (TemplateForOp second : llvm::drop_begin(loops, index + 1)) {
+      if (first.getList() != second.getList() ||
+          first.getPositions() != second.getPositions() ||
+          first.getCell() != second.getCell() ||
+          first.getCutoffAttr() != second.getCutoffAttr() ||
+          first.getExtentAttr() != second.getExtentAttr() ||
+          first.getAlphaAttr() != second.getAlphaAttr() ||
+          uses(second, first) || !usersComeAfter(first, second))
+        continue;
+      // Moving the first evaluation past a side effect could change what
+      // an externally captured scalar observes. Do not cross such an op.
+      bool safe = true;
+      for (Operation *op = first->getNextNode(); op != second;
+           op = op->getNextNode())
+        safe &= isPure(op);
+      if (!safe)
+        continue;
+      OpBuilder builder(second);
+      Location loc = second.getLoc();
+      llvm::SetVector<Value> inputs;
+      inputs.insert(first.getIns().begin(), first.getIns().end());
+      inputs.insert(second.getIns().begin(), second.getIns().end());
+      SmallVector<Value> outs(first.getOuts());
+      llvm::append_range(outs, second.getOuts());
+      SmallVector<Value> reduce(first.getReduce());
+      llvm::append_range(reduce, second.getReduce());
+      SmallVector<Type> types;
+      for (Value value : outs) types.push_back(value.getType());
+      for (Value value : reduce) types.push_back(value.getType());
+      unsigned firstOuts = first.getOuts().size();
+      unsigned secondOuts = second.getOuts().size();
+      unsigned firstColumns = firstOuts + first.getReduce().size();
+      unsigned secondColumns = secondOuts + second.getReduce().size();
+      SmallVector<int32_t> pairs;
+      for (unsigned tag = 0; tag != 3; ++tag) {
+        auto a = first.getPairs().slice(tag * firstColumns, firstColumns);
+        auto b = second.getPairs().slice(tag * secondColumns, secondColumns);
+        llvm::append_range(pairs, a.take_front(firstOuts));
+        llvm::append_range(pairs, b.take_front(secondOuts));
+        llvm::append_range(pairs, a.drop_front(firstOuts));
+        llvm::append_range(pairs, b.drop_front(secondOuts));
+      }
+      auto fused = TemplateForOp::create(
+          builder, loc, types, first.getList(), first.getPositions(),
+          first.getCell(), inputs.getArrayRef(), outs, reduce, ValueRange(),
+          builder.getDenseI32ArrayAttr(pairs), first.getCutoffAttr(),
+          first.getExtentAttr(), first.getAlphaAttr());
+      constexpr unsigned arities[] = {6, 4, 2};
+      constexpr unsigned geometry[] = {5, 3, 1};
+      for (unsigned tag = 0; tag != 3; ++tag) {
+        Block *target = new Block();
+        fused->getRegion(tag).push_back(target);
+        Block &source = first->getRegion(tag).front();
+        for (unsigned i = 0; i != geometry[tag]; ++i)
+          target->addArgument(source.getArgument(i).getType(), loc);
+        for (Value field : inputs)
+          for (unsigned i = 0; i != arities[tag]; ++i)
+            target->addArgument(cast<md::FieldType>(field.getType()).getKernelValueType(), loc);
+        OpBuilder body = OpBuilder::atBlockEnd(target);
+        SmallVector<Value> yieldedOuts, yieldedSums;
+        auto clone = [&](TemplateForOp loop) {
+          Block &from = loop->getRegion(tag).front();
+          IRMapping mapping;
+          for (unsigned i = 0; i != geometry[tag]; ++i)
+            mapping.map(from.getArgument(i), target->getArgument(i));
+          for (auto [i, field] : llvm::enumerate(loop.getIns()))
+            for (unsigned member = 0; member != arities[tag]; ++member)
+              mapping.map(from.getArgument(geometry[tag] + i * arities[tag] + member),
+                          target->getArgument(geometry[tag] +
+                              (llvm::find(inputs, field) - inputs.begin()) *
+                                  arities[tag] + member));
+          for (Operation &nested : from.without_terminator())
+            body.clone(nested, mapping);
+          unsigned columns = loop.getOuts().size() + loop.getReduce().size();
+          unsigned offset = 0;
+          for (unsigned column = 0; column != columns; ++column) {
+            bool scatter = column < loop.getOuts().size();
+            unsigned count = loop.getPairs()[tag * columns + column] *
+                             (1 + (scatter ? arities[tag] : 1));
+            auto &yielded = scatter ? yieldedOuts : yieldedSums;
+            for (Value value : from.getTerminator()->getOperands().slice(offset, count))
+              yielded.push_back(mapping.lookupOrDefault(value));
+            offset += count;
+          }
+        };
+        clone(first);
+        clone(second);
+        llvm::append_range(yieldedOuts, yieldedSums);
+        YieldOp::create(body, loc, yieldedOuts);
+      }
+      for (unsigned i = 0; i != first.getNumResults(); ++i)
+        first.getResult(i).replaceAllUsesWith(
+            fused.getResult(i < firstOuts ? i : i + secondOuts));
+      for (unsigned i = 0; i != second.getNumResults(); ++i)
+        second.getResult(i).replaceAllUsesWith(fused.getResult(
+            i < secondOuts ? firstOuts + i : firstColumns + i));
+      first.erase();
+      second.erase();
+      return true;
+    }
+  }
+  return false;
+}
+
 namespace mdir {
 namespace md_exec {
 
@@ -847,6 +960,8 @@ public:
           blocks.push_back(&block);
     });
     for (Block *block : blocks) {
+      while (fuseTemplateLoopsOnce(*block))
+        ;
       while (fuseOnce(*block))
         ;
       while (fuseTupleLoopsOnce(*block))

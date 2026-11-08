@@ -48,6 +48,13 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
     The structure is empty when the loop begins, so the first iteration
     builds it.
 
+    The template route uses the same lifetime transformation with its own
+    `empty_segmented_pairs` and `refresh_segmented_pairs` operations. One
+    state carries the WW/SW/SS ranges and the two mobility groups. Segment
+    boundaries and fresh step loops start a new state; nested step/output
+    loops otherwise continue it. Ordinary neighbor classification and
+    refresh rules are unchanged (D[rigid-water-template]).
+
     A refresh that repeats the last refresh of its structure (the same
     positions and cell, as values, and the same parameters) is removed,
     also where a loop carries the structure and only repeats that refresh:
