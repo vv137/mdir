@@ -5,7 +5,7 @@ Recorded 2026-11-09.
 Amends [D76](D76.md). With leapfrog and a barostat, store
 $\mathbf v_\mathrm{stored}=\mathcal P_{\mathbf x_n}
 (\mathbf v_\mathrm{coupled}-hM^{-1}\mathbf F_n)$, where
-$h=\Delta t/2$ and $\mathcal P$ is the mass-weighted constraint projector
+$h=\Delta t/2$, $M$ is the diagonal particle mass matrix, and $\mathcal P$ is the mass-weighted constraint projector
 at the current positions. Apply it after coupling, at each native entry
 boundary that stores the backward half-kick. SETTLE and SHAKE use their
 existing velocity projectors; unconstrained particles retain the same
@@ -123,3 +123,22 @@ The unchanged independent-step checks reached maximum position difference
 $2.1797549321078691\times10^{-8}$ nm and full-step velocity difference
 $7.7852177327031313\times10^{-6}$ nm/ps. The same-frame stored oracle and
 bond velocity checks also passed without relaxing their constants.
+
+## Subsequent focused validation
+
+Archived-main comparisons against 97329f6f passed on CPU and RTX 5090 in
+both precisions. The GPU mixed baselines were acquired on the GPU route,
+with the same fixed perturbation and sample steps as on CPU.
+
+| Maximum difference or residual | CPU double | CPU mixed | RTX 5090 double | RTX 5090 mixed |
+|---|---:|---:|---:|---:|
+| Position, nm | 1.577e-14 | 1.049e-7 | 2.531e-14 | 1.856e-7 |
+| Projected full-step velocity, nm/ps | 2.191e-12 | 1.236e-5 | 2.379e-12 | 1.376e-5 |
+| Stored-velocity oracle, nm/ps | 1.967e-12 | 9.854e-6 | 2.290e-12 | 1.484e-5 |
+| Normalized bond velocity, nm/ps | 1.100e-15 | 6.841e-7 | 1.299e-15 | 6.108e-7 |
+
+The focused CPU regressions passed 5/5 and RTX 5090 regressions passed
+4/4, including the existing constraint, Langevin-reference and energy-step
+tests and the new double/mixed storage fixtures. No GPU numerical failure
+or retry occurred. Sanitizer and final clean-head full-suite results remain
+pending.

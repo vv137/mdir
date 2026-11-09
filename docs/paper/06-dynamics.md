@@ -117,7 +117,7 @@ takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
 
 After leapfrog barostat coupling, store
 $\mathbf v_\mathrm{stored}=\mathcal P_{\mathbf x_n}
-(\mathbf v_\mathrm{coupled}-hM^{-1}\mathbf F_n)$
+(\mathbf v_\mathrm{coupled}-h\mathbf a_n)$
 (D[leapfrog-npt-stored-velocity]). Projecting this backward half-kick
 removes its dependence on constraint-normal force components while
 preserving the projected full-step velocity used by the couplings and
