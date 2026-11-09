@@ -14,6 +14,28 @@ derivation is in Section 4.7 of the white paper and the paragraph on the
 template's extra point in Section 6.1; this file states what is decided,
 why, and the gates.
 
+## Glossary
+
+These terms apply to this decision, its documentation and diagnostics.
+Implementation identifiers retain their spelling but describe the term
+they implement.
+
+| Term | Meaning | Implementation names |
+|---|---|---|
+| class-segmented pair list (segmented list) | One buffer of cluster-pair records, divided by class-pair tag into segments. | shared arena, pair allocation |
+| segment | The WW, SW or SS part of that buffer, with its outer and inner ranges. | WW/SW/SS ranges |
+| class | Water template or solute; selects the computation for a unit. | class, class row |
+| class pair | WW, SW or SS. | three-class |
+| unit | A matched water with anchor O and radius $r_\mathrm m$, or a solute particle with radius zero in this version. | real unit, padded unit |
+| anchor | A unit's reference point for sorting and displacement tests. | anchor |
+| mobility group | Units sharing a displacement test and refresh schedule: anchors of matched waters; atoms. | group, stale group |
+| refresh | Rebuild or prune of the segments invalidated by a mobility group's test. | stale-group refresh, cold refresh |
+| template kernel | The fused launch evaluating all three class pairs. | three-class loop, fused window |
+| extent | Largest distance of a unit's sites from its anchor, checked against $r_\mathrm m$. | extent, initial extent widening |
+| covering bound | The anchor-distance conditions $R+2r_\mathrm m$ for WW and $R+r_\mathrm m$ for SW. | covering predicate |
+| rule (A) | The extra point's constant transpose used by template dynamics. | constant site transpose |
+| rule (B) | The true bisector transpose used for written-frame forces. | general frame evaluator |
+
 ## Why
 
 In an aqueous system most pairs within $r_c$ are pairs of water sites:
@@ -781,9 +803,31 @@ hazards and all 49 values unchanged, holding the device for about twelve
 seconds. No numerical bound, pair arithmetic or shared helper changed.
 Six native schedule lowering audits also pass: NVE plus leapfrog and
 velocity-Verlet variants of isotropic, semi-isotropic, anisotropic and
-first-order pressure updates. Constraint-history refusal coverage,
-written-frame bisector forces and the physical-system/end-to-end gates
-remain required.
+first-order pressure updates. Constraint-history refusal coverage and the
+physical-system/end-to-end gates remain required.
+
+Force-bearing H5MD reports evaluate rule (B) with a separate general
+no-step program at the current positions, cell and step. Its activation,
+runtime records and force buffers belong to that observation; the
+template dynamics' carried rule-(A) forces and checkpoint state remain
+unchanged. The program is compiled lazily and reused until the physics
+version changes. Its precision is the legacy general mixed route's at
+every operation, including the bisector placement and transpose; it adds
+no new pair arithmetic. No performance conclusion is drawn from this
+reporting check.
+
+The reporter isolation fixture passes two force frames against the general
+no-step API at relative bound $10^{-5}$, distinguishes rules (A) and (B),
+checks carried positions, velocities and forces bitwise before/after
+reporting, and resumes dynamics between reports. This is an API isolation
+check, not the independent physical oracle gate. Its first run stopped
+before execution because the new list-constructor declaration lacked
+read-only annotations on its two input tables. Adding those annotations
+passed lowering; the affected run then reached the new helper and found
+that the public frame API requires tunables. The helper now uses the
+existing general no-step state evaluator, without changing that refusal
+or any ordinary entry. Its single affected rerun passed. Neither failure
+was a numerical comparison or an intermittent failure.
 
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this

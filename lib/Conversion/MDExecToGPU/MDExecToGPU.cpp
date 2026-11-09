@@ -6045,6 +6045,8 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   func::FuncOp create = getOrDeclare("mdrtTemplatePairsCreateMembers",
       builder.getFunctionType({hostType, wide, wide, hostType}, {wide}));
   create->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  create.setArgAttr(0, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
+  create.setArgAttr(3, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value handle = func::CallOp::create(builder, loc, create,
       ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded}).getResult(0);
   for (Value host : copied) memref::DeallocOp::create(builder, loc, host);

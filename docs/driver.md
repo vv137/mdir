@@ -106,6 +106,11 @@ The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
 are preserved; deterministic, double, CPU and derivative programs retain
 the general path, with a named refusal for `ON`.
+Its [glossary](decisions/rigid-water-template.md#glossary) defines the
+class-segmented pair list, its WW/SW/SS segments, units, anchors, mobility
+groups and refreshes. The template kernel uses rule (A) for dynamics;
+force-bearing H5MD reports use a separate general rule-(B) evaluation,
+leaving the carried state and checkpoint forces unchanged.
 
 The [particle-grid stencil primitives](reciprocal-stencils.md),
 D390, adds compiler IR only. It introduces no control
