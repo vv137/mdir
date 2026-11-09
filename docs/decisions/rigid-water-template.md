@@ -726,6 +726,19 @@ rounding guards. These are validity-primitive checks, not physical force
 tolerances or completed native scheduling. The explicit-reach cold search
 also matches all 1,979 expected memberships in both cells exactly.
 
+The final-SSA writer callback now joins retained-frame packing, current
+fraction publication and both displacement tests inside its caller's
+particle kernel. It loads no world-position buffer. Unbuilt lists skip
+the epoch views, while constraint history still enforces the extent bound
+even on a fresh list. Its boolean results are supplied to the writer's
+flag reduction; the callback adds no launch, synchronization or readback.
+An isolated dyadic fixture passes 736 exact comparisons across both cell
+types, including independent hydrogen images, retained packing cells,
+outer/inner motion in both groups, untouched unbuilt state and the
+formed-site extent at alpha = 0.75. Geometry is serialized as integer
+bits from the start. Native writer selection and flag-event integration
+remain to be connected; this is not yet a physical-dynamics gate.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
