@@ -579,7 +579,24 @@ volume (Section 5). Neither a measured half step nor a virial of the
 constraints enters: with the kinetic energy of the atoms, the rotational
 kinetic energy of the rigid waters and the centripetal part of their
 constraint virial cancel only if both are taken from the same velocities,
-which the step of Langevin dynamics does not offer. Without constraints
+which the step of Langevin dynamics does not offer. In continuous time the
+cancellation is an identity. With $m_i\ddot{\mathbf x}_i$ the force on atom $i$
+and its constraint forces, $\mathbf x_i = \mathbf X_g + (\mathbf x_i -
+\mathbf X_g)$ splits the virial of the atoms into $\mathsf W_g$ and an
+internal part; in a rigid group $\tfrac{d^2}{dt^2}\lVert\mathbf x_i -
+\mathbf X_g\rVert^2 = 0$, and $\sum_{i\in g}m_i(\mathbf x_i - \mathbf X_g)
+= 0$ removes $\ddot{\mathbf X}_g$, so
+
+$$
+\sum_g\sum_{i\in g}\mathbf x_i\cdot m_i\ddot{\mathbf x}_i
+= \mathrm{tr}\,\mathsf W_g + \sum_g\sum_{i\in g}m_i(\mathbf x_i - \mathbf X_g)\cdot\ddot{\mathbf x}_i
+= \mathrm{tr}\,\mathsf W_g - \sum_g\sum_{i\in g}m_i\lVert\mathbf v_i - \dot{\mathbf X}_g\rVert^2
+= \mathrm{tr}\,\mathsf W_g - 2(K - K_g),
+$$
+
+and $2K$ plus the trace of the virial of the atoms is $2K_g +
+\mathrm{tr}\,\mathsf W_g$, provided $K$ and the constraint forces belong
+to the same velocities. Without constraints
 the pressure is the $P_\text{half}$ of the log of D203, unchanged. With $\lambda = \sqrt V$, which makes the noise
 additive, and $f = \beta_T N_P\Delta t/\tau_P$ (compressibility $\beta_T$,
 time constant $\tau_P$), one step of Euler and Maruyama of eq. (S7) of
