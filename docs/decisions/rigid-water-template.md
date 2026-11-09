@@ -821,6 +821,33 @@ zero and all production code remain unchanged. The refusal fixture
 captures unbuffered stdout as well as stderr because `cf.assert` lowers
 to `puts` followed by `abort`.
 
+The first small physical OPC fixture uses three waters with plain-cutoff
+Lennard-Jones and Coulomb interactions and no dispersion correction. It
+takes one template step to obtain a constrained frame, then evaluates the
+general double and mixed entries at that same frame. An independent CPU
+f64 all-pairs sum enumerates periodic images, forms the actual Amber
+bisector and applies its analytic transpose. The oracle energy is
+$-49.297633223430694$ kJ/mol against general double's
+$-49.297633223264853$: difference $1.6584\times10^{-10}$ kJ/mol. The raw
+force difference is at most $2.9746\times10^{-9}$ kJ/mol/nm, with RMS
+$1.0494\times10^{-9}$, against a largest double component of
+$1403.7811390878728$ kJ/mol/nm. The predeclared double-oracle check is
+$10^{-10}\max(1,\lvert U\rvert)$ for energy and
+$10^{-10}\max(1,F_\mathrm{max})$ for the largest force error.
+
+The force comparison removes the span of each water's three distance
+constraint gradients with the same Euclidean projection for both entries.
+On an RTX 5090, general mixed's projected max/RMS error against general
+double is $0.00165918/0.000631856$ kJ/mol/nm; the template's is
+$0.000674345/0.000217867$. Both template errors are below the accepted
+bound $\max(1.5e_\mathrm{mixed},10^{-5}F_\mathrm{max})$, which is
+$0.0140378114$ kJ/mol/nm for each quantity here. Its relative energy
+error is $1.6761\times10^{-7}$ against bound $10^{-5}$. This first
+execution passed without a correction or retry. These are small-system
+pair-arithmetic checks, not the larger-system, virial, stability or
+end-to-end gates. The oracle uses f64 throughout; the two compiled routes
+retain the precision assignments in the table below.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the

@@ -82,6 +82,10 @@ add_llvm_executable(mdir-template-report-test Driver/TemplateReportTest.cpp)
 llvm_update_compile_flags(mdir-template-report-test)
 target_link_libraries(mdir-template-report-test PRIVATE MDIRSimulation)
 
+add_llvm_executable(mdir-template-physics-test Driver/TemplatePhysicsTest.cpp)
+llvm_update_compile_flags(mdir-template-physics-test)
+target_link_libraries(mdir-template-physics-test PRIVATE MDIRSimulation)
+
 add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
 llvm_update_compile_flags(mdir-jit-memory-test)
 target_compile_options(mdir-jit-memory-test PRIVATE -fexceptions)
@@ -98,6 +102,7 @@ set(MDIR_TEST_DEPENDS
   mdir-compile-cache-test
   mdir-compile-test
   mdir-template-report-test
+  mdir-template-physics-test
   mdir-model-test
   mdir-dihedral-tunables-test
   mdir-output-rows-test

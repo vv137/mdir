@@ -1,0 +1,9 @@
+# REQUIRES: cuda
+# CPU f64 all-pairs oracle; GPU general double and mixed at the same
+# constrained OPC frame. Only this small plain-cutoff case is covered.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_report.py %S/Inputs/opc %t
+# RUN: mdir-template-physics-test %t/control.toml | tee %t/metrics.txt | FileCheck %s
+# CHECK: oracle: energy
+# CHECK: projected forces: general-mixed max
+# CHECK: OPC independent physical pair oracle and projected template comparison passed
