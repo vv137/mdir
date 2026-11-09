@@ -617,12 +617,17 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           result.masses, halfBack);
       // D[leapfrog-npt-stored-velocity]: do not retain the constraint-normal
       // part of a force representation in the stored half-step velocity.
+      SmallVector<Value> currentEdges;
+      if (!config.constraints.empty())
+        for (Value index : edgeIndices)
+          currentEdges.push_back(memref::LoadOp::create(inside, loc, boxMemory, index));
+      Value currentCell = config.constraints.empty() ? cell : buildCell(inside, currentEdges);
       auto fields = buildEntryPotentialFields(result);
       for (const auto &group : config.constraints) {
         SmallVector<Value> lengths;
         for (unsigned slot : group.parameters) lengths.push_back(fields[slot]);
         ConstraintVelocityInputs input{fields[group.relation], result.positions,
-            cell, result.velocities, result.masses, lengths, {}, {}};
+            currentCell, result.velocities, result.masses, lengths, {}, {}};
         result.velocities = group.water
             ? buildSettleVelocities(inside, input).velocities
             : buildShakeVelocities(inside, input, group.arity).velocities;

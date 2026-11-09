@@ -41,3 +41,23 @@ constraints, Langevin-reference and energy-step determinism tests, then the
 full suite at the final clean head. Results are pending. The separate
 rigid-water-template PR rebases after this fix merges and reruns its failed
 case with raw stored arrays and its unchanged numerical bounds.
+
+## First development check: stopped in the independent oracle
+
+The first valid CPU double/Trotter fixture compared the changed leapfrog
+route with velocity Verlet from the same source tree. At steps 10/11,
+position differences were $2.4424906541753444\times10^{-14}$ and
+$2.5757174171303632\times10^{-14}$ nm; cell differences were zero.
+Projected full-step velocity differences were
+$2.1662810434364133\times10^{-12}$ and
+$2.0056456495609609\times10^{-12}$ nm/ps. The step-10 stored velocity
+differed from the independent projected backward-half-kick reference by
+$2.0832849334517789\times10^{-12}$ nm/ps, with normalized bond velocity
+residual $1.1002474477654185\times10^{-15}$ nm/ps.
+
+The independent SHAKE reference for step 11 did not converge within its
+1000 sweeps at its declared $10^{-14}$ relative squared-bond criterion.
+The test stopped there (0 passed, 1 failed); no oracle or trajectory
+comparison was retried. These measurements are against velocity Verlet,
+not archived main, and are not final clean-head gate results. Main,
+GPU/mixed, existing leapfrog regressions and the full suite remain pending.
