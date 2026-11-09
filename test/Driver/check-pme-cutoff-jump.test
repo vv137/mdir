@@ -24,13 +24,13 @@
 # RUN: sed -e 's|^\[pme\]|[pme]\ntolerance = 1e-3|' %t/default.toml > %t/loose.toml
 #
 # RUN: cd %t && mdir check beta.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=BETA
-# BETA: mdir: warning: PME with beta = 0.34705 Å^-1 at the cutoff of 4.50 Å has erfc(beta r_c) = 2.72E-02: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 229.06 kJ/mol/nm where it crosses the cutoff, more than 1 kJ/mol/nm. About 0.03 pairs of charged particles a frame lie within 3.5E-07 nm of the cutoff (from their mean density), where mixed precision may decide them differently from double, each changing the forces by up to the jump; the jump also degrades the conservation of energy in either precision. To derive beta from the cutoff, remove 'beta' of [pme], so that 'tolerance' (10^-5 by default) sets erfc(beta r_c)
+# BETA: mdir: warning: PME with beta = 0.34705 Ang^-1 at the cutoff of 4.50 Ang has erfc(beta r_c) = 2.72E-02: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 229.06 kJ/mol/nm where it crosses the cutoff, more than 1 kJ/mol/nm. About 0.03 pairs of charged particles a frame lie within 3.5E-07 nm of the cutoff (from their mean density), where mixed precision may decide them differently from double, each changing the forces by up to the jump; the jump also degrades the conservation of energy in either precision. To derive beta from the cutoff, remove 'beta' of [pme], so that 'tolerance' (10^-5 by default) sets erfc(beta r_c)
 #
 # RUN: cd %t && mdir check --json beta.toml | FileCheck %s --check-prefix=JSON
 # JSON: "code": "pme_cutoff_jump"
 #
 # RUN: cd %t && mdir check loose.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=LOOSE
-# LOOSE: at the cutoff of 9.00 Å has erfc(beta r_c) = 1.00E-03: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 4.02 kJ/mol/nm
+# LOOSE: at the cutoff of 9.00 Ang has erfc(beta r_c) = 1.00E-03: the force of a pair of charges with |q_i q_j| = 1.8449 e^2 jumps by 4.02 kJ/mol/nm
 # LOOSE-SAME: To derive beta from the cutoff, set 'tolerance' of [pme] to 10^-5 (the default) or less
 #
 # The defaults: no warning, at 9 A and at 4.5 A.

@@ -460,7 +460,7 @@ static void checkCutoffJump(const Control &control, const System &system,
   warnings.push_back(
       {"pme_cutoff_jump",
        llvm::formatv(
-           "PME with beta = {0:F5} Å^-1 at the cutoff of {1} Å has "
+           "PME with beta = {0:F5} Ang^-1 at the cutoff of {1} Ang has "
            "erfc(beta r_c) = {2:E2}: the force of a pair of charges with "
            "|q_i q_j| = {3:F4} e^2 jumps by {4:F2} kJ/mol/nm where it "
            "crosses the cutoff, more than 1 kJ/mol/nm. About {5:F2} pairs "
