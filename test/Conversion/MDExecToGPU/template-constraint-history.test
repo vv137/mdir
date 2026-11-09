@@ -1,0 +1,8 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.reference %t.lowered.mlir
+# RUN: %python %S/../../Integration/Inputs/template_epoch_cases.py initial-fresh %t.input.mlir %t.reference
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.lowered.mlir
+# RUN: %python %S/../../Integration/Inputs/template_epoch_cases.py within-fresh %t.input.mlir %t.reference --triclinic
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.lowered.mlir
+# RUN: %python %S/../../Integration/Inputs/template_epoch_cases.py constrained-fresh %t.input.mlir %t.reference
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.lowered.mlir
