@@ -122,6 +122,29 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     Value inside = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, thread, ix(at, 3));
     scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
       memref::StoreOp::create(in, loc, integer(in, loc, 0), v.counters, ValueRange{thread});
+      if (v.classCells) {
+        assert(v.classReaches && v.reaches);
+        Value ww = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 0));
+        Value ss = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 2));
+        Value active = arith::SelectOp::create(in, loc, ww, v.spatial.waterActive,
+            arith::SelectOp::create(in, loc, ss, v.spatial.atomActive,
+                arith::OrIOp::create(in, loc, v.spatial.waterActive, v.spatial.atomActive)));
+        scf::IfOp::create(in, loc, active, [&](OpBuilder &publish, Location) {
+          int width = isTriclinic(v.cell) ? 6 : 3;
+          for (int64_t axis = 0; axis != 6; ++axis) {
+            Value component = axis < width
+                ? Value(vector::ExtractOp::create(publish, loc, v.cell, axis)) : real(publish, 0);
+            Value row = arith::AddIOp::create(publish, loc,
+                arith::MulIOp::create(publish, loc, thread, ix(publish, 2)), ix(publish, axis / 3));
+            memref::StoreOp::create(publish, loc, component, v.classCells,
+                ValueRange{row, ix(publish, axis % 3)});
+          }
+          Value radius = vector::ExtractOp::create(publish, loc, v.reaches, OpFoldResult(thread));
+          memref::StoreOp::create(publish, loc, radius, v.classReaches,
+              ValueRange{ix(publish, 0), thread});
+          scf::YieldOp::create(publish, loc);
+        });
+      }
       scf::YieldOp::create(in, loc);
     });
     gpu::TerminatorOp::create(at, loc);

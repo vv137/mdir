@@ -62,6 +62,7 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       TemplateSearchBuffers s;
       s.cell = v.cell; s.baseReach = v.baseReach; s.extent = v.extent;
       s.reaches = v.reaches;
+      s.classCells = v.classCells; s.classReaches = v.classReaches;
       auto &p = s.spatial;
       p.points = v.points;
       p.columnsX = v.columnsX; p.columnsY = v.columnsY;

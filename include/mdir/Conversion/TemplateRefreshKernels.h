@@ -10,6 +10,9 @@ struct TemplateRefreshInputs {
   mlir::Value handle, points, cell, baseReach, extent;
   mlir::Value columnsX, columnsY, waterActive, atomActive;
   mlir::Value reaches;
+  /// Optional fixed f64 epoch views, published in the search's existing
+  /// control-reset kernel. They do not belong to the growing pair arena.
+  mlir::Value classCells, classReaches;
 };
 /// One combined sort/search and compaction for an already stale list.
 /// This is a cold build operation, not a per-step validity check: its

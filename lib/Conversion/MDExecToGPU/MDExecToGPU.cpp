@@ -9,12 +9,18 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/TemplateWindowKernels.h"
+#include "mdir/Conversion/TemplateWriterKernels.h"
+#include "mdir/Conversion/TemplateRefreshKernels.h"
+#include "mdir/Conversion/TemplateFrameKernels.h"
+#include "mdir/Conversion/TemplateValidityKernels.h"
+#include "mdir/Conversion/TemplatePruneKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -25,6 +31,7 @@
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Utils/GPUUtils.h"
@@ -314,11 +321,35 @@ private:
 
   struct TemplatePairState {
     Value handle, waters, atoms, members, excluded;
+    Value built, extent, invalid;
+    Value frames, slots, realMembers, packingCells, currentPoints;
+    Value outerReference, innerReference;
+    Value hostCells, hostReaches;
+    md_exec::RefreshSegmentedPairsOp specification;
   };
   llvm::DenseMap<Value, TemplatePairState> templatePairs;
+  /// One history per invocation, rather than per list: a fresh list in
+  /// a later part must not reopen the unconstrained-input exception.
+  Value templateConstraintHistory;
+  struct TemplateWriterPlan {
+    md_exec::RefreshSegmentedPairsOp refresh;
+    unsigned positionOutput;
+  };
+  llvm::DenseMap<Operation *, TemplateWriterPlan> templateWriters;
+  struct TemplateDeferredFlag { Flag flag; Value start, result; };
+  llvm::DenseMap<Operation *, Operation *> templateFlagOwners;
+  llvm::DenseMap<Operation *, SmallVector<TemplateDeferredFlag>> templateDeferredFlags;
+  bool deferTemplateFlag(Operation *, const Flag &, Value start, Value result);
+  LogicalResult lowerTemplateParticleFor(md_exec::ParticleForOp);
+  LogicalResult planTemplateWriters(func::FuncOp function);
+  void recordTemplateConstraintEpoch(OpBuilder &, Location,
+                                     ArrayRef<Operation *> operations);
   LogicalResult lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp op);
   LogicalResult lowerTemplateFor(md_exec::TemplateForOp op);
+  LogicalResult lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairsOp op);
   LogicalResult getTemplateState(Operation *op, Value value, TemplatePairState &state);
+  Value templateRuntimeView(OpBuilder &, Location, Value handle, StringRef name,
+                            MemRefType type, std::optional<int64_t> slot = {});
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
@@ -2340,6 +2371,10 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   if (!before || inRows.contains(before) || !before.getReduce().empty() ||
       before.getOuts().empty())
     return false;
+  // A complete template frame is packed from the final SSA coordinates
+  // in this particle writer, rather than reread across tuple threads.
+  if (templateWriters.contains(before))
+    return false;
   DenseSet<Value> beforeOuts(before.getOuts().begin(),
                              before.getOuts().end());
   DenseSet<Value> loopOuts;
@@ -2388,6 +2423,8 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
     next = next->getNextNode();
   }
   if (!after || inRows.contains(after))
+    return false;
+  if (templateWriters.contains(after))
     return false;
   // The loop after reads what the loop before wrote and what the loops
   // over tuples wrote, and takes the particles of the loop before.
@@ -2553,6 +2590,21 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   // The flags of the loops over tuples, which both kernels set: one event
   // after them for all.
   if (!loopFlags.empty()) {
+    if (!templateFlagOwners.empty()) {
+      SmallVector<Flag> remaining;
+      SmallVector<Value> starts, results;
+      unsigned i = 0;
+      for (auto loop : run.loops)
+        if (!loop.getReduce().empty()) {
+          Flag flag = loopFlags[i++];
+          Value start = loop.getReduce().front(), result = loop.getResult(0);
+          if (!deferTemplateFlag(loop, flag, start, result)) {
+            remaining.push_back(flag); starts.push_back(start); results.push_back(result);
+          }
+        }
+      if (!remaining.empty()) replaceWithFlags(builder, loc, remaining, starts, results);
+      return success();
+    }
     SmallVector<Value> starts, results;
     for (md_exec::TupleForOp loop : run.loops)
       if (!loop.getReduce().empty()) {
@@ -2744,12 +2796,14 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       for (auto [loop, used] : llvm::zip(loops, loopFlags)) {
         auto tuple = cast<md_exec::TupleForOp>(loop.op);
         for (auto [index, start] : llvm::enumerate(tuple.getReduce())) {
+          if (deferTemplateFlag(tuple, used[index], start, tuple->getResult(index)))
+            continue;
           all.push_back(used[index]);
           starts.push_back(start);
           results.push_back(tuple->getResult(index));
         }
       }
-      replaceWithFlags(builder, loc, all, starts, results);
+      if (!all.empty()) replaceWithFlags(builder, loc, all, starts, results);
       return success();
     }
     // The global sums of each loop, over its own particles.
@@ -4414,8 +4468,8 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
   for (auto [index, start] : llvm::enumerate(op.getReduce())) {
     int place = places[index];
     if (place < 0) {
-      replaceWithFlag(builder, loc, used[-place - 1], start,
-                      op.getResult(index));
+      if (!deferTemplateFlag(op, used[-place - 1], start, op.getResult(index)))
+        replaceWithFlag(builder, loc, used[-place - 1], start, op.getResult(index));
       continue;
     }
     Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
@@ -5845,6 +5899,100 @@ static bool feedsEdges(Value value) {
   return false;
 }
 
+LogicalResult Lowering::planTemplateWriters(func::FuncOp function) {
+  templateWriters.clear();
+  DominanceInfo dominance(function);
+  WalkResult walk = function.walk([&](md_exec::RefreshSegmentedPairsOp refresh) {
+    Value positions = refresh.getPositions();
+    for (Operation *previous = refresh->getPrevNode(); previous;
+         previous = previous->getPrevNode()) {
+      // A refresh at the same positions consumes a previous publication;
+      // it does not need a second write of that publication's flags.
+      if (auto earlier = dyn_cast<md_exec::RefreshSegmentedPairsOp>(previous))
+        if (earlier.getPositions() == positions)
+          break;
+      if (isa<md_exec::EmptySegmentedPairsOp>(previous))
+        break;
+      auto writer = dyn_cast<md_exec::ParticleForOp>(previous);
+      if (!writer)
+        continue;
+      auto output = llvm::find(writer.getOuts(), positions);
+      if (output == writer.getOuts().end())
+        continue;
+      if (!dominance.properlyDominates(refresh->getOperand(0), writer) ||
+          !dominance.properlyDominates(refresh.getCellMutable().get(), writer)) {
+        refresh.emitOpError("template writer requires its list and current cell before the final position update");
+        return WalkResult::interrupt();
+      }
+      unsigned index = std::distance(writer.getOuts().begin(), output);
+      if (auto found = templateWriters.find(writer); found != templateWriters.end()) {
+        if (found->second.positionOutput != index ||
+            found->second.refresh->getOperand(0) != refresh->getOperand(0)) {
+          refresh.emitOpError("one template position writer cannot publish two independent list epochs");
+          return WalkResult::interrupt();
+        }
+      } else {
+        templateWriters[writer] = {refresh, index};
+      }
+      break;
+    }
+    return WalkResult::advance();
+  });
+  if (walk.wasInterrupted()) return failure();
+  templateFlagOwners.clear();
+  templateDeferredFlags.clear();
+  for (const auto &[writer, plan] : templateWriters) {
+    for (Operation *previous = writer->getPrevNode(); previous;
+         previous = previous->getPrevNode()) {
+      if (isa<md_exec::RefreshSegmentedPairsOp, md_exec::EmptySegmentedPairsOp>(previous))
+        break;
+      if (templateWriters.contains(previous))
+        break;
+      auto tuple = dyn_cast<md_exec::TupleForOp>(previous);
+      if (!tuple || tuple.getReduce().empty() ||
+          !llvm::all_of(tuple.getReduce(), [](Value x) { return x.getType().isInteger(1); }))
+        continue;
+      bool after = llvm::all_of(tuple.getResults(), [&](Value result) {
+        return llvm::all_of(result.getUsers(), [&](Operation *user) {
+          Operation *ancestor = writer->getBlock()->findAncestorOpInBlock(*user);
+          return ancestor && writer->isBeforeInBlock(ancestor);
+        });
+      });
+      if (after) templateFlagOwners.try_emplace(tuple, writer);
+    }
+  }
+  return failure(walk.wasInterrupted());
+}
+
+bool Lowering::deferTemplateFlag(Operation *op, const Flag &flag, Value start, Value result) {
+  auto owner = templateFlagOwners.find(op);
+  if (owner == templateFlagOwners.end()) return false;
+  templateDeferredFlags[owner->second].push_back({flag, start, result});
+  return true;
+}
+
+void Lowering::recordTemplateConstraintEpoch(OpBuilder &b, Location loc,
+                                             ArrayRef<Operation *> operations) {
+  if (!templateConstraintHistory ||
+      !llvm::any_of(operations, [](Operation *op) {
+        return op->hasAttr(md::kTemplateConstraintEpoch);
+      }))
+    return;
+  Value yes = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
+  memref::StoreOp::create(b, loc, yes, templateConstraintHistory, ValueRange{});
+}
+
+Value Lowering::templateRuntimeView(OpBuilder &b, Location loc, Value handle,
+                                    StringRef name, MemRefType type,
+                                    std::optional<int64_t> slot) {
+  SmallVector<Value, 2> arguments{handle};
+  if (slot)
+    arguments.push_back(arith::ConstantIntOp::create(b, loc, *slot, 64));
+  auto getter = getOrDeclare(name, b.getFunctionType(ValueRange(arguments).getTypes(), {type}));
+  getter->setAttr("llvm.emit_c_interface", b.getUnitAttr());
+  return func::CallOp::create(b, loc, getter, arguments).getResult(0);
+}
+
 LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -5900,7 +6048,50 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   Value handle = func::CallOp::create(builder, loc, create,
       ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded}).getResult(0);
   for (Value host : copied) memref::DeallocOp::create(builder, loc, host);
-  templatePairs[handle] = {handle, waters, atoms, op.getMolecules(), op.getExcluded()};
+  TemplatePairState state{handle, waters, atoms, op.getMolecules(), op.getExcluded()};
+  auto scalar = [&](Type type, Value initial) -> Value {
+    Value buffer = memref::AllocaOp::create(builder, loc, MemRefType::get({}, type));
+    memref::StoreOp::create(builder, loc, initial, buffer, ValueRange{});
+    return buffer;
+  };
+  Value no = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(true));
+  Value zero = createReal(builder, loc, builder.getF64Type(), 0);
+  state.built = scalar(builder.getI1Type(), no);
+  state.extent = scalar(builder.getF64Type(), zero);
+  state.invalid = memref::AllocaOp::create(builder, loc, MemRefType::get({5}, builder.getI1Type()));
+  for (int64_t flag = 0; flag != 5; ++flag)
+    memref::StoreOp::create(builder, loc, flag == 4 ? no : yes, state.invalid,
+        ValueRange{createIndex(builder, loc, flag)});
+  state.hostCells = memref::AllocaOp::create(builder, loc,
+      MemRefType::get({2, 3, getCellSize()}, builder.getF64Type()));
+  state.hostReaches = memref::AllocaOp::create(builder, loc,
+      MemRefType::get({2, 3}, builder.getF64Type()));
+  // These views are initialized even before the first build. The writer
+  // skips device epochs until built, and host margin arithmetic must not
+  // read uninitialized storage while constructing that guarded launch.
+  for (int64_t epoch = 0; epoch != 2; ++epoch)
+    for (int64_t tag = 0; tag != 3; ++tag) {
+      Value e = createIndex(builder, loc, epoch), t = createIndex(builder, loc, tag);
+      memref::StoreOp::create(builder, loc, zero, state.hostReaches, ValueRange{e, t});
+      for (int64_t axis = 0; axis != getCellSize(); ++axis)
+        memref::StoreOp::create(builder, loc, zero, state.hostCells,
+            ValueRange{e, t, createIndex(builder, loc, axis)});
+    }
+  auto indices = getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
+  auto frameType = getDeviceType({ShapedType::kDynamic, 3}, builder.getF32Type());
+  auto referenceType = getDeviceType({ShapedType::kDynamic, 3}, builder.getF64Type());
+  state.frames = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsFrames", frameType);
+  state.realMembers = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_MEMBERS);
+  state.slots = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_PARTICLE_SLOTS);
+  auto reference = [&](int64_t slot) {
+    return templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsFrameState", referenceType, slot);
+  };
+  state.packingCells = reference(TEMPLATE_FRAME_PACKING_CELLS);
+  state.currentPoints = reference(TEMPLATE_FRAME_CURRENT_POINTS);
+  state.outerReference = reference(TEMPLATE_FRAME_OUTER_REFERENCE);
+  state.innerReference = reference(TEMPLATE_FRAME_INNER_REFERENCE);
+  templatePairs[handle] = state;
   module->setAttr("mdrt.template_pairs_abi",
                   builder.getI32IntegerAttr(MDRT_TEMPLATE_PAIRS_ABI_VERSION));
   // The new opaque state is represented by its runtime handle on the host.
@@ -5929,6 +6120,248 @@ LogicalResult Lowering::getTemplateState(Operation *op, Value value,
     } else break;
   }
   return op->emitOpError("template list has no initializer in this function");
+}
+
+LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairsOp op) {
+  TemplatePairState state;
+  if (failed(getTemplateState(op, op->getOperand(0), state))) return failure();
+  Location loc = op.getLoc();
+  OpBuilder b(op);
+  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
+  auto boolean = [&](OpBuilder &at, bool yes) -> Value {
+    return arith::ConstantOp::create(at, loc, at.getBoolAttr(yes));
+  };
+  auto real = [&](OpBuilder &at, double x) { return createReal(at, loc, at.getF64Type(), x); };
+  auto invalid = [&](int64_t flag) -> Value {
+    return memref::LoadOp::create(b, loc, state.invalid, ValueRange{ix(b, flag)});
+  };
+  Value built = memref::LoadOp::create(b, loc, state.built, ValueRange{});
+  Value initial = arith::XOrIOp::create(b, loc, built, boolean(b, true));
+  Value water = arith::OrIOp::create(b, loc, initial, invalid(0));
+  Value atom = arith::OrIOp::create(b, loc, initial, invalid(1));
+  Value extentValid = arith::XOrIOp::create(b, loc, invalid(4), boolean(b, true));
+  cf::AssertOp::create(b, loc, extentValid,
+      "template water exceeds its covering extent after position constraints");
+  Value cell = op.getCellMutable().get();
+  Value inverse = createInverse(b, loc, cell);
+  scf::IfOp::create(b, loc, arith::OrIOp::create(b, loc, water, atom),
+      [&](OpBuilder &cold, Location) {
+    auto counterType = getDeviceType({4}, cold.getI64Type());
+    Value counters = templateRuntimeView(cold, loc, state.handle,
+        "mdrtTemplatePairsCounters", counterType);
+    TemplateFrameBuffers frames{op.getPositions(), state.realMembers, state.frames,
+        state.outerReference, state.packingCells, state.currentPoints, counters,
+        state.waters, state.atoms, cell, inverse,
+        cast<MemRefType>(state.members.getType()).getDimSize(1) == 4,
+        op.getAlpha().convertToDouble()};
+    emitSnapshotTemplateFrames(cold, loc, frames, water, atom);
+    Value host = memref::AllocaOp::create(cold, loc,
+        MemRefType::get({4}, cold.getI64Type()));
+    createTransfer(cold, loc, host, counters);
+    Value extentBits = memref::LoadOp::create(cold, loc, host,
+        ValueRange{ix(cold, TEMPLATE_COUNTER_EXTENT)});
+    Value squared = arith::BitcastOp::create(cold, loc, cold.getF64Type(), extentBits);
+    Value nominal = real(cold, op.getExtent().convertToDouble());
+    Value nominal2 = arith::MulFOp::create(cold, loc, nominal, nominal);
+    Value constrained = memref::LoadOp::create(cold, loc, templateConstraintHistory, ValueRange{});
+    Value finite = arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::OLT,
+        squared, real(cold, std::numeric_limits<double>::infinity()));
+    cf::AssertOp::create(cold, loc, finite, "template water has a nonfinite covering extent");
+    Value within = arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::OLE, squared, nominal2);
+    Value initialPhase = arith::XOrIOp::create(cold, loc, constrained, boolean(cold, true));
+    cf::AssertOp::create(cold, loc, arith::OrIOp::create(cold, loc, initialPhase, within),
+        "template water exceeds its covering extent after position constraints");
+    Value measured = math::SqrtOp::create(cold, loc, squared);
+    Value previous = memref::LoadOp::create(cold, loc, state.extent, ValueRange{});
+    Value widened = arith::MaximumFOp::create(cold, loc, nominal,
+        arith::MaximumFOp::create(cold, loc, previous, measured));
+    Value extent = arith::SelectOp::create(cold, loc, constrained, nominal, widened);
+    memref::StoreOp::create(cold, loc, extent, state.extent, ValueRange{});
+    // Candidate-only padding covers f32 frame geometry, as in the legacy
+    // mixed route. Neither the source site cutoff nor its arithmetic is
+    // widened. The validity margins use these same actual class reaches.
+    Value magnitude = vector::ReductionOp::create(cold, loc, vector::CombiningKind::ADD,
+        math::AbsFOp::create(cold, loc, cell));
+    Value cutoff = arith::AddFOp::create(cold, loc, real(cold, op.getCutoff().convertToDouble()),
+        arith::MulFOp::create(cold, loc, magnitude, real(cold, 3.e-6)));
+    SmallVector<Value, 3> physical;
+    physical.push_back(arith::AddFOp::create(cold, loc, cutoff,
+        arith::MulFOp::create(cold, loc, real(cold, 2), extent)));
+    physical.push_back(arith::AddFOp::create(cold, loc, cutoff, extent));
+    physical.push_back(cutoff);
+    Value actual = emitTemplateFreshReaches(cold, loc,
+        vector::FromElementsOp::create(cold, loc, VectorType::get({3}, cold.getF64Type()), physical),
+        real(cold, op.getSkin().convertToDouble()));
+    Value prepared = memref::AllocaOp::create(cold, loc, MemRefType::get({}, cold.getI1Type()));
+    memref::StoreOp::create(cold, loc, boolean(cold, true), prepared, ValueRange{});
+    TemplateRefreshInputs input{state.handle, state.outerReference, cell, {}, {},
+        ix(cold, 3), ix(cold, 2), water, atom, actual};
+    auto epochType = getDeviceType({ShapedType::kDynamic, 3}, cold.getF64Type());
+    input.classCells = templateRuntimeView(cold, loc, state.handle,
+        "mdrtTemplatePairsFrameState", epochType, TEMPLATE_FRAME_OUTER_CELLS);
+    input.classReaches = templateRuntimeView(cold, loc, state.handle,
+        "mdrtTemplatePairsFrameState", epochType, TEMPLATE_FRAME_REACHES);
+    auto rebuilt = emitRefreshTemplatePairArena(cold, loc, module, input,
+        [&](OpBuilder &at, Value waterActive, Value atomActive) {
+      Value done = memref::LoadOp::create(at, loc, prepared, ValueRange{});
+      Value needsSnapshot = arith::XOrIOp::create(at, loc, done, boolean(at, true));
+      scf::IfOp::create(at, loc, needsSnapshot, [&](OpBuilder &prepare, Location) {
+        // The only later attempt follows growth, which forces both groups
+        // and must choose fresh packing/reference frames for both.
+        // Controls are an arena view too; the pre-growth descriptor must
+        // not survive into this attempt. Fixed frame/reference views do.
+        TemplateFrameBuffers fresh = frames;
+        fresh.counters = templateRuntimeView(prepare, loc, state.handle,
+            "mdrtTemplatePairsCounters", counterType);
+        emitSnapshotTemplateFrames(prepare, loc, fresh, waterActive, atomActive);
+        scf::YieldOp::create(prepare, loc);
+      });
+      memref::StoreOp::create(at, loc, boolean(at, false), prepared, ValueRange{});
+    });
+    for (int64_t tag = 0; tag != 3; ++tag) {
+      Value active = tag == 0 ? rebuilt[0] : tag == 2 ? rebuilt[1]
+          : Value(arith::OrIOp::create(cold, loc, rebuilt[0], rebuilt[1]));
+      scf::IfOp::create(cold, loc, active, [&](OpBuilder &publish, Location) {
+        Value t = ix(publish, tag), epoch = ix(publish, 0);
+        Value radius = vector::ExtractOp::create(publish, loc, actual, tag);
+        memref::StoreOp::create(publish, loc, radius, state.hostReaches, ValueRange{epoch, t});
+        for (int64_t axis = 0; axis != getCellSize(); ++axis) {
+          Value component = vector::ExtractOp::create(publish, loc, cell, axis);
+          memref::StoreOp::create(publish, loc, component, state.hostCells,
+              ValueRange{epoch, t, ix(publish, axis)});
+        }
+        scf::YieldOp::create(publish, loc);
+      });
+    }
+    memref::StoreOp::create(cold, loc, boolean(cold, true), state.built, ValueRange{});
+    for (int64_t flag = 0; flag != 4; ++flag)
+      memref::StoreOp::create(cold, loc, boolean(cold, flag >= 2), state.invalid,
+          ValueRange{ix(cold, flag)});
+    scf::YieldOp::create(cold, loc);
+  });
+  op->getResult(0).replaceAllUsesWith(op->getOperand(0));
+  templatePairs[state.handle].specification = op;
+  return success();
+}
+
+LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
+  const auto &plan = templateWriters.find(op)->second;
+  auto refresh = plan.refresh;
+  TemplatePairState state;
+  if (failed(getTemplateState(op, refresh->getOperand(0), state))) return failure();
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
+  Value cell = refresh.getCellMutable().get();
+  Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
+  Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
+      math::AbsFOp::create(b, loc, cell));
+  Value cutoff = arith::AddFOp::create(b, loc,
+      createReal(b, loc, b.getF64Type(), refresh.getCutoff().convertToDouble()),
+      arith::MulFOp::create(b, loc, magnitude, createReal(b, loc, b.getF64Type(), 3.e-6)));
+  SmallVector<Value, 3> radii{
+      arith::AddFOp::create(b, loc, cutoff,
+          arith::MulFOp::create(b, loc, createReal(b, loc, b.getF64Type(), 2), extent)),
+      arith::AddFOp::create(b, loc, cutoff, extent), cutoff};
+  Value physical = vector::FromElementsOp::create(b, loc,
+      VectorType::get({3}, b.getF64Type()), radii);
+  auto limits = [&](int64_t epoch, double skin) {
+    SmallVector<Value, 3> cells, reaches;
+    for (int64_t tag = 0; tag != 3; ++tag) {
+      SmallVector<Value, 6> components;
+      Value e = ix(b, epoch), t = ix(b, tag);
+      for (int64_t axis = 0; axis != getCellSize(); ++axis)
+        components.push_back(memref::LoadOp::create(b, loc, state.hostCells,
+            ValueRange{e, t, ix(b, axis)}));
+      cells.push_back(vector::FromElementsOp::create(b, loc,
+          VectorType::get({getCellSize()}, b.getF64Type()), components));
+      reaches.push_back(memref::LoadOp::create(b, loc, state.hostReaches, ValueRange{e, t}));
+    }
+    return emitTemplateGroupMotionLimits(b, loc, cell, cells,
+        vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), reaches),
+        physical, createReal(b, loc, b.getF64Type(), skin));
+  };
+  TemplateWriterBuffers v;
+  v.frames = state.frames; v.packingCells = state.packingCells;
+  v.currentPoints = state.currentPoints; v.outerReference = state.outerReference;
+  v.innerReference = state.innerReference; v.waters = state.waters;
+  v.cell = cell; v.inverse = createInverse(b, loc, cell);
+  v.outerLimits = limits(0, refresh.getSkin().convertToDouble());
+  v.innerLimits = limits(1, refresh.getPruneSkin().convertToDouble());
+  v.built = memref::LoadOp::create(b, loc, state.built, ValueRange{});
+  v.constrained = memref::LoadOp::create(b, loc, templateConstraintHistory, ValueRange{});
+  v.positionOutput = plan.positionOutput;
+  v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
+  v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
+  SmallVector<int> places;
+  unsigned numSums = 0, numOriginalFlags = 0;
+  for (Value value : op.getReduce())
+    places.push_back(value.getType().isInteger(1) ? -int(++numOriginalFlags) : int(numSums++));
+  if (failed(checkScratch(op, numSums, op.getScratch().size()))) return failure();
+  SmallVector<Flag> originalFlags, validityFlags;
+  for (unsigned i = 0; i != numOriginalFlags; ++i) originalFlags.push_back(getFlag(flags.size(), loc));
+  for (unsigned i = 0; i != 5; ++i) validityFlags.push_back(getFlag(flags.size(), loc));
+  auto setFlag = [&](OpBuilder &at, Value condition, const Flag &flag) {
+    scf::IfOp::create(at, loc, condition, [&](OpBuilder &in, Location) {
+      Value one = arith::ConstantIntOp::create(in, loc, 1, 32);
+      memref::StoreOp::create(in, loc, one, flag.device, ValueRange{ix(in, 0)});
+      scf::YieldOp::create(in, loc);
+    });
+  };
+  Value size = createSize(b, loc, op.getOuts()[plan.positionOutput]);
+  launchOver(b, loc, size, [&](OpBuilder &at, Value particle) {
+    IRMapping captures;
+    emitTemplateParticleKernel(at, loc, op, particle, state.slots, state.realMembers,
+        state.waters, captures,
+        [&](OpBuilder &in, Value unit, ArrayRef<TemplateParticleResult> results) {
+      for (const auto &result : results)
+        for (auto [i, contribution] : llvm::enumerate(result.reductions)) {
+          int place = places[i];
+          if (place >= 0)
+            storeElement(in, loc, contribution, op.getScratch()[2 * place], result.particle);
+          else
+            setFlag(in, contribution, originalFlags[-place - 1]);
+        }
+      auto changed = emitUpdateTemplateFrame(in, loc, v, unit, results);
+      Value values[] = {changed.waterOuter, changed.atomOuter,
+          changed.waterInner, changed.atomInner, changed.extent};
+      for (auto [flag, value] : llvm::zip(validityFlags, values)) setFlag(in, value, flag);
+    });
+  });
+  SmallVector<Value> contributions, partials;
+  for (unsigned i = 0; i != numSums; ++i) {
+    contributions.push_back(op.getScratch()[2 * i]); partials.push_back(op.getScratch()[2 * i + 1]);
+  }
+  auto sums = emitReductions(b, loc, contributions, partials, size, kernels::Combiner::Add);
+  SmallVector<Flag> eventFlags;
+  SmallVector<Value> starts, eventResults;
+  if (auto pending = templateDeferredFlags.find(op); pending != templateDeferredFlags.end()) {
+    for (const auto &flag : pending->second) {
+      eventFlags.push_back(flag.flag); starts.push_back(flag.start); eventResults.push_back(flag.result);
+    }
+    templateDeferredFlags.erase(pending);
+  }
+  for (auto [i, start] : llvm::enumerate(op.getReduce())) {
+    int place = places[i];
+    if (place >= 0) {
+      op.getResult(i).replaceAllUsesWith(arith::AddFOp::create(b, loc, start, sums[place]));
+    } else {
+      eventFlags.push_back(originalFlags[-place - 1]); starts.push_back(start); eventResults.push_back(op.getResult(i));
+    }
+  }
+  Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
+  Operation *firstStore = nullptr;
+  for (int64_t flag = 0; flag != 5; ++flag) {
+    // Distinct placeholders have only their own store as a user. Replace
+    // them together with deferred constraint results through one event.
+    Value placeholder = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
+    auto store = memref::StoreOp::create(b, loc, placeholder, state.invalid, ValueRange{ix(b, flag)});
+    if (!firstStore) firstStore = store;
+    eventFlags.push_back(validityFlags[flag]); starts.push_back(no); eventResults.push_back(placeholder);
+  }
+  b.setInsertionPoint(firstStore);
+  replaceWithFlags(b, loc, eventFlags, starts, eventResults);
+  return success();
 }
 
 LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
@@ -5965,6 +6398,44 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value pairs = view("mdrtTemplatePairsBuffer", indexBuffer);
   Value order = view("mdrtTemplatePairsOrder", indexBuffer);
   Value frames = view("mdrtTemplatePairsFrames", framesType);
+  TemplatePruneBuffers pruning;
+  Value innerReaches, deviceInnerCells, deviceReaches;
+  bool nativeEpochs = bool(state.specification);
+  if (nativeEpochs) {
+    auto arena = [&](int64_t slot) {
+      return templateRuntimeView(b, loc, handle, "mdrtTemplatePairsArenaView", indexBuffer, slot);
+    };
+    pruning.outerUnits = arena(TEMPLATE_LAYOUT_OUTER_UNITS);
+    pruning.innerUnits = arena(TEMPLATE_LAYOUT_INNER_UNITS);
+    pruning.outerEntries = arena(TEMPLATE_LAYOUT_OUTER_ENTRIES);
+    pruning.innerEntries = arena(TEMPLATE_LAYOUT_INNER_ENTRIES);
+    pruning.order = order; pruning.currentPoints = state.currentPoints;
+    pruning.innerReference = state.innerReference; pruning.waters = state.waters;
+    pruning.cell = op.getCellMutable().get();
+    pruning.waterActive = memref::LoadOp::create(b, loc, state.invalid,
+        ValueRange{createIndex(b, loc, 2)});
+    pruning.atomActive = memref::LoadOp::create(b, loc, state.invalid,
+        ValueRange{createIndex(b, loc, 3)});
+    Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
+    Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
+        math::AbsFOp::create(b, loc, pruning.cell));
+    Value cutoff = arith::AddFOp::create(b, loc,
+        createReal(b, loc, b.getF64Type(), state.specification.getCutoff().convertToDouble()),
+        arith::MulFOp::create(b, loc, magnitude, createReal(b, loc, b.getF64Type(), 3.e-6)));
+    SmallVector<Value, 3> physical{
+        arith::AddFOp::create(b, loc, cutoff,
+            arith::MulFOp::create(b, loc, createReal(b, loc, b.getF64Type(), 2), extent)),
+        arith::AddFOp::create(b, loc, cutoff, extent), cutoff};
+    innerReaches = emitTemplateFreshReaches(b, loc,
+        vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), physical),
+        createReal(b, loc, b.getF64Type(), state.specification.getPruneSkin().convertToDouble()));
+    pruning.reaches = innerReaches;
+    auto epochType = getDeviceType({ShapedType::kDynamic, 3}, b.getF64Type());
+    deviceInnerCells = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsFrameState",
+        epochType, TEMPLATE_FRAME_INNER_CELLS);
+    deviceReaches = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsFrameState",
+        epochType, TEMPLATE_FRAME_REACHES);
+  }
   Value workOffset = layout(TEMPLATE_LAYOUT_INNER_UNITS);
   Value entryOffset = layout(TEMPLATE_LAYOUT_INNER_ENTRIES);
   Value capacity = layout(TEMPLATE_LAYOUT_UNITS);
@@ -5979,6 +6450,8 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value threads = arith::MulIOp::create(b, loc, launched, warp32);
   Value block = createIndex(b, loc, blockSize);
   Value grid = createGroups(b, loc, threads, blockSize);
+  Value launchedThreads;
+  if (nativeEpochs) launchedThreads = arith::MulIOp::create(b, loc, grid, block);
   auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
@@ -5986,6 +6459,42 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value warp = arith::DivUIOp::create(k, loc, thread, warp32);
   Value lane = arith::IndexCastOp::create(k, loc, k.getI32Type(),
       arith::RemUIOp::create(k, loc, thread, warp32));
+  if (nativeEpochs) {
+    Value leader = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq,
+        thread, createIndex(k, loc, 0));
+    scf::IfOp::create(k, loc, leader, [&](OpBuilder &publish, Location) {
+      for (int64_t tag = 0; tag != 3; ++tag) {
+        Value active = tag == 0 ? pruning.waterActive : tag == 2 ? pruning.atomActive
+            : Value(arith::OrIOp::create(publish, loc, pruning.waterActive, pruning.atomActive));
+        scf::IfOp::create(publish, loc, active, [&](OpBuilder &in, Location) {
+          for (int64_t axis = 0; axis != 6; ++axis) {
+            Value value = axis < getCellSize()
+                ? Value(vector::ExtractOp::create(in, loc, pruning.cell, axis))
+                : createReal(in, loc, in.getF64Type(), 0);
+            memref::StoreOp::create(in, loc, value, deviceInnerCells,
+                ValueRange{createIndex(in, loc, 2 * tag + axis / 3), createIndex(in, loc, axis % 3)});
+          }
+          memref::StoreOp::create(in, loc,
+              vector::ExtractOp::create(in, loc, innerReaches, tag), deviceReaches,
+              ValueRange{createIndex(in, loc, 1), createIndex(in, loc, tag)});
+          scf::YieldOp::create(in, loc);
+        });
+      }
+      scf::YieldOp::create(publish, loc);
+    });
+    Value units = arith::AddIOp::create(k, loc, state.waters, state.atoms);
+    scf::ForOp::create(k, loc, thread, units, launchedThreads, ValueRange(),
+        [&](OpBuilder &in, Location, Value unit, ValueRange) {
+      Value water = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, unit, state.waters);
+      Value active = arith::SelectOp::create(in, loc, water, pruning.waterActive, pruning.atomActive);
+      scf::IfOp::create(in, loc, active, [&](OpBuilder &publish, Location) {
+        storeElement(publish, loc, loadElement(publish, loc, state.currentPoints, unit),
+            state.innerReference, unit);
+        scf::YieldOp::create(publish, loc);
+      });
+      scf::YieldOp::create(in, loc);
+    });
+  }
   Value valid = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, warp, warps);
   Value end = arith::IndexCastOp::create(k, loc, k.getIndexType(),
       memref::LoadOp::create(k, loc, pairs,
@@ -5998,6 +6507,7 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
                                frames, waters, op.getCellMutable().get(), hasSite};
   auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
       [&](OpBuilder &body, Location, Value record, ValueRange previous) {
+        if (nativeEpochs) emitPruneTemplateWork(body, loc, pruning, record, lane);
         IRMapping captures;
         auto contributions = emitTemplateWorkUnit(body, loc, op, buffers, record, lane, captures);
         SmallVector<Value> next;
@@ -6020,6 +6530,25 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   }
   gpu::TerminatorOp::create(k, loc);
   bringIn(launch);
+  if (nativeEpochs) {
+    for (int64_t tag = 0; tag != 3; ++tag) {
+      Value active = tag == 0 ? pruning.waterActive : tag == 2 ? pruning.atomActive
+          : Value(arith::OrIOp::create(b, loc, pruning.waterActive, pruning.atomActive));
+      scf::IfOp::create(b, loc, active, [&](OpBuilder &publish, Location) {
+        Value epoch = createIndex(publish, loc, 1), t = createIndex(publish, loc, tag);
+        Value radius = vector::ExtractOp::create(publish, loc, innerReaches, tag);
+        memref::StoreOp::create(publish, loc, radius, state.hostReaches, ValueRange{epoch, t});
+        for (int64_t axis = 0; axis != getCellSize(); ++axis)
+          memref::StoreOp::create(publish, loc,
+              vector::ExtractOp::create(publish, loc, pruning.cell, axis), state.hostCells,
+              ValueRange{epoch, t, createIndex(publish, loc, axis)});
+        scf::YieldOp::create(publish, loc);
+      });
+    }
+    Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
+    for (int64_t flag : {2, 3})
+      memref::StoreOp::create(b, loc, no, state.invalid, ValueRange{createIndex(b, loc, flag)});
+  }
   return finishSums(op, b, op.getReduce(), op.getScratch(), warps);
 }
 
@@ -8205,6 +8734,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
 
   if (auto loop = dyn_cast<md_exec::TemplateForOp>(op)) {
     if (failed(lowerTemplateFor(loop))) return failure();
+  } else if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(op)) {
+    if (failed(lowerRefreshTemplatePairs(refresh))) return failure();
   } else if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())
       return op->emitOpError()
@@ -8317,8 +8848,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     if (failed(lowerScatterAdd(scatter)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::ParticleForOp>(op)) {
-    if (failed(appliesBatchedStage(loop) ? lowerStagedParticleFor(loop)
-                                         : lowerParticleFor(loop)))
+    if (failed(templateWriters.contains(loop) ? lowerTemplateParticleFor(loop)
+        : appliesBatchedStage(loop) ? lowerStagedParticleFor(loop) : lowerParticleFor(loop)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
     if (failed(appliesBatchedStage(loop) ? lowerStagedPairFor(loop)
@@ -8953,6 +9484,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   current = function;
   templatePairs.clear();
+  templateConstraintHistory = {};
+  templateWriters.clear();
   cells.clear();
   resultCells.clear();
   nextResult.clear();
@@ -9031,6 +9564,18 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       reciprocal->moveBefore(refresh);
   });
 
+  if (failed(planTemplateWriters(function)))
+    return failure();
+  bool hasTemplateList = false;
+  function.walk([&](md_exec::EmptySegmentedPairsOp) { hasTemplateList = true; });
+  if (hasTemplateList) {
+    OpBuilder b = OpBuilder::atBlockBegin(&function.getBody().front());
+    templateConstraintHistory = memref::AllocaOp::create(b, function.getLoc(),
+        MemRefType::get({}, b.getI1Type()));
+    Value no = arith::ConstantOp::create(b, function.getLoc(), b.getBoolAttr(false));
+    memref::StoreOp::create(b, function.getLoc(), no, templateConstraintHistory, ValueRange{});
+  }
+
   findSharedFrames(function, aliases);
   if (fusePruning)
     findPrunedInLoop();
@@ -9052,6 +9597,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       if (run != onceRuns.end()) {
         if (failed(lowerOnceRun(run->second)))
           return failure();
+        SmallVector<Operation *> templateEpochs;
+        for (auto loop : run->second) templateEpochs.push_back(loop);
+        OpBuilder epoch(op);
+        recordTemplateConstraintEpoch(epoch, op->getLoc(), templateEpochs);
         // The arithmetic of a fused term over centers goes after its loop.
         for (md_exec::TupleForOp loop : run->second)
           if (CenterFusion *fusion = fusionOfForces.lookup(loop))
@@ -9066,6 +9615,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       if (run != rows.end()) {
         if (failed(lowerRows(run->second)))
           return failure();
+        OpBuilder epoch(op);
+        recordTemplateConstraintEpoch(epoch, op->getLoc(), run->second);
         for (Operation *loop : run->second)
           lowered.push_back(loop);
       }
@@ -9074,6 +9625,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
         const kernels::IntegrationRun &fused = integration->second;
         if (failed(lowerIntegration(fused)))
           return failure();
+        SmallVector<Operation *> templateEpochs;
+        for (auto loop : fused.loops) templateEpochs.push_back(loop);
+        OpBuilder epoch(op);
+        recordTemplateConstraintEpoch(epoch, op->getLoc(), templateEpochs);
         lowered.push_back(fused.before);
         for (md_exec::TupleForOp loop : fused.loops)
           lowered.push_back(loop);
@@ -9083,7 +9638,13 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     }
     if (failed(lowerOp(op)))
       return failure();
+    if (templateConstraintHistory && op->hasAttr(md::kTemplateConstraintEpoch)) {
+      OpBuilder epoch(op);
+      recordTemplateConstraintEpoch(epoch, op->getLoc(), {op});
+    }
   }
+  if (!templateDeferredFlags.empty())
+    return function.emitOpError("template constraint flags have no final position-writer event");
   rows.clear();
   sharesPrunedFrames.clear();
   integrations.clear();
@@ -9100,6 +9661,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   lowered.clear();
   neighbors.clear();
   templatePairs.clear();
+  templateWriters.clear();
+  templateFlagOwners.clear();
+  templateDeferredFlags.clear();
+  templateConstraintHistory = {};
 
   // The kernels read tables from their buffers.
   if (failed(inlineFrameReadbacks(function)))

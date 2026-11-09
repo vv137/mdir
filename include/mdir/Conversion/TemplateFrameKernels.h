@@ -17,7 +17,9 @@ struct TemplateFrameBuffers {
 /// extent bits publish the measured squared extent in counter 3; this is
 /// zero if no water was requested. The caller checks finiteness and either
 /// widens an initial build or enforces the post-constraint bound. No such
-/// measurement/readback belongs to the per-step position writer.
+/// measurement/readback belongs to the per-step position writer. The
+/// existing reset launch initializes all four controls before a cold
+/// owner may copy that packet; no previous search counters are retained.
 void emitSnapshotTemplateFrames(mlir::OpBuilder &, mlir::Location,
     const TemplateFrameBuffers &, mlir::Value waterActive, mlir::Value atomActive);
 }

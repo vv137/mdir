@@ -35,7 +35,6 @@ without compute-sanitizer: Sanitizer/fft-resident-gpu.test
 without compute-sanitizer: Sanitizer/frame-batch-entry-gpu.test
 without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
 without compute-sanitizer: Sanitizer/fused-prune-gpu.test
-without compute-sanitizer: Sanitizer/water-template-prune-gpu.test
 without compute-sanitizer: Sanitizer/group-scatter-gpu.test
 without compute-sanitizer: Sanitizer/groups-empty-gpu.test
 without compute-sanitizer: Sanitizer/npt-leapfrog-gpu.test
@@ -52,6 +51,8 @@ without compute-sanitizer: Sanitizer/stage-body-scalars-gpu.test
 without compute-sanitizer: Sanitizer/target-gpu.test
 without compute-sanitizer: Sanitizer/triclinic-gpu.test
 without compute-sanitizer: Sanitizer/tuple-block-sums-gpu.test
+without compute-sanitizer: Sanitizer/water-template-native-gpu.test
+without compute-sanitizer: Sanitizer/water-template-prune-gpu.test
 
 # The plugin of learned potentials (-DMDIR_ENABLE_METATOMIC=ON) and what its
 # tests need besides (docs/metatomic-ml1.md, docs/ml4-baselines.md).

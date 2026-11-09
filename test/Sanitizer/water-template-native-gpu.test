@@ -1,0 +1,19 @@
+# Native cold growth, retained writer packing, fused pruning and epochs.
+# REQUIRES: cuda, compute-sanitizer
+# RUN: rm -f %t.input.mlir %t.reference %t.mlir %t.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
+# RUN: %python %S/../Integration/Inputs/template_native_oracle.py generate %t.input.mlir %t.reference --triclinic
+# RUN: mdir-opt %t.input.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 --log-file %t.memcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.memcheck
+# RUN: %python %S/../Integration/Inputs/template_native_oracle.py check %t.records %t.reference
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 --log-file %t.initcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.initcheck
+# RUN: %python %S/../Integration/Inputs/template_native_oracle.py check %t.records %t.reference
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 --log-file %t.racecheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=RACE < %t.racecheck
+# RUN: %python %S/../Integration/Inputs/template_native_oracle.py check %t.records %t.reference
+# RUN: %compute_sanitizer --tool synccheck --error-exitcode 1 --log-file %t.synccheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.synccheck
+# RUN: %python %S/../Integration/Inputs/template_native_oracle.py check %t.records %t.reference
+# CLEAN: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards

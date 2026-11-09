@@ -476,6 +476,7 @@ def ConvertMDExecToGPU
                            "::mlir::gpu::GPUDialect",
                            "::mlir::LLVM::LLVMDialect",
                            "::mlir::NVVM::NVVMDialect",
+                           "::mlir::cf::ControlFlowDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
