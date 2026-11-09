@@ -6,6 +6,7 @@ add_mlir_library(MDIRTestPasses
   TestTemplateScheduler.cpp
   TestTemplateSearch.cpp
   TestTemplateParticles.cpp
+  TestTemplateWriter.cpp
   TestTemplateFrames.cpp
   TestLoopEffects.cpp
   TestStageAdjoint.cpp

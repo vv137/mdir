@@ -506,6 +506,7 @@ struct TestTemplateStage
 namespace mdir::test {
 void registerTestTemplateSearch();
 void registerTestTemplateParticles();
+void registerTestTemplateWriter();
 void registerTestTemplateFrames();
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
@@ -514,6 +515,7 @@ void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateStage>();
   registerTestTemplateSearch();
   registerTestTemplateParticles();
+  registerTestTemplateWriter();
   registerTestTemplateFrames();
 }
 }
