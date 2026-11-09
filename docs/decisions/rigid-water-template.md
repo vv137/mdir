@@ -862,6 +862,23 @@ rerun or correction; diagnosis awaits the maintainer's ruling. The signed
 template energy and general mixed's energy were not printed, so neither
 is inferred from the saved absolute relative error.
 
+The separately authorized single instrumentation-only acquisition reports
+the CPU oracle's absolute pair sums as $5.3547091502235036$ kJ/mol for LJ
+and $3732.1090605247377$ for Coulomb, beside the same net
+$5.3014572263468054$. Their sum is about 705 times the net energy.
+Signed potential energies on the same recorded frame are
+$5.3013687133789062$ (template), $5.3014259338378906$ (general mixed) and
+$5.3014572263438957$ kJ/mol (general double). Template minus double is
+$-8.85129649894623\times10^{-5}$ kJ/mol; general mixed minus double is
+$-3.12925060050873\times10^{-5}$. The template's absolute energy error
+is about 2.82857 times general mixed's, and its relative error remains
+$1.6695968902592555\times10^{-5}$ against the unchanged $10^{-5}$ bound.
+The executable exits 1 at that assertion. Exact energy, oracle-sum,
+coordinate and cell bits are recorded. Inputs and paths were unchanged;
+only host diagnostic instrumentation was added, with the oracle's existing
+net-energy and force expressions retained. No further run or bound change
+follows this acquisition; the maintainer rules on these data.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the

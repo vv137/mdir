@@ -36,7 +36,7 @@ static V image(V d, const double *box) {
   for(unsigned k=0;k!=3;++k) d[k]-=box[k]*std::nearbyint(d[k]/box[k]);
   return d;
 }
-struct Oracle { double energy=0; std::vector<double> forces; };
+struct Oracle { double energy=0, ljAbsolute=0, coulombAbsolute=0; std::vector<double> forces; };
 static Oracle oracle(const driver::System &system, const std::vector<double> &coordinates,
                      double cutoff) {
   const auto &t=*system.topology;
@@ -67,6 +67,8 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       double sr2=t.sigma[type]*t.sigma[type]/r2;
       double sr6=sr2*sr2*sr2, sr12=sr6*sr6, epsilon=t.epsilon[type];
       result.energy+=q/r+4*epsilon*(sr12-sr6);
+      result.ljAbsolute+=std::abs(4*epsilon*(sr12-sr6));
+      result.coulombAbsolute+=std::abs(q/r);
       V pair=scale(d,q/(r2*r)+24*epsilon*(2*sr12-sr6)/r2);
       f[i]=add(f[i],pair); f[j]=sub(f[j],pair);
     }
@@ -125,6 +127,11 @@ static Error error(const std::vector<double> &a,const std::vector<double> &b) {
   }
   e.rms=std::sqrt(e.rms/a.size());return e;
 }
+static uint64_t bits(double value) {
+  uint64_t result;
+  std::memcpy(&result, &value, sizeof(result));
+  return result;
+}
 int main(int argc,char **argv) {
   require(argc==2||(argc==3&&std::strcmp(argv[2],"TIP3P")==0),"expected control file and optional TIP3P");
   bool threeSite=argc==3;
@@ -147,6 +154,12 @@ int main(int argc,char **argv) {
   require(take(native->run(1,{},true))==1,"template run did not take one step");
   auto state=take(native->getState());
   require(bool(state.energies),"template step gave no energy");
+  std::cout<<"frame position bits:";
+  for(double value:state.positions) std::cout<<' '<<bits(value);
+  std::cout<<std::endl<<"frame cell bits:";
+  for(double value:state.box) std::cout<<' '<<bits(value);
+  for(double value:state.tilt) std::cout<<' '<<bits(value);
+  std::cout<<std::endl;
   p.system.positions=state.positions;p.system.velocities=state.velocities;
   p.control.waterTemplate=driver::WaterTemplateChoice::Off;
   auto doubleModel=p;
@@ -157,6 +170,11 @@ int main(int argc,char **argv) {
   succeed(generalDouble->evaluate());auto reference=take(generalDouble->getState());
   require(bool(reference.energies),"general double gave no energy");
   Oracle independent=oracle(p.system,state.positions,p.control.cutoffDistance*driver::units::length);
+  std::cout<<std::setprecision(17)<<"CPU oracle pair sums: net "<<independent.energy
+           <<"; LJ absolute "<<independent.ljAbsolute
+           <<"; Coulomb absolute "<<independent.coulombAbsolute<<std::endl;
+  std::cout<<"CPU oracle pair-sum bits: "<<bits(independent.energy)<<' '
+           <<bits(independent.ljAbsolute)<<' '<<bits(independent.coulombAbsolute)<<std::endl;
   double largest=0;
   for(double f:reference.forces) largest=std::max(largest,std::abs(f));
   Error oracleError=error(reference.forces,independent.forces);
@@ -168,6 +186,12 @@ int main(int argc,char **argv) {
   require(oracleEnergy<=1e-10*std::max(1.,std::abs(independent.energy)),"general double differs from independent energy oracle");
   auto generalMixed=take(compiler::Simulation::create(p,false));
   succeed(generalMixed->evaluate());auto mixed=take(generalMixed->getState());
+  require(bool(mixed.energies),"general mixed gave no energy for instrumentation");
+  std::cout<<"signed energies: template "<<state.energies->potential
+           <<"; general-mixed "<<mixed.energies->potential
+           <<"; general-double "<<reference.energies->potential<<std::endl;
+  std::cout<<"signed energy bits: "<<bits(state.energies->potential)<<' '
+           <<bits(mixed.energies->potential)<<' '<<bits(reference.energies->potential)<<std::endl;
   auto projectedReference=project(p.system,state.positions,reference.forces);
   Error baseline=error(project(p.system,state.positions,mixed.forces),projectedReference);
   Error candidate=error(project(p.system,state.positions,state.forces),projectedReference);
