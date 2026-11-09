@@ -71,6 +71,48 @@ from the header. CMake copies this module into `mdir._physical_constants`.
 Remaining Python consumers and the duplicate-definition check follow in
 part 2 of #805.
 
+### Units and symbols in printed text
+
+The text that the `mdir` tool prints to the terminal (the summary of
+`mdir check`, the log of `mdir run`, which its log file copies, and the
+warnings and errors of the libraries that the tool reports) is ASCII only
+(D[ascii-cli-output], #812). A unit or a symbol is spelled as follows:
+
+| Unicode | Printed | Example |
+|---|---|---|
+| Å, the angstrom | `Ang` | `cutoff: 9 Ang` |
+| an exponent (³, ⁻¹) | `^` and the exponent | `g/cm^3`, `Ang^-1` |
+| a quotient of units | `/` | `kcal/mol/Ang` |
+| ± | `+/-` | `300.1 +/- 0.4` |
+| µ, the prefix micro | `u` | `us` |
+| × | `x` | `a grid of 48 x 48 x 48` |
+| −, the minus sign | `-` | `-1` |
+| °, the degree | `deg` | `90 deg` |
+| √ | `sqrt` | `sqrt(x y)` |
+| a Greek letter | its name | `alpha`, `beta`, `gamma`, `epsilon`, `lambda`, `sigma` |
+
+`A` would be the ampere. The case-sensitive code of the angstrom in the
+Unified Code for Units of Measure (UCUM) is `Ao`; MDIR prints `Ang`, which
+a reader recognizes without the code.
+
+The rule covers the terminal only. Comments, the documentation, and the
+files that MDIR writes keep their text: the line of units of a file of
+columns (`Å^3`, `kcal/mol/Å`), which a continued run compares with the file
+it extends, the manifest of a run, the JSON summaries, the cache of the
+skins, and the templates of control files that `mdir template` prints.
+Changing those is a change of a file format and needs a ruling of its own.
+A string that the tool prints and a file also holds keeps its text for now:
+the reasons for the automatic choices of the neighbor structure and of the
+skins, which the manifest records. The messages of the builder of the
+program (`lib/Driver/Builder*.cpp`, `lib/Driver/Term*.cpp`) follow in a
+change of their own (#813).
+
+`scripts/check-before-push.sh` refuses a string literal with a non-ASCII
+character in `tools/mdir/*.cpp` outside a comment. A literal there that goes
+into a file, not to the terminal, carries the comment `// ascii-exempt` on
+its line (the units of the file of the pulled coordinates). The strings of
+the libraries are kept by review.
+
 ## 2. Geometry
 
 | Item | Convention |

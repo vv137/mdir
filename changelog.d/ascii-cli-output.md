@@ -1,0 +1,3 @@
+### Changed
+
+- **The text that `mdir` prints is ASCII only** (D[ascii-cli-output], #812). The summary of `mdir check`, the log of `mdir run`, and the warnings and errors they report spell the angstrom `Ang` (`cutoff: 9 Ang`, `PME beta: 0.35 Ang^-1`), the density `g/cm^3`, the error of a mean `+/-`, microseconds `us`, and Greek letters by name; the table is in [docs/conventions.md](docs/conventions.md#units-and-symbols-in-printed-text). A script that matches the old text of `mdir check` or of a log must match the new. The files that MDIR writes are unchanged, the line of units of the files of columns included. `scripts/check-before-push.sh` refuses a non-ASCII character in a string literal of `tools/mdir/*.cpp`.
