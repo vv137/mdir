@@ -57,6 +57,7 @@ tools = [
     "mdir-neighbor-count-test",
     "mdir-compile-test",
     "mdir-template-report-test",
+    "mdir-template-physics-test",
     "mdir-jit-memory-test",
     "mdir-compile-cache-test",
     "mlir-opt",
