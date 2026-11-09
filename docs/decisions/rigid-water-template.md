@@ -903,6 +903,21 @@ retry followed either execution. The prior failures remain recorded
 under their original criterion; the approved change resolves that stop
 for these two fixtures without completing the larger-system gates.
 
+An additional first-execution fixture includes three TIP3P waters and two
+synthetic charged monatomic solutes. Its independent oracle requires all
+three class pairs to be present and counts 27 WW, 18 SW and one SS site
+interaction. On RTX 5090 it passes 1/1. The oracle energy is
+$-160.3300676795815$ kJ/mol against general double's
+$-160.33006767913147$, difference $4.5003\times10^{-10}$; their raw force
+max/RMS difference is $2.8897\times10^{-9}/9.7022\times10^{-10}$ kJ/mol/nm.
+The template's projected force max/RMS errors are
+$0.000934964/0.000357931$ against general mixed's
+$0.00204032/0.000636082$, with unchanged bound $0.00841704789$ kJ/mol/nm.
+Its absolute energy error is $0.000165030206$ kJ/mol against the approved
+$0.00678867271$ allowance, with $S=6788.6727145034756$ kJ/mol. This is a
+small all-class arithmetic check, not larger-system or refresh-boundary
+coverage. No correction, threshold change or numerical retry occurred.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the

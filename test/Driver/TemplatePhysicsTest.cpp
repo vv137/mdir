@@ -36,12 +36,19 @@ static V image(V d, const double *box) {
   for(unsigned k=0;k!=3;++k) d[k]-=box[k]*std::nearbyint(d[k]/box[k]);
   return d;
 }
-struct Oracle { double energy=0, ljAbsolute=0, coulombAbsolute=0; std::vector<double> forces; };
+struct Oracle {
+  double energy=0, ljAbsolute=0, coulombAbsolute=0;
+  std::vector<double> forces;
+  std::array<unsigned,3> classPairs{};
+};
 static Oracle oracle(const driver::System &system, const std::vector<double> &coordinates,
                      double cutoff) {
   const auto &t=*system.topology;
   size_t n=system.getNumParticles(), nt=t.getNumTypes();
   std::vector<V> x(n), f(n);
+  std::vector<bool> water(n,false);
+  for(const auto &s:t.settles) for(unsigned j=0;j!=3;++j) water[s.oxygen+j]=true;
+  for(const auto &s:t.virtualSites) water[s.site]=true;
   for(size_t i=0;i!=n;++i) x[i]=vectorAt(coordinates,i);
   // Form the actual Amber bisector from the instantaneous OHH geometry.
   for(const auto &s:t.virtualSites) {
@@ -62,6 +69,7 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       double r2=dot(d,d);
       if(r2>=cutoff*cutoff) continue;
       require(r2>0,"oracle encountered overlapping sites");
+      ++result.classPairs[water[i]&&water[j]?0:water[i]||water[j]?1:2];
       double r=std::sqrt(r2), q=coulomb*t.charges[i]*t.charges[j];
       unsigned type=t.types[i]*nt+t.types[j];
       double sr2=t.sigma[type]*t.sigma[type]/r2;
@@ -133,9 +141,11 @@ static uint64_t bits(double value) {
   return result;
 }
 int main(int argc,char **argv) {
-  require(argc==2||(argc==3&&std::strcmp(argv[2],"TIP3P")==0),"expected control file and optional TIP3P");
+  bool withSolutes=argc==3&&std::strcmp(argv[2],"TIP3P-SOLUTES")==0;
+  require(argc==2||(argc==3&&(std::strcmp(argv[2],"TIP3P")==0||withSolutes)),
+          "expected control file and optional TIP3P or TIP3P-SOLUTES");
   bool threeSite=argc==3;
-  const char *name=threeSite?"TIP3P":"OPC";
+  const char *name=withSolutes?"TIP3P+solutes":threeSite?"TIP3P":"OPC";
   llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
   model::PreparedModel p;
   p.control=take(driver::readControl(argv[1]));
@@ -148,7 +158,7 @@ int main(int argc,char **argv) {
   require(!p.control.pme&&!p.control.ljpme&&!p.control.reactionField,"oracle requires plain cutoff");
   require(p.system.tilt[0]==0&&p.system.tilt[1]==0&&p.system.tilt[2]==0,"oracle fixture requires an orthorhombic cell");
   require(p.system.topology->virtualSites.size()==(threeSite?0u:3u)&&
-          p.system.getNumParticles()==(threeSite?9u:12u)&&p.system.topology->settles.size()==3,
+          p.system.getNumParticles()==(withSolutes?11u:threeSite?9u:12u)&&p.system.topology->settles.size()==3,
           "expected three waters of the requested model");
   auto native=take(compiler::Simulation::create(p,false));
   require(take(native->run(1,{},true))==1,"template run did not take one step");
@@ -170,6 +180,10 @@ int main(int argc,char **argv) {
   succeed(generalDouble->evaluate());auto reference=take(generalDouble->getState());
   require(bool(reference.energies),"general double gave no energy");
   Oracle independent=oracle(p.system,state.positions,p.control.cutoffDistance*driver::units::length);
+  std::cout<<"CPU oracle class pair counts: WW "<<independent.classPairs[0]
+           <<"; SW "<<independent.classPairs[1]<<"; SS "<<independent.classPairs[2]<<std::endl;
+  if(withSolutes) require(independent.classPairs[0]&&independent.classPairs[1]&&independent.classPairs[2],
+                         "charged-solute fixture must exercise all three class pairs");
   std::cout<<std::setprecision(17)<<"CPU oracle pair sums: net "<<independent.energy
            <<"; LJ absolute "<<independent.ljAbsolute
            <<"; Coulomb absolute "<<independent.coulombAbsolute<<std::endl;
