@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -125,7 +126,9 @@ static Error error(const std::vector<double> &a,const std::vector<double> &b) {
   e.rms=std::sqrt(e.rms/a.size());return e;
 }
 int main(int argc,char **argv) {
-  require(argc==2,"expected OPC control file");
+  require(argc==2||(argc==3&&std::strcmp(argv[2],"TIP3P")==0),"expected control file and optional TIP3P");
+  bool threeSite=argc==3;
+  const char *name=threeSite?"TIP3P":"OPC";
   llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
   model::PreparedModel p;
   p.control=take(driver::readControl(argv[1]));
@@ -137,7 +140,9 @@ int main(int argc,char **argv) {
   p.execution.target=p.control.target;p.execution.precision=p.control.precision;
   require(!p.control.pme&&!p.control.ljpme&&!p.control.reactionField,"oracle requires plain cutoff");
   require(p.system.tilt[0]==0&&p.system.tilt[1]==0&&p.system.tilt[2]==0,"oracle fixture requires an orthorhombic cell");
-  require(p.system.topology->virtualSites.size()==3&&p.system.getNumParticles()==12,"expected three OPC waters");
+  require(p.system.topology->virtualSites.size()==(threeSite?0u:3u)&&
+          p.system.getNumParticles()==(threeSite?9u:12u)&&p.system.topology->settles.size()==3,
+          "expected three waters of the requested model");
   auto native=take(compiler::Simulation::create(p,false));
   require(take(native->run(1,{},true))==1,"template run did not take one step");
   auto state=take(native->getState());
@@ -174,5 +179,5 @@ int main(int argc,char **argv) {
            <<"; bounds "<<maxBound<<", "<<rmsBound<<"; template energy relative "<<energyRelative<<std::endl;
   require(candidate.maximum<=maxBound&&candidate.rms<=rmsBound,"template projected forces exceed mixed criterion");
   require(std::isfinite(energyRelative)&&energyRelative<=1e-5,"template energy exceeds mixed criterion");
-  std::cout<<"OPC independent physical pair oracle and projected template comparison passed"<<std::endl;
+  std::cout<<name<<" independent physical pair oracle and projected template comparison passed"<<std::endl;
 }
