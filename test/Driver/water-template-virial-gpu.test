@@ -1,0 +1,9 @@
+# REQUIRES: cuda
+# Instantaneous total virial at one shared constrained frame and velocities.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_report.py %S/Inputs/opc %t
+# RUN: mdir-template-physics-test %t/control.toml OPC-VIRIAL | tee %t/metrics.txt | FileCheck %s
+# CHECK: scalar total virials:
+# CHECK: oracle virial:
+# CHECK: virial oracle difference
+# CHECK: OPC physical total virial with constraint reaction passed

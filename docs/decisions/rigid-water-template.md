@@ -435,6 +435,24 @@ measurements replace them.
    while the first term retains the previous relative allowance. Force
    bounds and the oracle/general-double bounds remain unchanged. The
    physical fixtures retain both absolute pair sums in their output.
+   The scalar total virial, including constraint reactions, uses
+   $\lvert W_\mathrm{template}-W_\mathrm{double}\rvert \le
+   \max(1.5\lvert W_\mathrm{mixed}-W_\mathrm{double}\rvert,
+   10^{-5}\lvert W_\mathrm{double}\rvert,10^{-6}S_W)$, where the CPU
+   oracle at the same frame computes $S_W=\sum\lvert\mathbf r\cdot
+   \mathbf F\rvert$ over pair, site-transfer and constraint-force
+   contributions. The independent-oracle/general-double bound is
+   $10^{-10}\max(1,\lvert W_\mathrm{oracle}\rvert)$. The extra term
+   accounts for cancellation among large positive and negative virial
+   contributions; the mixed reference error and relative term remain in
+   the maximum. Record all three total virials, the oracle's separate
+   pair, site and constraint traces, and their absolute sum.
+   The instantaneous physical check uses fresh no-step entries at the
+   same constrained positions and velocities. Its independent constraint
+   force solves the mass-weighted holonomic system, including the
+   velocity-curvature term; constraint force arms are relative to each
+   water's oxygen anchor. The step's averaged impulse virial, trajectory
+   behavior, NPT virial and pressure remain separate validation gates.
 2. **Coverage**, just before a pruning, just before a build, and just after
    a build, for every list, against an f64 periodic brute force, including
    runs under a barostat (the prototype's runs were NVE, with no scaling
@@ -917,6 +935,24 @@ Its absolute energy error is $0.000165030206$ kJ/mol against the approved
 $0.00678867271$ allowance, with $S=6788.6727145034756$ kJ/mol. This is a
 small all-class arithmetic check, not larger-system or refresh-boundary
 coverage. No correction, threshold change or numerical retry occurred.
+
+The first physical OPC total-virial check stops at the independent
+oracle/general-double comparison: 0/1 passed. The three recorded scalar
+virials are $-16.738173485733569$ (template), $-16.737474841997027$
+(general mixed) and $-16.738609513560707$ kJ/mol (general double).
+The CPU oracle gives pair $145.6249626905543$, site-transfer
+$32.434048928111224$ and constraint $-195.00577757087518$ kJ/mol,
+total $-16.94676595220966$. The oracle/general-double difference is
+$0.2081564386489525$ kJ/mol against $1.694676595220966\times10^{-9}$
+allowed, so this gate fails. The pair/site absolute sum is
+$9267.282163805563$ and the constraint absolute sum
+$230.99318153942767$, total $9498.2753453449914$ kJ/mol. The diagnostic
+template/general-double difference, $0.00043602782713847432$, lies below
+its $0.0094982753453449909$ envelope; the independent-oracle failure
+blocks validation before that assertion. The energy and projected-force
+checks preceding the virial check passed. Exact positions, velocities,
+cell and virial bits are retained. No correction or numerical rerun
+followed the failure; its cause awaits diagnosis under a new ruling.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,

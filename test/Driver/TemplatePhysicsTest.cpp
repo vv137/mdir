@@ -38,6 +38,7 @@ static V image(V d, const double *box) {
 }
 struct Oracle {
   double energy=0, ljAbsolute=0, coulombAbsolute=0;
+  double pairVirial=0, siteVirial=0, pairSiteVirialAbsolute=0;
   std::vector<double> forces;
   std::array<unsigned,3> classPairs{};
 };
@@ -78,6 +79,9 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       result.ljAbsolute+=std::abs(4*epsilon*(sr12-sr6));
       result.coulombAbsolute+=std::abs(q/r);
       V pair=scale(d,q/(r2*r)+24*epsilon*(2*sr12-sr6)/r2);
+      double pairTrace=dot(d,pair);
+      result.pairVirial+=pairTrace;
+      result.pairSiteVirialAbsolute+=std::abs(pairTrace);
       f[i]=add(f[i],pair); f[j]=sub(f[j],pair);
     }
   }
@@ -89,10 +93,72 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
     V across=sub(f[s.site],scale(axis,dot(axis,f[s.site])));
     V fj=scale(sub(across,scale(a,dot(a,across))),s.a/(ru*rw));
     V fk=scale(sub(across,scale(b,dot(b,across))),s.a/(rv*rw));
-    f[s.i]=add(f[s.i],sub(sub(f[s.site],fj),fk));
+    V fo=sub(sub(f[s.site],fj),fk);
+    const unsigned atoms[3]={s.i,s.j,s.k};
+    const V transferred[3]={fo,fj,fk};
+    for(unsigned k=0;k!=3;++k) {
+      double term=dot(image(sub(x[atoms[k]],x[s.site]),system.box),transferred[k]);
+      result.siteVirial+=term;
+      result.pairSiteVirialAbsolute+=std::abs(term);
+    }
+    f[s.i]=add(f[s.i],fo);
     f[s.j]=add(f[s.j],fj); f[s.k]=add(f[s.k],fk); f[s.site]={0,0,0};
   }
   for(V value:f) result.forces.insert(result.forces.end(),value.begin(),value.end());
+  return result;
+}
+struct ConstraintVirial { double trace=0, absolute=0; };
+// c=|x_j-x_i|^2/2 gives G a + |v_j-v_i|^2=0. Solve
+// (G M^-1 G^T) lambda = -(G M^-1 F + b) for all three water
+// constraints. The resulting G^T lambda includes the velocity curvature.
+// Oxygen-relative force arms define the reported absolute contributions.
+static ConstraintVirial constraintVirial(const driver::System &system,
+    const std::vector<double> &x, const std::vector<double> &v,
+    const std::vector<double> &f) {
+  ConstraintVirial result;
+  for(const auto &water:system.topology->settles) {
+    unsigned o=water.oxygen;
+    double g[3][9]={}, inverse[9]={}, augmented[3][4]={};
+    const unsigned pairs[3][2]={{0,1},{0,2},{1,2}};
+    for(unsigned k=0;k!=9;++k) {
+      double mass=system.masses[o+k/3];
+      require(mass>0,"constraint oracle requires positive atomic masses");
+      inverse[k]=1/mass;
+    }
+    for(unsigned q=0;q!=3;++q) {
+      unsigned i=o+pairs[q][0],j=o+pairs[q][1];
+      V d=image(sub(vectorAt(x,j),vectorAt(x,i)),system.box);
+      V dv=sub(vectorAt(v,j),vectorAt(v,i));
+      augmented[q][3]=-dot(dv,dv);
+      for(unsigned k=0;k!=3;++k) {
+        g[q][3*pairs[q][0]+k]=-d[k];
+        g[q][3*pairs[q][1]+k]=d[k];
+      }
+      for(unsigned k=0;k!=9;++k) augmented[q][3]-=g[q][k]*inverse[k]*f[3*o+k];
+    }
+    for(unsigned i=0;i!=3;++i) for(unsigned j=0;j!=3;++j)
+      for(unsigned k=0;k!=9;++k) augmented[i][j]+=g[i][k]*inverse[k]*g[j][k];
+    for(unsigned i=0;i!=3;++i) {
+      unsigned pivot=i;
+      for(unsigned j=i+1;j!=3;++j) if(std::abs(augmented[j][i])>std::abs(augmented[pivot][i])) pivot=j;
+      for(unsigned k=0;k!=4;++k) std::swap(augmented[i][k],augmented[pivot][k]);
+      double divisor=augmented[i][i];
+      require(std::abs(divisor)>1e-15,"singular constraint virial system");
+      for(unsigned k=i;k!=4;++k) augmented[i][k]/=divisor;
+      for(unsigned j=0;j!=3;++j) if(j!=i) {
+        double multiplier=augmented[j][i];
+        for(unsigned k=i;k!=4;++k) augmented[j][k]-=multiplier*augmented[i][k];
+      }
+    }
+    for(unsigned member=0;member!=3;++member) {
+      V reaction{};
+      for(unsigned k=0;k!=3;++k) for(unsigned q=0;q!=3;++q)
+        reaction[k]+=g[q][3*member+k]*augmented[q][3];
+      V arm=image(sub(vectorAt(x,o+member),vectorAt(x,o)),system.box);
+      double term=dot(arm,reaction);
+      result.trace+=term;result.absolute+=std::abs(term);
+    }
+  }
   return result;
 }
 static std::vector<double> project(const driver::System &system,
@@ -142,9 +208,10 @@ static uint64_t bits(double value) {
 }
 int main(int argc,char **argv) {
   bool withSolutes=argc==3&&std::strcmp(argv[2],"TIP3P-SOLUTES")==0;
-  require(argc==2||(argc==3&&(std::strcmp(argv[2],"TIP3P")==0||withSolutes)),
-          "expected control file and optional TIP3P or TIP3P-SOLUTES");
-  bool threeSite=argc==3;
+  bool virialCheck=argc==3&&std::strcmp(argv[2],"OPC-VIRIAL")==0;
+  require(argc==2||(argc==3&&(std::strcmp(argv[2],"TIP3P")==0||withSolutes||virialCheck)),
+          "expected control file and optional TIP3P, TIP3P-SOLUTES or OPC-VIRIAL");
+  bool threeSite=argc==3&&!virialCheck;
   const char *name=withSolutes?"TIP3P+solutes":threeSite?"TIP3P":"OPC";
   llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
   model::PreparedModel p;
@@ -170,7 +237,13 @@ int main(int argc,char **argv) {
   for(double value:state.box) std::cout<<' '<<bits(value);
   for(double value:state.tilt) std::cout<<' '<<bits(value);
   std::cout<<std::endl;
+  if(virialCheck) {
+    std::cout<<"frame velocity bits:";
+    for(double value:state.velocities) std::cout<<' '<<bits(value);
+    std::cout<<std::endl;
+  }
   p.system.positions=state.positions;p.system.velocities=state.velocities;
+  auto templateFrameModel=p;
   p.control.waterTemplate=driver::WaterTemplateChoice::Off;
   auto doubleModel=p;
   doubleModel.control.precision=driver::Precision::Double;
@@ -223,5 +296,34 @@ int main(int argc,char **argv) {
   require(candidate.maximum<=maxBound&&candidate.rms<=rmsBound,"template projected forces exceed mixed criterion");
   require(std::isfinite(energyDifference)&&std::isfinite(energyBound)&&energyDifference<=energyBound,
           "template energy exceeds cancellation-aware criterion");
+  if(virialCheck) {
+    // A fresh no-step entry gives the instantaneous constraint reaction.
+    // The carried step's mean impulse virial is a different quantity.
+    auto templateFrame=take(compiler::Simulation::create(templateFrameModel,false));
+    succeed(templateFrame->evaluate());auto observed=take(templateFrame->getState());
+    require(bool(observed.energies),"template no-step entry gave no virial");
+    auto constraint=constraintVirial(p.system,state.positions,state.velocities,independent.forces);
+    double oracleTotal=independent.pairVirial+independent.siteVirial+constraint.trace;
+    double absoluteSum=independent.pairSiteVirialAbsolute+constraint.absolute;
+    double wt=observed.energies->virial,wm=mixed.energies->virial,wd=reference.energies->virial;
+    double oracleDifference=std::abs(wd-oracleTotal);
+    double oracleBound=1e-10*std::max(1.,std::abs(oracleTotal));
+    double mixedDifference=std::abs(wm-wd),difference=std::abs(wt-wd);
+    double bound=std::max({1.5*mixedDifference,1e-5*std::abs(wd),1e-6*absoluteSum});
+    std::cout<<"scalar total virials: template "<<wt<<"; general-mixed "<<wm<<"; general-double "<<wd<<std::endl;
+    std::cout<<"scalar total virial bits: "<<bits(wt)<<' '<<bits(wm)<<' '<<bits(wd)<<std::endl;
+    std::cout<<"oracle virial: pair "<<independent.pairVirial<<"; site "<<independent.siteVirial
+             <<"; constraint "<<constraint.trace<<"; total "<<oracleTotal
+             <<"; pair/site absolute "<<independent.pairSiteVirialAbsolute
+             <<"; constraint absolute "<<constraint.absolute<<"; absolute sum "<<absoluteSum<<std::endl;
+    std::cout<<"oracle virial bits: "<<bits(independent.pairVirial)<<' '<<bits(independent.siteVirial)
+             <<' '<<bits(constraint.trace)<<' '<<bits(oracleTotal)<<' '
+             <<bits(independent.pairSiteVirialAbsolute)<<' '<<bits(constraint.absolute)<<' '<<bits(absoluteSum)<<std::endl;
+    std::cout<<"virial oracle difference "<<oracleDifference<<"; oracle bound "<<oracleBound
+             <<"; mixed difference "<<mixedDifference<<"; template difference "<<difference<<"; bound "<<bound<<std::endl;
+    require(std::isfinite(oracleDifference)&&oracleDifference<=oracleBound,"general double differs from total-virial oracle");
+    require(std::isfinite(difference)&&std::isfinite(bound)&&difference<=bound,"template total virial exceeds approved criterion");
+    std::cout<<"OPC physical total virial with constraint reaction passed"<<std::endl;
+  }
   std::cout<<name<<" independent physical pair oracle and projected template comparison passed"<<std::endl;
 }
