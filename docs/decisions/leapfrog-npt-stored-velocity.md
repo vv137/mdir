@@ -1,5 +1,7 @@
 # D[leapfrog-npt-stored-velocity]
 
+Recorded 2026-11-09.
+
 Amends [D76](D76.md). With leapfrog and a barostat, store
 $\mathbf v_\mathrm{stored}=\mathcal P_{\mathbf x_n}
 (\mathbf v_\mathrm{coupled}-hM^{-1}\mathbf F_n)$, where
