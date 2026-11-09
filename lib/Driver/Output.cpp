@@ -1025,7 +1025,7 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
     if (before[k] > 0.0 && !(ratio >= 0.5 && ratio <= 2.0)) {
       std::snprintf(message, sizeof message,
                     "the barostat has scaled the cell by %.4g along %c at "
-                    "one coupling, from %.4f Å to %.4g Å; the run has "
+                    "one coupling, from %.4f Ang to %.4g Ang; the run has "
                     "failed (a time step too long, a bad contact, or a "
                     "defect of mdir)",
                     ratio, axes[k], before[k] / units::length,
@@ -1038,8 +1038,8 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
     if (output.box[k] < output.leastEdge) {
       char message[256];
       std::snprintf(message, sizeof message,
-                    "the barostat has made the cell %.4f Å along %c, "
-                    "less than twice the cutoff, %.4f Å; the run needs a "
+                    "the barostat has made the cell %.4f Ang along %c, "
+                    "less than twice the cutoff, %.4f Ang; the run needs a "
                     "larger cell",
                     output.box[k] / units::length, axes[k],
                     0.5 * output.leastEdge / units::length);
@@ -1050,8 +1050,8 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
     if (output.box[k] < output.leastReachEdge) {
       char message[320];
       std::snprintf(message, sizeof message,
-                    "the barostat has made the cell %.4f Å along %c, less "
-                    "than the pairlist distance over 0.999, %.4f Å, below "
+                    "the barostat has made the cell %.4f Ang along %c, less "
+                    "than the pairlist distance over 0.999, %.4f Ang, below "
                     "which the groups do not hold every pair; the run needs "
                     "a larger cell or a shorter 'pairlist_distance'",
                     output.box[k] / units::length, axes[k],
@@ -1350,9 +1350,9 @@ static void checkSpread(const Output &output, const std::vector<double> &x,
     if (most - least > output.box[k] - output.listReach) {
       char message[512];
       std::snprintf(message, sizeof message,
-                    "at step %lld the particles spread %.4f Å along "
+                    "at step %lld the particles spread %.4f Ang along "
                     "%c, more than the cell around them less the reach of "
-                    "the neighbor structures, %.4f Å; images of the "
+                    "the neighbor structures, %.4f Ang; images of the "
                     "particles would interact. The run stops; begin it "
                     "again with a larger 'pairlist_distance', which places "
                     "a larger cell (D142)",

@@ -140,8 +140,8 @@ static void warnAboutCell(const Checkpoint &checkpoint, const System &system,
             checkpoint.tilt[i] == system.tilt[i];
   if (same)
     return;
-  warn(llvm::formatv("the cell of '{0}', {1:F4} {2:F4} {3:F4} Å, differs "
-                     "from that of the input, {4:F4} {5:F4} {6:F4} Å; the "
+  warn(llvm::formatv("the cell of '{0}', {1:F4} {2:F4} {3:F4} Ang, differs "
+                     "from that of the input, {4:F4} {5:F4} {6:F4} Ang; the "
                      "run takes that of the checkpoint",
                      path, checkpoint.box[0] / units::length,
                      checkpoint.box[1] / units::length,
@@ -1249,11 +1249,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         columns.push_back({(term.name + "." + quantity).str(), unit.str()});
       };
       if (term.arity == 2) {
+        // The line of units of the file, not printed (D[ascii-cli-output]).
         for (StringRef quantity : {"r", "dx", "dy", "dz"})
-          add(quantity, "Å");
+          add(quantity, "Å"); // ascii-exempt
         add("energy", "kcal/mol");
         for (StringRef quantity : {"f_r", "fx", "fy", "fz"})
-          add(quantity, "kcal/mol/Å");
+          add(quantity, "kcal/mol/Å"); // ascii-exempt
       } else {
         add("theta", "rad");
         add("energy", "kcal/mol");
@@ -1317,7 +1318,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (control->minimize && control->minimizeTolerance > 0.0)
     output.log.print("MDIR: %zu particles, at most %lld steps of steepest "
                      "descent, until the largest force is below %g "
-                     "kcal/mol/Å\n",
+                     "kcal/mol/Ang\n",
                      count, static_cast<long long>(control->numSteps),
                      control->minimizeTolerance);
   else if (control->minimize)
@@ -1342,9 +1343,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!control->periodic)
     output.log.print(
                  "MDIR: no periodic cell; the particles are in a cell of "
-                 "%.4f %.4f %.4f Å, whose images stay beyond the reach of "
-                 "the neighbor structures, %.4f Å, while the particles "
-                 "spread less than %.4f %.4f %.4f Å (D142)\n",
+                 "%.4f %.4f %.4f Ang, whose images stay beyond the reach of "
+                 "the neighbor structures, %.4f Ang, while the particles "
+                 "spread less than %.4f %.4f %.4f Ang (D142)\n",
                  system->box[0] / units::length, system->box[1] / units::length,
                  system->box[2] / units::length, control->pairlistDistance,
                  (system->box[0] - output.listReach) / units::length,
@@ -1379,12 +1380,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (control->neighborStructureRequested == NeighborStructure::Auto) {
     if (control->neighborStructure == NeighborStructure::Groups)
       output.log.print("MDIR: neighbor structure: groups of 16 with the "
-                       "reach %g Å", control->pairlistDistance);
+                       "reach %g Ang", control->pairlistDistance);
     else
       output.log.print("MDIR: neighbor structure: the matrix with the "
-                       "reach %g Å", control->pairlistDistance);
+                       "reach %g Ang", control->pairlistDistance);
     if (control->prunedDistance != 0.0)
-      output.log.print(", pruned to %g Å", control->prunedDistance);
+      output.log.print(", pruned to %g Ang", control->prunedDistance);
     output.log.print(" (AUTO: %s)\n",
                      control->neighborStructureReason.c_str());
   }
@@ -1395,9 +1396,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     control->skinsRequested;
   if (control->isSkinAuto() && skinsShown) {
     output.log.print("%s", skinLines.c_str());
-    output.log.print("MDIR: skins: the reach %g Å", control->pairlistDistance);
+    output.log.print("MDIR: skins: the reach %g Ang",
+                     control->pairlistDistance);
     if (control->prunedDistance != 0.0)
-      output.log.print(", pruned to %g Å", control->prunedDistance);
+      output.log.print(", pruned to %g Ang", control->prunedDistance);
     output.log.print(" (%s: %s", control->skinSource.c_str(),
                      control->skinReason.c_str());
     if (!skinChoice.trials.empty())
@@ -1612,8 +1614,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
       output.log.print(
                    "MDIR: the pressures of the barostat over %lld periods, "
-                   "in bar: x and y %.2f ± %.2f, z %.2f ± %.2f, the "
-                   "difference %.2f ± %.2f\n",
+                   "in bar: x and y %.2f +/- %.2f, z %.2f +/- %.2f, the "
+                   "difference %.2f +/- %.2f\n",
                    static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2],
                    p[5]);
     } else {
@@ -1627,7 +1629,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
       output.log.print(
           "MDIR: the pressures of the barostat over %lld periods, in bar: "
-          "x %.2f ± %.2f, y %.2f ± %.2f, z %.2f ± %.2f\n",
+          "x %.2f +/- %.2f, y %.2f +/- %.2f, z %.2f +/- %.2f\n",
           static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2], p[5]);
     } else {
       llvm::consumeError(get.takeError());
@@ -1650,8 +1652,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       auto soluteFull = summarize(output.soluteFull);
       output.log.print(
           "MDIR: the temperatures over %zu rows, in K: of the solute "
-          "%.2f ± %.2f, of the solvent %.2f ± %.2f; from the velocities of "
-          "the steps alone, %.2f ± %.2f and %.2f ± %.2f\n",
+          "%.2f +/- %.2f, of the solvent %.2f +/- %.2f; from the velocities of "
+          "the steps alone, %.2f +/- %.2f and %.2f +/- %.2f\n",
           static_cast<size_t>(output.solventOptimal.count), solute.first,
           solute.second,
           solvent.first, solvent.second, soluteFull.first, soluteFull.second,
@@ -1659,7 +1661,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     } else {
       output.log.print(
           "MDIR: the temperature of the solvent over %zu rows, in K: "
-          "%.2f ± %.2f; from the velocities of the steps alone, %.2f ± "
+          "%.2f +/- %.2f; from the velocities of the steps alone, %.2f +/- "
           "%.2f\n",
           static_cast<size_t>(output.solventOptimal.count), solvent.first,
           solvent.second, solventFull.first, solventFull.second);
@@ -1701,10 +1703,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      (units::energy / units::length);
     if (output.stalledStep >= 0) {
       output.log.print(
-          "MDIR: stopped at step %lld: the step has shrunk to %.3e Å, "
-          "below %.0e Å (%.0e of its cap of %g Å), where a trial no longer "
+          "MDIR: stopped at step %lld: the step has shrunk to %.3e Ang, "
+          "below %.0e Ang (%.0e of its cap of %g Ang), where a trial no longer "
           "lowers the energy by more than its rounding; the largest force "
-          "is %.4f kcal/mol/Å",
+          "is %.4f kcal/mol/Ang",
           static_cast<long long>(output.stalledStep),
           output.lastMinimization.stepSize / units::length,
           control->getMinimizeStepFloor(),
@@ -1716,12 +1718,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     } else if (control->minimizeTolerance > 0.0) {
       if (output.convergedStep >= 0)
         output.log.print("MDIR: converged at step %lld: the largest force, "
-                         "%.4f kcal/mol/Å, is below %g\n",
+                         "%.4f kcal/mol/Ang, is below %g\n",
                          static_cast<long long>(output.convergedStep),
                          largest, control->minimizeTolerance);
       else
         output.log.print("MDIR: not converged in %lld steps: the largest "
-                         "force, %.4f kcal/mol/Å, is not below %g\n",
+                         "force, %.4f kcal/mol/Ang, is not below %g\n",
                          static_cast<long long>(control->numSteps), largest,
                          control->minimizeTolerance);
     }

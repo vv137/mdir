@@ -68,7 +68,7 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
     entry.mixing = tunable.mixing;
     if (entry.mixing != driver::Mixing::Arithmetic &&
         entry.mixing != driver::Mixing::Geometric)
-      return input(where + ": the mixing of σ is arithmetic or geometric");
+      return input(where + ": the mixing of sigma is arithmetic or geometric");
     if (entry.mixing != driver::Mixing::Arithmetic && tunable.parameter != "sigma")
       return input(where + ": a mixing rule is for \"sigma\" only");
     // The values of the sites in the model.
@@ -518,7 +518,7 @@ static llvm::Error apply(Apply mode, const TunableSet &set,
           if (!poison && values[a] == 0.0 && values[b] != 0.0)
             return input("the tunable '" + entry.name + "' is 0 for the type " +
                          topology->typeNames[a] + ", where the combining "
-                         "rule √(x y) has no derivative; give the type -1 "
+                         "rule sqrt(x y) has no derivative; give the type -1 "
                          "in its map, or compile without "
                          "System.tunable_gradient");
           weight = values[a] == 0.0 ? 0.0

@@ -12,15 +12,15 @@
 # RUN: mdir run %t/stop.toml | FileCheck %s --check-prefix=STOP
 # RUN: mdir run %t/more.toml | FileCheck %s --check-prefix=MORE
 
-# STOP:      MDIR: 1168 particles, at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Å
+# STOP:      MDIR: 1168 particles, at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Ang
 # STOP:      INFO:         0 {{.*}}
 # STOP:      INFO:        80 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}34.9
 # STOP-NEXT: INFO:        90 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}13.2
 # STOP-NOT:  INFO:       100
-# STOP:      MDIR: converged at step 90: the largest force, 13.2{{[0-9]+}} kcal/mol/Å, is below 15
+# STOP:      MDIR: converged at step 90: the largest force, 13.2{{[0-9]+}} kcal/mol/Ang, is below 15
 
 # MORE:      INFO:        20
-# MORE:      MDIR: not converged in 20 steps: the largest force, {{[0-9.]+}} kcal/mol/Å, is not below 1
+# MORE:      MDIR: not converged in 20 steps: the largest force, {{[0-9.]+}} kcal/mol/Ang, is not below 1
 
 [input]
 topology = "@ROOT@/dipeptide.prmtop"

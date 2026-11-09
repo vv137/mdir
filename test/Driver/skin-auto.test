@@ -53,22 +53,22 @@
 # RUN: cd %t && mdir check --json auto.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
 # RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON-GIVEN
 
-# OMITTED: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
+# OMITTED: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles
 # OMITTED-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
-# SHORT: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
+# SHORT: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles
 # SHORT-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
-# LONG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å
+# LONG: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang
 # LONG-NEXT: skins: default (`mdir run` measures candidates; this does not)
 # NEVER: skins: default (MDIR_SKIN_SEARCH=never)
-# CPU: neighbors: matrix, reach 10.5 Å (AUTO: the target is the CPU)
+# CPU: neighbors: matrix, reach 10.5 Ang (AUTO: the target is the CPU)
 # CPU-NEXT: skins: default (the CPU)
-# DETERMINISTIC: neighbors: matrix, reach 10.5 Å (AUTO: the deterministic mode)
+# DETERMINISTIC: neighbors: matrix, reach 10.5 Ang (AUTO: the deterministic mode)
 # DETERMINISTIC-NEXT: skins: default (the deterministic mode)
-# MATRIX: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles
+# MATRIX: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles
 # MATRIX-NEXT: skins: default (the matrix, which is not searched)
-# OUTER: neighbors: groups of 16, reach 11 Å, pruned to 9.6 Å
+# OUTER: neighbors: groups of 16, reach 11 Ang, pruned to 9.6 Ang
 # OUTER-NEXT: skins: default (`mdir run` measures candidates; this does not)
-# GIVEN: neighbors: groups of 16, reach 11 Å, pruned to 9.3 Å
+# GIVEN: neighbors: groups of 16, reach 11 Ang, pruned to 9.3 Ang
 # BOOLEAN: expected a positive number or "AUTO" for 'pruned_distance'
 # JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 5e+12"}
 # JSON-GIVEN: {"pairlist_distance_source": "given", "pruned_distance_source": "given", "reason": ""}

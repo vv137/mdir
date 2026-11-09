@@ -520,7 +520,7 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
         return llvm::createStringError(
             llvm::inconvertibleErrorCode(),
             "'born_radius_cutoff' and the largest screened radius reach "
-            "%g Å, beyond the cutoff, %g Å",
+            "%g Ang, beyond the cutoff, %g Ang",
             reach / units::length, control.cutoffDistance);
     }
     system.bornTermNames.push_back("generalized Born");

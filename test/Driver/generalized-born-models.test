@@ -96,6 +96,6 @@
 
 # RADII: generalized Born needs the radii and the screening of every particle, the sections RADII and SCREEN of a topology of Amber; for another topology give 'born_radii = "MBONDI2"'
 # COLD: 'salt_concentration' screens with the Debye length at the temperature of [ensemble], which is 0 K
-# FAR: 'born_radius_cutoff', 45 Å, is beyond the cutoff, 40 Å
+# FAR: 'born_radius_cutoff', 45 Ang, is beyond the cutoff, 40 Ang
 # REACH: 'born_radius_cutoff' and the largest screened radius reach
 # STRAY: 'salt_concentration' is for 'implicit_solvent'

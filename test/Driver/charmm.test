@@ -43,7 +43,7 @@
 # CHECK-TOPOLOGY: pairs 1-4:          6
 # CHECK-TOPOLOGY: CMAP terms:         1, 1 maps
 
-# NOBOX: expected 'box' in [boundary], the edges of the cell in Å: a coordinate file of CHARMM has no cell
+# NOBOX: expected 'box' in [boundary], the edges of the cell in Ang: a coordinate file of CHARMM has no cell
 # NOPARAMETERS: a PSF needs 'parameters' in [input]
 # MISSING: no ANGLES parameters for CB1(2) CB1(4) CB1(6)
 

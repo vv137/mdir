@@ -43,19 +43,19 @@
 # RUN: cd %t && not mdir check cpu-inner.toml 2>&1 | FileCheck %s --check-prefix=REFUSED
 # RUN: cd %t && mdir check --json big.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['neighbors'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
 
-# BIG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
-# SMALL: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
-# DENSE: neighbors: matrix, reach 29 Å (AUTO: the reach of the groups, 29 Å, exceeds 0.999 of the least edge of the cell, 28.97 Å)
-# CPU: neighbors: matrix, reach 10.5 Å (AUTO: the target is the CPU)
-# DETERMINISTIC: neighbors: matrix, reach 10.5 Å (AUTO: the deterministic mode)
-# LONG: neighbors: groups of 16, reach 12 Å, pruned to 10.2 Å (AUTO:
-# OUTER: neighbors: groups of 16, reach 11 Å, pruned to 9.6 Å (AUTO:
-# SHORT: neighbors: groups of 16, reach 9.4 Å (AUTO:
-# INNER: neighbors: groups of 16, reach 12 Å, pruned to 9.3 Å (AUTO:
-# UNUSED: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}}; 'pruned_distance' is not used)
-# INTERVAL: neighbors: matrix, reach 10.5 Å (AUTO: 'rebuild_interval' is given)
-# MATRIX: neighbors: matrix, reach 10.5 Å{{$}}
-# GROUPS: neighbors: groups of 16, reach 10.5 Å{{$}}
+# BIG: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
+# SMALL: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
+# DENSE: neighbors: matrix, reach 29 Ang (AUTO: the reach of the groups, 29 Å, exceeds 0.999 of the least edge of the cell, 28.97 Å)
+# CPU: neighbors: matrix, reach 10.5 Ang (AUTO: the target is the CPU)
+# DETERMINISTIC: neighbors: matrix, reach 10.5 Ang (AUTO: the deterministic mode)
+# LONG: neighbors: groups of 16, reach 12 Ang, pruned to 10.2 Ang (AUTO:
+# OUTER: neighbors: groups of 16, reach 11 Ang, pruned to 9.6 Ang (AUTO:
+# SHORT: neighbors: groups of 16, reach 9.4 Ang (AUTO:
+# INNER: neighbors: groups of 16, reach 12 Ang, pruned to 9.3 Ang (AUTO:
+# UNUSED: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}}; 'pruned_distance' is not used)
+# INTERVAL: neighbors: matrix, reach 10.5 Ang (AUTO: 'rebuild_interval' is given)
+# MATRIX: neighbors: matrix, reach 10.5 Ang{{$}}
+# GROUPS: neighbors: groups of 16, reach 10.5 Ang{{$}}
 # REFUSED: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"', or "AUTO" on a GPU and not 'deterministic'
 # JSON: {"pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6, "reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "requested": "auto", "structure": "groups"}
 

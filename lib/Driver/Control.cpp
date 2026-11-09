@@ -1461,8 +1461,8 @@ Error Reader::readTriplet(const toml::table &table) {
   if (term.cutoff > control.cutoffDistance) {
     std::string message;
     llvm::raw_string_ostream(message)
-        << llvm::format("the cutoff of the triplets, %g Å, is beyond that "
-                        "of [energy], %g Å",
+        << llvm::format("the cutoff of the triplets, %g Ang, is beyond that "
+                        "of [energy], %g Ang",
                         term.cutoff, control.cutoffDistance);
     return fail(*table.get("cutoff"), message);
   }
@@ -2224,7 +2224,7 @@ Error Reader::readEnergy(const toml::table &table) {
       return error;
     if (control.bornRadiusCutoff < 0.0)
       return fail(*table.get("born_radius_cutoff"),
-                  "expected 0 or a positive 'born_radius_cutoff' in Å");
+                  "expected 0 or a positive 'born_radius_cutoff' in Ang");
     if (Error error = readChoice<Control::BornRadii>(
             table, "born_radii", control.bornRadii,
             {{"TOPOLOGY", Control::BornRadii::Topology},
@@ -2939,16 +2939,17 @@ Error Reader::readBoundary(const toml::table &table) {
   if (!node)
     return fail(table, control.charmmStructureFile.empty()
                            ? "expected 'box' in [boundary], the edges of the "
-                             "cell in Å"
+                             "cell in Ang"
                            : "expected 'box' in [boundary], the edges of the "
-                             "cell in Å: a coordinate file of CHARMM has no "
+                             "cell in Ang: a coordinate file of CHARMM has no "
                              "cell");
   const toml::array *box = node->as_array();
   bool charmm = !control.charmmStructureFile.empty();
   if (!box || (box->size() != 3 && !(charmm && box->size() == 6)))
     return fail(*node, charmm ? "expected the three edges of the cell for "
-                                "'box', in Å, and its angles α, β, γ in "
-                                "degrees if they are not right angles"
+                                "'box', in Ang, and its angles alpha, beta, "
+                                "gamma in degrees if they are not right "
+                                "angles"
                               : "expected the three edges of the cell for "
                                 "'box'");
   for (int i = 0; i != 3; ++i) {
@@ -3274,7 +3275,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
   if (control.bornRadiusCutoff > control.cutoffDistance)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'born_radius_cutoff', %g Å, is beyond the cutoff, %g Å",
+        "%s: 'born_radius_cutoff', %g Ang, is beyond the cutoff, %g Ang",
         path.str().c_str(), control.bornRadiusCutoff,
         control.cutoffDistance);
   // The triplets are found on the host (D160).

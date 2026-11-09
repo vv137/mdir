@@ -110,18 +110,18 @@ static void describeTopology(const Control &control, const System &system) {
       cell.tilt[k] = topology.tilt[k] / units::length;
     }
     if (cell.isOrthorhombic()) {
-      std::printf("box:                %g %g %g Å\n", cell.diagonal[0],
+      std::printf("box:                %g %g %g Ang\n", cell.diagonal[0],
                   cell.diagonal[1], cell.diagonal[2]);
     } else {
       std::array<double, 6> shape = cell.getLengthsAndAngles();
-      std::printf("box:                %g %g %g Å, angles %g %g %g\n",
+      std::printf("box:                %g %g %g Ang, angles %g %g %g\n",
                   shape[0], shape[1], shape[2], shape[3], shape[4], shape[5]);
       std::printf("cell vectors:       a (%g, 0, 0), b (%g, %g, 0), "
-                  "c (%g, %g, %g) Å\n",
+                  "c (%g, %g, %g) Ang\n",
                   cell.diagonal[0], cell.tilt[0], cell.diagonal[1],
                   cell.tilt[1], cell.tilt[2], cell.diagonal[2]);
     }
-    std::printf("density:            %g g/cm³\n",
+    std::printf("density:            %g g/cm^3\n",
                 totalMass / volume * mdir::physical::densityGramsPerCubicCentimeter);
   } else {
     std::printf("boundary:           NONE (no periodic cell)\n");
@@ -154,11 +154,11 @@ static void describeParticles(const Control &control, const System &system) {
                 perType[t]);
   std::printf("total mass:         %g amu\n", totalMass);
   if (control.periodic) {
-    std::printf("box:                %g %g %g Å\n",
+    std::printf("box:                %g %g %g Ang\n",
                 system.box[0] / units::length, system.box[1] / units::length,
                 system.box[2] / units::length);
     // Convert amu/nm³ to g/cm³ with the native mass-density coefficient.
-    std::printf("density:            %g g/cm³\n",
+    std::printf("density:            %g g/cm^3\n",
                 totalMass / volume * mdir::physical::densityGramsPerCubicCentimeter);
   } else {
     std::printf("boundary:           NONE (no periodic cell)\n");
@@ -341,7 +341,7 @@ static void describeRun(const Control &control, const System &system,
                                         : "ISOTROPIC",
                   control.pressure);
   }
-  std::printf("cutoff:             %g Å\n", control.cutoffDistance);
+  std::printf("cutoff:             %g Ang\n", control.cutoffDistance);
   std::printf("electrostatics:     %s\n", getElectrostatics(control));
   // The learned potentials (D270), which the plugin loads
   // when the run starts.
@@ -365,14 +365,15 @@ static void describeRun(const Control &control, const System &system,
                   "aliasing, %lld points of the window\n",
                   static_cast<long long>(control.pmeOrder));
     else
-      std::printf("PME grid:           automatic, max spacing %g Å, order %lld\n",
+      std::printf("PME grid:           automatic, max spacing %g Ang, "
+                  "order %lld\n",
                   control.pmeMaxSpacing,
                   static_cast<long long>(control.pmeOrder));
     if (control.pmeKernel == PMEKernel::Prolate)
       std::printf("PME kernel:         PROLATE, tolerance %g\n",
                   control.pmeAlphaTolerance);
     else if (control.pmeAlpha > 0)
-      std::printf("PME beta:           %g Å^-1\n", control.pmeAlpha);
+      std::printf("PME beta:           %g Ang^-1\n", control.pmeAlpha);
     else
       std::printf("PME beta:           automatic, tolerance %g\n",
                   control.pmeAlphaTolerance);
@@ -389,13 +390,13 @@ static void describeRun(const Control &control, const System &system,
                 static_cast<long long>(control.threads));
   // The structure that the run builds, as `AUTO` resolves it for this
   // system, and why (D261).
-  std::printf("neighbors:          %s, reach %g Å",
+  std::printf("neighbors:          %s, reach %g Ang",
               control.neighborStructure == NeighborStructure::Groups
                   ? "groups of 16"
                   : "matrix",
               control.pairlistDistance);
   if (control.prunedDistance != 0.0)
-    std::printf(", pruned to %g Å", control.prunedDistance);
+    std::printf(", pruned to %g Ang", control.prunedDistance);
   if (control.neighborStructureRequested == NeighborStructure::Auto)
     std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
   std::printf("\n");

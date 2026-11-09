@@ -14,7 +14,7 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s
 
-# CHECK: mdir: the barostat has scaled the cell by {{[0-9.e+]+}} along {{[xyz]}} at one coupling, from {{[0-9.]+}} Å to {{[0-9.e+]+}} Å; the run has failed
+# CHECK: mdir: the barostat has scaled the cell by {{[0-9.e+]+}} along {{[xyz]}} at one coupling, from {{[0-9.]+}} Ang to {{[0-9.e+]+}} Ang; the run has failed
 
 #--- run.toml
 [input]

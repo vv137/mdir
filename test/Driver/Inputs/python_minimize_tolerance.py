@@ -109,10 +109,10 @@ assert stop == 90, stop
 log, rows, step, positions = cli_run("tolerance", STEPS, TOLERANCE)
 assert max(rows) == stop and step == stop, (max(rows), step)
 assert rows == {s: r for s, r in reference.items() if s <= stop}
-match = re.search(r"MDIR: converged at step (\d+): the largest force, ([0-9.]+) kcal/mol/Å, "
+match = re.search(r"MDIR: converged at step (\d+): the largest force, ([0-9.]+) kcal/mol/Ang, "
                   r"is below 15", log)
 assert match and int(match.group(1)) == stop, log[-400:]
-assert "at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Å" in log
+assert "at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Ang" in log
 # A run of that many steps without the key writes the same files.
 _, _, short_step, short_positions = cli_run("short", stop)
 assert short_step == stop and short_positions == positions
