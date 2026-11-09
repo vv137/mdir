@@ -115,6 +115,15 @@ write rows of energies (`test/Driver/leapfrog-energy-step.test`). A run
 that starts leapfrog from velocities of time 0
 takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
 
+After leapfrog barostat coupling, store
+$\mathbf v_\mathrm{stored}=\mathcal P_{\mathbf x_n}
+(\mathbf v_\mathrm{coupled}-hM^{-1}\mathbf F_n)$
+(D[leapfrog-npt-stored-velocity]). Projecting this backward half-kick
+removes its dependence on constraint-normal force components while
+preserving the projected full-step velocity used by the couplings and
+the constrained trajectory to rounding. H5MD and checkpoints retain the
+half-step offset $-0.5$.
+
 **Brownian dynamics** (`integrator = "BROWNIAN"`, D163b) is the limit of
 Langevin dynamics in which the friction damps the momenta faster than the
 forces change. Langevin's equation for particle $i$,

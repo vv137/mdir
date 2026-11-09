@@ -612,6 +612,23 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           center.velocity, factor, inverse, bath);
       return result;
     };
+    auto storeLeapfrogVelocity = [&](OpBuilder &inside, EntryFieldsIR result) {
+      result.velocities = buildKick(inside, result.velocities, result.forces,
+          result.masses, halfBack);
+      // D[leapfrog-npt-stored-velocity]: do not retain the constraint-normal
+      // part of a force representation in the stored half-step velocity.
+      auto fields = buildEntryPotentialFields(result);
+      for (const auto &group : config.constraints) {
+        SmallVector<Value> lengths;
+        for (unsigned slot : group.parameters) lengths.push_back(fields[slot]);
+        ConstraintVelocityInputs input{fields[group.relation], result.positions,
+            cell, result.velocities, result.masses, lengths, {}, {}};
+        result.velocities = group.water
+            ? buildSettleVelocities(inside, input).velocities
+            : buildShakeVelocities(inside, input, group.arity).velocities;
+      }
+      return result;
+    };
     auto closeCoupling = [&](OpBuilder &inside, const EntryFieldsIR &point,
         llvm::function_ref<Value()> makeStep) -> EntryFieldsIR {
           if (config.trotter) {
@@ -635,7 +652,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
             if (config.leapfrog) actual.velocities = full;
             auto result = couple(inside, actual, scaled.completed, optimal, {}, diagonal, {}, &scaled);
             if (config.leapfrog)
-              result.velocities = buildKick(inside, result.velocities, result.forces, result.masses, halfBack);
+              result = storeLeapfrogVelocity(inside, result);
             return result;
           }
           auto next = call(inside, (measuredCoupling || config.barostat) ? couplingProgram : step, point);
@@ -667,7 +684,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
               config.barostat ? next.getResult(3) : Value{}, diagonal,
               config.barostat ? next.getResult(5) : Value{});
           if (config.barostat && config.leapfrog)
-            result.velocities = buildKick(inside, result.velocities, result.forces, result.masses, halfBack);
+            result = storeLeapfrogVelocity(inside, result);
           return result;
     };
     if (config.segments) {
@@ -849,7 +866,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
                 config.barostat ? next.getResult(3) : Value{}, row.diagonal,
                 config.barostat ? next.getResult(5) : Value{}, scaled ? &*scaled : nullptr);
             if (config.barostat && config.leapfrog)
-              completed.velocities = buildKick(body, completed.velocities, completed.forces, completed.masses, halfBack);
+              completed = storeLeapfrogVelocity(body, completed);
           }
           if (auto error = frameIfDue(body, counts[8], row.step, completed)) return std::move(error);
           return pack(completed, false);
@@ -937,7 +954,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           final = couple(inside, final, completed, optimal, next.getResult(3), row.diagonal,
               config.barostat ? next.getResult(5) : Value{}, scaled ? &*scaled : nullptr);
           if (config.barostat && config.leapfrog)
-            final.velocities = buildKick(inside, final.velocities, final.forces, final.masses, halfBack);
+            final = storeLeapfrogVelocity(inside, final);
         }
         if (config.framesAtEnergies) writeFrame(inside, completed, final);
         return pack(final, false);

@@ -172,6 +172,12 @@ trajectory_interval  = 1000
   Leapfrog's velocities are half a step behind the positions: `velocity`
   then has a `time` dataset of its own with the times of the velocities,
   and `/parameters/mdir/velocity_offset` is $-0.5$.
+  With leapfrog and a barostat, the stored backward half-kick is projected
+  through the mass-weighted constraints at the current positions
+  (D[leapfrog-npt-stored-velocity]); it has no constraint-normal force
+  component. It remains a stored half-step quantity, not the full-step
+  velocity used by the thermostat and barostat. Checkpoints use the same
+  stored convention.
 - **Observables.** `tunables_version` is the version of the values of the
   tunables (D213) that the forces of the frame were computed with; it is
   written for a program with tunables and costs nothing.
