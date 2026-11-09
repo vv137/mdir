@@ -2,6 +2,8 @@
 # Same predeclared bounds and independent SHAKE/RATTLE oracle.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/verlet.npz --integrator VelocityVerlet --target GPU --precision Mixed
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/verlet-double.npz --integrator VelocityVerlet --target GPU --precision Double
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/verlet-ulp.npz --integrator VelocityVerlet --target GPU --precision Mixed --perturb-f32-ulp
 # RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/leapfrog.npz --target GPU --precision Mixed
-# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py check %S/Inputs %t/leapfrog.npz --base %t/verlet.npz --reference-integrator VelocityVerlet --target GPU --precision Mixed | FileCheck %s
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py check %S/Inputs %t/leapfrog.npz --base %t/verlet.npz --reference-integrator VelocityVerlet --target GPU --precision Mixed --baseline-double %t/verlet-double.npz --baseline-ulp %t/verlet-ulp.npz | FileCheck %s
 # CHECK: Mixed Trotter: reference/oracle passed

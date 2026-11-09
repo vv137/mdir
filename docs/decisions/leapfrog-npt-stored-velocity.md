@@ -92,3 +92,34 @@ $1.3880629978757497\times10^{-10}$ nm and projected full-step velocity
 difference $1.2362750595046323\times10^{-5}$ nm/ps remain below their
 respective bounds. No rerun, threshold change or correction followed.
 The GPU, existing leapfrog regression and full-suite gates remain unrun.
+
+The CPU rounding diagnosis found that step 10's change is entirely the
+intended removal of a constraint-normal stored component, apart from
+f32 rounding. The later position difference is below both main's own
+mixed-versus-double and one-f32-ulp trajectory baselines. The maintainer
+therefore approved a mixed finite-trajectory criterion
+$\epsilon_q(t)\le\max(3B_q(t),a_q)$ for position, cell and projected
+full-step velocity maxima. Here $B_q$ is the larger of the reference
+route's mixed-versus-double and one-f32-ulp baseline at that step; $a_q$
+retains the original $10^{-7}$ nm position/cell and $10^{-4}$ nm/ps
+velocity floors. Measure baselines separately per target, including GPU
+baselines on the GPU route, with identical state, seed and settings.
+The perturbed coordinate is fixed before acquisition: particle 606, x,
+one f32 spacing toward positive infinity, added to the original f64
+coordinate without prerounding. There is no perturbation search or retry.
+
+Double bounds, the same-frame stored-velocity oracle, normalized bond
+velocity residual and independent-step bounds remain unchanged and have
+separate constants in the test. The ordinary velocity-Verlet reference
+route is unchanged by this fix and supplies the per-target precision
+baselines for the in-suite leapfrog/Verlet regressions; archived-main
+comparisons use the archived-main route itself. Baseline scaling governs
+only finite mixed trajectory divergence, not per-frame oracle accuracy.
+
+The single approved preserved-CPU checker rerun passed with this criterion.
+The step-21 position difference $1.0492913204984688\times10^{-7}$ nm is
+below its measured-baseline limit $1.1057031750194568\times10^{-6}$ nm.
+The unchanged independent-step checks reached maximum position difference
+$2.1797549321078691\times10^{-8}$ nm and full-step velocity difference
+$7.7852177327031313\times10^{-6}$ nm/ps. The same-frame stored oracle and
+bond velocity checks also passed without relaxing their constants.
