@@ -57,13 +57,22 @@ def project(x,v,cell):
 def shake(old,trial,cell):
     x=trial.copy()
     for _ in range(1000):
-        worst=0.
         for (i,j),length in zip(pairs,lengths):
             old_d=image(old[j]-old[i],cell);d=image(x[j]-x[i],cell)
-            error=d@d-length*length;worst=max(worst,abs(error)/(length*length))
+            error=d@d-length*length
             impulse=error/(2*(inverse[i]+inverse[j])*(d@old_d))
             x[i]+=inverse[i]*impulse*old_d;x[j]-=inverse[j]*impulse*old_d
-        if worst<1e-14:return x
+        # Judge the completed array, not stale errors from intermediate
+        # bond corrections. Its propagated f64 coordinate-rounding level
+        # is 1.42e-14 for bond 24--22 in the diagnosed state. The approved
+        # 1e-13 oracle criterion is about seven times that level; the old
+        # 1e-14 could reject correct solutions farther from the origin.
+        # This changes no position/velocity comparison bound.
+        worst=0.
+        for (i,j),length in zip(pairs,lengths):
+            d=image(x[j]-x[i],cell)
+            worst=max(worst,abs(d@d-length*length)/(length*length))
+        if worst<1e-13:return x
     raise AssertionError('independent SHAKE did not converge')
 
 def normalized_rate(x,v,cell):

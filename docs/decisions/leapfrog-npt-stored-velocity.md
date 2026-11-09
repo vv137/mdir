@@ -61,3 +61,17 @@ The test stopped there (0 passed, 1 failed); no oracle or trajectory
 comparison was retried. These measurements are against velocity Verlet,
 not archived main, and are not final clean-head gate results. Main,
 GPU/mixed, existing leapfrog regressions and the full suite remain pending.
+
+The CPU-only diagnosis found an f64 in-sweep cycle: the stale
+pre-correction maximum was $1.014641954615416\times10^{-14}$ while the
+completed-state maximum was $7.951959625309013\times10^{-15}$. The
+propagated coordinate-rounding level was $1.42\times10^{-14}$. The
+maintainer approved monitoring the completed sweep at $10^{-13}$ (about
+seven times that level), without changing any comparison bound. The one
+controlled checker rerun on the preserved acquisitions passed: maximum
+position difference $7.2608585810485238\times10^{-14}$ nm, projected
+full-step velocity difference $6.1612936974597687\times10^{-12}$ nm/ps,
+stored-velocity oracle difference $4.724082236506888\times10^{-12}$ nm/ps,
+and normalized bond velocity residual
+$1.1002474477654185\times10^{-15}$ nm/ps. The independent SHAKE step
+position difference was $7.1054273576010019\times10^{-15}$ nm.
