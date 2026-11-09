@@ -149,4 +149,13 @@ was canceled without a retry. No sanitizer summary or numerical comparison
 was produced, so this is an incomplete validation, not a sanitizer pass
 or an established numerical mismatch. The remaining sanitizer tools and
 the final clean-head full suite have not run. Source-only diagnosis of
-this host-compilation hang is proposed before another validation run.
+this host-compilation hang was proposed before another validation run.
+
+The maintainer ruled that this ad hoc acquisition is not the gate and
+deferred its diagnosis to #804. The required gate is the whole standard
+sanitizer tier with `-Dsanitize=1`, including the new
+`test/Sanitizer/npt-leapfrog-gpu.test`: the same small ala3 workload as
+the velocity-Verlet sanitizer fixture, with leapfrog, rigid water and
+hydrogen-bond constraints, NPT coupling at steps 10 and 20, and memcheck,
+initcheck and racecheck. Run that tier once, then the full suite if it
+passes; any failure stops. All numerical comparison bounds stay unchanged.
