@@ -15,6 +15,7 @@
 #include "mdir/MLIP/Plugin.h"
 #include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Support/PhysicalConstants.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1005,7 +1006,7 @@ inline llvm::Error makeError(const llvm::Twine &message) {
 //===----------------------------------------------------------------------===//
 
 /// The Coulomb constant in kJ nm mol⁻¹ e⁻², from CODATA 2018.
-constexpr double coulombInternal = physical::coulomb;
+constexpr double coulombInternal = mdir::physical::coulomb;
 
 /// g(x) = exp(−x²) (1 + x² + x⁴/2), the share of the dispersion −c_i c_j /
 /// r⁶ at x = β r that the direct terms of particle mesh Ewald keep
