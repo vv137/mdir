@@ -689,7 +689,7 @@ specification follow those made with it.
 | [D391](decisions/D391.md) | Forward-mode AD through the operations of `mdir.torch` is refused by name: a tangent of `torch.func.jvp`, `jacfwd`, or `torch.autograd.forward_ad` that reaches an operation, on an argument of `evaluate` or on a cotangent of a backward, raises `UnsupportedError` ("forward mode ... is not implemented; reverse mode (torch.autograd.grad / backward) is"), naming the tensor that carries it; it never gives a zero. `FrameEvaluator.evaluate` refuses frames that carry such a tangent. The transforms of `torch.func` are not supported through `mdir.torch`, with PyTorch's own error; `torch.autograd` is. | 2026-11-08 |
 | [D392](decisions/D392.md) | Expose grid maps and reductions and the selected rectangular Gaussian reciprocal chain. | 2026-11-08 |
 | [D393](decisions/D393.md) | With leapfrog and a barostat, the stored backward half-kick is projected through the constraints, so written and checkpoint velocities carry no constraint-normal part of a force representation. | 2026-11-09 |
-| [D394](decisions/D394.md) | Part 1 of #805. | 2026-11-09 |
+| [D394](decisions/D394.md) | Physical constants have one definition, derived from the exact SI defining constants and CODATA 2022 vacuum permittivity. | 2026-11-09 |
 <!-- end decisions-table -->
 
 
