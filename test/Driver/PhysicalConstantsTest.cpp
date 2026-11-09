@@ -30,4 +30,7 @@ int main() {
   emit("debye",debyeSquaredMolarCoefficient);
   emit("boltzmann",boltzmann);emit("avogadro",avogadro);
   emit("charge",elementaryCharge);emit("permittivity",vacuumPermittivity);
+  emit("pi",MDIR_PHYSICAL_PI);
+  emit("kcal",kilojoulesPerKilocalorie);
+  emit("angstrom",nanometersPerAngstrom);emit("atmosphere",barPerAtmosphere);
 }

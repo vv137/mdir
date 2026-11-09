@@ -8,8 +8,10 @@ are deliberately conservative for exact powers of two. This checks the
 compiler-rounded derivation, not equality to a second rounded literal.
 """
 from decimal import Decimal, localcontext
+import hashlib
 from pathlib import Path
 import re
+import runpy
 import struct
 import subprocess
 import sys
@@ -38,14 +40,16 @@ with localcontext() as context:
         "pressure_atm":pressure/atmosphere,"density":Decimal(10)**21/na,
         # Independent SI screening formula, rather than reusing C/R.
         "debye":2*na*e*e/(eps*k)*Decimal(10)**-15,
-        "boltzmann":k,"avogadro":na,"charge":e,"permittivity":eps}
+        "boltzmann":k,"avogadro":na,"charge":e,"permittivity":eps,
+        "pi":pi,"kcal":kcal,"angstrom":angstrom,"atmosphere":atmosphere}
     # Coulomb: five repeated-input roundings plus six operations; control
     # conversion adds two inputs and two operations. R needs four factors;
     # pressure has its two prefix inputs, N_A, and three divisions. Debye
     # through C/R adds repeated inputs/operations, covered by 24 factors.
     budgets={"coulomb":12,"coulomb_control":16,"gas":4,"gas_control":6,
         "pressure_bar":6,"pressure_atm":8,"density":3,"debye":24,
-        "boltzmann":1,"avogadro":1,"charge":1,"permittivity":1}
+        "boltzmann":1,"avogadro":1,"charge":1,"permittivity":1,
+        "pi":1,"kcal":1,"angstrom":1,"atmosphere":1}
     output=subprocess.check_output([sys.argv[2]],text=True)
     measured={}
     for line in output.splitlines():
@@ -53,6 +57,19 @@ with localcontext() as context:
         assert struct.unpack("=Q",struct.pack("=d",value))[0]==int(bits),(name,"value lost bits")
         measured[name]=value
     assert measured.keys()==reference.keys()
+    generated=runpy.run_path(sys.argv[3])
+    assert generated["_HEADER_SHA256"]==hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest(), "stale generated header digest"
+    bindings={"coulomb":"COULOMB_NATIVE","coulomb_control":"COULOMB_CONTROL",
+        "gas":"MOLAR_GAS_CONSTANT","gas_control":"MOLAR_GAS_CONSTANT_CONTROL",
+        "pressure_bar":"PRESSURE_BAR","pressure_atm":"PRESSURE_ATMOSPHERE",
+        "density":"DENSITY_G_PER_CM3","debye":"DEBYE_SQUARED",
+        "boltzmann":"BOLTZMANN_SI","avogadro":"AVOGADRO",
+        "charge":"ELEMENTARY_CHARGE","permittivity":"VACUUM_PERMITTIVITY",
+        "pi":"PI","kcal":"KJ_PER_KCAL","angstrom":"NM_PER_ANGSTROM",
+        "atmosphere":"BAR_PER_ATM"}
+    assert {name for name in generated if name.isupper() and not name.startswith("_") }==set(bindings.values())
+    for name,binding in bindings.items():
+        assert struct.pack("=d",generated[binding])==struct.pack("=d",measured[name]), (binding,"generated bits differ")
     unit=Decimal(2)**-53
     for name,expected in reference.items():
         n=budgets[name];gamma=n*unit/(1-n*unit)
@@ -60,4 +77,4 @@ with localcontext() as context:
         bound=gamma*abs(expected)
         assert error<=bound,(name,error,bound)
         print(f"{name}: {measured[name]:.17g}; Decimal relative error {error/abs(expected):.4E}, bound {gamma:.4E}")
-print("physical constants: Decimal formulas and C/C++ bits passed")
+print("physical constants: Decimal formulas and C/C++/Python bits passed")

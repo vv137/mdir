@@ -100,6 +100,8 @@ The C/C++ physical inputs have one public definition in
 control-unit values. Coulomb, thermal and pressure coefficients derive
 from the exact SI inputs and CODATA 2022 permittivity
 [[Mohr2025]](references.md#mohr2025), with exact unit conversions.
+The Python values for analysis utilities are emitted by compiling that
+same header and retain its f64 bits, without a second set of formulas.
 
 **Precision.** f32 and f64 are the IEEE-754 binary32 and binary64 types;
 an *ulp* is a unit in the last place. A *mode* (`single`, `mixed`,

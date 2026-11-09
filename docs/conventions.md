@@ -64,8 +64,12 @@ Native and control-expression results change bitwise wherever the revised
 coefficients enter, deliberately before 1.0.0. The native Coulomb input
 changes by about −6.75e-10 relative; the control-expression input changes
 by about −6.78e-10. Thermal, pressure and density inputs also derive anew;
-no compatibility constants are retained. Python consumers and the
-generated-module check follow in part 2 of #805.
+no compatibility constants are retained. The coupling lifter reads the
+same bits from the compiler-generated `scripts/mdir_physical_constants.py`;
+`scripts/generate-physical-constants.py --check` verifies regeneration
+from the header. CMake copies this module into `mdir._physical_constants`.
+Remaining Python consumers and the duplicate-definition check follow in
+part 2 of #805.
 
 ## 2. Geometry
 

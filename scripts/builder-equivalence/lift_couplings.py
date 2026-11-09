@@ -48,8 +48,12 @@ not read.
 """
 
 import argparse
+from pathlib import Path
 import re
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from mdir_physical_constants import PRESSURE_BAR
 
 SSA = r"%[A-Za-z0-9_$.#-]+"
 HEADER = re.compile(
@@ -449,7 +453,7 @@ class Lifter:
                 wc3.group(2) == wc.group(1) and self.is_value(wc3.group(3), i, 1.0 / 3.0) and
                 wcb.group(2) == wc3.group(1) and w.group(2) == w0.group(1) and
                 w.group(3) == wcb.group(1) and pc.group(3) == volume and
-                self.is_value(pc.group(2), i, 16.6053906717) and
+                self.is_value(pc.group(2), i, PRESSURE_BAR) and
                 pcb.group(2) == pc.group(1) and p3.group(2) == w.group(1) and
                 p3.group(3) == pcb.group(1)):
             return None

@@ -23,7 +23,8 @@ Features of classical MD (Section 5) continue between milestones.
 Physical constants (#805): D[physical-constants-cpp] centralizes C/C++
 definitions and derives native and expression coefficients from the exact
 SI defining constants and CODATA 2022 permittivity; output bits change.
-Generated Python consumers and the duplicate-definition check follow in part 2.
+The shared generated Python module starts with the pressure lifter;
+remaining Python consumers and the duplicate-definition check follow in part 2.
 
 ## 1. Robustness (under way)
 

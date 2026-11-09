@@ -42,6 +42,11 @@ target_link_libraries(mdir_python PRIVATE MDIRCompiler MDIRSimulation)
 # the driver through the symbols that Simulation.cpp gives the engine.
 target_link_options(mdir_python PRIVATE LINKER:--exclude-libs,ALL LINKER:--gc-sections)
 configure_file(mdir/__init__.py ${MDIR_PYTHON_PACKAGE_DIR}/__init__.py COPYONLY)
+# The same header-generated module used by standalone scripts. Part 2 of
+# #805 moves the remaining Python consumers onto it; no native import is
+# needed by the first consumer, the coupling lifter.
+configure_file(${PROJECT_SOURCE_DIR}/scripts/mdir_physical_constants.py
+  ${MDIR_PYTHON_PACKAGE_DIR}/_physical_constants.py COPYONLY)
 # The frame evaluator and its PyTorch adapter (docs/python-frames.md);
 # `mdir.torch` imports torch and is imported only by a script that asks.
 configure_file(mdir/_frames.py ${MDIR_PYTHON_PACKAGE_DIR}/_frames.py COPYONLY)
@@ -75,6 +80,8 @@ install(TARGETS mdir_python LIBRARY DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
   COMPONENT python)
 install(FILES mdir/__init__.py mdir/_frames.py mdir/torch.py mdir/jax.py
   DESTINATION ${MDIR_PYTHON_INSTALL_DIR} COMPONENT python)
+install(FILES ${PROJECT_SOURCE_DIR}/scripts/mdir_physical_constants.py
+  DESTINATION ${MDIR_PYTHON_INSTALL_DIR} RENAME _physical_constants.py COMPONENT python)
 # What a wheel builds (pyproject.toml): the extension and the runtime.
 add_custom_target(mdir_wheel)
 add_dependencies(mdir_wheel mdir_python mdrt)

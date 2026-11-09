@@ -87,9 +87,49 @@ independent force/virial assertions and generated dialect docs. An RTX
 virial, and its pinned 200-step row was unchanged. The no-cell 2000-step
 reference row was also unchanged.
 
-Corpus classification and the full suite at the final clean head remain
-pending. No final suite result is claimed yet. Python
-consolidation and the generated-module/duplicate-check work belong to
-part 2 of #805. #795 rebases onto the merged header before its oracle
+The corpus against git-archived base d879e647 has 263 controls, 1,050
+cases and 3,150 outputs (module raw/printed and lowered printed): 474
+cases identical, including 458 with the same error, and 576 changed.
+There are no status changes. Full diffs classify all 1,716 changed
+outputs as floating literals or encoded floating/radial-table data;
+none remain unclassified. These are the accepted constant changes.
+
+## Generated Python values and reference routes
+
+The no-fail-fast inventory stopped at 867 passed, 5 failed, 38 unsupported
+and 1 skipped: four printed-golden failures and an operation-count
+diagnostic in `Lit/lift-couplings.test`. The pressure lifter's exact
+comparison still carried the old coefficient. The maintainer authorized
+its integration with the generated-module mechanism of #805 part 2.
+
+`scripts/generate-physical-constants.py` compiles the public header with
+its C++ generator and emits `scripts/mdir_physical_constants.py`, using
+exact hexadecimal f64 values. It parses no header arithmetic and carries
+no second physical formula. CMake copies this same module into the Python
+package as `mdir._physical_constants`. The pressure lifter is its first
+consumer, retaining exact equality and the existing operation-count
+checks. The constants fixture checks all 16 generated values against the
+C++ bits and checks the header digest. The one controlled CPU selection
+passed both that fixture and the affected lifting fixture (2/2).
+
+The shared printed goldens come from the CPU route in double precision.
+In particular, a CPU double run of the PME fixture for 500 steps gives
+potential -3754.0058 and kinetic 942.3640 kcal/mol; every printed
+step-500 column matches the preserved deterministic GPU double run.
+No separate device value is substituted for a host reference. The four
+regenerated values, in kcal/mol, are:
+
+| Reference | Route | Before | After | Difference |
+|---|---|---:|---:|---:|
+| Minimization step 50 potential | CPU double | -6602.2021 | -6602.2020 | +0.0001 |
+| PME step 500 potential | CPU double, GPU double agrees | -3754.0060 | -3754.0058 | +0.0002 |
+| PME step 500 kinetic | CPU double, GPU double agrees | 942.3642 | 942.3640 | -0.0002 |
+| Prolate step 40 potential | CPU double, GPU double agrees | -12927.4744 | -12927.4743 | +0.0001 |
+
+Tolerances and bitwise/determinism checks are unchanged. The confirming
+full suite runs at the corrected clean head; the ready comment records
+that head, its base and the counts. Remaining Python consumers and the
+duplicate-definition check belong to part 2 of #805.
+#795 rebases onto the merged header before its oracle
 includes it; its decision names the header/conventions rather than a
 literal and its stopped case is then rerun once.
