@@ -1058,8 +1058,16 @@ $2.6898305804934353\times10^{-10}$ was below
 $0.000640077634487475$ nm$^3$. Exact positions, velocities and cells
 were retained. The serial matrix stopped with one failure and seven
 skipped cases; it did not reach a fresh same-frame physical evaluation.
-No trajectory rerun or production drift run followed. The cause remains
-to be diagnosed under the numerical stop rule.
+No trajectory rerun or production drift run followed before diagnosis.
+The established cause was the shared leapfrog/NPT backward-half-kick
+storage retaining a constraint-normal force component. The maintainer
+required the separate shared fix first: D393 (#802), merged ahead of this
+PR, projects that stored array through the mass-weighted constraints.
+After rebasing onto that fix, rerun the stopped OPC/leapfrog/NPT case once
+with the raw stored arrays and the same bounds. The helper also records
+the independently projected full-step reconstruction as a diagnostic;
+it does not replace the raw-array gate. On a pass, continue the seven
+other short cases, production drift and remaining implementation gates.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,

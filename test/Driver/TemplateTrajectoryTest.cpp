@@ -26,6 +26,51 @@ static double residual(const driver::System &system, const compiler::SimulationS
   }
   return worst;
 }
+// Diagnostic only: reconstruct the physical full-step velocity with each
+// route's carried forces, then remove constraint-normal velocity in the
+// mass metric. The gate below still compares the raw stored arrays.
+static std::vector<double> fullVelocity(const driver::System &system,
+    const compiler::SimulationState &s, double dt) {
+  auto v=s.velocities;
+  if(s.velocityOffset<0) {
+    for(size_t i=0;i!=system.masses.size();++i)
+      if(system.masses[i]>0)
+        for(unsigned k=0;k!=3;++k) v[3*i+k]+=.5*dt*s.forces[3*i+k]/system.masses[i];
+    for(const auto &water:system.topology->settles) {
+      unsigned o=water.oxygen;
+      double g[3][9]={},a[3][4]={};
+      const unsigned pairs[3][2]={{0,1},{0,2},{1,2}};
+      for(unsigned q=0;q!=3;++q) {
+        V d=image(sub(vectorAt(s.positions,o+pairs[q][1]),
+                      vectorAt(s.positions,o+pairs[q][0])),s.box.data());
+        for(unsigned k=0;k!=3;++k) {g[q][3*pairs[q][0]+k]=-d[k];g[q][3*pairs[q][1]+k]=d[k];}
+      }
+      for(unsigned i=0;i!=3;++i) {
+        for(unsigned k=0;k!=9;++k) {
+          a[i][3]+=g[i][k]*v[3*o+k];
+          for(unsigned j=0;j!=3;++j) a[i][j]+=g[i][k]*g[j][k]/system.masses[o+k/3];
+        }
+      }
+      for(unsigned i=0;i!=3;++i) {
+        unsigned pivot=i;
+        for(unsigned j=i+1;j!=3;++j) if(std::abs(a[j][i])>std::abs(a[pivot][i])) pivot=j;
+        for(unsigned k=0;k!=4;++k) std::swap(a[i][k],a[pivot][k]);
+        double divisor=a[i][i];require(std::abs(divisor)>1e-15,"singular velocity diagnostic projection");
+        for(unsigned k=i;k!=4;++k) a[i][k]/=divisor;
+        for(unsigned j=0;j!=3;++j) if(j!=i) {
+          double multiplier=a[j][i];
+          for(unsigned k=i;k!=4;++k) a[j][k]-=multiplier*a[i][k];
+        }
+      }
+      for(unsigned k=0;k!=9;++k) for(unsigned q=0;q!=3;++q)
+        v[3*o+k]-=g[q][k]*a[q][3]/system.masses[o+k/3];
+    }
+  }
+  std::vector<double> massive;
+  for(size_t i=0;i!=system.masses.size();++i) if(system.masses[i]>0)
+    for(unsigned k=0;k!=3;++k) massive.push_back(v[3*i+k]);
+  return massive;
+}
 static void sameFrame(model::PreparedModel p,const compiler::SimulationState &frame) {
   installFrame(p,frame);
   // Potential, forces and molecular virial have no velocity-time offset.
@@ -98,7 +143,11 @@ int main(int argc,char **argv) {
       std::cout<<"cell bits "<<r;for(double x:s[r].box) std::cout<<' '<<bits(x);std::cout<<std::endl;
     }
     std::array<Error,2> xe,ve;
+    auto fullReference=fullVelocity(p.system,s[2],p.control.timestep);
     for(unsigned r=0;r!=2;++r) {
+      auto diagnostic=error(fullVelocity(p.system,s[r],p.control.timestep),fullReference);
+      std::cout<<"full-step velocity diagnostic "<<r<<" step "<<s[r].step
+          <<" max "<<diagnostic.maximum<<" RMS "<<diagnostic.rms<<std::endl;
       auto x=s[r].positions;
       for(size_t i=0;i<x.size();i+=3) {
         V d=image(sub(vectorAt(x,i/3),vectorAt(s[2].positions,i/3)),s[2].box.data());
