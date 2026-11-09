@@ -6142,6 +6142,41 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
   Value water = arith::OrIOp::create(b, loc, initial, invalid(0));
   Value atom = arith::OrIOp::create(b, loc, initial, invalid(1));
   Value extentValid = arith::XOrIOp::create(b, loc, invalid(4), boolean(b, true));
+  // Approved failure-only acquisition: neither the predicates nor the
+  // successful path's device work changes. Preserve evidence before abort.
+  auto diagnoseExtent = [&](OpBuilder &at, Value condition, int64_t phase,
+                            Value constrained, Value measuredSquared) {
+    Value bad = arith::XOrIOp::create(at, loc, condition, boolean(at, true));
+    scf::IfOp::create(at, loc, bad, [&](OpBuilder &failure, Location) {
+      Value cell = op.getCellMutable().get();
+      Value cells = memref::AllocaOp::create(failure, loc,
+          MemRefType::get({6}, failure.getF64Type()));
+      for (int64_t axis = 0; axis != 6; ++axis) {
+        Value value = axis < getCellSize()
+            ? Value(vector::ExtractOp::create(failure, loc, cell, axis))
+            : Value(real(failure, 0));
+        memref::StoreOp::create(failure, loc, value, cells,
+                               ValueRange{ix(failure, axis)});
+      }
+      Value cellView = memref::CastOp::create(failure, loc,
+          MemRefType::get({ShapedType::kDynamic}, failure.getF64Type()), cells);
+      Value phaseValue = arith::ConstantIntOp::create(failure, loc, phase, 64);
+      Value historyValue = constrained ? constrained : Value(memref::LoadOp::create(
+          failure, loc, templateConstraintHistory, ValueRange{}));
+      Value history = arith::ExtUIOp::create(failure, loc, failure.getI64Type(), historyValue);
+      Value wasBuilt = arith::ExtUIOp::create(failure, loc, failure.getI64Type(), built);
+      Value nominal = real(failure, op.getExtent().convertToDouble());
+      Value alpha = real(failure, op.getAlpha().convertToDouble());
+      SmallVector<Value> args{state.handle, op.getPositions(), cellView,
+          phaseValue, history, wasBuilt, nominal, alpha, measuredSquared};
+      auto callee = getOrDeclare("mdrtTemplateExtentDiagnostic",
+          failure.getFunctionType(ValueRange(args).getTypes(), {}));
+      callee->setAttr("llvm.emit_c_interface", failure.getUnitAttr());
+      func::CallOp::create(failure, loc, callee, args);
+      scf::YieldOp::create(failure, loc);
+    });
+  };
+  diagnoseExtent(b, extentValid, 0, {}, real(b, -1));
   cf::AssertOp::create(b, loc, extentValid,
       "template water exceeds its covering extent after position constraints");
   Value cell = op.getCellMutable().get();
@@ -6174,7 +6209,9 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
     cf::AssertOp::create(cold, loc, finite, "template water has a nonfinite covering extent");
     Value within = arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::OLE, squared, nominal2);
     Value initialPhase = arith::XOrIOp::create(cold, loc, constrained, boolean(cold, true));
-    cf::AssertOp::create(cold, loc, arith::OrIOp::create(cold, loc, initialPhase, within),
+    Value permitted = arith::OrIOp::create(cold, loc, initialPhase, within);
+    diagnoseExtent(cold, permitted, 1, constrained, squared);
+    cf::AssertOp::create(cold, loc, permitted,
         "template water exceeds its covering extent after position constraints");
     Value measured = math::SqrtOp::create(cold, loc, squared);
     Value previous = memref::LoadOp::create(cold, loc, state.extent, ValueRange{});
