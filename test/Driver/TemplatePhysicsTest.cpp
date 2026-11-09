@@ -108,6 +108,39 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
   return result;
 }
 struct ConstraintVirial { double trace=0, absolute=0; };
+struct MolecularMoments {
+  double removal=0, removalAbsolute=0, twiceInternalKinetic=0;
+};
+// D264's molecular virial removes the force moment about each rigid
+// group's mass center. Atomic constraint virial and internal kinetic
+// energy are retained separately for diagnosing the two conventions.
+static MolecularMoments molecularMoments(const driver::System &system,
+    const std::vector<double> &x, const std::vector<double> &v,
+    const std::vector<double> &f) {
+  MolecularMoments result;
+  for(const auto &water:system.topology->settles) {
+    unsigned o=water.oxygen;
+    V center{},velocityCenter{};
+    std::array<V,3> arms;
+    double mass=0;
+    for(unsigned j=0;j!=3;++j) {
+      double m=system.masses[o+j];
+      arms[j]=image(sub(vectorAt(x,o+j),vectorAt(x,o)),system.box);
+      center=add(center,scale(arms[j],m));
+      velocityCenter=add(velocityCenter,scale(vectorAt(v,o+j),m));
+      mass+=m;
+    }
+    require(mass>0,"molecular oracle requires positive group mass");
+    center=scale(center,1/mass);velocityCenter=scale(velocityCenter,1/mass);
+    for(unsigned j=0;j!=3;++j) {
+      double term=-dot(sub(arms[j],center),vectorAt(f,o+j));
+      result.removal+=term;result.removalAbsolute+=std::abs(term);
+      V relative=sub(vectorAt(v,o+j),velocityCenter);
+      result.twiceInternalKinetic+=system.masses[o+j]*dot(relative,relative);
+    }
+  }
+  return result;
+}
 // c=|x_j-x_i|^2/2 gives G a + |v_j-v_i|^2=0. Solve
 // (G M^-1 G^T) lambda = -(G M^-1 F + b) for all three water
 // constraints. The resulting G^T lambda includes the velocity curvature.
@@ -297,33 +330,39 @@ int main(int argc,char **argv) {
   require(std::isfinite(energyDifference)&&std::isfinite(energyBound)&&energyDifference<=energyBound,
           "template energy exceeds cancellation-aware criterion");
   if(virialCheck) {
-    // A fresh no-step entry gives the instantaneous constraint reaction.
-    // The carried step's mean impulse virial is a different quantity.
+    // A fresh non-Brownian entry reports the D264 molecular virial.
+    // Compare directly in that convention, retaining atomic diagnostics.
     auto templateFrame=take(compiler::Simulation::create(templateFrameModel,false));
     succeed(templateFrame->evaluate());auto observed=take(templateFrame->getState());
     require(bool(observed.energies),"template no-step entry gave no virial");
     auto constraint=constraintVirial(p.system,state.positions,state.velocities,independent.forces);
-    double oracleTotal=independent.pairVirial+independent.siteVirial+constraint.trace;
-    double absoluteSum=independent.pairSiteVirialAbsolute+constraint.absolute;
+    auto moments=molecularMoments(p.system,state.positions,state.velocities,independent.forces);
+    double atomicTotal=independent.pairVirial+independent.siteVirial+constraint.trace;
+    double oracleTotal=independent.pairVirial+independent.siteVirial+moments.removal;
+    double absoluteSum=independent.pairSiteVirialAbsolute+moments.removalAbsolute;
     double wt=observed.energies->virial,wm=mixed.energies->virial,wd=reference.energies->virial;
     double oracleDifference=std::abs(wd-oracleTotal);
     double oracleBound=1e-10*std::max(1.,std::abs(oracleTotal));
     double mixedDifference=std::abs(wm-wd),difference=std::abs(wt-wd);
     double bound=std::max({1.5*mixedDifference,1e-5*std::abs(wd),1e-6*absoluteSum});
-    std::cout<<"scalar total virials: template "<<wt<<"; general-mixed "<<wm<<"; general-double "<<wd<<std::endl;
-    std::cout<<"scalar total virial bits: "<<bits(wt)<<' '<<bits(wm)<<' '<<bits(wd)<<std::endl;
+    std::cout<<"scalar molecular virials: template "<<wt<<"; general-mixed "<<wm<<"; general-double "<<wd<<std::endl;
+    std::cout<<"scalar molecular virial bits: "<<bits(wt)<<' '<<bits(wm)<<' '<<bits(wd)<<std::endl;
     std::cout<<"oracle virial: pair "<<independent.pairVirial<<"; site "<<independent.siteVirial
-             <<"; constraint "<<constraint.trace<<"; total "<<oracleTotal
+             <<"; internal-force removal "<<moments.removal<<"; molecular total "<<oracleTotal
              <<"; pair/site absolute "<<independent.pairSiteVirialAbsolute
-             <<"; constraint absolute "<<constraint.absolute<<"; absolute sum "<<absoluteSum<<std::endl;
+             <<"; removal absolute "<<moments.removalAbsolute<<"; molecular absolute sum "<<absoluteSum<<std::endl;
     std::cout<<"oracle virial bits: "<<bits(independent.pairVirial)<<' '<<bits(independent.siteVirial)
-             <<' '<<bits(constraint.trace)<<' '<<bits(oracleTotal)<<' '
-             <<bits(independent.pairSiteVirialAbsolute)<<' '<<bits(constraint.absolute)<<' '<<bits(absoluteSum)<<std::endl;
+             <<' '<<bits(moments.removal)<<' '<<bits(oracleTotal)<<' '
+             <<bits(independent.pairSiteVirialAbsolute)<<' '<<bits(moments.removalAbsolute)<<' '<<bits(absoluteSum)<<std::endl;
+    std::cout<<"atomic diagnostics: total "<<atomicTotal<<"; full constraint reaction "<<constraint.trace
+             <<"; constraint absolute "<<constraint.absolute<<"; twice internal kinetic "<<moments.twiceInternalKinetic<<std::endl;
+    std::cout<<"atomic diagnostic bits: "<<bits(atomicTotal)<<' '<<bits(constraint.trace)<<' '
+             <<bits(constraint.absolute)<<' '<<bits(moments.twiceInternalKinetic)<<std::endl;
     std::cout<<"virial oracle difference "<<oracleDifference<<"; oracle bound "<<oracleBound
              <<"; mixed difference "<<mixedDifference<<"; template difference "<<difference<<"; bound "<<bound<<std::endl;
-    require(std::isfinite(oracleDifference)&&oracleDifference<=oracleBound,"general double differs from total-virial oracle");
-    require(std::isfinite(difference)&&std::isfinite(bound)&&difference<=bound,"template total virial exceeds approved criterion");
-    std::cout<<"OPC physical total virial with constraint reaction passed"<<std::endl;
+    require(std::isfinite(oracleDifference)&&oracleDifference<=oracleBound,"general double differs from molecular-virial oracle");
+    require(std::isfinite(difference)&&std::isfinite(bound)&&difference<=bound,"template molecular virial exceeds approved criterion");
+    std::cout<<"OPC physical molecular virial passed"<<std::endl;
   }
   std::cout<<name<<" independent physical pair oracle and projected template comparison passed"<<std::endl;
 }

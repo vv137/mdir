@@ -421,8 +421,9 @@ measurements replace them.
    `main` in double on the same frame, within `main` mixed's own error
    (step 0's criterion). With rule (A) the forces are compared with the
    constraint directions of each water projected out (#789), and the
-   virial is compared as the total with the constraint virial; with rule
-   (B) the raw atom forces are compared as well.
+   virial is compared in D264's molecular convention, with the atomic
+   total including constraint reaction retained as a diagnostic; with
+   rule (B) the raw atom forces are compared as well.
    Potential energy uses the cancellation-aware bound
    $\lvert E_\mathrm{template}-E_\mathrm{double}\rvert \le
    \max(10^{-5}\lvert E_\mathrm{double}\rvert,10^{-6}S)$ for OPC and
@@ -435,24 +436,33 @@ measurements replace them.
    while the first term retains the previous relative allowance. Force
    bounds and the oracle/general-double bounds remain unchanged. The
    physical fixtures retain both absolute pair sums in their output.
-   The scalar total virial, including constraint reactions, uses
+   The scalar virial is compared directly in D264's molecular convention:
    $\lvert W_\mathrm{template}-W_\mathrm{double}\rvert \le
    \max(1.5\lvert W_\mathrm{mixed}-W_\mathrm{double}\rvert,
    10^{-5}\lvert W_\mathrm{double}\rvert,10^{-6}S_W)$, where the CPU
    oracle at the same frame computes $S_W=\sum\lvert\mathbf r\cdot
-   \mathbf F\rvert$ over pair, site-transfer and constraint-force
-   contributions. The independent-oracle/general-double bound is
+   \mathbf F\rvert$ over the contributions to the molecular virial:
+   pair, site-transfer and removal of the internal force moment about
+   each rigid group's mass center. The independent-oracle/general-double bound is
    $10^{-10}\max(1,\lvert W_\mathrm{oracle}\rvert)$. The extra term
    accounts for cancellation among large positive and negative virial
    contributions; the mixed reference error and relative term remain in
-   the maximum. Record all three total virials, the oracle's separate
-   pair, site and constraint traces, and their absolute sum.
+   the maximum. Record all three reported molecular virials, the oracle's
+   pair, site-transfer and internal-force-removal traces, and the sum of
+   their absolute contributions.
    The instantaneous physical check uses fresh no-step entries at the
-   same constrained positions and velocities. Its independent constraint
-   force solves the mass-weighted holonomic system, including the
-   velocity-curvature term; constraint force arms are relative to each
-   water's oxygen anchor. The step's averaged impulse virial, trajectory
-   behavior, NPT virial and pressure remain separate validation gates.
+   same constrained positions and full-step velocities for velocity
+   Verlet. Its molecular oracle computes the pair and site-transfer
+   virial with the internal force moment removed. Keep the atomic total,
+   full constraint reaction and $2K_\mathrm{internal}$ as diagnostics:
+   $W_\mathrm{atomic}=W_\mathrm{molecular}-2K_\mathrm{internal}$.
+   The diagnostic constraint force solves the mass-weighted holonomic
+   system with its velocity-curvature term and oxygen-relative force
+   arms. D264 pairs the molecular virial with its group-center half-step
+   kinetic estimator; the three reported virials are used directly,
+   without velocity-dependent adjustment. The step's averaged impulse
+   virial, trajectory behavior, NPT virial and pressure remain separate
+   validation gates.
 2. **Coverage**, just before a pruning, just before a build, and just after
    a build, for every list, against an f64 periodic brute force, including
    runs under a barostat (the prototype's runs were NVE, with no scaling
@@ -951,8 +961,28 @@ template/general-double difference, $0.00043602782713847432$, lies below
 its $0.0094982753453449909$ envelope; the independent-oracle failure
 blocks validation before that assertion. The energy and projected-force
 checks preceding the virial check passed. Exact positions, velocities,
-cell and virial bits are retained. No correction or numerical rerun
-followed the failure; its cause awaits diagnosis under a new ruling.
+cell and virial bits are retained. The subsequent CPU diagnosis found a
+convention mismatch in the new fixture: D264's non-Brownian no-step entry
+reports the molecular virial. Twice the saved internal kinetic energy is
+$0.2081564380316547$ kJ/mol. The independent analytic constraint reaction
+and the replay of the velocity-constraint displacement with curvature
+agree to $1.14\times10^{-13}$ kJ/mol. The CPU molecular oracle gives
+$-16.738609514178023$, within $6.18\times10^{-10}$ of the saved general
+double value. The maintainer approved a fixture-only molecular comparison
+with both conventions recorded as above; shared code remains unchanged.
+
+The single approved corrected RTX 5090 run passed. The molecular oracle
+is $-16.738609514178052$ kJ/mol; general double differs by
+$6.1734439782412664\times10^{-10}$ against the unchanged oracle bound
+$1.6738609514178053\times10^{-9}$. The template and general mixed
+differences from general double are $0.00043602782713847432$ and
+$0.0011346715636797455$ kJ/mol. The molecular absolute contribution sum
+is $9497.0534530477507$ kJ/mol, giving the approved template envelope
+$0.0094970534530477504$ kJ/mol. The atomic diagnostic remains
+$-16.94676595220966$, its full constraint reaction
+$-195.00577757087518$, and $2K_\mathrm{internal}$ is
+$0.20815643803165473$ kJ/mol. This corrects only the new fixture's
+convention; it changes neither production arithmetic nor either bound.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
