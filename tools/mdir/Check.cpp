@@ -17,7 +17,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -315,6 +317,164 @@ static Preflight inspect(const Control &control) {
   return report;
 }
 
+/// The largest |q_i q_j| (e²) over the pairs of particles that the topology
+/// does not exclude, exactly: the particles are grouped by their charge,
+/// the products of two charges are taken in decreasing magnitude, and the
+/// first that some pair not excluded carries is the largest. 0 without
+/// such a pair.
+static double getLargestChargeProduct(const Topology &topology) {
+  const std::vector<double> &charges = topology.charges;
+  std::vector<double> values;
+  for (double q : charges)
+    if (q != 0.0)
+      values.push_back(q);
+  std::sort(values.begin(), values.end());
+  // Each distinct charge with its count.
+  std::vector<std::pair<double, double>> groups;
+  for (double q : values) {
+    if (groups.empty() || groups.back().first != q)
+      groups.push_back({q, 0.0});
+    groups.back().second += 1.0;
+  }
+  struct Candidate {
+    double product;
+    size_t a, b;
+  };
+  std::vector<Candidate> candidates;
+  for (size_t a = 0; a != groups.size(); ++a)
+    for (size_t b = a; b != groups.size(); ++b)
+      candidates.push_back(
+          {std::abs(groups[a].first * groups[b].first), a, b});
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Candidate &x, const Candidate &y) {
+              return x.product > y.product;
+            });
+  auto groupOf = [&](double q) -> size_t {
+    auto it = std::lower_bound(
+        groups.begin(), groups.end(), q,
+        [](const std::pair<double, double> &g, double v) {
+          return g.first < v;
+        });
+    return static_cast<size_t>(it - groups.begin());
+  };
+  for (const Candidate &candidate : candidates) {
+    double na = groups[candidate.a].second, nb = groups[candidate.b].second;
+    double pairs = candidate.a == candidate.b ? na * (na - 1.0) / 2.0
+                                              : na * nb;
+    if (pairs <= 0.0)
+      continue;
+    double excluded = 0.0;
+    for (const auto &[i, j] : topology.exclusions) {
+      if (charges[i] == 0.0 || charges[j] == 0.0)
+        continue;
+      size_t gi = groupOf(charges[i]), gj = groupOf(charges[j]);
+      if ((gi == candidate.a && gj == candidate.b) ||
+          (gi == candidate.b && gj == candidate.a))
+        excluded += 1.0;
+    }
+    if (pairs > excluded)
+      return candidate.product;
+  }
+  return 0.0;
+}
+
+/// A hard cutoff of the direct sum of particle mesh Ewald with the
+/// Gaussian kernel cuts a force that is not small where erfc(β r_c) is not:
+/// a pair of charges whose distance crosses r_c changes its force by
+///   f |q_i q_j| [erfc(β r_c)/r_c² + 2β exp(−β² r_c²)/(√π r_c)],
+/// the derivative of f q_i q_j erfc(β r)/r at r_c (docs/pme.md). Mixed and
+/// double precision decide differently for the pairs within a thin shell
+/// at r_c, and every such pair changes a force by up to the jump; the jump
+/// also spoils the conservation of energy in either precision. Warns when
+/// the largest jump over the pairs of the topology exceeds 1 kJ/mol/nm, the
+/// maintainer's ruling on #793, D[pme-cutoff-jump-warning].
+static void checkCutoffJump(const Control &control, const System &system,
+                            std::vector<Warning> &warnings) {
+  if (!control.pme || control.pmeKernel != PMEKernel::Gaussian ||
+      !system.topology)
+    return;
+  // In nm, nm⁻¹, and kJ/mol, as the forces of MDIR.
+  double rc = control.cutoffDistance * units::length;
+  if (!(rc > 0.0))
+    return;
+  double beta = control.pmeAlpha / units::length;
+  if (beta == 0.0) {
+    // As the driver finds it from the tolerance (docs/pme.md).
+    double low = 0.0, high = 1.0;
+    while (std::erfc(high * rc) > control.pmeAlphaTolerance)
+      high *= 2.0;
+    for (int i = 0; i != 100; ++i) {
+      double middle = 0.5 * (low + high);
+      if (std::erfc(middle * rc) > control.pmeAlphaTolerance)
+        low = middle;
+      else
+        high = middle;
+    }
+    beta = 0.5 * (low + high);
+  }
+  double product = getLargestChargeProduct(*system.topology);
+  double tail = std::erfc(beta * rc);
+  double slope = tail / (rc * rc) + 2.0 * beta *
+                                        std::exp(-beta * beta * rc * rc) /
+                                        (std::sqrt(M_PI) * rc);
+  double jump = mdir::physical::coulomb * product * slope;
+  constexpr double limit = 1.0; // kJ/mol/nm
+  if (!(jump > limit))
+    return;
+  // The shell where f32 and f64 may decide differently: the f32 cutoff of
+  // the pair kernels is pulled in by about four units in the last place
+  // (D159; as createCutoff2 of lib/Conversion/MDExecKernels finds it), and
+  // the f32 positions of a cell of edge L are rounded by up to a unit in
+  // the last place of L. The pairs within it a frame, for charged
+  // particles spread at their mean density n = N_q / V:
+  // N_q (N_q − 1) / (2V) · 4π r_c² δ.
+  float limit32 = static_cast<float>(rc);
+  for (int k = 0; k != 4; ++k)
+    limit32 = std::nextafter(limit32, 0.0f);
+  double square = rc * rc;
+  float narrow = static_cast<float>(square);
+  while (static_cast<double>(narrow) > square ||
+         std::sqrt(std::nextafter(narrow, 0.0f)) > limit32)
+    narrow = std::nextafter(narrow, 0.0f);
+  double pullIn = rc - std::sqrt(static_cast<double>(narrow));
+  // The cell is in nm.
+  double edge = std::max({system.box[0], system.box[1], system.box[2]});
+  float edge32 = static_cast<float>(edge);
+  double rounding = static_cast<double>(
+      std::nextafter(edge32, std::numeric_limits<float>::infinity()) -
+      edge32);
+  double shell = pullIn + rounding;
+  double volume = system.box[0] * system.box[1] * system.box[2];
+  double charged = 0.0;
+  for (double q : system.topology->charges)
+    charged += q != 0.0;
+  double expected = volume > 0.0 ? charged * (charged - 1.0) /
+                                       (2.0 * volume) * 4.0 * M_PI * rc *
+                                       rc * shell
+                                 : 0.0;
+  std::string advice =
+      control.pmeAlpha > 0.0
+          ? "remove 'beta' of [pme], so that 'tolerance' (10^-5 by "
+            "default) sets erfc(beta r_c)"
+          : "set 'tolerance' of [pme] to 10^-5 (the default) or less";
+  warnings.push_back(
+      {"pme_cutoff_jump",
+       llvm::formatv(
+           "PME with beta = {0:F5} Å^-1 at the cutoff of {1} Å has "
+           "erfc(beta r_c) = {2:E2}: the force of a pair of charges with "
+           "|q_i q_j| = {3:F4} e^2 jumps by {4:F2} kJ/mol/nm where it "
+           "crosses the cutoff, more than 1 kJ/mol/nm. About {5:F2} pairs "
+           "of charged particles a frame lie within {6:E1} nm of the "
+           "cutoff (from their mean density), where mixed precision may "
+           "decide them differently from double, each changing the forces "
+           "by up to the jump; the jump also degrades the conservation of "
+           "energy in either precision. To derive beta from the cutoff, "
+           "{7}",
+           beta * units::length, control.cutoffDistance, tail, product,
+           jump, expected, shell, advice)
+           .str()});
+}
+
 static void describeRun(const Control &control, const System &system,
                         const Preflight &report) {
   std::printf("ensemble:           %s\n", getEnsemble(control));
@@ -594,6 +754,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   Preflight report = inspect(*control);
   for (const auto &[code, message] : system->warnings)
     report.warnings.push_back({code, message});
+  checkCutoffJump(*control, *system, report.warnings);
   if (json) {
     printJSON(makeJSON(*control, *system, report));
   } else {
