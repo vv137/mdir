@@ -1111,6 +1111,10 @@ $R+2r_\mathrm m$ for WW and $R+r_\mathrm m$ for SW. **Rule (A)** is the
 extra point's constant transpose used by dynamics. Written forces use
 the general bisector transpose, rule (B), in a separate no-step
 evaluation; the carried state and checkpoint forces retain rule (A).
+Rules (A) and (B) distribute the extra point's force differently but
+leave each group's total force $\mathbf F_g$ unchanged. Consequently,
+the D264 molecular virial and pressure are the same under either rule;
+the physical-virial check uses this molecular convention.
 
 In an aqueous system most pairs within $r_c$ are pairs of water sites:
 93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166

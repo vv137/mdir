@@ -20,6 +20,9 @@ struct TemplateFrameBuffers {
 /// measurement/readback belongs to the per-step position writer. The
 /// existing reset launch initializes all four controls before a cold
 /// owner may copy that packet; no previous search counters are retained.
+/// Before packing, bad real-particle positions (D107) increment counter 1
+/// and their unit is skipped. The host consumes that count before search
+/// reuses counter 1 as flags; it must stop before ordering invalid anchors.
 void emitSnapshotTemplateFrames(mlir::OpBuilder &, mlir::Location,
     const TemplateFrameBuffers &, mlir::Value waterActive, mlir::Value atomActive);
 }

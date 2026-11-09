@@ -7,6 +7,8 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -38,6 +40,32 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
   Value active = arith::AndIOp::create(k, loc, valid,
       arith::SelectOp::create(k, loc, water, waterActive, atomActive));
   scf::IfOp::create(k, loc, active, [&](OpBuilder &at, Location) {
+    // D107: count particles, not units. In this snapshot phase the flags
+    // word is a bad-position count; the host consumes it before search
+    // initializes that word for its own flags. No arena ABI changes.
+    auto validPositions = [&](OpBuilder &in, ValueRange positions) -> Value {
+      Value valid = arith::ConstantIntOp::create(in, loc, 1, 1);
+      Value count = arith::ConstantIntOp::create(in, loc, 0, 64);
+      Value limit = createReal(in, loc, in.getF64Type(), 1.e100);
+      for (Value position : positions) {
+        Value magnitude = math::AbsFOp::create(in, loc,
+            vector::ExtractOp::create(in, loc, position, 0));
+        for (unsigned axis = 1; axis != 3; ++axis)
+          magnitude = arith::MaximumFOp::create(in, loc, magnitude,
+              math::AbsFOp::create(in, loc,
+                  vector::ExtractOp::create(in, loc, position, axis)));
+        Value good = arith::CmpFOp::create(in, loc, arith::CmpFPredicate::OLE,
+            magnitude, limit);
+        valid = arith::AndIOp::create(in, loc, valid, good);
+        Value bad = arith::CmpFOp::create(in, loc, arith::CmpFPredicate::UGT,
+            magnitude, limit);
+        count = arith::AddIOp::create(in, loc, count,
+            arith::ExtUIOp::create(in, loc, in.getI64Type(), bad));
+      }
+      memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::addi,
+          count, v.counters, ValueRange{ix(in, TEMPLATE_COUNTER_FLAGS)});
+      return valid;
+    };
     auto member = [&](OpBuilder &in, Value row) -> Value {
       Value id = memref::LoadOp::create(in, loc, v.members, ValueRange{row});
       return arith::IndexCastOp::create(in, loc, in.getIndexType(), id);
@@ -56,29 +84,35 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
       for (int site = 0; site != 3; ++site)
         positions.push_back(loadElement(in, loc, v.positions,
             member(in, arith::AddIOp::create(in, loc, row, ix(in, site)))));
-      Value cells = emitTemplatePackingCells(in, loc, positions[0], v.cell, v.inverse);
-      auto frame = emitRetainedTemplateFrame(in, loc, positions, v.cell, v.inverse,
-                                              cells, in.getF32Type());
-      for (int site = 0; site != 3; ++site)
-        storeElement(in, loc, frame.packed[site], v.frames,
-            arith::AddIOp::create(in, loc, row, ix(in, site)));
-      publish(in, positions[0], cells);
-      Value h1 = arith::SubFOp::create(in, loc, frame.whole[1], frame.whole[0]);
-      Value h2 = arith::SubFOp::create(in, loc, frame.whole[2], frame.whole[0]);
-      Value extent = mdir::md::emitTemplateExtentSquared(in, loc, v.alpha, v.hasSite, h1, h2);
-      Value bits = arith::BitcastOp::create(in, loc, in.getI64Type(), extent);
-      memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu, bits, v.counters,
-                                  ValueRange{ix(in, TEMPLATE_COUNTER_EXTENT)});
+      scf::IfOp::create(in, loc, validPositions(in, positions), [&](OpBuilder &in, Location) {
+        Value cells = emitTemplatePackingCells(in, loc, positions[0], v.cell, v.inverse);
+        auto frame = emitRetainedTemplateFrame(in, loc, positions, v.cell, v.inverse,
+                                                cells, in.getF32Type());
+        for (int site = 0; site != 3; ++site)
+          storeElement(in, loc, frame.packed[site], v.frames,
+              arith::AddIOp::create(in, loc, row, ix(in, site)));
+        publish(in, positions[0], cells);
+        Value h1 = arith::SubFOp::create(in, loc, frame.whole[1], frame.whole[0]);
+        Value h2 = arith::SubFOp::create(in, loc, frame.whole[2], frame.whole[0]);
+        Value extent = mdir::md::emitTemplateExtentSquared(in, loc, v.alpha, v.hasSite, h1, h2);
+        Value bits = arith::BitcastOp::create(in, loc, in.getI64Type(), extent);
+        memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu, bits, v.counters,
+                                    ValueRange{ix(in, TEMPLATE_COUNTER_EXTENT)});
+        scf::YieldOp::create(in, loc);
+      });
       scf::YieldOp::create(in, loc);
     }, [&](OpBuilder &in, Location) {
       Value row = arith::AddIOp::create(in, loc, unit,
           arith::MulIOp::create(in, loc, v.waters, ix(in, 2)));
       Value position = loadElement(in, loc, v.positions, member(in, row));
-      Value cells = emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
-      Value framed = arith::AddFOp::create(in, loc, position,
-          emitLatticeShift(in, loc, cells, v.cell));
-      storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
-      publish(in, position, cells);
+      scf::IfOp::create(in, loc, validPositions(in, ValueRange{position}), [&](OpBuilder &in, Location) {
+        Value cells = emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
+        Value framed = arith::AddFOp::create(in, loc, position,
+            emitLatticeShift(in, loc, cells, v.cell));
+        storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
+        publish(in, position, cells);
+        scf::YieldOp::create(in, loc);
+      });
       scf::YieldOp::create(in, loc);
     });
     scf::YieldOp::create(at, loc);

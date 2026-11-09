@@ -1,0 +1,10 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../../Integration/Inputs/template_not_numbers_matrix.py %t --printer mdir-opt --mlir-opt mlir-opt --runner mlir-runner --lower='%lower_gpu_to_llvm' --lower-only | FileCheck %s --check-prefix=MATRIX
+# RUN: FileCheck %s --check-prefix=STRUCTURE < %t/cold-solute-nan.gpu.mlir
+# MATRIX: D107 template matrix: 20 lowerings passed
+# STRUCTURE: arith.cmpf ole
+# STRUCTURE: memref.atomic_rmw addi
+# STRUCTURE: scf.if
+# STRUCTURE: func.call @mdrtStopNotNumbers
+# STRUCTURE: arith.fptoui
