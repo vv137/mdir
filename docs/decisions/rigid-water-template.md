@@ -424,6 +424,16 @@ measurements replace them.
    virial is compared in D264's molecular convention, with the atomic
    total including constraint reaction retained as a diagnostic; with
    rule (B) the raw atom forces are compared as well.
+   The independent native-topology oracles use **138.935457644**
+   kJ nm mol⁻¹ e⁻² for the Coulomb constant, explicitly, as specified in
+   [conventions, Section 1](../conventions.md#1-units). Converting the
+   control-expression constant instead gives 138.93545764438196: its
+   extra digits change the input and can dominate a nearly canceled
+   molecular virial's net-relative bound. The fixture-only alignment
+   changes no comparison bound; unifying shared definitions is #805.
+   Fresh comparisons record signed oracle/general-double values and
+   exact bits, evaluated bounds, absolute contribution sums and term
+   counts before assertions, including every force component.
    Potential energy uses the cancellation-aware bound
    $\lvert E_\mathrm{template}-E_\mathrm{double}\rvert \le
    \max(10^{-5}\lvert E_\mathrm{double}\rvert,10^{-6}S)$ for OPC and
