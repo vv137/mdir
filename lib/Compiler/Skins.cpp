@@ -749,7 +749,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   if (best != &first && gain > noise) {
     control.pairlistDistance = best->outer;
     control.prunedDistance = best->inner;
-    control.skinReason = llvm::formatv("{0:f1}% faster than {1} / {2} Å, "
+    control.skinReason = llvm::formatv("{0:f1}% faster than {1} / {2} Ang, "
                                        "beyond the noise of {3:f1}%",
                                        100.0 * gain, format(first.outer),
                                        first.inner != 0.0 ? format(first.inner)
@@ -762,7 +762,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     control.skinReason =
         best == &first
             ? std::string("the reference was the fastest")
-            : llvm::formatv("the fastest, {0} / {1} Å, is {2:f1}% faster, "
+            : llvm::formatv("the fastest, {0} / {1} Ang, is {2:f1}% faster, "
                             "within the noise of {3:f1}%",
                             format(best->outer),
                             best->inner != 0.0 ? format(best->inner) : "-",

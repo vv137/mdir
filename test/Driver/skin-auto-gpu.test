@@ -26,6 +26,10 @@
 # RUN: FileCheck %s --check-prefix=FIRST < %t/first.log
 # RUN: FileCheck %s --check-prefix=CHECKED < %t/first.err
 # RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']))" | FileCheck %s --check-prefix=MANIFEST
+# An entry written before D[ascii-cli-output], whose reason spells the
+# angstrom in Unicode, is read as any other: the reader takes the key and
+# the two reaches alone.
+# RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f, encoding='utf-8')); e['search']['reason'] = '1.0% faster than 12 / 9.6 \u00c5, beyond the noise of 0.6%'; json.dump(e, open(f, 'w', encoding='utf-8'), ensure_ascii=False)"
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run auto.toml > second.log 2>&1
 # RUN: FileCheck %s --check-prefix=CACHED < %t/second.log
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run --continue longer.toml > continued.log 2>&1

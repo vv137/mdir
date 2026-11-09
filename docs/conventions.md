@@ -95,15 +95,17 @@ warnings and errors of the libraries that the tool reports) is ASCII only
 Unified Code for Units of Measure (UCUM) is `Ao`; MDIR prints `Ang`, which
 a reader recognizes without the code.
 
-The rule covers the terminal only. Comments, the documentation, and the
-files that MDIR writes keep their text: the line of units of a file of
-columns (`Å^3`, `kcal/mol/Å`), which a continued run compares with the file
-it extends, the manifest of a run, the JSON summaries, the cache of the
-skins, and the templates of control files that `mdir template` prints.
-Changing those is a change of a file format and needs a ruling of its own.
-A string that the tool prints and a file also holds keeps its text for now:
-the reasons for the automatic choices of the neighbor structure and of the
-skins, which the manifest records. The messages of the builder of the
+The rule covers the terminal. Comments and the documentation keep their
+text, and so do two parts of the files that MDIR writes: the line of units
+of a file of columns (`Å^3`, `kcal/mol/Å`), which a continued run compares
+with the file it extends, and the templates of control files that
+`mdir template` prints. Changing those is a change of a file format and
+needs a ruling of its own. A string that the tool prints and a file also
+holds is ASCII as well: the reasons for the automatic choices of the
+neighbor structure and of the skins, which the manifest of a run, the JSON
+summaries, the cache of the skins, and the settings that Python resolves
+record. An entry of the cache written before, with `Å` in its reason, is
+still read: the reader takes the key and the two reaches alone. The messages of the builder of the
 program (`lib/Driver/Builder*.cpp`, `lib/Driver/Term*.cpp`) follow in a
 change of their own (#813).
 

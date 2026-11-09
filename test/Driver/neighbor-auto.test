@@ -45,7 +45,7 @@
 
 # BIG: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
 # SMALL: neighbors: matrix, reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
-# DENSE: neighbors: matrix, reach 29 Ang (AUTO: the reach of the groups, 29 Å, exceeds 0.999 of the least edge of the cell, 28.97 Å)
+# DENSE: neighbors: matrix, reach 29 Ang (AUTO: the reach of the groups, 29 Ang, exceeds 0.999 of the least edge of the cell, 28.97 Ang)
 # CPU: neighbors: matrix, reach 10.5 Ang (AUTO: the target is the CPU)
 # DETERMINISTIC: neighbors: matrix, reach 10.5 Ang (AUTO: the deterministic mode)
 # LONG: neighbors: groups of 16, reach 12 Ang, pruned to 10.2 Ang (AUTO:
