@@ -1,0 +1,9 @@
+# REQUIRES: cuda
+# Same independent plain-cutoff oracle and bounds as the OPC fixture;
+# here the three-site model has no placement or extra-point transpose.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_tip3p.py %S/Inputs/triclinic %t
+# RUN: mdir-template-physics-test %t/control.toml TIP3P | tee %t/metrics.txt | FileCheck %s
+# CHECK: oracle: energy
+# CHECK: projected forces: general-mixed max
+# CHECK: TIP3P independent physical pair oracle and projected template comparison passed

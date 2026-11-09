@@ -848,6 +848,20 @@ pair-arithmetic checks, not the larger-system, virial, stability or
 end-to-end gates. The oracle uses f64 throughout; the two compiled routes
 retain the precision assignments in the table below.
 
+The first corresponding three-site TIP3P fixture stops on its energy
+comparison. Its independent f64 energy is $5.3014572263468054$ kJ/mol;
+general double gives $5.3014572263438957$, a difference of
+$2.9097\times10^{-12}$ kJ/mol. Their raw force max/RMS difference is
+$1.4258\times10^{-9}/6.7265\times10^{-10}$ kJ/mol/nm. The template's
+projected force max/RMS errors, $0.000565281/0.000237396$, pass the same
+criterion against general mixed's $0.00100856/0.000390067$, with bound
+$0.00433485148$ kJ/mol/nm. Its relative energy error,
+$1.6695968902592555\times10^{-5}$, exceeds the unchanged $10^{-5}$
+bound. The first execution is recorded as a numerical failure, with no
+rerun or correction; diagnosis awaits the maintainer's ruling. The signed
+template energy and general mixed's energy were not printed, so neither
+is inferred from the saved absolute relative error.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the
