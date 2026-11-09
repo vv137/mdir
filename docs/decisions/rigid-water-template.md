@@ -739,6 +739,25 @@ formed-site extent at alpha = 0.75. Geometry is serialized as integer
 bits from the start. Native writer selection and flag-event integration
 remain to be connected; this is not yet a physical-dynamics gate.
 
+The fixed-block pruning emitter intersects existing I masks with the
+current f64 covering predicate, compacts surviving entries within each
+outer block and publishes its inner live end. All 32 lanes participate
+in a warp barrier before evaluation can read another lane's stores. An
+inactive class retains its prior inner block. Requested groups read
+current points, and other groups read retained inner references, allowing
+the owner to publish new references in the evaluation prologue without
+a cross-warp read/write race. Outer records and storage ranges remain
+immutable; inner work records carry their actual live ends.
+An independent rational all-images oracle passes 16,096 exact integer
+comparisons in both cell types and all four group-activity combinations.
+It checks sparse masks, two-batch blocks, empty and partial blocks,
+inactive retention, immutable outer records, stable compaction and
+immediate same-kernel consumption. The tilted-cell case also passes
+memcheck, initcheck, racecheck and synccheck with zero errors or hazards;
+the focused sanitizer run held the device for five seconds. The owner
+still must select pruning epochs and publish their references in the
+native force loop.
+
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
 emitter against the same independent 27-image f64 quadratic oracle and
@@ -758,6 +777,7 @@ per-pair device work.
 | Validity deformation and displacement | f64 integrator/reference arithmetic | f64 guarded inverse-cell norm bound, incident-class margins and anchor displacement |
 | Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
 | Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
+| Inner-block pruning predicate | f32 | f64 hybrid reference fractions, explicit images and covering radius; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
 | Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
 | Squared distance and site cutoff | f32 | f32 |
