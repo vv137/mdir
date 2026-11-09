@@ -28,11 +28,35 @@ control file is in Å, kcal/mol, amu, K, and atm, with angles in degrees.
 
 The constants come from CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021):
 
-| Constant | Value |
-|---|---|
-| Boltzmann constant $k_B$ | 0.0083144626181532 kJ/(mol K) |
-| Coulomb constant $f = N_A e^2 / (4\pi\varepsilon_0)$ | 138.935457644 kJ mol⁻¹ nm e⁻² |
-| Calorie | 4.184 J |
+`include/mdir/Support/PhysicalConstants.h` is the definition site for C++
+and the C runtime (D[physical-constants-cpp]). Native rounded coefficients
+are retained as primary inputs; other unit systems derive their values
+in that header by exact conversions. Values below show 17 significant
+digits of their f64 representations.
+
+| Constant or coefficient | Native value | Control-file value |
+|---|---|---|
+| Coulomb $f$ | 138.93545764400000 kJ nm mol⁻¹ e⁻² (primary) | 332.06371329827908 kcal Å mol⁻¹ e⁻² |
+| Molar thermal coefficient | 0.0083144626181532004 kJ mol⁻¹ K⁻¹ (primary) | 0.0019872042586408221 kcal mol⁻¹ K⁻¹ |
+| Pressure per kJ mol⁻¹ nm⁻³ | 16.605390671700000 bar (primary) | 16.388246406809770 atm |
+| Density per amu nm⁻³ | 0.0016605390666000000 g cm⁻³ | same |
+
+The Coulomb conversion divides the native coefficient by 4.184 kJ/kcal
+and 0.1 nm/Å. This intentionally changes control-expression `coulomb` by
+about 2.75e-12 relative; native-topology Coulomb values retain their bits.
+The thermal coefficient divides by 4.184 for kcal/mol. The pressure
+conversion divides by the exact 1.01325 bar/atm factor.
+
+The SI inputs used by the Debye formula are centralized in the same
+header: $k_B = 1.3806490000000001\times10^{-23}$ J K⁻¹,
+$N_A = 6.0221407599999999\times10^{23}$ mol⁻¹,
+$e = 1.6021766339999999\times10^{-19}$ C, and
+$\varepsilon_0 = 8.8541878128000006\times10^{-12}$ F m⁻¹. The first three
+are exact SI defining values before conversion to f64. The draft retains
+the existing rounded molar and pressure coefficients rather than
+recomputing them from those SI inputs; that preservation contract is
+pending the precision ruling recorded in the decision. Python consumers
+and the generated-module check follow in part 2 of #805.
 
 ## 2. Geometry
 

@@ -1005,7 +1005,7 @@ inline llvm::Error makeError(const llvm::Twine &message) {
 //===----------------------------------------------------------------------===//
 
 /// The Coulomb constant in kJ nm mol⁻¹ e⁻², from CODATA 2018.
-constexpr double coulombInternal = 138.935457644;
+constexpr double coulombInternal = physical::coulomb;
 
 /// g(x) = exp(−x²) (1 + x² + x⁴/2), the share of the dispersion −c_i c_j /
 /// r⁶ at x = β r that the direct terms of particle mesh Ewald keep

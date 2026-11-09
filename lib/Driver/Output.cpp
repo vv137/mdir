@@ -1200,8 +1200,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                          potential + kinetic,
                          temperature,
                          virial,
-                         // bar: kJ/mol/nm^3 is 16.6053906717 bar.
-                         pressure * 16.6053906717,
+                         // Convert kJ/mol/nm^3 to bar with the native coefficient.
+                         pressure * mdir::physical::pressureBar,
                          potential + kinetic + (output.couples ? output.bath : 0.0),
                          output.volume};
   if (!isRow)

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "mdir/Support/PhysicalConstants.h"
 
 /* D184: a diagnostic central-difference comparison failed.
    The first five arguments are the lowered memref<?xi8> descriptor. */
@@ -346,13 +347,14 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
    Δε = 2 ln(λ'/λ). The pressures are in bar, `compressibility` β_T in
    1/bar, `volume` V in nm³ before the scaling, `kT` k_B T at the
    temperature of the bath in kJ/mol, `rate` Δt_p / τ_p, and
-   c = 16.6053906717 bar nm³ mol/kJ. The positions and the cell are then
+   c is the native pressure coefficient from PhysicalConstants.h.
+   The positions and the cell are then
    scaled by exp(Δε / 3), the velocities by exp(−Δε / 3). The number R is
    that of stream 1 at `step`. */
 double mdrtBarostatStrain(int64_t seed, int64_t step, double pressure,
                           double target, double volume, double kT,
                           double compressibility, double rate) {
-  const double conversion = 16.6053906717;
+  const double conversion = MDIR_PHYSICAL_PRESSURE_BAR;
   Draws draws;
   initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
   double r = drawNormal(&draws);
@@ -434,7 +436,7 @@ double mdrtBarostatStrainArea(int64_t seed, int64_t step, double pressure,
                               double target, double volume, double height,
                               double kT, double compressibility, double rate,
                               double tension) {
-  const double conversion = 16.6053906717;
+  const double conversion = MDIR_PHYSICAL_PRESSURE_BAR;
   double r[2];
   drawSemi(seed, step, r);
   double f = compressibility * rate;
@@ -447,7 +449,7 @@ double mdrtBarostatStrainArea(int64_t seed, int64_t step, double pressure,
 double mdrtBarostatStrainHeight(int64_t seed, int64_t step, double pressure,
                                 double target, double volume, double kT,
                                 double compressibility, double rate) {
-  const double conversion = 16.6053906717;
+  const double conversion = MDIR_PHYSICAL_PRESSURE_BAR;
   double r[2];
   drawSemi(seed, step, r);
   double f = compressibility * rate;
@@ -481,7 +483,7 @@ double mdrtBarostatStrainAxis(int64_t seed, int64_t step, int64_t axis,
                               double pressure, double target, double volume,
                               double kT, double compressibility,
                               double rate) {
-  const double conversion = 16.6053906717;
+  const double conversion = MDIR_PHYSICAL_PRESSURE_BAR;
   Draws draws;
   initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
   double r = 0.0;

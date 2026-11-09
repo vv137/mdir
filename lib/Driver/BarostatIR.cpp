@@ -1,5 +1,6 @@
 // Stochastic cell rescaling [Bernetti2020] at the original insertion point.
 #include "BarostatIR.h"
+#include "mdir/Support/PhysicalConstants.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -232,7 +233,7 @@ BarostatParameterValues mdir::driver::builder::buildBarostatParameters(
   result.compressibility = real(parameters.compressibility);
   result.rate = real(parameters.rate);
   result.thermal = real(parameters.thermal);
-  result.bar = real(16.6053906717);
+  result.bar = real(mdir::physical::pressureBar);
   result.three = real(3.0);
   result.third = real(1.0 / 3.0);
   result.unit = real(1.0);

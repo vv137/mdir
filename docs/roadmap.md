@@ -20,6 +20,11 @@ follows are in [principles.md](principles.md).
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
 
+Physical constants (#805): D[physical-constants-cpp] centralizes C/C++
+definitions, preserving native coefficients and deriving the expression
+Coulomb value. The molar/SI rounding contract awaits a ruling; generated
+Python consumers and the duplicate-definition check follow in part 2.
+
 ## 1. Robustness (under way)
 
 | Item | State and next |

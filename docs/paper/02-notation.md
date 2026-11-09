@@ -93,6 +93,12 @@ inputs that the suite of Section 10 takes; the driver converts at the
 boundary (1 kcal/mol = 4.184 kJ/mol; 1 kJ/(mol nm³) =
 $16.6053906717/1.01325 \approx 16.388$ atm).
 
+The C/C++ physical inputs have one public definition in
+`include/mdir/Support/PhysicalConstants.h` (D[physical-constants-cpp]);
+[conventions, Section 1](../conventions.md#1-units) gives the native and
+control-unit values. The native Coulomb coefficient is primary, and the
+expression's coefficient derives from it by exact unit conversions.
+
 **Precision.** f32 and f64 are the IEEE-754 binary32 and binary64 types;
 an *ulp* is a unit in the last place. A *mode* (`single`, `mixed`,
 `double`) assigns a type to each role of a value (Section 7).

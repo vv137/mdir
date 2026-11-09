@@ -122,7 +122,7 @@ static void describeTopology(const Control &control, const System &system) {
                   cell.tilt[1], cell.tilt[2], cell.diagonal[2]);
     }
     std::printf("density:            %g g/cm³\n",
-                totalMass / volume * 1.66053906660e-3);
+                totalMass / volume * mdir::physical::densityGramsPerCubicCentimeter);
   } else {
     std::printf("boundary:           NONE (no periodic cell)\n");
   }
@@ -157,9 +157,9 @@ static void describeParticles(const Control &control, const System &system) {
     std::printf("box:                %g %g %g Å\n",
                 system.box[0] / units::length, system.box[1] / units::length,
                 system.box[2] / units::length);
-    // amu/nm³ to g/cm³: 1 amu = 1.66053906660e-24 g, 1 nm³ = 1e-21 cm³.
+    // Convert amu/nm³ to g/cm³ with the native mass-density coefficient.
     std::printf("density:            %g g/cm³\n",
-                totalMass / volume * 1.66053906660e-3);
+                totalMass / volume * mdir::physical::densityGramsPerCubicCentimeter);
   } else {
     std::printf("boundary:           NONE (no periodic cell)\n");
   }

@@ -7,6 +7,7 @@
 // converted to the forms of docs/conventions.md.
 
 #include "mdir/Driver/Topology.h"
+#include "mdir/Support/PhysicalConstants.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -26,8 +27,8 @@ using llvm::StringRef;
 namespace {
 
 /// Units of CHARMM in those of MDIR.
-constexpr double nmPerAngstrom = 0.1;
-constexpr double kjPerKcal = 4.184;
+constexpr double nmPerAngstrom = mdir::physical::nanometersPerAngstrom;
+constexpr double kjPerKcal = mdir::physical::kilojoulesPerKilocalorie;
 constexpr double radiansPerDegree = M_PI / 180.0;
 /// σ = R_min / 2^(1/6).
 const double sigmaPerRmin = std::pow(2.0, -1.0 / 6.0);

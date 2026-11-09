@@ -322,8 +322,10 @@ double BornTermBuilder::getDebyeKappa(const Control &control) {
   // constants of CODATA 2018 in SI units, c in mol/m³; κ in nm⁻¹.
   if (control.saltConcentration <= 0.0)
     return 0.0;
-  const double avogadro = 6.02214076e23, charge = 1.602176634e-19,
-               permittivity = 8.8541878128e-12, boltzmann = 1.380649e-23;
+  const double avogadro = mdir::physical::avogadro,
+               charge = mdir::physical::elementaryCharge,
+               permittivity = mdir::physical::vacuumPermittivity,
+               boltzmann = mdir::physical::boltzmann;
   double concentration = control.saltConcentration * 1000.0;
   double kappa2 = 2.0 * avogadro * charge * charge * concentration /
                   (permittivity * control.solventDielectric * boltzmann *

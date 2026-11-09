@@ -7,6 +7,7 @@
 
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Topology.h"
+#include "mdir/Support/PhysicalConstants.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -33,8 +34,8 @@ std::string show(double value) {
 }
 
 /// Units of Amber in those of MDIR.
-constexpr double nmPerAngstrom = 0.1;
-constexpr double kjPerKcal = 4.184;
+constexpr double nmPerAngstrom = mdir::physical::nanometersPerAngstrom;
+constexpr double kjPerKcal = mdir::physical::kilojoulesPerKilocalorie;
 /// The factor of the charges of a prmtop: `q = CHARGE / 18.2223`.
 constexpr double chargeFactor = 18.2223;
 /// Velocities of a restart are in Å per 1/20.455 ps.

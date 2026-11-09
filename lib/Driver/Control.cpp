@@ -2347,7 +2347,7 @@ Error Reader::readEnergy(const toml::table &table) {
         llvm::StringMap<double> values, swapped;
         for (const auto &[name, value] : term.constants)
           values[name] = swapped[name] = value;
-        values["coulomb"] = swapped["coulomb"] = 332.0637;
+        values["coulomb"] = swapped["coulomb"] = units::coulomb;
         values["r"] = swapped["r"] = s[0];
         values["sigma"] = swapped["sigma"] = 0.5 * (s[3] + s[4]);
         values["epsilon"] = swapped["epsilon"] = std::sqrt(s[5] * s[6]);

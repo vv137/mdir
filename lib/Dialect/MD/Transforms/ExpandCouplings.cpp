@@ -6,6 +6,7 @@
 // deterministic mode stays bitwise that of the text (Section 2.2.8).
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
+#include "mdir/Support/PhysicalConstants.h"
 
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
@@ -371,7 +372,7 @@ void ExpandCouplings::expandPressure(dyn::PressureOp op) {
   Value constant = e.div(op.getConstant(), volume);
   Value third = e.mul(constant, e.real(1.0 / 3.0));
   Value total = e.add(virial, e.splat(third));
-  Value bar = e.div(e.real(16.6053906717), volume);
+  Value bar = e.div(e.real(mdir::physical::pressureBar), volume);
   op.replaceAllUsesWith(e.mul(total, e.splat(bar)));
   op.erase();
 }

@@ -9,6 +9,7 @@
 
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Topology.h"
+#include "mdir/Support/PhysicalConstants.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
@@ -33,7 +34,7 @@ using llvm::StringRef;
 namespace {
 
 constexpr double radiansPerDegree = M_PI / 180.0;
-constexpr double kjPerKcal = 4.184;
+constexpr double kjPerKcal = mdir::physical::kilojoulesPerKilocalorie;
 
 std::string show(double value) {
   char text[32];
