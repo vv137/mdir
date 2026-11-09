@@ -37,6 +37,7 @@ without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
 without compute-sanitizer: Sanitizer/fused-prune-gpu.test
 without compute-sanitizer: Sanitizer/group-scatter-gpu.test
 without compute-sanitizer: Sanitizer/groups-empty-gpu.test
+without compute-sanitizer: Sanitizer/npt-leapfrog-gpu.test
 without compute-sanitizer: Sanitizer/npt-velocity-verlet-gpu.test
 without compute-sanitizer: Sanitizer/pme-p3m-gpu.test
 without compute-sanitizer: Sanitizer/pme-side-gpu.test
