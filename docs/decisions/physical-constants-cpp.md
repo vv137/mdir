@@ -116,7 +116,7 @@ The shared printed goldens come from the CPU route in double precision.
 In particular, a CPU double run of the PME fixture for 500 steps gives
 potential -3754.0058 and kinetic 942.3640 kcal/mol; every printed
 step-500 column matches the preserved deterministic GPU double run.
-No separate device value is substituted for a host reference. The four
+No separate device value is substituted for a host reference. The five
 regenerated values, in kcal/mol, are:
 
 | Reference | Route | Before | After | Difference |
@@ -125,6 +125,19 @@ regenerated values, in kcal/mol, are:
 | PME step 500 potential | CPU double, GPU double agrees | -3754.0060 | -3754.0058 | +0.0002 |
 | PME step 500 kinetic | CPU double, GPU double agrees | 942.3642 | 942.3640 | -0.0002 |
 | Prolate step 40 potential | CPU double, GPU double agrees | -12927.4744 | -12927.4743 | +0.0001 |
+| DODEC step 10 virial | CPU double, GPU double agrees | 42734.5995 | 42734.5996 | +0.0001 |
+
+The first confirming suite reached the DODEC row only after the earlier
+prolate check passed, and stopped on that additional printed value. The
+maintainer approved its CPU-derived replacement and a sweep of every
+prefix group before confirmation. That sweep executes the original RUN
+commands and invokes FileCheck separately for every group, preserving
+each input without removing or relaxing any check. All 20 invocations
+across 17 distinct file/prefix groups passed: minimization (2), PME GPU
+(6), prolate CPU (7) and prolate GPU (5). These include all four checkpoint
+comparisons for run-to-run, reciprocal-stream and mixed-precision
+determinism, plus the bond oracle and all diagnostic checks. Every
+printed host/device row agrees; no further value needed regeneration.
 
 Tolerances and bitwise/determinism checks are unchanged. The confirming
 full suite runs at the corrected clean head; the ready comment records
