@@ -20,7 +20,7 @@ follows are in [principles.md](principles.md).
 The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
 
-Physical constants (#805): D[physical-constants-cpp] centralizes C/C++
+Physical constants (#805): D394 centralizes C/C++
 definitions and derives native and expression coefficients from the exact
 SI defining constants and CODATA 2022 permittivity; output bits change.
 The shared generated Python module starts with the pressure lifter;

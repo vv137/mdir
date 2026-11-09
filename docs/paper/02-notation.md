@@ -95,7 +95,7 @@ boundary (1 kcal/mol = 4.184 kJ/mol; 1 kJ/(mol nm³) =
 $16.605390671738466/1.01325 \approx 16.388$ atm).
 
 The C/C++ physical inputs have one public definition in
-`include/mdir/Support/PhysicalConstants.h` (D[physical-constants-cpp]);
+`include/mdir/Support/PhysicalConstants.h` (D394);
 [conventions, Section 1](../conventions.md#1-units) gives the native and
 control-unit values. Coulomb, thermal and pressure coefficients derive
 from the exact SI inputs and CODATA 2022 permittivity

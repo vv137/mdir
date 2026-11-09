@@ -91,7 +91,7 @@ must use the same choice. It is included in the checkpoint fingerprint.
 ### 1.1 Keywords
 
 The expression name `coulomb` uses the shared SI-derived physical constant
-in the public header (D[physical-constants-cpp]); the values and unit
+in the public header (D394); the values and unit
 conversions are explicit in [conventions, Section 1](conventions.md#1-units).
 No new keyword is introduced.
 

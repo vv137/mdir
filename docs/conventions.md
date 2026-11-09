@@ -27,7 +27,7 @@ A file or a control file may use other units; its reader converts. The
 control file is in Å, kcal/mol, amu, K, and atm, with angles in degrees.
 
 The one definition site for C++ and the C runtime is
-`include/mdir/Support/PhysicalConstants.h` (D[physical-constants-cpp]).
+`include/mdir/Support/PhysicalConstants.h` (D394).
 Its exact defining inputs are from the BIPM SI Brochure, 9th edition
 [[BIPM2019]](references.md#bipm2019); vacuum permittivity is the nominal
 CODATA 2022 value [[Mohr2025]](references.md#mohr2025), not an exact SI

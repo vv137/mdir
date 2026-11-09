@@ -15,7 +15,7 @@ between the first and the last row, not the largest excursion.
 used the Coulomb constant of CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021), larger than
 Amber's by a factor 1.0000346 (332.0637/332.0522); sander's electrostatic
 terms were multiplied by that factor before they were compared. These
-pinned measurements predate D[physical-constants-cpp]; current programs
+pinned measurements predate D394; current programs
 derive their constants from the SI defining values and CODATA 2022,
 as specified in Section 2.*
 

@@ -1692,7 +1692,7 @@ values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
 **93**, 025010 (2021).
 [doi:10.1103/RevModPhys.93.025010](https://doi.org/10.1103/RevModPhys.93.025010)
 
-Historical source for values used before D[physical-constants-cpp].
+Historical source for values used before D394.
 The current defining constants are those of BIPM2019, with the CODATA
 2022 vacuum permittivity from Mohr2025.
 
