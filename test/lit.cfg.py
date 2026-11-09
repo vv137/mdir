@@ -44,6 +44,7 @@ llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
 tool_dirs = [config.mdir_tools_dir, config.llvm_tools_dir]
 tools = [
+    "mdir-physical-constants-test",
     "mdir-term-ir-test",
     "mdir",
     "mdir-opt",

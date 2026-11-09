@@ -318,17 +318,12 @@ BornIRConfig BornTermBuilder::configure(const TermInputs &context, unsigned term
 }
 
 double BornTermBuilder::getDebyeKappa(const Control &control) {
-  // κ² = 2 N_A e² c / (ε0 ε_r k_B T) for a 1:1 salt of c mol/L, with the
-  // constants of CODATA 2018 in SI units, c in mol/m³; κ in nm⁻¹.
+  // κ² = 8 pi f N_A c * 1e-24 / (R ε_r T) for c in mol/L, with the
+  // same derived Coulomb f and molar gas constant R as the pair kernels.
+  // The header converts mol/L and SI lengths to kappa squared in nm^-2.
   if (control.saltConcentration <= 0.0)
     return 0.0;
-  const double avogadro = mdir::physical::avogadro,
-               charge = mdir::physical::elementaryCharge,
-               permittivity = mdir::physical::vacuumPermittivity,
-               boltzmann = mdir::physical::boltzmann;
-  double concentration = control.saltConcentration * 1000.0;
-  double kappa2 = 2.0 * avogadro * charge * charge * concentration /
-                  (permittivity * control.solventDielectric * boltzmann *
-                   control.temperature);
-  return 0.73 * std::sqrt(kappa2) * 1e-9;
+  double kappa2 = mdir::physical::debyeSquaredMolarCoefficient *
+      control.saltConcentration / (control.solventDielectric * control.temperature);
+  return 0.73 * std::sqrt(kappa2);
 }

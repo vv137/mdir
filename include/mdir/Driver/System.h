@@ -27,10 +27,10 @@ constexpr double energy = physical::kilojoulesPerKilocalorie;
 /// A surface tension: bar nm in one dyn/cm (1 dyn/cm is 1e-3 N/m, and
 /// 1 bar nm is 1e-4 N/m).
 constexpr double dynePerCmToBarNm = 10.0;
-/// The existing rounded molar thermal coefficient in kJ/(mol K).
+/// The molar thermal coefficient k N_A in kJ/(mol K).
 constexpr double boltzmann = physical::molarGasConstant;
 /// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
-/// from CODATA 2018 (docs/conventions.md). An expression names it
+/// from the SI inputs and CODATA 2022 (docs/conventions.md). An expression names it
 /// `coulomb`.
 constexpr double coulomb = physical::coulombControl;
 } // namespace units

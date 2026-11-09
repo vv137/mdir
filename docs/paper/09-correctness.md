@@ -12,9 +12,12 @@ between the first and the last row, not the largest excursion.
 ## 9.1 The terms and the forces against sander and GROMACS
 
 *Table 9.1. The energy terms at the start against other programs. MDIR
-uses the Coulomb constant of CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021), larger than
+used the Coulomb constant of CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021), larger than
 Amber's by a factor 1.0000346 (332.0637/332.0522); sander's electrostatic
-terms are multiplied by that factor before they are compared.*
+terms were multiplied by that factor before they were compared. These
+pinned measurements predate D[physical-constants-cpp]; current programs
+derive their constants from the SI defining values and CODATA 2022,
+as specified in Section 2.*
 
 | System | Compared with | Result | Kind |
 |---|---|---|---|

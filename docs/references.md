@@ -169,6 +169,15 @@ Lett.* **222**(6), 529–539 (1994).
 
 Used for: the soft-core Lennard-Jones of the pairs that [free_energy] decouples (D161).
 
+### BIPM2019
+
+Bureau International des Poids et Mesures, *The International System of
+Units (SI)*, SI Brochure, 9th ed. (2019), ISBN 978-92-822-2272-0.
+[doi:10.59161/AUEZ1291](https://doi.org/10.59161/AUEZ1291)
+
+Used for: the exact SI defining elementary charge, Boltzmann constant and
+Avogadro constant in the single public physical-constants header.
+
 ### Blackman2021
 
 D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
@@ -1139,6 +1148,16 @@ and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
 Used for: SETTLE, the constraints of rigid water in double precision
 (M1; below it, M-SHAKE, D112).
 
+### Mohr2025
+
+P. J. Mohr, D. B. Newell, B. N. Taylor, E. Tiesinga, "CODATA recommended
+values of the fundamental physical constants: 2022," *Rev. Mod. Phys.*
+**97**, 025002 (2025).
+[doi:10.1103/RevModPhys.97.025002](https://doi.org/10.1103/RevModPhys.97.025002)
+
+Used for: the nominal vacuum permittivity and its uncertainty; together
+with the SI defining constants it determines the Coulomb coefficient.
+
 ### Molinero2009
 
 V. Molinero, E. B. Moore, "Water modeled as an intermediate element
@@ -1673,9 +1692,9 @@ values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
 **93**, 025010 (2021).
 [doi:10.1103/RevModPhys.93.025010](https://doi.org/10.1103/RevModPhys.93.025010)
 
-Used for: the Boltzmann and Avogadro constants, from which the driver
-takes the Boltzmann constant in kJ/(mol K) and the factor of the unit of
-pressure.
+Historical source for values used before D[physical-constants-cpp].
+The current defining constants are those of BIPM2019, with the CODATA
+2022 vacuum permittivity from Mohr2025.
 
 ### Tironi1995
 

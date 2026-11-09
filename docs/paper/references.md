@@ -57,6 +57,12 @@ in free energy calculations based on molecular simulations," *Chem. Phys.
 Lett.* **222**(6), 529–539 (1994).
 [doi:10.1016/0009-2614(94)00397-1](https://doi.org/10.1016/0009-2614(94)00397-1)
 
+### BIPM2019
+
+Bureau International des Poids et Mesures, *The International System of
+Units (SI)*, SI Brochure, 9th ed. (2019), ISBN 978-92-822-2272-0.
+[doi:10.59161/AUEZ1291](https://doi.org/10.59161/AUEZ1291)
+
 ### Blackman2021
 
 D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
@@ -432,6 +438,13 @@ S. Miyamoto, P. A. Kollman, "Settle: An analytical version of the SHAKE
 and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
 952–962 (1992).
 [doi:10.1002/jcc.540130805](https://doi.org/10.1002/jcc.540130805)
+
+### Mohr2025
+
+P. J. Mohr, D. B. Newell, B. N. Taylor, E. Tiesinga, "CODATA recommended
+values of the fundamental physical constants: 2022," *Rev. Mod. Phys.*
+**97**, 025002 (2025).
+[doi:10.1103/RevModPhys.97.025002](https://doi.org/10.1103/RevModPhys.97.025002)
 
 ### Molinero2009
 

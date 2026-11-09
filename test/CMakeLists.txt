@@ -40,6 +40,9 @@ add_llvm_executable(mdir-model-test Driver/ModelTest.cpp)
 llvm_update_compile_flags(mdir-model-test)
 target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
 
+add_llvm_executable(mdir-physical-constants-test
+  Driver/PhysicalConstantsTest.cpp Driver/PhysicalConstantsTest.c)
+
 add_llvm_executable(mdir-dihedral-tunables-test Driver/DihedralTunablesTest.cpp)
 llvm_update_compile_flags(mdir-dihedral-tunables-test)
 target_link_libraries(mdir-dihedral-tunables-test PRIVATE MDIRDriver)
@@ -78,6 +81,7 @@ llvm_update_compile_flags(mdir-compile-cache-test)
 target_link_libraries(mdir-compile-cache-test PRIVATE MDIRSimulation)
 
 set(MDIR_TEST_DEPENDS
+  mdir-physical-constants-test
   mdir-term-ir-test
   mdir-jit-memory-test
   mdir-compile-cache-test

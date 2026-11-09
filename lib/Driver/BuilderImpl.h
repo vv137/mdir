@@ -1005,7 +1005,7 @@ inline llvm::Error makeError(const llvm::Twine &message) {
 // Runs from a topology
 //===----------------------------------------------------------------------===//
 
-/// The Coulomb constant in kJ nm mol⁻¹ e⁻², from CODATA 2018.
+/// The Coulomb constant in kJ nm mol⁻¹ e⁻², from the shared SI derivation.
 constexpr double coulombInternal = mdir::physical::coulomb;
 
 /// g(x) = exp(−x²) (1 + x² + x⁴/2), the share of the dispersion −c_i c_j /

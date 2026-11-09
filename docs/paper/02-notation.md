@@ -87,17 +87,19 @@ element.
 | $\rho_i = \sum_{j\ne i} f(r_{ij});\ F(\rho);\ \bar\rho_i$ | In Section 13, the density of the embedded-atom method at particle $i$, from the function $f$ of the distance; the embedding energy of a particle of density $\rho$; the derivative of the energy in $\rho_i$, $F'(\rho_i)$ (D279) |
 
 **Units.** Inside a compiled program MDIR computes in nm, ps, amu, and
-kJ/mol, with $k_B = 0.0083144626181532$ kJ/(mol K) [[Tiesinga2021]](references.md#tiesinga2021). The
+kJ/mol, with $k_B = 0.0083144626181532403$ kJ/(mol K) in molar units,
+derived from the exact SI defining constants [[BIPM2019]](references.md#bipm2019). The
 control file and the logs use Å, ps, and kcal/mol, the units of the Amber
 inputs that the suite of Section 10 takes; the driver converts at the
 boundary (1 kcal/mol = 4.184 kJ/mol; 1 kJ/(mol nm³) =
-$16.6053906717/1.01325 \approx 16.388$ atm).
+$16.605390671738466/1.01325 \approx 16.388$ atm).
 
 The C/C++ physical inputs have one public definition in
 `include/mdir/Support/PhysicalConstants.h` (D[physical-constants-cpp]);
 [conventions, Section 1](../conventions.md#1-units) gives the native and
-control-unit values. The native Coulomb coefficient is primary, and the
-expression's coefficient derives from it by exact unit conversions.
+control-unit values. Coulomb, thermal and pressure coefficients derive
+from the exact SI inputs and CODATA 2022 permittivity
+[[Mohr2025]](references.md#mohr2025), with exact unit conversions.
 
 **Precision.** f32 and f64 are the IEEE-754 binary32 and binary64 types;
 an *ulp* is a unit in the last place. A *mode* (`single`, `mixed`,

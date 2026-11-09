@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/physical_constants.py %S/../../include/mdir/Support/PhysicalConstants.h mdir-physical-constants-test | FileCheck %s
+# CHECK: physical constants: Decimal formulas and C/C++ bits passed

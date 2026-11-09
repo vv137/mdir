@@ -26,37 +26,46 @@ Inside MDIR (D36):
 A file or a control file may use other units; its reader converts. The
 control file is in Å, kcal/mol, amu, K, and atm, with angles in degrees.
 
-The constants come from CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021):
+The one definition site for C++ and the C runtime is
+`include/mdir/Support/PhysicalConstants.h` (D[physical-constants-cpp]).
+Its exact defining inputs are from the BIPM SI Brochure, 9th edition
+[[BIPM2019]](references.md#bipm2019); vacuum permittivity is the nominal
+CODATA 2022 value [[Mohr2025]](references.md#mohr2025), not an exact SI
+defining constant:
 
-`include/mdir/Support/PhysicalConstants.h` is the definition site for C++
-and the C runtime (D[physical-constants-cpp]). Native rounded coefficients
-are retained as primary inputs; other unit systems derive their values
-in that header by exact conversions. Values below show 17 significant
-digits of their f64 representations.
-
-| Constant or coefficient | Native value | Control-file value |
+| Input | Value | Status |
 |---|---|---|
-| Coulomb $f$ | 138.93545764400000 kJ nm mol⁻¹ e⁻² (primary) | 332.06371329827908 kcal Å mol⁻¹ e⁻² |
-| Molar thermal coefficient | 0.0083144626181532004 kJ mol⁻¹ K⁻¹ (primary) | 0.0019872042586408221 kcal mol⁻¹ K⁻¹ |
-| Pressure per kJ mol⁻¹ nm⁻³ | 16.605390671700000 bar (primary) | 16.388246406809770 atm |
-| Density per amu nm⁻³ | 0.0016605390666000000 g cm⁻³ | same |
+| Elementary charge $e$ | $1.602176634\times10^{-19}$ C | Exact SI definition |
+| Boltzmann constant $k$ | $1.380649\times10^{-23}$ J K⁻¹ | Exact SI definition |
+| Avogadro constant $N_A$ | $6.02214076\times10^{23}$ mol⁻¹ | Exact SI definition |
+| Vacuum permittivity $\varepsilon_0$ | $8.8541878188(14)\times10^{-12}$ F m⁻¹ | CODATA 2022, with standard uncertainty |
 
-The Coulomb conversion divides the native coefficient by 4.184 kJ/kcal
-and 0.1 nm/Å. This intentionally changes control-expression `coulomb` by
-about 2.75e-12 relative; native-topology Coulomb values retain their bits.
-The thermal coefficient divides by 4.184 for kcal/mol. The pressure
-conversion divides by the exact 1.01325 bar/atm factor.
+Every other value derives from those inputs in the header, with f64
+arithmetic and exact conversions: 4.184 J/cal and decimal unit prefixes.
+The following values show the compiler-rounded expressions, rather than
+independently rounded literals:
 
-The SI inputs used by the Debye formula are centralized in the same
-header: $k_B = 1.3806490000000001\times10^{-23}$ J K⁻¹,
-$N_A = 6.0221407599999999\times10^{23}$ mol⁻¹,
-$e = 1.6021766339999999\times10^{-19}$ C, and
-$\varepsilon_0 = 8.8541878128000006\times10^{-12}$ F m⁻¹. The first three
-are exact SI defining values before conversion to f64. The draft retains
-the existing rounded molar and pressure coefficients rather than
-recomputing them from those SI inputs; that preservation contract is
-pending the precision ruling recorded in the decision. Python consumers
-and the generated-module check follow in part 2 of #805.
+| Quantity | Derivation | Native value | Control-file value |
+|---|---|---|---|
+| Coulomb $f$ | $N_A e^2/(4\pi\varepsilon_0)$, converted from J m/mol | 138.93545755023302 kJ nm mol⁻¹ e⁻² | 332.06371307417066 kcal Å mol⁻¹ e⁻² |
+| Molar thermal coefficient | $kN_A$, converted from J/(mol K) | 0.0083144626181532403 kJ mol⁻¹ K⁻¹ | Derived by division by 4.184 |
+| Pressure per kJ mol⁻¹ nm⁻³ | $(10^3/N_A)/10^{-27}/10^5$ | 16.605390671738466 bar | Derived by division by 1.01325 bar/atm |
+| Mass-density coefficient | $10^{21}/N_A$, for molar mass in g/mol per nm³ | 0.0016605390671738467 g cm⁻³ | Same |
+
+Generalized-Born screening uses the same derived Coulomb and molar
+thermal coefficients. With $R_\mathrm{MD}=10^{-3}kN_A$ in kJ mol⁻¹ K⁻¹
+and salt concentration $c$ in mol/L,
+$\kappa^2 = 8\pi f N_A 10^{-24}c/(R_\mathrm{MD}\varepsilon_r T)$ in nm⁻²;
+the method's existing factor 0.73 on $\kappa$ remains unchanged.
+The physical-input expressions are checked against an independent
+high-precision Decimal calculation and are bitwise identical in C/C++.
+
+Native and control-expression results change bitwise wherever the revised
+coefficients enter, deliberately before 1.0.0. The native Coulomb input
+changes by about −6.75e-10 relative; the control-expression input changes
+by about −6.78e-10. Thermal, pressure and density inputs also derive anew;
+no compatibility constants are retained. Python consumers and the
+generated-module check follow in part 2 of #805.
 
 ## 2. Geometry
 
@@ -112,9 +121,11 @@ rejects it.
 Energies in kcal/mol are multiplied by 4.184 and lengths in Å by 0.1.
 
 **The Coulomb constant of Amber.** Amber takes $18.2223^2 = 332.0522$
-kcal Å mol⁻¹ e⁻² for $f$; the value of CODATA 2018 is 332.0637. A charge
+kcal Å mol⁻¹ e⁻² for $f$; MDIR's SI/CODATA 2022 value is
+332.06371307417066. A charge
 of a `prmtop` divided by 18.2223 and used with $f$ of CODATA gives
-electrostatic energies about 3.5 × 10⁻⁵ larger than sander gives. MDIR
+electrostatic energies larger by a factor of about 1.00003461951 than
+sander gives. MDIR
 keeps its constant. A comparison with sander scales the electrostatic
 terms by the ratio of the two constants, or states the difference.
 

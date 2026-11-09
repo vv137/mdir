@@ -6,8 +6,9 @@ mesh Ewald (PME) in the smooth form of [[Essmann1995]](references.md#essmann1995
 the forces and the virial of the reciprocal sum, and how the sum runs on a
 device; Sections 5.4 and 5.5 treat the dispersion beyond the cutoff, by a
 correction and by the same mesh; Section 5.6 a second kernel of the splitting and the spreading. Internally the energies are in kJ/mol and the Coulomb constant is
-$f = 138.935457644$ kJ nm/(mol e²), that of CODATA 2018
-[[Tiesinga2021]](references.md#tiesinga2021), whatever the format of the
+$f = 138.93545755023302$ kJ nm/(mol e²), derived from the SI defining
+constants [[BIPM2019]](references.md#bipm2019) and CODATA 2022 permittivity
+[[Mohr2025]](references.md#mohr2025), whatever the format of the
 input: Amber's constant is smaller by a factor 1.0000346 and CHARMM's
 larger by 1.0000238, so the electrostatic terms of the same charges differ
 from those programs' by these factors (Section 9.1).
