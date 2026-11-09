@@ -480,6 +480,23 @@ measurements replace them.
    Include short template-versus-general trajectories for both velocity
    Verlet and leapfrog in NVE and in NPT with the barostat, with the same
    acceptance criteria. Leapfrog couples $\mathbf v_{n+1}$ in NPT.
+   The approved short comparison is 100 steps at 1 fs, sampled every
+   10 steps, for OPC/TIP3P, NVE/NPT and both integrators from identical
+   constrained states and seeds. Position, velocity and volume bounds
+   use $\max(3\epsilon_\mathrm{mixed},10^{-5}s)$, with the general
+   mixed/general-double difference as baseline. The scales are the
+   largest cell edge, $\max(1\ \mathrm{nm/ps},\max_i\lvert v_i\rvert)$,
+   and the general-double volume. Fresh same-frame physical evaluations
+   keep the force, energy and virial bounds above unchanged.
+   Production NVE drift uses ubiquitin with OPC and TIP3P, mixed, 2 fs,
+   1 ns, template versus general mixed for each integrator. Fit conserved
+   energy versus time and divide its slope by the degrees of freedom;
+   require $\lvert d_\mathrm t\rvert\le
+   \max(2\lvert d_\mathrm{mixed}\rvert,5\times10^{-4})$ in
+   kJ/mol/ns per degree of freedom. Report energy fluctuation and maximum
+   relative squared-bond residual. Report NPT mean and fluctuation of
+   volume and pressure separately, without instantaneous or atomic
+   equality along different trajectories.
 6. **Timings** against `main` with the groups on one kind of device:
    #738's boxes, ubiquitin, and the Amber suite, where no system may be
    slower under `AUTO`.
@@ -1024,6 +1041,25 @@ in one water reporting a count of two. The same 20 device-free lowerings
 and the structural ordering checks passed. The new fixture initially
 needed explicit tool paths from lit; its single affected rerun passed.
 No existing numerical comparison was retried.
+
+The first approved short trajectory stopped at step 10 of OPC leapfrog
+NPT on RTX 5090. The template's maximum velocity difference from general
+double was $0.077423795223588388$ nm/ps and RMS
+$0.029671181280507719$, both above the unchanged short-trajectory bound
+$1.9378578682114735\times10^{-5}$. The general-mixed baseline was
+$4.45384523073411\times10^{-6}$ maximum and
+$1.1859527987351613\times10^{-6}$ RMS. At zero-based particle 2,
+x velocity, template reported $0.14639574733540228$ versus general double
+$0.22381954255899067$ nm/ps. All three stored velocity offsets were
+$-0.5$ step. Position maximum/RMS differences were
+$2.5018192850723153\times10^{-8}$/$8.9255992957879745\times10^{-9}$ nm,
+below $4.0001617319761775\times10^{-5}$; volume difference
+$2.6898305804934353\times10^{-10}$ was below
+$0.000640077634487475$ nm$^3$. Exact positions, velocities and cells
+were retained. The serial matrix stopped with one failure and seven
+skipped cases; it did not reach a fresh same-frame physical evaluation.
+No trajectory rerun or production drift run followed. The cause remains
+to be diagnosed under the numerical stop rule.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
