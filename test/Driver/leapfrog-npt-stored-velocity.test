@@ -4,4 +4,4 @@
 # RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/verlet.npz --integrator VelocityVerlet
 # RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/leapfrog.npz
 # RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py check %S/Inputs %t/leapfrog.npz --base %t/verlet.npz --reference-integrator VelocityVerlet | FileCheck %s
-# CHECK: Double Trotter: main/oracle passed
+# CHECK: Double Trotter: reference/oracle passed

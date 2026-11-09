@@ -5,11 +5,14 @@ the independent step oracle, as in leapfrog_langevin_reference.py; force
 evaluation itself is not the subject of this storage-contract check.
 """
 import argparse
+import os
 from pathlib import Path
+import subprocess
+import sys
 import numpy as np
 
 p=argparse.ArgumentParser()
-p.add_argument('mode',choices=['collect','check'])
+p.add_argument('mode',choices=['collect','check','compare'])
 p.add_argument('inputs',type=Path)
 p.add_argument('output',type=Path)
 p.add_argument('--target',choices=['CPU','GPU'],default='CPU')
@@ -18,6 +21,8 @@ p.add_argument('--work',choices=['Trotter','TrotterFirstOrder','Exact','FirstOrd
 p.add_argument('--base',type=Path)
 p.add_argument('--integrator',choices=['Leapfrog','VelocityVerlet'],default='Leapfrog')
 p.add_argument('--reference-integrator',choices=['Leapfrog','VelocityVerlet'],default='Leapfrog')
+p.add_argument('--base-module',type=Path)
+p.add_argument('--branch-module',type=Path)
 a=p.parse_args()
 DT=.002
 BOUND={'Double':(1e-11,1e-9,1e-10),'Mixed':(1e-7,1e-4,1e-5)}[a.precision]
@@ -81,7 +86,16 @@ def normalized_rate(x,v,cell):
 def full(x,v,f,cell):
     return project(x,v+.5*DT*f*inverse[:,None],cell)
 
-if a.mode=='collect':
+if a.mode=='compare':
+    assert a.base_module is not None and a.branch_module is not None
+    a.output.mkdir(parents=True,exist_ok=True)
+    common=['--target',a.target,'--precision',a.precision,'--work',a.work]
+    for name,module in [('main',a.base_module),('branch',a.branch_module)]:
+        env=dict(os.environ);env['PYTHONPATH']=str(module)
+        subprocess.run([sys.executable,__file__,'collect',str(a.inputs),str(a.output/(name+'.npz')),*common],env=env,check=True)
+    subprocess.run([sys.executable,__file__,'check',str(a.inputs),str(a.output/'branch.npz'),
+                    '--base',str(a.output/'main.npz'),*common],check=True)
+elif a.mode=='collect':
     import mdir
     loaded=mdir.load_amber(str(a.inputs/'dipeptide/dipeptide.prmtop'),str(a.inputs/'dipeptide/dipeptide.inpcrd'))
     system,state=loaded.make_system(),loaded.make_state()
@@ -119,7 +133,7 @@ else:
         base_full=full(bx,bv,bf,bc) if a.reference_integrator=='Leapfrog' else project(bx,bv,bc)
         dv=float(np.max(np.abs(full(x,v,f,cell)-base_full)))
         largest_x=max(largest_x,dx,dc);largest_v=max(largest_v,dv)
-        print(f'{step}: main position {dx:.17g} cell {dc:.17g}; projected full velocity {dv:.17g}',flush=True)
+        print(f'{step}: reference position {dx:.17g} cell {dc:.17g}; projected full velocity {dv:.17g}',flush=True)
         assert max(dx,dc)<=BOUND[0] and dv<=BOUND[1],('trajectory changed beyond rounding',step,dx,dc,dv,BOUND)
         if step in [10,20]:
             expected=project(bx,bv,bc) if a.reference_integrator=='Leapfrog' else project(bx,bv-.5*DT*bf*inverse[:,None],bc)
@@ -138,4 +152,4 @@ else:
             largest_step=max(largest_step,dx_ref)
             print(f'{step}: independent SHAKE step position {dx_ref:.17g}; full velocity {dv_ref:.17g}',flush=True)
             assert dx_ref<=BOUND[0] and dv_ref<=BOUND[1],('independent step failed',step,dx_ref,dv_ref,BOUND)
-    print(f'{a.precision} {a.work}: main/oracle passed; maximum x {largest_x:.3e}, full v {largest_v:.3e}, storage {largest_projection:.3e}, bond rate {largest_rate:.3e}, independent step x {largest_step:.3e}',flush=True)
+    print(f'{a.precision} {a.work}: reference/oracle passed; maximum x {largest_x:.3e}, full v {largest_v:.3e}, storage {largest_projection:.3e}, bond rate {largest_rate:.3e}, independent step x {largest_step:.3e}',flush=True)

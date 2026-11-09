@@ -1,0 +1,7 @@
+# REQUIRES: python-api, hdf5
+# Same predeclared bounds and independent SHAKE/RATTLE oracle.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/verlet.npz --integrator VelocityVerlet --target CPU --precision Mixed
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py collect %S/Inputs %t/leapfrog.npz --target CPU --precision Mixed
+# RUN: %mdir_python %S/Inputs/leapfrog_npt_storage.py check %S/Inputs %t/leapfrog.npz --base %t/verlet.npz --reference-integrator VelocityVerlet --target CPU --precision Mixed | FileCheck %s
+# CHECK: Mixed Trotter: reference/oracle passed

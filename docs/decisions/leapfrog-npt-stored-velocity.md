@@ -75,3 +75,20 @@ stored-velocity oracle difference $4.724082236506888\times10^{-12}$ nm/ps,
 and normalized bond velocity residual
 $1.1002474477654185\times10^{-15}$ nm/ps. The independent SHAKE step
 position difference was $7.1054273576010019\times10^{-15}$ nm.
+
+The first CPU double comparison against archived main at 97329f6f passed:
+maximum position difference $1.5765166949677223\times10^{-14}$ nm,
+projected full-step velocity difference $2.1911361614002089\times10^{-12}$
+nm/ps, stored projection difference $1.9674262219382399\times10^{-12}$
+nm/ps and normalized bond velocity residual
+$1.1002474477654185\times10^{-15}$ nm/ps.
+
+The first CPU mixed comparison against that same archived main stopped at
+step 21: position difference $1.0492913204984688\times10^{-7}$ nm exceeds
+the declared $10^{-7}$ nm bound. At zero-based particle 606, x component,
+the branch position is $2.290540280174774$ nm against main's
+$2.290540175245642$ nm. Cell difference
+$1.3880629978757497\times10^{-10}$ nm and projected full-step velocity
+difference $1.2362750595046323\times10^{-5}$ nm/ps remain below their
+respective bounds. No rerun, threshold change or correction followed.
+The GPU, existing leapfrog regression and full-suite gates remain unrun.
