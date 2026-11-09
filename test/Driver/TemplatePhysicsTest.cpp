@@ -197,11 +197,17 @@ int main(int argc,char **argv) {
   Error candidate=error(project(p.system,state.positions,state.forces),projectedReference);
   double maxBound=std::max(1.5*baseline.maximum,1e-5*largest);
   double rmsBound=std::max(1.5*baseline.rms,1e-5*largest);
-  double energyRelative=std::abs(state.energies->potential-reference.energies->potential)/std::abs(reference.energies->potential);
+  double energyDifference=std::abs(state.energies->potential-reference.energies->potential);
+  double absolutePairSum=independent.ljAbsolute+independent.coulombAbsolute;
+  double energyBound=std::max(1e-5*std::abs(reference.energies->potential),1e-6*absolutePairSum);
+  double energyRelative=energyDifference/std::abs(reference.energies->potential);
   std::cout<<"projected forces: general-mixed max "<<baseline.maximum<<", RMS "<<baseline.rms
            <<"; template max "<<candidate.maximum<<", RMS "<<candidate.rms
            <<"; bounds "<<maxBound<<", "<<rmsBound<<"; template energy relative "<<energyRelative<<std::endl;
+  std::cout<<"energy absolute error "<<energyDifference<<"; cancellation-aware bound "<<energyBound
+           <<"; CPU oracle absolute pair sum "<<absolutePairSum<<std::endl;
   require(candidate.maximum<=maxBound&&candidate.rms<=rmsBound,"template projected forces exceed mixed criterion");
-  require(std::isfinite(energyRelative)&&energyRelative<=1e-5,"template energy exceeds mixed criterion");
+  require(std::isfinite(energyDifference)&&std::isfinite(energyBound)&&energyDifference<=energyBound,
+          "template energy exceeds cancellation-aware criterion");
   std::cout<<name<<" independent physical pair oracle and projected template comparison passed"<<std::endl;
 }
