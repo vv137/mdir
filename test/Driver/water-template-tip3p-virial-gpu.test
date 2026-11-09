@@ -1,0 +1,14 @@
+# REQUIRES: cuda
+# Three-site molecular virials, first water-only and then all three classes.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_tip3p.py %S/Inputs/triclinic %t
+# RUN: mdir-template-physics-test %t/control.toml TIP3P-VIRIAL | tee %t/water-metrics.txt | FileCheck %s --check-prefix=WATER
+# RUN: %python %S/Inputs/water_template_tip3p.py %S/Inputs/triclinic %t --solutes
+# RUN: mdir-template-physics-test %t/control.toml TIP3P-SOLUTES-VIRIAL | tee %t/solute-metrics.txt | FileCheck %s --check-prefix=SOLUTE
+# WATER: scalar molecular virials:
+# WATER: atomic diagnostics:
+# WATER: TIP3P physical molecular virial passed
+# SOLUTE: CPU oracle class pair counts: WW 27; SW 18; SS 1
+# SOLUTE: scalar molecular virials:
+# SOLUTE: atomic diagnostics:
+# SOLUTE: TIP3P+solutes physical molecular virial passed

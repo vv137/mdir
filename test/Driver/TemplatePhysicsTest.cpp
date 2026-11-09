@@ -240,11 +240,12 @@ static uint64_t bits(double value) {
   return result;
 }
 int main(int argc,char **argv) {
-  bool withSolutes=argc==3&&std::strcmp(argv[2],"TIP3P-SOLUTES")==0;
-  bool virialCheck=argc==3&&std::strcmp(argv[2],"OPC-VIRIAL")==0;
-  require(argc==2||(argc==3&&(std::strcmp(argv[2],"TIP3P")==0||withSolutes||virialCheck)),
-          "expected control file and optional TIP3P, TIP3P-SOLUTES or OPC-VIRIAL");
-  bool threeSite=argc==3&&!virialCheck;
+  std::string mode=argc==3?argv[2]:"OPC";
+  bool withSolutes=mode=="TIP3P-SOLUTES"||mode=="TIP3P-SOLUTES-VIRIAL";
+  bool virialCheck=mode=="OPC-VIRIAL"||mode=="TIP3P-VIRIAL"||mode=="TIP3P-SOLUTES-VIRIAL";
+  require((argc==2||argc==3)&&(mode=="OPC"||mode=="TIP3P"||withSolutes||virialCheck),
+          "expected control file and OPC, TIP3P or TIP3P-SOLUTES, optionally suffixed -VIRIAL");
+  bool threeSite=mode.find("TIP3P")==0;
   const char *name=withSolutes?"TIP3P+solutes":threeSite?"TIP3P":"OPC";
   llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
   model::PreparedModel p;
@@ -362,7 +363,7 @@ int main(int argc,char **argv) {
              <<"; mixed difference "<<mixedDifference<<"; template difference "<<difference<<"; bound "<<bound<<std::endl;
     require(std::isfinite(oracleDifference)&&oracleDifference<=oracleBound,"general double differs from molecular-virial oracle");
     require(std::isfinite(difference)&&std::isfinite(bound)&&difference<=bound,"template molecular virial exceeds approved criterion");
-    std::cout<<"OPC physical molecular virial passed"<<std::endl;
+    std::cout<<name<<" physical molecular virial passed"<<std::endl;
   }
   std::cout<<name<<" independent physical pair oracle and projected template comparison passed"<<std::endl;
 }
