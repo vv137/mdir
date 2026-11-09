@@ -984,6 +984,16 @@ $-195.00577757087518$, and $2K_\mathrm{internal}$ is
 $0.20815643803165473$ kJ/mol. This corrects only the new fixture's
 convention; it changes neither production arithmetic nor either bound.
 
+The all-class native epoch fixture adds two translating solutes to the
+quadratic water fixture. WW, SW and SS contributions are present in all
+seven phases: initial build, two small motions at the pruning threshold,
+larger motion requiring a build, full winding, cell expansion and cell
+restoration. Independent rational all-image sums agree bitwise in both
+rectangular and tilted cells (14 energies, bound zero), on the first
+RTX 5090 execution. This exercises generated search, pruning and immediate
+consumption rather than seeded work records. It checks cell changes but
+does not replace the physical barostat and long-trajectory gates.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the
