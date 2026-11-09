@@ -6160,6 +6160,9 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
     Value host = memref::AllocaOp::create(cold, loc,
         MemRefType::get({4}, cold.getI64Type()));
     createTransfer(cold, loc, host, counters);
+    Value notNumbers = memref::LoadOp::create(cold, loc, host,
+        ValueRange{ix(cold, TEMPLATE_COUNTER_FLAGS)});
+    emitStopNotNumbers(cold, loc, notNumbers);
     Value extentBits = memref::LoadOp::create(cold, loc, host,
         ValueRange{ix(cold, TEMPLATE_COUNTER_EXTENT)});
     Value squared = arith::BitcastOp::create(cold, loc, cold.getF64Type(), extentBits);

@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/template_not_numbers_matrix.py %t --printer mdir-opt --mlir-opt mlir-opt --runner mlir-runner --lower='%lower_gpu_to_llvm' --libs='%mlir_c_runner_utils,%mdrt,%mdrt_cuda' | FileCheck %s
+# CHECK: cold/two-hydrogens/nan: named D107 stop, count 2
+# CHECK: writer/two-hydrogens/nan: named D107 stop, count 2
+# CHECK: D107 template matrix: 20 named stops passed

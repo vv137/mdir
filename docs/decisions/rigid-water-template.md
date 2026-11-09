@@ -477,6 +477,9 @@ measurements replace them.
 5. **Stability over many steps.** NVE energy drift against `main` at the
    same settings; the constraint residuals; the virial and the pressure;
    NPT run and reported separately from NVT and NVE.
+   Include short template-versus-general trajectories for both velocity
+   Verlet and leapfrog in NVE and in NPT with the barostat, with the same
+   acceptance criteria. Leapfrog couples $\mathbf v_{n+1}$ in NPT.
 6. **Timings** against `main` with the groups on one kind of device:
    #738's boxes, ubiquitin, and the Amber suite, where no system may be
    slower under `AUTO`.
@@ -1008,6 +1011,19 @@ general-mixed differences are $0.00036740053724315658$ and
 $0.00039198553221808652$ kJ/mol. All three pair classes occur in the
 solute case. Both fixtures retain the atomic diagnostics and exact bits;
 neither changes a bound or production arithmetic.
+
+The new snapshot path enforces D107 before packing any real O/H/H or
+solute position: NaN, infinity and magnitudes beyond $10^{100}$ are
+counted per particle, and preparation of the invalid unit is skipped.
+The host consumes that count from the existing snapshot control packet
+and calls the existing named stop before spatial ordering. Search later
+reuses the same packet word for its flags; the published arena ABI and
+ordinary builders are unchanged. All 20 poisoned cold-build/post-writer
+cases passed their first RTX 5090 execution, including two bad hydrogens
+in one water reporting a count of two. The same 20 device-free lowerings
+and the structural ordering checks passed. The new fixture initially
+needed explicit tool paths from lit; its single affected rerun passed.
+No existing numerical comparison was retried.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
