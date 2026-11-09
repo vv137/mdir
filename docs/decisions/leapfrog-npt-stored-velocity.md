@@ -140,5 +140,13 @@ with the same fixed perturbation and sample steps as on CPU.
 The focused CPU regressions passed 5/5 and RTX 5090 regressions passed
 4/4, including the existing constraint, Langevin-reference and energy-step
 tests and the new double/mixed storage fixtures. No GPU numerical failure
-or retry occurred. Sanitizer and final clean-head full-suite results remain
-pending.
+or retry occurred.
+
+The additional focused sanitizer check stopped before its first fixture
+output: memcheck's host LLVM workers remained active for over 20 minutes,
+while the ordinary GPU acquisition completed in under a minute. The run
+was canceled without a retry. No sanitizer summary or numerical comparison
+was produced, so this is an incomplete validation, not a sanitizer pass
+or an established numerical mismatch. The remaining sanitizer tools and
+the final clean-head full suite have not run. Source-only diagnosis of
+this host-compilation hang is proposed before another validation run.
