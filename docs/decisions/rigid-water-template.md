@@ -994,6 +994,21 @@ RTX 5090 execution. This exercises generated search, pruning and immediate
 consumption rather than seeded work records. It checks cell changes but
 does not replace the physical barostat and long-trajectory gates.
 
+The same approved molecular-virial fixture also passed its first TIP3P
+water-only and TIP3P-plus-solutes executions on RTX 5090. Their CPU
+molecular references are $92.427540176839841$ and
+$-31.93733989739232$ kJ/mol. General-double differences are
+$9.0381035988684744\times10^{-12}$ and
+$3.6726532925968058\times10^{-10}$, below the respective oracle bounds
+$9.2427540176839847\times10^{-9}$ and
+$3.1937339897392322\times10^{-9}$. Template/general-double differences
+are $0.00017925847600963607$ and $0.00073529103738678714$, below
+$0.0039424069241047795$ and $0.0070071929698018436$ kJ/mol. The
+general-mixed differences are $0.00036740053724315658$ and
+$0.00039198553221808652$ kJ/mol. All three pair classes occur in the
+solute case. Both fixtures retain the atomic diagnostics and exact bits;
+neither changes a bound or production arithmetic.
+
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
 runtime records and force buffers belong to that observation; the
