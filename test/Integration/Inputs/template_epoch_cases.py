@@ -30,26 +30,52 @@ def replace(old, new):
     s = s.replace(old, new)
 
 replace('md.particle_set @atoms', '''md.particle_set @atoms
-memref.global "private" constant @constraint : memref<3xi32> = dense<[0, 1, 2]>''')
-replace('func.func @evaluate(%types:', 'func.func @evaluate(%constraint: memref<?xi32, 1>, %types:')
+memref.global "private" constant @constraint : memref<1x3xi32> = dense<[[0, 1, 2]]>''')
+replace('func.func @evaluate(%types:', 'func.func @evaluate(%constraint: memref<?x3xi32>, %types:')
 replace('  %parts = arith.constant 1024 : index', '''  %parts = arith.constant 1024 : index
-  %three = arith.constant 3 : index
-  %constraint = gpu.alloc(%three) : memref<?xi32, 1>
-  %constraint_host = memref.get_global @constraint : memref<3xi32>
-  %constraint_view = memref.cast %constraint_host : memref<3xi32> to memref<?xi32>
-  %constraint_ready = gpu.wait async
-  %constraint_copy = gpu.memcpy async [%constraint_ready] %constraint, %constraint_view : memref<?xi32, 1>, memref<?xi32>
-  gpu.wait [%constraint_copy]''')
+  %constraint_host = memref.get_global @constraint : memref<1x3xi32>
+  %constraint = memref.cast %constraint_host : memref<1x3xi32> to memref<?x3xi32>''')
 replace('func.call @evaluate(%types,', 'func.call @evaluate(%constraint, %types,')
 replace('      : (memref<?xi32, 1>, memref<?x4xi32>,',
-        '      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?x4xi32>,')
+        '      : (memref<?x3xi32>, memref<?xi32, 1>, memref<?x4xi32>,')
 mark = ' {md.template_constraint_epoch}' if a.case != 'initial-fresh' else ''
-event = '''  md_exec.tuple_for %constraint, %x, %cell1 coordinates(displacement(1, 0))
-      ins(%x : memref<?x3xf64, 1>) outs(%x : memref<?x3xf64, 1>)
-      arity(3) overwrite [true] disjoint {
-  ^bb0(%d: vector<3xf64>, %p0: vector<3xf64>, %p1: vector<3xf64>, %p2: vector<3xf64>):
-    md_exec.yield %p0, %p1, %p2 : vector<3xf64>, vector<3xf64>, vector<3xf64>
+event = '''  %identity_c0 = arith.constant 0 : index
+  %identity_c1 = arith.constant 1 : index
+  %identity_c3 = arith.constant 3 : index
+  %identity_c16 = arith.constant 16 : index
+  %identity_n = memref.dim %x, %identity_c0 : memref<?x3xf64, 1>
+  %identity_size = arith.cmpi eq, %identity_n, %identity_c16 : index
+  cf.assert %identity_size, "identity fixture must check all 48 position components"
+  %constraint_rows = md_exec.build_incidence %constraint size(%identity_n)
+      : memref<?x3xi32> -> memref<?xi32, 1>
+  %identity_before = memref.alloc(%identity_n) : memref<?x3xf64>
+  %identity_after = memref.alloc(%identity_n) : memref<?x3xf64>
+  %identity_ready_before = gpu.wait async
+  %identity_copy_before = gpu.memcpy async [%identity_ready_before] %identity_before, %x
+      : memref<?x3xf64>, memref<?x3xf64, 1>
+  gpu.wait [%identity_copy_before]
+  md_exec.tuple_for %constraint_rows, %x, %cell1 coordinates(displacement(1, 0))
+      outs(%x : memref<?x3xf64, 1>) arity(3) overwrite [false] disjoint {
+  ^bb0(%d: vector<3xf64>):
+    %correction = arith.subf %d, %d : vector<3xf64>
+    md_exec.yield %correction, %correction, %correction : vector<3xf64>, vector<3xf64>, vector<3xf64>
   }''' + mark + ''' : memref<?xi32, 1>, memref<?x3xf64, 1>
+  %identity_ready_after = gpu.wait async
+  %identity_copy_after = gpu.memcpy async [%identity_ready_after] %identity_after, %x
+      : memref<?x3xf64>, memref<?x3xf64, 1>
+  gpu.wait [%identity_copy_after]
+  scf.for %identity_i = %identity_c0 to %identity_n step %identity_c1 {
+    scf.for %identity_j = %identity_c0 to %identity_c3 step %identity_c1 {
+      %identity_a = memref.load %identity_before[%identity_i, %identity_j] : memref<?x3xf64>
+      %identity_b = memref.load %identity_after[%identity_i, %identity_j] : memref<?x3xf64>
+      %identity_a_bits = arith.bitcast %identity_a : f64 to i64
+      %identity_b_bits = arith.bitcast %identity_b : f64 to i64
+      %identity_same = arith.cmpi eq, %identity_a_bits, %identity_b_bits : i64
+      cf.assert %identity_same, "identity tuple event changed a position component"
+    }
+  }
+  memref.dealloc %identity_before : memref<?x3xf64>
+  memref.dealloc %identity_after : memref<?x3xf64>
   %fresh = md_exec.empty_segmented_pairs %types, %members
       cutoff(1.0) skin(0.2) extent(0.2) alpha(0.75)
       : memref<?xi32, 1>, memref<?x4xi32> -> !list

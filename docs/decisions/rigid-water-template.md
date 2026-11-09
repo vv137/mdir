@@ -803,8 +803,23 @@ hazards and all 49 values unchanged, holding the device for about twelve
 seconds. No numerical bound, pair arithmetic or shared helper changed.
 Six native schedule lowering audits also pass: NVE plus leapfrog and
 velocity-Verlet variants of isotropic, semi-isotropic, anisotropic and
-first-order pressure updates. Constraint-history refusal coverage and the
+first-order pressure updates. Additional boundary coverage and the
 physical-system/end-to-end gates remain required.
+
+The fresh-list constraint-history fixture covers unmarked initial-input
+widening, marked geometry within the declared extent in a tilted cell,
+and marked excessive extent after a fresh list. Its first comparison
+stopped numerically: the fixture had supplied a three-integer member list
+where a CSR incidence structure was required, and its overwriting tuple
+loop zeroed particles outside the tuple. The approved fixture-only
+correction uses `md_exec.build_incidence` at the actual particle count,
+accumulates zero corrections, and checks all 48 position components
+bitwise before the fresh constructor. The single controlled corrected
+execution passes fourteen oracle energies bitwise, all 144 position
+checks, and the named post-constraint extent refusal. The oracle, bound
+zero and all production code remain unchanged. The refusal fixture
+captures unbuffered stdout as well as stderr because `cf.assert` lowers
+to `puts` followed by `abort`.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
