@@ -3,6 +3,7 @@
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Runtime/TemplateMembership.h"
 #include "mdir/Runtime/TemplateExclusions.h"
+#include <math.h>
 
 struct TemplatePairs {
   struct MdrtTemplatePairLayout layout;
@@ -14,6 +15,104 @@ struct TemplatePairs {
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
 };
+
+/* Approved acquisition only, reached immediately before an unchanged
+ * template extent assertion. Never runs on the successful path. */
+void _mlir_ciface_mdrtTemplateExtentDiagnostic(
+    int64_t handle, struct Buffer2 *positions, struct Buffer1 *cell,
+    int64_t phase, int64_t constrained, int64_t built,
+    double nominal, double alpha, double measuredSquared) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  int64_t n = positions->sizes[0], w = pairs->layout.waters;
+  int64_t span = n ? (n - 1) * positions->strides[0] +
+                         2 * positions->strides[1] + 1 : 0;
+  double *raw = malloc((size_t)(span ? span : 1) * sizeof(double));
+  double *x = malloc((size_t)(n ? 3 * n : 1) * sizeof(double));
+  int32_t *members = malloc((size_t)(w ? 3 * w : 1) * sizeof(int32_t));
+  if (!raw || !x || !members) {
+    fprintf(stderr, "mdrt: extent diagnostic host allocation failed\n");
+    free(raw); free(x); free(members); return;
+  }
+  check(cuCtxSynchronize(), "extent diagnostic synchronize");
+  if (span) check(cuMemcpyDtoH(raw,
+      (CUdeviceptr)((double *)positions->aligned + positions->offset),
+      (size_t)span * sizeof(double)), "extent diagnostic positions");
+  if (w) check(cuMemcpyDtoH(members,
+      (CUdeviceptr)((int32_t *)pairs->metadata +
+                   pairs->metadataOffsets[TEMPLATE_MEMBERS]),
+      (size_t)(3 * w) * sizeof(int32_t)), "extent diagnostic membership");
+  for (int64_t i = 0; i < n; ++i)
+    for (int axis = 0; axis != 3; ++axis)
+      x[3 * i + axis] = raw[i * positions->strides[0] +
+                                axis * positions->strides[1]];
+  double h[6];
+  for (int axis = 0; axis != 6; ++axis)
+    h[axis] = ((double *)cell->aligned)[cell->offset + axis * cell->stride];
+  double maximum = -1, worstOH[2] = {0, 0}, worstHH = 0;
+  int64_t worst = -1;
+  for (int64_t i = 0; i < w; ++i) {
+    double d[2][3], squared[2] = {0, 0};
+    for (int site = 0; site != 2; ++site) {
+      for (int axis = 0; axis != 3; ++axis)
+        d[site][axis] = x[3 * members[3 * i + site + 1] + axis] -
+                        x[3 * members[3 * i] + axis];
+      /* Same upper-triangular lattice convention, independently evaluated
+       * on the acquired f64 coordinates. The present case is orthorhombic. */
+      double z = nearbyint(d[site][2] / h[2]);
+      d[site][2] -= z * h[2]; d[site][1] -= z * h[5]; d[site][0] -= z * h[4];
+      double y = nearbyint(d[site][1] / h[1]);
+      d[site][1] -= y * h[1]; d[site][0] -= y * h[3];
+      d[site][0] -= nearbyint(d[site][0] / h[0]) * h[0];
+      for (int axis = 0; axis != 3; ++axis)
+        squared[site] += d[site][axis] * d[site][axis];
+    }
+    double extent = fmax(squared[0], squared[1]);
+    if (alpha > 0.5) {
+      double siteSquared = 0;
+      for (int axis = 0; axis != 3; ++axis) {
+        double v = alpha * (d[0][axis] + d[1][axis]); siteSquared += v * v;
+      }
+      extent = fmax(extent, siteSquared);
+    }
+    if (!isfinite(extent) || extent > maximum) {
+      maximum = extent; worst = i;
+      worstOH[0] = squared[0]; worstOH[1] = squared[1]; worstHH = 0;
+      for (int axis = 0; axis != 3; ++axis) {
+        double v = d[1][axis] - d[0][axis]; worstHH += v * v;
+      }
+    }
+  }
+  fprintf(stderr, "template extent diagnostic phase=%lld history=%lld built=%lld "
+      "measured_squared=%.17g nominal=%.17g maximum=%.17g maximum_squared=%.17g "
+      "excess=%.17g alpha=%.17g water=%lld OH_squared=%.17g,%.17g HH_squared=%.17g\n",
+      (long long)phase, (long long)constrained, (long long)built,
+      measuredSquared, nominal, sqrt(maximum), maximum,
+      sqrt(maximum) - nominal, alpha, (long long)worst,
+      worstOH[0], worstOH[1], worstHH);
+  for (int axis = 0; axis != 6; ++axis)
+    fprintf(stderr, "template extent cell[%d]=%.17g (%a)\n", axis, h[axis], h[axis]);
+  if (worst >= 0)
+    for (int site = 0; site != 3; ++site) {
+      int32_t id = members[3 * worst + site];
+      for (int axis = 0; axis != 3; ++axis) {
+        double value = x[3 * id + axis]; uint64_t bits;
+        memcpy(&bits, &value, sizeof(bits));
+        fprintf(stderr, "template extent member[%d]=%d coordinate[%d]=%.17g bits=%016llx\n",
+            site, id, axis, value, (unsigned long long)bits);
+      }
+    }
+  FILE *file = fopen("template-extent-failure-frame.bin", "wb");
+  if (file) {
+    int64_t header[] = {n, w, phase, constrained, built};
+    double parameters[] = {nominal, alpha, measuredSquared};
+    fwrite("MDIREXT1", 1, 8, file); fwrite(header, sizeof(int64_t), 5, file);
+    fwrite(h, sizeof(double), 6, file); fwrite(parameters, sizeof(double), 3, file);
+    fwrite(x, sizeof(double), (size_t)(3 * n), file);
+    fwrite(members, sizeof(int32_t), (size_t)(3 * w), file);
+    fclose(file);
+  } else fprintf(stderr, "mdrt: could not retain extent diagnostic frame\n");
+  fflush(stderr); free(raw); free(x); free(members);
+}
 
 static void allocateTemplatePairs(struct TemplatePairs *pairs) {
   allocationTag = "template pairs: shared outer/inner WW/SW/SS";

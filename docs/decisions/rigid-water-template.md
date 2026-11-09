@@ -416,6 +416,17 @@ measurements replace them.
 
 ## Gates of the implementation
 
+The maintainer approved one failure-instrumented native checkpoint run to
+diagnose the extent stop. Only the false branches of the two existing
+extent checks acquire data: their phase, constraint history, built state,
+runtime cell, nominal bound, stopped positions and fixed water membership.
+The diagnostic prints the largest extent and the offending state-index
+members with exact coordinate bits, and retains the acquired frame as
+`template-extent-failure-frame.bin`. Both predicates and aborts remain
+unchanged; the successful path performs no diagnostic device work. The
+measured excess is reported against the constraint tolerance and expected
+f32/f64 rounding before any numerical correction or bound change.
+
 1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
    TIP3P and on #738's water boxes, against an f64 oracle and against
    `main` in double on the same frame, within `main` mixed's own error
