@@ -4,6 +4,7 @@
 // distance constraint gradients of each water, in the Euclidean metric.
 // It does not share the compiler's pair body, site emitter or list search.
 #include "mdir/Compiler/Simulation.h"
+#include "mdir/Support/PhysicalConstants.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
@@ -66,10 +67,10 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
   }
   std::set<std::pair<unsigned,unsigned>> excluded(t.exclusions.begin(),t.exclusions.end());
   Oracle result;
-  // docs/conventions.md, Section 1: the native-topology Coulomb input.
-  // The converted control-expression constant has more digits and would
-  // compare different inputs when a nearly canceled virial approaches zero.
-  const double coulomb=138.935457644;
+  // D394 and docs/conventions.md, Section 1: share the native-topology
+  // physical input, keeping the pair/image arithmetic independent. A
+  // different rounded input can dominate a nearly canceled virial.
+  const double coulomb=physical::coulomb;
   // Enumerate images independently, rather than choosing the list's image.
   for(unsigned i=0;i!=n;++i) for(unsigned j=i+1;j!=n;++j) {
     if(excluded.count({i,j})) continue;

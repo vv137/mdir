@@ -424,13 +424,16 @@ measurements replace them.
    virial is compared in D264's molecular convention, with the atomic
    total including constraint reaction retained as a diagnostic; with
    rule (B) the raw atom forces are compared as well.
-   The independent native-topology oracles use **138.935457644**
-   kJ nm mol⁻¹ e⁻² for the Coulomb constant, explicitly, as specified in
-   [conventions, Section 1](../conventions.md#1-units). Converting the
-   control-expression constant instead gives 138.93545764438196: its
-   extra digits change the input and can dominate a nearly canceled
-   molecular virial's net-relative bound. The fixture-only alignment
-   changes no comparison bound; unifying shared definitions is #805.
+   The independent native-topology oracles include
+   `include/mdir/Support/PhysicalConstants.h` and use its
+   `mdir::physical::coulomb`, the same physical input as the compiled
+   native route (D394, #805 part 1). Its SI/CODATA 2022 derivation and
+   compiler-rounded values are specified in
+   [conventions, Section 1](../conventions.md#1-units). Pair/image
+   enumeration, force arithmetic and the molecular virial remain
+   independently implemented. A separately rounded coefficient can
+   dominate a nearly canceled virial's net-relative bound; no comparison
+   bound changes when the fixture consumes the public header.
    Fresh comparisons record signed oracle/general-double values and
    exact bits, evaluated bounds, absolute contribution sums and term
    counts before assertions, including every force component.
