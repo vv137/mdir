@@ -2131,6 +2131,59 @@ llvm::Error Simulation::setReports(const Reports &given) {
   return llvm::Error::success();
 }
 
+llvm::Expected<std::vector<double>> Simulation::evaluateWrittenFrameForces() {
+  // The existing no-step evaluator owns the general potential and exact
+  // site transpose. A separate activation keeps reporting out of the
+  // suspended dynamics' state, tuple caches and allocation records.
+  struct RestoreOutput {
+    Output *output;
+    ~RestoreOutput() {
+      std::lock_guard<std::mutex> lock(getRunMutex());
+      setOutput(output);
+    }
+  } restore{output.get()};
+  if (!writtenForceEvaluator || writtenForceVersion != tunablesVersion) {
+    model::PreparedModel general = prepared;
+    general.control = compiled->control;
+    general.system = compiledSystem;
+    if (!general.tunables.empty())
+      if (llvm::Error error = model::applyTunables(general.tunables, tunableValues,
+                                                   general.control, general.system))
+        return std::move(error);
+    general.tunables.values = tunableValues;
+    // The execution choice applies to the dynamics. The ruling explicitly
+    // selects the general bisector evaluation for its written forces.
+    general.control.waterTemplate = WaterTemplateChoice::Off;
+    auto evaluator = Simulation::create(general, compiled->stats.bypassed == 0);
+    if (!evaluator) return evaluator.takeError();
+    writtenForceEvaluator = std::move(*evaluator);
+    writtenForceVersion = tunablesVersion;
+  }
+  Simulation &evaluator = *writtenForceEvaluator;
+  // Each observation takes the current step, including time-dependent
+  // terms. No frame activation carries the time of an earlier report.
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    evaluator.endActivation(Ended::UndoneFrame);
+    evaluator.step = step;
+    // This evaluator never advances dynamics or carries a half-step. Each
+    // observation is an initial no-step force evaluation, also for leapfrog.
+    evaluator.hasRun = false;
+    evaluator.system.positions = system.positions;
+    evaluator.system.velocities = system.velocities;
+    evaluator.setCell(getCell());
+    evaluator.hostCurrent = true;
+  }
+  if (llvm::Error error = evaluator.evaluate()) return std::move(error);
+  auto state = evaluator.getState();
+  if (!state) return state.takeError();
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    evaluator.endActivation(Ended::UndoneFrame);
+  }
+  return std::move(state->forces);
+}
+
 llvm::Error Simulation::writeStateFrame() {
   if (!reports.framesFromState() || !output->trajectory ||
       !output->trajectory->isExact())
@@ -2142,6 +2195,21 @@ llvm::Error Simulation::writeStateFrame() {
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  std::vector<double> writtenForces;
+  bool templateForces = reports.frameForces && llvm::any_of(compiled->program.tupleSets,
+      [](const auto &set) { return set.name == "template_water"; });
+  if (templateForces) {
+    {
+      std::lock_guard<std::mutex> lock(getRunMutex());
+      downloadState();
+      if (forces.size() != 3 * system.getNumParticles())
+        return simulationError("the state has no forces for its frame; this is "
+                               "a defect of mdir");
+    }
+    auto observed = evaluateWrittenFrameForces();
+    if (!observed) return observed.takeError();
+    writtenForces = std::move(*observed);
+  }
   std::lock_guard<std::mutex> lock(getRunMutex());
   downloadState();
   size_t count = system.getNumParticles();
@@ -2156,7 +2224,8 @@ llvm::Error Simulation::writeStateFrame() {
     extras.potential = output->lastEnergies.potential;
   extras.tunablesVersion = tunablesVersion;
   if (!writer.writeState(system.positions.data(), system.velocities.data(),
-                         forces.empty() ? nullptr : forces.data(), step,
+                         templateForces ? writtenForces.data()
+                                        : forces.empty() ? nullptr : forces.data(), step,
                          getTime(), extras))
     return simulationError(writer.getFailure());
   return llvm::Error::success();

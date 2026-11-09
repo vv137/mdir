@@ -1,3 +1,3 @@
 ### Added
 
-- Add the topology proof, execution-choice parser and structured image-aware window IR for the rigid-water template, including first force and virial rules and a per-site cutoff. Add whole-molecule packing, class-window fusion, persistent list state and a shared outer/inner allocation layout. GPU dispatch remains in implementation; ordinary execution is unchanged at this checkpoint (D[rigid-water-template], #774).
+- Add opt-in rigid-water template execution with a class-segmented pair list, whole-molecule packing and fused refresh checks; physical-system validation and automatic selection remain in progress. Written force frames use the general bisector transpose while preserving the forces carried by dynamics and checkpoints (D[rigid-water-template], #774).

@@ -78,6 +78,10 @@ add_llvm_executable(mdir-compile-test Driver/CompileTest.cpp)
 llvm_update_compile_flags(mdir-compile-test)
 target_link_libraries(mdir-compile-test PRIVATE MDIRCompiler)
 
+add_llvm_executable(mdir-template-report-test Driver/TemplateReportTest.cpp)
+llvm_update_compile_flags(mdir-template-report-test)
+target_link_libraries(mdir-template-report-test PRIVATE MDIRSimulation)
+
 add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
 llvm_update_compile_flags(mdir-jit-memory-test)
 target_compile_options(mdir-jit-memory-test PRIVATE -fexceptions)
@@ -93,6 +97,7 @@ set(MDIR_TEST_DEPENDS
   mdir-jit-memory-test
   mdir-compile-cache-test
   mdir-compile-test
+  mdir-template-report-test
   mdir-model-test
   mdir-dihedral-tunables-test
   mdir-output-rows-test

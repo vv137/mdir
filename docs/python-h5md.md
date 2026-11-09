@@ -42,7 +42,7 @@ for positions, cell in frames:             # one frame at a time
 | `file` | The name of the file; any extension. |
 | `period` | Steps between frames; the schedule of the other reporters (D207): a frame at every step that is a multiple of `period` after the step the reporter was added at. |
 | `positions` | `"f64"` (the default) or `"f32"`: the type of the positions in the file, and of the velocities and the forces if they are written. The positions of the state are f64 in the mixed and the double mode, so `"f64"` rounds nothing; `"f32"` holds the state rounded to the nearest f32, in half the space. |
-| `velocities`, `forces` | Whether the frames hold them: those of `state()` at the step of the frame. |
+| `velocities`, `forces` | Whether the frames hold them: those of `state()` at the step of the frame, except template dynamics' written forces as described below. |
 | `strings` | `"fixed"` (the default) or `"variable"`: the form of the `unit` attributes, strings of fixed length as the units module of H5MD prescribes, or of variable length ([Strings](#strings)). |
 
 - It is the trajectory of the simulation: a simulation takes one
@@ -58,6 +58,12 @@ for positions, cell in frames:             # one frame at a time
   program is compiled before the reporters are known, and its frame call
   carries the positions only. The cost is a part boundary and a copy of the
   state per frame (measured below).
+- With the rigid-water template kernel (D[rigid-water-template]), written
+  forces use rule (B), the general bisector transpose, in a separate
+  no-step evaluation at the same positions and cell. The carried forces
+  returned by `state()` and saved in checkpoints retain rule (A), the
+  constant transpose used by dynamics. Writing a force frame adds that
+  evaluation but does not replace the carried forces or advance the state.
 - Files are opened at the first `run`, backed up as the other outputs
   (`#name.n#`, D149), appended across `run` calls, and closed by
   `close_reporters()`.

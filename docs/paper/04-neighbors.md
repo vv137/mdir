@@ -902,6 +902,21 @@ RTX 5090 also passed an exact dyadic force/energy/virial oracle, with
 partial batches, exclusion masks and differing water orientations. This
 checks scheduling and cached geometry, not a physical-system trajectory.
 
+Terminology follows the [decision's glossary](../decisions/rigid-water-template.md#glossary).
+A **class-segmented pair list** is one buffer divided into WW, SW and SS
+**segments**, each with outer and inner ranges. A **unit** is a matched
+water with oxygen **anchor** and radius $r_\mathrm m$, or a solute
+particle with radius zero. Its **class** selects the computation; WW, SW
+and SS are **class pairs**. A **mobility group** shares a displacement
+test and refresh schedule: matched-water anchors or atoms. A **refresh**
+rebuilds or prunes the affected segments. The **template kernel** is the
+fused launch evaluating all three class pairs. The **extent** is the
+largest site distance from its anchor; the **covering bound** uses
+$R+2r_\mathrm m$ for WW and $R+r_\mathrm m$ for SW. **Rule (A)** is the
+extra point's constant transpose used by dynamics. Written forces use
+the general bisector transpose, rule (B), in a separate no-step
+evaluation; the carried state and checkpoint forces retain rule (A).
+
 In an aqueous system most pairs within $r_c$ are pairs of water sites:
 93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166
 waters), against 4.1% between solute and water and 2.3% within the
