@@ -506,8 +506,8 @@ Compatible template loops now fuse their three tagged bodies, preserving
 destination and reduction order. Template-list reuse makes initialization
 separate from refresh: the state is carried through nested step/output
 loops, while segments and fresh step loops reset it. Refresh declares two
-mobility-group references and outer/inner margins; its physical device
-implementation is still pending. Focused checks cover those reset
+mobility-group references and outer/inner margins, now connected to the
+native device owner. Focused checks cover those reset
 boundaries and the combined fusion, precision and storage pipeline.
 
 The isolated packing emitter adds the lattice shift to whole-molecule
@@ -587,8 +587,8 @@ blocks in the fused loop. An integer oracle independently concatenates
 rows for all three classes, including empty rows and a 65-entry row, with
 staging chunks supplied out of order. Its 1,182 exact checks include
 unchanged capacity tails. A separate seeded pair passes through compaction
-and production dispatch to the exact energy $1/4$. These remain isolated
-compaction tests until the actual spatial search and validity are wired.
+and production dispatch to the exact energy $1/4$. These are isolated
+compaction fixtures; the combined native checks are recorded below.
 
 The shared spatial-order emitter uses class-prefixed x-y serpentine
 columns, then z keys with fixed-unit-ID ties. Reference fractions wrap
@@ -599,7 +599,7 @@ padded order and inverse map untouched, while the search bins retain both
 groups' hybrid references. An independent lexicographic oracle checks
 996 integer values over all four group-activity combinations, including
 repeated-point ties and coordinates that round to the final bin edge.
-The production refresh that owns these bins is not yet connected.
+The native cold refresh owns these bins and their combined search.
 
 The search's append primitive ballot-compacts sparse candidate batches
 into chunks of 64, carrying a partial chunk across rounds. Concurrent
@@ -646,8 +646,8 @@ A complete-frame particle-writer emitter evaluates the original scalar
 body for O/H/H under one thread, loading all three members before storing
 any output. Its callback receives the final values for packing and
 validity without a cross-thread position read. Unmatched atoms and stored
-extra points retain their scalar updates. Native writer selection is not
-yet connected. Its first device validation reported 323 of 1,059 values
+extra points retain their scalar updates. The native owner selects the
+last position writer before a refresh. Its first device validation reported 323 of 1,059 values
 different from the exact dyadic oracle, with every decimal value equal
 to that oracle rounded to six significant digits. Work stopped, and the
 maintainer authorized a fixture-only change to exact-bit serialization
@@ -666,9 +666,9 @@ groups before rebuilding all classes; another overflow is fatal. Two
 independent coverage fixtures start undersized and require automatic
 growth, then exercise both single-group refreshes and retained inactive
 rows. Both cell types match all 1,979 expected unit/image memberships
-with zero missing pairs, extras or duplicates. The native refresh's
-selection by fused validity and its reference-epoch preparation remain
-to be connected; this is not a per-step rebuild policy.
+with zero missing pairs, extras or duplicates. The native refresh consumes
+the fused writer's group flags and prepares only stale outer epochs;
+this is not a per-step rebuild policy.
 
 Packing-cell coordinates are integer-valued f64 values chosen at the
 outer build. The retained-frame emitter reconstructs O/H/H and applies
@@ -684,16 +684,16 @@ have fixed f64 views independent of pair-arena capacity. The stored reach
 can retain the initial-input extent widening in the validity theorem.
 An isolated runtime fixture checks all seven views before and after pair
 growth: 180 bitwise f64 comparisons, the dimensions and a stable-address
-check. This establishes ownership and retained-frame arithmetic, not the
-native epoch updates or complete dynamics.
+check. Native epoch publication is also checked below; complete physical
+dynamics remains a separate gate.
 
 The cold snapshot emitter chooses packing cells and updates outer/current
 fractions only for requested mobility groups. It reconstructs independent
 hydrogen images before packing real sites; stored extra-point coordinates
 are never read. An unsigned maximum of nonnegative f64 extent bits records
 the measured squared extent, including the formed site where required.
-The owner must use that measurement for initial widening or a
-post-constraint check; those native policies remain to be connected.
+The native owner uses that measurement for initial widening or a
+post-constraint check.
 An independent rational-geometry oracle checks four activity phases for
 three-site and four-site water in both cell types. All 1,264 scalar bit
 patterns match exactly, including 3/4-weight formed-site extents, retained
@@ -703,9 +703,9 @@ The native template step marks its matched-water position-constraint
 operations with reserved provenance, `md.template_constraint_epoch`.
 Conversion, tuple fusion, destination merging and storage preserve it;
 ordinary gathers and ordinary native programs receive no marker. This
-gives the later runtime policy an explicit constraint event instead of
-inferring one from a tuple name. The function-level history that observes
-those events, including across a fresh list, remains to be connected.
+gives the runtime policy an explicit constraint event instead of
+inferring one from a tuple name. Function-level host history observes
+those events and is not reset by a fresh list.
 
 The validity emitters use a conservative lower bound on Cartesian cell
 deformation: the least edge ratio for rectangular cells, and the inverse
@@ -723,7 +723,7 @@ and other results stay below the mathematical norm bound and within
 and zero margins, both cells and an unwrapped whole-cell jump that must
 invalidate. Projection and squared-distance arithmetic have conservative
 rounding guards. These are validity-primitive checks, not physical force
-tolerances or completed native scheduling. The explicit-reach cold search
+tolerances or physical dynamics. The explicit-reach cold search
 also matches all 1,979 expected memberships in both cells exactly.
 
 The final-SSA writer callback now joins retained-frame packing, current
@@ -736,8 +736,10 @@ An isolated dyadic fixture passes 736 exact comparisons across both cell
 types, including independent hydrogen images, retained packing cells,
 outer/inner motion in both groups, untouched unbuilt state and the
 formed-site extent at alpha = 0.75. Geometry is serialized as integer
-bits from the start. Native writer selection and flag-event integration
-remain to be connected; this is not yet a physical-dynamics gate.
+bits from the start. The native owner connects this callback and shares
+one mapped-flag event with preceding constraint flags whose results are
+first consumed after the writer. The ordinary writer path is unchanged.
+This is not yet a physical-dynamics gate.
 
 The fixed-block pruning emitter intersects existing I masks with the
 current f64 covering predicate, compacts surviving entries within each
@@ -754,9 +756,34 @@ It checks sparse masks, two-batch blocks, empty and partial blocks,
 inactive retention, immutable outer records, stable compaction and
 immediate same-kernel consumption. The tilted-cell case also passes
 memcheck, initcheck, racecheck and synccheck with zero errors or hazards;
-the focused sanitizer run held the device for five seconds. The owner
-still must select pruning epochs and publish their references in the
-native force loop.
+the focused sanitizer run held the device for five seconds. The native
+force-loop prologue now publishes requested inner references, cells and
+reaches; its work loop prunes requested classes before evaluating them.
+
+The integrated native fixture joins cold refresh, capacity growth, the
+actual scalar particle writer, both validity epochs, fused pruning and
+source-derived formed-site energy. Four unconstrained waters have extent
+3/4 against the nominal 1/5: the nominal covering radius would miss an
+interacting pair, so the first evaluation requires widening. It also
+asserts automatic arena growth. Subsequent evaluations translate one
+water, wind it by a whole lattice vector, double the cell and restore it.
+An independent rational all-images oracle passes all fourteen energies
+bitwise in the two cell representations. The final class cells and actual
+reaches add 84 exact components, also serialized as integer bit patterns.
+
+The first native sanitizer fixture passed memcheck but stopped in
+initcheck on one uninitialized 32-byte control readback; its 49 saved
+values still matched exactly. The snapshot had initialized only the
+extent word before the owner copied all four controls. One correction
+initializes all four in the existing reset launch. The affected rerun
+passes memcheck, initcheck, racecheck and synccheck with zero errors or
+hazards and all 49 values unchanged, holding the device for about twelve
+seconds. No numerical bound, pair arithmetic or shared helper changed.
+Six native schedule lowering audits also pass: NVE plus leapfrog and
+velocity-Verlet variants of isotropic, semi-isotropic, anisotropic and
+first-order pressure updates. Constraint-history refusal coverage,
+written-frame bisector forces and the physical-system/end-to-end gates
+remain required.
 
 The execution-body emitter retains independent site guards and the actual
 scalar/derived expressions. A second test-only outliner checks this
@@ -765,8 +792,8 @@ the same predeclared bound as the semantic reduction. This remains an
 isolated body test, not physical-system or device-list validation.
 
 The current pair-arithmetic precision comparison is below. It describes
-the execution IR and isolated packing/scheduler emitters; complete device
-integration and measurements are still pending. Compile-time folding of
+the execution IR, packing/scheduler emitters and native epoch pipeline;
+physical-system and end-to-end measurements are still pending. Compile-time folding of
 water coefficients is the rounding difference accepted above, not f64
 per-pair device work.
 

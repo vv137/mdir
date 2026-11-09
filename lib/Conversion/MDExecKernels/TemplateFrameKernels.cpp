@@ -19,8 +19,11 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
   {
     OpBuilder at = OpBuilder::atBlockEnd(&clear.getBody().front());
     Value zero = arith::ConstantIntOp::create(at, loc, 0, 64);
-    memref::StoreOp::create(at, loc, zero, v.counters,
-                            ValueRange{ix(at, TEMPLATE_COUNTER_EXTENT)});
+    // The cold owner reads this whole four-word control packet before
+    // search. Initialize every copied byte, including its not-yet-used
+    // chunk/flag/entry fields; search will reset those fields again.
+    for (int64_t slot = 0; slot != 4; ++slot)
+      memref::StoreOp::create(at, loc, zero, v.counters, ValueRange{ix(at, slot)});
     gpu::TerminatorOp::create(at, loc);
   }
   Value units = arith::AddIOp::create(b, loc, v.waters, v.atoms);
