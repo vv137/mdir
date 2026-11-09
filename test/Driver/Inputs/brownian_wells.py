@@ -81,7 +81,7 @@ for line in open(log):
         if int(words[1]) >= 2000:
             energies.append(float(words[column]))
 kcal = 4.184
-kT = 0.0083144626181532 * temp
+kT = 0.0083144626181532403 * temp
 # k in kcal/mol/A^2 to kJ/mol/nm^2.
 a = k * kcal * 100 * dt / (mass * gamma)
 exact = 1.5 * n * kT / (1 - a / 2) / kcal

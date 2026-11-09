@@ -31,12 +31,12 @@
 # RUN: mdir checkpoint %t/end.h5 | FileCheck %s --check-prefix=CELL
 
 # CHECK:      MDIR:   Lennard-Jones               2915.050920
-# CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
+# CHECK-NEXT: MDIR:   Coulomb                    -3460.248851
 # CHECK-NEXT: MDIR:   bonds                        898.698404
 # CHECK-NEXT: MDIR:   angles                       226.926238
-# CHECK:      MDIR:   Coulomb excluded           29997.892113
+# CHECK:      MDIR:   Coulomb excluded           29997.892093
 # CHECK-NEXT: MDIR:   Coulomb reciprocal           252.948835
-# CHECK-NEXT: MDIR:   Coulomb self              -30754.902526
+# CHECK-NEXT: MDIR:   Coulomb self              -30754.902505
 # CHECK-NEXT: MDIR:   dispersion                   -31.808995
 # CELL: box:             2.6 2.6 1.83848 nm
 # CELL-NEXT: tilts:           0 1.3 1.3 nm (b_x, c_x, c_y)

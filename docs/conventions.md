@@ -48,8 +48,8 @@ independently rounded literals:
 | Quantity | Derivation | Native value | Control-file value |
 |---|---|---|---|
 | Coulomb $f$ | $N_A e^2/(4\pi\varepsilon_0)$, converted from J m/mol | 138.93545755023302 kJ nm mol⁻¹ e⁻² | 332.06371307417066 kcal Å mol⁻¹ e⁻² |
-| Molar thermal coefficient | $kN_A$, converted from J/(mol K) | 0.0083144626181532403 kJ mol⁻¹ K⁻¹ | Derived by division by 4.184 |
-| Pressure per kJ mol⁻¹ nm⁻³ | $(10^3/N_A)/10^{-27}/10^5$ | 16.605390671738466 bar | Derived by division by 1.01325 bar/atm |
+| Molar thermal coefficient | $kN_A$, converted from J/(mol K) | 0.0083144626181532403 kJ mol⁻¹ K⁻¹ | 0.0019872042586408316 kcal mol⁻¹ K⁻¹ |
+| Pressure per kJ mol⁻¹ nm⁻³ | $(10^3/N_A)/10^{-27}/10^5$ | 16.605390671738466 bar | 16.388246406847735 atm |
 | Mass-density coefficient | $10^{21}/N_A$, for molar mass in g/mol per nm³ | 0.0016605390671738467 g cm⁻³ | Same |
 
 Generalized-Born screening uses the same derived Coulomb and molar

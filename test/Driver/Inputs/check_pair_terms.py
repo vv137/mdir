@@ -51,7 +51,7 @@ vals = [float(lines[2 + i // 6][12 * (i % 6):12 * (i % 6) + 12]) for i in range(
 X = [vals[3 * i:3 * i + 3] for i in range(n)]
 box = [float(v) for v in [l for l in lines if l.strip()][-1].split()[:3]]
 cutoff = 9.0
-coulomb = 332.06371329919205
+coulomb = 332.06371307417066
 
 def residue(i):
     return max(r for r in range(len(residues)) if residues[r] <= i) + 1

@@ -24,7 +24,7 @@
 # MODULE-DAG:      md.lookup [[EPSILON]]{{\[}}[[TI]], [[TJ]]] : !md.table<2, f64, symmetric>, i32, i32 -> f64
 # MODULE:        md.sum_relation {{.*}} gather([[Q]] : !md.field<@atoms, f64>)
 # MODULE-NEXT:   ^bb0({{%[a-z0-9]+}}: f64, {{%[a-z0-9]+}}: vector<3xf64>, [[QI:%[a-z0-9]+]]: f64, [[QJ:%[a-z0-9]+]]: f64):
-# MODULE:          arith.constant 332.0637132991{{[0-9]*}} : f64
+# MODULE:          arith.constant 332.0637130741{{[0-9]*}} : f64
 # MODULE:          arith.mulf [[QI]], [[QJ]] : f64
 
 [input]

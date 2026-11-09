@@ -460,7 +460,7 @@ def constraints(o):
                                        mdir.Execution(), schedule))
     sim.run(0, energy=True)
     energies = sim.state().energies
-    engine = 2.0 * energies["kinetic"] / (0.0083144626181532 * energies["temperature"])
+    engine = 2.0 * energies["kinetic"] / (0.0083144626181532403 * energies["temperature"])
     assert abs(engine - dof) < 1e-6, (engine, dof)
     del sim
     print(f"constraints: {len(top.constraints)} bonds of hydrogen and "

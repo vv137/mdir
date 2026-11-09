@@ -40,7 +40,7 @@ vals = [float(lines[2 + i // 6][12 * (i % 6):12 * (i % 6) + 12]) for i in range(
 X = [vals[3 * i:3 * i + 3] for i in range(n)]
 box = [float(v) for v in [l for l in lines if l.strip()][-1].split()[:3]]
 
-f = 332.06371329919205
+f = 332.06371307417066
 rc = 9.0
 eps = float(sys.argv[3])
 krf = 1 / (2 * rc ** 3) if eps == 0 else (eps - 1) / ((2 * eps + 1) * rc ** 3)

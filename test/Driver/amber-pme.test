@@ -9,10 +9,10 @@
 
 # sander gives EEL = -4136.0005 kcal/mol: the direct sum, the reciprocal
 # sum, the self term, and the excluded pairs, but not the pairs three bonds
-# apart. MDIR gives, with the Coulomb constant of CODATA 2018, which is
+# apart. MDIR gives, with the SI/CODATA 2022 Coulomb constant, which is
 # larger by 1.0000346,
 #
-#   −3741.809551 + 69096.758451 + 280.458965 − 69771.551485 = −4136.14362,
+#   −3741.809549 + 69096.758404 + 280.458965 − 69771.551438 = −4136.143618,
 #
 # and sander times the ratio is −4136.14360. sander scales the influence
 # function by a factor that the aliasing of the B-splines sets

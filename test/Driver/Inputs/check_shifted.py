@@ -14,7 +14,7 @@ difference from the file, and whether it is within the tolerance.
 import math
 import sys
 
-COULOMB = 332.06371329919205  # kcal Å/(mol e²), CODATA 2018
+COULOMB = 332.06371307417066  # kcal Å/(mol e²), SI/CODATA 2022 reference input
 CUTOFF = 12.0
 
 

@@ -30,8 +30,8 @@ from mixture_reference import EDGE, read  # noqa: E402
 CUTOFF = 9.0
 TYPES = {"AR": (0.238465, 3.4, 0.25), "KR": (0.3253, 3.65, -0.25)}
 NBFIX = {("AR", "KR"): (0.2, 3.3)}
-# kcal Å mol^-1 e^-2: 138.935457644 kJ nm mol^-1 e^-2 of CODATA 2018.
-COULOMB = 138.935457644 * 10.0 / 4.184
+# kcal Å mol^-1 e^-2, the SI/CODATA 2022 control-unit reference input.
+COULOMB = 332.06371307417066
 
 
 def pair_parameters(a, b):

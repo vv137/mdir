@@ -27,22 +27,22 @@
 # RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nreaction_field_dielectric = 78.5/' %t/plain.toml > %t/stray.toml
 # RUN: not mdir check %t/stray.toml 2>&1 | FileCheck %s --check-prefix=STRAY
 
-# CHECK:      MDIR:   Coulomb                    -3130.389970
-# CHECK:      MDIR:   Coulomb excluded           10956.303882
-# CHECK:      MDIR:   Coulomb self              -11017.441847
+# CHECK:      MDIR:   Coulomb                    -3130.389968
+# CHECK:      MDIR:   Coulomb excluded           10956.303874
+# CHECK:      MDIR:   Coulomb self              -11017.441840
 
-# PYTHON:      Coulomb -3130.389970
-# PYTHON-NEXT: Coulomb excluded 10956.303882
-# PYTHON-NEXT: Coulomb self -11017.441847
+# PYTHON:      Coulomb -3130.389968
+# PYTHON-NEXT: Coulomb excluded 10956.303874
+# PYTHON-NEXT: Coulomb self -11017.441840
 # PYTHON-NEXT: forces against differences of the energy: ok
 
-# CONDUCTOR:      MDIR:   Coulomb                    -3131.239595
-# CONDUCTOR:      MDIR:   Coulomb excluded           11025.847183
-# CONDUCTOR:      MDIR:   Coulomb self              -11087.616636
+# CONDUCTOR:      MDIR:   Coulomb                    -3131.239593
+# CONDUCTOR:      MDIR:   Coulomb excluded           11025.847175
+# CONDUCTOR:      MDIR:   Coulomb self              -11087.616629
 
-# PYTHON-CONDUCTOR:      Coulomb -3131.239595
-# PYTHON-CONDUCTOR-NEXT: Coulomb excluded 11025.847183
-# PYTHON-CONDUCTOR-NEXT: Coulomb self -11087.616636
+# PYTHON-CONDUCTOR:      Coulomb -3131.239593
+# PYTHON-CONDUCTOR-NEXT: Coulomb excluded 11025.847175
+# PYTHON-CONDUCTOR-NEXT: Coulomb self -11087.616629
 # PYTHON-CONDUCTOR-NEXT: forces against differences of the energy: ok
 
 # MISSING: expected 'reaction_field_dielectric' with 'electrostatics = "REACTION_FIELD"': the relative permittivity beyond the cutoff, or 0 for a conductor

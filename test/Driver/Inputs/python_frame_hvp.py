@@ -33,7 +33,7 @@ import python_frame_product as base  # noqa: E402  (reads sys.argv as this scrip
 scenario = sys.argv[2]
 work = base.work
 double, mode = base.double, base.mode
-F = 138.935457644
+F = 138.93545755023302
 
 
 def hvp(evaluator, x, g, v):

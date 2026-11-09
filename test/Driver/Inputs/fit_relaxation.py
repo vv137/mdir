@@ -24,7 +24,7 @@ cold, warm = rows(sys.argv[1]), rows(sys.argv[2])
 particles, temperature, span = (int(sys.argv[3]), float(sys.argv[4]),
                                 float(sys.argv[5]))
 expected, tolerance = float(sys.argv[6]), float(sys.argv[7])
-equilibrium = 1.5 * particles * 0.0083144626181532 / 4.184 * temperature
+equilibrium = 1.5 * particles * 0.0083144626181532403 / 4.184 * temperature
 start, k0 = cold[-1]
 points = [(t - start, math.log((equilibrium - k) / (equilibrium - k0)))
           for t, k in warm if t - start <= span and k < equilibrium]

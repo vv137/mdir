@@ -34,7 +34,7 @@ if sys.argv[1] == "hot":
     sys.exit(0)
 
 log, nf, steps = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
-kB = 0.0083144626181532
+kB = 0.0083144626181532403
 kT = kB * 150.0
 kcal = 4.184
 omega2 = 2.0 * kcal * 100 / 39.948

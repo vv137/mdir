@@ -60,9 +60,35 @@ derivation through Coulomb and gas coefficients. A defining input has a
 one-factor bound. This tests the compiler-rounded expression against the
 high-precision physical formula; it does not fit a new decimal literal.
 
-Verify both added references, regenerate affected numerical references
-and the corpus, classify changes against the base, and run the full
-suite at the final clean head. No final results are claimed yet. Python
+Both added references passed the bibliographic verifier (2 checked, no
+metadata differences). The new Decimal/C/C++ fixture passed. Numerical
+reference inputs are refreshed for native/control Coulomb, thermal and
+pressure coefficients without changing comparison bounds. Standalone IR
+fixtures retain their explicit input coefficients; other engines retain
+their own physical models.
+
+The initial-energy reference regeneration includes salted Born,
+reaction field at dielectric 78.5 and in the conductor limit, and PME.
+The following examples are in kcal/mol:
+
+| Reference | Before | After |
+|---|---:|---:|
+| Reaction-field excluded energy | 10956.303882 | 10956.303874 |
+| Triclinic PME excluded energy | 29997.892113 | 29997.892093 |
+| Triclinic PME total energy | 44.556135 | 44.556138 |
+| Rounded-coordinate GROMACS Born energy | −143.211170 | −143.211169 |
+
+The Amber Born fixture still prints −143.211170; the format-specific
+references now distinguish the rounding boundary. The first focused
+selection stopped at that stale golden (6 passed, 1 failed, 5 skipped);
+after regenerating it, the five follow-up checks passed, including the
+independent force/virial assertions and generated dialect docs. An RTX
+5090 reference run reproduced the refreshed triclinic initial terms and
+virial, and its pinned 200-step row was unchanged. The no-cell 2000-step
+reference row was also unchanged.
+
+Corpus classification and the full suite at the final clean head remain
+pending. No final suite result is claimed yet. Python
 consolidation and the generated-module/duplicate-check work belong to
 part 2 of #805. #795 rebases onto the merged header before its oracle
 includes it; its decision names the header/conventions rather than a

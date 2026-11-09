@@ -18,14 +18,14 @@
 # sum is 4.693822 kcal/mol, off by 7e-4 of it.
 #
 # EWALD:      direct       -14.3572978
-# EWALD-NEXT: excluded     535.1260685
+# EWALD-NEXT: excluded     535.1260682
 # EWALD-NEXT: reciprocal   4.6972413
-# EWALD-NEXT: self         -539.7928275
+# EWALD-NEXT: self         -539.7928271
 #
 # CHECK:      MDIR:   Coulomb                      -14.357298
-# CHECK:      MDIR:   Coulomb excluded             535.126069
+# CHECK:      MDIR:   Coulomb excluded             535.126068
 # CHECK-NEXT: MDIR:   Coulomb reciprocal             4.697241
-# CHECK-NEXT: MDIR:   Coulomb self                -539.792828
+# CHECK-NEXT: MDIR:   Coulomb self                -539.792827
 
 # The forces are the derivatives of the energy: the total energy changes
 # as the square of the time step, with the extra points placed from their

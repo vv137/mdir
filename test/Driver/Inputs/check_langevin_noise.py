@@ -19,7 +19,7 @@ seed, step, temperature = (int(sys.argv[2]), int(sys.argv[3]),
                            float(sys.argv[4]))
 Words4 = ctypes.c_uint32 * 4
 Words2 = ctypes.c_uint32 * 2
-kT = 0.0083144626181532 * temperature
+kT = 0.0083144626181532403 * temperature
 c = math.exp(-1.0)
 worst, count = 0.0, 0
 for line in sys.stdin:

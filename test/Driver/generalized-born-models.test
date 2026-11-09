@@ -47,7 +47,7 @@
 # RUN: sed -e 's/peptide.prmtop/peptide.top/' -e 's/peptide.inpcrd/peptide.gro/' -e 's/plain.h5/gromacs-plain.h5/' %t/plain.toml > %t/gromacs-plain.toml
 # RUN: cd %t && mdir run amber-plain.toml > amber-plain.log && mdir run gromacs-plain.toml > gromacs-plain.log
 # RUN: cd %t && mdir run amber.toml | FileCheck %s --check-prefix=ROUNDED
-# RUN: cd %t && mdir run gromacs.toml | FileCheck %s --check-prefix=ROUNDED
+# RUN: cd %t && mdir run gromacs.toml | FileCheck %s --check-prefix=ROUNDED-GROMACS
 # RUN: mdir checkpoint --print=forces %t/amber.h5 > %t/amber.forces
 # RUN: mdir checkpoint --print=forces %t/amber-plain.h5 > %t/amber-plain.forces
 # RUN: mdir checkpoint --print=forces %t/gromacs.h5 > %t/gromacs.forces
@@ -90,6 +90,8 @@
 
 # ROUNDED:      MDIR:   generalized Born            -143.211170
 # ROUNDED-NEXT: MDIR:   nonpolar surface               8.220448
+# ROUNDED-GROMACS:      MDIR:   generalized Born            -143.211169
+# ROUNDED-GROMACS-NEXT: MDIR:   nonpolar surface               8.220448
 # SAME: the columns agree
 
 # RADII: generalized Born needs the radii and the screening of every particle, the sections RADII and SCREEN of a topology of Amber; for another topology give 'born_radii = "MBONDI2"'

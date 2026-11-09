@@ -60,12 +60,12 @@
 # PERIODIC:   INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
 # NONE:       INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL{{$}}
 # TERMS:      MDIR:   Lennard-Jones                  9.710233
-# TERMS-NEXT: MDIR:   Coulomb                     -213.951939
+# TERMS-NEXT: MDIR:   Coulomb                     -213.951938
 # TERMS-NEXT: MDIR:   bonds                          0.148913
 # TERMS-NEXT: MDIR:   angles                         0.687548
 # TERMS-NEXT: MDIR:   dihedrals                      4.668195
 # TERMS-NEXT: MDIR:   Lennard-Jones 1-4             11.303110
-# TERMS-NEXT: MDIR:   Coulomb 1-4                  164.940916
+# TERMS-NEXT: MDIR:   Coulomb 1-4                  164.940915
 # TERMS-NEXT: MDIR:   CMAP                           0.096326
 # TERMS-NEXT: MDIR:   dispersion                     0.000000
 # TERMS-NEXT: MDIR:   total                        -22.396697

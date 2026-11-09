@@ -274,7 +274,7 @@ def run_terms(target, precision):
 
 def run_charges(target, precision):
     double = precision == "Double"
-    rc, f = 0.8, 138.935457644
+    rc, f = 0.8, 138.93545755023302
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     # The defaults of before D248, with which this was written.
@@ -513,7 +513,7 @@ def run_torchpme(target, precision):
     import torchpme
     torch.set_default_dtype(torch.float64)
     double = precision == "Double"
-    rc, f, beta = 0.8, 138.935457644, 3.5
+    rc, f, beta = 0.8, 138.93545755023302, 3.5
 
     def simulate(points):
         loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")

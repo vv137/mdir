@@ -44,7 +44,7 @@ import python_frame_product as base  # noqa: E402  (reads sys.argv as this scrip
 scenario = sys.argv[2]
 work = base.work
 double = base.double
-F = 138.935457644
+F = 138.93545755023302
 # OPC of amber19sb.ff (opc.itp and ffnonbonded.itp of GROMACS 2026.3).
 SIGMA, EPSILON = 0.316655208196, 0.890358601592
 CHARGES = {"OW": 0.0, "HW": 0.679142, "MW": -1.358284}

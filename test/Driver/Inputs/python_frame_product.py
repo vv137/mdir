@@ -423,7 +423,7 @@ def run_lj():
 # --- charges ---------------------------------------------------------------
 
 def run_charges():
-    rc, f = 0.8, 138.935457644
+    rc, f = 0.8, 138.93545755023302
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.truncation = mdir.Truncation.Switch

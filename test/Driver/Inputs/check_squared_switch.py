@@ -16,7 +16,7 @@ import subprocess
 
 DISTANCES = [6.0, 9.999, 10.0, 10.001, 10.5, 11.0, 11.999,
              12.0, 12.001, 13.0]
-COULOMB = 138.935457644 / 4.184 * 10
+COULOMB = 332.06371307417066
 
 
 def potential(r, sigma, epsilon):

@@ -102,7 +102,7 @@ def direct_shift(beta, cutoff):
             d = [d[a] - box[a] * round(d[a] / box[a]) for a in range(3)]
             if math.sqrt(sum(c * c for c in d)) < cutoff:
                 total += charges[i] * charges[j]
-    return 332.06371329919205 * total * math.erfc(beta * cutoff) / cutoff
+    return 332.06371307417066 * total * math.erfc(beta * cutoff) / cutoff
 
 
 # Under a plain cutoff (lennard_jones_modifier = "NONE") the free-energy

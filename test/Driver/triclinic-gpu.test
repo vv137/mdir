@@ -48,16 +48,16 @@
 # RUN: mdir checkpoint %t/whole.h5 | %python %S/Inputs/check_cell.py 0 0.5 0.5 | FileCheck %s --check-prefix=SHAPE
 
 # CHECK:      MDIR:   Lennard-Jones               2915.050920
-# CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
+# CHECK-NEXT: MDIR:   Coulomb                    -3460.248851
 # CHECK-NEXT: MDIR:   bonds                        898.698404
 # CHECK-NEXT: MDIR:   angles                       226.926238
-# CHECK:      MDIR:   Coulomb excluded           29997.892113
+# CHECK:      MDIR:   Coulomb excluded           29997.892093
 # CHECK-NEXT: MDIR:   Coulomb reciprocal           252.948835
-# CHECK-NEXT: MDIR:   Coulomb self              -30754.902526
+# CHECK-NEXT: MDIR:   Coulomb self              -30754.902505
 # CHECK-NEXT: MDIR:   dispersion                   -31.808995
-# CHECK-NEXT: MDIR:   total                         44.556135
+# CHECK-NEXT: MDIR:   total                         44.556138
 # CHECK-NEXT: MDIR: the diagonal of the virial at the start
-# CHECK-NEXT: MDIR:       -4874.182854      2569.824183       487.863639
+# CHECK-NEXT: MDIR:       -4874.182854      2569.824184       487.863640
 # STEPS:      INFO:       200         0.1000        16.6708     -2740.9437      2757.6144
 # MIXED: Lennard-Jones 1
 # MIXED: bonds 1

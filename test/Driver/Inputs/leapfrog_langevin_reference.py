@@ -42,7 +42,7 @@ import mdir
 
 inputs, runtime, target, precision = sys.argv[1:5]
 SEED, TEMPERATURE, FRICTION, DT = 2024, 300.0, 1.0, 0.002
-KT = 0.0083144626181532 * TEMPERATURE
+KT = 0.0083144626181532403 * TEMPERATURE
 # nm and nm/ps. In mixed precision the velocities and the changes of the
 # positions are of f32: measured 2.1e-8 nm and 1.0e-5 nm/ps.
 TOLERANCE = {"Double": (1e-12, 1e-9), "Mixed": (1e-7, 1e-4)}[precision]

@@ -13,7 +13,7 @@ gives its distance. Prints each term in kcal/mol."""
 import math
 import sys
 
-F = 138.935457644  # kJ mol⁻¹ nm e⁻², CODATA 2018 (docs/conventions.md)
+F = 138.93545755023302  # kJ mol⁻¹ nm e⁻², SI/CODATA 2022 (docs/conventions.md)
 KCAL = 4.184
 
 

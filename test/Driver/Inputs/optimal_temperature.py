@@ -17,7 +17,7 @@ import sys
 
 log, n, wdt, target = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), \
     float(sys.argv[4])
-kB = 0.0083144626181532 / 4.184
+kB = 0.0083144626181532403 / 4.184
 nf = 3 * n - 3
 rows = []
 for line in open(log):

@@ -581,7 +581,7 @@ def run_interface():
 
 
 BETA = 3.5  # the splitting parameter of the comparisons with other programs, 1/nm
-COULOMB = 138.935457644  # kJ nm / (mol e^2), the constant of the programs
+COULOMB = 138.93545755023302  # kJ nm / (mol e^2), SI/CODATA 2022 reference input
 
 
 def oracle_model(points, kind="amber", charges=False):

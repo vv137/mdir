@@ -22,7 +22,7 @@ model_test = sys.argv[4]
 work = pathlib.Path(sys.argv[5])
 scenario = sys.argv[6]
 SEED = 271828
-BOLTZMANN = 0.0083144626181532  # kJ/mol/K
+BOLTZMANN = 0.0083144626181532403  # kJ/mol/K
 # The restraints of the control file and of the model: the heavy atoms of
 # the peptide about their center, its alanine once more (the constants
 # add), and six water oxygens each with the cell (D74, D124).

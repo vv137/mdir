@@ -328,7 +328,7 @@ def charges_system(electrostatics=mdir.Electrostatics.Cutoff, tied=True):
 
 
 def run_charges():
-    rc, f = 0.8, 138.935457644
+    rc, f = 0.8, 138.93545755023302
     system, state, charge_map = charges_system()
     program = base.compile_(system, state)
     evaluator = mdir.FrameEvaluator(program)

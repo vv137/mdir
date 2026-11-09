@@ -15,7 +15,7 @@ from the row of step 0, where K_T = K.
 import sys
 
 log, dt, paths = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
-kB = 0.0083144626181532 / 4.184
+kB = 0.0083144626181532403 / 4.184
 rows = {}
 for line in open(log):
     words = line.split()
