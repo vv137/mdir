@@ -507,6 +507,7 @@ namespace mdir::test {
 void registerTestTemplateSearch();
 void registerTestTemplateParticles();
 void registerTestTemplateWriter();
+void registerTestTemplatePrune();
 void registerTestTemplateFrames();
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
@@ -516,6 +517,7 @@ void registerTestTemplateScheduler() {
   registerTestTemplateSearch();
   registerTestTemplateParticles();
   registerTestTemplateWriter();
+  registerTestTemplatePrune();
   registerTestTemplateFrames();
 }
 }

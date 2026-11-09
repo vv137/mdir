@@ -35,6 +35,7 @@ without compute-sanitizer: Sanitizer/fft-resident-gpu.test
 without compute-sanitizer: Sanitizer/frame-batch-entry-gpu.test
 without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
 without compute-sanitizer: Sanitizer/fused-prune-gpu.test
+without compute-sanitizer: Sanitizer/water-template-prune-gpu.test
 without compute-sanitizer: Sanitizer/group-scatter-gpu.test
 without compute-sanitizer: Sanitizer/groups-empty-gpu.test
 without compute-sanitizer: Sanitizer/npt-leapfrog-gpu.test

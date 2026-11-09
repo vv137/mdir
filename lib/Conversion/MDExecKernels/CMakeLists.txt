@@ -18,6 +18,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   TemplateFrameKernels.cpp
   TemplateValidityKernels.cpp
   TemplateWriterKernels.cpp
+  TemplatePruneKernels.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion
@@ -36,6 +37,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   MLIRIR
   MLIRMathDialect
   MLIRMemRefDialect
+  MLIRNVVMDialect
   MLIRPass
   MLIRSCFDialect
   MLIRVectorDialect

@@ -1,0 +1,8 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.reference %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_prune_oracle.py generate %t.input.mlir %t.reference --triclinic
+# RUN: mdir-opt %t.input.mlir --test-md-template-prune --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK: llvm.func @prune_work
+# CHECK-NOT: builtin.unrealized_conversion_cast
