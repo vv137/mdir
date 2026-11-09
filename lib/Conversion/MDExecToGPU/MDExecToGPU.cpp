@@ -6018,6 +6018,10 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
                                  builder.getI32Type());
   SmallVector<Value> copied;
   auto onHost = [&](Value buffer) -> Value {
+    // Device renumbering leaves an original-file host placeholder; its
+    // registered device buffer holds the members in the current state order.
+    if (auto found = deviceTuplesOf.find(buffer); found != deviceTuplesOf.end())
+      buffer = found->second.renumbered;
     auto type = cast<MemRefType>(buffer.getType());
     if (!isDeviceType(type))
       return memref::CastOp::create(builder, loc, hostType, buffer);

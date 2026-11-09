@@ -427,6 +427,25 @@ unchanged; the successful path performs no diagnostic device work. The
 measured excess is reported against the constraint tolerance and expected
 f32/f64 rounding before any numerical correction or bound change.
 
+The acquisition exposed an initialization contract error after the native
+spatial sort. Device tuple renumbering leaves an original-file host
+placeholder and registers the actual device members separately. Template
+initialization must resolve that registered buffer before acquiring both
+the water members and the exclusions. The correction is local to this new
+initializer; ordinary tuple renumbering and incidence construction retain
+their existing contract.
+
+The short fixtures and preliminary water boxes did not establish this
+contract: a sort of homogeneous water can permute complete, identical
+OHH/EP blocks while preserving the unlabeled block partition and its
+energy. The corpus and order matrix compare emitted programs, rather
+than executing the metadata handoff. The regression therefore interposes
+solute slots between spatially sorted water blocks and checks exact
+members, packed slots and exclusions, with identity and nonidentity
+orders. Its CPU check follows the initializer's copy back to the
+registered renumbered buffer in device-tuples mode and to actual host
+renumbering in the host configuration.
+
 1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
    TIP3P and on #738's water boxes, against an f64 oracle and against
    `main` in double on the same frame, within `main` mixed's own error
