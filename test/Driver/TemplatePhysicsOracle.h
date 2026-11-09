@@ -41,6 +41,9 @@ struct Oracle {
   double energy=0, ljAbsolute=0, coulombAbsolute=0;
   double pairVirial=0, siteVirial=0, pairSiteVirialAbsolute=0;
   std::vector<double> forces;
+  std::vector<double> forceAbsolute;
+  std::vector<size_t> forceTerms;
+  size_t pairTerms=0, siteTerms=0;
   std::array<unsigned,3> classPairs{};
 };
 static Oracle oracle(const driver::System &system, const std::vector<double> &coordinates,
@@ -48,6 +51,8 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
   const auto &t=*system.topology;
   size_t n=system.getNumParticles(), nt=t.getNumTypes();
   std::vector<V> x(n), f(n);
+  std::vector<V> forceAbsolute(n);
+  std::vector<std::array<size_t,3>> forceTerms(n);
   std::vector<bool> water(n,false);
   for(const auto &s:t.settles) for(unsigned j=0;j!=3;++j) water[s.oxygen+j]=true;
   for(const auto &s:t.virtualSites) water[s.site]=true;
@@ -61,7 +66,10 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
   }
   std::set<std::pair<unsigned,unsigned>> excluded(t.exclusions.begin(),t.exclusions.end());
   Oracle result;
-  const double coulomb=driver::units::coulomb*driver::units::energy*driver::units::length;
+  // docs/conventions.md, Section 1: the native-topology Coulomb input.
+  // The converted control-expression constant has more digits and would
+  // compare different inputs when a nearly canceled virial approaches zero.
+  const double coulomb=138.935457644;
   // Enumerate images independently, rather than choosing the list's image.
   for(unsigned i=0;i!=n;++i) for(unsigned j=i+1;j!=n;++j) {
     if(excluded.count({i,j})) continue;
@@ -72,6 +80,7 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       if(r2>=cutoff*cutoff) continue;
       require(r2>0,"oracle encountered overlapping sites");
       ++result.classPairs[water[i]&&water[j]?0:water[i]||water[j]?1:2];
+      ++result.pairTerms;
       double r=std::sqrt(r2), q=coulomb*t.charges[i]*t.charges[j];
       unsigned type=t.types[i]*nt+t.types[j];
       double sr2=t.sigma[type]*t.sigma[type]/r2;
@@ -84,6 +93,10 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       result.pairVirial+=pairTrace;
       result.pairSiteVirialAbsolute+=std::abs(pairTrace);
       f[i]=add(f[i],pair); f[j]=sub(f[j],pair);
+      for(unsigned k=0;k!=3;++k) {
+        forceAbsolute[i][k]+=std::abs(pair[k]);forceAbsolute[j][k]+=std::abs(pair[k]);
+        ++forceTerms[i][k];++forceTerms[j][k];
+      }
     }
   }
   for(const auto &s:t.virtualSites) {
@@ -101,16 +114,25 @@ static Oracle oracle(const driver::System &system, const std::vector<double> &co
       double term=dot(image(sub(x[atoms[k]],x[s.site]),system.box),transferred[k]);
       result.siteVirial+=term;
       result.pairSiteVirialAbsolute+=std::abs(term);
+      ++result.siteTerms;
+      for(unsigned c=0;c!=3;++c) {
+        forceAbsolute[atoms[k]][c]+=std::abs(transferred[k][c]);
+        ++forceTerms[atoms[k]][c];
+      }
     }
     f[s.i]=add(f[s.i],fo);
     f[s.j]=add(f[s.j],fj); f[s.k]=add(f[s.k],fk); f[s.site]={0,0,0};
+    forceAbsolute[s.site]={0,0,0};forceTerms[s.site]={0,0,0};
   }
   for(V value:f) result.forces.insert(result.forces.end(),value.begin(),value.end());
+  for(V value:forceAbsolute) result.forceAbsolute.insert(result.forceAbsolute.end(),value.begin(),value.end());
+  for(auto value:forceTerms) result.forceTerms.insert(result.forceTerms.end(),value.begin(),value.end());
   return result;
 }
 struct ConstraintVirial { double trace=0, absolute=0; };
 struct MolecularMoments {
   double removal=0, removalAbsolute=0, twiceInternalKinetic=0;
+  size_t removalTerms=0;
 };
 // D264's molecular virial removes the force moment about each rigid
 // group's mass center. Atomic constraint virial and internal kinetic
@@ -136,6 +158,7 @@ static MolecularMoments molecularMoments(const driver::System &system,
     for(unsigned j=0;j!=3;++j) {
       double term=-dot(sub(arms[j],center),vectorAt(f,o+j));
       result.removal+=term;result.removalAbsolute+=std::abs(term);
+      ++result.removalTerms;
       V relative=sub(vectorAt(v,o+j),velocityCenter);
       result.twiceInternalKinetic+=system.masses[o+j]*dot(relative,relative);
     }

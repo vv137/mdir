@@ -91,6 +91,26 @@ static void sameFrame(model::PreparedModel p,const compiler::SimulationState &fr
   double uo=std::abs(s[2].energies->potential-ref.energy);
   double wo=std::abs(s[2].energies->virial-(ref.pairVirial+ref.siteVirial+moments.removal));
   double wOracleBound=1e-10*std::max(1.,std::abs(ref.pairVirial+ref.siteVirial+moments.removal));
+  double fOracleBound=1e-10*std::max(1.,largest);
+  double uOracleBound=1e-10*std::max(1.,std::abs(ref.energy));
+  auto record=[&](const std::string &name,double oracleValue,double generalValue,
+                  double bound,double absolute,size_t terms) {
+    std::cout<<"fresh "<<frame.step<<' '<<name
+        <<" oracle "<<oracleValue<<" bits "<<bits(oracleValue)
+        <<" general-double "<<generalValue<<" bits "<<bits(generalValue)
+        <<" bound "<<bound<<" bits "<<bits(bound)
+        <<" absolute-sum "<<absolute<<" bits "<<bits(absolute)
+        <<" terms "<<terms<<std::endl;
+  };
+  record("energy",ref.energy,s[2].energies->potential,uOracleBound,
+      ref.ljAbsolute+ref.coulombAbsolute,2*ref.pairTerms);
+  record("molecular-virial",ref.pairVirial+ref.siteVirial+moments.removal,
+      s[2].energies->virial,wOracleBound,
+      ref.pairSiteVirialAbsolute+moments.removalAbsolute,
+      ref.pairTerms+ref.siteTerms+moments.removalTerms);
+  for(size_t i=0;i!=ref.forces.size();++i)
+    record("force-"+std::to_string(i/3)+"-"+std::to_string(i%3),ref.forces[i],
+        s[2].forces[i],fOracleBound,ref.forceAbsolute[i],ref.forceTerms[i]);
   auto projected=project(p.system,frame.positions,s[2].forces);
   auto baseline=error(project(p.system,frame.positions,s[1].forces),projected);
   auto candidate=error(project(p.system,frame.positions,s[0].forces),projected);
@@ -105,7 +125,7 @@ static void sameFrame(model::PreparedModel p,const compiler::SimulationState &fr
            <<" virial "<<wo<<"; projected max "<<candidate.maximum<<" / "<<fb
            <<" RMS "<<candidate.rms<<" / "<<rb<<"; energy "<<ud<<" / "<<ub
            <<"; molecular virial "<<wd<<" / "<<wb<<std::endl;
-  require(oe.maximum<=1e-10*std::max(1.,largest)&&uo<=1e-10*std::max(1.,std::abs(ref.energy))&&wo<=wOracleBound,
+  require(oe.maximum<=fOracleBound&&uo<=uOracleBound&&wo<=wOracleBound,
           "trajectory frame differs from independent physical oracle");
   require(candidate.maximum<=fb&&candidate.rms<=rb&&ud<=ub&&wd<=wb,
           "trajectory frame exceeds unchanged physical bounds");
