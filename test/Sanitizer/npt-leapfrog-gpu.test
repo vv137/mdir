@@ -1,6 +1,6 @@
 # Constrained leapfrog NPT on the small ala3 system, in mixed precision.
 # Coupling at steps 10 and 20 reaches the projected backward-half-kick
-# storage of D[leapfrog-npt-stored-velocity], with SETTLE and SHAKE.
+# storage of D393, with SETTLE and SHAKE.
 # Modeled on npt-velocity-verlet-gpu.test; keep the same 20-step workload.
 #
 # REQUIRES: cuda, compute-sanitizer, hdf5

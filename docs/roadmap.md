@@ -72,7 +72,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Pairs and lists, next | Measure first, then a box test of a group in the pruning and forces of the groups in fixed point, as the grid of PME (D70) ([neighbor-groups.md](neighbor-groups.md#next)) |
 | Other engines on MDBench | Preliminary (2026-10-02, [validation.md](validation.md#other-engines-on-mdbench)). Next: three repeats on GPU 0 alone, 9naw, runs with other seeds |
 | Semi-isotropic barostat | Done (D119). Next: the area per lipid, which needs runs of 100 ns or more |
-| Leapfrog stored NPT velocities (#801) | In progress: project the backward half-kick through the constraints before H5MD/checkpoint storage (D[leapfrog-npt-stored-velocity]); preserve coupled full-step velocities and trajectories to rounding |
+| Leapfrog stored NPT velocities (#801) | In progress: project the backward half-kick through the constraints before H5MD/checkpoint storage (D393); preserve coupled full-step velocities and trajectories to rounding |
 
 The goal of the first milestone, its history, and the rates of the first
 comparison are in [validation.md](validation.md#the-goal-of-the-first-milestone)

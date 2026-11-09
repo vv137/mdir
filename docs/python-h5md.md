@@ -174,7 +174,7 @@ trajectory_interval  = 1000
   and `/parameters/mdir/velocity_offset` is $-0.5$.
   With leapfrog and a barostat, the stored backward half-kick is projected
   through the mass-weighted constraints at the current positions
-  (D[leapfrog-npt-stored-velocity]); it has no constraint-normal force
+  (D393); it has no constraint-normal force
   component. It remains a stored half-step quantity, not the full-step
   velocity used by the thermostat and barostat. Checkpoints use the same
   stored convention.

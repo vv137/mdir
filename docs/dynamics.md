@@ -336,7 +336,7 @@ The period maps onto the ops as follows (velocity Verlet; with leapfrog
 the coupling takes the velocities of the time of the positions where the
 barostat acts, and stores them half a kick behind by a `dyn.kick` of
 $-\Delta t/2$ followed by the mass-weighted constraint projection
-(D[leapfrog-npt-stored-velocity]); the thermostat alone scales the stored velocities, with
+(D393); the thermostat alone scales the stored velocities, with
 $K_T$ from those of the time of the positions, Section 6):
 
 1. **Without a barostat.** The closing step is `@step`, or with
@@ -923,7 +923,7 @@ of velocity Verlet to the bit (`test/Driver/barostat.test`).
 
 The stored velocities are the constraint projection of the backward half-kick
 from the ones the coupling leaves without the motion of the center of mass
-(D[leapfrog-npt-stored-velocity]). This removes the constraint-normal
+(D393). This removes the constraint-normal
 force component without changing the projected coupled full-step velocity.
 The projection conserves group momentum. The forces of PME do not sum to
 zero (their interpolation does not conserve momentum), so the momentum of

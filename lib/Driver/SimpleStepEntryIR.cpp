@@ -615,7 +615,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     auto storeLeapfrogVelocity = [&](OpBuilder &inside, EntryFieldsIR result) {
       result.velocities = buildKick(inside, result.velocities, result.forces,
           result.masses, halfBack);
-      // D[leapfrog-npt-stored-velocity]: do not retain the constraint-normal
+      // D393: do not retain the constraint-normal
       // part of a force representation in the stored half-step velocity.
       SmallVector<Value> currentEdges;
       if (!config.constraints.empty())

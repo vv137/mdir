@@ -1,4 +1,4 @@
-"""D[leapfrog-npt-stored-velocity]: independent RATTLE/SHAKE and main comparison.
+"""D393: independent RATTLE/SHAKE and main comparison.
 
 Bounds declared in the decision before the first run. Forces are inputs to
 the independent step oracle, as in leapfrog_langevin_reference.py; force
