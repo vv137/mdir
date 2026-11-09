@@ -36,7 +36,68 @@ Measured as each part was built (to 2026-10-03):
 | The barostat, isotropic stochastic cell rescaling (D72) | 1394 OPC waters at 300 K and 1 bar come to 0.9977 g/cm³ over 300 ps, with a compressibility from the fluctuations of the volume of 4.1 × 10⁻⁵ /bar; a trajectory is the same for any grouping of steps into loops and across a restart; the target of D65 runs at constant pressure on a GPU (`test/Driver/barostat-ff19sb-gpu.test`) |
 | CMAP, ff19SB | The terms of ACE-ALA-GLY-SER-NME with ff19SB in OPC agree with sander, and CMAP with an independent model to 12 digits; a peptide with amber19sb agrees with GROMACS. The energy of the peptide alone is conserved as the square of the time step. |
 
-## 2. Comparisons with the engines
+## 2. How bounds are set
+
+The maintainer adopted these rules on 2026-11-09. Each states its reason;
+the rules of the review are in [workflow.md](workflow.md#validation).
+
+1. **A bound is declared before the measurement and derived from an error
+   model**: the precision (about $10^{-16}$ in `f64`, an epsilon of
+   $1.19\times10^{-7}$ in `f32`), the propagation of ulps through the
+   quantity, its condition number, or the tolerance of a solver. It is never
+   fitted to the result: a fitted bound passes whatever the code does.
+2. **A bound is relative with an absolute floor**,
+   $\max(\epsilon_\mathrm{rel}\,s, \epsilon_\mathrm{abs})$ for a scale $s$:
+   a relative bound alone fails on a value near zero. For a sum that cancels,
+   an energy or a virial, the relative part is taken against the sum of the
+   magnitudes of its terms, $10^{-6}\sum_i\lvert E_i\rvert$ in mixed
+   precision: about eight `f32` epsilons over the magnitude of the terms, the
+   usual form of a bound on the error of a sum. A bound relative to the net
+   value is ill-conditioned when the terms cancel.
+3. **Scales do not depend on the origin or the frame**: positions against
+   the largest edge of the cell, velocities against
+   $\max(1\ \mathrm{nm/ps}, \lvert v\rvert_{\max})$, forces against their
+   largest or their RMS component. Not per-atom relative errors: the error of
+   a position does not shrink as it nears the origin, nor that of a force as
+   the force nears zero.
+4. **The accuracy of one frame and the divergence of trajectories are
+   separate checks**, since rounding grows exponentially along a trajectory
+   and a bound for one frame does not hold for the next thousand.
+   - An evaluation of one frame is compared with an independent oracle in
+     double precision, to about $10^{-10}$ relative, or with the existing
+     route at the same precision: no worse than $k$ times its error, with an
+     absolute floor.
+   - A short trajectory is compared with a baseline of rounding measured on
+     the same system, mixed against double or a run perturbed by one ulp,
+     within about 3 times that baseline: the ratio of two divergences
+     fluctuates.
+   - A long run is compared by statistics, not pointwise: means with
+     standard errors from blocks within 2 to 3 $\sigma$, distributions by a
+     test of Kolmogorov and Smirnov, and the drift at constant energy in
+     kJ/mol/ns per degree of freedom against the existing route. Its values
+     are chaotic; its distributions are not.
+5. **A bound of zero (bitwise) only where the arithmetic is the same**: the
+   deterministic mode, a restart from a checkpoint, a change of layout or of
+   order that keeps each operation. Elsewhere the rounding differs, and a
+   bound of zero fails a correct change.
+6. **A failing comparison stops the work**; it is not met by widening the
+   bound or by a rerun. A bound changes only with its numerical reasoning,
+   recorded in the test and in the decision: otherwise the bound records the
+   code, not the method. An intermittent failure is reported with its
+   repeats and failures ([workflow.md](workflow.md#validation)).
+
+Examples:
+
+| Rule | Where | Check |
+|---|---|---|
+| 1, 4 | The bonded terms of Section 1 | Energy, forces, and virial against a script in double precision, to $10^{-10}$ |
+| 3 | `test/Driver/leapfrog-constraints.test` | `Inputs/compare_logs.py` takes each column of the log of leapfrog against that of velocity Verlet within $10^{-7}$ of the largest magnitude of the column, not of each row |
+| 4 | The mixture of `test/Driver/thermostat.test` over 400 ps (white paper, Section 6.3) | The kinetic energy samples $\Gamma(N_f/2, k_BT_0)$ by a test of Kolmogorov and Smirnov, $p = 0.11$ |
+| 4 | `scripts/validation/ensembles/analyze.py` (Section 4, Physical validity) | Variances with errors from blocks; the kinetic energy of OPC water against the gamma distribution of the bath, $p = 0.26$ and 0.61 |
+| 5 | `test/Driver/thermostat.test` | The row of step 2000 is the same (`diff`) for two energy intervals, which group the steps into loops differently |
+| 5 | `test/Driver/barostat-restart.test` | A run continued from a checkpoint ends in the state of the run that did not stop (`mdir checkpoint`) |
+
+## 3. Comparisons with the engines
 
 The terms of a run from a topology of GROMACS were compared with those of
 GROMACS 2026.3 (mixed precision) for the peptide ALA-GLY-SER-LYS-ASP-TRP
@@ -265,7 +326,7 @@ the mean potential energy −4763.3 ± 4.1 against −4759.2 ± 2.6 kcal/mol
 (about 0.6 g/cm³), relaxed over the whole 500 ps; its CPU run also
 found D117, a crash at the end of 250,000 steps.
 
-## 3. From the roadmap
+## 4. From the roadmap
 
 What the roadmap held of these results, moved here when its rows became
 state and next steps (#603).

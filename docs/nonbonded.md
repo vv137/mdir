@@ -105,7 +105,7 @@ that form, and the comparison with sander is of the energy of each term.
 The comparison with GROMACS takes another form instead: the reaction
 field of both programs at a permittivity of 78.5, whose `Coulomb`,
 `Coulomb excluded`, and `Coulomb self` MDIR compares with GROMACS's
-Coulomb (SR) (D140; [validation.md](validation.md), Section 2;
+Coulomb (SR) (D140; [validation.md](validation.md), Section 3;
 `scripts/validation/gromacs`).
 
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
