@@ -423,6 +423,18 @@ measurements replace them.
    constraint directions of each water projected out (#789), and the
    virial is compared as the total with the constraint virial; with rule
    (B) the raw atom forces are compared as well.
+   Potential energy uses the cancellation-aware bound
+   $\lvert E_\mathrm{template}-E_\mathrm{double}\rvert \le
+   \max(10^{-5}\lvert E_\mathrm{double}\rvert,10^{-6}S)$ for OPC and
+   TIP3P. Here $S=\sum_p(\lvert E_{\mathrm{LJ},p}\rvert+
+   \lvert E_{\mathrm{Coulomb},p}\rvert)$ comes from the independent CPU
+   oracle at the same frame, summing the two contributions' magnitudes
+   separately. Heavy cancellation can make the net energy a small
+   remainder of large terms; rounding then scales with those terms.
+   The $10^{-6}S$ allowance is about eight f32 epsilons of their magnitude,
+   while the first term retains the previous relative allowance. Force
+   bounds and the oracle/general-double bounds remain unchanged. The
+   physical fixtures retain both absolute pair sums in their output.
 2. **Coverage**, just before a pruning, just before a build, and just after
    a build, for every list, against an f64 periodic brute force, including
    runs under a barostat (the prototype's runs were NVE, with no scaling
@@ -848,7 +860,7 @@ pair-arithmetic checks, not the larger-system, virial, stability or
 end-to-end gates. The oracle uses f64 throughout; the two compiled routes
 retain the precision assignments in the table below.
 
-The first corresponding three-site TIP3P fixture stops on its energy
+The first corresponding three-site TIP3P fixture stopped on its energy
 comparison. Its independent f64 energy is $5.3014572263468054$ kJ/mol;
 general double gives $5.3014572263438957$, a difference of
 $2.9097\times10^{-12}$ kJ/mol. Their raw force max/RMS difference is
@@ -856,9 +868,9 @@ $1.4258\times10^{-9}/6.7265\times10^{-10}$ kJ/mol/nm. The template's
 projected force max/RMS errors, $0.000565281/0.000237396$, pass the same
 criterion against general mixed's $0.00100856/0.000390067$, with bound
 $0.00433485148$ kJ/mol/nm. Its relative energy error,
-$1.6695968902592555\times10^{-5}$, exceeds the unchanged $10^{-5}$
-bound. The first execution is recorded as a numerical failure, with no
-rerun or correction; diagnosis awaits the maintainer's ruling. The signed
+$1.6695968902592555\times10^{-5}$, exceeded the original $10^{-5}$
+relative bound. The first execution remains recorded as a numerical
+failure. The signed
 template energy and general mixed's energy were not printed, so neither
 is inferred from the saved absolute relative error.
 
@@ -876,8 +888,20 @@ $1.6695968902592555\times10^{-5}$ against the unchanged $10^{-5}$ bound.
 The executable exits 1 at that assertion. Exact energy, oracle-sum,
 coordinate and cell bits are recorded. Inputs and paths were unchanged;
 only host diagnostic instrumentation was added, with the oracle's existing
-net-energy and force expressions retained. No further run or bound change
-follows this acquisition; the maintainer rules on these data.
+net-energy and force expressions retained. No bound changed for that
+acquisition. These data led to the maintainer's cancellation-aware ruling
+in the validation gates above, applied equally to OPC and TIP3P.
+
+Each physical fixture then passed its single authorized execution with
+the new bound on RTX 5090: TIP3P 1/1 and OPC 1/1. TIP3P's absolute energy
+error is $8.85129649894623\times10^{-5}$ kJ/mol against
+$0.0037374637696749612$ allowed, with $S=3737.4637696749614$ kJ/mol.
+OPC's is $8.26266463604952\times10^{-6}$ against
+$0.0090322398755513979$, with $S=9032.2398755513987$. All unchanged
+force and oracle/general-double checks passed. No additional numerical
+retry followed either execution. The prior failures remain recorded
+under their original criterion; the approved change resolves that stop
+for these two fixtures without completing the larger-system gates.
 
 Force-bearing H5MD reports evaluate rule (B) with a separate general
 no-step program at the current positions, cell and step. Its activation,
