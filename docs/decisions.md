@@ -690,6 +690,7 @@ specification follow those made with it.
 | [D392](decisions/D392.md) | Expose grid maps and reductions and the selected rectangular Gaussian reciprocal chain. | 2026-11-08 |
 | [D393](decisions/D393.md) | With leapfrog and a barostat, the stored backward half-kick is projected through the constraints, so written and checkpoint velocities carry no constraint-normal part of a force representation. | 2026-11-09 |
 | [D394](decisions/D394.md) | Physical constants have one definition, derived from the exact SI defining constants and CODATA 2022 vacuum permittivity. | 2026-11-09 |
+| [D395](decisions/D395.md) | `mdir check` warns (`pme_cutoff_jump`) when the largest jump of the force of a pair of charges at the cutoff of PME with the Gaussian kernel, $f\lvert q_iq_j\rvert[\mathrm{erfc}(\beta r_c)/r_c^2 + 2\beta e^{-\beta^2r_c^2}/(\sqrt\pi\,r_c)]$ over the pairs that the topology does not exclude, exceeds 1 kJ/mol/nm; it gives the jump and the expected number of pairs a frame within the shell where mixed and double precision decide the cutoff differently, and `mdir run` is unchanged. | 2026-11-10 |
 <!-- end decisions-table -->
 
 

@@ -1,5 +1,5 @@
 # `mdir check` warns when the force of a pair of charges jumps at the cutoff
-# of PME by more than 1 kJ/mol/nm (D[pme-cutoff-jump-warning], #793): the
+# of PME by more than 1 kJ/mol/nm (D395, #793): the
 # jump is f |q_i q_j| [erfc(beta r_c)/r_c^2 + 2 beta exp(-beta^2 r_c^2)/(sqrt(pi) r_c)]
 # for the largest |q_i q_j| of the pairs that the topology does not exclude.
 # Mixed and double precision decide the pairs within a shell of some 1e-7 nm

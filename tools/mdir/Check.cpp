@@ -387,7 +387,7 @@ static double getLargestChargeProduct(const Topology &topology) {
 /// at r_c, and every such pair changes a force by up to the jump; the jump
 /// also spoils the conservation of energy in either precision. Warns when
 /// the largest jump over the pairs of the topology exceeds 1 kJ/mol/nm, the
-/// maintainer's ruling on #793, D[pme-cutoff-jump-warning].
+/// maintainer's ruling on #793, D395.
 static void checkCutoffJump(const Control &control, const System &system,
                             std::vector<Warning> &warnings) {
   if (!control.pme || control.pmeKernel != PMEKernel::Gaussian ||
