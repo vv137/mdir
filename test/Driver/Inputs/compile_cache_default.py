@@ -20,12 +20,20 @@ that of a run without a cache bit for bit.
   is refused: nothing is read, written, or touched, though its entries are
   whole and valid, and a warning says why; made private again, they are
   read. A parent that the group may write, the user's, loses that
-  permission, and the entries are read. A default that is
-  another user's directory (a link to `/`) is refused. A directory named by
-  MDIR_COMPILE_CACHE_DIR that others may write is used, with a warning.
+  permission, and the entries are read. A default that is a symbolic link,
+  to another user's directory (`/`) or to a private directory of the
+  user's that holds whole and valid entries, is refused, and so is a
+  default whose parent (`mdir`) is a link to the user's private one:
+  another user may swap a link that passes the checks (they would follow
+  it) for one to a directory of their own. Nothing in the target of a link
+  is read or touched. A directory named by MDIR_COMPILE_CACHE_DIR that
+  others may write is used, with a warning.
 - --size: MDIR_COMPILE_CACHE_MAX_MB=0 turns the cache off, and a value that
-  is not a number is reported and keeps the bound.
-- --salt: MDIR_COMPILE_CACHE_SALT_OVERRIDE, which stands for another build
+  is not a number, or whose bytes do not fit in 64 bits, is reported and
+  keeps the bound.
+- --salt: a stored key holds the build ID of the image that compiled it
+  (the Python extension, read from its ELF notes here);
+  MDIR_COMPILE_CACHE_SALT_OVERRIDE, which stands for another build
   of MDIR, misses every entry of every kind on a warm cache and stores as
   many again; the same override then hits, and so does no override.
 """
@@ -157,7 +165,29 @@ def main():
             link.symlink_to("/")
         stats, out, err = run("foreign-default", default=foreign)
         report("foreign-default", stats, out)
-        print("foreign-default: " + warned(err, "belongs to user 0"))
+        print("foreign-default: " + warned(err, "is a symbolic link"))
+        # Links to the user's own private directories, which pass every
+        # check of the owner and the mode that follows a link.
+        before = files(default)
+        linked = work / "xdg-linked"
+        (linked / "mdir").mkdir(parents=True, exist_ok=True)
+        os.chmod(linked / "mdir", 0o700)
+        if not (linked / "mdir" / "compile").is_symlink():
+            (linked / "mdir" / "compile").symlink_to(default)
+        stats, out, err = run("linked-default", default=linked)
+        report("linked-default", stats, out)
+        print("linked-default: " + warned(err, "is a symbolic link")
+              + ", entries " + ("unchanged" if files(default) == before
+                                else "CHANGED"))
+        linked = work / "xdg-linked-parent"
+        linked.mkdir(exist_ok=True)
+        if not (linked / "mdir").is_symlink():
+            (linked / "mdir").symlink_to(default.parent)
+        stats, out, err = run("linked-parent", default=linked)
+        report("linked-parent", stats, out)
+        print("linked-parent: " + warned(err, "is a symbolic link")
+              + ", entries " + ("unchanged" if files(default) == before
+                                else "CHANGED"))
         named = work / "named"
         named.mkdir(exist_ok=True)
         os.chmod(named, 0o777)
@@ -177,8 +207,23 @@ def main():
         report("size-malformed", stats, out)
         print("size-malformed: " + warned(err, "MDIR_COMPILE_CACHE_MAX_MB='2GB'"
                                                " is not a whole number"))
+        # 2^44 MiB is 2^64 bytes, one more than 64 bits hold.
+        huge = str(2**44)
+        stats, out, err = run("size-overflow", default=sized,
+                              env={"MDIR_COMPILE_CACHE_MAX_MB": huge})
+        report("size-overflow", stats, out)
+        print("size-overflow: " + warned(err, f"MDIR_COMPILE_CACHE_MAX_MB='{huge}'"
+                                              " is not a whole number"))
 
     if "--salt" in options:
+        # The key of a stored host object names this build: the build ID of
+        # the extension that compiled it.
+        import mdir
+        extension = next(pathlib.Path(mdir.__file__).parent.glob("_core*.so"))
+        keys = [read_key(p) for p in sorted((default / "host").glob("*.o"))]
+        print("build-id: " + ("the extension's" if keys and all(
+            f"image build-id {build_id(extension)}\n" in k for k in keys)
+            else "MISSING"))
         before = set(files(default))
         stats, out, _ = run("other-build", default=xdg,
                             env={"MDIR_COMPILE_CACHE_SALT_OVERRIDE": "other"})
@@ -192,6 +237,41 @@ def main():
         report("other-build-again", stats, out)
         stats, out, _ = run("this-build", default=xdg)
         report("this-build", stats, out)
+
+
+def read_key(path):
+    """The key of the cache entry at `path`: after the magic tag and the
+    length of the key (CompileCache.cpp)."""
+    data = path.read_bytes()
+    length = int.from_bytes(data[8:16], "little")
+    return data[16:16 + length].decode()
+
+
+def build_id(path):
+    """The GNU build ID of the ELF file at `path`, from its PT_NOTE
+    segments, in lowercase hex."""
+    data = path.read_bytes()
+    assert data[:4] == b"\x7fELF" and data[4] == 2 and data[5] == 1
+    phoff = int.from_bytes(data[32:40], "little")
+    phentsize = int.from_bytes(data[54:56], "little")
+    phnum = int.from_bytes(data[56:58], "little")
+    for i in range(phnum):
+        header = data[phoff + i * phentsize:phoff + (i + 1) * phentsize]
+        if int.from_bytes(header[0:4], "little") != 4:  # PT_NOTE
+            continue
+        offset = int.from_bytes(header[8:16], "little")
+        end = offset + int.from_bytes(header[32:40], "little")
+        while offset + 12 <= end:
+            namesz, descsz, kind = (int.from_bytes(data[offset + 4 * j:
+                                                        offset + 4 * j + 4],
+                                                   "little")
+                                    for j in range(3))
+            name = data[offset + 12:offset + 12 + namesz]
+            desc = offset + 12 + (namesz + 3) // 4 * 4
+            if kind == 3 and name == b"GNU\0":  # NT_GNU_BUILD_ID
+                return data[desc:desc + descsz].hex()
+            offset = desc + (descsz + 3) // 4 * 4
+    return None
 
 
 if __name__ == "__main__":

@@ -126,25 +126,73 @@ std::string getCodeKey(llvm::StringRef module, llvm::StringRef pipeline,
 
 struct CompileCacheLocation;
 
+/// An open directory of the compile cache (D[compile-cache-default]). Its
+/// descriptor is kept, and the subdirectories `host` and `gpu`, their
+/// entries, and the file `size` are opened, made, renamed, and removed
+/// relative to it, never following a symbolic link: once the directory is
+/// open and checked, a change to the components of its path does not move
+/// the cache.
+class CacheDirectory {
+public:
+  /// A directory that `MDIR_COMPILE_CACHE_DIR` or a caller names: taken as
+  /// given, symbolic links included, and opened when it is first used; a
+  /// use that writes makes it first if it is missing.
+  explicit CacheDirectory(std::string path);
+  /// The default directory `path`, `<base>/<parent>/compile`. `<base>` is
+  /// opened as given (`$XDG_CACHE_HOME`, `$HOME/.cache`, or `/var/tmp`);
+  /// `<parent>` and `compile` are made with mode 0700 if they are missing
+  /// and `create`, and opened without following a link. Either is refused
+  /// if it is a symbolic link or not a directory, or another user owns it;
+  /// `compile` also if group or others may write it, and `<parent>` loses
+  /// that permission instead. Null, with the reason in `refused`, when
+  /// refused.
+  static std::shared_ptr<CacheDirectory>
+  openDefault(llvm::StringRef path, bool create, std::string &refused);
+  ~CacheDirectory();
+  CacheDirectory(const CacheDirectory &) = delete;
+  CacheDirectory &operator=(const CacheDirectory &) = delete;
+
+  const std::string &getPath() const { return path; }
+  /// The descriptor of the directory, or -1 if it cannot be opened; a
+  /// named one is made first if `create`.
+  int getDescriptor(bool create);
+  /// The descriptor of the subdirectory `kind` ("host" or "gpu"), made if
+  /// `create`, or -1. Kept with the directory.
+  int getSubdirectory(llvm::StringRef kind, bool create);
+
+private:
+  CacheDirectory() = default;
+  std::string path;
+  bool isDefault = false;
+  std::mutex mutex;
+  int descriptor = -1;
+  std::map<std::string, int> subdirectories;
+};
+
 /// Where the compile cache lives, as the environment says
 /// (D212, D[compile-cache-default]). `MDIR_COMPILE_CACHE_MAX_MB` bounds its
 /// size (2048 MiB by default); see CompileCacheLocation for the directory.
 struct CompileCacheConfig {
   std::string directory;
   uint64_t maxBytes = uint64_t(2048) << 20;
+  /// The directory, open (CacheDirectory); locate() sets it, and a cache
+  /// given a config without it opens `directory` as named.
+  std::shared_ptr<CacheDirectory> opened;
 
   /// The cache that a compile uses: locate().config.
   static std::optional<CompileCacheConfig> fromEnvironment();
   /// Where the cache is, and why there is none, decided once per process
   /// for each environment (D[compile-cache-default]), in this order:
-  /// `MDIR_COMPILE_CACHE=off` and `MDIR_COMPILE_CACHE_MAX_MB=0` turn it off;
-  /// `MDIR_COMPILE_CACHE_DIR` names it; otherwise the default,
-  /// `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile` if that file system is
-  /// local, else `/var/tmp/mdir-<uid>/compile` if local, else none. A
-  /// default directory is made with mode 0700 and refused, before anything
-  /// is read or written, when another user owns it or its parent, or group
-  /// or others may write it; a parent of the user's loses the permission of
-  /// group and others to write. Warnings (a refusal, a bound that does not
+  /// `MDIR_COMPILE_CACHE=off` and `MDIR_COMPILE_CACHE_MAX_MB=0` turn it off,
+  /// and so does an LLVM option set whose value the salt did not record
+  /// (getUnrecordedOptions); `MDIR_COMPILE_CACHE_DIR` names it; otherwise
+  /// the default, `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile` if that
+  /// file system is local, else `/var/tmp/mdir-<uid>/compile` if local,
+  /// else none. A default directory is made with mode 0700, opened once,
+  /// and refused, before anything is read or written, when it or its parent
+  /// is a symbolic link, another user owns it or its parent, or group or
+  /// others may write it; a parent of the user's loses the permission of
+  /// group and others to write (CacheDirectory::openDefault). Warnings (a refusal, a bound that does not
   /// parse, a directory named that others may write) go to the standard
   /// error once per process.
   static CompileCacheLocation locate();
@@ -162,9 +210,11 @@ struct CompileCacheLocation {
 
 /// The directory that `mdir.clear_compile_cache()` clears without one
 /// given (D217): `MDIR_COMPILE_CACHE_DIR`, else the default
-/// directory that locate() would take, whether or not the cache is off.
-/// Nothing is made. Nullopt when there is none.
-std::optional<std::string> getCacheDirectoryToClear();
+/// directory that locate() would take, whether or not the cache is off,
+/// opened and checked as locate() opens it. Nothing is made. `path` takes
+/// its name, empty when there is none; null when there is none, it does
+/// not exist, or it is refused (with a warning).
+std::shared_ptr<CacheDirectory> openCacheDirectoryToClear(std::string &path);
 
 /// The salt in front of every key of the cache and of the code that a
 /// `Program` keeps (D[compile-cache-default]): the ELF build ID of the image
@@ -180,8 +230,14 @@ std::string getCacheSalt();
 /// command line. A key of generated code takes it when it is taken.
 std::string getSchedulerInForce();
 /// Records the arguments of the command line that name registered LLVM
-/// options, for getCacheSalt. Called by `mdir` after it parses them.
+/// options, for getCacheSalt, after `@file` arguments are expanded as
+/// cl::ParseCommandLineOptions expands them. Called by `mdir` and
+/// `mdir-opt` after they parse them.
 void recordCommandLineOptions(int argc, const char *const *argv);
+/// The LLVM options set (other than `-pre-RA-sched`) whose values no
+/// recorded argument gives. The cache is off in a process that has any
+/// (D[compile-cache-default]): its keys would not tell their values apart.
+std::vector<std::string> getUnrecordedOptions();
 /// The BLAKE3 of the file at `path`, read once per process for each
 /// device, inode, size, time of modification, and time of change of the
 /// file; nullopt if it cannot be read.
@@ -205,6 +261,7 @@ struct ClearedCache {
 /// write or read entries meanwhile: a writer renames a complete entry into
 /// place and a reader copies the file, so each sees a whole entry or none
 /// (D217).
+ClearedCache clearCache(CacheDirectory &directory);
 ClearedCache clearCache(llvm::StringRef directory);
 
 /// The entries of every kind of the cache (D212, D214):
@@ -214,13 +271,26 @@ ClearedCache clearCache(llvm::StringRef directory);
 /// Reads the entry at `path` if its key is `key`, its data is intact, and
 /// `isValid` (if given) accepts the data; the time its generation took goes
 /// to `seconds`. A file that exists but fails a check sets `rejected`.
+///
+/// The entry is the file `name` in the subdirectory `kind` of `directory`;
+/// the forms with a `path` open the directory of the path as given, for
+/// tests. A symbolic link in the place of an entry is rejected.
+std::unique_ptr<llvm::MemoryBuffer>
+readCacheEntry(CacheDirectory &directory, llvm::StringRef kind,
+               llvm::StringRef name, llvm::StringRef key, double &seconds,
+               bool &rejected,
+               llvm::function_ref<bool(llvm::StringRef)> isValid = nullptr);
 std::unique_ptr<llvm::MemoryBuffer>
 readCacheEntry(llvm::StringRef path, llvm::StringRef key, double &seconds,
                bool &rejected,
                llvm::function_ref<bool(llvm::StringRef)> isValid = nullptr);
 /// Writes the entry atomically: a unique temporary file in the same
 /// directory, then a rename. `written`, if given, takes the bytes of the
-/// entry's file, for noteCacheStores.
+/// entry's file, for noteCacheStores. The subdirectory is made if missing.
+llvm::Error writeCacheEntry(CacheDirectory &directory, llvm::StringRef kind,
+                            llvm::StringRef name, llvm::StringRef key,
+                            llvm::StringRef data, double seconds,
+                            uint64_t *written = nullptr);
 llvm::Error writeCacheEntry(llvm::StringRef path, llvm::StringRef key,
                             llvm::StringRef data, double seconds,
                             uint64_t *written = nullptr);
@@ -231,6 +301,7 @@ std::string getCacheEntryName(llvm::StringRef key, llvm::StringRef extension);
 /// it holds at most `maxBytes`, and temporary files left by processes that
 /// died. The listing reads the status of every entry, so stores do not
 /// call this; they call noteCacheStores.
+void evictCache(CacheDirectory &directory, uint64_t maxBytes);
 void evictCache(llvm::StringRef directory, uint64_t maxBytes);
 /// Tells the cache at `directory` that this process stored entries of
 /// `bytes` in all, and keeps it within `maxBytes`
@@ -243,13 +314,17 @@ void evictCache(llvm::StringRef directory, uint64_t maxBytes);
 /// call lists. A listing that finds the entries over the bound evicts as
 /// evictCache does, but down to 90% of the bound, so that the stores after
 /// it fit without another listing (#675).
+void noteCacheStores(CacheDirectory &directory, uint64_t bytes,
+                     uint64_t maxBytes);
 void noteCacheStores(llvm::StringRef directory, uint64_t bytes,
                      uint64_t maxBytes);
 /// How many times this process listed a cache directory for eviction; for
 /// tests.
 uint64_t getCacheListingCount();
-/// Marks the entry at `path` as used, for the eviction.
-void touchCacheEntry(llvm::StringRef path);
+/// Marks the entry `name` of the subdirectory `kind` as used, for the
+/// eviction.
+void touchCacheEntry(CacheDirectory &directory, llvm::StringRef kind,
+                     llvm::StringRef name);
 
 /// The part of a key that the build and the target machine and the code
 /// generator's options give: the salt (getCacheSalt), the LLVM version, the

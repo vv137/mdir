@@ -26,12 +26,15 @@
 #include <chrono>
 #include <cstring>
 #include <cerrno>
+#include <dirent.h>
 #include <fcntl.h>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -178,6 +181,37 @@ std::string getEnvironment(const char *name) {
   return value ? *value : std::string();
 }
 
+std::string describeErrno(int error) {
+  return std::error_code(error, std::generic_category()).message();
+}
+
+Error errnoToError(int error) {
+  return errorCodeToError(std::error_code(error, std::generic_category()));
+}
+
+/// A file descriptor, closed with its owner.
+class Descriptor {
+public:
+  explicit Descriptor(int fd = -1) : fd(fd) {}
+  ~Descriptor() {
+    if (fd >= 0)
+      ::close(fd);
+  }
+  Descriptor(Descriptor &&other) : fd(other.release()) {}
+  Descriptor(const Descriptor &) = delete;
+  Descriptor &operator=(const Descriptor &) = delete;
+  int get() const { return fd; }
+  int release() { return std::exchange(fd, -1); }
+
+private:
+  int fd;
+};
+
+/// Opens the directory `name` relative to `at`, without following a link.
+int openDirectoryAt(int at, const char *name) {
+  return ::openat(at, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+}
+
 /// Whether the file system of `path`, or of the nearest directory above it
 /// that exists, is local. MDIR_COMPILE_CACHE_TEST_LOCAL=1, for tests only,
 /// takes every one as local.
@@ -223,34 +257,138 @@ std::optional<std::string> findDefaultDirectory(std::string &why) {
   return std::nullopt;
 }
 
-/// Why the default directory `directory` may not be used: another user
-/// owns it or its parent, or group or others may write it. A parent of the
-/// user's that group or others may write, such as `~/.cache/mdir` made
-/// under a umask of 002, loses that permission first: whoever may write
-/// the parent could put a directory of their own in the place of this one
-/// once it is checked. Empty if it may be used.
-std::string checkPrivate(StringRef directory) {
-  SmallString<256> name(directory), parent(directory);
-  sys::path::remove_filename(parent);
+/// Opens the component `name` of a default directory relative to `at`
+/// (`shown` is its path, for messages), made with mode 0700 first if
+/// `create`. Refused, -1 with the reason in `refused`, if it is a symbolic
+/// link or not a directory, or another user owns it; if group or others may
+/// write it, it loses that permission when `tighten`, and is refused
+/// otherwise. Whoever may write a parent could put a directory of their own
+/// in the place of the one below it.
+int openPrivateComponent(int at, StringRef name, const std::string &shown,
+                         bool create, bool tighten, std::string &refused) {
+  SmallString<64> component(name);
+  if (create && ::mkdirat(at, component.c_str(), 0700) != 0 &&
+      errno != EEXIST) {
+    refused = "cannot make '" + shown + "': " + describeErrno(errno);
+    return -1;
+  }
+  Descriptor fd(openDirectoryAt(at, component.c_str()));
+  if (fd.get() < 0) {
+    int error = errno;
+    struct stat status;
+    if (::fstatat(at, component.c_str(), &status, AT_SYMLINK_NOFOLLOW) == 0 &&
+        S_ISLNK(status.st_mode))
+      refused = "'" + shown + "' is a symbolic link";
+    else if (error == ENOTDIR)
+      refused = "'" + shown + "' is not a directory";
+    else if (error == ENOENT)
+      refused = "'" + shown + "' does not exist";
+    else
+      refused = "'" + shown + "' cannot be opened: " + describeErrno(error);
+    return -1;
+  }
   struct stat status;
-  if (::stat(parent.c_str(), &status) != 0)
-    return "'" + parent.str().str() + "' cannot be read";
-  if (status.st_uid != ::geteuid())
-    return "'" + parent.str().str() + "' belongs to user " +
-           std::to_string(status.st_uid);
-  if ((status.st_mode & (S_IWGRP | S_IWOTH)) &&
-      ::chmod(parent.c_str(), status.st_mode & 07777 & ~(S_IWGRP | S_IWOTH)))
-    return "group or others may write '" + parent.str().str() + "'";
-  if (::stat(name.c_str(), &status) != 0)
-    return "'" + directory.str() + "' cannot be read";
-  if (status.st_uid != ::geteuid())
-    return "'" + directory.str() + "' belongs to user " +
-           std::to_string(status.st_uid);
-  if (status.st_mode & (S_IWGRP | S_IWOTH))
-    return "group or others may write '" + directory.str() + "'";
-  return "";
+  if (::fstat(fd.get(), &status) != 0) {
+    refused = "'" + shown + "' cannot be read";
+    return -1;
+  }
+  if (status.st_uid != ::geteuid()) {
+    refused = "'" + shown + "' belongs to user " +
+              std::to_string(status.st_uid);
+    return -1;
+  }
+  if (status.st_mode & (S_IWGRP | S_IWOTH)) {
+    if (!tighten || ::fchmod(fd.get(), status.st_mode & 07777 &
+                                           ~(S_IWGRP | S_IWOTH)) != 0) {
+      refused = "group or others may write '" + shown + "'";
+      return -1;
+    }
+  }
+  return fd.release();
+}
+} // namespace
+
+CacheDirectory::CacheDirectory(std::string path) : path(std::move(path)) {}
+
+CacheDirectory::~CacheDirectory() {
+  if (descriptor >= 0)
+    ::close(descriptor);
+  for (const auto &entry : subdirectories)
+    ::close(entry.second);
 }
 
+std::shared_ptr<CacheDirectory>
+CacheDirectory::openDefault(StringRef path, bool create,
+                            std::string &refused) {
+  SmallString<256> parent(sys::path::parent_path(path));
+  SmallString<256> base(sys::path::parent_path(parent));
+  StringRef leaf = sys::path::filename(path);
+  StringRef parentName = sys::path::filename(parent);
+  // The base is the user's ($XDG_CACHE_HOME, $HOME/.cache) or the system's
+  // (/var/tmp), and is taken as given, links included.
+  if (create) {
+    if (std::error_code error = sys::fs::create_directories(
+            base, /*IgnoreExisting=*/true, sys::fs::perms::owner_all)) {
+      refused = "cannot make '" + base.str().str() + "': " + error.message();
+      return nullptr;
+    }
+  }
+  Descriptor baseFd(
+      ::open(base.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (baseFd.get() < 0) {
+    refused = errno == ENOENT ? "'" + parent.str().str() + "' does not exist"
+                              : "'" + base.str().str() +
+                                    "' cannot be opened: " +
+                                    describeErrno(errno);
+    return nullptr;
+  }
+  Descriptor parentFd(openPrivateComponent(baseFd.get(), parentName,
+                                           parent.str().str(), create,
+                                           /*tighten=*/true, refused));
+  if (parentFd.get() < 0)
+    return nullptr;
+  int fd = openPrivateComponent(parentFd.get(), leaf, path.str(), create,
+                                /*tighten=*/false, refused);
+  if (fd < 0)
+    return nullptr;
+  std::shared_ptr<CacheDirectory> directory(new CacheDirectory());
+  directory->path = path.str();
+  directory->isDefault = true;
+  directory->descriptor = fd;
+  return directory;
+}
+
+int CacheDirectory::getDescriptor(bool create) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (descriptor >= 0 || isDefault)
+    return descriptor;
+  // A named directory: as given, made as `create_directories` makes it.
+  if (create && sys::fs::create_directories(path))
+    return -1;
+  descriptor = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  return descriptor;
+}
+
+int CacheDirectory::getSubdirectory(StringRef kind, bool create) {
+  int root = getDescriptor(create);
+  if (root < 0)
+    return -1;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (auto found = subdirectories.find(kind.str());
+      found != subdirectories.end())
+    return found->second;
+  SmallString<16> name(kind);
+  // Private in the default directory; as the umask says in a named one.
+  if (create && ::mkdirat(root, name.c_str(), isDefault ? 0700 : 0777) != 0 &&
+      errno != EEXIST)
+    return -1;
+  int fd = openDirectoryAt(root, name.c_str());
+  if (fd >= 0)
+    subdirectories[kind.str()] = fd;
+  return fd;
+}
+
+namespace {
 CompileCacheLocation computeLocation() {
   CompileCacheLocation location;
   if (StringRef(getEnvironment("MDIR_COMPILE_CACHE")).equals_insensitive("off")) {
@@ -260,7 +398,9 @@ CompileCacheLocation computeLocation() {
   CompileCacheConfig config;
   if (auto size = sys::Process::GetEnv("MDIR_COMPILE_CACHE_MAX_MB")) {
     uint64_t megabytes = 0;
-    if (StringRef(*size).trim().getAsInteger(10, megabytes)) {
+    // A bound whose bytes do not fit in 64 bits is no bound.
+    if (StringRef(*size).trim().getAsInteger(10, megabytes) ||
+        megabytes > (std::numeric_limits<uint64_t>::max() >> 20)) {
       warnOnce("warning: MDIR_COMPILE_CACHE_MAX_MB='" + *size +
                "' is not a whole number of MiB; the compile cache keeps its "
                "bound of 2048 MiB");
@@ -271,9 +411,23 @@ CompileCacheLocation computeLocation() {
       config.maxBytes = megabytes << 20;
     }
   }
+  // The salt holds the value of every LLVM option set on the command line;
+  // one whose value it could not record would let entries of two values
+  // meet (D[compile-cache-default]).
+  if (std::vector<std::string> unrecorded = getUnrecordedOptions();
+      !unrecorded.empty()) {
+    location.reason = "the keys do not record the value of the LLVM option";
+    if (unrecorded.size() > 1)
+      location.reason += "s";
+    for (size_t i = 0; i < unrecorded.size(); ++i)
+      location.reason += (i ? ", -" : " -") + unrecorded[i];
+    warnOnce("note: the compile cache is off: " + location.reason);
+    return location;
+  }
   std::string named = getEnvironment("MDIR_COMPILE_CACHE_DIR");
   if (!named.empty()) {
     config.directory = named;
+    config.opened = std::make_shared<CacheDirectory>(named);
     struct stat status;
     if (::stat(named.c_str(), &status) == 0 &&
         (status.st_mode & (S_IWGRP | S_IWOTH)))
@@ -294,14 +448,13 @@ CompileCacheLocation computeLocation() {
     warnOnce("note: the compile cache is off: " + location.reason);
     return location;
   }
-  // Private: mode 0700 for the directories made here.
-  if (std::error_code error = sys::fs::create_directories(
-          *directory, /*IgnoreExisting=*/true, sys::fs::perms::owner_all)) {
-    location.reason = "cannot make '" + *directory + "': " + error.message();
-    warnOnce("warning: the compile cache is off: " + location.reason);
-    return location;
-  }
-  if (std::string refused = checkPrivate(*directory); !refused.empty()) {
+  // Made private (0700), opened once, and checked through its descriptor
+  // before anything is read or written; every entry is then opened
+  // relative to that descriptor.
+  std::string refused;
+  config.opened = CacheDirectory::openDefault(*directory, /*create=*/true,
+                                              refused);
+  if (!config.opened) {
     location.reason = "refused the default directory: " + refused;
     warnOnce("warning: the compile cache is off: " + location.reason +
              "; nothing is read from it or written to it");
@@ -311,6 +464,13 @@ CompileCacheLocation computeLocation() {
   location.config = std::move(config);
   location.source = "default";
   return location;
+}
+
+/// The open directory of `config`, opened as named if it has none.
+CacheDirectory &getOpened(CompileCacheConfig &config) {
+  if (!config.opened)
+    config.opened = std::make_shared<CacheDirectory>(config.directory);
+  return *config.opened;
 }
 } // namespace
 
@@ -338,12 +498,23 @@ std::optional<CompileCacheConfig> CompileCacheConfig::fromEnvironment() {
   return locate().config;
 }
 
-std::optional<std::string> mdir::compiler::getCacheDirectoryToClear() {
-  std::string named = getEnvironment("MDIR_COMPILE_CACHE_DIR");
-  if (!named.empty())
-    return named;
+std::shared_ptr<CacheDirectory>
+mdir::compiler::openCacheDirectoryToClear(std::string &path) {
+  path = getEnvironment("MDIR_COMPILE_CACHE_DIR");
+  if (!path.empty())
+    return std::make_shared<CacheDirectory>(path);
   std::string why;
-  return findDefaultDirectory(why);
+  auto directory = findDefaultDirectory(why);
+  if (!directory)
+    return nullptr;
+  path = *directory;
+  std::string refused;
+  auto opened = CacheDirectory::openDefault(path, /*create=*/false, refused);
+  // A default that does not exist yet holds nothing to clear.
+  if (!opened && !StringRef(refused).ends_with("' does not exist"))
+    warnOnce("warning: the compile cache is not cleared: refused the "
+             "default directory: " + refused);
+  return opened;
 }
 
 std::string mdir::compiler::describeMachine(const TargetMachine &machine,
@@ -376,7 +547,10 @@ std::string mdir::compiler::describeMachine(const TargetMachine &machine,
 HostObjectCache::HostObjectCache(std::optional<CompileCacheConfig> config,
                                  std::string machine, std::string module)
     : config(std::move(config)), machine(std::move(machine)),
-      module(std::move(module)) {}
+      module(std::move(module)) {
+  if (this->config)
+    getOpened(*this->config);
+}
 
 HostObjectCache::~HostObjectCache() = default;
 
@@ -399,18 +573,33 @@ std::string HostObjectCache::getObjectDirectory(StringRef directory) {
   return std::string(path);
 }
 
+namespace {
+/// Reads the entry `name` relative to the directory `at`, as
+/// readCacheEntry does.
 std::unique_ptr<MemoryBuffer>
-mdir::compiler::readCacheEntry(StringRef path, StringRef key, double &seconds,
-                               bool &rejected,
-                               function_ref<bool(StringRef)> isValid) {
+readEntryAt(int at, StringRef name, StringRef key, double &seconds,
+            bool &rejected, function_ref<bool(StringRef)> isValid) {
   rejected = false;
+  if (at < 0)
+    return nullptr;
+  SmallString<128> component(name);
+  Descriptor fd(::openat(at, component.c_str(),
+                         O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+  if (fd.get() < 0) {
+    // A link in the place of an entry is no entry of this cache.
+    rejected = errno == ELOOP;
+    return nullptr;
+  }
+  rejected = true;
+  struct stat status;
+  if (::fstat(fd.get(), &status) != 0 || !S_ISREG(status.st_mode))
+    return nullptr;
   // Read, not mapped: another process may replace the file by a rename.
-  auto file = MemoryBuffer::getFile(path, /*IsText=*/false,
-                                    /*RequiresNullTerminator=*/false,
-                                    /*IsVolatile=*/true);
+  auto file = MemoryBuffer::getOpenFile(fd.get(), name, status.st_size,
+                                        /*RequiresNullTerminator=*/false,
+                                        /*IsVolatile=*/true);
   if (!file)
     return nullptr;
-  rejected = true;
   StringRef in = (*file)->getBuffer();
   if (!in.consume_front(StringRef(kMagic, sizeof(kMagic))))
     return nullptr;
@@ -426,37 +615,19 @@ mdir::compiler::readCacheEntry(StringRef path, StringRef key, double &seconds,
   if (in.size() != objectLength || hashObject(in) != hash)
     return nullptr;
   // A copy, aligned, which a parser of objects needs.
-  auto data = MemoryBuffer::getMemBufferCopy(in, path);
+  auto data = MemoryBuffer::getMemBufferCopy(in, name);
   if (isValid && !isValid(data->getBuffer()))
     return nullptr;
   rejected = false;
   return data;
 }
 
-std::unique_ptr<MemoryBuffer>
-HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
-                           bool &rejected) {
-  // An object LLVM cannot read is rejected here rather than at linking.
-  return readCacheEntry(path, key, seconds, rejected, [](StringRef data) {
-    auto parsed = object::ObjectFile::createObjectFile(
-        MemoryBufferRef(data, "cached object"));
-    if (!parsed) {
-      consumeError(parsed.takeError());
-      return false;
-    }
-    return true;
-  });
-}
-
-Error HostObjectCache::writeEntry(StringRef path, StringRef key,
-                                  MemoryBufferRef object, double seconds,
-                                  uint64_t *written) {
-  return writeCacheEntry(path, key, object.getBuffer(), seconds, written);
-}
-
-Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
-                                      StringRef object, double seconds,
-                                      uint64_t *written) {
+/// Writes the entry `name` relative to the directory `at`, as
+/// writeCacheEntry does.
+Error writeEntryAt(int at, StringRef name, StringRef key, StringRef object,
+                   double seconds, uint64_t *written) {
+  if (at < 0)
+    return errnoToError(ENOENT);
   std::string data(kMagic, sizeof(kMagic));
   append<uint64_t>(data, key.size());
   data += key;
@@ -466,30 +637,110 @@ Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
   data += object;
   // A unique temporary file in the same directory, then a rename: a
   // reader sees the old entry, the new one, or none, never a part.
-  SmallString<256> model(path);
-  model += ".tmp-%%%%%%%%%%%%";
+  std::string temporary;
   int fd = -1;
-  SmallString<256> temporary;
-  if (auto error = sys::fs::createUniqueFile(model, fd, temporary))
-    return errorCodeToError(error);
-  {
-    raw_fd_ostream os(fd, /*shouldClose=*/true);
-    os << data;
-    os.close();
-    if (os.has_error()) {
-      std::error_code error = os.error();
-      os.clear_error();
-      sys::fs::remove(temporary);
-      return errorCodeToError(error);
-    }
+  for (int attempt = 0; attempt < 64 && fd < 0; ++attempt) {
+    temporary = name.str() + ".tmp-";
+    for (int i = 0; i < 3; ++i)
+      temporary += utohexstr(sys::Process::GetRandomNumber() & 0xffff,
+                             /*LowerCase=*/true, /*Width=*/4);
+    fd = ::openat(at, temporary.c_str(),
+                  O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
+    if (fd < 0 && errno != EEXIST)
+      return errnoToError(errno);
   }
-  if (auto error = sys::fs::rename(temporary, path)) {
-    sys::fs::remove(temporary);
-    return errorCodeToError(error);
+  if (fd < 0)
+    return errnoToError(EEXIST);
+  Descriptor file(fd);
+  for (size_t done = 0; done < data.size();) {
+    ssize_t count = ::write(fd, data.data() + done, data.size() - done);
+    if (count < 0 && errno == EINTR)
+      continue;
+    if (count <= 0) {
+      int error = count < 0 ? errno : EIO;
+      ::unlinkat(at, temporary.c_str(), 0);
+      return errnoToError(error);
+    }
+    done += count;
+  }
+  if (::close(file.release()) != 0) {
+    int error = errno;
+    ::unlinkat(at, temporary.c_str(), 0);
+    return errnoToError(error);
+  }
+  SmallString<128> target(name);
+  if (::renameat(at, temporary.c_str(), at, target.c_str()) != 0) {
+    int error = errno;
+    ::unlinkat(at, temporary.c_str(), 0);
+    return errnoToError(error);
   }
   if (written)
     *written = data.size();
   return Error::success();
+}
+
+/// The directory of `path` opened as given, and the name of its file.
+std::pair<Descriptor, std::string> openParentOf(StringRef path) {
+  SmallString<256> parent(sys::path::parent_path(path));
+  if (parent.empty())
+    parent = ".";
+  return {Descriptor(::open(parent.c_str(), O_RDONLY | O_DIRECTORY |
+                                                O_CLOEXEC)),
+          sys::path::filename(path).str()};
+}
+
+bool isHostObject(StringRef data) {
+  // An object LLVM cannot read is rejected here rather than at linking.
+  auto parsed = object::ObjectFile::createObjectFile(
+      MemoryBufferRef(data, "cached object"));
+  if (!parsed) {
+    consumeError(parsed.takeError());
+    return false;
+  }
+  return true;
+}
+} // namespace
+
+std::unique_ptr<MemoryBuffer> mdir::compiler::readCacheEntry(
+    CacheDirectory &directory, StringRef kind, StringRef name, StringRef key,
+    double &seconds, bool &rejected, function_ref<bool(StringRef)> isValid) {
+  return readEntryAt(directory.getSubdirectory(kind, /*create=*/false), name,
+                     key, seconds, rejected, isValid);
+}
+
+std::unique_ptr<MemoryBuffer>
+mdir::compiler::readCacheEntry(StringRef path, StringRef key, double &seconds,
+                               bool &rejected,
+                               function_ref<bool(StringRef)> isValid) {
+  auto [parent, name] = openParentOf(path);
+  return readEntryAt(parent.get(), name, key, seconds, rejected, isValid);
+}
+
+std::unique_ptr<MemoryBuffer>
+HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
+                           bool &rejected) {
+  return readCacheEntry(path, key, seconds, rejected, isHostObject);
+}
+
+Error HostObjectCache::writeEntry(StringRef path, StringRef key,
+                                  MemoryBufferRef object, double seconds,
+                                  uint64_t *written) {
+  return writeCacheEntry(path, key, object.getBuffer(), seconds, written);
+}
+
+Error mdir::compiler::writeCacheEntry(CacheDirectory &directory,
+                                      StringRef kind, StringRef name,
+                                      StringRef key, StringRef object,
+                                      double seconds, uint64_t *written) {
+  return writeEntryAt(directory.getSubdirectory(kind, /*create=*/true), name,
+                      key, object, seconds, written);
+}
+
+Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
+                                      StringRef object, double seconds,
+                                      uint64_t *written) {
+  auto [parent, name] = openParentOf(path);
+  return writeEntryAt(parent.get(), name, key, object, seconds, written);
 }
 
 std::string mdir::compiler::getCacheEntryName(StringRef key,
@@ -497,21 +748,53 @@ std::string mdir::compiler::getCacheEntryName(StringRef key,
   return hashObject(key) + extension.str();
 }
 
-void mdir::compiler::touchCacheEntry(StringRef path) {
-  sys::fs::setLastAccessAndModificationTime(path,
-                                            std::chrono::system_clock::now());
+void mdir::compiler::touchCacheEntry(CacheDirectory &directory, StringRef kind,
+                                     StringRef name) {
+  int at = directory.getSubdirectory(kind, /*create=*/false);
+  SmallString<128> component(name);
+  if (at >= 0)
+    (void)::utimensat(at, component.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);
 }
 
 namespace {
+/// Calls `visit(name, status)` for each regular file of the directory `at`,
+/// listed through a descriptor of its own; links are not followed.
+template <typename Visit> void forEachFile(int at, Visit visit) {
+  if (at < 0)
+    return;
+  int fd = ::openat(at, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0)
+    return;
+  DIR *listing = ::fdopendir(fd);
+  if (!listing) {
+    ::close(fd);
+    return;
+  }
+  while (struct dirent *entry = ::readdir(listing)) {
+    struct stat status;
+    // Another process may have removed it since the listing.
+    if (::fstatat(at, entry->d_name, &status, AT_SYMLINK_NOFOLLOW) != 0 ||
+        !S_ISREG(status.st_mode))
+      continue;
+    visit(StringRef(entry->d_name), status);
+  }
+  ::closedir(listing);
+}
+
+sys::TimePoint<> getModificationTime(const struct stat &status) {
+  return sys::toTimePoint(status.st_mtim.tv_sec, status.st_mtim.tv_nsec);
+}
+
 /// Lists the entries of every kind, removes the temporary files left by
 /// processes that died and, when they exceed `maxBytes`, entries least
 /// recently used first until at most `target` (at most `maxBytes`) are
 /// left. Returns the bytes left.
-uint64_t listAndEvict(StringRef directory, uint64_t maxBytes,
+uint64_t listAndEvict(CacheDirectory &directory, uint64_t maxBytes,
                       uint64_t target) {
   ++listings;
   struct Entry {
-    std::string path;
+    int at;
+    std::string name;
     uint64_t size;
     sys::TimePoint<> used;
   };
@@ -520,29 +803,20 @@ uint64_t listAndEvict(StringRef directory, uint64_t maxBytes,
   auto current = std::chrono::system_clock::now();
   // One bound for the entries of every kind.
   for (StringRef kind : {"host", "gpu"}) {
-    SmallString<256> subdirectory(directory);
-    sys::path::append(subdirectory, kind);
-    std::error_code error;
-    for (sys::fs::directory_iterator it(subdirectory, error), end;
-         it != end && !error; it.increment(error)) {
-      sys::fs::file_status status;
-      // Another process may have removed it since the listing.
-      if (sys::fs::status(it->path(), status) ||
-          status.type() != sys::fs::file_type::regular_file)
-        continue;
-      StringRef name = sys::path::filename(it->path());
+    int at = directory.getSubdirectory(kind, /*create=*/false);
+    forEachFile(at, [&](StringRef name, const struct stat &status) {
       if (name.contains(".tmp-")) {
-        if (current - status.getLastModificationTime() > kStaleTemporary)
-          sys::fs::remove(it->path());
-        continue;
+        if (current - getModificationTime(status) > kStaleTemporary)
+          ::unlinkat(at, name.data(), 0);
+        return;
       }
       if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
           !name.ends_with(".cubin"))
-        continue;
-      entries.push_back({it->path(), status.getSize(),
-                         status.getLastModificationTime()});
-      total += status.getSize();
-    }
+        return;
+      entries.push_back({at, name.str(), uint64_t(status.st_size),
+                         getModificationTime(status)});
+      total += status.st_size;
+    });
   }
   if (total <= maxBytes)
     return total;
@@ -552,7 +826,7 @@ uint64_t listAndEvict(StringRef directory, uint64_t maxBytes,
     if (total <= target)
       break;
     // A file another process removed first counts as removed.
-    sys::fs::remove(entry.path);
+    ::unlinkat(entry.at, entry.name.c_str(), 0);
     total -= entry.size;
   }
   return total;
@@ -588,17 +862,15 @@ bool lockWithin(int fd, std::chrono::milliseconds timeout) {
 /// process holds it only while it adds to the total or lists the directory.
 class SizeFile {
 public:
-  SizeFile(StringRef directory, bool create) : lock(getMutex()) {
-    SmallString<256> path(directory);
-    sys::path::append(path, "size");
-    auto opened = sys::fs::openNativeFileForReadWrite(
-        path, create ? sys::fs::CD_OpenAlways : sys::fs::CD_OpenExisting,
-        sys::fs::OF_None);
-    if (!opened) {
-      consumeError(opened.takeError());
+  SizeFile(CacheDirectory &directory, bool create) : lock(getMutex()) {
+    int at = directory.getDescriptor(/*create=*/false);
+    if (at < 0)
       return;
-    }
-    fd = *opened;
+    fd = ::openat(at, "size",
+                  O_RDWR | O_NOFOLLOW | O_CLOEXEC | (create ? O_CREAT : 0),
+                  0666);
+    if (fd < 0)
+      return;
     // A lock of the file between processes (fcntl), which a network file
     // system carries; a file system without locks, or a lock not given
     // within the timeout, leaves the file unused: the store then lists the
@@ -662,14 +934,19 @@ int64_t secondsSinceEpoch() {
 }
 } // namespace
 
-void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
+void mdir::compiler::evictCache(CacheDirectory &directory, uint64_t maxBytes) {
   SizeFile file(directory, /*create=*/false);
   uint64_t total = listAndEvict(directory, maxBytes, maxBytes);
   if (file.usable())
     file.write(total, secondsSinceEpoch());
 }
 
-void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
+void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
+  CacheDirectory opened(directory.str());
+  evictCache(opened, maxBytes);
+}
+
+void mdir::compiler::noteCacheStores(CacheDirectory &directory, uint64_t bytes,
                                      uint64_t maxBytes) {
   SizeFile file(directory, /*create=*/true);
   if (!file.usable()) {
@@ -697,45 +974,46 @@ void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
   file.write(listAndEvict(directory, maxBytes, lowWater(maxBytes)), current);
 }
 
+void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
+                                     uint64_t maxBytes) {
+  CacheDirectory opened(directory.str());
+  noteCacheStores(opened, bytes, maxBytes);
+}
+
 uint64_t mdir::compiler::getCacheListingCount() { return listings; }
 
-ClearedCache mdir::compiler::clearCache(StringRef directory) {
+ClearedCache mdir::compiler::clearCache(CacheDirectory &directory) {
   ClearedCache cleared;
   auto current = std::chrono::system_clock::now();
   for (StringRef kind : {"host", "gpu"}) {
-    SmallString<256> subdirectory(directory);
-    sys::path::append(subdirectory, kind);
-    std::error_code error;
-    for (sys::fs::directory_iterator it(subdirectory, error), end;
-         it != end && !error; it.increment(error)) {
-      sys::fs::file_status status;
-      // Another process may have removed it since the listing.
-      if (sys::fs::status(it->path(), status) ||
-          status.type() != sys::fs::file_type::regular_file)
-        continue;
-      StringRef name = sys::path::filename(it->path());
+    int at = directory.getSubdirectory(kind, /*create=*/false);
+    forEachFile(at, [&](StringRef name, const struct stat &status) {
       // The temporary file of a writer under way is left, so that its
       // rename succeeds; one older than an hour was left by a process
       // that died.
       if (name.contains(".tmp-")) {
-        if (current - status.getLastModificationTime() > kStaleTemporary)
-          sys::fs::remove(it->path());
-        continue;
+        if (current - getModificationTime(status) > kStaleTemporary)
+          ::unlinkat(at, name.data(), 0);
+        return;
       }
       if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
           !name.ends_with(".cubin"))
-        continue;
+        return;
       // Only entries of this format: the magic tag of the layout.
-      auto head = MemoryBuffer::getFileSlice(it->path(), sizeof(kMagic), 0,
-                                             /*IsVolatile=*/true);
-      if (!head || (*head)->getBuffer() != StringRef(kMagic, sizeof(kMagic)))
-        continue;
+      Descriptor fd(::openat(at, name.data(), O_RDONLY | O_NOFOLLOW |
+                                                  O_CLOEXEC));
+      char head[sizeof(kMagic)];
+      if (fd.get() < 0 ||
+          ::pread(fd.get(), head, sizeof(head), 0) !=
+              static_cast<ssize_t>(sizeof(head)) ||
+          std::memcmp(head, kMagic, sizeof(kMagic)) != 0)
+        return;
       // A file another process removed first counts as left to it.
-      if (sys::fs::remove(it->path(), /*IgnoreNonExisting=*/false))
-        continue;
+      if (::unlinkat(at, name.data(), 0) != 0)
+        return;
       ++(kind == "host" ? cleared.hostEntries : cleared.gpuEntries);
-      cleared.bytes += status.getSize();
-    }
+      cleared.bytes += status.st_size;
+    });
   }
   // The total loses what was removed. An entry that its writer had not yet
   // added leaves the total too large, which the next listing corrects.
@@ -747,6 +1025,11 @@ ClearedCache mdir::compiler::clearCache(StringRef directory) {
       file.write(total - std::min(total, cleared.bytes), listed);
   }
   return cleared;
+}
+
+ClearedCache mdir::compiler::clearCache(StringRef directory) {
+  CacheDirectory opened(directory.str());
+  return clearCache(opened);
 }
 
 std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
@@ -762,13 +1045,14 @@ std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
   double start = now();
   if (config) {
     request.key = getKey(*module);
-    SmallString<256> path(getObjectDirectory(config->directory));
-    sys::path::append(path, getEntryName(request.key));
+    std::string name = getEntryName(request.key);
     double seconds = 0.0;
     bool rejected = false;
-    if (auto object = readEntry(path, request.key, seconds, rejected)) {
+    if (auto object = readCacheEntry(*config->opened, "host", name,
+                                     request.key, seconds, rejected,
+                                     isHostObject)) {
       // Marks the entry as used, for the eviction of the least recent.
-      touchCacheEntry(path);
+      touchCacheEntry(*config->opened, "host", name);
       std::lock_guard<std::mutex> lock(mutex);
       ++stats.hits;
       stats.savedSeconds += seconds;
@@ -803,18 +1087,14 @@ void HostObjectCache::notifyObjectCompiled(const Module *module,
   bool stored = false;
   uint64_t written = 0;
   if (config) {
-    std::string directory = getObjectDirectory(config->directory);
-    SmallString<256> path(directory);
-    sys::path::append(path, getEntryName(request.key));
     // A cache that cannot be written is no cache; the run goes on.
-    if (sys::fs::create_directories(directory)) {
-      stored = false;
-    } else if (auto error =
-                   writeEntry(path, request.key, object, seconds, &written)) {
+    if (auto error = writeCacheEntry(*config->opened, "host",
+                                     getEntryName(request.key), request.key,
+                                     object.getBuffer(), seconds, &written)) {
       consumeError(std::move(error));
     } else {
       stored = true;
-      noteCacheStores(config->directory, written, config->maxBytes);
+      noteCacheStores(*config->opened, written, config->maxBytes);
     }
   }
   std::lock_guard<std::mutex> lock(mutex);

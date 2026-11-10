@@ -321,16 +321,15 @@ struct Counters {
   }
 };
 
-/// The GPU entries of the compile cache (D212): `<directory>/gpu/`.
+/// The GPU entries of the compile cache (D212): `<directory>/gpu/`, opened
+/// relative to the cache's open directory (D[compile-cache-default]).
 class GpuCache {
 public:
   explicit GpuCache(std::optional<CompileCacheConfig> config)
       : config(std::move(config)) {
-    if (this->config) {
-      SmallString<256> path(this->config->directory);
-      llvm::sys::path::append(path, "gpu");
-      directory = std::string(path);
-    }
+    if (this->config && !this->config->opened)
+      this->config->opened = std::make_shared<mdir::compiler::CacheDirectory>(
+          this->config->directory);
   }
   bool enabled() const { return config.has_value(); }
 
@@ -339,34 +338,33 @@ public:
   std::optional<std::string> read(StringRef key, StringRef extension,
                                   bool (*isValid)(StringRef), double &saved,
                                   Counters &counters) {
-    std::string path = getPath(key, extension);
+    std::string name = mdir::compiler::getCacheEntryName(key, extension);
     bool rejected = false;
-    auto entry = mdir::compiler::readCacheEntry(path, key, saved, rejected,
-                                                isValid);
+    auto entry = mdir::compiler::readCacheEntry(*config->opened, "gpu", name,
+                                                key, saved, rejected, isValid);
     if (rejected)
       ++counters.rejected;
     if (!entry)
       return std::nullopt;
-    mdir::compiler::touchCacheEntry(path);
+    mdir::compiler::touchCacheEntry(*config->opened, "gpu", name);
     return entry->getBuffer().str();
   }
 
   void write(StringRef key, StringRef extension, StringRef data,
              double seconds, Counters &counters) {
     // A cache that cannot be written is no cache; the run goes on.
-    std::call_once(made, [&] {
-      writable = !llvm::sys::fs::create_directories(directory);
-    });
     uint64_t written = 0;
-    if (writable &&
-        !mdir::compiler::writeCacheEntry(getPath(key, extension), key, data,
-                                         seconds, &written)) {
-      ++counters.stored;
-      counters.storedBytes += written;
+    if (auto error = mdir::compiler::writeCacheEntry(
+            *config->opened, "gpu",
+            mdir::compiler::getCacheEntryName(key, extension), key, data,
+            seconds, &written)) {
+      // The error is dropped with the entry.
+      llvm::consumeError(std::move(error));
+      ++counters.unstored;
       return;
     }
-    // writeCacheEntry's error, if any, is dropped with the entry.
-    ++counters.unstored;
+    ++counters.stored;
+    counters.storedBytes += written;
   }
 
   /// Adds what one run of the pass stored to the cache's total, once for
@@ -374,21 +372,12 @@ public:
   /// exceeded (D234).
   void noteStores(uint64_t bytes) {
     if (config)
-      mdir::compiler::noteCacheStores(config->directory, bytes,
+      mdir::compiler::noteCacheStores(*config->opened, bytes,
                                       config->maxBytes);
   }
 
 private:
-  std::string getPath(StringRef key, StringRef extension) const {
-    SmallString<256> path(directory);
-    llvm::sys::path::append(path,
-                            mdir::compiler::getCacheEntryName(key, extension));
-    return std::string(path);
-  }
   std::optional<CompileCacheConfig> config;
-  std::string directory;
-  std::once_flag made;
-  bool writable = false;
 };
 
 /// The key of the PTX of `module` for `target`: the salt, which names the

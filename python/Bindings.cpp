@@ -962,12 +962,21 @@ PYBIND11_MODULE(_core, m) {
   });
   python::xla::addBindings(m);
   m.def("clear_compile_cache", [](std::optional<std::string> directory) {
-    if (!directory)
-      directory = compiler::getCacheDirectoryToClear();
+    // Without a directory, the one a compile would use, opened and checked
+    // as a compile opens it (D[compile-cache-default]).
+    std::shared_ptr<compiler::CacheDirectory> opened;
+    if (!directory) {
+      std::string path;
+      opened = compiler::openCacheDirectoryToClear(path);
+      if (!path.empty())
+        directory = path;
+    } else if (!directory->empty()) {
+      opened = std::make_shared<compiler::CacheDirectory>(*directory);
+    }
     compiler::ClearedCache cleared;
-    if (directory && !directory->empty()) {
+    if (opened) {
       py::gil_scoped_release release;
-      cleared = compiler::clearCache(*directory);
+      cleared = compiler::clearCache(*opened);
     }
     py::dict d;
     d["directory"] = directory && !directory->empty() ? py::cast(*directory) : py::none();
