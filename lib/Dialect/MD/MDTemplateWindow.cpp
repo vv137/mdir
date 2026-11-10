@@ -135,7 +135,13 @@ template <typename Op> static LogicalResult verifyBody(Op op, bool gather) {
     if (inner.getNumRegions() || !isMemoryEffectFree(&inner))
       return op.emitOpError("expected a straight-line, effect-free window body");
   auto yield = dyn_cast<YieldOp>(block.getTerminator());
-  unsigned stride = gather ? arity + 1 : 2;
+  if (Attribute layout = op->getAttr(kTemplateSiteForces)) {
+    auto flags = dyn_cast<DenseI32ArrayAttr>(layout);
+    if (!gather || !flags || flags.size() != 3 ||
+        llvm::any_of(flags.asArrayRef(), [](int32_t flag) { return flag != 0 && flag != 1; }))
+      return op.emitOpError("expected three binary site-force layout flags on a gather");
+  }
+  unsigned stride = gather ? getTemplateForceArity(op, arity) + 1 : 2;
   if (!yield || yield.getNumOperands() == 0 || yield.getNumOperands() % stride)
     return op.emitOpError("expected site contributions followed by their site displacements");
   unsigned pairs = yield.getNumOperands() / stride;
@@ -156,6 +162,52 @@ template <typename Op> static LogicalResult verifyBody(Op op, bool gather) {
   return success();
 }
 } // namespace
+
+llvm::SmallVector<Value> mdir::md::emitTemplateForceTranspose(
+    OpBuilder &builder, Location loc, ValueRange values, double alpha) {
+  if (values.size() != 4) return llvm::to_vector(values);
+  auto vector = cast<VectorType>(values[0].getType());
+  SmallVector<Value> real;
+  for (unsigned site = 0; site != 3; ++site) {
+    Value weight = arith::ConstantOp::create(builder, loc,
+        DenseElementsAttr::get(vector, FloatAttr::get(vector.getElementType(),
+            site == 0 ? 1 - 2 * alpha : alpha)));
+    Value extra = arith::MulFOp::create(builder, loc, values[3], weight);
+    real.push_back(arith::AddFOp::create(builder, loc, values[site], extra));
+  }
+  return real;
+}
+
+unsigned mdir::md::getTemplateForceArity(Operation *op, unsigned arity,
+    unsigned column, unsigned outs) {
+  auto flags = op->getAttrOfType<DenseI32ArrayAttr>(kTemplateSiteForces);
+  unsigned tag = arity == 6 ? 0 : arity == 4 ? 1 : 2;
+  if (!flags || !flags[tag * outs + column]) return arity;
+  return arity == 6 ? 8 : arity == 4 ? 5 : 2;
+}
+
+std::optional<std::array<unsigned, 2>> mdir::md::getTemplateWindowSites(
+    Value displacement, Block &block, unsigned arity, double alpha) {
+  SmallVector<double> c;
+  if (!coefficients(displacement, block, getTemplateWindowMembers(arity).size(), c)
+      || c[0] != 1.0) return std::nullopt;
+  auto identify = [&](double a, double b) -> std::optional<unsigned> {
+    if (a == 0.0 && b == 0.0) return 0;
+    if (a == 1.0 && b == 0.0) return 1;
+    if (a == 0.0 && b == 1.0) return 2;
+    if (a == alpha && b == alpha) return 3;
+    return std::nullopt;
+  };
+  if (arity == 2) return std::array<unsigned, 2>{0, 1};
+  if (arity == 4) {
+    auto b = identify(-c[1], -c[2]);
+    if (b) return std::array<unsigned, 2>{0, 1 + *b};
+  } else {
+    auto a = identify(c[1], c[2]), b = identify(-c[3], -c[4]);
+    if (a && b) return std::array<unsigned, 2>{*a, 4 + *b};
+  }
+  return std::nullopt;
+}
 
 LogicalResult SumTemplateWindowOp::verify() { return verifyOperands(*this, false); }
 LogicalResult SumTemplateWindowOp::verifyRegions() { return verifyBody(*this, false); }

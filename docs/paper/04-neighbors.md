@@ -1217,6 +1217,13 @@ expose their squared distances, regions and contribution outputs through
 one compiler interface. The same radial canonicalization and D94 table
 admission then apply to both, retaining the original error criterion and
 analytic fallback; the physical expression remains the source body.
+For a proved radial site energy the window constructor forms
+$\mathbf F=-2wU'(r^2)\mathbf d$ directly, leaving general differentiation
+unchanged. It accumulates forces at interaction sites, then applies the
+linear rule-(A) transpose once at the molecular write boundary. This
+avoids expanding coordinate-basis derivatives and repeating the
+extra-point pullback for each site pair. The per-site cutoff and candidate
+image remain explicit; energy and strain use the same source expression.
 
 The native spatial order uses one stable counting sort of the joint
 column and z key, with the unit ID breaking ties. Each digit composes

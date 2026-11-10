@@ -189,6 +189,13 @@ def MDExec_TemplateForOp : MDExec_Op<"template_for", [
     nothing; later fusion combines compatible bodies and destinations.
     Scalar expressions, forces and strain come from the structured MD
     reduction, not a second physical expression in the scheduler.
+
+    Optional `md.template_site_forces` has three rows of binary flags,
+    one per `outs` column. A flagged force column yields O/H1/H2/E site
+    slots for each water (WW 8, SW 5, SS 2) before its displacements.
+    The scheduler accumulates these sites and applies the constant rule-A
+    transpose once at each real-member write boundary. Captured source
+    coefficients, site cutoffs and image displacements are unchanged.
   }];
   let arguments = (ins MDRT_SegmentedPairsType:$list,
       MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,

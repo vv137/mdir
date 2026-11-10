@@ -143,13 +143,15 @@ LogicalResult Converter::convertTemplateWindow(OpTy op, bool gather) {
     outs.push_back(md_exec::ZerosOp::create(builder, loc, op.getResult().getType()));
   else reductions.push_back(createZero(loc, op.getResult().getType()));
   unsigned count = op.getKernel().front().getTerminator()->getNumOperands() /
-                   (gather ? arity + 1 : 2);
+                   (gather ? md::getTemplateForceArity(op, arity) + 1 : 2);
   SmallVector<int32_t> pairs(3, 0);
   pairs[tag] = count;
   auto loop = md_exec::TemplateForOp::create(builder, loc,
       TypeRange{op.getResult().getType()}, list, op.getPositions(), op.getCell(),
       op.getGathered(), outs, reductions, ValueRange{}, builder.getDenseI32ArrayAttr(pairs),
       op.getCutoffAttr(), op.getExtentAttr(), op.getAlphaAttr());
+  if (auto flags = op->getAttr(md::kTemplateSiteForces))
+    loop->setAttr(md::kTemplateSiteForces, flags);
   constexpr unsigned arities[] = {6, 4, 2};
   Type vector = VectorType::get({3}, builder.getF64Type());
   for (unsigned kind = 0; kind != 3; ++kind) {

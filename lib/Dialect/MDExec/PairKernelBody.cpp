@@ -1,4 +1,5 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "llvm/ADT/DenseMap.h"
@@ -25,7 +26,8 @@ SmallVector<PairKernelBody> TemplateForOp::getPairKernelBodies() {
     llvm::DenseMap<Value, unsigned> seen;
     unsigned offset = 0;
     for (unsigned column = 0; column != columns; ++column) {
-      unsigned stride = column < getOuts().size() ? arities[tag] : 1;
+      unsigned stride = column < getOuts().size()
+          ? mdir::md::getTemplateForceArity(*this, arities[tag], column, getOuts().size()) : 1;
       unsigned count = getPairs()[tag * columns + column];
       for (unsigned pair = 0; pair != count; ++pair) {
         Value displacement = yield->getOperand(offset + stride * count + pair);

@@ -126,6 +126,12 @@ LogicalResult TemplateForOp::verify() {
   unsigned columns = getOuts().size() + getReduce().size();
   if (!columns || getPairs().size() != 3 * columns)
     return emitOpError("expected three rows of pair counts, one column per destination/reduction");
+  if (Attribute layout = (*this)->getAttr(mdir::md::kTemplateSiteForces)) {
+    auto flags = dyn_cast<DenseI32ArrayAttr>(layout);
+    if (!flags || flags.size() != 3 * getOuts().size() ||
+        llvm::any_of(flags.asArrayRef(), [](int32_t flag) { return flag != 0 && flag != 1; }))
+      return emitOpError("expected three rows of binary site-force flags, one per destination");
+  }
   for (int32_t count : getPairs())
     if (count < 0) return emitOpError("expected nonnegative site-pair counts");
   for (Value value : getIns())
@@ -171,7 +177,8 @@ LogicalResult TemplateForOp::verifyRegions() {
       bool scatter = column < getOuts().size();
       Type type = scatter ? getKernelValueType(getOuts()[column].getType())
                           : getReduce()[column - getOuts().size()].getType();
-      expected.append(pairs * (scatter ? arities[tag] : 1), type);
+      expected.append(pairs * (scatter ? mdir::md::getTemplateForceArity(
+          *this, arities[tag], column, getOuts().size()) : 1), type);
       expected.append(pairs, vector);
     }
     auto yield = dyn_cast<YieldOp>(block.getTerminator());

@@ -1415,3 +1415,13 @@ their operations. This is a future behavior-preserving refactor, with
 byte-identical PTX as its gate, rather than five new semantic primitives.
 
 The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D350). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.
+
+The template derivative-window constructor can retain interaction-site
+forces through the warp accumulation. It derives a scalar radial factor
+from the source energy's squared norm through the common pair-body
+interface, then multiplies it by the site displacement. A four-site
+water's constant rule-A transpose runs once at the accumulated write
+boundary. This does not change general differentiation or the site,
+image, cutoff, coverage and pruning predicates. Pair and force arithmetic
+remain f32; energy and virial accumulation and covering geometry retain
+their declared f64 precision.

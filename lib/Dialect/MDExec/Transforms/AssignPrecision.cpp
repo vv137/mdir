@@ -8,6 +8,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -769,7 +770,7 @@ void Assigner::rewriteTemplateLoop(TemplateForOp loop) {
       Type expected = loop.getResult(column).getType();
       if (auto field = dyn_cast<FieldType>(expected))
         expected = field.getKernelValueType();
-      unsigned contributions = count * (column < outs ? arities[tag] : 1);
+      unsigned contributions = count * (column < outs ? md::getTemplateForceArity(loop, arities[tag], column, outs) : 1);
       for (unsigned i = 0; i != contributions; ++i, ++operand)
         yield->setOperand(operand,
                          createCast(exit, loc, yield->getOperand(operand), expected));

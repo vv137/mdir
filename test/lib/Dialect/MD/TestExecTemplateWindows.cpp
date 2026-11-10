@@ -1,6 +1,7 @@
 // Exercise the actual execution-body emitter independently of device lists.
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -88,8 +89,10 @@ struct TestExecTemplateWindows
       }
       auto contribution = mdir::kernels::emitTemplateWindowContributions(
           builder, op.getLoc(), op, 0, mapping);
-      SmallVector<Value> values(contribution.firstForces.begin(), contribution.firstForces.end());
-      llvm::append_range(values, contribution.secondForces);
+      auto values = mdir::md::emitTemplateForceTranspose(builder, op.getLoc(),
+          contribution.firstForces, op.getAlpha().convertToDouble());
+      llvm::append_range(values, mdir::md::emitTemplateForceTranspose(builder,
+          op.getLoc(), contribution.secondForces, op.getAlpha().convertToDouble()));
       llvm::append_range(values, contribution.sums);
       func::ReturnOp::create(builder, op.getLoc(), values);
     }
