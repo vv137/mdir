@@ -187,6 +187,15 @@ Recorded at its merge.
 alternatives, and the measurements before and after.
 ```
 
+A decision for a feature that has a prototype or a reference
+implementation lists, as requirements, the mechanisms that make it fast
+and accurate, not only the numbers they gave. An implementation that
+departs from one says why in the decision. The decision of #795 recorded
+a prototype at 0.78 to 0.93 of `main`'s step but not its joint sort, its
+column and group layout, its prefilter, or its single image per pair. The
+implementation, rebuilt rather than ported, came out 20 to 48 times
+slower, and after fixes still 1.8 to 4.5 times.
+
 The branch does not edit the table of [decisions.md](decisions.md), which
 `scripts/decisions-table.py` writes from the files: the number, the
 statement (the bold sentence that begins the text), and the date. Several
@@ -341,6 +350,15 @@ any slowdown on the Amber suite.
   temperature under load that the job recorded at its end.
 - **Publication.** A figure for publication is the mean and standard
   deviation of repeated runs.
+- **Against a prototype.** A feature with a prototype or a reference
+  implementation reports, from its first integration on and after each
+  stage, its time per kernel next to the prototype's, on the same kind of
+  device where possible and otherwise marked as context. A preliminary
+  timing that shows a large gap against the prototype or `main` stops the
+  work: the author or the reviewer asks for its cause with
+  `needs-decision`, before the remaining gates. In #795 a timing 7 to 21
+  times slower was posted as information, and the cause was sought only
+  after the correctness gates.
 
 ## Shared machines
 
