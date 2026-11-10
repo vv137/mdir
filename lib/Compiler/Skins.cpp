@@ -206,8 +206,11 @@ compiler::SkinTrial measure(const Control &control, const System &system,
                                          from)
         .count();
   };
-  // Nothing is kept or cached: each candidate is compiled anew, which is
-  // what the search costs (D281).
+  // No code is kept in memory: each candidate is lowered and generated
+  // anew (D281). The compile cache on disk is used as by any simulation,
+  // so a candidate whose host object, PTX, or cubins are there takes them,
+  // and its compileSeconds, which counts in the budget of the search, is
+  // shorter (D[compile-cache-default]).
   auto simulation = compiler::Simulation::create(prepared, /*cache=*/true);
   if (!simulation) {
     trial.failure = llvm::toString(simulation.takeError());
@@ -218,6 +221,7 @@ compiler::SkinTrial measure(const Control &control, const System &system,
   trial.pipelineSeconds = stats.pipelineSeconds;
   trial.kernelSeconds = stats.gpuSerializeSeconds;
   trial.hostSeconds = stats.compileSeconds;
+  trial.cache = stats;
   int64_t unit = getStepUnit(control);
   auto run = [&](int64_t steps) -> double {
     auto from = std::chrono::steady_clock::now();

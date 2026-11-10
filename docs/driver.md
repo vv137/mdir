@@ -854,6 +854,12 @@ UUID in hexadecimal, compute capability, and driver API version. MDIR
 uses the driver API; `runtime_api_version` is null unless a CUDA runtime
 API is actually loaded. API versions use CUDA's integer representation
 (e.g. 13040 for 13.4). UTC timestamps use the wall clock;
+`compile_cache` says whether the compile cache was on, its directory and
+the rule that chose it (`MDIR_COMPILE_CACHE_DIR` or `default`), or why it
+was off, and what it gave the run: the GPU modules, their PTX and cubins
+compiled and read, the GPU entries stored and rejected, and the host
+objects of the skin search's candidates compiled, read, and stored
+(D[compile-cache-default], [compile-cache.md](compile-cache.md#where-the-cache-is)).
 `compile_seconds` and `elapsed_seconds` use monotonic clocks, with elapsed
 time measured from the start record through completion or a checkpoint
 stop, excluding compilation. The terminal `step` is the completed step,

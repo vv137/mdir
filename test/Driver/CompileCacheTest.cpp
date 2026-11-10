@@ -5,7 +5,11 @@
 // and nothing else, and a process that clears while another writes leaves
 // only intact entries. The total kept in the directory
 // (D234): stores list the directory only at the
-// bound, without a total, or once a day.
+// bound, without a total, or once a day. An entry that is a symbolic link
+// is rejected. The LLVM options set on the command line
+// (D[compile-cache-default]): one whose value no recorded argument gives
+// turns the cache off; a `cl::alias` records the option it names, and a
+// response file is recorded expanded.
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Runtime/GroupsABI.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -14,6 +18,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -22,6 +27,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
 #include <chrono>
+#include <cstdlib>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -167,6 +173,11 @@ int main(int argc, char **argv) {
       path, key, MemoryBufferRef(object, "program"), 1.5));
   found = HostObjectCache::readEntry(path, key, seconds, rejected);
   check(found && !rejected, "a rewritten entry is read again");
+  std::string linked = entry("linked.o");
+  cantFail(errorCodeToError(sys::fs::create_link(path, linked)));
+  found = HostObjectCache::readEntry(linked, key, seconds, rejected);
+  check(!found && rejected, "an entry that is a symbolic link is rejected");
+  cantFail(errorCodeToError(sys::fs::remove(linked)));
 
   // The bound: the entries used least recently go first, and temporary
   // files go once they are older than an hour.
@@ -493,6 +504,52 @@ int main(int argc, char **argv) {
   store(2004, kUnbounded);
   check(getCacheListingCount() == before && recorded() == entrySize,
         "and the store after a clear does not list");
+
+  // The LLVM options of the command line: an option set whose value no
+  // recorded argument gives turns the cache off, with a note; a
+  // `cl::alias` gives the value of the option it names; a response file is
+  // recorded as the arguments it holds.
+  {
+    static cl::opt<int> probe("mdir-test-cache-probe", cl::init(0));
+    static cl::alias probeAlias("mdir-test-cache-probe-alias",
+                                cl::aliasopt(probe));
+    static cl::opt<int> fromFile("mdir-test-cache-file", cl::init(0));
+    auto unrecorded = [] {
+      std::string names;
+      for (const std::string &name : getUnrecordedOptions())
+        names += name + " ";
+      return names;
+    };
+    check(unrecorded().empty(), "no option is set at first");
+    const char *aliased[] = {"test", "-mdir-test-cache-probe-alias=3"};
+    cl::ParseCommandLineOptions(2, aliased);
+    SmallString<256> named(directory);
+    sys::path::append(named, "options");
+    ::setenv("MDIR_COMPILE_CACHE_DIR", named.c_str(), 1);
+    ::unsetenv("MDIR_COMPILE_CACHE");
+    ::unsetenv("MDIR_COMPILE_CACHE_MAX_MB");
+    CompileCacheLocation location = CompileCacheConfig::locate();
+    check(unrecorded() == "mdir-test-cache-probe " && !location.config &&
+              StringRef(location.reason).contains("-mdir-test-cache-probe"),
+          "an option set but not recorded turns the cache off");
+    recordCommandLineOptions(2, aliased);
+    check(unrecorded().empty(), "an alias records the option it names");
+    SmallString<256> response(directory);
+    sys::path::append(response, "options.rsp");
+    write(response, "-mdir-test-cache-file 5\n");
+    std::string argument = "@" + response.str().str();
+    const char *expanded[] = {"test", argument.c_str()};
+    cl::ParseCommandLineOptions(2, expanded);
+    check(fromFile == 5 && unrecorded() == "mdir-test-cache-file ",
+          "an option of a response file is set and not yet recorded");
+    recordCommandLineOptions(2, expanded);
+    check(unrecorded().empty(), "a response file is recorded expanded");
+    ::setenv("MDIR_COMPILE_CACHE_MAX_MB", "1", 1);
+    location = CompileCacheConfig::locate();
+    check(location.config && location.config->directory == named.str(),
+          "with every option recorded the cache is on");
+    ::unsetenv("MDIR_COMPILE_CACHE_MAX_MB");
+  }
 
   outs() << (failures ? "compile cache checks FAILED\n"
                       : "compile cache checks passed\n");

@@ -1,0 +1,15 @@
+# The chip and the kind of binary in the keys of the GPU entries
+# (D[compile-cache-default], D214): `mdir emit --stage=lowered` for
+# the device's architecture stores every PTX and cubin; for another
+# architecture (MDIR_GPU_ARCH) it misses every one of both; as PTX
+# (MDIR_GPU_BINARY=ptx) every PTX misses and no cubin is made; for the
+# device again everything hits (Inputs/compile_cache_run.py).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t target mdir | FileCheck %s
+# CHECK: device: new ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
+# CHECK-NEXT: other-chip: new ptx [[P]] cubin [[C]]
+# CHECK-NEXT: as-ptx: new ptx [[P]] cubin 0
+# CHECK-NEXT: device-again: new ptx 0 cubin 0

@@ -4,8 +4,7 @@
 # module has the constructors that load them, so a later simulation loads
 # and runs them without the pipeline, and gives the same positions and
 # velocities bit for bit in the deterministic mode. As
-# python-program-reuse.test, without a directory of the compile cache and
-# with one.
+# python-program-reuse.test, without a compile cache and with one.
 # RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide GPU Mixed | FileCheck %s --check-prefixes=CHECK,PLAIN
 # RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide GPU Mixed %t | FileCheck %s --check-prefixes=CHECK,DISK

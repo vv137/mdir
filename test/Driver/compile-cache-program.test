@@ -1,0 +1,24 @@
+# REQUIRES: python-api
+# What of the program misses the host object (D[compile-cache-default]),
+# on the CPU: on a warm cache, precision, fast_math, neighbor_capacity, the
+# PME grid, and a switch of the builder (MDIR_CONSTRAINT_TEST) change the
+# lowered program and miss; the switches of the GPU's pipeline leave the
+# program of the CPU as it is and hit, and so does a start from another
+# cell (D227). A variant misses exactly when its lowered program differs
+# (Inputs/compile_cache_program.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache_program.py %S/Inputs/dipeptide CPU %t | FileCheck %s
+# CHECK: base: lowered same, host compiled 1 hits 0
+# CHECK-NEXT: base-again: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: precision: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: fast-math: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: neighbor-capacity: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: pme-grid: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: pme-spread: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: tuple-sums: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: pair-sums: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: fused-prune: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: check-pruning: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: constraint-test: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: other-cell: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: a variant missed exactly when its lowered program differs: yes

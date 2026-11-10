@@ -51,8 +51,9 @@ tree configured with `-DMDIR_ENABLE_PYTHON=ON` with
 `PYTHONPATH=build/python python examples/ala3/run.py` and the Python it was
 built for.
 
-Each stage prints what compiling it took. With `MDIR_COMPILE_CACHE_DIR`
-set to a directory, a later run takes the host code of the stages from it
+Each stage prints what compiling it took. The compile cache, on by
+default (or in `MDIR_COMPILE_CACHE_DIR`), gives a later run the host code
+of the stages
 ([compile-cache.md](../../docs/compile-cache.md)); in the deterministic
 mode every stage hits, while without it the production stage starts from
 another cell and misses.

@@ -1,0 +1,19 @@
+# The toolchain in the keys of the GPU entries (D[compile-cache-default]),
+# in one Python process with a toolkit of its own: a libdevice of other
+# bytes (the same bitcode behind a wrapper header) written over the file
+# with its size and time of modification kept misses every PTX and hits
+# every cubin; a ptxas script of other bytes that runs the same ptxas,
+# with the same `--version`, likewise written over, misses every cubin; the
+# real ptxas in another process misses every cubin again
+# (Inputs/compile_cache_toolchain.py).
+#
+# REQUIRES: python-api, cuda
+#
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache_toolchain.py %S/Inputs/dipeptide %t | FileCheck %s
+# CHECK: cold: modules [[M:[1-9][0-9]*]] ptx generated {{[1-9][0-9]*}} read {{[0-9]+}} cubins generated {{[1-9][0-9]*}} read {{[0-9]+}} new ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
+# CHECK-NEXT: cold: entries ptx [[P]] cubin [[C]]
+# CHECK-NEXT: warm: modules [[M]] ptx generated 0 read [[M]] cubins generated 0 read [[M]] new ptx 0 cubin 0
+# CHECK-NEXT: libdevice: modules [[M]] ptx generated {{[1-9][0-9]*}} read {{[0-9]+}} cubins generated 0 read [[M]] new ptx [[P]] cubin 0
+# CHECK-NEXT: ptxas: modules [[M]] ptx generated 0 read [[M]] cubins generated {{[1-9][0-9]*}} read {{[0-9]+}} new ptx 0 cubin [[C]]
+# CHECK-NEXT: linked-ptxas: modules [[M]] ptx generated 0 read [[M]] cubins generated {{[1-9][0-9]*}} read {{[0-9]+}} new ptx 0 cubin [[C]]

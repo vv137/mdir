@@ -1,0 +1,19 @@
+# The default compile cache on a GPU (D[compile-cache-default]), as
+# compile-cache-default.test: the default directory holds the PTX and
+# cubins of the kernels with the host object, a stored key holds the
+# build ID of the extension, and a salt that stands for
+# another build misses every entry of every kind and stores as many again
+# (Inputs/compile_cache_default.py).
+# REQUIRES: python-api, cuda
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache_default.py %S/Inputs/dipeptide GPU Mixed %t --salt | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0 gpu ptx [[M:[1-9][0-9]*]] read 0 cubin [[M]] read 0 stored 0 state same
+# CHECK-NEXT: off: default absent
+# CHECK-NEXT: default-cold: compiled 1 hits 0 rejected 0 stored 1 gpu ptx {{[0-9]+}} read {{[0-9]+}} cubin {{[0-9]+}} read {{[0-9]+}} stored {{[1-9][0-9]*}} state same
+# CHECK-NEXT: default-cold: directory 700 parent 700 entries o 1 ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
+# CHECK-NEXT: default-warm: compiled 0 hits 1 rejected 0 stored 0 gpu ptx 0 read [[M]] cubin 0 read [[M]] stored 0 state same
+# CHECK-NEXT: build-id: the extension's
+# CHECK-NEXT: other-build: compiled 1 hits 0 rejected 0 stored 1 gpu ptx {{[0-9]+}} read {{[0-9]+}} cubin {{[0-9]+}} read {{[0-9]+}} stored {{[1-9][0-9]*}} state same
+# CHECK-NEXT: other-build: new entries o 1 ptx [[P]] cubin [[C]]
+# CHECK-NEXT: other-build-again: compiled 0 hits 1 rejected 0 stored 0 gpu ptx 0 read [[M]] cubin 0 read [[M]] stored 0 state same
+# CHECK-NEXT: this-build: compiled 0 hits 1 rejected 0 stored 0 gpu ptx 0 read [[M]] cubin 0 read [[M]] stored 0 state same

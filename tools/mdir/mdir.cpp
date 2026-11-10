@@ -2,6 +2,7 @@
 
 #include "Commands.h"
 
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Control.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -126,6 +127,9 @@ int main(int argc, char **argv) {
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n"
       "  mdir doctor [--target=all|cpu|gpu] [--timeout=<seconds>]\n");
+  // The LLVM options given, with their values, are part of every key of
+  // the compile cache (D[compile-cache-default]).
+  mdir::compiler::recordCommandLineOptions(argc, argv);
 
   if (runCommand) {
     RunOptions options;

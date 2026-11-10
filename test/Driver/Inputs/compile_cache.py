@@ -15,7 +15,8 @@ scenario runs in a process of its own on the cache directory WORK/cache:
   rejected, generated again, and stored; flipped, a byte of the stored
   object is flipped, likewise; rewarm, a hit again.
 - with --misses: a changed pipeline option (not deterministic) and a
-  changed precision miss, and a bound of 0 MiB leaves no entry.
+  changed precision miss, and a bound of 0 MiB turns the cache off
+  (D[compile-cache-default]): nothing is stored.
 - with --concurrent: four processes start at once on an empty directory;
   each generates or reads the object, and one entry remains, which the
   next process hits.
@@ -30,8 +31,9 @@ scenario runs in a process of its own on the cache directory WORK/cache:
 - with --clear: `mdir.clear_compile_cache()` removes the entries of the
   warm cache and leaves a file of another format and a writer's temporary
   file; the next process misses and stores, and the one after hits;
-  `directory=` names another directory, and without a directory it
-  removes nothing.
+  `directory=` names another directory, and without one it clears the
+  default directory (D[compile-cache-default]), here under WORK, and
+  removes nothing here.
 - with --clear-concurrent: a process clears the directory over and over
   while another compiles four simulations, each storing its entries; then
   every entry that remains is well formed, and the next process reads
@@ -181,13 +183,14 @@ def main():
         return {str(p): (p.stat().st_size, p.stat().st_mtime_ns)
                 for p in cache.rglob("*") if p.is_file() and part in str(p)}
 
-    def clear_in_child(directory=None, env=None):
+    def clear_in_child(directory=None, env=None, path=False):
         environment = dict(os.environ)
         environment["MDIR_COMPILE_CACHE_DIR"] = str(cache)
         environment.update(env or {})
         code = ("import json, sys, mdir; d = sys.argv[1] or None; "
                 "r = mdir.clear_compile_cache(d) if d else mdir.clear_compile_cache(); "
-                "r['directory'] = r['directory'] is not None; print(json.dumps(r))")
+                + ("" if path else "r['directory'] = r['directory'] is not None; ")
+                + "print(json.dumps(r))")
         result = subprocess.run([sys.executable, "-c", code, directory or ""],
                                 env=environment, check=True,
                                 stdout=subprocess.PIPE, text=True)
@@ -248,8 +251,14 @@ def main():
         cleared = clear_in_child(str(work / "other"))
         print(f"clear-other: host {cleared['host_entries']} gpu {cleared['gpu_entries']}"
               f", entries here " + ("kept" if len(all_entries()) == count else "REMOVED"))
-        cleared = clear_in_child(env={"MDIR_COMPILE_CACHE_DIR": ""})
-        print(f"clear-none: directory {cleared['directory']} host "
+        # The default directory, under WORK, never the user's.
+        none = work / "xdg-none"
+        cleared = clear_in_child(env={"MDIR_COMPILE_CACHE_DIR": "",
+                                      "XDG_CACHE_HOME": str(none),
+                                      "MDIR_COMPILE_CACHE_TEST_LOCAL": "1"},
+                                 path=True)
+        default = cleared["directory"] == str(none / "mdir" / "compile")
+        print(f"clear-none: directory {'default' if default else cleared['directory']} host "
               f"{cleared['host_entries']} gpu {cleared['gpu_entries']}, entries here "
               + ("kept" if len(all_entries()) == count else "REMOVED"))
         cleared = clear_in_child(env={"MDIR_COMPILE_CACHE": "off"})
@@ -323,9 +332,9 @@ def main():
         report("precision", stats)
         for entry in entries():
             entry.unlink()
-        stats, _ = run("bounded", env={"MDIR_COMPILE_CACHE_MAX_MB": "0"})
-        report("bounded", stats)
-        print(f"bounded: entries {len(entries())}")
+        stats, _ = run("bound-zero", env={"MDIR_COMPILE_CACHE_MAX_MB": "0"})
+        report("bound-zero", stats)
+        print(f"bound-zero: entries {len(entries())}")
     if concurrent:
         for entry in entries():
             entry.unlink()

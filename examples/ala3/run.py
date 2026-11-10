@@ -118,8 +118,8 @@ def restrain(kcal):
 
 def simulate(name, *model):
     """A simulation of the program of `model`, with what compiling it took.
-    With MDIR_COMPILE_CACHE_DIR set, a stage whose host object is in the
-    compile cache skips its generation (D212)."""
+    A stage whose host object is in the compile cache, on by default,
+    skips its generation (D212)."""
     began = time.perf_counter()
     program = mdir.compile(*model)
     lowered = time.perf_counter()

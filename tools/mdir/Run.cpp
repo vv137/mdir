@@ -7,6 +7,7 @@
 #include "Commands.h"
 #include "Manifest.h"
 
+#include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -657,6 +658,53 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     module->print(llvm::outs());
     return 0;
   }
+  // Where the compile cache is, or why there is none, and what it gave the
+  // GPU modules of the run and the host objects of the skin search
+  // (D[compile-cache-default]). The host code of the run itself is not
+  // cached until it moves onto the owned engine (#99).
+  compiler::CompileCacheLocation cacheLocation =
+      compiler::CompileCacheConfig::locate();
+  compiler::CompileStats gpuCache = mdir::takeGpuModuleStats(context);
+  compiler::CompileStats searchCache;
+  for (const compiler::SkinTrial &trial : skinChoice.trials)
+    searchCache += trial.cache;
+  std::string cacheLine = "MDIR: compile cache: ";
+  if (cacheLocation.config)
+    cacheLine += "on, '" + cacheLocation.config->directory + "' (" +
+                 cacheLocation.source + ")";
+  else
+    cacheLine += "off (" + cacheLocation.reason + ")";
+  if (gpuCache.gpuModules)
+    cacheLine += llvm::formatv(
+        "; GPU modules {0}: PTX {1} compiled, {2} read; cubins {3} compiled, "
+        "{4} read; {5} stored",
+        gpuCache.gpuModules, gpuCache.gpuPtxCompiled, gpuCache.gpuPtxHits,
+        gpuCache.gpuCubinCompiled, gpuCache.gpuCubinHits, gpuCache.gpuStored);
+  if (!skinChoice.trials.empty())
+    cacheLine += llvm::formatv(
+        "; the skin search: host objects {0} compiled, {1} read, {2} stored",
+        searchCache.compiled, searchCache.hits, searchCache.stored);
+  cacheLine += "\n";
+  auto optionalText = [](const std::string &text) {
+    return text.empty() ? llvm::json::Value(nullptr) : llvm::json::Value(text);
+  };
+  llvm::json::Object cacheRecord{
+      {"enabled", cacheLocation.config.has_value()},
+      {"directory", cacheLocation.config
+                        ? llvm::json::Value(cacheLocation.config->directory)
+                        : llvm::json::Value(nullptr)},
+      {"source", optionalText(cacheLocation.source)},
+      {"reason", optionalText(cacheLocation.reason)},
+      {"gpu_modules", gpuCache.gpuModules},
+      {"ptx_compiled", gpuCache.gpuPtxCompiled},
+      {"ptx_read", gpuCache.gpuPtxHits},
+      {"cubin_compiled", gpuCache.gpuCubinCompiled},
+      {"cubin_read", gpuCache.gpuCubinHits},
+      {"gpu_stored", gpuCache.gpuStored},
+      {"gpu_rejected", gpuCache.gpuRejected},
+      {"skin_search_host_compiled", searchCache.compiled},
+      {"skin_search_host_read", searchCache.hits},
+      {"skin_search_host_stored", searchCache.stored}};
   // A run that is not continued keeps the outputs of an earlier run that
   // has the same names as `#<name>.<n>#` before it writes its own (D149);
   // those of a continued run are its own.
@@ -1046,7 +1094,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"outputs", std::move(outputs)}, {"first_step", firstStep},
         {"requested_end_step", firstStep + control->numSteps},
         {"part", part}, {"continued", options.continues},
-        {"compile_seconds", compileTime}};
+        {"compile_seconds", compileTime},
+        {"compile_cache", std::move(cacheRecord)}};
     if (llvm::Error error = manifest.start(getOutputPath(control->manifestFile),
                                             options.continues, std::move(metadata)))
       return fail(std::move(error));
@@ -1412,6 +1461,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(")\n");
   }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
+  output.log.print("%s", cacheLine.c_str());
   if (output.models)
     output.log.print("%s", output.models->describe().c_str());
   writeLogHeader(output);

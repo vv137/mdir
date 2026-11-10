@@ -1,0 +1,28 @@
+# The LLVM options and the build in the keys of `mdir run`'s GPU entries
+# (D[compile-cache-default]). On the dipeptide with PME, a warm run
+# reads every PTX and cubin and gives the energies of the cold one; an
+# LLVM option of the command line (-nvptx-prec-divf32=0) misses every PTX
+# and cubin, in either order, and the option given again hits, also from a
+# response file, whose file of another value misses every entry; the
+# scheduler of the command line misses every PTX, and the cubins of the PTX
+# it changes (one of the same PTX, which ptxas compiles alone, hits); a salt that stands for another
+# build (MDIR_COMPILE_CACHE_SALT_OVERRIDE) misses every entry and gives the
+# energies of the cold run, and hits when given again. A miss of every
+# module stores as many new entries as the cold run (Inputs/compile_cache_run.py).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t llvm mdir | FileCheck %s
+# CHECK: cold: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
+# CHECK-NEXT: warm: ptx compiled 0 read [[M:[1-9][0-9]*]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
+# CHECK-NEXT: divf32: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
+# CHECK-NEXT: divf32-again: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
+# CHECK-NEXT: response-same: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
+# CHECK-NEXT: response-other: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
+# CHECK-NEXT: plain-again: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
+# CHECK-NEXT: divf32-first: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
+# CHECK-NEXT: plain-after: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]] energies same
+# CHECK-NEXT: scheduler: ptx compiled [[P]] read 0 cubins compiled [[S:[1-9][0-9]*]] read {{[0-9]+}}; new ptx [[P]] cubin [[S]]
+# CHECK-NEXT: other-build: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]] energies same
+# CHECK-NEXT: other-build-again: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
