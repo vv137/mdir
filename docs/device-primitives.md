@@ -916,6 +916,42 @@ remain the broader work of #817; a frame conversion does not change the
 sort keys, class order or fixed-ID ties. Orthorhombic/triclinic all-images
 oracles cover independent reframing and groups spanning eight frames.
 
+### 4.11 Conservative group-box prefilter (D[rigid-water-template])
+
+The template build computes a Cartesian f64 bounding box for each group
+of wrapped references, through `emitSpatialWarpBox`. Two rows per group
+hold its minimum and maximum in an auxiliary frame-state view, independent
+of pair-arena growth. The search shifts the partner box by the query
+image and calls `emitSpatialBoxesWithinReach` before its pair predicates.
+For each Cartesian component, the nonnegative separation of the two
+intervals is a lower bound on every member-pair separation; its squared
+norm is a lower bound on the distance. This works for triclinic cells too:
+the boxes enclose the Cartesian points, rather than treating fractional
+axes as orthogonal.
+
+The prefilter admits uncertain cases. Let $\epsilon=2^{-52}$ and let
+$C$ be the sum of absolute cell components. Each component gap is reduced
+by $64\epsilon C(4+\sum_a\lvert f_{i,a}\rvert+
+\sum_a\lvert s_a\rvert)$, and the prefilter's reach alone is enlarged
+by $1+64\epsilon$. Coordinate transformation, image conversion/addition,
+gap subtraction and squared-norm evaluation each have fewer than 32
+rounded operations along a component's dependency chain. Their
+$\gamma_{32}=32u/(1-32u)$ envelope, $u=2^{-53}$, is below the chosen
+$64\epsilon$ allowance with the frame/image scale above. This covers
+the difference between Cartesian box arithmetic and the original f64
+displacement order, including large integer frames. Indeterminate or
+overflowing box arithmetic also falls through to the pair test.
+These allowances only admit extra candidates: the original f64 radial
+predicate, its reach and its less-than-or-equal comparison are unchanged.
+
+All lanes still reach the first-unit broadcasts. A lane rejected by the
+box does not enter its subsequent pair-distance/exclusion predicates;
+it must not diverge around a warp shuffle that supplies other lanes.
+The exact all-images fixtures include every mobility-group activity,
+reframed groups, both cell shapes, and one-dimensional cutoff rays at
+and one representable coordinate on either side of each class cutoff.
+No physical tolerance is used for their membership comparisons.
+
 ## 5. Reductions by their algebra
 
 ### 5.1 What is stated

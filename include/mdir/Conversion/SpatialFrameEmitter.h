@@ -20,5 +20,11 @@ struct SpatialBoundingBox {
 /// yields (+infinity,-infinity), which the caller must not search.
 SpatialBoundingBox emitSpatialWarpBox(mlir::OpBuilder &, mlir::Location,
     mlir::Value point, mlir::Value valid);
+/// Conservative Cartesian box prefilter. `shift` translates the second
+/// box, and `roundoff` bounds coordinate/conversion error per component.
+/// This admits uncertain cases; the original f64 pair test remains required.
+mlir::Value emitSpatialBoxesWithinReach(mlir::OpBuilder &, mlir::Location,
+    SpatialBoundingBox first, SpatialBoundingBox second, mlir::Value shift,
+    mlir::Value reach, mlir::Value roundoff);
 }
 #endif

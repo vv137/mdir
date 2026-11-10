@@ -1,0 +1,9 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --boundary
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.tilt.mlir %t.tilt.json --boundary --triclinic
+# RUN: mdir-opt %t.tilt.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.tilt.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.tilt.records %t.tilt.json
+# Exact dyadic cutoff rays and adjacent representable coordinates exercise
+# admission/refusal at the WW/SW/SS boundaries with the original f64 test.

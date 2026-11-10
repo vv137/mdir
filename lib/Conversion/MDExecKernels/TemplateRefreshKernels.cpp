@@ -63,6 +63,10 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       s.cell = v.cell; s.baseReach = v.baseReach; s.extent = v.extent;
       s.reaches = v.reaches;
       s.classCells = v.classCells; s.classReaches = v.classReaches;
+      auto boxes = MemRefType::get({ShapedType::kDynamic, 3}, in.getF64Type(),
+          MemRefLayoutAttrInterface(), in.getI64IntegerAttr(1));
+      s.groupBoxes = call(in, "mdrtTemplatePairsFrameState",
+          ValueRange{v.handle, wide(in, TEMPLATE_FRAME_GROUP_BOXES)}, boxes, true);
       auto &p = s.spatial;
       p.points = v.points;
       p.columnsX = v.columnsX; p.columnsY = v.columnsY;

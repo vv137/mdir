@@ -16,6 +16,9 @@ struct TemplateSearchBuffers {
   /// base reach plus covering extent, as in the isolated search fixtures.
   mlir::Value reaches;
   mlir::Value classCells, classReaches;
+  /// f64 Cartesian min/max of wrapped references, two rows per group.
+  /// Independent of the growing pair arena; built before candidate search.
+  mlir::Value groupBoxes;
 };
 /// Search each active class row once, with explicit periodic images and
 /// per-entry masks. Inactive rows copy retained outer records instead.
