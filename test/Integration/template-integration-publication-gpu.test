@@ -1,4 +1,5 @@
 # REQUIRES: cuda
+# Expected: under 180 seconds on RTX 5090; submit with lit --timeout=300.
 # Exact marked fused/unfused publication and independent energy: normal groups, renumbered/nonconsecutive
 # OHH spanning warps, a partial tail, extra points, and a marked constrained
 # triplet excluded from template membership (ordinary atom-unit publication).
