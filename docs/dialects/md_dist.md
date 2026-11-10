@@ -129,7 +129,7 @@ contribute zero displacement.
 
 Traits: `AlwaysSpeculatableImplTrait`
 
-Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
 Effects: `MemoryEffects::Effect{}`
 
@@ -594,6 +594,54 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_dist.pack` (::mdir::md_dist::PackOp)
+
+_A state of a step loop: an epoch, its halo, and its fields_
+
+Syntax:
+
+```
+operation ::= `md_dist.pack` $layout `,` $halo `,` $cell `fields` `(` $fields `:`
+              qualified(type($fields)) `)` attr-dict `:` qualified(type($result))
+```
+
+Forms a state from a layout, a halo of it, and every carried owned
+field of that layout, the positions first. The halo must cover the
+positions at the state's cutoff, by one of three witnesses: the halo
+was built at these positions (`md_dist.halo`); the halo and the
+positions come from one `md_dist.unpack` of a state of that cutoff; or
+the op is in the then-region of an `scf.if` whose condition is a
+`md_dist.covered` of the halo and the positions at a cutoff at least
+the state's. `cell` is the cell of the halo. The state keeps the
+halo's reference positions, for `md_dist.covered` after an unpack.
+
+```mlir
+%s = md_dist.pack %l, %h, %cell fields(%x, %v : !own, !own) : !state
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `layout` | The ownership of the particles by the domains |
+| `halo` | The ghosts of each domain |
+| `cell` | A simulation cell |
+| `fields` | variadic of A field over the owned or the ghost rows of every domain |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | The state a step loop on domains carries |
+
+
+
 ### `md_dist.partition` (::mdir::md_dist::PartitionOp)
 
 _The layout that gives each particle to the domain it is in_
@@ -830,6 +878,51 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md_dist.unpack` (::mdir::md_dist::UnpackOp)
+
+_The layout, halo, reference positions, and fields of a state_
+
+Syntax:
+
+```
+operation ::= `md_dist.unpack` $state `,` $cell attr-dict `:` qualified(type($state))
+```
+
+Consumes a state, its one use, and gives its layout, its halo, the
+positions the halo was built at, and its fields. The results have the
+provenance of the state: the fields are of the layout, the halo is of
+the layout, and the halo covers the first field at the state's cutoff.
+`cell` is the cell the state is used with; the runtime checks that it
+is the halo's.
+
+```mlir
+%l, %h, %xr, %x, %v = md_dist.unpack %s, %cell : !state
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `InferTypeOpInterface`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `state` | The state a step loop on domains carries |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `layout` | The ownership of the particles by the domains |
+| `halo` | The ghosts of each domain |
+| `reference` | A field over the owned or the ghost rows of every domain |
+| `fields` | variadic of A field over the owned or the ghost rows of every domain |
+
+
+
 ### `md_dist.yield` (::mdir::md_dist::YieldOp)
 
 _Yields the value of a kernel_
@@ -1027,6 +1120,34 @@ of its two particles; with `unique`, every pair once.
 | :-------: | :-------: | ----------- |
 | decomposition | `::mlir::FlatSymbolRefAttr` |  |
 | traversal | `::mdir::md_dist::Traversal` | an enum of type Traversal |
+
+### StateType
+
+_The state a step loop on domains carries_
+
+An ownership epoch (a layout), its halo, the halo's reference positions,
+and the owned fields of that epoch, as one value: the only value of
+md_dist that may cross `scf.for` and `scf.if`
+(D[distributed-migration]). The halo is proved to cover the first
+field, the positions, at `cutoff`. Each field is a complete field of
+the owned rows; it is written as its components and its element type.
+
+```mlir
+!md_dist.state<@dd, reach = 2.4, cutoff = 2.0,
+               fields = [3 x f64, 3 x f64, f64]>
+```
+
+A state is linear: it has exactly one use, in the block that defines
+it.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| decomposition | `::mlir::FlatSymbolRefAttr` |  |
+| reach | `::llvm::APFloat` | the reach of the halo |
+| cutoff | `::llvm::APFloat` | the cutoff the halo covers |
+| fields | `::llvm::ArrayRef<::mlir::Type>` |  |
 
 ## Enums
 

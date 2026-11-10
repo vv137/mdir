@@ -20,5 +20,7 @@ add_mlir_conversion_library(MDIRMDDistToLoops
   MLIRMemRefDialect
   MLIRPass
   MLIRSCFDialect
+  MLIRSCFTransforms
+  MLIRTransformUtils
   MLIRVectorDialect
   )

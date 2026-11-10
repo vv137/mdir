@@ -1,0 +1,41 @@
+# The drift of the energy over 2000 steps of the trajectory of
+# dist-trajectory-lj.test on domains, with about 125 migrations
+# (D[distributed-migration]). After 2000 steps the trajectories on domains
+# and on one domain have separated, as two runs of a chaotic system whose
+# sums are added in other orders do, so only the total energy is compared:
+# its change since the start, against the kinetic energy (about 64), on
+# domains and on one domain. Measured: in double 1.0e-5 on domains and 1.2e-4
+# on one domain (the fluctuation of velocity Verlet at the step 0.005); in
+# mixed 5.0e-5 and 5.3e-4. The bound is 2e-3 for both. The other checks are
+# given the bound 1e30, which every difference meets.
+#
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/2000/; s/XTOL/1.0e30/; s/VTOL/1.0e30/; s/ETOL/1.0e30/; s/DTOL/2.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/2000/; s/XTOL/1.0e30/; s/VTOL/1.0e30/; s/ETOL/1.0e30/; s/DTOL/2.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+# RUN: sed 's/GRID/16, 1, 1/; s/STEPS/2000/; s/XTOL/1.0e30/; s/VTOL/1.0e30/; s/ETOL/1.0e30/; s/DTOL/2.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+
+# The rebuilds, then the checks: positions, velocities, three energies, and
+# the two drifts, each its difference and 1.
+# CHECK: {{^[1-9][0-9]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-COUNT-7: {{^1$}}

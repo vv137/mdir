@@ -125,4 +125,38 @@ def MDDist_RelationType : MDDist_Type<"Relation", "relation"> {
   let assemblyFormat = "`<` $decomposition `,` $traversal `>`";
 }
 
+def MDDist_StateType : MDDist_Type<"State", "state"> {
+  let summary = "The state a step loop on domains carries";
+  let description = [{
+    An ownership epoch (a layout), its halo, the halo's reference positions,
+    and the owned fields of that epoch, as one value: the only value of
+    md_dist that may cross `scf.for` and `scf.if`
+    (D[distributed-migration]). The halo is proved to cover the first
+    field, the positions, at `cutoff`. Each field is a complete field of
+    the owned rows; it is written as its components and its element type.
+
+    ```mlir
+    !md_dist.state<@dd, reach = 2.4, cutoff = 2.0,
+                   fields = [3 x f64, 3 x f64, f64]>
+    ```
+
+    A state is linear: it has exactly one use, in the block that defines
+    it.
+  }];
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$decomposition,
+    APFloatParameter<"the reach of the halo">:$reach,
+    APFloatParameter<"the cutoff the halo covers">:$cutoff,
+    ArrayRefParameter<"::mlir::Type">:$fields
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// The type of the halo of the state.
+    HaloType getHaloType() const;
+    /// The type of field `i` of the state, a complete owned field.
+    FieldType getFieldType(unsigned i) const;
+  }];
+}
+
 #endif // MDIR_DIALECT_MDDIST_MDDISTTYPES_TD
