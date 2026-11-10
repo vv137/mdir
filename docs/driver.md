@@ -288,9 +288,38 @@ Its schema begins at version 1:
 | `run.skins` | `pairlist_distance_source` and `pruned_distance_source` (`given`, `default`, or `cached`: the check measures nothing) and `reason`; the text output has the line `skins:` (D281, [neighbors.md](neighbors.md), Section 6.4) |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
 | `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `free_energy`, `observables`, `trajectory`, `checkpoint`, `manifest`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
-| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable`. Each is reported once (`short_thermostat_period` was added twice for a run from a topology before #124), and a run whose particles come from a PDB file reports the warnings of its control file (`unused_parameter`, `constant_expression`, D158) as a run from a topology does (#129) |
+| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, `gpu_unavailable`, or `pme_cutoff_jump` (D[pme-cutoff-jump-warning], below). Each is reported once (`short_thermostat_period` was added twice for a run from a topology before #124), and a run whose particles come from a PDB file reports the warnings of its control file (`unused_parameter`, `constant_expression`, D158) as a run from a topology does (#129) |
 | `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
+
+`pme_cutoff_jump` (D[pme-cutoff-jump-warning], #793) is a warning of
+`mdir check` alone; `mdir run` runs such an input as before. With the
+Gaussian kernel of PME, the direct sum is cut at $r_c$ where its force is
+not zero: a pair of charges whose distance crosses $r_c$ changes its force
+by
+
+$$\Delta F = f\,\lvert q_iq_j\rvert\left[\frac{\mathrm{erfc}(\beta r_c)}{r_c^2} + \frac{2\beta\,e^{-\beta^2r_c^2}}{\sqrt\pi\,r_c}\right].$$
+
+The check takes the largest $\lvert q_iq_j\rvert$ exactly, over the pairs
+of the topology that it does not exclude, and warns when $\Delta F$
+exceeds 1 kJ/mol/nm (the maintainer's ruling on #793). At the default
+tolerance, $\mathrm{erfc}(\beta r_c) = 10^{-5}$, it is 0.03 to 0.3 kJ/mol/nm
+for water and ions from 4.5 to 9 Å, and the check is silent; it warns
+when `beta` is given for a longer cutoff than the run's, or when
+`tolerance` is loose (OPC at 9 Å: 4.0 kJ/mol/nm at $10^{-3}$). Mixed and
+double precision decide differently for the pairs within a shell at
+$r_c$ of width $\delta$: the f32 cutoff of the pair kernels lies about four
+units in the last place inside $r_c$ (D159), and f32 positions in a cell of
+edge $L$ are rounded by up to a unit in the last place of $L$, so
+$\delta$ is that pull-in plus $\mathrm{ulp}_{32}(L_{\max})$. The message
+gives the expected number of pairs of charged particles in the shell a
+frame, $N_q(N_q-1)/(2V)\cdot 4\pi r_c^2\delta$, from their mean density,
+and each such pair changes the forces by up to $\Delta F$; the jump also
+degrades the conservation of energy in either precision. On the TIP3P
+box of #793 (12,600 particles, 4.5 Å with the $\beta$ of 9 Å) $\Delta F$ is
+86.4 kJ/mol/nm for O–O and the estimate is 0.94 pairs a frame; the frame
+of the issue had two, which set the forces of mixed precision apart from
+those of double by 43 and 22 kJ/mol/nm.
 
 In a minimization, `time_step_ps`, `duration_ns`, and temperature are null;
 pressure is null without a barostat. Temperature denotes the bath, or the
