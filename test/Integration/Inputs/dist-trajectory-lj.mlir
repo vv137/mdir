@@ -2,12 +2,14 @@
 // domain (D[distributed-migration]). The RUN lines are in
 // dist-trajectory-lj.test; GRID, STEPS, and TOLERANCES are put in by sed.
 //
-// The system of lj-dynamics.mlir: 64 particles of unit mass on a cubic
-// lattice of spacing 1.2, each displaced by up to 0.1 along every axis, in
+// The system of lj-dynamics.mlir: 64 particles on a cubic lattice of
+// spacing 1.2, each displaced by up to 0.1 along every axis, in
 // a periodic cube of edge 4.8, here with velocities drawn uniformly in
 // [-1, 1) per component. The lattice puts particles at 0 and 2.4 along each
 // axis, the faces of the domains of a 2 x 2 x 2 grid and of the periodic
-// boundary, so that particles cross faces, edges, and corners.
+// boundary, so that particles cross faces, edges, and corners. The masses
+// are 1, 1.25, 1.5, and 1.75 in turn (exact in binary), so that a mass
+// carried to another particle by a migration changes the trajectory.
 //
 // Lennard-Jones with eps = sigma = 1, shifted so that the energy and the
 // force vanish at the cutoff 2.0, so that the energy is conserved by the
@@ -21,7 +23,11 @@
 // md_dist.state of the positions, velocities, forces, and masses, a halo of
 // reach 2.4 (a skin of 0.4), and at every step the collective skin test
 // md_dist.covered: the halo and the layout are kept while it holds, and the
-// particles migrate and the halo is rebuilt when it does not.
+// particles migrate and the halo is rebuilt when it does not. At every step
+// the fields unpacked after the branch are compared, in the order of the
+// set, with those before it: the forces carried through a rebuild are not
+// read by the step (they are evaluated again), so this is where a force
+// field given to the wrong particles would show.
 
 !vec   = !md.field<@atoms, 3 x f64>
 !real  = !md.field<@atoms, f64>
@@ -263,14 +269,40 @@ func.func @aim(%x: memref<?x3xf64>, %v: memref<?x3xf64>) {
   return
 }
 
-func.func @fill_scalar(%x: memref<?xf64>, %value: f64) {
+// The masses 1 + (i mod 4) / 4.
+func.func @weigh(%x: memref<?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %one = arith.constant 1.0 : f64
+  %quarter = arith.constant 0.25 : f64
   %n = memref.dim %x, %c0 : memref<?xf64>
   scf.for %i = %c0 to %n step %c1 {
+    %r = arith.remui %i, %c4 : index
+    %ri = arith.index_cast %r : index to i64
+    %rf = arith.sitofp %ri : i64 to f64
+    %q = arith.mulf %rf, %quarter : f64
+    %value = arith.addf %one, %q : f64
     memref.store %value, %x[%i] : memref<?xf64>
   }
   return
+}
+
+// The largest difference of two scalar fields.
+func.func @difference_scalar(%a: memref<?xf64>, %b: memref<?xf64>) -> f64 {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %zero = arith.constant 0.0 : f64
+  %n = memref.dim %a, %c0 : memref<?xf64>
+  %error = scf.for %i = %c0 to %n step %c1 iter_args(%e = %zero) -> f64 {
+    %va = memref.load %a[%i] : memref<?xf64>
+    %vb = memref.load %b[%i] : memref<?xf64>
+    %raw = arith.subf %va, %vb : f64
+    %ad = math.absf %raw : f64
+    %next = arith.maximumf %e, %ad : f64
+    scf.yield %next : f64
+  }
+  return %error : f64
 }
 
 func.func @main() {
@@ -286,7 +318,7 @@ func.func @main() {
   %cell = md.orthorhombic_cell %edge, %edge, %edge
 
   %masses = memref.alloc(%count) : memref<?xf64>
-  call @fill_scalar(%masses, %one) : (memref<?xf64>, f64) -> ()
+  call @weigh(%masses) : (memref<?xf64>) -> ()
   %m = mdrt.from_buffer %masses : memref<?xf64> to !real
 
   %positions = memref.alloc(%count) : memref<?x3xf64>
@@ -379,8 +411,9 @@ func.func @main() {
   %c0i = arith.constant 0 : i64
   %c1i = arith.constant 1 : i64
 
-  %final, %rebuilds = scf.for %s = %c0 to %steps step %c1
-      iter_args(%sa = %start, %nb = %c0i) -> (!state, i64) {
+  %final, %rebuilds, %carried, %carried_x = scf.for %s = %c0 to %steps step %c1
+      iter_args(%sa = %start, %nb = %c0i, %ca = %zero, %cx = %zero)
+      -> (!state, i64, f64, f64) {
     %l, %h, %xref, %x, %v, %f, %mm = md_dist.unpack %sa, %cell : !state
     // The first half kick and the drift, on the owned rows.
     %v1 = md_dist.map_particles gather(%v, %f, %mm : !own, !own, !mass) {
@@ -423,6 +456,37 @@ func.func @main() {
     // The forces at the new positions and the second half kick.
     %lb, %hb, %xrb, %xb, %vb, %fb_old, %mb = md_dist.unpack %moved, %cell
         : !state
+    // The fields after the branch against those before it, in the order of
+    // the set: a migration copies them, so the velocities, forces, and
+    // masses agree exactly, and the positions to the rounding of their wrap.
+    %cx0 = md_dist.collect %x1, %l : !own -> !vec
+    %cx1 = md_dist.collect %xb, %lb : !own -> !vec
+    %cv0 = md_dist.collect %v1, %l : !own -> !vec
+    %cv1 = md_dist.collect %vb, %lb : !own -> !vec
+    %cf0 = md_dist.collect %f, %l : !own -> !vec
+    %cf1 = md_dist.collect %fb_old, %lb : !own -> !vec
+    %cm0 = md_dist.collect %mm, %l : !mass -> !real
+    %cm1 = md_dist.collect %mb, %lb : !mass -> !real
+    %bx0 = mdrt.to_buffer %cx0 : !vec to memref<?x3xf64>
+    %bx1 = mdrt.to_buffer %cx1 : !vec to memref<?x3xf64>
+    %bv0 = mdrt.to_buffer %cv0 : !vec to memref<?x3xf64>
+    %bv1 = mdrt.to_buffer %cv1 : !vec to memref<?x3xf64>
+    %bf0 = mdrt.to_buffer %cf0 : !vec to memref<?x3xf64>
+    %bf1 = mdrt.to_buffer %cf1 : !vec to memref<?x3xf64>
+    %bm0 = mdrt.to_buffer %cm0 : !real to memref<?xf64>
+    %bm1 = mdrt.to_buffer %cm1 : !real to memref<?xf64>
+    %ex = func.call @difference(%bx0, %bx1, %edge)
+        : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
+    %ev = func.call @difference(%bv0, %bv1, %zero)
+        : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
+    %ef = func.call @difference(%bf0, %bf1, %zero)
+        : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
+    %em = func.call @difference_scalar(%bm0, %bm1)
+        : (memref<?xf64>, memref<?xf64>) -> f64
+    %evf = arith.maximumf %ev, %ef : f64
+    %evfm = arith.maximumf %evf, %em : f64
+    %ca1 = arith.maximumf %ca, %evfm : f64
+    %cx1m = arith.maximumf %cx, %ex : f64
     %xgb = md_dist.halo_copy %xb, %hb image(%cell) : !own, !halo -> !gho
     %nbr = md_dist.neighborhood %xb, %xgb, %hb cutoff(2.0)
         : !own, !gho, !halo -> !rel
@@ -459,7 +523,7 @@ func.func @main() {
     } : !own
     %next = md_dist.pack %lb, %hb, %cell
         fields(%xb, %v3, %fb, %mb : !own, !own, !own, !mass) : !state
-    scf.yield %next, %nb1 : !state, i64
+    scf.yield %next, %nb1, %ca1, %cx1m : !state, i64, f64, f64
   }
 
   // The energies and the fields after the steps, in the order of the set.
@@ -499,6 +563,7 @@ func.func @main() {
   %kd = md_dist.all_reduce %kp : !md_dist.partial<f64> -> f64
   %xglobal = md_dist.collect %xf, %lf : !own -> !vec
   %vglobal = md_dist.collect %vf, %lf : !own -> !vec
+  %fglobal = md_dist.collect %ff, %lf : !own -> !vec
 
   //===--------------------------------------------------------------------===//
   // The comparison
@@ -520,19 +585,27 @@ func.func @main() {
   %xb = mdrt.to_buffer %xr : !vec to memref<?x3xf64>
   %va = mdrt.to_buffer %vglobal : !vec to memref<?x3xf64>
   %vb = mdrt.to_buffer %vr : !vec to memref<?x3xf64>
+  %fa = mdrt.to_buffer %fglobal : !vec to memref<?x3xf64>
+  %fb = mdrt.to_buffer %fr : !vec to memref<?x3xf64>
   %dx = call @difference(%xa, %xb, %edge)
       : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
   %dv = call @difference(%va, %vb, %zero)
       : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
+  %df = call @difference(%fa, %fb, %zero)
+      : (memref<?x3xf64>, memref<?x3xf64>, f64) -> f64
   %vmax = call @largest(%vb) : (memref<?x3xf64>) -> f64
+  %fmax = call @largest(%fb) : (memref<?x3xf64>) -> f64
   %tx = arith.constant XTOL : f64
   %tv = arith.constant VTOL : f64
   %te = arith.constant ETOL : f64
+  %tf = arith.constant FTOL : f64
   // Positions: the largest difference, to the nearest image, against the
   // edge of the cell.
   call @check(%dx, %zero, %edge, %tx) : (f64, f64, f64, f64) -> ()
   // Velocities: against the largest component.
   call @check(%dv, %zero, %vmax, %tv) : (f64, f64, f64, f64) -> ()
+  // Forces of the last step: against the largest component.
+  call @check(%df, %zero, %fmax, %tf) : (f64, f64, f64, f64) -> ()
   // The potential and the kinetic energy, and the total, against the
   // kinetic energy.
   call @check(%ud, %ur, %kr, %te) : (f64, f64, f64, f64) -> ()
@@ -545,11 +618,20 @@ func.func @main() {
   %td_drift = arith.constant DTOL : f64
   call @check(%td, %t0, %kr, %td_drift) : (f64, f64, f64, f64) -> ()
   call @check(%tr, %t0, %kr, %td_drift) : (f64, f64, f64, f64) -> ()
+  // The fields carried through the branches: the velocities, forces, and
+  // masses exactly; the positions within 1e-15 of the edge, a few roundings
+  // of the wrap x - n L (half an ulp of 4.8 is 9.3e-17 of it).
+  %exact = arith.constant 0.0 : f64
+  %wrap = arith.constant 1.0e-15 : f64
+  call @check(%carried, %zero, %one, %exact) : (f64, f64, f64, f64) -> ()
+  call @check(%carried_x, %zero, %edge, %wrap) : (f64, f64, f64, f64) -> ()
   call @printF64(%tr) : (f64) -> ()
   call @printNewline() : () -> ()
   call @printF64(%kr) : (f64) -> ()
   call @printNewline() : () -> ()
   call @printF64(%vmax) : (f64) -> ()
+  call @printNewline() : () -> ()
+  call @printF64(%fmax) : (f64) -> ()
   call @printNewline() : () -> ()
   return
 }
