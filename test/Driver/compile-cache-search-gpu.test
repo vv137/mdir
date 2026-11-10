@@ -1,0 +1,17 @@
+# The host objects of the skin search (D281) of `mdir run` in the compile
+# cache (D[compile-cache-default]): the candidates of a cold search
+# store theirs; a second search reads some (its reference is always the
+# defaults of D261); with an LLVM option of the host's code generator
+# (-unroll-threshold=0), which is part of every key, it reads none and
+# stores new ones (Inputs/compile_cache_run.py).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t search | FileCheck %s
+# CHECK: search-cold: {{.*}}
+# CHECK-NEXT: search-cold: host objects of the search compiled some, read none, new some
+# CHECK-NEXT: search-warm: {{.*}}
+# CHECK-NEXT: search-warm: host objects of the search compiled {{some|none}}, read some, new {{some|none}}
+# CHECK-NEXT: search-unroll: {{.*}}
+# CHECK-NEXT: search-unroll: host objects of the search compiled some, read none, new some

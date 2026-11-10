@@ -1,0 +1,24 @@
+# What the program and its pipeline give the keys of `mdir run`'s GPU
+# entries (D[compile-cache-default], D227): on a warm cache,
+# switches of the pipeline and of the builder (MDIR_PME_SPREAD,
+# MDIR_CHECK_PRUNING, MDIR_CONSTRAINT_TEST), fast_math, precision,
+# neighbor_capacity, the PME grid, and a pipeline that MDIR_PIPELINE
+# replaces each store new entries, for the modules they change; the same
+# pipeline through MDIR_PIPELINE, and a start from another cell, whose
+# edges are arguments of the entry, store none (Inputs/compile_cache_run.py).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t program | FileCheck %s
+# CHECK: cold: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: pme-spread: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: check-pruning: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: constraint-test: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: fast-math: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: precision: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: neighbor-capacity: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: pme-grid: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: mdir-pipeline: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: same-pipeline: ptx compiled 0 read [[M:[1-9][0-9]*]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
+# CHECK-NEXT: other-cell: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
