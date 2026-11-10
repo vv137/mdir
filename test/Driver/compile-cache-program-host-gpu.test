@@ -1,0 +1,25 @@
+# REQUIRES: python-api, cuda
+# What of the program misses the host object on a GPU
+# (D[compile-cache-default]), as compile-cache-program.test: precision,
+# fast_math, neighbor_capacity, the PME grid, and a switch of the builder
+# change the lowered program, kernels included, and miss; a start from
+# another cell (D227) hits; each switch of the pipeline misses when it
+# changes the lowered program of this system and hits when it does not. A
+# variant misses exactly when its lowered program differs
+# (Inputs/compile_cache_program.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache_program.py %S/Inputs/dipeptide GPU %t | FileCheck %s
+# CHECK: base: lowered same, host compiled 1 hits 0
+# CHECK-NEXT: base-again: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: precision: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: fast-math: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: neighbor-capacity: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: pme-grid: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: pme-spread: lowered {{same, host compiled 0 hits 1|differs, host compiled 1 hits 0}}
+# CHECK-NEXT: tuple-sums: lowered {{same, host compiled 0 hits 1|differs, host compiled 1 hits 0}}
+# CHECK-NEXT: pair-sums: lowered {{same, host compiled 0 hits 1|differs, host compiled 1 hits 0}}
+# CHECK-NEXT: fused-prune: lowered {{same, host compiled 0 hits 1|differs, host compiled 1 hits 0}}
+# CHECK-NEXT: check-pruning: lowered {{same, host compiled 0 hits 1|differs, host compiled 1 hits 0}}
+# CHECK-NEXT: constraint-test: lowered differs, host compiled 1 hits 0
+# CHECK-NEXT: other-cell: lowered same, host compiled 0 hits 1
+# CHECK-NEXT: a variant missed exactly when its lowered program differs: yes

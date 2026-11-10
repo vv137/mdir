@@ -20,9 +20,11 @@ GROUP is one of:
   stands for another build; the energies of a hit are those of the cold run.
 - target: `mdir emit --stage=lowered` for the device's architecture, then
   for another one (MDIR_GPU_ARCH), then as PTX (MDIR_GPU_BINARY=ptx).
-- program: the switches of the pipeline and of the builder, fast_math,
-  precision, the PME grid, neighbor_capacity, and MDIR_PIPELINE each store
-  new entries; a start from another cell (D227) stores none.
+- program: a switch of the builder (MDIR_CONSTRAINT_TEST), precision, and
+  a pipeline that MDIR_PIPELINE replaces each store new entries for the
+  kernels they change; the same pipeline through MDIR_PIPELINE, and a start
+  from another cell (D227), store none. Settings that change the host code
+  alone are in compile_cache_program.py, whose host objects are cached.
 - search: the skin search (D281) of a run with the groups: its candidates'
   host objects are stored cold and read again warm, and with an LLVM option
   of the host's code generator (-unroll-threshold=0) none is read.
@@ -158,21 +160,8 @@ elif group == "target":
     run("device-again", "one", emit=True)
 elif group == "program":
     run("cold", "one")
-    for name, env in [("pme-spread-global", {"MDIR_PME_SPREAD": "global"}),
-                      ("pme-spread-tiles", {"MDIR_PME_SPREAD": "tiles"}),
-                      ("tuple-sums-atomics", {"MDIR_TUPLE_SUMS": "atomics"}),
-                      ("tuple-sums-blocks", {"MDIR_TUPLE_SUMS": "blocks"}),
-                      ("pair-sums-blocks", {"MDIR_PAIR_SUMS": "blocks"}),
-                      ("fused-prune-off", {"MDIR_FUSED_PRUNE": "off"}),
-                      ("check-pruning", {"MDIR_CHECK_PRUNING": "1"}),
-                      ("constraint-test", {"MDIR_CONSTRAINT_TEST": "separate"})]:
-        run(name, "one", env=env)
-    for name, edit in [
-            ("fast-math", lambda t: t + "fast_math = true\n"),
-            ("precision", lambda t: t + 'precision = "mixed"\n'),
-            ("neighbor-capacity", lambda t: t + "neighbor_capacity = 600\n"),
-            ("pme-grid", lambda t: t + "\n[pme]\ngrid = [36, 36, 36]\n")]:
-        run(name, "one", control=edit(BASE))
+    run("constraint-test", "one", env={"MDIR_CONSTRAINT_TEST": "separate"})
+    run("precision", "one", control=BASE + 'precision = "mixed"\n')
     # The pipeline that the run takes, with one option changed.
     emitted = subprocess.run(
         [mdir, "emit", "run.toml", "--stage=pipeline"], cwd=work / "cold",
