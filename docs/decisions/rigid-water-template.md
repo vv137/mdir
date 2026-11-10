@@ -463,7 +463,7 @@ launch sizes, work counts and measurement qualifications.
 | Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
 | Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
 | Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After S1: search uses two group warps per 64-thread block; small-box grids about 138–144, large 537–551. Common evaluation remains one combined launch. S3 adds four column-index launches, measured in its net cost. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
-| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **D0 required, then W1:** one per-row/stage diagnostic at S4 records elapsed distributions and the longest-row relation. The whole prototype search port follows regardless of that result. No speculative row-splitting or standalone search correction intervenes. |
+| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **D0 completed at S4:** six exact-output-preserving fixed-frame captures show the latest/longest WW row spans 99.93–99.95% of instrumented kernel wall. Instrumentation overhead and all stage distributions follow below. **W1 is required next regardless of that result**; no standalone search item intervenes. |
 | Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
 
 S0 was discarded and S1 retained after their isolated comparisons. The
@@ -772,7 +772,110 @@ box and launch rows together from that evidence. Sort/group plan S6/S7 may
 follow with the same whole-structure approach if their gap remains large.
 No extra single-mechanism search items intervene before W1.
 
-### Precision contract for planned search and pruning changes
+### Completed single S4 row-clock diagnostic
+
+The detached diagnostic uses S4 `f9ea87ef`, with uncommitted diagnostic-only
+edits and patch SHA256
+`383619218876fdb132e3290cc9f5a36fd28eea0724d034596e53e577a2023ff2`.
+It is not a correction and is not kept in the PR implementation. Six
+one-step program invocations on RTX 5090 completed; every natural growth
+and search attempt was retained. The predefined primary selection is the
+first successful initial refresh, not the fastest sample. No standard
+warmup/repeat/two-job timing protocol is used for this diagnostic.
+
+All six selected outputs match the source-faithful CPU replay exactly:
+264865, 267364, 113185, 423498, 116491 and 432421 ordered entries,
+including row/ordinal, partner, image, mask, reserved word, counts and flags.
+The replay uses the actual dumped references/order/groups/keys/cells/reaches/
+exclusions and the original diagonal multiply plus x/y/z FMA norm graph.
+This validates output preservation, not independent physical-force or
+full-trajectory/state equality.
+
+Each one-step program naturally builds an initial-force list and a separate
+advanced-position list inside the checkpoint segment; reuse is not hoisted
+across that segment. Each allocation grows once and then succeeds, producing
+24 retained search attempts across six processes. All primary samples were
+fixed to serial 1, attempt 1. Serial 2 is retained, not substituted. Serial
+is a process-global refresh-call sequence, not a step number; allocation
+association is established from source/dataflow because headers omit handle
+IDs. Successful serial-1/2 snapshots and payloads differ in every case.
+
+Instrumentation preserves the original 511 static f64 operations and existing
+barriers but increases stack/spills materially: 168 registers, 448-byte stack,
+468/580 static spill-store/load bytes, versus S4's 168-byte stack and
+232/272 bytes. Application shared memory stays 896 bytes; ELF includes a
+separate 1024-byte reserve. A 64-byte private depot remains at outer query
+boundaries. There is no paired uninstrumented exact-frame run or fabricated
+constant overhead subtraction. The production S4 means below provide scale,
+not production per-row clocks or a direct overhead estimate.
+
+Times below are instrumented elapsed microseconds. Five exclusive budgets are z; candidate/filter/control excluding partner; partner mask/enumeration excluding append; append; and residual. Candidate-inclusive contains partner-inclusive, which contains append; z is disjoint. Residual=total−z−candidate-inclusive includes setup/cache/frame/image/subset/control/timer/finish overhead and is not a measured pure enumeration stage. P99 uses the higher observed order statistic. Row intervals overlap: sums across rows and sums of stage maxima are not kernel wall time.
+
+| System | Active rows | Kernel W | Row envelope E | Longest L | Latest row | Start delay | W−E | Production S4 search A/B |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ubq-opc | 723 | 1395.070 | 1394.432 | 1394.368 | 199 (WW) | 0.064 | 0.638 | 1295.472/1287.249 |
+| ubq-tip3p | 724 | 1438.814 | 1438.208 | 1438.144 | 247 (WW) | 0.064 | 0.606 | 1300.962/1311.513 |
+| opc-small | 283 | 940.350 | 939.712 | 939.680 | 3 (WW) | 0.032 | 0.638 | 902.321/903.700 |
+| opc-large | 1079 | 1132.830 | 1132.224 | 1132.160 | 5 (WW) | 0.064 | 0.606 | 1104.661/1103.046 |
+| tip3p-small | 284 | 959.934 | 959.296 | 959.264 | 3 (WW) | 0.032 | 0.638 | 912.839/912.498 |
+| tip3p-large | 1087 | 1146.493 | 1145.920 | 1145.856 | 0 (WW) | 0.064 | 0.573 | 1111.281/1109.528 |
+
+In these six instrumented initial launches, the longest row is also the latest finishing row. Its32–64ns start delay plus its total elapsed interval equals E exactly; W−E is0.573–0.638us. Thus the long row envelope accounts for essentially the entire instrumented kernel duration. Production S4 values are separately recorded stationary per-refresh means over evolving geometry, not a paired uninstrumented run on these fixed snapshots. They provide scale, not an instrumentation overhead estimate or production row-clock proof.
+
+| System | Exclusive stage | Mean | P99 | Max |
+|---|---|---:|---:|---:|
+| ubq-opc | z lookup | 122.294 | 336.992 | 393.248 |
+| ubq-opc | candidate/filter/control | 170.904 | 434.720 | 446.656 |
+| ubq-opc | partner mask/enumeration | 174.654 | 361.408 | 407.840 |
+| ubq-opc | append | 12.051 | 28.224 | 36.672 |
+| ubq-opc | setup/enumeration residual | 103.099 | 248.224 | 266.560 |
+| ubq-tip3p | z lookup | 123.403 | 335.424 | 403.328 |
+| ubq-tip3p | candidate/filter/control | 172.312 | 435.808 | 450.624 |
+| ubq-tip3p | partner mask/enumeration | 173.978 | 368.160 | 402.752 |
+| ubq-tip3p | append | 12.124 | 27.360 | 36.064 |
+| ubq-tip3p | setup/enumeration residual | 104.067 | 231.296 | 275.328 |
+| opc-small | z lookup | 127.713 | 205.728 | 208.608 |
+| opc-small | candidate/filter/control | 186.438 | 216.128 | 216.352 |
+| opc-small | partner mask/enumeration | 212.778 | 395.712 | 402.656 |
+| opc-small | append | 13.608 | 25.600 | 26.432 |
+| opc-small | setup/enumeration residual | 104.211 | 135.712 | 137.536 |
+| opc-large | z lookup | 150.052 | 241.120 | 251.712 |
+| opc-large | candidate/filter/control | 187.796 | 284.256 | 288.640 |
+| opc-large | partner mask/enumeration | 237.837 | 436.512 | 480.064 |
+| opc-large | append | 13.199 | 22.272 | 28.064 |
+| opc-large | setup/enumeration residual | 124.309 | 194.496 | 208.928 |
+| tip3p-small | z lookup | 129.211 | 204.448 | 208.288 |
+| tip3p-small | candidate/filter/control | 189.203 | 215.936 | 216.736 |
+| tip3p-small | partner mask/enumeration | 215.848 | 402.176 | 438.240 |
+| tip3p-small | append | 13.927 | 25.504 | 29.120 |
+| tip3p-small | setup/enumeration residual | 105.590 | 137.184 | 138.112 |
+| tip3p-large | z lookup | 149.696 | 239.872 | 250.272 |
+| tip3p-large | candidate/filter/control | 188.444 | 286.944 | 297.632 |
+| tip3p-large | partner mask/enumeration | 239.431 | 435.904 | 515.904 |
+| tip3p-large | append | 13.216 | 22.784 | 26.752 |
+| tip3p-large | setup/enumeration residual | 125.580 | 194.784 | 207.264 |
+
+The latest row decomposition is measured on that same row, not assembled from different maxima.
+
+| System | Start delay | z | Candidate exclusive | Partner exclusive | Append | Residual | Envelope E |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ubq-opc | 0.064 | 367.776 | 425.728 | 311.808 | 36.672 | 252.384 | 1394.432 |
+| ubq-tip3p | 0.064 | 403.328 | 442.272 | 283.936 | 33.280 | 275.328 | 1438.208 |
+| opc-small | 0.032 | 208.608 | 215.072 | 352.224 | 26.240 | 137.536 | 939.712 |
+| opc-large | 0.064 | 231.616 | 261.536 | 402.016 | 28.064 | 208.928 | 1132.224 |
+| tip3p-small | 0.032 | 208.288 | 214.624 | 370.048 | 29.120 | 137.184 | 959.296 |
+| tip3p-large | 0.064 | 188.416 | 258.112 | 515.904 | 18.656 | 164.768 | 1145.920 |
+
+No single measured stage explains every long row. Candidate/filter/control, partner mask/enumeration, z lookup and the combined residual all contribute materially; append is smaller. The residual does not isolate frame/image enumeration, and elapsed stage spans include scheduling/memory/timer effects. One representative SM ID is recorded twice after compiler CSE; this is not an independent migration detector. clock64 is auxiliary and was not compared across SMs or converted using a nominal clock. No achieved occupancy, memory throughput, instruction latency or causal speedup is claimed.
+
+The first helper attempt failed before JIT execution because the full host runtime had not been built. Its exported capture has zero CUDA activity/kernel tables and no row dumps. Evidence and cold cache were preserved. One deterministic setup correction built the complete runtime pair and verified both with CPU RTLD_NOW loader checks; the fresh corrected invocation is the only actual measurement. The premeasurement decoder was corrected to ignore uninitialized unused class/inner metadata (affected CPU smoke1/1 passed). During postcapture analysis, the wrapper-integrity parser initially assumed SHA256; unchanged cache source establishes BLAKE3, and one corrected extraction passed all six. Neither analysis correction changed source predicates, classification, refusal, tolerance, nor any GPU run.
+
+
+The required next step remains W1, the complete prototype search structure,
+regardless of this diagnostic result. No row-splitting experiment or further
+single-mechanism search correction is inserted before it.
+
+### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
 image, reach, source admission and accuracy bound remains unchanged.
