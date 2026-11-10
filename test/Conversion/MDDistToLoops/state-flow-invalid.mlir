@@ -1,4 +1,4 @@
-// D[distributed-migration]: only a md_dist.state crosses control flow; a
+// D399: only a md_dist.state crosses control flow; a
 // layout, halo, or field carried by scf.for apart from its state is refused
 // by the executor with the reason, since the verifier cannot follow its
 // epoch through a block argument.

@@ -694,6 +694,7 @@ specification follow those made with it.
 | [D396](decisions/D396.md) | The text that the `mdir` tool prints to the terminal is ASCII only, with one spelling of units and symbols: the angstrom `Ang`, exponents with `^` (`Ang^-1`, `g/cm^3`), `+/-`, `us`, `x`, `deg`, `sqrt`, and Greek letters by name. | 2026-11-10 |
 | [D397](decisions/D397.md) | The compile cache is on by default, for `mdir run` and Python alike, in a private directory on a local file system, and every key of it begins with a salt that names the build of MDIR and LLVM (the ELF build ID of the image that holds the compiler), the LLVM options given on the command line, and the scheduler in force, so that an entry is used only when nothing that changes the compiled result differs. | 2026-11-10 |
 | [D398](decisions/D398.md) | **The compiler records the source of every parallel region of the host in a profile map, written as JSON by `mdir emit --profile-map=FILE` and by `[output] profile_map`, and the CPU sampler's tools read it instead of classifying regions by the functions they call.** Issue #840 (the CPU part; the GPU part waits for #795). | 2026-11-10 |
+| [D399](decisions/D399.md) | A step loop on domains carries one linear value, `!md_dist.state`, that holds an ownership epoch, its halo, the halo's reference positions, and every live per-particle field; a state is formed only by `md_dist.pack` under a proof that its halo covers its positions, and the in-process executor runs `md_dist` ops inside `scf.for` and `scf.if` through it. | 2026-11-10 |
 <!-- end decisions-table -->
 
 

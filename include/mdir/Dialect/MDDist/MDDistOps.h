@@ -75,7 +75,7 @@ mlir::Value copySourceOf(mlir::Value ghosts);
 
 /// The owned positions a halo was built at: the positions of its
 /// md_dist.halo, or the reference of the md_dist.unpack that gives it; null
-/// if neither (D[distributed-migration]).
+/// if neither (D399).
 mlir::Value referenceOf(mlir::Value halo);
 
 /// The cell of a halo: that of its md_dist.halo or of the md_dist.unpack
@@ -85,7 +85,7 @@ mlir::Value cellOf(mlir::Value halo);
 /// Whether `positions` are shown to be wrapped into `cell`: a
 /// md_dist.distribute or md_dist.redistribute with `image` of that cell, or
 /// the reference positions of a md_dist.unpack with that cell
-/// (D[distributed-migration]).
+/// (D399).
 bool isWrapped(mlir::Value positions, mlir::Value cell);
 
 /// Proves that `halo` covers every pair within `cutoff` at the owned
@@ -101,7 +101,7 @@ mlir::LogicalResult proveCovers(mlir::Operation *op, mlir::Value halo,
 /// Checks that every value of a md_dist.state in `root` (results and block
 /// arguments) has exactly one use, in its own block, and that no other value
 /// of md_dist is carried through the iteration arguments, results, or
-/// terminators of control flow (D[distributed-migration]).
+/// terminators of control flow (D399).
 mlir::LogicalResult verifyStateFlow(mlir::Operation *root);
 
 /// Checks that `ghosts` is the copy of `owned` through `halo`: V1 (a ghost

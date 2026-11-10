@@ -1,5 +1,5 @@
 # The trajectory of dist-trajectory-lj.test with the loops of each domain on
-# a GPU (D[distributed-migration], D290): the md_dist.state and the
+# a GPU (D399, D290): the md_dist.state and the
 # transfers on the host, the pair loops of md_exec on the device, in double
 # and mixed precision, with the bounds of that test.
 #

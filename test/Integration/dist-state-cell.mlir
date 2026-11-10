@@ -1,4 +1,4 @@
-// D[distributed-migration]: a state used with another cell than the one its
+// D399: a state used with another cell than the one its
 // halo was built in is stopped at run time; the images of the halo and the
 // regions of the layout were made in that cell, and this slice has no change
 // of the cell on domains.

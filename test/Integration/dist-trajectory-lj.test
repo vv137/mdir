@@ -1,5 +1,5 @@
 # A Lennard-Jones trajectory on domains against one domain, 200 steps of
-# velocity Verlet (D[distributed-migration]); the program is in
+# velocity Verlet (D399); the program is in
 # Inputs/dist-trajectory-lj.mlir. The state of the domains is a
 # md_dist.state carried by scf.for; at every step md_dist.covered decides,
 # for all domains at once, whether the halo is kept or the particles migrate

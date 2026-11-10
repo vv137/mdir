@@ -199,7 +199,7 @@ def MDDist_HaloOp : MDDist_Op<"halo", [
     with the halo only if its positions come from `md_dist.distribute` or
     `md_dist.redistribute` with `image` of this cell (after
     `md_dist.migrate`), or are the reference positions of a
-    `md_dist.unpack` (V10, D[distributed-migration]).
+    `md_dist.unpack` (V10, D399).
 
     ```mlir
     %h = md_dist.halo %l, %xo, %cell
@@ -345,7 +345,7 @@ def MDDist_ZerosOp : MDDist_Op<"zeros", [Pure]> {
 }
 
 //===----------------------------------------------------------------------===//
-// The state of a step loop (D[distributed-migration])
+// The state of a step loop (D399)
 //===----------------------------------------------------------------------===//
 
 def MDDist_PackOp : MDDist_Op<"pack", [

@@ -761,7 +761,7 @@ the old row of each identity and produces a new field for the new layout.
 The old fields and buffers remain valid until their existing users finish.
 Every live field needed after migration must be redistributed before it is
 used with the new layout; the verifier rejects an old-epoch field there.
-The step loop itself is D[distributed-migration], Section 8.1.
+The step loop itself is D399, Section 8.1.
 
 The first temporal-validity slice, D332 (#542), adds
 `md_dist.covered` as a collective Verlet skin predicate
@@ -781,7 +781,7 @@ candidate halo membership; a current coordinate payload must still receive
 its own `halo_copy` before a pair kernel reads it. The predicate is used by
 the step loop below.
 
-### 8.1 The state of a step loop (D[distributed-migration])
+### 8.1 The state of a step loop (D399)
 
 The verifier follows epochs (V5), copy versions (V2), and coverage through
 defining ops, which a block argument does not have. A loop therefore

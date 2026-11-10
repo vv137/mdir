@@ -1,4 +1,4 @@
-// D[distributed-migration]: a step loop on domains carries one
+// D399: a step loop on domains carries one
 // md_dist.state; it prints and parses back, and the three witnesses of
 // coverage are accepted: a halo built at the positions, one unpack, and the
 // then-region of a branch on md_dist.covered.

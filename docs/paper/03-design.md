@@ -73,7 +73,7 @@ displacement is small. The predicate is one value for all domains, including emp
 The current coordinate values remain a separate version and require their
 own halo copy before use. A step loop carries the layout, the halo, its reference positions, and every
 live per-particle field as one linear value, `md_dist.state`
-(D[distributed-migration]). The state is formed only under a witness of
+(D399). The state is formed only under a witness of
 coverage: the halo was built at the positions, or the positions and the halo
 come from one earlier state, or the formation is guarded by a true
 `md_dist.covered` of them. With every witness the halo must have been built

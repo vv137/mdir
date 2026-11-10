@@ -34,7 +34,7 @@ input or output format, checkpoint, or overwrite behavior.
 
 D313 adds execution-level ownership-epoch migration and field
 redistribution to `md_dist`. D332 adds an execution-level
-collective halo skin predicate. D[distributed-migration] adds the step state
+collective halo skin predicate. D399 adds the step state
 `md_dist.state`. None of them adds a `[distribute]` table, Python
 option, checkpoint or output format, or overwrite behavior. The approved
 `[distribute]` keys arrive with the driver's run on domains (#832).

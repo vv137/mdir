@@ -63,7 +63,7 @@ struct Storage {
   Value count;
   /// A field (memref<?x?x?xf64>) or a partial sum (memref<?x?xf64>).
   Value buffer;
-  /// A state (D[distributed-migration]): the layout handle, the halo
+  /// A state (D399): the layout handle, the halo
   /// handle, the halo's reference positions, and one buffer per field.
   SmallVector<Value> state;
 };
@@ -1210,7 +1210,7 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
 }
 
 //===----------------------------------------------------------------------===//
-// The state of a step loop (D[distributed-migration])
+// The state of a step loop (D399)
 //===----------------------------------------------------------------------===//
 
 SmallVector<Value> Lowering::stateOf(Value state) {
@@ -1362,7 +1362,7 @@ LogicalResult Lowering::lowerUnpack(UnpackOp op) {
 FlatSymbolRefAttr Lowering::getSet(int64_t d, bool local, Value epoch) {
   // A set of md_exec has one size in a function, and the rows of a domain
   // change with its epoch: a layout for the owned rows, a halo for the local
-  // ones (D[distributed-migration]). The first epoch keeps the plain name.
+  // ones (D399). The first epoch keeps the plain name.
   auto &epochs = local ? localEpochs : ownedEpochs;
   int64_t number = epochs.try_emplace(epoch, epochs.size()).first->second;
   std::string name =
@@ -1832,7 +1832,7 @@ static bool isDistributedType(Type type) {
 static constexpr llvm::StringLiteral kStepLoop = "md_dist.step_loop";
 
 /// Gives `scf.for`, `scf.if`, and `scf.while` that carry a md_dist.state its
-/// tuple instead (D[distributed-migration]): the layout and halo handles,
+/// tuple instead (D399): the layout and halo handles,
 /// the reference positions, and one buffer per field. The ops of md_dist
 /// keep the state, through unrealized casts from and to the tuple, which
 /// the lowering of pack and unpack resolves.
@@ -1884,7 +1884,7 @@ static LogicalResult convertStateFlow(func::FuncOp function) {
 }
 
 /// Moves the body of each loop that carried a state into a function of its
-/// own, called by the loop (D[distributed-migration]). The second executor
+/// own, called by the loop (D399). The second executor
 /// needs it: a particle set of md_exec has one size in a function, and its
 /// storage is assigned for the whole function, while the rows of a domain
 /// change with every migration and rebuild of the halo. In the function of
@@ -1994,7 +1994,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
       return function.emitOpError()
              << "the reference executor runs the values of md_dist within "
                 "a function; an argument of md_dist cannot be run";
-  // Control flow carries only states (D[distributed-migration]); every other
+  // Control flow carries only states (D399); every other
   // value of md_dist stays in the region of its op and is used by ops of
   // md_dist.
   if (failed(verifyStateFlow(function)))

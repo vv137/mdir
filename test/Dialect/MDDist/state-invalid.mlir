@@ -1,4 +1,4 @@
-// D[distributed-migration]: a state is formed only under a witness of
+// D399: a state is formed only under a witness of
 // coverage, of one ownership epoch, with every field it carries, and it is
 // linear; a neighborhood at other positions than its halo's needs the same
 // witness (V10).

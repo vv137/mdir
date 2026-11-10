@@ -297,7 +297,7 @@ Value mdir::md_dist::layoutOf(Value value) {
     return {};
   if (auto op = dyn_cast<HaloOp>(def))
     return op.getLayout();
-  // The results of an unpack are of its layout (D[distributed-migration]).
+  // The results of an unpack are of its layout (D399).
   if (auto op = dyn_cast<UnpackOp>(def))
     return op.getLayout();
   FieldType field = getFieldType(value);
@@ -823,7 +823,7 @@ LogicalResult ZerosOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// PackOp, UnpackOp (D[distributed-migration])
+// PackOp, UnpackOp (D399)
 //===----------------------------------------------------------------------===//
 
 LogicalResult PackOp::verify() {

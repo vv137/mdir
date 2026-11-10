@@ -1,6 +1,6 @@
 # The drift of the energy over 2000 steps of the trajectory of
 # dist-trajectory-lj.test on domains, with about 124 migrations
-# (D[distributed-migration]). After 2000 steps the trajectories on domains
+# (D399). After 2000 steps the trajectories on domains
 # and on one domain have separated, as two runs of a chaotic system whose
 # sums are added in other orders do, so they are compared by the change of
 # the total energy since the start, against the kinetic energy (about 73),

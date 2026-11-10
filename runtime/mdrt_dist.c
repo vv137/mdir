@@ -53,7 +53,7 @@ static void fail(const char *message) {
   abort();
 }
 
-/* Layouts and halos count their references (D[distributed-migration]): the
+/* Layouts and halos count their references (D399): the
    op that makes one holds the first, a md_dist.state holds one while it
    carries it, and a halo holds one of its layout. */
 struct Layout {
@@ -522,7 +522,7 @@ void mdrtDistRetainHalo(int64_t handle) {
 }
 
 /* The cell a state is used with must be the one its halo's images and its
-   layout's regions were made in (D[distributed-migration]); this slice has
+   layout's regions were made in (D399); this slice has
    no change of the cell on domains. */
 void mdrtDistCheckHaloCell(int64_t handle, double lx, double ly, double lz) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;

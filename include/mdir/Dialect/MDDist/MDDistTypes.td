@@ -131,7 +131,7 @@ def MDDist_StateType : MDDist_Type<"State", "state"> {
     An ownership epoch (a layout), its halo, the halo's reference positions,
     and the owned fields of that epoch, as one value: the only value of
     md_dist that may cross `scf.for` and `scf.if`
-    (D[distributed-migration]). The halo is proved to cover the first
+    (D399). The halo is proved to cover the first
     field, the positions, at `cutoff`. Each field is a complete field of
     the owned rows; it is written as its components and its element type.
 

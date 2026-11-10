@@ -320,7 +320,7 @@ positions lie in the cell: a neighborhood or a pack proves coverage
 with the halo only if its positions come from `md_dist.distribute` or
 `md_dist.redistribute` with `image` of this cell (after
 `md_dist.migrate`), or are the reference positions of a
-`md_dist.unpack` (V10, D[distributed-migration]).
+`md_dist.unpack` (V10, D399).
 
 ```mlir
 %h = md_dist.halo %l, %xo, %cell
@@ -1137,7 +1137,7 @@ _The state a step loop on domains carries_
 An ownership epoch (a layout), its halo, the halo's reference positions,
 and the owned fields of that epoch, as one value: the only value of
 md_dist that may cross `scf.for` and `scf.if`
-(D[distributed-migration]). The halo is proved to cover the first
+(D399). The halo is proved to cover the first
 field, the positions, at `cutoff`. Each field is a complete field of
 the owned rows; it is written as its components and its element type.
 

@@ -1,5 +1,5 @@
 // A Lennard-Jones trajectory on domains against the same trajectory on one
-// domain (D[distributed-migration]). The RUN lines are in
+// domain (D399). The RUN lines are in
 // dist-trajectory-lj.test; GRID, STEPS, and TOLERANCES are put in by sed.
 //
 // The system of lj-dynamics.mlir: 64 particles on a cubic lattice of

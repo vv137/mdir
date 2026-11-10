@@ -97,7 +97,7 @@ func.func @cross_block_wait(%halo: i64, %condition: i1) {
 
 // -----
 
-// D[distributed-migration]: a md_dist.pack lowers to a copy of each field
+// D399: a md_dist.pack lowers to a copy of each field
 // into the state and a reference to the halo; neither may come between a
 // start and its wait.
 func.func @pack_before_wait(%halo: i64, %image: i64) {
