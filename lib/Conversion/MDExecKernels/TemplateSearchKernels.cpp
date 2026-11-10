@@ -884,6 +884,17 @@ Value mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   SmallVector<Value> metadata{v.handle, path,
       arith::ExtUIOp::create(b, loc, b.getI64Type(), v.spatial.waterActive),
       arith::ExtUIOp::create(b, loc, b.getI64Type(), v.spatial.atomActive)};
+  // Scalar host inputs let an explicitly installed test observer associate
+  // a successful refresh with its exact selection geometry, without reads
+  // of device metadata or any change to the public entry representation.
+  for (int64_t axis = 0; axis != 6; ++axis)
+    metadata.push_back(axis < (isTriclinic(v.cell) ? 6 : 3)
+        ? Value(vector::ExtractOp::create(b, loc, v.cell, axis)) : real(b, 0));
+  for (int64_t kind = 0; kind != 3; ++kind)
+    metadata.push_back(v.reaches
+        ? Value(vector::ExtractOp::create(b, loc, v.reaches, kind))
+        : Value(arith::AddFOp::create(b, loc, v.baseReach,
+            arith::MulFOp::create(b, loc, real(b, 2 - kind), v.extent))));
   auto metadataType = b.getFunctionType(ValueRange(metadata).getTypes(), TypeRange{b.getI64Type()});
   auto setter = module.lookupSymbol<func::FuncOp>("mdrtTemplatePairsSetImagePath");
   if (!setter) {
@@ -891,6 +902,7 @@ Value mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     setter = func::FuncOp::create(symbols, loc, "mdrtTemplatePairsSetImagePath", metadataType);
     setter.setPrivate();
   }
+  assert(setter.getFunctionType() == metadataType && "template image-path runtime type mismatch");
   func::CallOp::create(b, loc, setter, metadata);
   auto call = [&](OpBuilder &at, unsigned mode) {
     auto function = outlineSearch(at, loc, module, selected, mode);
