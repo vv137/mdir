@@ -8,7 +8,7 @@
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t
-# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t target | FileCheck %s
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t target mdir | FileCheck %s
 # CHECK: device: new ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
 # CHECK-NEXT: other-chip: new ptx [[P]] cubin [[C]]
 # CHECK-NEXT: as-ptx: new ptx [[P]] cubin 0

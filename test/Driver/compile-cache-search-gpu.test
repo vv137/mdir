@@ -8,7 +8,7 @@
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t
-# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t search | FileCheck %s
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t search mdir | FileCheck %s
 # CHECK: search-cold: {{.*}}
 # CHECK-NEXT: search-cold: host objects of the search compiled some, read none, new some
 # CHECK-NEXT: search-warm: {{.*}}

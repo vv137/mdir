@@ -1,6 +1,6 @@
 """What misses the GPU entries of `mdir run` (D[compile-cache-default]).
 
-  compile_cache_run.py INPUTS WORK GROUP
+  compile_cache_run.py INPUTS WORK GROUP MDIR
 
 The dipeptide in water with PME, 20 deterministic steps on a GPU (the
 program of gpu-module-compile-gpu.test). Each scenario is a run of its own,
@@ -36,6 +36,7 @@ import subprocess
 import sys
 
 inputs, work, group = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+mdir = sys.argv[4]
 work.mkdir(parents=True, exist_ok=True)
 
 BASE = """[input]
@@ -106,8 +107,8 @@ def run(name, cache, args=(), env=None, control=BASE, emit=False,
     environment["MDIR_COMPILE_CACHE_DIR"] = str(work / cache)
     environment.update(env or {})
     before, hosts = entries(work / cache), host_entries(work / cache)
-    command = (["mdir", "emit", "run.toml", "--stage=lowered"] if emit else
-               ["mdir", "run", "run.toml"]) + list(args)
+    command = ([mdir, "emit", "run.toml", "--stage=lowered"] if emit else
+               [mdir, "run", "run.toml"]) + list(args)
     result = subprocess.run(command, cwd=directory, env=environment,
                             capture_output=True, text=True)
     if result.returncode != 0:
@@ -148,7 +149,7 @@ if group == "llvm":
 elif group == "target":
     run("device", "one", emit=True)
     pipeline = subprocess.run(
-        ["mdir", "emit", "run.toml", "--stage=pipeline"], cwd=work / "device",
+        [mdir, "emit", "run.toml", "--stage=pipeline"], cwd=work / "device",
         text=True, capture_output=True, check=True).stdout
     chip = re.search(r"cubin-chip=(sm_\d+)", pipeline)
     other = "sm_86" if chip and chip.group(1) == "sm_80" else "sm_80"
@@ -157,7 +158,12 @@ elif group == "target":
     run("device-again", "one", emit=True)
 elif group == "program":
     run("cold", "one")
-    for name, env in [("pme-spread", {"MDIR_PME_SPREAD": "global"}),
+    for name, env in [("pme-spread-global", {"MDIR_PME_SPREAD": "global"}),
+                      ("pme-spread-tiles", {"MDIR_PME_SPREAD": "tiles"}),
+                      ("tuple-sums-atomics", {"MDIR_TUPLE_SUMS": "atomics"}),
+                      ("tuple-sums-blocks", {"MDIR_TUPLE_SUMS": "blocks"}),
+                      ("pair-sums-blocks", {"MDIR_PAIR_SUMS": "blocks"}),
+                      ("fused-prune-off", {"MDIR_FUSED_PRUNE": "off"}),
                       ("check-pruning", {"MDIR_CHECK_PRUNING": "1"}),
                       ("constraint-test", {"MDIR_CONSTRAINT_TEST": "separate"})]:
         run(name, "one", env=env)
@@ -169,7 +175,7 @@ elif group == "program":
         run(name, "one", control=edit(BASE))
     # The pipeline that the run takes, with one option changed.
     emitted = subprocess.run(
-        ["mdir", "emit", "run.toml", "--stage=pipeline"], cwd=work / "cold",
+        [mdir, "emit", "run.toml", "--stage=pipeline"], cwd=work / "cold",
         text=True, capture_output=True, check=True).stdout.strip()
     changed = emitted.replace("explicit-fma=true", "explicit-fma=false", 1)
     assert changed != emitted

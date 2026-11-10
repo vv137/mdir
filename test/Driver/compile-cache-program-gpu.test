@@ -10,7 +10,7 @@
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t
-# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t program | FileCheck %s
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t program mdir | FileCheck %s
 # CHECK: cold: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
 # CHECK-NEXT: pme-spread: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
 # CHECK-NEXT: check-pruning: {{.*}}; new ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}

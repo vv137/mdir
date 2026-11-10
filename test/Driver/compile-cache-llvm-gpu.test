@@ -11,7 +11,7 @@
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t
-# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t llvm | FileCheck %s
+# RUN: %python %S/Inputs/compile_cache_run.py %S/Inputs/dipeptide %t llvm mdir | FileCheck %s
 # CHECK: cold: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P:[1-9][0-9]*]] cubin [[C:[1-9][0-9]*]]
 # CHECK-NEXT: warm: ptx compiled 0 read [[M:[1-9][0-9]*]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
 # CHECK-NEXT: divf32: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
