@@ -644,12 +644,30 @@ its whole run. TIP3P MDIR starts at 298.15 K from generated velocities,
 while pmemd generates its velocities from 300 K.
 
 The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
-16-thread TIP3P NPT step before this NVE baseline. Eliminating that loop's
-cost completely would therefore give at most $1/(1-0.64)=2.78$ times the
-rate in that earlier configuration. This is a bound for choosing the next
-strategy, not a measured speedup of the NVE runs below; the next pair-loop
-slice (#554) will measure its share and the full step together. The
-sampler attributes each parallel region of the host to a part (pairs,
+16-thread TIP3P NPT step before this NVE baseline. For #554 the share was
+measured again in this NVE protocol, on its three systems, on `main`
+17704a2d. The runs used an EPYC 7543 with 16 cores of a Slurm job, two
+jobs per system, and the sampler's share of the main thread's wall clock.
+At 16 threads in mixed precision the loop over pairs takes 56.5 to 56.6%
+of the step on JAC, 63.9 to 65.5% on TIP3P 103k, and 55.7 to 56.1% on
+Cellulose (the range of the two jobs). Removing its cost completely would
+therefore give at most 2.30, 2.77 to 2.90, and 2.26 to 2.28 times the rate.
+In double precision at 16 threads the shares are 83.0 to 83.3%, 87.7 to
+87.8%, and 82.7 to 82.9%, which bound the gain at 5.9 to 6.0, 8.2, and 5.8
+to 5.9.
+
+A program of one thread has no parallel regions to attribute, so its
+share was measured on the program of two threads run by one OpenMP
+thread. That program's step is 1.5 to 6.0% slower than the true one-thread
+step. In mixed precision its share is 65.7%, 68.8 to 68.9%, and 62.9 to
+63.1%. The loop's time in that program, divided by the true one-thread
+step, gives 68.7 to 69.7%, 70.5%, and 63.9 to 65.5%. These bounds guide
+the choice of a strategy; they are not measured speedups.
+
+The rates of Tables 10.8 and 10.9 were measured on an EPYC 9354. The
+shares above come from another CPU model and do not replace those rates.
+
+The sampler attributes each parallel region of the host to a part (pairs,
 bonded terms, constraints, PME stages, list builds) by the profile map that
 the compiler writes with the program (D398): each region's record
 names the op of the lowering it comes from and the set it runs over, so the
