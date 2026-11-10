@@ -5,6 +5,8 @@
 # RUN: mdir-opt %t/marked.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=MARKED
 # RUN: %python %S/../../Integration/Inputs/template_integration_publication.py %t/plain.mlir %t/plain.json --no-proof
 # RUN: mdir-opt %t/plain.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=FALLBACK
+# RUN: %python %S/../../Integration/Inputs/template_integration_publication.py %t/mixed.mlir %t/mixed.json --mixed-loops
+# RUN: mdir-opt %t/mixed.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=FALLBACK
 # MARKED: gpu.launch {{.*}} function(@evaluate_particle_for_integration1_template_publication_{{[0-9]+}})
 # MARKED: gpu.shuffle idx
 # MARKED: gpu.launch {{.*}} function(@evaluate_particle_for_integration1_template_publication_{{[0-9]+}})

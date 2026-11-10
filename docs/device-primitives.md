@@ -1056,13 +1056,10 @@ The default absent callback preserves ordinary lowering. A caller must prove
 complete-group ownership, original adjacency and the point at which flags
 are consumed before combining publication with integration. A constraint
 marker is not by itself proof of membership in a selected rigid class.
-
-Template publication shares its f64 whole-frame reconstruction between
-extent checking and retained-frame packing. Retained shifts are added before
-the existing f32 narrowing. Common anchor/cell magnitude terms can be reused
-by the two motion tests, while reference coordinates, limits and build guards
-remain specific to each independently aged epoch. This does not combine
-epochs or weaken their validity predicates.
+The template adapter currently admits one marked constraint family only:
+the measured mixed-family fusion regressed, so its existing separate
+publication remains. The R2 arithmetic-sharing experiment was discarded
+after its stage screen; the retained writer arithmetic is unchanged.
 
 ### 5.1 What is stated
 

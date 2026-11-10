@@ -348,9 +348,10 @@ inside the existing fused kernel, provided its ownership and ordering proofs
 hold. It consumes final SSA coordinates, including the completed constraints;
 it does not read positions concurrently with their publication. Extra-point
 placement or overlapping integration runs that break those preconditions
-retain a separate writer. Sharing the whole-frame reconstruction with extent
-checking and the common magnitude terms of the two motion tests leaves the
-independently aged reference epochs and their validity bounds unchanged.
+retain a separate writer. Admission currently requires one marked constraint
+family: the measured mixed-family kernel regressed. The retained writer
+arithmetic, independently aged reference epochs and validity bounds are
+unchanged.
 
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$

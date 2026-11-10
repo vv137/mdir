@@ -1336,13 +1336,12 @@ about 60% of the saving was in the pair kernel and 40% in the lists; in a
 solvated protein the solute's lists and the packing of the waters take
 part of it back.
 
-The native writer shares the whole-frame reconstruction needed by extent
-checking and packed publication, retaining f64 geometry and adding retained
-shifts before narrowing the packed coordinates to f32. Its outer and inner
-motion tests share common magnitude terms but keep their own reference
-coordinates and limits. Eligible integration runs publish these results
-through the shared final-output observer; other runs retain the separate
-writer. These mechanisms do not change the class-list validity contract.
+Eligible single-family integration runs publish through the shared
+final-output observer; mixed families retain the separate writer. The
+arithmetic-sharing experiment did not establish a stage gain and was
+discarded. The retained writer arithmetic and independently aged references
+are unchanged. Publication fusion does not change the class-list validity
+contract.
 
 The **class-segmented pair list** is one buffer of cluster pairs divided
 into segments by class-pair tag: WW, SW and SS here. For $P$ particle

@@ -17,6 +17,7 @@ p.add_argument('--snapshot', action='store_true')
 p.add_argument('--across', action='store_true')
 p.add_argument('--bad-extent', action='store_true')
 p.add_argument('--no-proof', action='store_true')
+p.add_argument('--mixed-loops', action='store_true')
 a = p.parse_args()
 subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('template_native_oracle.py')),
                 'generate', str(a.program), str(a.reference)], check=True)
@@ -74,6 +75,22 @@ s = s.replace(needle, needle + '''
   }
   %pub_no = arith.constant false
 ''')
+if a.mixed_loops:
+    # A second, empty disjoint family is enough to exercise the generic
+    # mixed-family selection rule without inventing overlapping constraints.
+    s = s.replace('  %pub_no = arith.constant false', '''
+  %pub_empty_count = arith.constant 0 : index
+  %pub_empty_members = memref.alloc(%pub_empty_count) : memref<?x3xi32>
+  %pub_empty_incidence = md_exec.build_incidence %pub_empty_members size(%pub_n)
+      : memref<?x3xi32> -> memref<?xi32, 1>
+  %pub_extra = gpu.alloc(%pub_n) : memref<?x3xf64, 1>
+  md_exec.particle_for ins(%x : memref<?x3xf64, 1>)
+      outs(%pub_extra : memref<?x3xf64, 1>) {
+  ^bb0(%pub_unused: vector<3xf64>):
+    %pub_extra_zero = arith.constant dense<0.0> : vector<3xf64>
+    md_exec.yield %pub_extra_zero : vector<3xf64>
+  }
+  %pub_no = arith.constant false''')
 if a.across:
     # A different constrained triplet is deliberately not in the selected
     # template membership. The native epoch marker applies to the entire
@@ -114,6 +131,24 @@ for serial, match in reversed(list(enumerate(writers))):
     md_exec.yield %pub_final : vector<3xf64>
   }}
 '''
+    if a.mixed_loops:
+        second = f'''
+  %pub_extra_failure{serial} = md_exec.tuple_for %pub_empty_incidence, %pub_predictor, %cell{serial+1}
+      coordinates(displacement(1, 0))
+      outs(%pub_extra : memref<?x3xf64, 1>) reduce(%pub_no : i1)
+      arity(3) overwrite [true] disjoint {{
+  ^bb0(%pub_d: vector<3xf64>):
+    %pub_extra_zero = arith.subf %pub_d, %pub_d : vector<3xf64>
+    %pub_extra_false = arith.constant false
+    md_exec.yield %pub_extra_zero, %pub_extra_zero, %pub_extra_zero, %pub_extra_false
+        : vector<3xf64>, vector<3xf64>, vector<3xf64>, i1
+  }} : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
+'''
+        event = event.replace('  md_exec.particle_for ins(%pub_predictor, %pub_correction : memref<?x3xf64, 1>, memref<?x3xf64, 1>)',
+            second + '  md_exec.particle_for ins(%pub_predictor, %pub_correction, %pub_extra : memref<?x3xf64, 1>, memref<?x3xf64, 1>, memref<?x3xf64, 1>)')
+        event = event.replace('%pub_delta: vector<3xf64>):', '%pub_delta: vector<3xf64>, %pub_extra_delta: vector<3xf64>):')
+        event = event.replace('    md_exec.yield %pub_final : vector<3xf64>',
+            '    %pub_both = arith.addf %pub_final, %pub_extra_delta : vector<3xf64>\n    md_exec.yield %pub_both : vector<3xf64>')
     if a.snapshot:
         event += f'  func.call @r1_snapshot(%r{serial}, %x, %pub_failure{serial}) : (!list, memref<?x3xf64, 1>, i1) -> ()\n'
     if a.across and serial == 0:

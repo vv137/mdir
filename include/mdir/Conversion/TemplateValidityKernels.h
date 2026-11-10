@@ -28,11 +28,8 @@ std::array<mlir::Value, 2> emitTemplateGroupMotionLimits(
 /// Compare an actual f64 framed anchor with the fractional reference
 /// point in the current cell. Outward error guards cover the projection,
 /// subtraction and squared norm. Does not wrap a face or a winding jump.
-/// Optional shared norms must be the unchanged ADD reduction of abs(anchor)
-/// and abs(currentCell), respectively, in their original f64 precision.
-/// Absent operands retain the original independently emitted operations.
 mlir::Value emitTemplateMotionExceeded(mlir::OpBuilder &, mlir::Location,
     mlir::Value anchor, mlir::Value referenceFraction, mlir::Value currentCell,
-    mlir::Value halfMargin, mlir::Value anchorL1 = {}, mlir::Value cellL1 = {});
+    mlir::Value halfMargin);
 }
 #endif
