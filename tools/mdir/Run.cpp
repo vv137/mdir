@@ -846,6 +846,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteEnergies",
         (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtStageFrame", (void *)&_mlir_ciface_mdrtStageFrame);
     add("_mlir_ciface_mdrtCheckSpread",
         (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
@@ -1133,6 +1134,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
   output.state = program->state;
   output.force = program->force;
+  output.onDevice = control->target == Target::GPU;
   output.firstStep = firstStep;
   output.energyPeriod = control->energyPeriod;
   // What the summary at the end takes of the rows, in constant memory
@@ -1532,6 +1534,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // once it has passed all three of its events (CheckpointThread in
   // lib/Driver/Output.cpp), the last its commit to stable storage.
   waitForCheckpoint();
+  // And for the frames that the thread of the frames still holds
+  // (D[async-output]).
+  finishFrames(output);
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();

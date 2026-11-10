@@ -706,9 +706,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         Value trips = arith::IndexCastOp::create(body, loc, body.getIndexType(), wide);
         auto write = buildEntryLoop(body, "part frame", zero, trips, one, {},
             [&](OpBuilder &at, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
+          // In place: the call stages its own copies while the steps go on
+          // (D[async-output]).
           mdir::mdrt::HostCallOp::create(at, loc, TypeRange{},
-              FlatSymbolRefAttr::get(at.getContext(), "mdrtWriteFrame"),
-              ValueRange{completed, point.positions, point.identities}, ValueRange{}, UnitAttr{});
+              FlatSymbolRefAttr::get(at.getContext(), "mdrtStageFrame"),
+              ValueRange{completed, point.positions, point.identities}, ValueRange{}, at.getUnitAttr());
           return SmallVector<Value>{};
         });
         if (!write) return write.takeError();
@@ -890,9 +892,11 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
           split ? periods[level - 1] : Value{}, periods[level], one, arguments.start);
     };
     auto writeFrame = [&](OpBuilder &body, Value completed, const EntryFieldsIR &point) {
+      // In place: the call stages its own copies while the steps go on
+      // (D[async-output]).
       mdir::mdrt::HostCallOp::create(body, loc, TypeRange{},
-          FlatSymbolRefAttr::get(body.getContext(), "mdrtWriteFrame"),
-          ValueRange{completed, point.positions, point.identities}, ValueRange{}, UnitAttr{});
+          FlatSymbolRefAttr::get(body.getContext(), "mdrtStageFrame"),
+          ValueRange{completed, point.positions, point.identities}, ValueRange{}, body.getUnitAttr());
     };
     std::function<llvm::Expected<scf::ForOp>(OpBuilder &, unsigned, EntryFieldsIR)> level;
     level = [&](OpBuilder &body, unsigned atLevel, EntryFieldsIR initial) -> llvm::Expected<scf::ForOp> {

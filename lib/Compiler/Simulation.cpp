@@ -433,6 +433,10 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
                                               double notNumbers,
                                               StridedMemRefType<int64_t, 1> *counts) {
   compiler::Activation *a = runningActivation;
+  // The frames of the part are in the trajectory when it returns to the
+  // host (D[async-output]).
+  if (driver::Output *output = driver::getOutput())
+    driver::waitForFrames(*output);
   a->x = *x;
   a->v = *v;
   a->f = *f;
@@ -552,6 +556,7 @@ Simulation::~Simulation() {
   std::lock_guard<std::mutex> lock(getRunMutex());
   // The files of the reports are complete when the simulation ends.
   if (output) {
+    driver::finishFrames(*output);
     output->energies.close();
     if (output->trajectory)
       output->trajectory->close();
@@ -753,6 +758,7 @@ compileEngine(const Control &control, const System &system,
     };
     add("_mlir_ciface_mdrtWriteEnergies", (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtStageFrame", (void *)&_mlir_ciface_mdrtStageFrame);
     add("_mlir_ciface_mdrtCheckSpread", (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
@@ -1009,6 +1015,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   auto a = std::make_unique<Activation>();
   a->engine = &engine;
   a->onDevice = engine.control.target == Target::GPU;
+  output->onDevice = a->onDevice;
   size_t count = system.getNumParticles();
   // The arguments in the order of the entry (Builder.h), from the state of
   // the host. The first call begins the run and ignores the forces that it
@@ -2059,6 +2066,7 @@ llvm::Error Simulation::setReports(const Reports &given) {
       given.frameVelocities != reports.frameVelocities ||
       given.frameForces != reports.frameForces ||
       given.framePeriod != reports.framePeriod) {
+    driver::waitForFrames(out);
     if (out.trajectory)
       out.trajectory->close();
     out.trajectory.reset();
@@ -2143,6 +2151,7 @@ llvm::Error Simulation::writeStateFrame() {
     ~Release() { flag = false; }
   } release{busy};
   std::lock_guard<std::mutex> lock(getRunMutex());
+  driver::waitForFrames(*output);
   downloadState();
   size_t count = system.getNumParticles();
   auto &writer = static_cast<driver::H5MDWriter &>(*output->trajectory);
@@ -2164,6 +2173,7 @@ llvm::Error Simulation::writeStateFrame() {
 
 void Simulation::closeReports() {
   std::lock_guard<std::mutex> lock(getRunMutex());
+  driver::finishFrames(*output);
   output->energies.close();
   output->observables.close();
   output->observablesPeriod = 0;
@@ -2419,6 +2429,7 @@ void Simulation::setCell(const std::array<double, 6> &cell) {
   // The frames of a reporter that is open take the cell from the program
   // only when a barostat changes it.
   if (output->trajectory) {
+    driver::waitForFrames(*output);
     double edges[3], tilts[3];
     for (int k = 0; k != 3; ++k) {
       edges[k] = cell[k] / units::length;
@@ -4056,6 +4067,7 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
   checkpoint.part = runPartNumber;
   checkpoint.outputsPart = outputsPart;
   if (output->hasTrajectory && output->trajectory) {
+    driver::waitForFrames(*output);
     checkpoint.trajectory =
         llvm::sys::path::filename(getReportPath(reports.trajectoryPath)).str();
     checkpoint.frames = output->trajectory->getNumFrames();

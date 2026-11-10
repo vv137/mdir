@@ -239,6 +239,9 @@ struct Output {
   /// The types that the buffers of the state and of the forces hold.
   Element state = Element::F64;
   Element force = Element::F64;
+  /// The program runs on a device: the buffers that it gives the host in
+  /// place are memory of the device (mdrtStageFrame, D[async-output]).
+  bool onDevice = false;
 
   /// The step and the time that the run begins with.
   int64_t firstStep = 0;
@@ -489,6 +492,19 @@ void writeLogHeader(Output &output);
 /// 1.
 void waitForCheckpoint();
 
+/// Waits until the thread of the frames (D[async-output]) has written every
+/// frame queued so far, and the changes of the cell of the trajectory
+/// queued with them. A write that failed ends the run of `output` with its
+/// error, as the call of the frame did before the frames had a thread
+/// (stopRun). Every reader of the trajectory outside that thread waits
+/// first: a checkpoint, which counts its frames, the close of the files, a
+/// stop, a failure, the end of a part of a simulation, and the exit of the
+/// process.
+void waitForFrames(Output &output);
+/// waitForFrames, then gives back the buffers of the device and of the
+/// host that staged the frames, at the end of a run or of a simulation.
+void finishFrames(Output &output);
+
 /// Writes a frame of the state to the trajectory of `output`, whose writer
 /// is exact (H5MDWriter): three numbers per particle in the order of the
 /// input, in nm, nm/ps, and kJ/mol/nm, with the potential energy of the
@@ -543,6 +559,11 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial, double pressureKinetic);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
+/// The frame of the step `step` of a run of dynamics, with the buffers in
+/// place (on a device, memory of the device): it stages copies of them,
+/// which the thread of the frames writes while the steps go on
+/// (D[async-output]). The file is that of mdrtWriteFrame.
+void _mlir_ciface_mdrtStageFrame(int64_t step, void *positions, void *ids);
 /// Without a periodic cell (D142), stops the run if the positions at the
 /// step `step` have spread so far that images interact.
 void _mlir_ciface_mdrtCheckSpread(int64_t step, void *positions, void *ids);

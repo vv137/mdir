@@ -2028,6 +2028,139 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 }
 
 /*===----------------------------------------------------------------------===
+ * Copies of the outputs while the steps go on (D[async-output], #113)
+ *===----------------------------------------------------------------------===
+
+  A staging slot holds the copy of a few buffers of the device (a frame: the
+  positions and the numbers of the particles) for a writer of the host that
+  reads them later, on a thread of its own. mdrtStagingCopy copies each
+  buffer into a buffer of the device that the slot owns, on the stream of
+  the kernels: after the work that produced it and before any later work
+  overwrites it, a copy within the device of a few microseconds.
+  mdrtStagingEnd then copies those buffers into pinned memory of the host on
+  a stream of copies of its own, which runs beside the kernels of the next
+  steps, and records an event. mdrtStagingWait, from any thread, waits for
+  that event; until it returns, and until the writer is done with the
+  memory of the host, the slot is not given to another frame (the caller
+  keeps a ring of slots). */
+
+#define MDRT_STAGING_PARTS 4
+
+struct Staging {
+  CUevent produced, copied;
+  struct {
+    CUdeviceptr device;
+    void *host;
+    uint64_t room, size;
+    int pending;
+  } parts[MDRT_STAGING_PARTS];
+};
+
+static CUstream copyStream = NULL;
+
+void *mdrtStagingCreate(void) {
+  enter();
+  struct Staging *slot = calloc(1, sizeof(struct Staging));
+  if (!slot) {
+    fprintf(stderr, "mdrt: out of memory of the host for a staging slot\n");
+    exit(1);
+  }
+  if (!copyStream)
+    check(cuStreamCreate(&copyStream, CU_STREAM_NON_BLOCKING),
+          "cuStreamCreate");
+  check(cuEventCreate(&slot->produced, CU_EVENT_DISABLE_TIMING),
+        "cuEventCreate");
+  check(cuEventCreate(&slot->copied, CU_EVENT_DISABLE_TIMING),
+        "cuEventCreate");
+  return slot;
+}
+
+/* Copies `size` bytes of the buffer of the device at `source` into part
+   `part` of the slot, on the stream of the kernels; returns the memory of
+   the host where they will be once mdrtStagingWait returns. The caller
+   knows that `source` is memory of the device (the program runs there);
+   it may be memory that the library does not record (a kept buffer). */
+void *mdrtStagingCopy(void *opaque, int32_t part, const void *source,
+                      uint64_t size) {
+  struct Staging *slot = opaque;
+  if (part < 0 || part >= MDRT_STAGING_PARTS)
+    return NULL;
+  CUstream stream = mgpuStreamCreate();
+  if (slot->parts[part].room < size) {
+    if (slot->parts[part].device)
+      mdrtDeviceFreeKept((void *)slot->parts[part].device);
+    if (slot->parts[part].host)
+      check(cuMemFreeHost(slot->parts[part].host), "cuMemFreeHost");
+    slot->parts[part].device = (CUdeviceptr)mdrtDeviceAllocateKept(size);
+    check(cuMemHostAlloc(&slot->parts[part].host, size, 0),
+          "cuMemHostAlloc");
+    slot->parts[part].room = size;
+  }
+  if (size) {
+    check(cuMemcpyAsync(slot->parts[part].device, (CUdeviceptr)source, size,
+                        stream),
+          "cuMemcpyAsync");
+    isPending = 1;
+  }
+  slot->parts[part].size = size;
+  slot->parts[part].pending = 1;
+  return slot->parts[part].host;
+}
+
+/* Copies the parts copied into the slot since its last end to the host, on
+   the stream of copies, once the stream of the kernels has copied them; the
+   host does not wait. */
+void mdrtStagingEnd(void *opaque) {
+  struct Staging *slot = opaque;
+  CUstream stream = mgpuStreamCreate();
+  check(cuEventRecord(slot->produced, stream), "cuEventRecord");
+  check(cuStreamWaitEvent(copyStream, slot->produced, 0),
+        "cuStreamWaitEvent");
+  for (int i = 0; i != MDRT_STAGING_PARTS; ++i) {
+    if (!slot->parts[i].pending)
+      continue;
+    slot->parts[i].pending = 0;
+    if (!slot->parts[i].size)
+      continue;
+    if (copyAudit)
+      copyAudit->downloads += slot->parts[i].size;
+    check(cuMemcpyDtoHAsync(slot->parts[i].host, slot->parts[i].device,
+                            slot->parts[i].size, copyStream),
+          "cuMemcpyDtoHAsync");
+  }
+  check(cuEventRecord(slot->copied, copyStream), "cuEventRecord");
+}
+
+/* Waits, on any thread, until the copies of the last end of the slot are in
+   the memory of the host. Returns 0, or the error of the driver, which the
+   caller reports: this may be the thread of a writer, which must not end
+   the process. */
+int32_t mdrtStagingWait(void *opaque) {
+  struct Staging *slot = opaque;
+  CUresult result = cuCtxSetCurrent(context);
+  if (result == CUDA_SUCCESS)
+    result = cuEventSynchronize(slot->copied);
+  return (int32_t)result;
+}
+
+void mdrtStagingDestroy(void *opaque) {
+  struct Staging *slot = opaque;
+  if (!slot)
+    return;
+  if (!isDriverGone()) {
+    for (int i = 0; i != MDRT_STAGING_PARTS; ++i) {
+      if (slot->parts[i].device)
+        mdrtDeviceFreeKept((void *)slot->parts[i].device);
+      if (slot->parts[i].host)
+        cuMemFreeHost(slot->parts[i].host);
+    }
+    cuEventDestroy(slot->produced);
+    cuEventDestroy(slot->copied);
+  }
+  free(slot);
+}
+
+/*===----------------------------------------------------------------------===
  * Work of a plugin of learned potentials (D270)
  *===----------------------------------------------------------------------===*/
 
