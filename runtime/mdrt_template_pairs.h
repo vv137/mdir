@@ -3,6 +3,7 @@
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Runtime/TemplateMembership.h"
 #include "mdir/Runtime/TemplateExclusions.h"
+#include <nvtx3/nvToolsExt.h>
 
 struct TemplatePairs {
   struct MdrtTemplatePairLayout layout;
@@ -13,7 +14,78 @@ struct TemplatePairs {
   int64_t frameOffsets[TEMPLATE_FRAME_SLOTS], frameRows[TEMPLATE_FRAME_SLOTS];
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
+  int diagnosticBuilt;
 };
+
+/* Diagnostic counters belong to this route, independently of the general
+ * neighbor structures. No force arithmetic or per-step device readback. */
+static int64_t templateRefreshes, templatePrunes, templateGrowths;
+static int64_t templateStartEntries, templateEndEntries;
+static int64_t templateStartWork, templateEndWork;
+static int64_t templateStartCapacity, templateEndCapacity;
+static int64_t templateStartInnerEntries, templateEndInnerEntries;
+
+/* Mark force-evaluation boundaries without waiting for the device. Timeline
+ * analysis correlates launches with these host intervals; it does not add
+ * a synchronization to delimit a step. */
+void mdrtTemplatePairsNoteStep(void) {
+  nvtxMarkA("template force interval");
+}
+
+void mdrtTemplatePairsSnapshotOccupancy(int64_t handle, int64_t first) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  if (!pairs->diagnosticBuilt) return;
+  int32_t header[MDRT_TEMPLATE_PAIR_HEADER_WORDS];
+  finish();
+  check(cuMemcpyDtoH(header, (CUdeviceptr)pairs->pairs, sizeof(header)),
+        "template occupancy header");
+  int64_t entries = 0, work = 0;
+  for (int tag = 0; tag != 3; ++tag) {
+    const int32_t *range = header + TEMPLATE_PAIR_OUTER_RANGES + 6 * tag;
+    entries += (int64_t)range[3] - range[2];
+    work += (int64_t)range[5] - range[4];
+  }
+  int64_t innerEntries = 0;
+  int32_t *inner = malloc((size_t)(work ? work : 1) * 4 * sizeof(int32_t));
+  if (!inner) abort();
+  if (work)
+    check(cuMemcpyDtoH(inner,
+        (CUdeviceptr)pairs->pairs + pairs->layout.innerUnits * sizeof(int32_t),
+        (size_t)work * 4 * sizeof(int32_t)), "template inner occupancy");
+  for (int64_t unit = 0; unit != work; ++unit)
+    innerEntries += (int64_t)inner[4 * unit + 3] - inner[4 * unit + 2];
+  free(inner);
+  if (first) {
+    templateStartEntries = entries;
+    templateStartWork = work;
+    templateStartCapacity = pairs->layout.entries;
+    templateStartInnerEntries = innerEntries;
+  } else {
+    templateEndEntries = entries;
+    templateEndWork = work;
+    templateEndCapacity = pairs->layout.entries;
+    templateEndInnerEntries = innerEntries;
+  }
+}
+
+void mdrtTemplatePairsNoteRefresh(int64_t handle) {
+  ((struct TemplatePairs *)(intptr_t)handle)->diagnosticBuilt = 1;
+  if (++templateRefreshes == 1)
+    mdrtTemplatePairsSnapshotOccupancy(handle, 1);
+}
+
+void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
+  if (water || atom) ++templatePrunes;
+}
+
+int64_t mdrtGetTemplatePairStatistic(int64_t slot) {
+  const int64_t values[] = {templateRefreshes, templatePrunes, templateGrowths,
+      templateStartEntries, templateEndEntries, templateStartWork,
+      templateEndWork, templateStartCapacity, templateEndCapacity};
+  if (slot == 9) return templateStartInnerEntries;
+  if (slot == 10) return templateEndInnerEntries;
+  return slot >= 0 && slot < 9 ? values[slot] : 0;
+}
 
 static void allocateTemplatePairs(struct TemplatePairs *pairs) {
   allocationTag = "template pairs: shared outer/inner WW/SW/SS";
@@ -280,6 +352,7 @@ int64_t mdrtTemplatePairsCapacity(int64_t handle) {
 int64_t mdrtTemplatePairsGrow(int64_t handle, int64_t required) {
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
   if (required >= 0 && required <= pairs->layout.entries) return 0;
+  ++templateGrowths;
   int64_t capacity = required;
   if (required >= 0 && required <= INT32_MAX)
     capacity = required + (INT32_MAX - required < required / 4

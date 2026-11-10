@@ -6098,6 +6098,13 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   state.outerReference = reference(TEMPLATE_FRAME_OUTER_REFERENCE);
   state.innerReference = reference(TEMPLATE_FRAME_INNER_REFERENCE);
   templatePairs[handle] = state;
+  // Read occupancy once at the end, while the activation still owns the
+  // arena. This diagnostic is outside the integration loop.
+  OpBuilder end(op->getBlock()->getTerminator());
+  func::CallOp::create(end, loc,
+      getOrDeclare("mdrtTemplatePairsSnapshotOccupancy",
+          end.getFunctionType({wide, wide}, {})),
+      ValueRange{handle, arith::ConstantIntOp::create(end, loc, 0, 64)});
   module->setAttr("mdrt.template_pairs_abi",
                   builder.getI32IntegerAttr(MDRT_TEMPLATE_PAIRS_ABI_VERSION));
   // The new opaque state is represented by its runtime handle on the host.
@@ -6133,6 +6140,9 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
   if (failed(getTemplateState(op, op->getOperand(0), state))) return failure();
   Location loc = op.getLoc();
   OpBuilder b(op);
+  func::CallOp::create(b, loc,
+      getOrDeclare("mdrtTemplatePairsNoteStep", b.getFunctionType({}, {})),
+      ValueRange{});
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   auto boolean = [&](OpBuilder &at, bool yes) -> Value {
     return arith::ConstantOp::create(at, loc, at.getBoolAttr(yes));
@@ -6227,6 +6237,10 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
       });
       memref::StoreOp::create(at, loc, boolean(at, false), prepared, ValueRange{});
     });
+    func::CallOp::create(cold, loc,
+        getOrDeclare("mdrtTemplatePairsNoteRefresh",
+            cold.getFunctionType({cold.getI64Type()}, {})),
+        ValueRange{state.handle});
     for (int64_t tag = 0; tag != 3; ++tag) {
       Value active = tag == 0 ? rebuilt[0] : tag == 2 ? rebuilt[1]
           : Value(arith::OrIOp::create(cold, loc, rebuilt[0], rebuilt[1]));
@@ -6425,6 +6439,11 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
         ValueRange{createIndex(b, loc, 2)});
     pruning.atomActive = memref::LoadOp::create(b, loc, state.invalid,
         ValueRange{createIndex(b, loc, 3)});
+    func::CallOp::create(b, loc,
+        getOrDeclare("mdrtTemplatePairsNotePrune",
+            b.getFunctionType({wide, wide}, {})),
+        ValueRange{arith::ExtUIOp::create(b, loc, wide, pruning.waterActive),
+                   arith::ExtUIOp::create(b, loc, wide, pruning.atomActive)});
     Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
     Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
         math::AbsFOp::create(b, loc, pruning.cell));
