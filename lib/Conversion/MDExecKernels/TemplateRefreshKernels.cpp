@@ -8,6 +8,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -87,7 +88,29 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       p.cursors = view(in, TEMPLATE_LAYOUT_SPATIAL_CURSORS);
       p.scanScratch = view(in, TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
       p.order = call(in, "mdrtTemplatePairsOrder", ValueRange{v.handle}, device, true);
-      auto groups = emitPrepareTemplateGroups(in, loc, module, v.handle, p, v.cell);
+      auto host3 = MemRefType::get({3}, in.getF64Type());
+      Value diagnosticCell = memref::AllocaOp::create(in, loc, host3);
+      Value diagnosticReaches = memref::AllocaOp::create(in, loc, host3);
+      for (int64_t axis = 0; axis != 3; ++axis) {
+        memref::StoreOp::create(in, loc, vector::ExtractOp::create(in, loc, v.cell, axis),
+            diagnosticCell, ValueRange{ix(in, axis)});
+        memref::StoreOp::create(in, loc, vector::ExtractOp::create(in, loc, v.reaches, axis),
+            diagnosticReaches, ValueRange{ix(in, axis)});
+      }
+      SmallVector<Value> diagnosticArgs{v.handle, diagnosticCell, diagnosticReaches,
+          arith::ExtUIOp::create(in, loc, in.getI64Type(), state[1]),
+          arith::ExtUIOp::create(in, loc, in.getI64Type(), state[2])};
+      Value diagnosticRows = call(in, "mdrtPrototypePrepare", diagnosticArgs, in.getI64Type(), true);
+      TemplateGroupBuffers groups;
+      groups.rows = arith::IndexCastOp::create(in, loc, in.getIndexType(), diagnosticRows);
+      groups.waterGroups = layout(in, TEMPLATE_LAYOUT_WATER_GROUPS);
+      groups.atomGroups = layout(in, TEMPLATE_LAYOUT_ATOM_GROUPS);
+      groups.starts = call(in,"mdrtTemplatePairsGroupView",ValueRange{v.handle,wide(in,TEMPLATE_GROUP_STARTS)},device,true);
+      groups.lengths = call(in,"mdrtTemplatePairsGroupView",ValueRange{v.handle,wide(in,TEMPLATE_GROUP_LENGTHS)},device,true);
+      groups.columns = call(in,"mdrtTemplatePairsGroupView",ValueRange{v.handle,wide(in,TEMPLATE_GROUP_COLUMNS)},device,true);
+      groups.atStart = call(in,"mdrtTemplatePairsGroupView",ValueRange{v.handle,wide(in,TEMPLATE_GROUP_AT_START)},device,true);
+      p.scanScratch = view(in,TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
+      p.scanBlocks = layout(in,TEMPLATE_LAYOUT_SCAN_BLOCKS);
       Value bins = arith::MulIOp::create(in, loc, ix(in, 2),
           arith::MulIOp::create(in, loc, p.columnsX, p.columnsY));
       Value fitsBins = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ule,
@@ -118,7 +141,17 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
           ValueRange{v.handle, wide(in, TEMPLATE_SS_ROWS)}, device, true);
       s.excludedNeighbors = call(in, "mdrtTemplatePairsMetadata",
           ValueRange{v.handle, wide(in, TEMPLATE_SS_NEIGHBORS)}, device, true);
-      emitSearchTemplatePairs(in, loc, s);
+      // Never-merged diagnostic: retain native grouping/epochs and replace
+      // candidate generation with the unchanged archived CUDA kernels.
+      SmallVector<Value> searchArgs{v.handle};
+      auto diagnosticType = in.getFunctionType(ValueRange(searchArgs).getTypes(), {});
+      auto diagnostic = module.lookupSymbol<func::FuncOp>("mdrtPrototypeSearch");
+      if (!diagnostic) {
+        OpBuilder symbols(module.getBodyRegion());
+        diagnostic = func::FuncOp::create(symbols, loc, "mdrtPrototypeSearch", diagnosticType);
+        diagnostic.setPrivate(); diagnostic->setAttr("llvm.emit_c_interface", in.getUnitAttr());
+      }
+      func::CallOp::create(in, loc, diagnostic, searchArgs);
       Type token = gpu::AsyncTokenType::get(in.getContext());
       Value ready = gpu::WaitOp::create(in, loc, token, ValueRange()).getAsyncToken();
       Value copied = gpu::MemcpyOp::create(in, loc, token, ValueRange{ready},

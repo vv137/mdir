@@ -11,6 +11,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/TemplateWriterKernels.h"
 #include "mdir/Conversion/TemplateRefreshKernels.h"
+#include "mdir/Conversion/TemplateBuildKernels.h"
 #include "mdir/Conversion/TemplateSpatialKernels.h"
 #include "mdir/Conversion/TemplateFrameKernels.h"
 #include "mdir/Conversion/TemplateValidityKernels.h"
@@ -6054,6 +6055,14 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   create.setArgAttr(3, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value handle = func::CallOp::create(builder, loc, create,
       ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded}).getResult(0);
+  auto originalIds = deviceTuplesOf.find(op.getMolecules());
+  if (originalIds == deviceTuplesOf.end())
+    return op.emitOpError("prototype diagnostic requires current-to-file particle IDs");
+  auto diagnosticOwner = getOrDeclare("mdrtPrototypeRegister",
+      builder.getFunctionType({wide, originalIds->second.ids.getType(), wide}, {}));
+  diagnosticOwner->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  func::CallOp::create(builder, loc, diagnosticOwner,
+      ValueRange{handle, originalIds->second.ids, makeWide(sites)});
   for (Value host : copied) memref::DeallocOp::create(builder, loc, host);
   TemplatePairState state{handle, waters, atoms, op.getMolecules(), op.getExcluded()};
   auto scalar = [&](Type type, Value initial) -> Value {
@@ -6106,6 +6115,8 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
       getOrDeclare("mdrtTemplatePairsSnapshotOccupancy",
           end.getFunctionType({wide, wide}, {})),
       ValueRange{handle, arith::ConstantIntOp::create(end, loc, 0, 64)});
+  func::CallOp::create(end, loc,
+      getOrDeclare("mdrtPrototypeRelease",end.getFunctionType({wide},{})),ValueRange{handle});
   module->setAttr("mdrt.template_pairs_abi",
                   builder.getI32IntegerAttr(MDRT_TEMPLATE_PAIRS_ABI_VERSION));
   // The new opaque state is represented by its runtime handle on the host.
@@ -6433,6 +6444,17 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value groupLengths = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsGroupView",
       indexBuffer, TEMPLATE_GROUP_AT_START);
   Value frames = view("mdrtTemplatePairsFrames", framesType);
+  Value prototypeDestination = op.getOuts().empty() ? Value() : op.getOuts()[0];
+  bool prototypeObservation = !op.getReduce().empty();
+  if (prototypeDestination && prototypeObservation) {
+    auto type = cast<MemRefType>(prototypeDestination.getType());
+    Value n = createSize(b,loc,op.getPositions());
+    Value shadow = createDeviceBuffer(b,loc,type,ValueRange{n});
+    launchOver(b,loc,n,[&](OpBuilder &at,Value particle){
+      storeElement(at,loc,createZero(at,loc,md_exec::getKernelValueType(type)),shadow,particle);
+    });
+    op.getOutsMutable().assign(ValueRange{shadow});
+  }
   TemplatePruneBuffers pruning;
   Value innerReaches, deviceInnerCells, deviceReaches;
   bool nativeEpochs = bool(state.specification);
@@ -6477,6 +6499,41 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
     deviceReaches = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsFrameState",
         epochType, TEMPLATE_FRAME_REACHES);
   }
+  if (!nativeEpochs)
+    return op.emitOpError("prototype diagnostic requires native template epochs");
+  auto host3 = MemRefType::get({3},b.getF64Type());
+  Value diagnosticCell=memref::AllocaOp::create(b,loc,host3);
+  Value diagnosticReaches=memref::AllocaOp::create(b,loc,host3);
+  for (int64_t axis=0;axis!=3;++axis) {
+    memref::StoreOp::create(b,loc,vector::ExtractOp::create(b,loc,pruning.cell,axis),diagnosticCell,ValueRange{createIndex(b,loc,axis)});
+    memref::StoreOp::create(b,loc,vector::ExtractOp::create(b,loc,innerReaches,axis),diagnosticReaches,ValueRange{createIndex(b,loc,axis)});
+  }
+  auto diagnosticCall=[&](StringRef name,ValueRange args) {
+    auto fn=getOrDeclare(name,b.getFunctionType(args.getTypes(),{}));
+    fn->setAttr("llvm.emit_c_interface",b.getUnitAttr());
+    func::CallOp::create(b,loc,fn,args);
+  };
+  auto integer=[&](int64_t value)->Value{return arith::ConstantIntOp::create(b,loc,value,64);};
+  int64_t positionWidth=cast<MemRefType>(op.getPositions().getType()).getElementType().getIntOrFloatBitWidth()/8;
+  diagnosticCall("mdrtPrototypeForcePrepare",ValueRange{handle,op.getPositions(),diagnosticCell,diagnosticReaches,integer(positionWidth),
+      arith::ExtUIOp::create(b,loc,wide,pruning.waterActive),arith::ExtUIOp::create(b,loc,wide,pruning.atomActive)});
+  auto anyPrune=arith::OrIOp::create(b,loc,pruning.waterActive,pruning.atomActive);
+  scf::IfOp::create(b,loc,anyPrune,[&](OpBuilder &at,Location){
+    OpBuilder::InsertionGuard guard(b);b.setInsertionPointToEnd(at.getInsertionBlock());
+    auto arena=[&](int64_t slot){return templateRuntimeView(b,loc,handle,"mdrtTemplatePairsArenaView",indexBuffer,slot);};
+    auto group=[&](int64_t slot){return templateRuntimeView(b,loc,handle,"mdrtTemplatePairsGroupView",indexBuffer,slot);};
+    TemplateBuildBuffers v;
+    v.arena=pairs;v.stageUnits=arena(TEMPLATE_LAYOUT_STAGE_UNITS);v.stageEntries=arena(TEMPLATE_LAYOUT_STAGE_ENTRIES);
+    v.counts=arena(TEMPLATE_LAYOUT_BUILD_COUNTS);v.entryOffsets=arena(TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS);
+    v.workCounts=arena(TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);v.workOffsets=arena(TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS);v.scanScratch=arena(TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
+    v.outerRows=arena(TEMPLATE_LAYOUT_OUTER_ROWS);v.innerRows=arena(TEMPLATE_LAYOUT_INNER_ROWS);v.outerUnits=pruning.outerUnits;v.innerUnits=pruning.innerUnits;
+    v.outerEntries=pruning.outerEntries;v.innerEntries=pruning.innerEntries;v.waters=state.waters;v.atoms=state.atoms;
+    v.groups.starts=group(TEMPLATE_GROUP_STARTS);v.groups.lengths=group(TEMPLATE_GROUP_LENGTHS);v.groups.columns=group(TEMPLATE_GROUP_COLUMNS);v.groups.atStart=group(TEMPLATE_GROUP_AT_START);
+    v.groups.waterGroups=layout(TEMPLATE_LAYOUT_WATER_GROUPS);v.groups.atomGroups=layout(TEMPLATE_LAYOUT_ATOM_GROUPS);
+    v.rows=arith::AddIOp::create(b,loc,v.groups.waterGroups,arith::MulIOp::create(b,loc,v.groups.atomGroups,createIndex(b,loc,2)));
+    v.groups.rows=v.rows;v.unitCapacity=layout(TEMPLATE_LAYOUT_UNITS);v.scanBlocks=layout(TEMPLATE_LAYOUT_SCAN_BLOCKS);
+    emitCompactTemplatePairs(b,loc,v,/*innerOnly=*/true);scf::YieldOp::create(b,loc);
+  });
   Value workOffset = layout(TEMPLATE_LAYOUT_INNER_UNITS);
   Value entryOffset = layout(TEMPLATE_LAYOUT_INNER_ENTRIES);
   Value capacity = layout(TEMPLATE_LAYOUT_UNITS);
@@ -6548,9 +6605,11 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
                                frames, waters, op.getCellMutable().get(), groupLengths, hasSite};
   auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
       [&](OpBuilder &body, Location, Value record, ValueRange previous) {
-        if (nativeEpochs) emitPruneTemplateWork(body, loc, pruning, record, lane);
+        // Prototype pruning already produced the native inner I/O view.
         IRMapping captures;
-        auto contributions = emitTemplateWorkUnit(body, loc, op, buffers, record, lane, captures);
+        SmallVector<Value> contributions;
+        if (prototypeObservation)
+          contributions = emitTemplateWorkUnit(body, loc, op, buffers, record, lane, captures);
         SmallVector<Value> next;
         for (auto [sum, value] : llvm::zip(previous, contributions))
           next.push_back(arith::AddFOp::create(body, loc, sum, value));
@@ -6571,6 +6630,10 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   }
   gpu::TerminatorOp::create(k, loc);
   bringIn(launch);
+  if (prototypeDestination) {
+    int64_t forceWidth=cast<MemRefType>(prototypeDestination.getType()).getElementType().getIntOrFloatBitWidth()/8;
+    diagnosticCall("mdrtPrototypeForcePublish",ValueRange{handle,prototypeDestination,integer(forceWidth)});
+  }
   if (nativeEpochs) {
     for (int64_t tag = 0; tag != 3; ++tag) {
       Value active = tag == 0 ? pruning.waterActive : tag == 2 ? pruning.atomActive

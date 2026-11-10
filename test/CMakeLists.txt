@@ -90,6 +90,10 @@ add_llvm_executable(mdir-template-trajectory-test Driver/TemplateTrajectoryTest.
 llvm_update_compile_flags(mdir-template-trajectory-test)
 target_link_libraries(mdir-template-trajectory-test PRIVATE MDIRSimulation)
 
+add_llvm_executable(mdir-prototype-physical-test ../experiments/prototype-transplant/TransplantPhysicsTest.cpp)
+llvm_update_compile_flags(mdir-prototype-physical-test)
+target_link_libraries(mdir-prototype-physical-test PRIVATE MDIRSimulation)
+
 add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
 llvm_update_compile_flags(mdir-jit-memory-test)
 target_compile_options(mdir-jit-memory-test PRIVATE -fexceptions)

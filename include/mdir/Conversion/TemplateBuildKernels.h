@@ -19,6 +19,6 @@ struct TemplateBuildBuffers {
 /// The caller must first handle any search overflow through arena growth;
 /// row counts and staged chunk counts must fit their advertised capacities.
 void emitCompactTemplatePairs(mlir::OpBuilder &, mlir::Location,
-                               const TemplateBuildBuffers &);
+                               const TemplateBuildBuffers &, bool innerOnly = false);
 }
 #endif

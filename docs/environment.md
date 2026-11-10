@@ -32,6 +32,13 @@ and for tests.
 | `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH` | the compiler of a GPU program; the test suite | The CUDA toolkit whose libdevice the kernels take their math functions from, and whose `ptxas` compiles them to cubins, the first of the three that is set; otherwise the toolkit of the build ([runtime.md](runtime.md), [compile-cache.md](compile-cache.md#cubins-for-the-device)). The three are also part of the key of the code that a `Program` keeps for its simulations on a GPU (D236). The test suite takes the same toolkit, the first of the three that is set or else the one of the build, gives it to every test as `CUDA_ROOT`, and takes `compute-sanitizer` from it (#758). |
 | `MDIR_RUNTIME_DIR=<dir>` | a Python simulation | The directory of the runtime libraries (`libmdrt`, `libmdrt_cuda`); otherwise `lib` next to the Python module, as a build tree and an installation place it ([python-segments.md](python-segments.md)). |
 
+## Never-merged prototype diagnostic
+
+| Variable | Read by | Effect |
+|---|---|---|
+| `MDIR_PROTOTYPE_SIDECAR=<file>` | the experimental prototype native adapter | The immutable archived parameter input for the six-system transplant diagnostic. Required only with the experimental adapter preloaded; dimensions, fixed cell, and current-to-file membership provenance are checked. This adapter is not a production runtime route. |
+| `MDIR_PROTOTYPE_PHYSICAL_CHECK=1` | the experimental prototype native adapter | On the first evaluated frame of each new session, independently checks actual-cutoff coverage in f64, including periodic images. Reports required, missing, and extra image-unit pairs by class; any missing physical pair stops. Fresh same-frame sessions cover each diagnostic sample. Disabled for timings. |
+
 ## Compilation
 
 | Variable | Read by | Effect |

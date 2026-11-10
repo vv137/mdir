@@ -11,7 +11,7 @@ using namespace mlir;
 using namespace mdir::kernels;
 
 void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
-                                             const TemplateBuildBuffers &v) {
+                                             const TemplateBuildBuffers &v, bool innerOnly) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   auto index = [&](OpBuilder &at, Value n) -> Value {
     return arith::IndexCastUIOp::create(at, loc, at.getIndexType(), n);
@@ -82,7 +82,7 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
       Value fields[] = {word(in, classify(in, row)), word(in, firstPlace(in, row)),
                        load(in, v.entryOffsets, row), load(in, v.counts, row)};
       for (unsigned column = 0; column != 4; ++column) {
-        recordStore(in, v.outerRows, row, column, fields[column]);
+        if (!innerOnly) recordStore(in, v.outerRows, row, column, fields[column]);
         recordStore(in, v.innerRows, row, column, fields[column]);
       }
       scf::YieldOp::create(in, loc);
@@ -103,7 +103,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
           load(in, v.entryOffsets, end), load(in, v.workOffsets, begin), load(in, v.workOffsets, end)};
       for (unsigned column = 0; column != 6; ++column)
         for (int64_t partition : {TEMPLATE_PAIR_OUTER_RANGES, TEMPLATE_PAIR_INNER_RANGES})
-          store(in, v.arena, add(in, ix(in, partition + column), mul(in, row, 6)), fields[column]);
+          if (!innerOnly || partition == TEMPLATE_PAIR_INNER_RANGES)
+            store(in, v.arena, add(in, ix(in, partition + column), mul(in, row, 6)), fields[column]);
       scf::YieldOp::create(in, loc);
     });
   });
@@ -122,7 +123,7 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
       Value fields[] = {word(in, classify(in, row)), word(in, firstPlace(in, row)),
                        word(in, destination), word(in, add(in, destination, count))};
       for (unsigned column = 0; column != 4; ++column) {
-        recordStore(in, v.outerUnits, work, column, fields[column]);
+        if (!innerOnly) recordStore(in, v.outerUnits, work, column, fields[column]);
         recordStore(in, v.innerUnits, work, column, fields[column]);
       }
       scf::ForOp::create(in, loc, ix(in, 0), count, ix(in, 1), ValueRange(),
@@ -131,7 +132,7 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
             Value target = mul(copy, add(copy, destination, i), 4);
             for (unsigned column = 0; column != 4; ++column) {
               Value value = load(copy, v.stageEntries, add(copy, source, ix(copy, column)));
-              store(copy, v.outerEntries, add(copy, target, ix(copy, column)), value);
+              if (!innerOnly) store(copy, v.outerEntries, add(copy, target, ix(copy, column)), value);
               store(copy, v.innerEntries, add(copy, target, ix(copy, column)), value);
             }
             scf::YieldOp::create(copy, loc);
