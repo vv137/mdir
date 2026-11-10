@@ -416,24 +416,14 @@ measurements replace them.
 
 ## Gates of the implementation
 
-The maintainer approved one failure-instrumented native checkpoint run to
-diagnose the extent stop. Only the false branches of the two existing
-extent checks acquire data: their phase, constraint history, built state,
-runtime cell, nominal bound, stopped positions and fixed water membership.
-The diagnostic prints the largest extent and the offending state-index
-members with exact coordinate bits, and retains the acquired frame as
-`template-extent-failure-frame.bin`. Both predicates and aborts remain
-unchanged; the successful path performs no diagnostic device work. The
-measured excess is reported against the constraint tolerance and expected
-f32/f64 rounding before any numerical correction or bound change.
-
-The acquisition exposed an initialization contract error after the native
+The failure-only native checkpoint acquisition exposed an initialization contract error after the native
 spatial sort. Device tuple renumbering leaves an original-file host
 placeholder and registers the actual device members separately. Template
 initialization must resolve that registered buffer before acquiring both
 the water members and the exclusions. The correction is local to this new
 initializer; ordinary tuple renumbering and incidence construction retain
-their existing contract.
+their existing contract. The temporary failure-only instrumentation was
+removed after acquisition.
 
 The short fixtures and preliminary water boxes did not establish this
 contract: a sort of homogeneous water can permute complete, identical
