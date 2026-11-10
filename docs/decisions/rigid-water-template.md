@@ -728,6 +728,15 @@ groups' hybrid references. An independent lexicographic oracle checks
 996 integer values over all four group-activity combinations, including
 repeated-point ties and coordinates that round to the final bin edge.
 The native cold refresh owns these bins and their combined search.
+Its column dimensions use the population of water anchors plus solute
+atoms and the current cell volume: the target edge is
+$(16V/(N_\mathrm{w}+N_\mathrm{s}))^{1/3}$. Face widths divided by this
+edge are rounded to the nearest positive integer. The dimensions are
+clamped before integer conversion so that the two class-prefixed grids
+fit the existing spatial-bin arena; empty populations use one unit for
+this sizing arithmetic. This is f64 host-only cold-refresh arithmetic.
+It replaces the constant three-by-two native grid without changing the
+class keys, fixed-ID ties, covering search or physical predicates.
 
 The search's append primitive ballot-compacts sparse candidate batches
 into chunks of 64, carrying a partial chunk across rounds. Concurrent
