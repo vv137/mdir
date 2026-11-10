@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # What of the program misses the host object on a GPU
-# (D[compile-cache-default]), as compile-cache-program.test: precision,
+# (D397), as compile-cache-program.test: precision,
 # fast_math, neighbor_capacity, the PME grid, and a switch of the builder
 # change the lowered program, kernels included, and miss; a start from
 # another cell (D227) hits; each switch of the pipeline misses when it

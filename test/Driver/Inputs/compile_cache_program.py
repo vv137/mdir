@@ -1,4 +1,4 @@
-"""What of the program misses the host object (D[compile-cache-default]).
+"""What of the program misses the host object (D397).
 
   compile_cache_program.py ROOT TARGET WORK [--child NAME OUT]
 

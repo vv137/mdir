@@ -5,7 +5,7 @@ add_mlir_library(MDIRCompileCache CompileCache.cpp CompileCacheSalt.cpp
   LINK_COMPONENTS BitWriter CodeGen Core Object SelectionDAG Support
 )
 # The commit and the state of the tree in the salt of the keys
-# (D[compile-cache-default]), readable only: the build ID of the image is
+# (D397), readable only: the build ID of the image is
 # what tells builds apart.
 set(MDIR_CACHE_BUILD_INFO "${CMAKE_CURRENT_BINARY_DIR}/CompileCacheBuildInfo.h")
 add_custom_target(mdir-compile-cache-build-info

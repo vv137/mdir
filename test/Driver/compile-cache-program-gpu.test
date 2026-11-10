@@ -1,5 +1,5 @@
 # What the program and its pipeline give the keys of `mdir run`'s GPU
-# entries (D[compile-cache-default], D227): on the warm cache of the
+# entries (D397, D227): on the warm cache of the
 # dipeptide with PME, a switch of the builder (MDIR_CONSTRAINT_TEST),
 # precision, and a pipeline that MDIR_PIPELINE replaces with one option
 # changed each store new entries for the kernels they change and read the

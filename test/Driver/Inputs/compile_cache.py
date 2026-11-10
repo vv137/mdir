@@ -16,7 +16,7 @@ scenario runs in a process of its own on the cache directory WORK/cache:
   object is flipped, likewise; rewarm, a hit again.
 - with --misses: a changed pipeline option (not deterministic) and a
   changed precision miss, and a bound of 0 MiB turns the cache off
-  (D[compile-cache-default]): nothing is stored.
+  (D397): nothing is stored.
 - with --concurrent: four processes start at once on an empty directory;
   each generates or reads the object, and one entry remains, which the
   next process hits.
@@ -32,7 +32,7 @@ scenario runs in a process of its own on the cache directory WORK/cache:
   warm cache and leaves a file of another format and a writer's temporary
   file; the next process misses and stores, and the one after hits;
   `directory=` names another directory, and without one it clears the
-  default directory (D[compile-cache-default]), here under WORK, and
+  default directory (D397), here under WORK, and
   removes nothing here.
 - with --clear-concurrent: a process clears the directory over and over
   while another compiles four simulations, each storing its entries; then

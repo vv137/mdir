@@ -7,7 +7,7 @@
 // (D234): stores list the directory only at the
 // bound, without a total, or once a day. An entry that is a symbolic link
 // is rejected. The LLVM options set on the command line
-// (D[compile-cache-default]): one whose value no recorded argument gives
+// (D397): one whose value no recorded argument gives
 // turns the cache off; a `cl::alias` records the option it names, and a
 // response file is recorded expanded.
 #include "mdir/Compiler/CompileCache.h"

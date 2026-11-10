@@ -760,7 +760,7 @@ the driver writes it, and the lowering outlines 545 GPU modules from it.
 A Python simulation compiles on an engine of its own (D199), whose host
 code generation is cached on disk (D212), by default in a private
 directory of the user on a local file system
-(D[compile-cache-default]). An entry is keyed by a hash of the
+(D397). An entry is keyed by a hash of the
 module's bitcode, which holds the PTX of its kernels, by the CPU and its
 features and the options of code generation, and by a salt that names
 what generates the object from the module: the ELF build ID of the image

@@ -1,7 +1,7 @@
 //===- CompileCacheSalt.cpp - What every key of the cache begins with -----===//
 //
 // The salt that names the build, the options of LLVM, and the scheduler in
-// every key of the compile cache (D[compile-cache-default]), and
+// every key of the compile cache (D397), and
 // the hashes of the files of the toolchain that the keys hold.
 //
 //===----------------------------------------------------------------------===//

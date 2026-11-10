@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
       "  mdir version\n"
       "  mdir doctor [--target=all|cpu|gpu] [--timeout=<seconds>]\n");
   // The LLVM options given, with their values, are part of every key of
-  // the compile cache (D[compile-cache-default]).
+  // the compile cache (D397).
   mdir::compiler::recordCommandLineOptions(argc, argv);
 
   if (runCommand) {

@@ -6,7 +6,7 @@
 # lists the directory; after an eviction at the bound, which goes down to
 # 90% of it, the 31 stores that fit under the bound list nothing (#675).
 # An entry that is a symbolic link is rejected, and an LLVM option set but
-# not recorded turns the cache off (D[compile-cache-default]).
+# not recorded turns the cache off (D397).
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s
 # CHECK: size file: 300 stores, listings 1

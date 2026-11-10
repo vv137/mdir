@@ -660,7 +660,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   // Where the compile cache is, or why there is none, and what it gave the
   // GPU modules of the run and the host objects of the skin search
-  // (D[compile-cache-default]). The host code of the run itself is not
+  // (D397). The host code of the run itself is not
   // cached until it moves onto the owned engine (#99).
   compiler::CompileCacheLocation cacheLocation =
       compiler::CompileCacheConfig::locate();

@@ -1,5 +1,5 @@
 # The host objects of the skin search (D281) of `mdir run` in the compile
-# cache (D[compile-cache-default]): the candidates of a cold search
+# cache (D397): the candidates of a cold search
 # store theirs; a second search reads some (its reference is always the
 # defaults of D261); with an LLVM option of the host's code generator
 # (-unroll-threshold=0), which is part of every key, it reads none and

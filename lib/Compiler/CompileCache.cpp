@@ -225,7 +225,7 @@ bool isLocal(StringRef path) {
   return !existing.empty() && !sys::fs::is_local(existing, local) && local;
 }
 
-/// The default directory (D[compile-cache-default]):
+/// The default directory (D397):
 /// `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile` if its file system is
 /// local, else `/var/tmp/mdir-<uid>/compile` if local; nullopt with the
 /// reason otherwise.
@@ -413,7 +413,7 @@ CompileCacheLocation computeLocation() {
   }
   // The salt holds the value of every LLVM option set on the command line;
   // one whose value it could not record would let entries of two values
-  // meet (D[compile-cache-default]).
+  // meet (D397).
   if (std::vector<std::string> unrecorded = getUnrecordedOptions();
       !unrecorded.empty()) {
     location.reason = "the keys do not record the value of the LLVM option";
@@ -874,7 +874,7 @@ public:
     // A lock of the file between processes (fcntl), which a network file
     // system carries; a file system without locks, or a lock not given
     // within the timeout, leaves the file unused: the store then lists the
-    // directory, as one without locks does (D[compile-cache-default]).
+    // directory, as one without locks does (D397).
     if (!lockWithin(fd, kLockTimeout)) {
       ::close(fd);
       fd = -1;

@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
       argc, argv, "MDIR optimizer driver\n", registry);
   // The LLVM options given, with their values, are part of every key of
   // the compile cache, which `--mdir-gpu-module-to-binary` uses
-  // (D[compile-cache-default]).
+  // (D397).
   mdir::compiler::recordCommandLineOptions(argc, argv);
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, input, output, registry));

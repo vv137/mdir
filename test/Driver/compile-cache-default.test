@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The default compile cache (D[compile-cache-default]) on the CPU:
+# The default compile cache (D397) on the CPU:
 # MDIR_COMPILE_CACHE=off comes first and makes nothing; without
 # MDIR_COMPILE_CACHE_DIR the cache is ${XDG_CACHE_HOME}/mdir/compile, made
 # 0700 with its parent, cold then warm; a relative XDG_CACHE_HOME gives

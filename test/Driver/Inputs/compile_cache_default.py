@@ -1,4 +1,4 @@
-"""Where the compile cache is and whom it trusts (D[compile-cache-default]).
+"""Where the compile cache is and whom it trusts (D397).
 
   compile_cache_default.py ROOT TARGET PRECISION WORK
                            [--location] [--security] [--size] [--salt]

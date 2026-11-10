@@ -97,7 +97,7 @@ def enable_compile_cache(config, lit_config):
     or MDIR_COMPILE_CACHE=off in the environment, runs the suite without it;
     a test of compilation itself sets MDIR_COMPILE_CACHE=off in its RUN
     lines. The directory is named either way: without one a compile would
-    take the user's default directory (D[compile-cache-default]),
+    take the user's default directory (D397),
     which a suite never reads or writes. The tests' test-only variables of
     the cache are not passed on."""
     off = (lit_config.params.get("compile_cache", "on").lower() == "off" or

@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# What of the program misses the host object (D[compile-cache-default]),
+# What of the program misses the host object (D397),
 # on the CPU: on a warm cache, precision, fast_math, neighbor_capacity, the
 # PME grid, and a switch of the builder (MDIR_CONSTRAINT_TEST) change the
 # lowered program and miss; the switches of the GPU's pipeline leave the

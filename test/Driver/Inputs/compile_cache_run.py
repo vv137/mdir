@@ -1,4 +1,4 @@
-"""What misses the GPU entries of `mdir run` (D[compile-cache-default]).
+"""What misses the GPU entries of `mdir run` (D397).
 
   compile_cache_run.py INPUTS WORK GROUP MDIR
 

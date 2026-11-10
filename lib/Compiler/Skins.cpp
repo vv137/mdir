@@ -210,7 +210,7 @@ compiler::SkinTrial measure(const Control &control, const System &system,
   // anew (D281). The compile cache on disk is used as by any simulation,
   // so a candidate whose host object, PTX, or cubins are there takes them,
   // and its compileSeconds, which counts in the budget of the search, is
-  // shorter (D[compile-cache-default]).
+  // shorter (D397).
   auto simulation = compiler::Simulation::create(prepared, /*cache=*/true);
   if (!simulation) {
     trial.failure = llvm::toString(simulation.takeError());

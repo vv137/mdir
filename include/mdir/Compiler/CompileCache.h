@@ -126,7 +126,7 @@ std::string getCodeKey(llvm::StringRef module, llvm::StringRef pipeline,
 
 struct CompileCacheLocation;
 
-/// An open directory of the compile cache (D[compile-cache-default]). Its
+/// An open directory of the compile cache (D397). Its
 /// descriptor is kept, and the subdirectories `host` and `gpu`, their
 /// entries, and the file `size` are opened, made, renamed, and removed
 /// relative to it, never following a symbolic link: once the directory is
@@ -170,7 +170,7 @@ private:
 };
 
 /// Where the compile cache lives, as the environment says
-/// (D212, D[compile-cache-default]). `MDIR_COMPILE_CACHE_MAX_MB` bounds its
+/// (D212, D397). `MDIR_COMPILE_CACHE_MAX_MB` bounds its
 /// size (2048 MiB by default); see CompileCacheLocation for the directory.
 struct CompileCacheConfig {
   std::string directory;
@@ -182,7 +182,7 @@ struct CompileCacheConfig {
   /// The cache that a compile uses: locate().config.
   static std::optional<CompileCacheConfig> fromEnvironment();
   /// Where the cache is, and why there is none, decided once per process
-  /// for each environment (D[compile-cache-default]), in this order:
+  /// for each environment (D397), in this order:
   /// `MDIR_COMPILE_CACHE=off` and `MDIR_COMPILE_CACHE_MAX_MB=0` turn it off,
   /// and so does an LLVM option set whose value the salt did not record
   /// (getUnrecordedOptions); `MDIR_COMPILE_CACHE_DIR` names it; otherwise
@@ -217,7 +217,7 @@ struct CompileCacheLocation {
 std::shared_ptr<CacheDirectory> openCacheDirectoryToClear(std::string &path);
 
 /// The salt in front of every key of the cache and of the code that a
-/// `Program` keeps (D[compile-cache-default]): the ELF build ID of the image
+/// `Program` keeps (D397): the ELF build ID of the image
 /// that holds this code (`mdir` or the Python extension, which link LLVM and
 /// MLIR statically), else a hash of its file; the version, commit, and dirty
 /// flag of MDIR and the version and revision of LLVM, which are readable
@@ -236,7 +236,7 @@ std::string getSchedulerInForce();
 void recordCommandLineOptions(int argc, const char *const *argv);
 /// The LLVM options set (other than `-pre-RA-sched`) whose values no
 /// recorded argument gives. The cache is off in a process that has any
-/// (D[compile-cache-default]): its keys would not tell their values apart.
+/// (D397): its keys would not tell their values apart.
 std::vector<std::string> getUnrecordedOptions();
 /// The BLAKE3 of the file at `path`, read once per process for each
 /// device, inode, size, time of modification, and time of change of the
@@ -343,7 +343,7 @@ std::string describeMachine(const llvm::TargetMachine &machine,
 /// its bitcode), the machine's description with the salt that names the
 /// build of MDIR and LLVM (describeMachine), and the scheduler in force
 /// when the key is taken: the object depends on the module and on the code
-/// of the build that optimizes and generates it (D[compile-cache-default]). Each
+/// of the build that optimizes and generates it (D397). Each
 /// entry stores its full key, the length and a BLAKE3 hash of the object,
 /// and the time its generation took; an entry whose key, length, or hash
 /// differs is a miss and is replaced. Entries are written to a temporary

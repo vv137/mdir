@@ -1,4 +1,4 @@
-# The toolchain in the keys of the GPU entries (D[compile-cache-default]),
+# The toolchain in the keys of the GPU entries (D397),
 # in one Python process with a toolkit of its own: a libdevice of other
 # bytes (the same bitcode behind a wrapper header) written over the file
 # with its size and time of modification kept misses every PTX and hits

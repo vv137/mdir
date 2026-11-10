@@ -616,7 +616,7 @@ GPU, in mixed and double precision.
 The host object of a simulation's program can be kept on disk across
 processes by the compile cache (D212,
 [compile-cache.md](compile-cache.md)), which is on by default
-(D[compile-cache-default]) and which `MDIR_COMPILE_CACHE_DIR` moves; `Simulation.compile_stats` reports the times of the pipeline and
+(D397) and which `MDIR_COMPILE_CACHE_DIR` moves; `Simulation.compile_stats` reports the times of the pipeline and
 of the engine, and the hits. `Simulation(program, cache=False)` compiles
 without it, and `mdir.clear_compile_cache()` empties it
 (D217,

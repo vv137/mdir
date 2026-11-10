@@ -1,4 +1,4 @@
-# The default compile cache on a GPU (D[compile-cache-default]), as
+# The default compile cache on a GPU (D397), as
 # compile-cache-default.test: the default directory holds the PTX and
 # cubins of the kernels with the host object, a stored key holds the
 # build ID of the extension, and a salt that stands for

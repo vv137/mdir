@@ -952,7 +952,7 @@ PYBIND11_MODULE(_core, m) {
 
   // Removes the entries of the compile cache (D217):
   // those of this format in `directory`, else in MDIR_COMPILE_CACHE_DIR,
-  // else in the default directory (D[compile-cache-default]), which
+  // else in the default directory (D397), which
   // MDIR_COMPILE_CACHE=off does not hide from it.
   // The idle memory of the device, given back to the driver (#622,
   // docs/runtime.md): for a long process between simulations of other sizes.
@@ -963,7 +963,7 @@ PYBIND11_MODULE(_core, m) {
   python::xla::addBindings(m);
   m.def("clear_compile_cache", [](std::optional<std::string> directory) {
     // Without a directory, the one a compile would use, opened and checked
-    // as a compile opens it (D[compile-cache-default]).
+    // as a compile opens it (D397).
     std::shared_ptr<compiler::CacheDirectory> opened;
     if (!directory) {
       std::string path;

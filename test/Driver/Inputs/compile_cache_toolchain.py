@@ -1,4 +1,4 @@
-"""The toolchain in the keys of the GPU entries (D[compile-cache-default]).
+"""The toolchain in the keys of the GPU entries (D397).
 
   compile_cache_toolchain.py ROOT WORK
 

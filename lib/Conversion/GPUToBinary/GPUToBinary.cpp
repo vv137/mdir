@@ -322,7 +322,7 @@ struct Counters {
 };
 
 /// The GPU entries of the compile cache (D212): `<directory>/gpu/`, opened
-/// relative to the cache's open directory (D[compile-cache-default]).
+/// relative to the cache's open directory (D397).
 class GpuCache {
 public:
   explicit GpuCache(std::optional<CompileCacheConfig> config)
@@ -382,7 +382,7 @@ private:
 
 /// The key of the PTX of `module` for `target`: the salt, which names the
 /// build of MDIR and LLVM and the LLVM options of the command line
-/// (D[compile-cache-default]), the scheduler in force, a hash of
+/// (D397), the scheduler in force, a hash of
 /// the module's IR, the target, and the libraries it links (libdevice).
 /// The translation of the module to LLVM IR and its serialization are code
 /// of the build, which the salt names. Nullopt if the module cannot be

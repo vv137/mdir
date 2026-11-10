@@ -1,5 +1,5 @@
 # The chip and the kind of binary in the keys of the GPU entries
-# (D[compile-cache-default], D214): `mdir emit --stage=lowered` for
+# (D397, D214): `mdir emit --stage=lowered` for
 # the device's architecture stores every PTX and cubin; for another
 # architecture (MDIR_GPU_ARCH) it misses every one of both; as PTX
 # (MDIR_GPU_BINARY=ptx) every PTX misses and no cubin is made; for the

@@ -523,7 +523,7 @@ def GpuModuleToBinary
     With `format=bin`, the toolkit's `ptxas` compiles the PTX of each module
     to a cubin. With `binary=auto`, a module stays PTX when there is no
     `ptxas` or it fails; with `binary=cubin`, that is an error. With the
-    compile cache on (by default, D[compile-cache-default]), the PTX and
+    compile cache on (by default, D397), the PTX and
     the cubin of each module are read from and written to it (D212),
     unless `cache` is false (D217).
   }];

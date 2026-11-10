@@ -1,5 +1,5 @@
 # The LLVM options and the build in the keys of `mdir run`'s GPU entries
-# (D[compile-cache-default]). On the dipeptide with PME, a warm run
+# (D397). On the dipeptide with PME, a warm run
 # reads every PTX and cubin and gives the energies of the cold one; an
 # LLVM option of the command line (-nvptx-prec-divf32=0) misses every PTX
 # and cubin, in either order, and the option given again hits, also from a

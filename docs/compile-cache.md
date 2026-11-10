@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227, D234, D236, D[compile-cache-default])
+# The compile cache (D212, D214, D217, D227, D234, D236, D397)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -29,7 +29,7 @@ an equilibrated cell hits the entry of another; see
 D234 (#196) keeps the total of the entries in a file, so
 that a store does not list the directory; see
 [The bound](#the-bound).
-D[compile-cache-default] (#826) turns the cache on by default
+D397 (#826) turns the cache on by default
 in a private directory of the user, and begins every key with a salt that
 names the build of MDIR and LLVM, the LLVM options of the command line, and
 the scheduler in force, so that an entry is used only when nothing that
@@ -261,7 +261,7 @@ Nodes that differ:
 ## The key
 
 Every key begins with a format tag and a salt
-(D[compile-cache-default]), computed once per process:
+(D397), computed once per process:
 
 - `image`: the ELF build ID (`NT_GNU_BUILD_ID`, read from the notes of the
   loaded image) of the image that holds the compiler: `mdir`, or the Python
@@ -299,7 +299,7 @@ Every key begins with a format tag and a salt
 
 A rebuild of MDIR that changes the image therefore starts cold, as do an
 LLVM option and another LLVM; `mdir` and the Python extension, two images,
-share no entry. This is the rule of D[compile-cache-default]:
+share no entry. This is the rule of D397:
 whenever anything that changes the compiled result may differ, the cache
 is not used. Before it, the keys held the LLVM version and the format
 tags, which had to be bumped by hand for any change of MDIR's code
@@ -782,7 +782,7 @@ directory:
     GPU every PTX and cubin) and leaves a file of another format and a
     writer's temporary file. The next process misses and stores, and the
     one after hits. A clear of another directory, or with no directory
-    (which clears the default, D[compile-cache-default]),
+    (which clears the default, D397),
     removes nothing; under `MDIR_COMPILE_CACHE=off` it still clears the
     directory set.
   - One process clears over and over while another compiles the
@@ -794,7 +794,7 @@ directory:
     it against a forked writer of 3000 entries under 50 keys: 85 clears
     removed 2947 entries, every write succeeded, and the 14 entries left
     were intact, with no temporary file.
-- **The default directory and the salt (D[compile-cache-default]).**
+- **The default directory and the salt (D397).**
   `compile-cache-default.test` refuses, with a warning, a default that is a
   symbolic link to `/`, one that is a link to the user's own private warm
   cache, and one whose parent (`mdir`) is such a link; nothing in the
