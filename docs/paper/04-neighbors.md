@@ -1225,17 +1225,29 @@ positions within the digit restores stability after the atomic scatter,
 so successive digits preserve both the lower keys and the fixed-ID ties.
 This changes the construction of the order, not the groups, covering
 predicate or physical pair expression.
+The template adapter then cuts at column boundaries and large adjacent
+z-key gaps, refining an overlong span at its rightmost largest gap.
+Shared scans produce groups of at most sixteen real units. Compact unit
+orders and explicit group lengths occupy fixed class partitions, so a
+rebuild leaves an inactive class's order and maps in place. The common
+grid also stays fixed while a nonempty class is retained. A work record
+keeps its first-unit begin and reads its length separately; growing row
+capacity preserves the previous class ranges even when their prefixes
+move (device-primitives, Section 4.12).
 The query boxes and keys use the same wrapped fractional frame. Units in
-one fixed group may retain different whole-cell translations; disjoint
+one group may retain different whole-cell translations; disjoint
 query masks compensate those translations in the partner image before
 the original f64 covering test. A compact key group therefore does not
 acquire a whole-cell box merely because its stored references straddle
 the reference-frame seam.
-A conservative Cartesian bounding box of each partner group then rejects
-impossible candidates before their member-pair predicates. Its distance
-lower bound admits roundoff uncertainty; the original f64 covering test
-still decides membership. Thus the prefilter removes work without
-changing the interaction, the cutoff or its image coverage.
+A conservative Cartesian bounding box rejects whole partner groups
+before their units are enumerated. A ballot and a warp-uniform survivor
+loop select the groups to enumerate, leaving every lane at each required
+broadcast. Its distance lower bound admits roundoff uncertainty; the
+original f64 covering test still decides membership. Fractional box
+intervals also prove when at most one integer image can be within reach;
+uncertain cases retain explicit images. Neither proof changes the
+interaction, the cutoff or its image coverage.
 
 ![Which distances the structure tests](figures/rigid-water-members.png)
 
