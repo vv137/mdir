@@ -66,7 +66,7 @@ static StringRef getRows(Operation *op) {
 }
 
 /// The names of the potentials and of the terms that the locations under
-/// `op` are in, in the order first seen.
+/// `op` are in.
 static void collectNames(Operation *op, llvm::SetVector<StringRef> &potentials,
                          llvm::SetVector<StringRef> &terms) {
   auto visit = [&](Location loc) {
@@ -84,10 +84,14 @@ static void collectNames(Operation *op, llvm::SetVector<StringRef> &potentials,
   op->walk([&](Operation *inner) { visit(inner->getLoc()); });
 }
 
+/// The names, sorted: the order in which a kernel's ops come is not part of
+/// the record.
 static ArrayAttr getStrings(Builder &builder,
                             const llvm::SetVector<StringRef> &names) {
+  SmallVector<StringRef> sorted(names.begin(), names.end());
+  llvm::sort(sorted);
   SmallVector<Attribute> values;
-  for (StringRef name : names)
+  for (StringRef name : sorted)
     values.push_back(builder.getStringAttr(name));
   return builder.getArrayAttr(values);
 }

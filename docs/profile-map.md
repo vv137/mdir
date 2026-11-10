@@ -18,7 +18,8 @@ once their lowering does (#840, after #795).
 The program of a run and the program that `mdir emit` lowers from the same
 control file are the same, region for region, so either map serves a
 profile of the run. A program on one thread has no parallel regions, and its
-map lists none.
+map lists none, and neither does that of a GPU target until the kernels of
+a device take records.
 
 ## The format
 
@@ -87,6 +88,21 @@ The lowered module, its LLVM IR, and so the keys of the compile caches are
 the same with the records as without them: the records are in locations
 only, and the mark is in a copy. The names of the outlined functions are
 LLVM's and are not changed.
+
+## Checks
+
+- `test/Lit/profile-map.test`: the program of a dipeptide with
+  Lennard-Jones, Coulomb with PME and excluded pairs, bonds, angles,
+  dihedrals, 1-4 pairs, SETTLE, and SHAKE, on two threads in the mixed and
+  the double mode. Every function `..omp_par` of its LLVM IR has one entry
+  and every entry a source; the counts of the entries by source, set,
+  stage, potentials, and precision are fixed, so that a region that loses
+  its entry or changes its source fails. The maps of `mdir run` and of
+  `mdir emit` at two stages are the same.
+- `scripts/profile-map/check-corpus.py MDIR`: the same check of entries
+  over the control files of the corpus of
+  `scripts/builder-equivalence/check.py`, each on two threads in the mixed
+  and the double mode.
 
 ## Reading a profile with it
 
