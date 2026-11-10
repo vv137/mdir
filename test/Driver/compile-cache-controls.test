@@ -29,7 +29,7 @@
 # CHECK-NEXT: after-clear: compiled 1 hits 0 rejected 0 stored 1 state same
 # CHECK-NEXT: rewarm-after-clear: compiled 0 hits 1 rejected 0 stored 0 state same
 # CHECK-NEXT: clear-other: host 0 gpu 0, entries here kept
-# CHECK-NEXT: clear-none: directory False host 0 gpu 0, entries here kept
+# CHECK-NEXT: clear-none: directory default host 0 gpu 0, entries here kept
 # CHECK-NEXT: clear-off: host 1 entries 0
 # CHECK-NEXT: clear-concurrent: stored over 4 compiles more than 1, clears many, removed some, malformed 0, state same
 # CHECK-NEXT: after-concurrent-clear: rejected 0 gpu rejected 0 state same

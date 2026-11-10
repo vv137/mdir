@@ -24,7 +24,10 @@ root, target, precision = sys.argv[1:4]
 if len(sys.argv) > 4:
     os.environ["MDIR_COMPILE_CACHE_DIR"] = sys.argv[4]
 else:
+    # No compile cache: the default directory would be the user's
+    # (D[compile-cache-default]).
     os.environ.pop("MDIR_COMPILE_CACHE_DIR", None)
+    os.environ["MDIR_COMPILE_CACHE"] = "off"
 
 import mdir
 

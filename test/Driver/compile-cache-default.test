@@ -1,0 +1,40 @@
+# REQUIRES: python-api
+# The default compile cache (D[compile-cache-default]) on the CPU:
+# MDIR_COMPILE_CACHE=off comes first and makes nothing; without
+# MDIR_COMPILE_CACHE_DIR the cache is ${XDG_CACHE_HOME}/mdir/compile, made
+# 0700 with its parent, cold then warm; a relative XDG_CACHE_HOME gives
+# HOME/.cache. A default directory that others may write, or whose parent
+# the group may write, is refused with a warning, and its whole and valid
+# entries are neither read nor touched; private again, they are read. A
+# default that is another user's directory is refused; a directory named
+# that others may write is used, with a warning. MDIR_COMPILE_CACHE_MAX_MB=0
+# turns the cache off and a malformed bound is reported. A salt that stands
+# for another build misses and stores every entry, then hits; this build's
+# entries still hit. Every state is that of no cache bit for bit. Each
+# scenario is a process of its own (Inputs/compile_cache_default.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache_default.py %S/Inputs/dipeptide CPU Mixed %t --location --security --size --salt | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0 state same
+# CHECK-NEXT: off: default absent
+# CHECK-NEXT: default-cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: default-cold: directory 700 parent 700 entries o 1 ptx 0 cubin 0
+# CHECK-NEXT: default-warm: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: relative-xdg: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: relative-xdg: entries in HOME/.cache o 1 ptx 0 cubin 0
+# CHECK-NEXT: open-default: compiled 1 hits 0 rejected 0 stored 0 state same
+# CHECK-NEXT: open-default: warned, entries unchanged
+# CHECK-NEXT: open-parent: compiled 1 hits 0 rejected 0 stored 0 state same
+# CHECK-NEXT: open-parent: warned, entries unchanged
+# CHECK-NEXT: private-again: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: foreign-default: compiled 1 hits 0 rejected 0 stored 0 state same
+# CHECK-NEXT: foreign-default: warned
+# CHECK-NEXT: open-named: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: open-named: warned
+# CHECK-NEXT: size-zero: compiled 1 hits 0 rejected 0 stored 0 state same
+# CHECK-NEXT: size-zero: default absent
+# CHECK-NEXT: size-malformed: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: size-malformed: warned
+# CHECK-NEXT: other-build: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: other-build: new entries o 1 ptx 0 cubin 0
+# CHECK-NEXT: other-build-again: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: this-build: compiled 0 hits 1 rejected 0 stored 0 state same

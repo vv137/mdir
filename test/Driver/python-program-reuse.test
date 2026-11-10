@@ -7,7 +7,7 @@
 # of the same inputs shares nothing in memory (with a directory of the
 # compile cache its first simulation hits the disk, and its second takes
 # what that left); two threads on a new Program both get a simulation.
-# Without a directory and with one (Inputs/python_program_reuse.py).
+# Without a compile cache and with one (Inputs/python_program_reuse.py).
 # RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide CPU Mixed | FileCheck %s --check-prefixes=CHECK,PLAIN
 # RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide CPU Mixed %t | FileCheck %s --check-prefixes=CHECK,DISK

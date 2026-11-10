@@ -96,14 +96,19 @@ def enable_compile_cache(config, lit_config):
     suite of one build shares nothing with that of another. lit -Dcompile_cache=off,
     or MDIR_COMPILE_CACHE=off in the environment, runs the suite without it;
     a test of compilation itself sets MDIR_COMPILE_CACHE=off in its RUN
-    lines."""
+    lines. The directory is named either way: without one a compile would
+    take the user's default directory (D[compile-cache-default]),
+    which a suite never reads or writes. The tests' test-only variables of
+    the cache are not passed on."""
     off = (lit_config.params.get("compile_cache", "on").lower() == "off" or
            os.environ.get("MDIR_COMPILE_CACHE", "").lower() == "off")
     if off:
         config.environment["MDIR_COMPILE_CACHE"] = "off"
-        return
     config.environment["MDIR_COMPILE_CACHE_DIR"] = os.path.join(
         config.mdir_obj_root, "test", "compile-cache")
+    for name in ("MDIR_COMPILE_CACHE_SALT_OVERRIDE",
+                 "MDIR_COMPILE_CACHE_TEST_LOCAL"):
+        config.environment.pop(name, None)
 
 
 # The tests expected to be unsupported, by the feature that decides it

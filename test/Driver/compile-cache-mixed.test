@@ -3,7 +3,7 @@
 # precision: a cold and a warm cache give the state of no cache bit for
 # bit after 20 deterministic steps; a truncated entry and an object with a
 # byte flipped are rejected and rebuilt; a changed pipeline option or precision
-# misses; a bound of 0 MiB keeps no entry; four processes at once on an
+# misses; a bound of 0 MiB turns the cache off; four processes at once on an
 # empty directory leave one entry. Each scenario is a process
 # of its own on one directory (Inputs/compile_cache.py).
 # RUN: rm -rf %t
@@ -18,7 +18,7 @@
 # CHECK-NEXT: rewarm: compiled 0 hits 1 rejected 0 stored 0 state same
 # CHECK-NEXT: nondeterministic: compiled 1 hits 0 rejected 0 stored 1
 # CHECK-NEXT: precision: compiled 1 hits 0 rejected 0 stored 1
-# CHECK-NEXT: bounded: compiled 1 hits 0 rejected 0 stored 1
-# CHECK-NEXT: bounded: entries 0
+# CHECK-NEXT: bound-zero: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: bound-zero: entries 0
 # CHECK-NEXT: concurrent: generated or hit 4, rejected 0, entries 1, state same
 # CHECK-NEXT: after: compiled 0 hits 1 rejected 0 stored 0 state same
