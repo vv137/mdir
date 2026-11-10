@@ -341,6 +341,9 @@ private:
   llvm::DenseMap<Operation *, Operation *> templateFlagOwners;
   llvm::DenseMap<Operation *, SmallVector<TemplateDeferredFlag>> templateDeferredFlags;
   bool deferTemplateFlag(Operation *, const Flag &, Value start, Value result);
+  LogicalResult prepareTemplateWriter(OpBuilder &, Location,
+      md_exec::ParticleForOp, TemplatePairState &, kernels::TemplateWriterBuffers &,
+      bool constrainedHere = false);
   LogicalResult lowerTemplateParticleFor(md_exec::ParticleForOp);
   LogicalResult planTemplateWriters(func::FuncOp function);
   void recordTemplateConstraintEpoch(OpBuilder &, Location,
@@ -2425,8 +2428,19 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   }
   if (!after || inRows.contains(after))
     return false;
-  if (templateWriters.contains(after))
-    return false;
+  if (templateWriters.contains(after)) {
+    // The native epoch marker proves ownership of complete matched groups.
+    // Without this proof retain the existing standalone publication.
+    unsigned owners = llvm::count_if(loops, [](md_exec::TupleForOp loop) {
+      return loop.getArity() == 3 && loop->hasAttr(md::kTemplateConstraintEpoch);
+    });
+    if (owners != 1) return false;
+    // A shared event may not postpone a constraint failure past an
+    // intervening consumer. The existing writer planner proves this order.
+    for (auto loop : loops)
+      if (!loop.getReduce().empty() && templateFlagOwners.lookup(loop) != after)
+        return false;
+  }
   // The loop after reads what the loop before wrote and what the loops
   // over tuples wrote, and takes the particles of the loop before.
   bool readsLoops = false;
@@ -2461,6 +2475,18 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   OpBuilder builder(after);
   setPurpose(before);
   purpose += "_integration" + std::to_string(run.loops.size());
+
+  bool publishesTemplate = templateWriters.contains(after);
+  if (publishesTemplate) purpose += "_template_publication";
+  TemplatePairState templateState;
+  TemplateWriterBuffers writer;
+  if (publishesTemplate && failed(prepareTemplateWriter(builder, loc, after,
+          templateState, writer, /*constrainedHere=*/true)))
+    return failure();
+  SmallVector<Flag> validityFlags;
+  if (publishesTemplate)
+    for (unsigned i = 0; i != 5; ++i)
+      validityFlags.push_back(getFlag(flags.size(), loc));
 
   // The flag of each loop that tests its tuples (D278),
   // one of its own (D118).
@@ -2522,6 +2548,109 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
             });
           }
   };
+  auto observe = [&](OpBuilder &b, md_exec::TupleForOp owner,
+      ArrayRef<Value> particles, ArrayRef<SmallVector<Value>> outputs) {
+    auto publish = [&](OpBuilder &at, Value unit,
+        ArrayRef<kernels::TemplateParticleResult> results) {
+      auto changed = emitUpdateTemplateFrame(at, loc, writer, unit, results);
+      Value flags[] = {changed.waterOuter, changed.atomOuter,
+          changed.waterInner, changed.atomInner, changed.extent};
+      for (auto [flag, set] : llvm::zip(validityFlags, flags))
+        scf::IfOp::create(at, loc, set, [&](OpBuilder &in, Location) {
+          memref::StoreOp::create(in, loc,
+              arith::ConstantIntOp::create(in, loc, 1, 32), flag.device,
+              ValueRange{createIndex(in, loc, 0)});
+          scf::YieldOp::create(in, loc);
+        });
+    };
+    auto publishSingles = [&](OpBuilder &b) {
+      // Unmatched constrained groups and ordinary singleton units retain
+      // their original per-particle publication, including extra-point skips.
+      for (auto [particle, values] : llvm::zip(particles, outputs)) {
+        Value slot = memref::LoadOp::create(b, loc, templateState.slots,
+                                           ValueRange{particle});
+        Value real = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
+            slot, arith::ConstantIntOp::create(b, loc, 0, 32));
+        Value unit = arith::SelectOp::create(b, loc, real,
+            arith::SubIOp::create(b, loc, slot,
+                arith::IndexCastOp::create(b, loc, b.getI32Type(),
+                    arith::MulIOp::create(b, loc, templateState.waters,
+                                         createIndex(b, loc, 2)))),
+            arith::ConstantIntOp::create(b, loc, -1, 32));
+        kernels::TemplateParticleResult result;
+        result.particle = particle;
+        result.outputs.assign(values.begin(), values.end());
+        publish(b, unit, ArrayRef<kernels::TemplateParticleResult>{result});
+      }
+    };
+    if (owner && owner->hasAttr(md::kTemplateConstraintEpoch)) {
+      // Match semantic sites through the fixed inverse map, not particle
+      // adjacency, tuple lane, or a particular post-renumbering index.
+      SmallVector<Value> slots;
+      for (Value particle : particles)
+        slots.push_back(memref::LoadOp::create(b, loc, templateState.slots,
+                                               ValueRange{particle}));
+      Value limit = arith::IndexCastOp::create(b, loc, b.getI32Type(),
+          arith::MulIOp::create(b, loc, templateState.waters, createIndex(b, loc, 3)));
+      Value zero = arith::ConstantIntOp::create(b, loc, 0, 32);
+      Value three = arith::ConstantIntOp::create(b, loc, 3, 32);
+      Value group = arith::DivUIOp::create(b, loc, slots.front(), three);
+      Value whole = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
+      Value sites = zero;
+      for (Value slot : slots) {
+        Value matched = arith::AndIOp::create(b, loc,
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge, slot, zero),
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, slot, limit));
+        Value same = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+            arith::DivUIOp::create(b, loc, slot, three), group);
+        whole = arith::AndIOp::create(b, loc, whole,
+            arith::AndIOp::create(b, loc, matched, same));
+        Value bit = arith::ShLIOp::create(b, loc,
+            arith::ConstantIntOp::create(b, loc, 1, 32),
+            arith::RemUIOp::create(b, loc, slot, three));
+        sites = arith::OrIOp::create(b, loc, sites, bit);
+      }
+      whole = arith::AndIOp::create(b, loc, whole,
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, sites,
+                                arith::ConstantIntOp::create(b, loc, 7, 32)));
+      // The marker proves selected waters are covered, not that every
+      // tuple is selected. Other models remain ordinary nonwater units.
+      scf::IfOp::create(b, loc, whole, [&](OpBuilder &inside, Location) {
+        OpBuilder::InsertionGuard guard(b);
+        b.setInsertionPointToEnd(inside.getInsertionBlock());
+      SmallVector<kernels::TemplateParticleResult, 3> ordered;
+      for (unsigned site = 0; site != 3; ++site) {
+        kernels::TemplateParticleResult result;
+        result.particle = particles.front();
+        result.outputs = outputs.front();
+        for (unsigned q = 0; q != particles.size(); ++q) {
+          Value matches = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+              arith::RemUIOp::create(b, loc, slots[q],
+                  arith::ConstantIntOp::create(b, loc, 3, 32)),
+              arith::ConstantIntOp::create(b, loc, site, 32));
+          result.particle = arith::SelectOp::create(b, loc, matches,
+                                                   particles[q], result.particle);
+          for (unsigned o = 0; o != result.outputs.size(); ++o)
+            result.outputs[o] = arith::SelectOp::create(b, loc, matches,
+                                                       outputs[q][o], result.outputs[o]);
+        }
+        ordered.push_back(result);
+      }
+      Value unit = arith::DivUIOp::create(b, loc, slots.front(),
+          arith::ConstantIntOp::create(b, loc, 3, 32));
+      publish(b, unit, ordered);
+        scf::YieldOp::create(b, loc);
+      }, [&](OpBuilder &inside, Location) {
+        publishSingles(inside);
+        scf::YieldOp::create(inside, loc);
+      });
+    } else {
+      publishSingles(b);
+    }
+  };
+  llvm::function_ref<void(OpBuilder &, md_exec::TupleForOp, ArrayRef<Value>,
+      ArrayRef<SmallVector<Value>>)> observer;
+  if (publishesTemplate) observer = observe;
   // The particles in no tuple and the tuples within a warp, which list
   // the tuples across warps; then those. The count of the list is
   // allocated once, where the function begins, and the second kernel
@@ -2553,13 +2682,13 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   launchOver(builder, loc, slots, [&](OpBuilder &body, Value thread) {
     kernels::emitIntegrationThread(body, run, boxes, inverses, thread, size,
                                    acrossList, acrossCount, /*across=*/false,
-                                   storeAfter);
+                                   storeAfter, observer);
   });
   Value threads = createIndex(builder, loc, blockSize);
   launchOver(builder, loc, threads, [&](OpBuilder &body, Value thread) {
     kernels::emitIntegrationThread(body, run, boxes, inverses, thread,
                                    threads, acrossList, acrossCount,
-                                   /*across=*/true, storeAfter);
+                                   /*across=*/true, storeAfter, observer);
   });
   {
     auto type = cast<MemRefType>(acrossList.getType());
@@ -2578,6 +2707,46 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
                                            partials, size,
                                            kernels::Combiner::Add);
+  if (publishesTemplate) {
+    SmallVector<Flag> events;
+    SmallVector<Value> starts, results;
+    for (auto [index, start] : llvm::enumerate(after.getReduce())) {
+      int place = places[index];
+      if (place < 0) {
+        events.push_back(used[-place - 1]); starts.push_back(start);
+        results.push_back(after.getResult(index));
+      } else {
+        after.getResult(index).replaceAllUsesWith(
+            arith::AddFOp::create(builder, loc, start, sums[place]));
+      }
+    }
+    unsigned flag = 0;
+    for (auto loop : run.loops)
+      if (!loop.getReduce().empty()) {
+        events.push_back(loopFlags[flag++]);
+        starts.push_back(loop.getReduce().front()); results.push_back(loop.getResult(0));
+      }
+    if (auto pending = templateDeferredFlags.find(after);
+        pending != templateDeferredFlags.end()) {
+      for (const auto &deferred : pending->second) {
+        events.push_back(deferred.flag); starts.push_back(deferred.start);
+        results.push_back(deferred.result);
+      }
+      templateDeferredFlags.erase(pending);
+    }
+    Value no = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
+    Operation *first = nullptr;
+    for (int64_t i = 0; i != 5; ++i) {
+      Value placeholder = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
+      auto store = memref::StoreOp::create(builder, loc, placeholder,
+          templateState.invalid, ValueRange{createIndex(builder, loc, i)});
+      if (!first) first = store;
+      events.push_back(validityFlags[i]); starts.push_back(no); results.push_back(placeholder);
+    }
+    builder.setInsertionPoint(first);
+    replaceWithFlags(builder, loc, events, starts, results);
+    return success();
+  }
   for (auto [index, start] : llvm::enumerate(after.getReduce())) {
     int place = places[index];
     if (place < 0) {
@@ -6277,13 +6446,12 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
   return success();
 }
 
-LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
+LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
+    md_exec::ParticleForOp op, TemplatePairState &state, TemplateWriterBuffers &v,
+    bool constrainedHere) {
   const auto &plan = templateWriters.find(op)->second;
   auto refresh = plan.refresh;
-  TemplatePairState state;
   if (failed(getTemplateState(op, refresh->getOperand(0), state))) return failure();
-  OpBuilder b(op);
-  Location loc = op.getLoc();
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   Value cell = refresh.getCellMutable().get();
   Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
@@ -6314,7 +6482,6 @@ LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
         vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), reaches),
         physical, createReal(b, loc, b.getF64Type(), skin));
   };
-  TemplateWriterBuffers v;
   v.frames = state.frames; v.packingCells = state.packingCells;
   v.currentPoints = state.currentPoints; v.outerReference = state.outerReference;
   v.innerReference = state.innerReference; v.waters = state.waters;
@@ -6323,9 +6490,22 @@ LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
   v.innerLimits = limits(1, refresh.getPruneSkin().convertToDouble());
   v.built = memref::LoadOp::create(b, loc, state.built, ValueRange{});
   v.constrained = memref::LoadOp::create(b, loc, templateConstraintHistory, ValueRange{});
+  if (constrainedHere)
+    v.constrained = arith::OrIOp::create(b, loc, v.constrained,
+        arith::ConstantOp::create(b, loc, b.getBoolAttr(true)));
   v.positionOutput = plan.positionOutput;
   v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
+  return success();
+}
+
+LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
+  TemplatePairState state;
+  TemplateWriterBuffers v;
+  if (failed(prepareTemplateWriter(b, loc, op, state, v))) return failure();
   SmallVector<int> places;
   unsigned numSums = 0, numOriginalFlags = 0;
   for (Value value : op.getReduce())
@@ -6341,7 +6521,7 @@ LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
       scf::YieldOp::create(in, loc);
     });
   };
-  Value size = createSize(b, loc, op.getOuts()[plan.positionOutput]);
+  Value size = createSize(b, loc, op.getOuts()[v.positionOutput]);
   launchOver(b, loc, size, [&](OpBuilder &at, Value particle) {
     IRMapping captures;
     emitTemplateParticleKernel(at, loc, op, particle, state.slots, state.realMembers,

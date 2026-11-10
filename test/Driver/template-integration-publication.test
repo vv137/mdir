@@ -1,0 +1,8 @@
+# Device-free structural proof from the actual native module and pipeline.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/template_integration_publication.py mdir mdir-opt %S/Inputs/opc %t | FileCheck %s
+# RUN: %python %S/Inputs/template_integration_publication.py mdir mdir-opt %S/Inputs/triclinic %t/tip3p --tip3p | FileCheck %s --check-prefix=TIP3P
+# CHECK: OPC VELOCITY_VERLET: standalone publication retained (extra-point final writer)
+# CHECK-NEXT: OPC LEAPFROG: standalone publication retained (extra-point final writer)
+# TIP3P: TIP3P VELOCITY_VERLET: native complete-output integration publication selected
+# TIP3P-NEXT: TIP3P LEAPFROG: standalone publication retained (predictor already owned by preceding run)

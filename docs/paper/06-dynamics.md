@@ -136,6 +136,15 @@ differ from those of the general path, so the template agrees with it
 within the error of mixed precision, not bitwise. Force outputs,
 derivatives, and water that is not rigid keep the bisector.
 
+The template's position publication may observe final integration outputs
+inside the existing fused kernel, provided its ownership and ordering proofs
+hold. It consumes final SSA coordinates, including the completed constraints;
+it does not read positions concurrently with their publication. Extra-point
+placement or overlapping integration runs that break those preconditions
+retain a separate writer. Sharing the whole-frame reconstruction with extent
+checking and the common magnitude terms of the two motion tests leaves the
+independently aged reference epochs and their validity bounds unchanged.
+
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
 followed by the same drift, constraint, and correction, with no second
