@@ -216,7 +216,8 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
       /*ghostFree=*/builder.getBoolAttr(false),
       /*images=*/md_exec::ImagesAttr(),
       // Chosen on a device (md-exec-choose-scatter, D291).
-      /*scatter=*/md_exec::ScatterAttr());
+      /*scatter=*/md_exec::ScatterAttr(),
+      /*hostLanes=*/IntegerAttr());
 
   // The kernel receives the squared distance; the semantic kernel is
   // written in terms of the distance.

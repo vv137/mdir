@@ -15,6 +15,8 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/FileSystem.h"
@@ -148,6 +150,56 @@ llvm::StringRef mdir::compiler::getFusedPruningSetting() {
 /// from the groups of `getFusedPruningGroups` for the architecture of
 /// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
 /// number of groups.
+/// The machine of the host code before its code-generation level: the
+/// host that LLVM detects, or, with `MDIR_HOST_CPU`, the CPU it names with
+/// that CPU's own features (`x86-64` for a host of SSE2 alone), to compile
+/// for a narrower host than this one (D[host-pair-vector]). The compile
+/// cache keys a host object by this machine's CPU and features.
+static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
+  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!builder)
+    return builder.takeError();
+  if (const char *cpu = std::getenv("MDIR_HOST_CPU"); cpu && *cpu) {
+    builder->setCPU(cpu);
+    builder->setFeatures("");
+  }
+  return builder;
+}
+
+/// The options of md-exec-choose-host-pairs (D[host-pair-vector]): the CPU
+/// of the host and the width of its vector registers, from the machine that
+/// compiles the host code, and `MDIR_HOST_PAIRS`, which overrides the
+/// host's policy for comparisons and tests: `scalar` (no loop takes the
+/// lanes), `lanes` (every loop that can, at the width of the mode and the
+/// host), or `lanes:W` (at `W` lanes).
+static std::string getHostPairsOptions() {
+  std::string options;
+  llvm::raw_string_ostream os(options);
+  StringRef chosen =
+      std::getenv("MDIR_HOST_PAIRS") ? std::getenv("MDIR_HOST_PAIRS") : "";
+  if (chosen.consume_front("lanes:"))
+    os << "mode=lanes width=" << chosen << " ";
+  else if (!chosen.empty())
+    os << "mode=" << chosen << " ";
+  if (auto builder = getHostBuilder()) {
+    int64_t bits = 128;
+    if (auto machine = builder->createTargetMachine()) {
+      const llvm::MCSubtargetInfo &target = (*machine)->getMCSubtargetInfo();
+      if ((*machine)->getTargetTriple().isX86())
+        bits = target.checkFeatures("+avx512f") ? 512
+               : target.checkFeatures("+avx")   ? 256
+                                                 : 128;
+      os << "cpu=" << (*machine)->getTargetCPU() << " ";
+    } else {
+      llvm::consumeError(machine.takeError());
+    }
+    os << "vector-bits=" << bits;
+  } else {
+    llvm::consumeError(builder.takeError());
+  }
+  return options;
+}
+
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   // The groups from which the pruning in the loop took no more time a step
   // than the pruning of the refresh. On an RTX 4090 (sm_89), water boxes of
@@ -290,6 +342,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // activations of the entry of an embedding front end (D253) and across
   // the segments of `mdir run` (#316).
   bool threaded = control.threads > 1;
+  // The lanes of the rows of the loops over pairs (D[host-pair-vector]),
+  // by the measured policy of the host, which a host not measured does not
+  // have (the scalar row).
+  os << "md-exec-choose-host-pairs{" << getHostPairsOptions() << "},";
   // On one thread the spreading of PME adds to its grid without atomics
   // (D271).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
@@ -536,7 +592,7 @@ compiler::lower(const driver::Control &control, driver::Program program,
 // the CPU (2%, within the noise), so the host code takes `Default` (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>>
 compiler::createHostMachine() {
-  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  auto builder = getHostBuilder();
   if (!builder)
     return builder.takeError();
   builder->setCodeGenOptLevel(llvm::CodeGenOptLevel::Default);

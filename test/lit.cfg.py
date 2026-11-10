@@ -37,6 +37,10 @@ if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
 # an earlier run under HOME reaches a test; the tests of the cache give
 # their own directory and turn it on.
 config.environment["MDIR_SKIN_CACHE"] = "off"
+# The rows of the loops over pairs on the host are scalar, so that what
+# `mdir emit` prints for the CPU does not depend on the host; the tests of
+# the lanes state their width (D[host-pair-vector]).
+config.environment["MDIR_HOST_PAIRS"] = "scalar"
 llvm_config.use_default_substitutions()
 
 config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")

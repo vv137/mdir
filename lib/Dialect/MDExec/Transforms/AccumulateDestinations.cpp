@@ -187,7 +187,8 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
       loop.getCenterSet(), loop.getGhostFreeAttr(),
       loop.getImagesAttr(),
       // Chosen later, for the loop as it is then (md-exec-choose-scatter).
-      /*scatter=*/ScatterAttr());
+      /*scatter=*/ScatterAttr(),
+      /*hostLanes=*/IntegerAttr());
   merged.getKernel().takeBody(loop.getKernel());
 
   auto yield = cast<YieldOp>(merged.getKernel().front().getTerminator());

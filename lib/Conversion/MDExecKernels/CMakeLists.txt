@@ -2,6 +2,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   CompactionEmitter.cpp
   ExpandPrimitives.cpp
   GatherEmitter.cpp
+  HostPairLanes.cpp
   MDExecKernels.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
@@ -18,10 +19,12 @@ add_mlir_conversion_library(MDIRMDExecKernels
   LINK_LIBS PUBLIC
   MDIRMDExec
   MDIRMDRT
+  MLIRArithAttrToLLVMConversion
   MLIRArithDialect
   MLIRFuncDialect
   MLIRGPUDialect
   MLIRIR
+  MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRPass

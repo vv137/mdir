@@ -1,6 +1,7 @@
 // Ops of the md_exec dialect.
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/HostPairs.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
@@ -1024,6 +1025,12 @@ LogicalResult PairForOp::verify() {
                            << stringifyConflict(getConflict())
                            << "': the loop adds only at its centers, each "
                               "by its own thread";
+  // The lanes of a row on the host (D[host-pair-vector]); the rest of the
+  // precondition is hostpairs::checkLanes, which the lowering applies.
+  if (std::optional<int64_t> lanes = getHostLanes())
+    if (hostpairs::Refusal refused = hostpairs::checkWidth(*lanes))
+      return emitOpError() << "cannot take host(lanes(" << *lanes
+                           << ")): " << *refused;
   auto neighbors = cast<NeighborsType>(getNeighbors().getType());
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))

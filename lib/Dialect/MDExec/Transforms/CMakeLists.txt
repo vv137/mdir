@@ -5,6 +5,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AssignPrecision.cpp
   AssignStorage.cpp
   AssignStreams.cpp
+  ChooseHostPairs.cpp
   ChooseNeighbors.cpp
   ChooseScatter.cpp
   CheckTransfers.cpp

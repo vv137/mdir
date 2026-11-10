@@ -76,6 +76,22 @@ Value kernels::emitOrderedRegisterSum(
   return value;
 }
 
+Value kernels::emitLaneReduce(OpBuilder &builder, Location loc, Value value,
+                              Combiner combiner) {
+  auto type = cast<VectorType>(value.getType());
+  for (int64_t width = type.getNumElements(); width > 1; width /= 2) {
+    int64_t half = width / 2;
+    Value low = vector::ExtractStridedSliceOp::create(
+        builder, loc, value, ArrayRef<int64_t>{0}, ArrayRef<int64_t>{half},
+        ArrayRef<int64_t>{1});
+    Value high = vector::ExtractStridedSliceOp::create(
+        builder, loc, value, ArrayRef<int64_t>{half}, ArrayRef<int64_t>{half},
+        ArrayRef<int64_t>{1});
+    value = emitCombine(builder, loc, combiner, low, high);
+  }
+  return vector::ExtractOp::create(builder, loc, value, 0);
+}
+
 Value kernels::emitWarpReduce(OpBuilder &builder, Location loc, Value value,
                               Combiner combiner, int64_t lanes) {
   for (int64_t offset = lanes / 2; offset >= 1; offset /= 2)

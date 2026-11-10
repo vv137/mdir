@@ -217,6 +217,53 @@ def ChooseScatter
   ];
 }
 
+def ChooseHostPairs
+    : Pass<"md-exec-choose-host-pairs", "::mlir::ModuleOp"> {
+  let summary = "Chooses the lanes of the rows of the loops over pairs on "
+                "the host";
+  let description = [{
+    Sets `host(lanes(W))` on each `md_exec.pair_for` of a program for the
+    CPU where the precondition of include/mdir/Dialect/MDExec/HostPairs.h
+    holds and the mode selects it (D[host-pair-vector]). The host lowering
+    then runs each row `W` candidates at a time in registers of the
+    `vector` dialect, lane `l` summing the candidates `k = l (mod W)` and
+    the lanes combined by halving. Runs after `md-exec-assign-algebra`
+    and before `md-exec-assign-storage`, which carries the attribute; the
+    lowering checks the precondition again.
+
+    - `W`: `width` where it is not 0. Otherwise, in the deterministic mode
+      (`md_exec.deterministic` on the module), 8 in f32 and 4 in f64
+      whatever the host, so that the bits do not depend on its vector
+      width; otherwise the host's register (`vector-bits`) over the bits
+      of the type that the kernel computes in.
+    - `mode=auto` (the default): the lanes where the policy of the host
+      `cpu` (HostPairs.h, `findPolicy`) makes them the default; a host
+      that was not measured keeps the scalar row. `mode=lanes`: every loop
+      where the precondition holds. `mode=scalar`: none.
+
+    With `explain`, each choice and each refusal is a remark on its op.
+
+    ```mlir
+    %e = md_exec.pair_for %nl, %x, %cell ins(...) reduce(...) cutoff(0.9)
+           policy(directed, owner_only) host(lanes(8)) { ... } : ...
+    ```
+  }];
+  let options = [
+    Option<"mode", "mode", "std::string", /*default=*/"\"auto\"",
+           "auto (the host's measured policy), lanes, or scalar">,
+    Option<"width", "width", "int64_t", /*default=*/"0",
+           "The lanes of a row, a power of two from 1 to 64; 0 takes them "
+           "from the mode and the host">,
+    Option<"cpu", "cpu", "std::string", /*default=*/"\"\"",
+           "The CPU of the host as LLVM names it (znver3), the key of its "
+           "policy">,
+    Option<"vectorBits", "vector-bits", "int64_t", /*default=*/"128",
+           "The width of the host's vector registers in bits">,
+    Option<"explain", "explain", "bool", /*default=*/"false",
+           "A remark on each op for its choice or the reason of a refusal">
+  ];
+}
+
 def AssignAlgebra
     : Pass<"md-exec-assign-algebra", "::mlir::ModuleOp"> {
   let summary = "States the algebra of each value that an op reduces";
