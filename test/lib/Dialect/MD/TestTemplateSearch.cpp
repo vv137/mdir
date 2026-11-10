@@ -1,6 +1,7 @@
 // Test-only workspace owner around the actual combined search emitter.
 #include "mdir/Conversion/TemplateSearchKernels.h"
 #include "mdir/Conversion/TemplateRefreshKernels.h"
+#include "mdir/Conversion/SpatialGroupEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -134,6 +135,43 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
   }
 };
 }
+namespace {
+struct TestSpatialGroupPlan
+    : PassWrapper<TestSpatialGroupPlan, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestSpatialGroupPlan)
+  StringRef getArgument() const final { return "test-md-spatial-group-plan"; }
+  StringRef getDescription() const final { return "Outlines the shared column/gap/span planner"; }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect, cf::ControlFlowDialect, func::FuncDialect,
+        gpu::GPUDialect, memref::MemRefDialect, scf::SCFDialect>();
+  }
+  void runOnOperation() final {
+    auto function = getOperation().lookupSymbol<func::FuncOp>("group_plan_probe");
+    if (!function || !function.isExternal() || function.getNumArguments() != 17 ||
+        function.getNumResults() != 3) {
+      getOperation().emitError("group-plan fixture expects seventeen arguments and three index results");
+      return signalPassFailure();
+    }
+    Block *entry = function.addEntryBlock();
+    OpBuilder b = OpBuilder::atBlockEnd(entry);
+    Location loc = function.getLoc();
+    SpatialGroupPlanBuffers v;
+    Value *fields[] = {&v.order, &v.columns, &v.zKeys, &v.flags, &v.segments,
+        &v.starts, &v.lengths, &v.counts, &v.offsets, &v.control, &v.scanScratch,
+        &v.size, &v.firstClassSize, &v.gap[0], &v.gap[1], &v.span[0], &v.span[1]};
+    for (auto [i, value] : llvm::enumerate(fields)) *value = entry->getArgument(i);
+    v.scanBlocks = arith::MaxUIOp::create(b, loc, createIndex(b, loc, 1),
+        arith::DivUIOp::create(b, loc,
+            arith::AddIOp::create(b, loc, v.size, createIndex(b, loc, 1023)),
+            createIndex(b, loc, 1024)));
+    auto plan = emitSpatialGroupPlan(b, loc, v);
+    func::ReturnOp::create(b, loc, ValueRange{plan.groups[0], plan.groups[1], plan.passes});
+  }
+};
+}
 namespace mdir::test {
-void registerTestTemplateSearch() { PassRegistration<TestTemplateSearch>(); }
+void registerTestTemplateSearch() {
+  PassRegistration<TestTemplateSearch>();
+  PassRegistration<TestSpatialGroupPlan>();
+}
 }

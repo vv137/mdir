@@ -1,0 +1,8 @@
+# REQUIRES: cuda-toolkit
+# RUN: %python %S/../../Integration/Inputs/spatial_group_plan_oracle.py %t.mlir %t.json
+# RUN: mdir-opt %t.mlir --test-md-spatial-group-plan | mlir-opt %lower_gpu_to_llvm | FileCheck %s
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy
+# CHECK: llvm.func @group_plan_probe
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy

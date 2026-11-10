@@ -327,6 +327,8 @@ Every other primitive is written at its site.
 
 | Conservative template group prefilter (D[rigid-water-template]) | wrapped-reference map, masked Cartesian min/max reduction, lower bound between boxes | f64 boxes; conservative roundoff envelope and indeterminate cases admitted; final pair predicate unchanged; convergent broadcasts | one auxiliary box per group, shared by WW/SW/SS searches, independent of pair growth | shared: `emitSpatialWarpBox` and `emitSpatialBoxesWithinReach` in `SpatialFrameEmitter.h` | other spatial callers #817 |
 
+| Stable spatial group cuts (D[rigid-water-template], integration in progress) | integer boundary map, shared scans, segment maps and monotone span refinement | class order and fixed-ID ties retained; strict gap threshold and rightmost-largest-gap span split; at most $N+1$ passes | `emitSpatialGroupPlan`; standalone exact integer oracle includes empty storage and an eleven-pass cascade | shared: `SpatialGroupEmitter.h`, composing `CompactionEmitter.h` scans/atomics; native publication is in progress | broader grid/ownership plan #817 |
+
 ### 3.2 Short range
 
 | Part | Primitives | Properties | Strategies today, and measurements | State | Gaps |

@@ -952,6 +952,38 @@ reframed groups, both cell shapes, and one-dimensional cutoff rays at
 and one representable coordinate on either side of each class cutoff.
 No physical tolerance is used for their membership comparisons.
 
+### 4.12 Stable column/gap/span cuts (D[rigid-water-template])
+
+`emitSpatialGroupPlan` in `SpatialGroupEmitter.h` takes a unit permutation
+ordered by class, column, z key and fixed ID. It first marks a class or
+column boundary and each adjacent z-key gap strictly greater than its
+class's gap threshold. Shared device scans and maps produce segment IDs,
+starts and lengths. Each segment is provisionally divided into groups
+of at most sixteen. If a group's last-minus-first z key exceeds its
+span threshold, the rightmost largest adjacent gap becomes a new segment
+boundary. The scan and refinement repeat until no span is too large.
+This is the grouping rule of the measured rigid-water prototype,
+composed here from the existing scan and integer atomic primitives.
+
+Flags only accumulate. Every refinement adds a previously absent boundary
+strictly inside a segment; group spans of one are zero. Thus a valid input
+converges in at most $N+1$ passes, including the empty input, without the
+prototype harness's eight-pass cap. Stable segment IDs are materialized
+before refinement, so no thread recovers an ID from flags another thread
+may be changing. The final scan gives each segment its group offset.
+Class order and all fixed-ID ties are retained; the helper does not
+publish or transfer ownership of a retained class's order or maps.
+
+The caller supplies nonnegative integer gap/span thresholds and separate
+scratch buffers. Their physical extent is based on $M=\max(N,1)$, with
+the dummy flag/count initialized to zero for an empty input, so the
+shared scan never receives empty storage. Control readback occurs only
+during a cold plan. The two classes' counts and the number of passes are
+host results; the stable IDs and offsets remain on the device. The
+standalone integer oracle covers empty input, class boundaries even when
+column keys coincide, strict gap equality, rightmost ties, an eleven-pass
+cascade and more than one scan block. Native integration is in progress.
+
 ## 5. Reductions by their algebra
 
 ### 5.1 What is stated
