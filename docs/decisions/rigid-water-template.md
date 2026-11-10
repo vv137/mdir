@@ -682,10 +682,7 @@ energy-only bodies; physical GPU validation remains outstanding.
 The scheduler prepares local O–H offsets once for the first unit, and
 once per loaded partner before its 16-turn rotation. A four-site model
 also prepares the formed-site offset there and rotates it with the
-partner. The scheduler adds the image shift to the partner anchor once
-before the rotations and carries that rounded f32 anchor; local offsets
-stay unshifted. Each pair keeps the same anchor addition and subtraction
-order, while three scalar shift shuffles are removed. Exact typed `alpha*(H1+H2)` source expressions bind to those
+partner. Exact typed `alpha*(H1+H2)` source expressions bind to those
 cached offsets; no alternate placement or force formula is introduced.
 Three-site models emit no formed-site products. Structural checks verify
 the products lie outside the rotation. An independent $\alpha=0.75$

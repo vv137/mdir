@@ -326,15 +326,12 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                                                 unit.hasSite, unit.alpha);
         unsigned frameSize = secondFrame.size();
         Value mask = arith::SelectOp::create(batch, loc, has, partner.mask, word(batch, loc, 0));
-        // Round the image-shifted anchor once; local offsets stay unshifted.
-        secondFrame[0] = arith::AddFOp::create(batch, loc,
-            secondFrame[0], partner.shift);
-        unsigned maskAt = frameSize + partner.parameters.size();
-        unsigned fjAt = maskAt + 1, fiAt = fjAt + fj;
+        unsigned shiftAt = frameSize + partner.parameters.size();
+        unsigned maskAt = shiftAt + 1, fjAt = maskAt + 1, fiAt = fjAt + fj;
         unsigned sumsAt = fiAt + fi;
         SmallVector<Value> carried(secondFrame.begin(), secondFrame.end());
         llvm::append_range(carried, partner.parameters);
-        carried.push_back(mask);
+        carried.append({partner.shift, mask});
         for (unsigned i = 0; i != fj; ++i) carried.push_back(createZero(batch, loc, forceType));
         llvm::append_range(carried, own);
         auto turns = scf::ForOp::create(batch, loc, word(batch, loc, 0),
@@ -347,8 +344,10 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
               paired = arith::AndIOp::create(turn, loc, paired, unit.firstValid);
               auto contribution = scf::IfOp::create(turn, loc, paired,
                   [&](OpBuilder &body, Location) {
+                    Value shiftedAnchor = arith::AddFOp::create(body, loc,
+                        state[0], state[shiftAt]);
                     SmallVector<Value> coordinates{arith::SubFOp::create(
-                        body, loc, firstFrame[0], state[0])};
+                        body, loc, firstFrame[0], shiftedAnchor)};
                     SmallVector<Value> sites;
                     if (ni == 3) {
                       coordinates.append({firstFrame[1], firstFrame[2]});
