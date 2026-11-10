@@ -3,7 +3,7 @@
 The profile map says, for each parallel region of a compiled program, what
 the region computes: the op of the lowering it comes from, the set it runs
 over, the potentials and terms its kernel holds, and the precision of its
-arithmetic (D[profile-map], #840). The compiler writes it, so a profile is
+arithmetic (D398, #840). The compiler writes it, so a profile is
 read without guessing from the code of a region. This document covers the
 host (the CPU target); the kernels of a device are to take the same records
 once their lowering does (#840, after #795).

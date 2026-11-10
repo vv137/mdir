@@ -5,7 +5,7 @@
 
 DIR is the SAMPLER_OUT of a run. Each parallel region of the program
 (mdir_run..omp_par.N, mdrt.pme_spread_..omp_par) is given a part from the
-profile map of the program (D[profile-map], docs/profile-map.md), which
+profile map of the program (D398, docs/profile-map.md), which
 the compiler writes: with --map, the map of the run (`[output]
 profile_map`); with --program, the control file of the run is emitted
 (`$MDIR emit CONTROL --stage=pipeline --profile-map=FILE`), whose compiled

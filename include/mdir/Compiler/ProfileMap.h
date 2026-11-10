@@ -1,4 +1,4 @@
-// The profile map of a lowered program (D[profile-map], #840): for each
+// The profile map of a lowered program (D398, #840): for each
 // parallel region of the host, the function that the translation to LLVM IR
 // outlines it into (`mdir_run..omp_par.N`, `mdrt.pme_spread_..omp_par`) and
 // the record that its lowering gave it

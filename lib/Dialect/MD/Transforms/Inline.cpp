@@ -37,7 +37,7 @@ static StringRef getPotential(Operation *callee) {
 }
 
 /// Replaces `call` with the body of `callee`. The ops of the body of a
-/// potential are located in it, for the profile map (D[profile-map]).
+/// potential are located in it, for the profile map (D398).
 static LogicalResult inlineCall(Operation *call, FunctionOpInterface callee) {
   if (callee.isExternal())
     return call->emitOpError() << "cannot inline a declaration";

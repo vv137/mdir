@@ -249,7 +249,7 @@ static Preflight inspect(const Control &control) {
        "checkpoints"},
       {"manifest", control.manifestFile, "JSON Lines", 0,
        !control.manifestFile.empty(), false, false, -1, "events"},
-      // Written once, when the program is compiled (D[profile-map]).
+      // Written once, when the program is compiled (D398).
       {"profile_map", control.profileMapFile, "JSON", 0,
        !control.profileMapFile.empty(), false, false,
        1, "files"}};

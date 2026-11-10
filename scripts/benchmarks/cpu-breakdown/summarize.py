@@ -59,7 +59,7 @@ def gmx_parts(d):
     return out
 
 
-# The parts of prof.py, from the profile map (D[profile-map]).
+# The parts of prof.py, from the profile map (D398).
 MDIR_PARTS = ["pairs", "list builds", "PME spread", "PME FFT", "PME convolution", "PME gather",
               "excluded pairs", "bonded", "constraints", "particles", "other"]
 rows = {}

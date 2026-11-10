@@ -109,7 +109,7 @@ The `ms<T>` and `ds<T>` variants run once under the sampler built from
 `sampler.c` (`SAMPLER`), and `prof.py DIR --program CONTROL` attributes the
 samples to the parallel regions of the program; it needs `MDIR`. Each
 region's part comes from the profile map that the compiler writes
-(D[profile-map], [profile-map.md](../../../docs/profile-map.md)):
+(D398, [profile-map.md](../../../docs/profile-map.md)):
 `--program` emits it (`mdir emit --profile-map`), and `--map` reads the map
 that a run wrote (`[output] profile_map`). Build the sampler with
 `cc -O2 -shared -fPIC -o libsampler.so sampler.c -lpthread -ldl -lrt`.

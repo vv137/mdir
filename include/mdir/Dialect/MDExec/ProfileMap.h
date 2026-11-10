@@ -1,4 +1,4 @@
-// The profile map (D[profile-map], #840): what each parallel region of the
+// The profile map (D398, #840): what each parallel region of the
 // host computes, recorded by the lowering that makes it, so that a profile
 // is read without guessing from the code of a region.
 //

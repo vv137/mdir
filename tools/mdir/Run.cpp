@@ -568,7 +568,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail(program.takeError());
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
-    // The profile map is of the lowered program (D[profile-map]).
+    // The profile map is of the lowered program (D398).
     if (options.profileMap.empty())
       return 0;
   }
@@ -659,7 +659,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                 controlFile + "` writes");
 
   // The profile map of the lowered program, which names the source of each
-  // parallel region of the host (D[profile-map]).
+  // parallel region of the host (D398).
   auto writeProfileMap = [&](const std::string &path) -> llvm::Error {
     auto map = compiler::getProfileMap(*module, *control);
     if (!map)

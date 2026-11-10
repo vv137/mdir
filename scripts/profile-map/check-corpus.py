@@ -4,7 +4,7 @@ profile map, over the corpus of the equivalence check?
 
   check-corpus.py MDIR [--only KIND...] [--precisions mixed,double] [-j N]
 
-The profile map (D[profile-map], docs/profile-map.md). The corpus is that of
+The profile map (D398, docs/profile-map.md). The corpus is that of
 scripts/builder-equivalence/check.py (its control files; the cases written
 in Python are left out). Each control file is a case for the CPU target on
 two threads, in each precision of --precisions: `mdir emit --stage=lowered

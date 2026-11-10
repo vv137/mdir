@@ -607,7 +607,7 @@ LogicalResult Lowering::addTemplates(Type real, bool centers) {
       continue;
     }
     op.remove();
-    // The loops of a template are named by its function (D[profile-map]).
+    // The loops of a template are named by its function (D398).
     profile::tagTemplate(&op);
     module.push_back(&op);
   }
@@ -676,7 +676,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       continue;
     }
     op.remove();
-    // The loops of a template are named by its function (D[profile-map]).
+    // The loops of a template are named by its function (D398).
     profile::tagTemplate(&op);
     module.push_back(&op);
   }
@@ -1593,7 +1593,7 @@ public:
   void runOnOperation() final {
     // Each op's record, read while the buffers still name their sets; the
     // loops that its lowering creates at its location inherit it
-    // (D[profile-map]).
+    // (D398).
     profile::tagOps(getOperation());
     if (failed(md_exec::eraseStorageSets(getOperation())))
       return signalPassFailure();

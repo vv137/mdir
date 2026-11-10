@@ -1,4 +1,4 @@
-// The records of the profile map (D[profile-map], #840); see
+// The records of the profile map (D398, #840); see
 // include/mdir/Dialect/MDExec/ProfileMap.h.
 
 #include "mdir/Dialect/MDExec/ProfileMap.h"

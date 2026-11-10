@@ -1,4 +1,4 @@
-// The profile map of a lowered program (D[profile-map], #840); see
+// The profile map of a lowered program (D398, #840); see
 // include/mdir/Compiler/ProfileMap.h and docs/profile-map.md.
 
 #include "mdir/Compiler/ProfileMap.h"

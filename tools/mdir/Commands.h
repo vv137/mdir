@@ -40,7 +40,7 @@ struct RunOptions {
   /// D215), not the program of the run (#568).
   bool segments = false;
   /// `mdir emit --profile-map=FILE`: the file that the profile map of the
-  /// lowered program is written to (D[profile-map]), or empty.
+  /// lowered program is written to (D398), or empty.
   std::string profileMap;
 };
 

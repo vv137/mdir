@@ -1,4 +1,4 @@
-# The profile map (D[profile-map], #840): every parallel region of the host
+# The profile map (D398, #840): every parallel region of the host
 # has an entry with its source, named as the translation to LLVM IR names
 # the function it is outlined into. The dipeptide of
 # test/Driver/Inputs/dipeptide has Lennard-Jones and Coulomb with PME and

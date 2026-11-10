@@ -617,7 +617,7 @@ strategy, not a measured speedup of the NVE runs below; the next pair-loop
 slice (#554) will measure its share and the full step together. The
 sampler attributes each parallel region of the host to a part (pairs,
 bonded terms, constraints, PME stages, list builds) by the profile map that
-the compiler writes with the program (D[profile-map]): each region's record
+the compiler writes with the program (D398): each region's record
 names the op of the lowering it comes from and the set it runs over, so the
 parts no longer rest on rules about the functions a region calls.
 
