@@ -543,7 +543,6 @@ void registerTestTemplateParticles();
 void registerTestTemplateWriter();
 void registerTestTemplatePrune();
 void registerTestTemplateFrames();
-void registerTestTemplateMaskStream();
 void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
   PassRegistration<TestTemplateCompaction>();
@@ -555,6 +554,5 @@ void registerTestTemplateScheduler() {
   registerTestTemplateWriter();
   registerTestTemplatePrune();
   registerTestTemplateFrames();
-  registerTestTemplateMaskStream();
 }
 }

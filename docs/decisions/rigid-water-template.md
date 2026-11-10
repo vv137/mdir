@@ -433,6 +433,16 @@ Both jobs exited zero: 36 successful native/main wall runs, 35 stationary accept
 
 ## Gates of the implementation
 
+The final-kernel short-range oracle gate covers all six measured systems,
+including both OPC water boxes. On the same exact frame, compare energy,
+forces and molecular virial with the independent f64 brute force; project
+force differences off the constraint-gradient span when comparing rules
+(A) and (B). Retain raw force diagnostics. The existing declared physical
+bounds remain unchanged; projection does not loosen energy or virial
+criteria. This additional gate runs with the final implementation gates,
+not as a prerequisite to the search diagnosis.
+
+
 The failure-only native checkpoint acquisition exposed an initialization contract error after the native
 spatial sort. Device tuple renumbering leaves an original-file host
 placeholder and registers the actual device members separately. Template
@@ -691,8 +701,8 @@ The isolated packing emitter adds the lattice shift to whole-molecule
 positions before narrowing, without loading a stored extra point. Its
 exact dyadic probe uses a large common translation that would erase local
 geometry if narrowed first. The warp scheduler rotates a partner's frame,
-parameters and force accumulator together through 16 half-warp
-turns; pair membership is consumed from a transposed local mask stream, then writes each partner once. It combines the two copies of each
+parameters, mask and force accumulator together through 16 half-warp
+turns, then writes each partner once. It combines the two copies of each
 first unit before writing. Its structural tests cover WW, SW, SS and
 energy-only bodies; physical GPU validation remains outstanding.
 
@@ -1310,9 +1320,6 @@ second kernel).
 Following the isolated anchor-cache experiment (discarded for no clear
 measured gain), the derivative-window constructor recognizes energy that
 depends on its site displacement only through the existing squared norm.
-The norm proof requires an accumulator-free reduction of the displacement
-squares in the same body; an accumulated reduction retains the general
-derivative and is not treated as a physical squared distance by D94.
 It differentiates that scalar expression and forms
 $\mathbf F=-2wU'(r^2)\mathbf d$. General differentiation is unchanged;
 unrecognized window expressions retain their existing derivative path.
@@ -1331,23 +1338,3 @@ Mixed pair arithmetic, site accumulators and the transpose are f32;
 energy and virial accumulators remain f64 and coverage/pruning geometry
 remains f64. Reassociation may change mixed bits; every existing physical
 bound is unchanged. Deterministic mode retains the general path.
-
-### Local mask stream
-
-Before each entry batch, four fixed XOR-shuffle stages transpose each
-half-warp's distributed 16-bit partner masks. The XOR offsets 1, 2, 4 and
-8 cannot cross the half-warp boundary. Bit reversal and a lane-dependent
-shift arrange the local stream in the existing previous-lane partner
-order. Each turn consumes its low bit and shifts locally; the mask no
-longer rotates with the partner. Frame, parameter, image and partner-force
-rotations retain their original order and ownership.
-
-The caller clears padded partner masks before every lane participates in
-the transpose. The receiving first unit's validity is applied when its
-bit is consumed. High input bits are ignored. Every operation of this
-change is i32 bit transport; floating-point arithmetic, covering/pruning,
-images, cutoffs, force convention and all physical bounds are unchanged.
-A direct-index integer oracle covers every single-bit basis in both
-half-warps, independent half patterns, random and high-bit-poison masks,
-and every padded batch length. The existing exact scheduler and physical
-fixtures remain required before isolated performance measurement.
