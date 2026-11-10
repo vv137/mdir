@@ -31,8 +31,6 @@ endif()
 if(MDIR_CUDA_FOUND)
   message(STATUS "CUDA toolkit: ${CUDAToolkit_TARGET_DIR}")
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
-  # Host geometry acquisition on the template extent failure branch.
-  target_link_libraries(mdrt_cuda PRIVATE m)
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
   # (D302).
