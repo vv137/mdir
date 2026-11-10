@@ -134,12 +134,10 @@ LogicalResult mdir::md::buildTemplateWindowDerivative(
     Value r2;
     for (Operation *user : displacement.getUsers())
       if (auto product = dyn_cast<arith::MulFOp>(user);
-          product && product.getLhs() == displacement && product.getRhs() == displacement &&
-          product->getBlock() == &block)
+          product && product.getLhs() == displacement && product.getRhs() == displacement)
         for (Operation *use : product.getResult().getUsers())
           if (auto norm = dyn_cast<vector::ReductionOp>(use);
-              norm && norm.getKind() == vector::CombiningKind::ADD &&
-              norm->getNumOperands() == 1 && norm->getBlock() == &block)
+              norm && norm.getKind() == vector::CombiningKind::ADD)
             r2 = norm.getResult();
     llvm::DenseMap<Value, bool> proved;
     std::function<bool(Value)> onlyRadial = [&](Value value) -> bool {

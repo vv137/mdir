@@ -1392,11 +1392,3 @@ boundary. This does not change general differentiation or the site,
 image, cutoff, coverage and pruning predicates. Pair and force arithmetic
 remain f32; energy and virial accumulation and covering geometry retain
 their declared f64 precision.
-
-`emitTemplateMaskStream` transposes each half-warp's sixteen 16-bit partner
-masks with four fixed XOR-shuffle stages and orders the resulting bits
-for the existing previous-lane rotation. It requires every lane to
-participate and padded partner masks to be zero. It defines only the low
-sixteen result bits. The caller applies receiving-unit validity, consumes
-one local bit per turn and retains all frame/parameter/force rotations.
-This is exact i32 transport; no physical arithmetic or predicate changes.
