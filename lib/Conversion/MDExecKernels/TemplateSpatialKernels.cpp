@@ -3,6 +3,7 @@
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/RaggedRows.h"
+#include "mdir/Conversion/SpatialFrameEmitter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -94,14 +95,8 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
   };
   launch(size, itemGrid, [&](OpBuilder &at, Value unit) {
     Value original = loadElement(at, loc, v.points, unit);
-    SmallVector<Value, 3> wrapped;
-    for (unsigned axis = 0; axis != 3; ++axis) {
-      Value component = vector::ExtractOp::create(at, loc, original, axis);
-      wrapped.push_back(arith::SubFOp::create(at, loc, component,
-          math::FloorOp::create(at, loc, component)));
-    }
     Value point = convertReal(at, loc,
-        vector::FromElementsOp::create(at, loc, original.getType(), wrapped), at.getF32Type());
+        emitSpatialReferenceFrame(at, loc, original).wrapped, at.getF32Type());
     auto bin = [&](unsigned axis, Value count) -> Value {
       Value component = vector::ExtractOp::create(at, loc, point, axis);
       Value scale = arith::UIToFPOp::create(at, loc, at.getF32Type(), word(at, count));

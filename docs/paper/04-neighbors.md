@@ -1225,6 +1225,12 @@ positions within the digit restores stability after the atomic scatter,
 so successive digits preserve both the lower keys and the fixed-ID ties.
 This changes the construction of the order, not the groups, covering
 predicate or physical pair expression.
+The query boxes and keys use the same wrapped fractional frame. Units in
+one fixed group may retain different whole-cell translations; disjoint
+query masks compensate those translations in the partner image before
+the original f64 covering test. A compact key group therefore does not
+acquire a whole-cell box merely because its stored references straddle
+the reference-frame seam.
 
 ![Which distances the structure tests](figures/rigid-water-members.png)
 

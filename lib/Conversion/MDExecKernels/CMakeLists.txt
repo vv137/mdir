@@ -7,6 +7,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   ReductionEmitter.cpp
   ScatterEmitter.cpp
   SinglePassScan.cpp
+  SpatialFrameEmitter.cpp
   TemplateWindowKernels.cpp
   TemplateWorkKernels.cpp
   TemplateBuildKernels.cpp

@@ -20,6 +20,7 @@ generate.add_argument('reference', type=pathlib.Path)
 generate.add_argument('--triclinic', action='store_true')
 generate.add_argument('--reframed', action='store_true')
 generate.add_argument('--refresh', action='store_true')
+generate.add_argument('--seam', action='store_true')
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -130,6 +131,12 @@ points[3] = points[2][:]
 points[5] = points[2][:]
 points[6][0] = 1 - 2 ** -30
 points[22][1] = points[22][2] = 1 - 2 ** -30
+if args.seam:
+    # Wrapped keys are close to 1/2, while nearby centered references lie
+    # on opposite sides of the lattice-frame seam in all three axes.
+    # Eight distinct first-unit frames must retain their own image masks.
+    points = [[(.5 + ((i * (axis + 3)) % 7 - 3) / 128)
+               - ((i >> axis) & 1) for axis in range(3)] for i in range(size)]
 phases = []
 water_places = ((waters + 15) // 16) * 16
 order = [-1] * (water_places + ((atoms + 15) // 16) * 16)

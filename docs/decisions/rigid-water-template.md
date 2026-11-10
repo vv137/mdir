@@ -772,6 +772,17 @@ groups' hybrid references. An independent lexicographic oracle checks
 repeated-point ties and coordinates that round to the final bin edge.
 The larger 516-unit variant also crosses launch blocks and exercises a
 different digit decomposition with many equal full keys.
+The search forms boxes in the wrapped key frame through the shared
+`SpatialFrameEmitter.h` helpers. A fixed sixteen-unit group queries each
+of its distinct lattice-frame subsets once, retaining disjoint masks.
+Query images add the first unit's lattice frame before the original f64
+subtraction and compensate the partner's frame in the stored image code.
+This tightens boxes at the reference-frame seam without changing the pair
+predicate, groups or image coverage. All 32 lanes reach each masked box
+reduction; a queried subset always contains its representative. The
+all-images oracle also covers groups spanning eight distinct frames in
+orthorhombic and triclinic cells. The ordinary group builder is unchanged;
+its eventual use of these shared helpers belongs to #817.
 The native cold refresh owns these bins and their combined search.
 Its column dimensions use the population of water anchors plus solute
 atoms and the current cell volume: the target edge is
