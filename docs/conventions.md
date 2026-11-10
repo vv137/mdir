@@ -64,12 +64,18 @@ Native and control-expression results change bitwise wherever the revised
 coefficients enter, deliberately before 1.0.0. The native Coulomb input
 changes by about −6.75e-10 relative; the control-expression input changes
 by about −6.78e-10. Thermal, pressure and density inputs also derive anew;
-no compatibility constants are retained. The coupling lifter reads the
-same bits from the compiler-generated `scripts/mdir_physical_constants.py`;
+no compatibility constants are retained. Python reads the same bits from
+the compiler-generated `scripts/mdir_physical_constants.py`;
 `scripts/generate-physical-constants.py --check` verifies regeneration
-from the header. CMake copies this module into `mdir._physical_constants`.
-Remaining Python consumers and the duplicate-definition check follow in
-part 2 of #805.
+from the header. CMake copies this module into `mdir._physical_constants`,
+from which `mdir.KB` is taken. The scripts of the repository, the
+references of the tests and the validation included, import the module
+from `scripts/` by their own path (`sys.path`, relative to `__file__`)
+and write no constant of their own; one that compares with another engine
+names that engine's constant, such as Amber's below, next to its source.
+`scripts/check-physical-constants.py`, one of the checks before a push
+(docs/workflow.md), fails on any other file that writes one of these
+values.
 
 ### Units and symbols in printed text
 

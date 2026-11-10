@@ -2,9 +2,10 @@
 # The checks of the `checks` job of CI (.github/workflows/ci.yml, which calls
 # this script), run in the worktree that holds the script: the links, the
 # decision numbers and their table, the changelog fragments, the list of the
-# expected unsupported tests, the release path (#764), and the control
-# characters in the text files, tabs included in Markdown (#768), and the
-# non-ASCII characters in the strings of the mdir tool (#812). No build,
+# expected unsupported tests, the release path (#764), the control
+# characters in the text files, tabs included in Markdown (#768), the
+# non-ASCII characters in the strings of the mdir tool (#812), and the
+# physical constants, which no file but their header writes (#805). No build,
 # no network, no GPU; seconds. All checks run even when one fails; one line
 # per check; the exit status is nonzero if any failed. The pre-push hook
 # (scripts/hooks/pre-push) runs it before every push.
@@ -66,6 +67,7 @@ run "The list of the expected unsupported tests" python3 test/mdir_lit.py
 run "The release path" scripts/release/check-path.sh
 run "Control characters in the text files" control_chars
 run "ASCII in the strings of the mdir tool" ascii_strings
+run "Physical constants defined once" python3 scripts/check-physical-constants.py
 
 if [ "$failed" -ne 0 ]; then
   echo "$failed check(s) failed"
