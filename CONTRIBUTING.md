@@ -50,6 +50,12 @@ per clone, with `git config core.hooksPath scripts/hooks`; `git push
   round to either one when the positions are converted for the kernels,
   and the forces of the two runs then differ by about $2k$ times its ulp:
   the test fails now and then, whatever the code it tests (#427, #428).
+- **The shared primitives** for device code and for the kernels that
+  search neighbors, sort, scan, compact, or reduce: the part's row of
+  [docs/primitives-map.md](docs/primitives-map.md) and the primitive's
+  preconditions in [docs/device-primitives.md](docs/device-primitives.md#11-preconditions-at-a-glance),
+  respected by the caller; a new hand-written copy states its reason in
+  the PR ([docs/workflow.md](docs/workflow.md#a-piece-of-work)).
 - **A switch and a comparison** for an optimization: it can be turned off,
   and a test compares both ways, bitwise where the sums have a fixed order.
 - **A decision**, a file `docs/decisions/<label>.md` that [docs/decisions.md](docs/decisions.md) lists (#602), for a choice

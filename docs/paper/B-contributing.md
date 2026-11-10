@@ -82,6 +82,14 @@ inventory and bounded typed interfaces.
 `test/Dialect/MDExec/Transforms`, and a place in the pipeline that
 `tools/mdir/Run.cpp` builds (`mdir emit --stage=pipeline` prints it).
 
+**A new kernel, or device code in a lowering or a template,** starts from
+the part's row of [primitives-map.md](../primitives-map.md) and calls the
+shared primitives of [device-primitives.md](../device-primitives.md)
+within their preconditions (its Section 1.1 gathers them, with where each
+is checked); a new hand-written copy where a shared primitive exists
+states its reason in the PR, and the row is updated with the change
+([workflow.md](../workflow.md#a-piece-of-work)).
+
 **A new optimization** has a switch, a test that compares the results with
 and without it, and, if it reorders or overlaps work, an argument in its
 decision (Section 12).
