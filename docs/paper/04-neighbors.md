@@ -1231,6 +1231,11 @@ query masks compensate those translations in the partner image before
 the original f64 covering test. A compact key group therefore does not
 acquire a whole-cell box merely because its stored references straddle
 the reference-frame seam.
+A conservative Cartesian bounding box of each partner group then rejects
+impossible candidates before their member-pair predicates. Its distance
+lower bound admits roundoff uncertainty; the original f64 covering test
+still decides membership. Thus the prefilter removes work without
+changing the interaction, the cutoff or its image coverage.
 
 ![Which distances the structure tests](figures/rigid-water-members.png)
 

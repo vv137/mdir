@@ -21,6 +21,7 @@ generate.add_argument('--triclinic', action='store_true')
 generate.add_argument('--reframed', action='store_true')
 generate.add_argument('--refresh', action='store_true')
 generate.add_argument('--seam', action='store_true')
+generate.add_argument('--boundary', action='store_true')
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -40,7 +41,7 @@ def sorted_units(points, waters):
     return sorted(range(len(points)), key=key)
 
 
-def expected_pairs(points, waters, atoms, tilted):
+def expected_pairs(points, waters, atoms, tilted, allow_boundary=False):
     exclusions = {(0, 1), (2, 3), (0, 16)}
     pairs = set()
     reach = (135 / 128, 117 / 128, 99 / 128)
@@ -63,7 +64,8 @@ def expected_pairs(points, waters, atoms, tilted):
                 minimum_gap = min(minimum_gap, abs(r2 - reach[tag] ** 2))
                 if r2 <= reach[tag] ** 2:
                     pairs.add((tag, i, j, *image))
-    assert minimum_gap > 1e-8, minimum_gap
+    if not allow_boundary:
+        assert minimum_gap > 1e-8, minimum_gap
     return sorted(pairs), minimum_gap
 
 
@@ -137,6 +139,17 @@ if args.seam:
     # Eight distinct first-unit frames must retain their own image masks.
     points = [[(.5 + ((i * (axis + 3)) % 7 - 3) / 128)
                - ((i >> axis) & 1) for axis in range(3)] for i in range(size)]
+if args.boundary:
+    # One-dimensional rays keep the independent f64 arithmetic exact at
+    # each WW/SW/SS cutoff. Neighboring representable coordinates exercise
+    # both sides without a tolerance or a changed membership criterion.
+    points = [[((i * 7) % 32) / 32, 0., 0.] for i in range(size)]
+    points[0][0] = points[waters][0] = 0.
+    for begin, radius in [(1, 135 / 256), (waters + 4, 99 / 256),
+                          (waters + 7, 117 / 256)]:
+        points[begin][0] = radius
+        points[begin + 1][0] = math.nextafter(radius, 0.)
+        points[begin + 2][0] = math.nextafter(radius, math.inf)
 phases = []
 water_places = ((waters + 15) // 16) * 16
 order = [-1] * (water_places + ((atoms + 15) // 16) * 16)
@@ -156,7 +169,7 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
             order[start:start + padded] = [-1] * padded
             offset = 0 if kind == 0 else waters
             order[start:start + count] = sorted_ids[offset:offset + count]
-    pairs, gap = expected_pairs(points, waters, atoms, args.triclinic)
+    pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
     phases.append({'active': active, 'points': [row[:] for row in points], 'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
 if args.reframed:
     for i, point in enumerate(points):
@@ -169,7 +182,7 @@ if args.reframed:
             ids = sorted_units(points, waters)
             order[:waters] = ids[:waters]
             order[water_places:water_places + atoms] = ids[waters:]
-        pairs, gap = expected_pairs(points, waters, atoms, args.triclinic)
+        pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
         phases.append({'active': active, 'points': [row[:] for row in points],
                        'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
 cell = [2., 2., 2., 1., .5, 1.] if args.triclinic else [2., 2., 2.]

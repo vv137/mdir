@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 5
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 6
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -30,7 +30,10 @@ enum MdrtTemplateFrameSlot {
   TEMPLATE_FRAME_OUTER_CELLS = 4, TEMPLATE_FRAME_INNER_CELLS = 5,
   /* Two rows of actual build reaches: outer WW/SW/SS, then inner. This
    * retains an initial-input extent widening in the validity theorem. */
-  TEMPLATE_FRAME_REACHES = 6, TEMPLATE_FRAME_SLOTS = 7
+  TEMPLATE_FRAME_REACHES = 6,
+  /* Two rows per possible group: Cartesian min/max of wrapped references.
+   * A capacity of one group per unit also admits later column/gap cuts. */
+  TEMPLATE_FRAME_GROUP_BOXES = 7, TEMPLATE_FRAME_SLOTS = 8
 };
 enum MdrtTemplateLayoutSlot {
   TEMPLATE_LAYOUT_WATERS = 0, TEMPLATE_LAYOUT_ATOMS = 1,

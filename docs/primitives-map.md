@@ -325,6 +325,8 @@ Every other primitive is written at its site.
 | Template spatial order (D[rigid-water-template]) | histogram, scan, cursor scatter, stable rank and gather over joint column/z digits | class order, fixed-ID ties and inactive maps preserved | balanced digits bounded by the existing bin arena; four temporary i32 words per unit borrow staging storage | shared: `CompactionEmitter.h` scan, scatter and rank; composition in `TemplateSpatialKernels.cpp` | broader grid plan #817 |
 | Spatial reference frame and query box (D[rigid-water-template]) | componentwise map by floor, masked warp minimum/maximum, ballot over frame membership | finite f64 fractional points; all lanes reach the reduction; each queried subset is nonempty; explicit images compensate the first and partner frames | template query boxes use the wrapped key frame while the original f64 pair predicate uses original references; disjoint frame masks avoid repeated pair/images | shared: `SpatialFrameEmitter.h`, composing `ReductionEmitter.h`; ordinary callers are not migrated | group-cut plan and other spatial callers #817 |
 
+| Conservative template group prefilter (D[rigid-water-template]) | wrapped-reference map, masked Cartesian min/max reduction, lower bound between boxes | f64 boxes; conservative roundoff envelope and indeterminate cases admitted; final pair predicate unchanged; convergent broadcasts | one auxiliary box per group, shared by WW/SW/SS searches, independent of pair growth | shared: `emitSpatialWarpBox` and `emitSpatialBoxesWithinReach` in `SpatialFrameEmitter.h` | other spatial callers #817 |
+
 ### 3.2 Short range
 
 | Part | Primitives | Properties | Strategies today, and measurements | State | Gaps |

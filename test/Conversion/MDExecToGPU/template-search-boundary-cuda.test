@@ -1,0 +1,8 @@
+# REQUIRES: cuda-toolkit
+# RUN: %python %S/../../Integration/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --boundary --triclinic
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | FileCheck %s
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy
+# CHECK: llvm.func @search_seed
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK-NOT: gpu.memcpy

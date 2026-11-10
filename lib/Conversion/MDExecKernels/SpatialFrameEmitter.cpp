@@ -34,3 +34,27 @@ SpatialBoundingBox mdir::kernels::emitSpatialWarpBox(
   Value maximum = emitWarpReduce(b, loc, maxInput, Combiner::Max);
   return {minimum, maximum};
 }
+
+Value mdir::kernels::emitSpatialBoxesWithinReach(OpBuilder &b, Location loc,
+    SpatialBoundingBox first, SpatialBoundingBox second, Value shift,
+    Value reach, Value roundoff) {
+  auto real = [&](double value) { return createReal(b, loc, b.getF64Type(), value); };
+  auto broadcast = [&](Value value) {
+    return vector::BroadcastOp::create(b, loc, first.minimum.getType(), value);
+  };
+  Value low = arith::SubFOp::create(b, loc, first.minimum,
+      arith::AddFOp::create(b, loc, second.maximum, shift));
+  Value high = arith::SubFOp::create(b, loc,
+      arith::AddFOp::create(b, loc, second.minimum, shift), first.maximum);
+  Value gap = arith::MaximumFOp::create(b, loc, low, high);
+  gap = arith::MaximumFOp::create(b, loc,
+      arith::SubFOp::create(b, loc, gap, broadcast(roundoff)), broadcast(real(0)));
+  Value square = arith::MulFOp::create(b, loc, gap, gap);
+  Value lower = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD, square);
+  // Protect the final lower-bound square/sum as well as coordinate errors.
+  Value enlarged = arith::MulFOp::create(b, loc, reach, real(1 + 0x1p-46));
+  Value upper = arith::MulFOp::create(b, loc, enlarged, enlarged);
+  // Overflow/indeterminate box arithmetic must fall through to the exact
+  // pair test, rather than becoming a false rejection by the prefilter.
+  return arith::CmpFOp::create(b, loc, arith::CmpFPredicate::ULE, lower, upper);
+}

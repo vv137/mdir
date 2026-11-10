@@ -71,6 +71,10 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     };
     TemplateSearchBuffers v;
     v.spatial.points = entry->getArgument(1);
+    auto boxes = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
+        MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    v.groupBoxes = call("mdrtTemplatePairsFrameState",
+        ValueRange{handle, integer(TEMPLATE_FRAME_GROUP_BOXES)}, boxes, true);
     v.spatial.places = view(TEMPLATE_LAYOUT_SPATIAL_PLACES);
     // Retain the fixture's observable inverse-map buffer, while testing
     // the same arena-owned workspace used by the production refresh.

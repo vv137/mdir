@@ -110,6 +110,55 @@ static Value bound(OpBuilder &b, Location loc, Value begin, Value end, Value wan
 }
 } // namespace
 
+// Boxes are auxiliary build state, never a new physical reference epoch.
+// The global padded place identifies the same group in WW, SW and SS.
+static void buildGroupBoxes(OpBuilder &b, Location loc,
+                            const TemplateSearchBuffers &v) {
+  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
+  Value one = ix(b, 1), block = ix(b, 256);
+  auto groups = [&](Value n) -> Value {
+    return arith::DivUIOp::create(b, loc,
+        arith::AddIOp::create(b, loc, n, ix(b, 15)), ix(b, 16));
+  };
+  Value count = arith::AddIOp::create(b, loc, groups(v.spatial.waters), groups(v.spatial.atoms));
+  Value grid = arith::MaxUIOp::create(b, loc, one,
+      arith::DivUIOp::create(b, loc,
+          arith::AddIOp::create(b, loc, count, ix(b, 7)), ix(b, 8)));
+  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
+  OpBuilder at = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value thread = arith::AddIOp::create(at, loc,
+      arith::MulIOp::create(at, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
+  Value group = arith::DivUIOp::create(at, loc, thread, ix(at, 32));
+  Value inside = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, group, count);
+  scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
+    Value lane = arith::RemUIOp::create(in, loc, thread, ix(in, 32));
+    Value place = arith::AddIOp::create(in, loc,
+        arith::MulIOp::create(in, loc, group, ix(in, 16)),
+        arith::AndIOp::create(in, loc, lane, ix(in, 15)));
+    Value unit = load(in, loc, v.spatial.order, place);
+    Value valid = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::sge, unit, word(in, loc, 0));
+    Value safe = arith::SelectOp::create(in, loc, valid, unit, word(in, loc, 0));
+    Value point = loadElement(in, loc, v.spatial.points, asIndex(in, loc, safe));
+    auto frame = emitSpatialReferenceFrame(in, loc, point);
+    auto box = emitSpatialWarpBox(in, loc,
+        emitLatticeShift(in, loc, frame.wrapped, v.cell), valid);
+    Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, lane, ix(in, 0));
+    scf::IfOp::create(in, loc, leader, [&](OpBuilder &store, Location) {
+      for (int64_t side = 0; side != 2; ++side) {
+        Value row = arith::AddIOp::create(store, loc,
+            arith::MulIOp::create(store, loc, group, ix(store, 2)), ix(store, side));
+        for (int64_t axis = 0; axis != 3; ++axis)
+          memref::StoreOp::create(store, loc,
+              vector::ExtractOp::create(store, loc, side ? box.maximum : box.minimum, axis),
+              v.groupBoxes, ValueRange{row, ix(store, axis)});
+      }
+      scf::YieldOp::create(store, loc);
+    });
+    scf::YieldOp::create(in, loc);
+  });
+  gpu::TerminatorOp::create(at, loc);
+}
+
 void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                             const TemplateSearchBuffers &v) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
@@ -118,6 +167,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     return arith::ConstantOp::create(at, loc, at.getBoolAttr(value));
   };
   Value one = ix(b, 1), block = ix(b, 256);
+  buildGroupBoxes(b, loc, v);
   auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
   {
     OpBuilder at = OpBuilder::atBlockEnd(&clear.getBody().front());
@@ -232,6 +282,14 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 [&](OpBuilder &search, Location) {
                 auto box = emitSpatialWarpBox(search, loc, firstFrame.wrapped, member);
                 Value minimum = box.minimum, maximum = box.maximum;
+                auto cartesianBox = emitSpatialWarpBox(search, loc,
+                    emitLatticeShift(search, loc, firstFrame.wrapped, v.cell), member);
+                Value cellNorm = real(search, 0);
+                for (int64_t axis = 0; axis != (isTriclinic(v.cell) ? 6 : 3); ++axis)
+                  cellNorm = arith::AddFOp::create(search, loc, cellNorm,
+                      math::AbsFOp::create(search, loc,
+                          vector::ExtractOp::create(search, loc, v.cell, axis)));
+
                 Value reach;
                 if (v.reaches) {
                   Value wwReach = vector::ExtractOp::create(search, loc, v.reaches, 0);
@@ -326,6 +384,27 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                   Value lastCandidate = bound(zloop, loc, firstCandidate, end,
                                       zKey(component(zloop, high, 2), true), true, keyAt);
                                   Value queryImages[] = {sx, sy, sz};
+                                  SmallVector<Value, 3> queryComponents;
+                                  Value magnitude = real(zloop, 4);
+                                  for (int64_t axis = 0; axis != 3; ++axis) {
+                                    Value query = arith::SIToFPOp::create(zloop, loc,
+                                        zloop.getF64Type(), queryImages[axis]);
+                                    queryComponents.push_back(query);
+                                    magnitude = arith::AddFOp::create(zloop, loc, magnitude,
+                                        arith::AddFOp::create(zloop, loc,
+                                            math::AbsFOp::create(zloop, loc, query),
+                                            math::AbsFOp::create(zloop, loc,
+                                                vector::ExtractOp::create(zloop, loc, frame, axis))));
+                                  }
+                                  Value queryShift = emitLatticeShift(zloop, loc,
+                                      vector::FromElementsOp::create(zloop, loc, pointType, queryComponents), v.cell);
+                                  // 64 eps times the cell 1-norm and frame/image scale
+                                  // covers the <32 rounded operations in box conversion,
+                                  // image addition and the original displacement. Only
+                                  // the prefilter widens; the exact pair test below does not.
+                                  Value boxRoundoff = arith::MulFOp::create(zloop, loc,
+                                      arith::MulFOp::create(zloop, loc, cellNorm, magnitude), real(zloop, 0x1p-46));
+
                                   SmallVector<Value, 3> imageComponents, imageIntegers;
                                   for (int64_t axis = 0; axis != 3; ++axis) {
                                     Value absolute = arith::AddIOp::create(zloop, loc, queryImages[axis],
@@ -346,6 +425,25 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                         Value partnerIndex = asIndex(batch, loc, partner);
                                         Value partnerPlace = asIndex(batch, loc, load(batch, loc, v.spatial.places, partnerIndex));
                                         Value partnerPoint = loadElement(batch, loc, v.spatial.points, partnerIndex);
+                                        Value partnerGroup = arith::DivUIOp::create(batch, loc,
+                                            partnerPlace, ix(batch, 16));
+                                        SmallVector<Value, 3> boxSides[2];
+                                        for (int64_t side = 0; side != 2; ++side) {
+                                          Value row = arith::AddIOp::create(batch, loc,
+                                              arith::MulIOp::create(batch, loc, partnerGroup, ix(batch, 2)), ix(batch, side));
+                                          for (int64_t axis = 0; axis != 3; ++axis)
+                                            boxSides[side].push_back(memref::LoadOp::create(batch, loc,
+                                                v.groupBoxes, ValueRange{row, ix(batch, axis)}));
+                                        }
+                                        SpatialBoundingBox partnerBox{
+                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[0]),
+                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[1])};
+                                        Value boxMayReach = emitSpatialBoxesWithinReach(batch, loc,
+                                            cartesianBox, partnerBox, queryShift, reach, boxRoundoff);
+                                        has = arith::AndIOp::create(batch, loc, has, boxMayReach);
+                                        // Every lane still reaches the broadcasts below.
+                                        // Do not put their shuffles in a divergent box branch.
+
                                         SmallVector<Value, 3> wrappedPartner;
                                         Value code = integer(batch, loc, 0);
                                         Value imageFits = boolean(batch, true);

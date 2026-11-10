@@ -783,6 +783,14 @@ reduction; a queried subset always contains its representative. The
 all-images oracle also covers groups spanning eight distinct frames in
 orthorhombic and triclinic cells. The ordinary group builder is unchanged;
 its eventual use of these shared helpers belongs to #817.
+Before the candidate masks, a shared conservative Cartesian box test
+rejects partner groups whose wrapped-reference boxes cannot reach the
+first-frame subset. Boxes and their distance bounds are f64; an auxiliary
+frame-state slot keeps them separate from pair-arena growth. A conservative
+roundoff allowance admits uncertain cases before the unchanged exact f64
+pair test, as derived in device-primitives Section 4.11. Every lane still
+reaches the first-unit warp broadcasts. The template runtime ABI is 6;
+ordinary builders and physical bounds are unchanged.
 The native cold refresh owns these bins and their combined search.
 Its column dimensions use the population of water anchors plus solute
 atoms and the current cell volume: the target edge is

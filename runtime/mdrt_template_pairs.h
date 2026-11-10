@@ -113,7 +113,8 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
   for (int slot = 0; slot != TEMPLATE_FRAME_SLOTS; ++slot) {
     pairs->frameOffsets[slot] = frameWords;
     pairs->frameRows[slot] = slot < TEMPLATE_FRAME_OUTER_CELLS ? units
-        : slot == TEMPLATE_FRAME_REACHES ? 2 : 6;
+        : slot == TEMPLATE_FRAME_REACHES ? 2
+        : slot == TEMPLATE_FRAME_GROUP_BOXES ? 2 * units : 6;
     frameWords += 3 * pairs->frameRows[slot];
   }
   allocationTag = "template pairs: reference epochs and retained packing cells";
