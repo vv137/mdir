@@ -5,6 +5,8 @@
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -25,13 +27,12 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
   auto active = scf::IfOp::create(b, loc, real, [&](OpBuilder &at, Location) {
     Value extentBad = no;
     SmallVector<Value, 3> positions;
+    std::array<Value, 3> whole;
     for (const auto &result : results) positions.push_back(result.outputs[v.positionOutput]);
     if (water) {
-      Value zero = createZero(at, loc, positions[0].getType());
-      auto whole = emitRetainedTemplateFrame(at, loc, positions, v.cell, v.inverse,
-                                               zero, at.getF32Type());
-      Value h1 = arith::SubFOp::create(at, loc, whole.whole[1], whole.whole[0]);
-      Value h2 = arith::SubFOp::create(at, loc, whole.whole[2], whole.whole[0]);
+      whole = emitWholeTemplateFrame(at, loc, positions, v.cell, v.inverse);
+      Value h1 = arith::SubFOp::create(at, loc, whole[1], whole[0]);
+      Value h2 = arith::SubFOp::create(at, loc, whole[2], whole[0]);
       Value squared = mdir::md::emitTemplateExtentSquared(at, loc, v.alpha, v.hasSite, h1, h2);
       Value bound = createReal(at, loc, at.getF64Type(), v.extent * v.extent);
       extentBad = arith::AndIOp::create(at, loc, v.constrained,
@@ -40,15 +41,14 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
     auto cached = scf::IfOp::create(at, loc, v.built, [&](OpBuilder &in, Location) {
       Value index = arith::IndexCastOp::create(in, loc, in.getIndexType(), unit);
       Value cells = loadElement(in, loc, v.packingCells, index);
-      Value framed = arith::AddFOp::create(in, loc, positions[0],
-          emitLatticeShift(in, loc, cells, v.cell));
+      Value shift = emitLatticeShift(in, loc, cells, v.cell);
+      Value framed = arith::AddFOp::create(in, loc, positions[0], shift);
       Value row;
       if (water) {
         row = arith::MulIOp::create(in, loc, index, ix(in, 3));
-        auto frame = emitRetainedTemplateFrame(in, loc, positions, v.cell, v.inverse,
-                                                cells, in.getF32Type());
+        auto packed = emitPackTemplateFrame(in, loc, whole, shift, in.getF32Type());
         for (int site = 0; site != 3; ++site)
-          storeElement(in, loc, frame.packed[site], v.frames,
+          storeElement(in, loc, packed[site], v.frames,
               arith::AddIOp::create(in, loc, row, ix(in, site)));
       } else {
         row = arith::AddIOp::create(in, loc, index,
@@ -58,10 +58,17 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
       Value fraction = emitTemplateFractional(in, loc, framed, v.cell, v.inverse);
       storeElement(in, loc, fraction, v.currentPoints, index);
       unsigned group = water ? 0 : 1;
+      auto norm1 = [&](Value value) -> Value {
+        return vector::ReductionOp::create(in, loc, vector::CombiningKind::ADD,
+            math::AbsFOp::create(in, loc, value));
+      };
+      Value anchorL1 = norm1(framed), cellL1 = norm1(v.cell);
       Value outer = emitTemplateMotionExceeded(in, loc, framed,
-          loadElement(in, loc, v.outerReference, index), v.cell, v.outerLimits[group]);
+          loadElement(in, loc, v.outerReference, index), v.cell, v.outerLimits[group],
+          anchorL1, cellL1);
       Value inner = emitTemplateMotionExceeded(in, loc, framed,
-          loadElement(in, loc, v.innerReference, index), v.cell, v.innerLimits[group]);
+          loadElement(in, loc, v.innerReference, index), v.cell, v.innerLimits[group],
+          anchorL1, cellL1);
       scf::YieldOp::create(in, loc, ValueRange{outer, inner});
     }, [&](OpBuilder &in, Location) {
       scf::YieldOp::create(in, loc, ValueRange{no, no});

@@ -1,0 +1,16 @@
+# Proved complete groups fuse; a writer with no ownership proof stays on
+# its existing standalone path. Lowering stops at gpu.launch (no device).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../../Integration/Inputs/template_integration_publication.py %t/marked.mlir %t/marked.json --across
+# RUN: mdir-opt %t/marked.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=MARKED
+# RUN: %python %S/../../Integration/Inputs/template_integration_publication.py %t/plain.mlir %t/plain.json --no-proof
+# RUN: mdir-opt %t/plain.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=FALLBACK
+# MARKED: gpu.launch {{.*}} function(@evaluate_particle_for_integration1_template_publication_{{[0-9]+}})
+# MARKED: gpu.shuffle idx
+# MARKED: gpu.launch {{.*}} function(@evaluate_particle_for_integration1_template_publication_{{[0-9]+}})
+# MARKED: call @mdrtFlagStart
+# MARKED: call @mdrtFlagFinish
+# MARKED-NOT: md_exec.
+# FALLBACK-NOT: _template_publication
+# FALLBACK: gpu.launch
+# FALLBACK-NOT: _template_publication

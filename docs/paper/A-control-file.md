@@ -235,6 +235,9 @@ and bypasses that floor. CPU, non-mixed, deterministic and derivative
 programs remain general and refuse `ON` by name. The choice is recorded
 in the execution fingerprint and may change on continuation. Section 4.7
 and the decision file give the match, force-output and coverage contracts.
+Combining publication with an eligible integration kernel and sharing frame
+arithmetic add no key and leave the reference epochs and validity bounds
+unchanged.
 
 The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering

@@ -102,6 +102,9 @@ The same-accuracy execution choice `[performance]`
 `"water.template" = "AUTO" | "ON" | "OFF"` belongs to
 D[rigid-water-template]. Its implementation is in progress; its accepted
 contract is in the [decision](decisions/rigid-water-template.md).
+Position publication may join an existing fused integration kernel only
+when the same ownership and ordering proofs hold. Sharing whole-frame and
+validity arithmetic changes no key, validity threshold or reference epoch.
 The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
 are preserved; deterministic, double, CPU and derivative programs retain

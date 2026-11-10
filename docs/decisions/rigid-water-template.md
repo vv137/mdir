@@ -478,6 +478,52 @@ followed by the remaining evaluation items. E4 needs its own concrete
 proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
+### Rest batch and ordered SW scheduling in progress
+
+R1 supplies the shared integration emitter with an optional completed-output
+observer. It consumes final SSA coordinates rather than rereading positions
+that another lane may already have stored. Publication is admitted only with
+the existing integration ownership, adjacency and flag-consumption proofs.
+Marked constraint tuples that are not members of the selected rigid class
+retain particle publication; the marker alone does not prove class membership.
+TIP3P velocity Verlet satisfies the native fusion preconditions. The OPC
+extra-point pipeline and the overlapping leapfrog integration runs retain
+their existing separate writer under those same preconditions. This is not
+a promise that every template writer becomes a fused integration kernel.
+
+R2 shares one whole-frame reconstruction between extent checking and packed
+publication. It also shares anchor/cell magnitude arithmetic between the two
+motion tests. The independently aged outer and inner references, their
+separate limits, all five validity meanings and the unbuilt-list guards stay
+unchanged. Whole-frame, extent and validity arithmetic remain f64; retained
+shifts are added before the existing f32 publication narrowing. These are
+unmeasured implementations until their correctness and stage screens pass.
+
+The first device-free R1/R2 selection run passed two tests and failed the
+new native-driver structural fixture: it incorrectly required all four
+model/integrator combinations to fuse and omitted the separate count-clear
+launch from the eligible closure. Inspection of all four lowered programs
+established the precondition distinctions above. Only that fixture's
+expectations changed; its one affected rerun passed 1/1. The subsequent
+focused lowering selection passed 4/4, including the existing native and
+writer conversion tests. No numerical comparison has run for this batch
+at this checkpoint.
+
+The authorized SW correction distributes consecutive candidate descriptor
+ranges of one original row across several warps and compacts them in original
+row/subrange/ordinal order. It must preserve the existing append carry across
+windows, images and frames, as well as entries, ownership and capacity proofs.
+The image-path screen already measured SW and SS and found no gain; that
+batch was discarded. Ordered SW scheduling is therefore measured against
+retained W1, not against the discarded image implementation.
+
+Independent SW epochs remain a decision item only. D80 would require the
+water displacement since the SW build, using a kept SW water reference or an
+accumulated bound, rather than the displacement since the latest WW build.
+Neither that reference nor an independent SW skin is implemented here without
+a further ruling. The potential cadence benefit is at most approximately
+half as many SW rebuilds, in addition to any independently chosen skin.
+
 ### S0 isolated measurement: padded-lane box guard
 
 The tested head was `ac4644f9`, against main `af7a9f47` and the preceding
