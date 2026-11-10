@@ -454,8 +454,8 @@ launch sizes, work counts and measurement qualifications.
 |---|---|---|---|
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
-| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **Planned B1:** reuse the cached first box for proved single-frame groups. **Planned B2:** bounded f32 Cartesian boxes/prefilter. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
-| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After S4: direct descriptor-column endpoints, indirect z searches, explicit image/subset enumeration, late half-list ownership, immutable f64 first-anchor caches and fractional-to-Cartesian pair work; search alone 15.4–22.7 in water boxes, 52.3–55.4 in ubiquitin. Added column indexing costs 0.05–0.12 separately. | **S2 implemented, validation/measurement pending:** clamp only WW/SS column ranges to the current descriptor before z/box/unit work, retaining self and all SW work. Earlier descriptors have zero ownership masks and cannot set keep-dependent image/arena flags; physical and refusal predicates are unchanged. Its own measurements gate retention. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **S4 closed by `f9ea87ef`, retained for modest local gain:** immutable f64 anchor/i32 ID caches use 896 application shared bytes per block. CPU 6/6, GPU 22/22 and focused four-mode sanitizer 1/1 pass. All 12 net search/ref comparisons improve 1.13–4.79%; whole-step results are mixed, including two recorded slowdowns. Do not claim a consistent end-to-end gain. **Planned S5:** local f32 geometry with certified uncertainty and original-f64 refinement. Each is measured separately. |
+| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 includes the prototype box/search structure:** certified f32 Cartesian boxes and shared anchors, retaining the native general f64 image proof where needed. B1/B2 are no longer standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
+| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After S4: direct descriptor-column endpoints, indirect z searches, explicit image/subset enumeration, late half-list ownership, immutable f64 first-anchor caches and fractional-to-Cartesian pair work; search alone 15.4–22.7 in water boxes, 52.3–55.4 in ubiquitin. Added column indexing costs 0.05–0.12 separately. | **Standalone S2 stopped by the whole-port ruling:** its source is reverted without timing it. Early backward-range removal belongs to W1 as part of the complete prototype search structure. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **S4 closed by `f9ea87ef`, retained for modest local gain:** immutable f64 anchor/i32 ID caches use 896 application shared bytes per block. CPU 6/6, GPU 22/22 and focused four-mode sanitizer 1/1 pass. All 12 net search/ref comparisons improve 1.13–4.79%; whole-step results are mixed, including two recorded slowdowns. Do not claim a consistent end-to-end gain. **W1 required whole search port:** class-specialized WW/SW/SS kernels, prototype direct endpoints, early backward ranges, shared anchors, launch distribution and certified f32 Cartesian geometry with the original f64 uncertainty shell. General covering-image proof, entry format/masks/ownership/order, epochs and validity stay fixed. No further standalone search corrections are measured. |
 | Pruning | Separate f32 Cartesian pruning with shared first anchors and CUB selection; 1.397–1.788 in water boxes, 7.436–7.609 in ubiquitin. | Fused pruning in the production evaluation; f64 hybrid-reference geometry, exact class incidence and image accounting. Its cost is not isolated in the current common evaluation. | **Kept on purpose:** fusion; the earlier separate-prune experiment `3eaad4f7` did not establish a total win. **Planned P1:** apply a proved, exact-membership f32/refined predicate separately from search. Keep reference epochs and certified validity reaches f64. |
 | Evaluation: loads | Specialized water coefficients and dynamic solute parameters; compact two-word entries; table coefficients and pair values f32. Included in 24.2–54.9 per common call; not isolated. | Actual source parameter bindings; four-word entries with explicit image/mask fields and original-member mapping; two indexed WW LJ coefficient loads remain. Included in 32.2–91.9 per common call; not isolated. | **Planned E3, after search:** invariant WW LJ operands, preserving coefficient bits and mutable bindings. **Kept on purpose:** explicit image domain, bounded-capacity records and original-particle mapping. Do not narrow their supported domain to match the prototype. |
 | Evaluation: extra point | Linear forward site geometry; the partner site is formed from its rotated frame. The force convention is rule B. Part of evaluation; no isolated time. | Exact typed source `alpha*(H1+H2)` cached per loaded partner and rotated with local geometry; dynamics uses rule A. Part of evaluation; no isolated time. | **Planned E4:** compare rematerialization with the rotated cache as its own correction after the approved evaluation items. **Kept on purpose:** source placement and the approved force convention. Anchor-cache experiment `8de4edec` was discarded by `d53ff917` for no clear measured gain. |
@@ -463,13 +463,14 @@ launch sizes, work counts and measurement qualifications.
 | Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
 | Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
 | Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After S1: search uses two group warps per 64-thread block; small-box grids about 138–144, large 537–551. Common evaluation remains one combined launch. S3 adds four column-index launches, measured in its net cost. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
-| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **R1 kept with reason:** existing evidence does not establish longest-row dominance. A conditional split of disjoint query ranges needs direct row/stage diagnostics and ordered subrow compaction before a separate experiment. No scheduling change is hidden in S3/S4/S2. |
+| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **D0 required, then W1:** one per-row/stage diagnostic at S4 records elapsed distributions and the longest-row relation. The whole prototype search port follows regardless of that result. No speculative row-splitting or standalone search correction intervenes. |
 | Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
 
 S0 was discarded and S1 retained after their isolated comparisons. The
-next working priority is **S3, S4, S2**, based on the serial-work diagnosis
-below; each remains an independent measured correction. Bounded precision
-and storage changes do not get folded into these corrections. Evaluation items E1–E3 resume
+current required next step is one diagnostic row/stage-clock measurement at
+S4, then **W1, the whole prototype search structure**, regardless of that
+measurement. The later ruling below supersedes the earlier S2/S5/B1/B2
+single-mechanism plan. W1 is measured as one correction against S4. Evaluation items E1–E3 resume
 after search; E4 needs its own concrete proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
@@ -590,7 +591,7 @@ but maximum candidate batches stay 98 in every box. Partner maxima change
 121 to 110, 123 to 115, 125 to 121 and 124 to 112. Column searches remain
 unchanged. Hence S2 does not promise a twofold critical-path reduction.
 
-The next working order is **S3, S4, S2**, a source-based priority rather
+The working order selected for this earlier record was **S3, S4, S2**, a source-based priority rather
 than a predicted cycle count. S3 removes dependent column searches from
 every query: maximum column steps are 1490/1932/1496/1930 in the four
 boxes and 3224/3220 in ubiquitin; z searches remain. S4 removes repeated
@@ -599,7 +600,7 @@ backward ownership work, with its unchanged enumeration ceiling explicitly
 recorded. Each is validated and measured alone; an unsuccessful correction
 is discarded. This order may change after its own measured evidence.
 
-**R1, conditional row-splitting proposal:** keep one warp per row for now,
+**Earlier R1 proposal, superseded by D0/W1 below:** keep one warp per row,
 because longest-row dominance is not proved. If serial tails remain after
 S3/S4, diagnose per-row elapsed clocks and coarse stage work on fixed frames
 before a separate split experiment. A possible split partitions disjoint
@@ -668,7 +669,7 @@ bottleneck or prove longest-row dominance.
 S3 is retained. Its modest isolated gain does not establish that column
 searches alone dominated the old serial path. The row model still has the
 same enumeration, partner batches and z searches, with column-bound steps
-removed. S4 next targets repeated first-anchor broadcasts, as a separate
+removed. S4 subsequently targeted repeated first-anchor broadcasts as a separate
 correction with unchanged f64 operands and its own shared-memory gates.
 
 ### S4 isolated measurement: immutable first-anchor cache
@@ -732,13 +733,44 @@ and reference epochs; this is a mechanism comparison, not a new oracle.
 | TIP3P small | 16.979 / 17.064 | 1.083 / 1.082 | 15.677 / 15.768 |
 | TIP3P large | 22.670 / 22.634 | 1.267 / 1.270 | 17.894 / 17.827 |
 
-A large search gap remains. S2 next clips backward WW/SS descriptors before
-z/box/unit work, preserving SW and self-descriptor work. The source proof
-also preserves refusal flags: an earlier descriptor has zero ownership
-mask, and bad-image flags and arena reservations require a nonzero kept
-mask. It does not promise to halve the longest row or elapsed time.
-S5's bounded f32/refined route remains a separately declared proof and
-correction, with exact final membership and unchanged physical bounds.
+A large search gap remains. The earlier S2 proposal clipped backward WW/SS
+descriptors, preserving SW, self, refusal flags and ordering through its
+zero-ownership proof. The superseding ruling stops that standalone item
+without timing it; early removal now belongs to W1. The bounded f32/f64-shell
+proof likewise supports W1, rather than a separate S5 correction.
+
+### Superseding ruling: one diagnostic, then the whole search structure
+
+The maintainer stopped S2 and further standalone search corrections. The
+already-running S2 fixture run completed 22/22; it is not a retained
+correction or a timing result. Its source is reverted
+so the active search again equals S4. No S2 timing job is submitted.
+
+First, use a separate diagnostic-only build based on S4 `f9ea87ef`, fixed
+frames of all six systems, and one device-clock measurement. Record each
+row's z search, frame/image/subset enumeration, candidate loop, partner
+batches and append elapsed time; report mean, p99 and maximum. Report
+inclusive and exclusive intervals clearly, prologue/epilogue/instrumentation
+residuals, row timelines, and whether the kernel duration follows the
+longest row. This is not the two-job timing protocol. Instrumentation and
+its build are not retained; logs, patch identity and resources are kept.
+
+Then implement W1 regardless of the diagnostic's performance result:
+class-specialized WW/SW/SS search kernels; prototype direct column/group
+endpoints and early backward-range removal; shared first anchors; its
+launch distribution; and f32 Cartesian geometry under the declared
+certified-accept/reject plus literal-original-f64 uncertainty shell.
+Retain the native general covering-image proof where the prototype's
+nearest-image assumption is narrower. Entry format, masks, ownership,
+output order, reference epochs and validity remain unchanged.
+
+Exact covering, boundary, triclinic, reframed, growth and brute-force
+coverage fixtures gate W1. A coverage counterexample stops work and does
+not justify widening a bound. Measure the complete port as one correction
+with the usual two independent jobs against S4. Close or justify the search,
+box and launch rows together from that evidence. Sort/group plan S6/S7 may
+follow with the same whole-structure approach if their gap remains large.
+No extra single-mechanism search items intervene before W1.
 
 ### Precision contract for planned search and pruning changes
 
