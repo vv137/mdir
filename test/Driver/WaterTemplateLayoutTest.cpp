@@ -26,7 +26,8 @@ int runWaterTemplateLayoutTest() {
         int64_t rows = 0;
         for (int64_t i = 0; i < waters; i += 16) ++rows;
         for (int64_t i = 0; i < atoms; i += 16) rows += 2;
-        requireLayout(layout.rows == rows, "partial class cluster lost");
+        requireLayout(layout.rows == (rows ? rows : 1), "partial class cluster lost");
+        rows = layout.rows; // One initialized dummy scan row for empty input.
         struct View { int64_t begin, count; };
         std::array<View, 21> views = {{{0, 48},
             {layout.outerRows, rows * 4}, {layout.innerRows, rows * 4},
@@ -98,10 +99,15 @@ int runWaterTemplateLayoutTest() {
                 "staging addresses narrowed to payload indices");
   requireLayout(mdrtTemplatePairLayout(1, int64_t(INT32_MAX) - 1, 0, &layout),
                 "valid split class index domain refused");
-  uint64_t lastAtomPlace = 16 + ((layout.atoms - 1) / 16) * 16;
-  requireLayout(lastAtomPlace > INT32_MAX &&
+  uint64_t lastAtomPlace = uint64_t(layout.waters + layout.atoms - 1);
+  requireLayout(lastAtomPlace == INT32_MAX - 1 &&
                 uint64_t(uint32_t(lastAtomPlace)) == lastAtomPlace,
-                "padded class places lost their unsigned i32 index");
+                "compact class places lost their i32 index");
+  requireLayout(mdrtTemplatePairLayoutCapacity(19, 17, 1, 53, &layout) &&
+                layout.rows == 53 && layout.units == 1 && layout.scanBlocks >= 1,
+                "singleton group capacity or tighter chunk bound lost");
+  requireLayout(!mdrtTemplatePairLayoutCapacity(19, 17, 1, 5, &layout),
+                "row capacity smaller than the minimum groups admitted");
   // Renumbered OHHM tuples: EPs 0 and 3 must not reappear as solute.
   int32_t members[] = {4, 2, 7, 0, 6, 1, 8, 3};
   int32_t units[10] = {};

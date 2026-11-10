@@ -207,26 +207,11 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
   });
   emitDeviceScan(b, loc, v.counts, v.starts, v.cursors, bins,
       v.scanScratch, v.scanBlocks, block, one);
-  Value waterPlaces = mul(b, arith::DivUIOp::create(b, loc,
-      add(b, v.waters, ix(b, 15)), ix(b, 16)), ix(b, 16));
-  Value atomPlaces = mul(b, arith::DivUIOp::create(b, loc,
-      add(b, v.atoms, ix(b, 15)), ix(b, 16)), ix(b, 16));
-  Value padded = add(b, waterPlaces, atomPlaces);
-  launch(padded, gridFor(padded), [&](OpBuilder &at, Value place) {
-    Value water = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, place, waterPlaces);
-    Value active = arith::SelectOp::create(at, loc, water, v.waterActive, v.atomActive);
-    scf::IfOp::create(at, loc, active, [&](OpBuilder &in, Location) {
-      Value none = arith::ConstantIntOp::create(in, loc, -1, 32);
-      memref::StoreOp::create(in, loc, none, v.order, ValueRange{place});
-      scf::YieldOp::create(in, loc);
-    });
-  });
   launch(size, itemGrid, [&](OpBuilder &at, Value rank) {
     Value unit = memref::LoadOp::create(at, loc, v.items, ValueRange{rank});
     Value water = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, rank, v.waters);
     Value active = arith::SelectOp::create(at, loc, water, v.waterActive, v.atomActive);
-    Value place = arith::SelectOp::create(at, loc, water, rank,
-        add(at, waterPlaces, sub(at, rank, v.waters)));
+    Value place = rank;
     scf::IfOp::create(at, loc, active, [&](OpBuilder &in, Location) {
       memref::StoreOp::create(in, loc, unit, v.order, ValueRange{place});
       memref::StoreOp::create(in, loc, word(in, place), v.places, ValueRange{index(in, unit)});

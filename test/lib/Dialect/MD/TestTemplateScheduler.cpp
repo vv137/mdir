@@ -166,6 +166,7 @@ struct TestTemplateScheduler
       auto hostFrames = MemRefType::get({153, 3}, f32);
       Value pairHost = memref::AllocOp::create(setup, loc, hostWords);
       Value orderHost = memref::AllocOp::create(setup, loc, hostOrder);
+      Value lengthHost = memref::AllocOp::create(setup, loc, hostOrder);
       Value memberHost = memref::AllocOp::create(setup, loc, hostMembers);
       Value frameHost = memref::AllocOp::create(setup, loc, hostFrames);
       auto put = [&](Value buffer, unsigned at, int32_t value) {
@@ -186,6 +187,7 @@ struct TestTemplateScheduler
         put(pairHost, 7 + 4 * j, 0);
       }
       for (unsigned i = 0; i != 16; ++i) put(orderHost, i, i < 13 ? i : -1);
+      for (unsigned i = 0; i != 16; ++i) put(lengthHost, i, i ? 0 : 13);
       for (unsigned i = 0; i != 153; ++i) put(memberHost, i, i);
       scf::ForOp::create(setup, loc, createIndex(setup, loc, 0),
           createIndex(setup, loc, 51), createIndex(setup, loc, 1), ValueRange(),
@@ -221,10 +223,11 @@ struct TestTemplateScheduler
       };
       Value pairs = upload(pairHost), order = upload(orderHost);
       Value members = upload(memberHost), frames = upload(frameHost);
+      Value lengths = upload(lengthHost);
       TemplateWorkBuffers buffers{pairs, createIndex(k, loc, 0), createIndex(k, loc, 4),
           order, members, frames, word(k, 51),
           arith::ConstantOp::create(k, loc,
-              DenseElementsAttr::get(VectorType::get({3}, f64), ArrayRef<double>{2, 2, 2})), true};
+              DenseElementsAttr::get(VectorType::get({3}, f64), ArrayRef<double>{2, 2, 2})), lengths, true};
       IRMapping mapped = captures;
       mapped.map(loop.getOuts()[0], forces);
       result = emitTemplateWorkUnit(k, loc, loop, buffers, word(k, 0), lane, mapped);
@@ -355,6 +358,11 @@ struct TestTemplateCompaction
     buffers.waters = layout(TEMPLATE_LAYOUT_WATERS);
     buffers.atoms = layout(TEMPLATE_LAYOUT_ATOMS);
     buffers.rows = layout(TEMPLATE_LAYOUT_ROWS);
+    buffers.groups.waterGroups = layout(TEMPLATE_LAYOUT_WATER_GROUPS);
+    buffers.groups.atomGroups = layout(TEMPLATE_LAYOUT_ATOM_GROUPS);
+    buffers.groups.rows = buffers.rows;
+    buffers.groups.starts = call("mdrtTemplatePairsGroupView",
+        ValueRange{handle, constant(TEMPLATE_GROUP_STARTS)}, device, true);
     buffers.unitCapacity = layout(TEMPLATE_LAYOUT_UNITS);
     buffers.scanBlocks = arith::MaxUIOp::create(b, loc,
         arith::DivUIOp::create(b, loc,

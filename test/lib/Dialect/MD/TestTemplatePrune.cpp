@@ -21,8 +21,8 @@ struct TestTemplatePrune : PassWrapper<TestTemplatePrune, OperationPass<ModuleOp
   }
   void runOnOperation() final {
     auto f = getOperation().lookupSymbol<func::FuncOp>("prune_work");
-    if (!f || f.getNumArguments() != 13 || !f.isExternal()) {
-      getOperation().emitError("expected a thirteen-argument prune_work declaration");
+    if (!f || f.getNumArguments() != 14 || !f.isExternal()) {
+      getOperation().emitError("expected a fourteen-argument prune_work declaration");
       return signalPassFailure();
     }
     Location loc = f.getLoc();
@@ -31,6 +31,7 @@ struct TestTemplatePrune : PassWrapper<TestTemplatePrune, OperationPass<ModuleOp
     TemplatePruneBuffers v{f.getArgument(0), f.getArgument(1), f.getArgument(2),
         f.getArgument(3), f.getArgument(4), f.getArgument(5), f.getArgument(6),
         f.getArgument(7), f.getArgument(8), f.getArgument(9), f.getArgument(10), f.getArgument(11)};
+    v.groupLengths = f.getArgument(13);
     Value n = arith::DivUIOp::create(b, loc,
         memref::DimOp::create(b, loc, v.outerUnits, ix(b, 0)), ix(b, 4));
     Value one = ix(b, 1), block = ix(b, 128);

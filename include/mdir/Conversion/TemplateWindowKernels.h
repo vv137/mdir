@@ -99,6 +99,7 @@ struct TemplateUnit {
 /// holds those rows' f32 coordinates, already whole and shifted in f64.
 struct TemplateWorkBuffers {
   mlir::Value pairs, workOffset, entryOffset, order, members, frames, waters, cell;
+  mlir::Value groupLengths;
   bool hasSite = false;
 };
 /// Execute an arena work record through its uniformly tagged class and

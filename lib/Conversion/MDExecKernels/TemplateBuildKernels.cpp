@@ -14,7 +14,7 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
                                              const TemplateBuildBuffers &v) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   auto index = [&](OpBuilder &at, Value n) -> Value {
-    return arith::IndexCastOp::create(at, loc, at.getIndexType(), n);
+    return arith::IndexCastUIOp::create(at, loc, at.getIndexType(), n);
   };
   auto word = [&](OpBuilder &at, Value n) -> Value {
     return arith::IndexCastOp::create(at, loc, at.getI32Type(), n);
@@ -58,8 +58,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
                   v.scanScratch, v.scanBlocks, block, one);
   emitDeviceScan(b, loc, v.workCounts, v.workOffsets, Value(), v.rows,
                   v.scanScratch, v.scanBlocks, block, one);
-  Value waterRows = arith::DivUIOp::create(b, loc, add(b, v.waters, ix(b, 15)), ix(b, 16));
-  Value atomRows = arith::DivUIOp::create(b, loc, add(b, v.atoms, ix(b, 15)), ix(b, 16));
+  Value waterRows = v.groups.waterGroups;
+  Value atomRows = v.groups.atomGroups;
   Value ssBegin = add(b, waterRows, atomRows);
   auto classify = [&](OpBuilder &at, Value row) -> Value {
     Value ww = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, waterRows);
@@ -72,8 +72,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
     Value sw = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, ssBegin);
     Value atomRow = arith::SubIOp::create(at, loc, row,
         arith::SelectOp::create(at, loc, sw, waterRows, ssBegin));
-    return arith::SelectOp::create(at, loc, ww, mul(at, row, 16),
-        mul(at, add(at, waterRows, atomRow), 16));
+    Value group = arith::SelectOp::create(at, loc, ww, row, add(at, v.waters, atomRow));
+    return index(at, load(at, v.groups.starts, group));
   };
   Value rowsOrClasses = arith::MaxUIOp::create(b, loc, v.rows, ix(b, 3));
   launch(rowsOrClasses, [&](OpBuilder &at, Value row) {
@@ -90,6 +90,10 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
     Value header = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, ix(at, 3));
     scf::IfOp::create(at, loc, header, [&](OpBuilder &in, Location) {
       Value zero = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, row, ix(in, 0));
+      scf::IfOp::create(in, loc, zero, [&](OpBuilder &total, Location) {
+        store(total, v.arena, ix(total, TEMPLATE_PAIR_ROWS), word(total, v.rows));
+        scf::YieldOp::create(total, loc);
+      });
       Value first = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, row, ix(in, 1));
       Value begin = arith::SelectOp::create(in, loc, zero, ix(in, 0),
           arith::SelectOp::create(in, loc, first, waterRows, ssBegin));

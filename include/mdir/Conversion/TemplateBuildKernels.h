@@ -1,6 +1,7 @@
 // Compaction of the single search's staged chunks in one pair arena.
 #ifndef MDIR_CONVERSION_TEMPLATEBUILDKERNELS_H
 #define MDIR_CONVERSION_TEMPLATEBUILDKERNELS_H
+#include "mdir/Conversion/TemplateGroupKernels.h"
 #include "mlir/IR/Builders.h"
 namespace mdir::kernels {
 struct TemplateBuildBuffers {
@@ -9,6 +10,7 @@ struct TemplateBuildBuffers {
   mlir::Value outerRows, innerRows, outerUnits, innerUnits, outerEntries, innerEntries;
   /// All sizes are index values, from host allocation metadata.
   mlir::Value waters, atoms, rows, unitCapacity, scanBlocks;
+  TemplateGroupBuffers groups;
 };
 /// Compact staged chunks by the fixed row/class order. No spatial search
 /// is repeated. Every buffer is a zero-offset view of the same arena.

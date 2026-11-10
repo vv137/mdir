@@ -35,6 +35,8 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
           arith::OrIOp::create(b, loc, v.waterActive, v.atomActive)));
   scf::IfOp::create(b, loc, active, [&](OpBuilder &at, Location) {
     Value firstBegin = read(at, v.outerUnits, work, 1);
+    Value firstLength = index(at, memref::LoadOp::create(at, loc, v.groupLengths,
+        ValueRange{index(at, firstBegin)}));
     Value beginWord = read(at, v.outerUnits, work, 2);
     Value begin = index(at, beginWord);
     Value end = index(at, read(at, v.outerUnits, work, 3));
@@ -78,12 +80,17 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
             VectorType::get({3}, test.getF64Type()), image);
         Value mask = word(test, 0);
         for (int bit = 0; bit != 16; ++bit) {
-          Value place = arith::AddIOp::create(test, loc, index(test, firstBegin), ix(test, bit));
+          Value inSpan = arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ult,
+              ix(test, bit), firstLength);
+          Value limit = arith::SubIOp::create(test, loc,
+              arith::MaxUIOp::create(test, loc, firstLength, ix(test, 1)), ix(test, 1));
+          Value place = arith::AddIOp::create(test, loc, index(test, firstBegin),
+              arith::MinUIOp::create(test, loc, ix(test, bit), limit));
           Value unit = memref::LoadOp::create(test, loc, v.order, ValueRange{place});
-          Value valid = arith::AndIOp::create(test, loc,
+          Value valid = arith::AndIOp::create(test, loc, inSpan, arith::AndIOp::create(test, loc,
               arith::CmpIOp::create(test, loc, arith::CmpIPredicate::sge, unit, word(test, 0)),
               arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ne,
-                  arith::AndIOp::create(test, loc, fields[2], word(test, 1 << bit)), word(test, 0)));
+                  arith::AndIOp::create(test, loc, fields[2], word(test, 1 << bit)), word(test, 0))));
           auto vote = scf::IfOp::create(test, loc, valid,
               [&](OpBuilder &check, Location) {
             Value delta = arith::SubFOp::create(check, loc,

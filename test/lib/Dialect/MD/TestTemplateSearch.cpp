@@ -76,6 +76,8 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
         MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
     v.groupBoxes = call("mdrtTemplatePairsFrameState",
         ValueRange{handle, integer(TEMPLATE_FRAME_GROUP_BOXES)}, boxes, true);
+    v.fractionalBoxes = call("mdrtTemplatePairsFrameState",
+        ValueRange{handle, integer(TEMPLATE_FRAME_FRACTIONAL_BOXES)}, boxes, true);
     v.spatial.places = view(TEMPLATE_LAYOUT_SPATIAL_PLACES);
     // Retain the fixture's observable inverse-map buffer, while testing
     // the same arena-owned workspace used by the production refresh.
@@ -113,14 +115,16 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.starts = view(TEMPLATE_LAYOUT_SPATIAL_STARTS);
     v.spatial.cursors = view(TEMPLATE_LAYOUT_SPATIAL_CURSORS);
     v.spatial.scanScratch = view(TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
-    v.build.rows = layout(TEMPLATE_LAYOUT_ROWS);
+    v.build.groups = emitPrepareTemplateGroups(b, loc, module, handle, v.spatial, v.cell);
+    v.build.rows = v.build.groups.rows;
+    v.build.arena = call("mdrtTemplatePairsBuffer", ValueRange{handle}, device, true);
     v.build.unitCapacity = layout(TEMPLATE_LAYOUT_UNITS);
     v.build.outerRows = view(TEMPLATE_LAYOUT_OUTER_ROWS);
     v.build.outerEntries = view(TEMPLATE_LAYOUT_OUTER_ENTRIES);
     v.build.stageUnits = view(TEMPLATE_LAYOUT_STAGE_UNITS);
     v.build.stageEntries = view(TEMPLATE_LAYOUT_STAGE_ENTRIES);
-    v.spatial.sortScratch = v.build.stageEntries;
     v.build.counts = view(TEMPLATE_LAYOUT_BUILD_COUNTS);
+    v.build.workCounts = view(TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);
     v.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
     v.excludedRows = call("mdrtTemplatePairsMetadata",
         ValueRange{handle, integer(TEMPLATE_SS_ROWS)}, device, true);
@@ -128,7 +132,6 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
         ValueRange{handle, integer(TEMPLATE_SS_NEIGHBORS)}, device, true);
     v.baseReach = createReal(b, loc, b.getF64Type(), 99.0 / 128);
     v.extent = createReal(b, loc, b.getF64Type(), 18.0 / 128);
-    emitTemplateSpatialOrder(b, loc, v.spatial);
     emitSearchTemplatePairs(b, loc, v);
     transfer(entry->getArgument(2), v.spatial.places);
     func::ReturnOp::create(b, loc);

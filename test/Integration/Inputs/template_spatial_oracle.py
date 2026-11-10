@@ -1,7 +1,7 @@
-"""Independent lexicographic spatial-order oracle: 996 exact integer checks.
+"""Independent lexicographic spatial-order oracle: 900 exact integer checks.
 
 Four activity combinations check keys, z keys, bin counts/starts, sorted
-items, padded order and inverse places. Repeated points test fixed-ID ties;
+items, compact order and inverse places. Repeated points test fixed-ID ties;
 coordinates just below one test f32 narrowing and the final-bin clamp.
 """
 import argparse
@@ -42,8 +42,8 @@ counts = [keys.count(k) for k in range(2 * nx * ny)]
 starts = [0]
 for count in counts:
     starts.append(starts[-1] + count)
-water_places = ((waters + 15) // 16) * 16
-places = water_places + ((atoms + 15) // 16) * 16
+water_places = waters
+places = size
 seed_order = [1000 + i for i in range(places)]
 seed_inverse = [2000 + i for i in range(size)]
 
@@ -72,7 +72,7 @@ for case, (wa, aa) in enumerate(cases):
     for rank, unit in enumerate(items):
         water = rank < waters
         if (wa if water else aa):
-            place = rank if water else water_places + rank - waters
+            place = rank
             order[place] = unit
             inverse[unit] = place
     for name, data in [('keys', keys), ('zkeys', zkeys), ('counts', counts),

@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 6
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 7
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -33,7 +33,24 @@ enum MdrtTemplateFrameSlot {
   TEMPLATE_FRAME_REACHES = 6,
   /* Two rows per possible group: Cartesian min/max of wrapped references.
    * A capacity of one group per unit also admits later column/gap cuts. */
-  TEMPLATE_FRAME_GROUP_BOXES = 7, TEMPLATE_FRAME_SLOTS = 8
+  TEMPLATE_FRAME_GROUP_BOXES = 7, TEMPLATE_FRAME_FRACTIONAL_BOXES = 8,
+  TEMPLATE_FRAME_SLOTS = 9
+};
+/* Fixed class partitions: group IDs [0,W) and [W,W+A). Only the committed
+ * count of each partition is valid. Order is compact in the same unit
+ * partitions. AT_START gives a work record's explicit length without
+ * widening its four-word payload or its first-unit-begin index. */
+enum MdrtTemplateGroupView {
+  TEMPLATE_GROUP_STARTS = 0, TEMPLATE_GROUP_LENGTHS = 1,
+  TEMPLATE_GROUP_COLUMNS = 2, TEMPLATE_GROUP_AT_START = 3,
+  TEMPLATE_GROUP_VIEWS = 4
+};
+enum MdrtTemplatePlanView {
+  TEMPLATE_PLAN_FLAGS = 0, TEMPLATE_PLAN_SEGMENTS = 1,
+  TEMPLATE_PLAN_STARTS = 2, TEMPLATE_PLAN_LENGTHS = 3,
+  TEMPLATE_PLAN_COUNTS = 4, TEMPLATE_PLAN_OFFSETS = 5,
+  TEMPLATE_PLAN_CONTROL = 6, TEMPLATE_PLAN_SCAN = 7,
+  TEMPLATE_PLAN_SORT = 8
 };
 enum MdrtTemplateLayoutSlot {
   TEMPLATE_LAYOUT_WATERS = 0, TEMPLATE_LAYOUT_ATOMS = 1,
@@ -49,7 +66,10 @@ enum MdrtTemplateLayoutSlot {
   TEMPLATE_LAYOUT_SPATIAL_ITEMS = 20, TEMPLATE_LAYOUT_SPATIAL_PLACES = 21,
   TEMPLATE_LAYOUT_SPATIAL_COUNTS = 22, TEMPLATE_LAYOUT_SPATIAL_STARTS = 23,
   TEMPLATE_LAYOUT_SPATIAL_CURSORS = 24, TEMPLATE_LAYOUT_SPATIAL_BINS = 25,
-  TEMPLATE_LAYOUT_SCAN_BLOCKS = 26
+  TEMPLATE_LAYOUT_SCAN_BLOCKS = 26,
+  TEMPLATE_LAYOUT_WATER_GROUPS = 27, TEMPLATE_LAYOUT_ATOM_GROUPS = 28,
+  TEMPLATE_LAYOUT_COLUMNS_X = 29, TEMPLATE_LAYOUT_COLUMNS_Y = 30,
+  TEMPLATE_LAYOUT_ROW_CAPACITY = 31
 };
 
 /* Header ranges are [row begin/end, entry begin/end, work begin/end].
@@ -88,24 +108,30 @@ struct MdrtTemplatePairLayout {
   int64_t spatialCounts, spatialStarts, spatialCursors, spatialBins;
 };
 
-/* All payload indices fit signless i32. Padded class places use unsigned
- * interpretation; original unit IDs use nonnegative signed i32 with -1
- * reserved for a vacant place. Physical offsets use i64, including on
+/* All payload indices fit signless i32. Compact class places and original
+ * unit IDs use nonnegative signed i32. Row indices use unsigned i32
+ * interpretation when singleton groups exceed the signed row domain. Physical offsets use i64, including on
  * allocations whose flattened byte address exceeds the i32 range. */
-static inline int mdrtTemplatePairLayout(
-    int64_t waters, int64_t atoms, int64_t entries,
+static inline int mdrtTemplatePairLayoutCapacity(
+    int64_t waters, int64_t atoms, int64_t entries, int64_t rows,
     struct MdrtTemplatePairLayout *layout) {
   if (!layout || waters < 0 || atoms < 0 || entries < 0 ||
       waters > INT32_MAX || atoms > INT32_MAX || entries > INT32_MAX ||
-      waters + atoms > INT32_MAX)
+      waters + atoms > INT32_MAX ||
+      rows < (waters + 15) / 16 + 2 * ((atoms + 15) / 16) || rows > UINT32_MAX)
     return 0;
   layout->waters = waters;
   layout->atoms = atoms;
-  layout->rows = (waters + 15) / 16 + 2 * ((atoms + 15) / 16);
+  layout->rows = rows ? rows : 1;
   layout->entries = entries;
   /* Splitting every row into blocks of 64 takes at most this many units,
    * even when every nonempty row has a partial final block. */
   layout->units = (entries + 63) / 64 + layout->rows;
+  /* Every nonempty chunk consumes an entry. This tighter bound preserves
+   * the existing signed i32 chunk domain even with singleton groups. A
+   * dummy chunk keeps empty arena views non-null at initialization. */
+  if (layout->units > entries) layout->units = entries;
+  if (!layout->units) layout->units = 1;
   layout->outerRows = MDRT_TEMPLATE_PAIR_HEADER_WORDS;
   layout->innerRows = layout->outerRows + 4 * layout->rows;
   layout->outerUnits = layout->innerRows + 4 * layout->rows;
@@ -141,5 +167,13 @@ static inline int mdrtTemplatePairLayout(
   layout->spatialCursors = layout->spatialStarts + layout->spatialBins + 1;
   layout->words = layout->spatialCursors + layout->spatialBins;
   return 1;
+}
+static inline int mdrtTemplatePairLayout(
+    int64_t waters, int64_t atoms, int64_t entries,
+    struct MdrtTemplatePairLayout *layout) {
+  if (waters < 0 || atoms < 0 || waters > INT32_MAX || atoms > INT32_MAX)
+    return 0;
+  return mdrtTemplatePairLayoutCapacity(waters, atoms, entries,
+      (waters + 15) / 16 + 2 * ((atoms + 15) / 16), layout);
 }
 #endif

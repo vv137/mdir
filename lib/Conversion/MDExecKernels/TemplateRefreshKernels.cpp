@@ -67,6 +67,8 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
           MemRefLayoutAttrInterface(), in.getI64IntegerAttr(1));
       s.groupBoxes = call(in, "mdrtTemplatePairsFrameState",
           ValueRange{v.handle, wide(in, TEMPLATE_FRAME_GROUP_BOXES)}, boxes, true);
+      s.fractionalBoxes = call(in, "mdrtTemplatePairsFrameState",
+          ValueRange{v.handle, wide(in, TEMPLATE_FRAME_FRACTIONAL_BOXES)}, boxes, true);
       auto &p = s.spatial;
       p.points = v.points;
       p.columnsX = v.columnsX; p.columnsY = v.columnsY;
@@ -83,18 +85,17 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       p.cursors = view(in, TEMPLATE_LAYOUT_SPATIAL_CURSORS);
       p.scanScratch = view(in, TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
       p.order = call(in, "mdrtTemplatePairsOrder", ValueRange{v.handle}, device, true);
+      auto groups = emitPrepareTemplateGroups(in, loc, module, v.handle, p, v.cell);
       Value bins = arith::MulIOp::create(in, loc, ix(in, 2),
           arith::MulIOp::create(in, loc, p.columnsX, p.columnsY));
       Value fitsBins = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ule,
           bins, layout(in, TEMPLATE_LAYOUT_SPATIAL_BINS));
       cf::AssertOp::create(in, loc, fitsBins, "template spatial grid exceeds its arena budget");
       auto &a = s.build;
+      a.groups = groups;
       a.arena = call(in, "mdrtTemplatePairsBuffer", ValueRange{v.handle}, device, true);
       a.stageUnits = view(in, TEMPLATE_LAYOUT_STAGE_UNITS);
       a.stageEntries = view(in, TEMPLATE_LAYOUT_STAGE_ENTRIES);
-      // Staging is unused until the subsequent search. Its 256 words per
-      // work capacity cover four words per unit even at the minimum arena.
-      p.sortScratch = a.stageEntries;
       a.counts = view(in, TEMPLATE_LAYOUT_BUILD_COUNTS);
       a.entryOffsets = view(in, TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS);
       a.workCounts = view(in, TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);
@@ -107,7 +108,7 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       a.outerEntries = view(in, TEMPLATE_LAYOUT_OUTER_ENTRIES);
       a.innerEntries = view(in, TEMPLATE_LAYOUT_INNER_ENTRIES);
       a.waters = p.waters; a.atoms = p.atoms;
-      a.rows = layout(in, TEMPLATE_LAYOUT_ROWS);
+      a.rows = groups.rows;
       a.unitCapacity = layout(in, TEMPLATE_LAYOUT_UNITS);
       a.scanBlocks = p.scanBlocks;
       s.counters = call(in, "mdrtTemplatePairsCounters", ValueRange{v.handle}, controls, true);
@@ -115,7 +116,6 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
           ValueRange{v.handle, wide(in, TEMPLATE_SS_ROWS)}, device, true);
       s.excludedNeighbors = call(in, "mdrtTemplatePairsMetadata",
           ValueRange{v.handle, wide(in, TEMPLATE_SS_NEIGHBORS)}, device, true);
-      emitTemplateSpatialOrder(in, loc, p);
       emitSearchTemplatePairs(in, loc, s);
       Type token = gpu::AsyncTokenType::get(in.getContext());
       Value ready = gpu::WaitOp::create(in, loc, token, ValueRange()).getAsyncToken();
