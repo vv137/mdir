@@ -1135,8 +1135,33 @@ completed comparisons. Constructing the fallback only in its proper
 operand branch corrected the new path. The expanded CPU outline test,
 including the actual native operand form, passed its one controlled
 rerun (1/1, 1.75 s). No host arithmetic, existing lowering, membership
-criterion or comparison bound changed. Native physical/barostat gates
-and performance remain pending for this correction.
+criterion or comparison bound changed.
+
+The controlled continuation at `ee83da18` completed with **22 passed and
+one failed**, 151.92 s on RTX 5090. All 22 existing coverage,
+physical-energy/force and molecular-virial fixtures passed. The new native
+barostat crossing fixture failed its predeclared path-transition assertion:
+the 100-step simulation completed, but its path log was
+`nearest, nearest`, with no `conditional` and no general fallback.
+
+| Preserved native observation | Value |
+|---|---|
+| Driver exit status | 0 |
+| Crossing test exit status | 2, after the transition assertion failed |
+| Initial diagonal | 4.0 nm on each axis |
+| Step 5 diagonal | 3.9881800048142346 nm on each axis |
+| Step 100 diagonal | 3.7611718410128505 nm on each axis |
+| Smallest recorded half diagonal | 1.8805859205064253 nm |
+| Recorded trajectory frames | 20, steps 5 through 100 |
+| Reported full refreshes / prunes / growths | 2 / 2 / 0 |
+| Observed path messages | Two nearest, zero conditional, zero general |
+
+This is an unmet gate, not a passing barostat transition. No input,
+duration, bound or checker was adjusted after this observation; no rerun
+was made. Work stops for a ruling. Recommend source/CPU-only diagnosis
+of the declared fixture's refresh schedule and selector inputs using the
+preserved frames before proposing any new device run. Sanitizer and
+performance measurements for this correction have not run.
 
 ### Target-driven remaining batches and reporting
 
