@@ -1,0 +1,48 @@
+# The frames of a run of dynamics are staged by the call of each frame and
+# written by a thread of their own while the steps go on (D[async-output],
+# #113). Here the thread holds each frame back by 20 ms
+# (MDIR_FRAME_WRITE_DELAY), much longer than the 10 steps between two
+# frames: its ring of 3 slots fills, and the call of a later frame waits for
+# a slot. The checkpoints, which count the frames of the trajectory (D130),
+# the stop on the wall time (D131), and the end of the run wait for the
+# frames queued before them. The trajectories in DCD and XTC, the energies,
+# and the checkpoints are those of a run whose frames are not held back,
+# byte for byte, and so are those of a run held back, stopped at its first
+# checkpoint, and continued.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t/plain %t/held %t/part
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|energy_interval = 50|energy_interval = 10\nenergy = "energies.txt"\ntrajectory = "run.dcd"\ntrajectory_interval = 10\ncheckpoint = "run.h5"\ncheckpoint_interval = 100|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: cp %t/run.toml %t/plain/run.toml && cp %t/run.toml %t/held/run.toml && cp %t/run.toml %t/part/run.toml
+# RUN: sed -e 's|run.dcd|run.xtc|' -e 's|run.h5|xtc.h5|' -e 's|energies.txt|xtc.txt|' %t/run.toml > %t/plain/xtc.toml
+# RUN: cp %t/plain/xtc.toml %t/held/xtc.toml
+# RUN: cd %t/plain && mdir run run.toml > out && mdir run xtc.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 mdir run xtc.toml > /dev/null
+# RUN: FileCheck %s < %t/held/err
+# RUN: cmp %t/plain/run.dcd %t/held/run.dcd
+# RUN: cmp %t/plain/run.xtc %t/held/run.xtc
+# RUN: cmp %t/plain/energies.txt %t/held/energies.txt
+# RUN: grep 'INFO: ' %t/plain/out > %t/plain/rows
+# RUN: grep 'INFO: ' %t/held/out > %t/held/rows
+# RUN: diff %t/plain/rows %t/held/rows
+# RUN: mdir checkpoint %t/plain/run.h5 %t/held/run.h5 | FileCheck %s --check-prefix=SAME
+# RUN: mdir checkpoint %t/plain/run.h5.prev %t/held/run.h5.prev | FileCheck %s --check-prefix=SAME
+#
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 run.toml | FileCheck %s --check-prefix=STOP
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 mdir run --continue run.toml > /dev/null
+# RUN: cmp %t/plain/run.dcd %t/part/run.dcd
+# RUN: cmp %t/plain/energies.txt %t/part/energies.txt
+# RUN: mdir checkpoint %t/plain/run.h5 %t/part/run.h5 | FileCheck %s --check-prefix=SAME
+
+# A frame waited for a slot of the ring, which the thread had held.
+# CHECK: MDIR: times of the frame at step {{[0-9]+}}: copy {{[0-9.]+}} ms, wait {{[1-9][0-9]+}}.{{[0-9]}} ms
+# CHECK: MDIR: times of the write of the frame at step {{[0-9]+}}: copy
+
+# STOP: MDIR: stopped after step 100 on the wall time
+# STOP: exit status 75
+
+# SAME: the states are identical
