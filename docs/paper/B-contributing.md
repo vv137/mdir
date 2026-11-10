@@ -56,6 +56,10 @@ wrote at fixed paths failed after 99 runs of the suite in one build tree
 
 ## B.2 Where a change goes
 
+The design patterns of the code, and which to use when adding a term, a
+pass, a kernel, a strategy, or a target, are summarized in
+[internals.md](../internals.md).
+
 | Directory | Contents |
 |---|---|
 | `include/mdir/Dialect/{MD,Dyn,MDExec,MDRT}`, `lib/Dialect/...` | The dialects: types and ops in TableGen, verifiers, and the passes over `md` and `md_exec` (`lib/Dialect/MDExec/Transforms`) |
@@ -80,7 +84,7 @@ inventory and bounded typed interfaces.
 `include/mdir/Dialect/MDExec/Transforms/Passes.td`, its code in
 `lib/Dialect/MDExec/Transforms`, a test of its IR in
 `test/Dialect/MDExec/Transforms`, and a place in the pipeline that
-`tools/mdir/Run.cpp` builds (`mdir emit --stage=pipeline` prints it).
+`getPipeline` in `lib/Compiler/Compile.cpp` builds (`mdir emit --stage=pipeline` prints it).
 
 **A new kernel, or device code in a lowering or a template,** starts from
 the part's row of [primitives-map.md](../primitives-map.md) and calls the
