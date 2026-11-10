@@ -112,8 +112,15 @@ llvm::SmallVector<mlir::Value, 2> emitTemplateWorkUnit(
     mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
     const TemplateWorkBuffers &, mlir::Value work, mlir::Value lane,
     const mlir::IRMapping &captures);
-/// Runs a block of entries of one segment. A partner's frame, mask, scalar
+/// Transpose each half-warp's distributed 16-bit partner masks into the
+/// receiving first unit's local turn stream. All lanes must participate;
+/// padded partner masks must be cleared first. Only the low 16 result bits
+/// are defined: bit t is original M[(lane-t)&15][lane&15].
+mlir::Value emitTemplateMaskStream(mlir::OpBuilder &, mlir::Location,
+                                  mlir::Value mask, mlir::Value lane);
+/// Runs a block of entries of one segment. A partner's frame, scalar
 /// parameters and accumulated forces rotate through its half warp together.
+/// Pair membership is consumed from the first unit's local mask stream.
 /// A lane holds one of 16 I units, repeated in the other half; those halves
 /// are combined before the single I write. Each valid J entry is written
 /// once, after the rotation. Callbacks supply the actual scalar body and

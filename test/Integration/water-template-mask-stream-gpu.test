@@ -1,0 +1,6 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/template_mask_stream_oracle.py %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --test-md-template-mask-stream | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Both half-warps, every single-bit basis, high-bit poison, random/adversarial
+# masks and every padded batch length. Comparison is exact integer equality.
+# CHECK: 1

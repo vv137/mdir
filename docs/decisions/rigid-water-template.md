@@ -414,6 +414,23 @@ measurements replace them.
   modes: no needed pair missing, none duplicated, no excluded pair in a
   solute–solute list.
 
+### RTX 5090 replay reference
+
+Measurement only. Unchanged source SHA256 `67b7f20293c24783e59798eb99bd2afd5ead2cc810c1d5eecedaeeee5bbe5f81`, CUDA 13.2, `-O3 --generate-line-info -arch=sm_120 -DFUSE_MINB=1`, uncapped and without fast math. Native head `f6999f3cc7dc05603841edf55dbdbc49c2b238c3`; main reference `af7a9f47bd6871324f6a4fc158ee1855f7f643c1`. Every cell is independent job A / B.
+
+| System | Prototype evaluation, us/call | Prototype short-range kernel path, us/frame | Composed whole-step ESTIMATE, us/step | ESTIMATE/main |
+| --- | --- | --- | --- | --- |
+| ubq-opc | 31.128 / 31.120 | 50.131 / 50.077 | 113.902 / 113.933 | 0.93566 / 0.93937 |
+| ubq-tip3p | 29.763 / 29.692 | 49.192 / 49.080 | 100.519 / 100.456 | 1.03211 / 1.03250 |
+| opc-small | 24.236 / 24.231 | 31.096 / 31.087 | 78.136 / 77.992 | 0.84843 / 0.84792 |
+| opc-large | 53.024 / 52.971 | 62.694 / 62.635 | 143.412 / 143.264 | 0.79899 / 0.79971 |
+| tip3p-small | 27.808 / 27.757 | 34.712 / 34.649 | 73.866 / 73.765 | 0.97280 / 0.97291 |
+| tip3p-large | 54.819 / 54.887 | 64.500 / 64.578 | 128.428 / 128.576 | 0.93799 / 0.93822 |
+
+The short-range path and ESTIMATE are the prototype's, not measured full dynamics. Composition retains main's host gap and other kernels. Replay uses consecutive main frames at 2 fs spacing, absolute steps 53001–55000 for ubiquitin and 1–2000 for boxes; selected prototype windows retain 53101–55000 and 101–2000. Native evolves independently over its unchanged 10,000-step controls. Prototype reads f32 DCD geometry, uses f32 list geometry and archived force rule B; native stores f64 positions, uses f64 coverage/pruning and rule A. Both use f32 pair/force arithmetic and atomics. Prototype force-only evaluation follows separate pruning; native common-force evaluation includes fused pruning and coexists with periodic energy work. Different histories and work volumes limit interpretation.
+
+Both jobs exited zero: 36 successful native/main wall runs, 35 stationary accepted; all 12 prototype kernel plateaus accepted and 36 captures completed. Job A ubiquitin OPC ON was nonstationary, retained/excluded without an accepted ratio, substitution or retry. Prototype evaluation A/B relative spread is at most 0.2403%. No numerical bound or source changed; this measurement does not mark the PR ready.
+
 ## Gates of the implementation
 
 The failure-only native checkpoint acquisition exposed an initialization contract error after the native
@@ -674,8 +691,8 @@ The isolated packing emitter adds the lattice shift to whole-molecule
 positions before narrowing, without loading a stored extra point. Its
 exact dyadic probe uses a large common translation that would erase local
 geometry if narrowed first. The warp scheduler rotates a partner's frame,
-parameters, mask and force accumulator together through 16 half-warp
-turns, then writes each partner once. It combines the two copies of each
+parameters and force accumulator together through 16 half-warp
+turns; pair membership is consumed from a transposed local mask stream, then writes each partner once. It combines the two copies of each
 first unit before writing. Its structural tests cover WW, SW, SS and
 energy-only bodies; physical GPU validation remains outstanding.
 
@@ -1314,3 +1331,23 @@ Mixed pair arithmetic, site accumulators and the transpose are f32;
 energy and virial accumulators remain f64 and coverage/pruning geometry
 remains f64. Reassociation may change mixed bits; every existing physical
 bound is unchanged. Deterministic mode retains the general path.
+
+### Local mask stream
+
+Before each entry batch, four fixed XOR-shuffle stages transpose each
+half-warp's distributed 16-bit partner masks. The XOR offsets 1, 2, 4 and
+8 cannot cross the half-warp boundary. Bit reversal and a lane-dependent
+shift arrange the local stream in the existing previous-lane partner
+order. Each turn consumes its low bit and shifts locally; the mask no
+longer rotates with the partner. Frame, parameter, image and partner-force
+rotations retain their original order and ownership.
+
+The caller clears padded partner masks before every lane participates in
+the transpose. The receiving first unit's validity is applied when its
+bit is consumed. High input bits are ignored. Every operation of this
+change is i32 bit transport; floating-point arithmetic, covering/pruning,
+images, cutoffs, force convention and all physical bounds are unchanged.
+A direct-index integer oracle covers every single-bit basis in both
+half-warps, independent half patterns, random and high-bit-poison masks,
+and every padded batch length. The existing exact scheduler and physical
+fixtures remain required before isolated performance measurement.

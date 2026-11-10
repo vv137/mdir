@@ -1029,6 +1029,10 @@ linear rule-(A) transpose once at the molecular write boundary. This
 avoids expanding coordinate-basis derivatives and repeating the
 extra-point pullback for each site pair. The per-site cutoff and candidate
 image remain explicit; energy and strain use the same source expression.
+Four fixed half-warp bit-transpose stages turn distributed partner masks
+into a local membership stream in the same partner order. Only this
+integer mask transport changes; positions and accumulated partner forces
+retain their rotations and the pair predicates are identical.
 
 The native spatial order uses one stable counting sort of the joint
 column and z key, with the unit ID breaking ties. Each digit composes
