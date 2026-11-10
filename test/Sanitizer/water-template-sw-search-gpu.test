@@ -1,5 +1,6 @@
 # Real SW search: tilted, reframed, partial groups/windows and retained epochs.
 # REQUIRES: cuda, compute-sanitizer
+# Expected time: under 180 s on RTX 5090; submit with lit --timeout=300.
 # RUN: rm -f %t.input.mlir %t.reference.json %t.mlir %t.records %t.unsplit.mlir %t.unsplit.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
 # RUN: %python %S/../Integration/Inputs/template_sw_ordered.py generate %t.input.mlir %t.reference.json --triclinic --reframed
 # RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir

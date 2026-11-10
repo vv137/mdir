@@ -1,5 +1,6 @@
 # Bounded work windows, frame carry, payload tails and stage chunk edges.
 # REQUIRES: cuda, compute-sanitizer
+# Expected time: under 120 s on RTX 5090; submit with lit --timeout=180.
 # RUN: rm -f %t.input.mlir %t.reference.json %t.mlir %t.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
 # RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py generate %t.input.mlir %t.reference.json
 # RUN: mdir-opt %t.input.mlir --test-md-ordered-row-work | mlir-opt %lower_gpu_to_llvm > %t.mlir
