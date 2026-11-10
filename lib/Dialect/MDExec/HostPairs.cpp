@@ -128,7 +128,15 @@ int64_t hostpairs::getDeterministicLanes(Type element) {
 
 std::optional<hostpairs::Policy> hostpairs::findPolicy(StringRef cpu) {
   // The hosts measured (D[host-pair-vector]); every other host keeps the
-  // scalar row.
-  (void)cpu;
+  // scalar row outside the deterministic mode.
+  static const Policy policies[] = {
+      // EPYC 7543 (Zen 3, AVX2): the NVE step of JAC, TIP3P 103k, and
+      // Cellulose against main, 1 and 16 threads, mixed and double; the
+      // lanes took 1.3 to 1.7 times less time a step, beyond the spread.
+      {"znver3", true, "lanes measured faster on an EPYC 7543"},
+  };
+  for (const Policy &policy : policies)
+    if (policy.cpu == cpu)
+      return policy;
   return std::nullopt;
 }
