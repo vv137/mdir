@@ -29,7 +29,10 @@ their function. The driver copies the lowered module, puts a mark with an
 index at the start of each `omp.parallel`, translates the copy to LLVM IR,
 and pairs each record with the function its mark is in. The format, the
 keys, and the parts that `prof.py` takes from them are in
-[profile-map.md](../profile-map.md).
+[profile-map.md](../profile-map.md). The run's map is an output as the
+others are: backed up by a fresh run (D149), named in the manifest's
+`outputs` (whose schema now lists its keys), and listed by `mdir check`.
+The keys and the scope of the terms were ruled on in #843.
 
 *Alternatives.*
 - Pairing the regions with the outlined functions by the order of the calls

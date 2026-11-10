@@ -26,6 +26,13 @@
 # The map of a run, and that of an emit, are the same.
 # RUN: cd %t && mdir run mixed.toml > /dev/null
 # RUN: cmp %t/mixed.json %t/run-map.json
+# The manifest of the run names it among its outputs, and mdir check lists
+# it; a second run keeps the first map as a backup (D149).
+# RUN: %python -c "import json, sys; print(json.loads(open(sys.argv[1]).readline())['outputs']['profile_map'])" %t/run.jsonl | FileCheck %s --check-prefix=MANIFEST
+# RUN: cd %t && mdir check mixed.toml | FileCheck %s --check-prefix=CHECK-TEXT
+# RUN: cd %t && mdir run mixed.toml > /dev/null && cmp %t/run-map.json %t/#run-map.json.1#
+# MANIFEST: run-map.json
+# CHECK-TEXT: profile_map: run-map.json (JSON), once, when the program is compiled, exists
 #
 # The parts of prof.py, from the map alone.
 # RUN: %python %S/../../scripts/benchmarks/cpu-breakdown/prof.py --classify %t/mixed.json \
@@ -178,6 +185,7 @@ coordinates = "dipeptide.inpcrd"
 
 [output]
 profile_map = "run-map.json"
+manifest = "run.jsonl"
 energy_interval = 5
 
 [energy]

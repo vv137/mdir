@@ -1059,7 +1059,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"energy", control->energyFile}, {"pull", control->pullFile},
         {"observables", control->observablesFile},
         {"trajectory", control->framePeriod > 0 ? control->trajectoryFile : ""},
-        {"manifest", control->manifestFile}})
+        {"manifest", control->manifestFile},
+        {"profile_map", control->profileMapFile}})
       if (!path.empty())
         outputs[name] = getOutputPath(path);
     if (!control->restartOutput.empty())

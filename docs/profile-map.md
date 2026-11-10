@@ -13,7 +13,7 @@ once their lowering does (#840, after #795).
 | Where | How | Written |
 |---|---|---|
 | `mdir emit` | `mdir emit control.toml --stage=lowered --profile-map=map.json` | The map of the lowered program, beside what the stage prints. With `--stage=module` or `--stage=pipeline` the program is lowered as well, to make the map. |
-| `mdir run` | `profile_map = "profile-map.json"` in `[output]` | The map of the program that the run compiles, once, before its steps. A run that is not continued keeps an earlier file of that name as `#<name>.<n>#`, as it keeps its other outputs (D149). |
+| `mdir run` | `profile_map = "profile-map.json"` in `[output]` | The map of the program that the run compiles, once, before its steps. A run that is not continued keeps an earlier file of that name as `#<name>.<n>#`, as it keeps its other outputs (D149). The manifest names it among its `outputs`, and `mdir check` lists it. |
 
 The program of a run and the program that `mdir emit` lowers from the same
 control file are the same, region for region, so either map serves a

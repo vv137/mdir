@@ -248,7 +248,11 @@ static Preflight inspect(const Control &control) {
        control.minimize ? 1 : count(control.checkpointPeriod, false),
        "checkpoints"},
       {"manifest", control.manifestFile, "JSON Lines", 0,
-       !control.manifestFile.empty(), false, false, -1, "events"}};
+       !control.manifestFile.empty(), false, false, -1, "events"},
+      // Written once, when the program is compiled (D[profile-map]).
+      {"profile_map", control.profileMapFile, "JSON", 0,
+       !control.profileMapFile.empty(), false, false,
+       1, "files"}};
   // `mdir run` keeps an output of an earlier run as `#<name>.<n>#` before
   // it writes its own; under --continue the files are the run's own
   // (D149). The checkpoint before the last, `.prev`, is kept as well.
@@ -579,13 +583,16 @@ static void describeRun(const Control &control, const System &system,
       std::printf(", disabled");
     else if (llvm::StringRef(output.kind) == "manifest")
       std::printf(", at execution start and end");
+    else if (llvm::StringRef(output.kind) == "profile_map")
+      std::printf(", once, when the program is compiled");
     else if (output.atEnd)
       std::printf(", at the end");
     else if (output.interval == 0)
       std::printf(", no rows");
     else
       std::printf(", every %lld steps", static_cast<long long>(output.interval));
-    if (output.enabled && output.count >= 0 && !output.atEnd)
+    if (output.enabled && output.count >= 0 && !output.atEnd &&
+        llvm::StringRef(output.kind) != "profile_map")
       std::printf(", %lld %s", static_cast<long long>(output.count),
                   output.countOf);
     if (output.exists)

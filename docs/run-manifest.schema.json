@@ -414,9 +414,33 @@
         },
         "outputs": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "properties": {
+            "log": {
+              "type": "string"
+            },
+            "energy": {
+              "type": "string"
+            },
+            "pull": {
+              "type": "string"
+            },
+            "observables": {
+              "type": "string"
+            },
+            "trajectory": {
+              "type": "string"
+            },
+            "manifest": {
+              "type": "string"
+            },
+            "profile_map": {
+              "type": "string"
+            },
+            "checkpoint": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
         },
         "first_step": {
           "type": "integer",
