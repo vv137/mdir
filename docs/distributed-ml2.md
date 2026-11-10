@@ -336,7 +336,7 @@ the verifiers and the lowering, and each has a negative test
 | V7 | A partial value has exactly one use, and the two partial operands of `halo_sum` are the two results of one traversal | Contributions lost or counted twice |
 | V8 | A unique traversal, or the two-ended gather over a directed one, states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
 | V9 | The relation's positions are those of the op that traverses it | A relation of another configuration without a coverage witness |
-| V10 | A neighborhood or a `pack` at positions other than its halo's build positions has a witness of coverage: the two come from one `unpack`, or the op is in the then-region of an `scf.if` on `covered` of them at a cutoff at least its own (Section 8.1) | A halo used after the particles moved, without the skin test |
+| V10 | A neighborhood or a `pack` uses a halo built at positions wrapped into its cell (from `distribute` or `redistribute` with `image`, or the reference of an `unpack`), and at positions other than the halo's build positions has a witness of coverage: the two come from one `unpack`, or the op is in the then-region of an `scf.if` on `covered` of them at a cutoff at least its own (Section 8.1) | A halo used after the particles moved, without the skin test; a halo rebuilt at drifted positions without a migration |
 
 Where a check cannot be decided (a value through a block argument whose
 layout is unknown), the verifier rejects with the reason, so that a proven
@@ -830,6 +830,18 @@ carries one value, a state, and nothing else of `md_dist`:
   witness. The reuse of the halo's membership (the candidate map) is thus
   proved, while its payload is fresh: every evaluation copies the current
   positions through the kept halo.
+- **A halo is built at wrapped positions** (V10, with every witness). The
+  runtime visits the images of a particle within
+  $\lceil\mathrm{reach}/L\rceil$ cells of its position along each axis, so
+  a halo covers the pairs within the cutoff only if the positions it is
+  built at lie in the cell. The verifier accepts as such positions the
+  result of `distribute` or `redistribute` with `image` of the halo's cell
+  (after `migrate`), and the reference positions of an `unpack`, which are
+  wrapped by induction. A loop that rebuilds the halo at the drifted
+  positions without migrating (at every step, or in the else-region of the
+  test) is refused; it would drop a pair once a particle has drifted by
+  about $L/2$ plus the reach, for example $L = 10$, reach 2.4, particles at
+  9.5 and $-10$.
 - **Linearity.** A state has exactly one use, in its own block: an
   `unpack`, an `scf.yield`, or the init of an `scf.for`. It is neither read
   twice nor dropped on one path.

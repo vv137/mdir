@@ -76,7 +76,11 @@ live per-particle field as one linear value, `md_dist.state`
 (D[distributed-migration]). The state is formed only under a witness of
 coverage: the halo was built at the positions, or the positions and the halo
 come from one earlier state, or the formation is guarded by a true
-`md_dist.covered` of them. The step therefore needs no global argument: by
+`md_dist.covered` of them. With every witness the halo must have been built
+at positions wrapped into the cell, by a distribution with images after a
+migration or as the reference of an earlier state: the ghosts are the images
+within $\lceil R_h/L_x\rceil$ cells of those positions along $x$ (likewise along $y$ and $z$), so a halo rebuilt at
+drifted positions without migrating would miss pairs. The step therefore needs no global argument: by
 induction over the steps, every relation a step builds is that of the global
 neighborhood at the current positions. When the predicate fails, the step
 migrates and redistributes every field the state carries, which its type

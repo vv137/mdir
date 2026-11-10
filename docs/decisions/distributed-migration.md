@@ -36,7 +36,15 @@ and the types of the carried fields; the first field is the positions.
 
 *Coverage of a neighborhood (V10).* `md_dist.neighborhood` at positions
 other than the halo's build positions needs the same witness as `pack`.
-Before, the verifier only compared the cutoff with the reach.
+Before, the verifier only compared the cutoff with the reach. With every
+witness, the halo must have been built at positions wrapped into its cell:
+the result of `md_dist.distribute` or `md_dist.redistribute` with `image`
+of that cell (after `migrate`), or the reference positions of an `unpack`
+(wrapped by induction, since each state was packed with such a halo). The
+runtime visits only the images within $\lceil\mathrm{reach}/L\rceil$
+cells of a position, so a halo rebuilt at drifted positions without a
+migration would drop pairs within the cutoff with no error; such a loop is
+refused.
 
 *The step.* Integrate on owned rows (`map_particles`), test
 `md_dist.covered`, and branch on the agreed bit with `scf.if`: if covered,

@@ -345,8 +345,44 @@ Value mdir::md_dist::cellOf(Value halo) {
   return {};
 }
 
+/// A cutoff in a diagnostic, as it is written in the program (%g).
+static std::string printCutoff(double value) {
+  char text[32];
+  std::snprintf(text, sizeof(text), "%g", value);
+  return text;
+}
+
+bool mdir::md_dist::isWrapped(Value positions, Value cell) {
+  if (auto op = positions.getDefiningOp<DistributeOp>())
+    return op.getImage() && op.getImage() == cell;
+  // A redistribution to the epoch of a md_dist.migrate, whose cell it uses.
+  if (auto op = positions.getDefiningOp<RedistributeOp>())
+    return op.getImage() && op.getImage() == cell;
+  // The positions a state's halo was built at, wrapped by induction: every
+  // state is packed with a halo whose reference passed this test.
+  if (auto op = positions.getDefiningOp<UnpackOp>())
+    return positions == op.getReference() && op.getCell() == cell;
+  return false;
+}
+
 LogicalResult mdir::md_dist::proveCovers(Operation *op, Value halo,
                                          Value positions, double cutoff) {
+  // The ghosts of a halo are the images within ceil(reach / L) cells of its
+  // reference positions, which therefore must lie in the cell: a halo built
+  // at positions that drifted out of it (rebuilt without a migration) misses
+  // pairs within the cutoff (V10).
+  Value reference = referenceOf(halo);
+  if (reference && !isWrapped(reference, cellOf(halo))) {
+    InFlightDiagnostic diagnostic =
+        op->emitOpError()
+        << "cannot prove that the halo covers the positions (V10): it was "
+           "built at positions that are not shown to be wrapped into its "
+           "cell; build a halo at positions from md_dist.distribute or "
+           "md_dist.redistribute with 'image' of its cell (after "
+           "md_dist.migrate), or from the reference of a md_dist.unpack";
+    diagnostic.attachNote(reference.getLoc()) << "the positions of the halo";
+    return diagnostic;
+  }
   // Built at these positions: every image within the reach (V4).
   if (auto build = halo.getDefiningOp<HaloOp>())
     if (build.getPositions() == positions)
@@ -358,8 +394,8 @@ LogicalResult mdir::md_dist::proveCovers(Operation *op, Value halo,
       if (cutoff <= covered)
         return success();
       return op->emitOpError()
-             << "the state covers its positions at the cutoff " << covered
-             << ", less than " << cutoff;
+             << "the state covers its positions at the cutoff "
+             << printCutoff(covered) << ", less than " << printCutoff(cutoff);
     }
   // The then-region of a branch on md_dist.covered (the agreed bit).
   for (Region *region = op->getParentRegion(); region;
@@ -374,7 +410,7 @@ LogicalResult mdir::md_dist::proveCovers(Operation *op, Value halo,
   }
   return op->emitOpError()
          << "cannot prove that the halo covers the positions at the cutoff "
-         << cutoff
+         << printCutoff(cutoff)
          << " (V10): the halo was not built at them, they do not come from "
             "one md_dist.unpack, and the op is not in the then-region of an "
             "scf.if on md_dist.covered of them";

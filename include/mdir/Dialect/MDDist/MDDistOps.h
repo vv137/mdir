@@ -82,8 +82,16 @@ mlir::Value referenceOf(mlir::Value halo);
 /// that gives it; null if neither.
 mlir::Value cellOf(mlir::Value halo);
 
+/// Whether `positions` are shown to be wrapped into `cell`: a
+/// md_dist.distribute or md_dist.redistribute with `image` of that cell, or
+/// the reference positions of a md_dist.unpack with that cell
+/// (D[distributed-migration]).
+bool isWrapped(mlir::Value positions, mlir::Value cell);
+
 /// Proves that `halo` covers every pair within `cutoff` at the owned
-/// positions `positions` (V10): the halo was built at them, the two come
+/// positions `positions` (V10): the halo's reference positions are wrapped
+/// into its cell (isWrapped), and either the halo was built at
+/// `positions`, the two come
 /// from one md_dist.unpack of a state of at least that cutoff, or `op` is in
 /// the then-region of an scf.if on a md_dist.covered of the two at a cutoff
 /// of at least `cutoff`. Emits the reason on `op` otherwise.
