@@ -2,6 +2,7 @@
 // for the scalar window and the covering bound of D242.
 #include "mdir/Conversion/TemplateSearchKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
+#include "mdir/Conversion/OrderedRowWorkEmitter.h"
 #include "mdir/Conversion/TemplateSearchPreparation.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/TemplateSearchGeometry.h"
@@ -104,15 +105,22 @@ static Value shuffle(OpBuilder &b, Location loc, Value value, Value lane) {
           arith::ExtUIOp::create(b, loc, b.getI64Type(), take(high)), shift));
   return arith::BitcastOp::create(b, loc, type, joined);
 }
-static TemplateStageState forState(OpBuilder &b, Location loc, Value begin, Value end,
-    Value step, TemplateStageState initial,
-    llvm::function_ref<TemplateStageState(OpBuilder &, Value, TemplateStageState)> body) {
-  auto loop = scf::ForOp::create(b, loc, begin, end, step, ValueRange{initial.count, initial.chunk},
+struct SearchState {
+  Value count, chunk, queued;
+};
+struct QueryValues {
+  SmallVector<Value, 3> components, integers;
+  Value image, fastShift, roundoff;
+};
+static SearchState forState(OpBuilder &b, Location loc, Value begin, Value end,
+    Value step, SearchState initial,
+    llvm::function_ref<SearchState(OpBuilder &, Value, SearchState)> body) {
+  auto loop = scf::ForOp::create(b, loc, begin, end, step, ValueRange{initial.count, initial.chunk, initial.queued},
       [&](OpBuilder &at, Location, Value i, ValueRange state) {
-        auto next = body(at, i, {state[0], state[1]});
-        scf::YieldOp::create(at, loc, ValueRange{next.count, next.chunk});
+        auto next = body(at, i, {state[0], state[1], state[2]});
+        scf::YieldOp::create(at, loc, ValueRange{next.count, next.chunk, next.queued});
       });
-  return {loop.getResult(0), loop.getResult(1)};
+  return {loop.getResult(0), loop.getResult(1), loop.getResult(2)};
 }
 // The before region never loads: an empty row can end at the buffer tail.
 static Value bound(OpBuilder &b, Location loc, Value begin, Value end, Value wanted,
@@ -145,7 +153,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   auto boolean = [&](OpBuilder &at, bool value) -> Value {
     return arith::ConstantOp::create(at, loc, at.getBoolAttr(value));
   };
-  Value one = ix(b, 1), block = ix(b, 64);
+  Value one = ix(b, 1);
   // Spatial sort scratch is dead after group publication. Reuse it for
   // dense descriptor-column endpoints without changing the arena capacity.
   Value bins = arith::MulIOp::create(b, loc, ix(b, 2),
@@ -221,13 +229,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   // remove the other ownership/exclusion paths from each kernel. Global
   // row IDs and row-local ordinal compaction preserve the existing order.
   for (unsigned searchClass = 0; searchClass != 3; ++searchClass) {
+  bool cooperative = searchClass == 1 && !v.forceUnsplitSW;
+  Value classBlock = ix(b, cooperative ? 128 : 64);
   Value classRows = searchClass == 0 ? waterRows : atomRows;
   Value rowOffset = searchClass == 0 ? ix(b, 0) :
       (searchClass == 1 ? waterRows : ssBegin);
-  Value threads = arith::MulIOp::create(b, loc, classRows, ix(b, 32));
+  Value threads = arith::MulIOp::create(b, loc, classRows, ix(b, cooperative ? 128 : 32));
   Value grid = arith::MaxUIOp::create(b, loc, one,
       arith::DivUIOp::create(b, loc,
-          arith::AddIOp::create(b, loc, threads, ix(b, 63)), block));
+          arith::AddIOp::create(b, loc, threads, ix(b, cooperative ? 127 : 63)), classBlock));
   auto sharedSpace = gpu::AddressSpaceAttr::get(b.getContext(),
       gpu::GPUDialect::getWorkgroupAddressSpace());
   auto pointCacheType = MemRefType::get({32, 3}, b.getF64Type(),
@@ -236,17 +246,32 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
       MemRefLayoutAttrInterface(), sharedSpace);
   auto idCacheType = MemRefType::get({32}, b.getI32Type(),
       MemRefLayoutAttrInterface(), sharedSpace);
-  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one,
+  SmallVector<Type> sharedTypes{pointCacheType, idCacheType, cartesianCacheType};
+  if (cooperative) {
+    sharedTypes.append({
+        MemRefType::get({128}, b.getI32Type(), MemRefLayoutAttrInterface(), sharedSpace),
+        MemRefType::get({128,3}, b.getI64Type(), MemRefLayoutAttrInterface(), sharedSpace),
+        MemRefType::get({128,16,4}, b.getI32Type(), MemRefLayoutAttrInterface(), sharedSpace),
+        MemRefType::get({128,16}, b.getI32Type(), MemRefLayoutAttrInterface(), sharedSpace),
+        MemRefType::get({2}, b.getI64Type(), MemRefLayoutAttrInterface(), sharedSpace)});
+  }
+  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, classBlock, one, one,
       /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
       /*asyncDependencies=*/{},
-      /*workgroupAttributions=*/TypeRange{pointCacheType, idCacheType, cartesianCacheType});
+      /*workgroupAttributions=*/sharedTypes);
   Value pointCache = launch.getWorkgroupAttributionBBArgs()[0];
   Value idCache = launch.getWorkgroupAttributionBBArgs()[1];
   Value cartesianCache = launch.getWorkgroupAttributionBBArgs()[2];
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
-      arith::MulIOp::create(k, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
-  Value localRow = arith::DivUIOp::create(k, loc, thread, ix(k, 32));
+      arith::MulIOp::create(k, loc, launch.getBlockIds().x, classBlock), launch.getThreadIds().x);
+  Value localRow = cooperative ? launch.getBlockIds().x
+      : Value(arith::DivUIOp::create(k, loc, thread, ix(k, 32)));
+  OrderedRowWorkBuffers ordered;
+  if (cooperative) {
+    auto args = launch.getWorkgroupAttributionBBArgs();
+    ordered = {args[3],args[4],args[5],args[6],args[7],launch.getThreadIds().x};
+  }
   Value row = arith::AddIOp::create(k, loc, localRow, rowOffset);
   Value validRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, localRow, classRows);
   scf::IfOp::create(k, loc, validRow, [&](OpBuilder &at, Location) {
@@ -256,7 +281,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     Value rowWord = arith::IndexCastOp::create(at, loc, at.getI32Type(), row);
     TemplateStageBuffers stage{v.build.stageUnits, v.build.stageEntries, v.counters,
         v.build.counts, asWide(at, loc, v.build.unitCapacity), rowWord, lane};
-    TemplateStageState initial{integer(at, loc, 0), integer(at, loc, -1)};
+    SearchState initial{integer(at, loc, 0), integer(at, loc, -1), ix(at, 0)};
     Value ww = boolean(at, searchClass == 0);
     Value sw = boolean(at, searchClass == 1);
     Value ss = boolean(at, searchClass == 2);
@@ -291,11 +316,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
           // Immutable per-row anchors, following the shared-anchor search
           // structure of the measured prototype while retaining native f64.
           // Only the lower half writes; duplicate upper-half stores would race.
-          Value cacheBase = arith::MulIOp::create(search, loc,
+          Value cacheBase = cooperative ? ix(search, 0) : Value(arith::MulIOp::create(search, loc,
               arith::DivUIOp::create(search, loc,
-                  launch.getThreadIds().x, ix(search, 32)), ix(search, 16));
+                  launch.getThreadIds().x, ix(search, 32)), ix(search, 16)));
           Value writesCache = arith::CmpIOp::create(search, loc,
               arith::CmpIPredicate::ult, lane, word(search, loc, 16));
+          if (cooperative)
+            writesCache = arith::AndIOp::create(search, loc, writesCache,
+                arith::CmpIOp::create(search, loc, arith::CmpIPredicate::ult,
+                    launch.getThreadIds().x, ix(search,32)));
           scf::IfOp::create(search, loc, writesCache, [&](OpBuilder &store, Location) {
             Value slot = arith::AddIOp::create(store, loc, cacheBase, laneIndex);
             for (int64_t axis = 0; axis != 3; ++axis) {
@@ -309,15 +338,17 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
             memref::StoreOp::create(store, loc, safeUnit, idCache, ValueRange{slot});
             scf::YieldOp::create(store, loc);
           });
-          // The sibling row may be absent/inactive: synchronize only this warp.
-          NVVM::SyncWarpOp::create(search, loc, word(search, loc, -1));
+          // WW/SS have independent sibling rows. Cooperative SW has one
+          // block-uniform row and one cache initialized by ownerwarp only.
+          if (cooperative) gpu::BarrierOp::create(search,loc);
+          else NVVM::SyncWarpOp::create(search, loc, word(search, loc, -1));
           auto firstFrame = emitSpatialReferenceFrame(search, loc, firstPoint);
           // Query each distinct frame of this at-most-sixteen-unit group:
           // lattice-frame subset in the wrapped key frame. The stored image
           // is translated back before the unchanged f64 pair predicate.
           auto framed = forState(search, loc, ix(search, 0), ix(search, 16),
               ix(search, 1), initial,
-              [&](OpBuilder &frameBody, Value representative, TemplateStageState frameState) {
+              [&](OpBuilder &frameBody, Value representative, SearchState frameState) {
             Value frame = shuffle(frameBody, loc, firstFrame.lattice,
                 arith::IndexCastOp::create(frameBody, loc, frameBody.getI32Type(), representative));
             Value member = firstValid;
@@ -422,14 +453,279 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 Value imageEnvelope = vector::FromElementsOp::create(search, loc, pointType, imageBounds);
                 auto certificate = emitTemplateSearchCertificate(search, loc,
                     v.cell, frame, imageEnvelope, reach2);
+                auto makeQuery = [&](OpBuilder &at, ValueRange queries) -> QueryValues {
+                  SmallVector<Value, 3> queryComponents;
+                  Value magnitude = real(at, 4);
+                  for (int64_t axis = 0; axis != 3; ++axis) {
+                    Value query = arith::SIToFPOp::create(at, loc,
+                        at.getF64Type(), queries[axis]);
+                    queryComponents.push_back(query);
+                    magnitude = arith::AddFOp::create(at, loc, magnitude,
+                        arith::AddFOp::create(at, loc,
+                            math::AbsFOp::create(at, loc, query),
+                            math::AbsFOp::create(at, loc,
+                                vector::ExtractOp::create(at, loc, frame, axis))));
+                  }
+                  Value queryVector = vector::FromElementsOp::create(at, loc, pointType, queryComponents);
+                  Value fastQueryShift = emitLatticeShift(at, loc,
+                      arith::TruncFOp::create(at, loc, fastType, queryVector), fastCell);
+                  // 64 eps times the cell 1-norm and frame/image scale
+                  // covers the <32 rounded operations in box conversion,
+                  // image addition and the original displacement. Only
+                  // the prefilter widens; the exact pair test below does not.
+                  Value boxRoundoff = arith::MulFOp::create(at, loc,
+                      arith::MulFOp::create(at, loc, cellNorm, magnitude), real(at, 0x1p-46));
+
+                  SmallVector<Value, 3> imageComponents, imageIntegers;
+                  for (int64_t axis = 0; axis != 3; ++axis) {
+                    Value absolute = arith::AddIOp::create(at, loc, queries[axis],
+                        arith::FPToSIOp::create(at, loc, at.getI64Type(),
+                            vector::ExtractOp::create(at, loc, frame, axis)));
+                    imageIntegers.push_back(absolute);
+                    imageComponents.push_back(arith::SIToFPOp::create(
+                        at, loc, at.getF64Type(), absolute));
+                  }
+                  Value image = vector::FromElementsOp::create(at, loc, pointType, imageComponents);
+                  return QueryValues{queryComponents, imageIntegers, image, fastQueryShift, boxRoundoff};
+                };
+                auto groupMayReach = [&](OpBuilder &at, Value partnerGroup,
+                                         const QueryValues &q) -> Value {
+                  SmallVector<Value, 3> boxSides[2], fractionSides[2];
+                  for (int64_t side = 0; side != 2; ++side) {
+                    Value row = arith::AddIOp::create(at, loc,
+                        arith::MulIOp::create(at, loc, partnerGroup, ix(at, 2)), ix(at, side));
+                    for (int64_t axis = 0; axis != 3; ++axis) {
+                      boxSides[side].push_back(memref::LoadOp::create(at, loc,
+                          v.groupBoxes, ValueRange{row, ix(at, axis)}));
+                      fractionSides[side].push_back(memref::LoadOp::create(at, loc,
+                          v.fractionalBoxes, ValueRange{row, ix(at, axis)}));
+                    }
+                  }
+                  SpatialBoundingBox partnerBox{
+                      vector::FromElementsOp::create(at, loc, fastType, boxSides[0]),
+                      vector::FromElementsOp::create(at, loc, fastType, boxSides[1])};
+                  Value lowGap = arith::SubFOp::create(at, loc, cartesianBox.minimum,
+                      arith::AddFOp::create(at, loc, partnerBox.maximum, q.fastShift));
+                  Value highGap = arith::SubFOp::create(at, loc,
+                      arith::AddFOp::create(at, loc, partnerBox.minimum, q.fastShift), cartesianBox.maximum);
+                  Value gap = arith::MaximumFOp::create(at, loc,
+                      arith::MaximumFOp::create(at, loc, lowGap, highGap),
+                      vector::BroadcastOp::create(at, loc, fastType,
+                          createReal(at, loc, at.getF32Type(), 0)));
+                  Value boxSquare = arith::MulFOp::create(at, loc, gap, gap);
+                  Value boxDistance = vector::ReductionOp::create(at, loc,
+                      vector::CombiningKind::ADD, boxSquare);
+                  Value finiteBox = arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OLT,
+                      math::AbsFOp::create(at, loc, boxDistance),
+                      createReal(at, loc, at.getF32Type(), std::numeric_limits<float>::infinity()));
+                  Value boxReject = arith::AndIOp::create(at, loc,
+                      arith::AndIOp::create(at, loc, certificate.enabled, finiteBox),
+                      arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OGT,
+                          boxDistance, certificate.boxUpper));
+                  Value boxMayReach = arith::XOrIOp::create(at, loc,
+                      boxReject, boolean(at, true));
+                  SpatialBoundingBox partnerFraction{
+                      vector::FromElementsOp::create(at, loc, pointType, fractionSides[0]),
+                      vector::FromElementsOp::create(at, loc, pointType, fractionSides[1])};
+                  Value fractionRoundoff = arith::DivFOp::create(at, loc,
+                      vector::BroadcastOp::create(at, loc, pointType,
+                          arith::MulFOp::create(at, loc, q.roundoff, real(at, 4))), widths);
+                  auto single = emitSpatialSingleImage(at, loc,
+                      box, partnerFraction, radius, fractionRoundoff);
+                  Value sameImage = boolean(at, true);
+                  for (int64_t axis = 0; axis != 3; ++axis)
+                    sameImage = arith::AndIOp::create(at, loc, sameImage,
+                        arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OEQ,
+                            vector::ExtractOp::create(at, loc, single.image, axis),
+                            q.components[axis]));
+                  Value imageMayReach = arith::OrIOp::create(at, loc, sameImage,
+                      arith::XOrIOp::create(at, loc, single.proved, boolean(at, true)));
+                  return Value(arith::AndIOp::create(at, loc, boxMayReach, imageMayReach));
+                };
+                auto partnerRecord = [&](OpBuilder &units, Value selectedGroup,
+                                         Value hasPair, const QueryValues &q) -> OrderedRowRecord {
+                  Value start = asIndex(units, loc,
+                      load(units, loc, v.build.groups.starts, selectedGroup));
+                  Value length = asIndex(units, loc,
+                      load(units, loc, v.build.groups.lengths, selectedGroup));
+                  Value local = asIndex(units, loc,
+                      arith::AndIOp::create(units, loc, lane, word(units, loc, 15)));
+                  Value partnerPlace = arith::AddIOp::create(units, loc, start,
+                      arith::MinUIOp::create(units, loc, local,
+                          arith::SubIOp::create(units, loc, length, ix(units, 1))));
+                  Value partner = load(units, loc, v.spatial.order, partnerPlace);
+                  Value partnerIndex = asIndex(units, loc, partner);
+                  Value partnerPoint = loadElement(units, loc, v.spatial.points, partnerIndex);
+                  Value partnerCartesian = cartesianAnchor(units, loc, v, partnerIndex);
+                  Value shiftedCartesian = arith::AddFOp::create(units, loc,
+                      partnerCartesian, q.fastShift);
+                  Value has = arith::AndIOp::create(units, loc, hasPair,
+                      arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult, local, length));
+                  SmallVector<Value, 3> wrappedPartner;
+                  Value code = integer(units, loc, 0);
+                  Value imageFits = boolean(units, true);
+                  for (unsigned axis = 0; axis != 3; ++axis) {
+                  Value coordinate = component(units, partnerPoint, axis);
+                  Value frame = math::FloorOp::create(units, loc, coordinate);
+                  wrappedPartner.push_back(arith::SubFOp::create(units, loc, coordinate, frame));
+                  Value offset = arith::SubIOp::create(units, loc, q.integers[axis],
+                      arith::FPToSIOp::create(units, loc, units.getI64Type(), frame));
+                  Value lower = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::sge,
+                      offset, integer(units, loc, -MDRT_TEMPLATE_IMAGE_OFFSET));
+                  Value upper = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::slt,
+                      offset, integer(units, loc, MDRT_TEMPLATE_IMAGE_OFFSET));
+                  imageFits = arith::AndIOp::create(units, loc, imageFits,
+                      arith::AndIOp::create(units, loc, lower, upper));
+                  code = arith::OrIOp::create(units, loc, code,
+                      arith::ShLIOp::create(units, loc,
+                          arith::AddIOp::create(units, loc, offset,
+                              integer(units, loc, MDRT_TEMPLATE_IMAGE_OFFSET)),
+                          integer(units, loc, MDRT_TEMPLATE_IMAGE_BITS * axis)));
+                  }
+                  Value imageCode = arith::TruncIOp::create(units, loc, units.getI32Type(), code);
+                  Value normalizedPartner = vector::FromElementsOp::create(units, loc, pointType, wrappedPartner);
+                  Value shifted = arith::AddFOp::create(units, loc, normalizedPartner, q.image);
+                  Value mask = word(units, loc, 0);
+                  for (unsigned i = 0; i != 16; ++i) {
+                  Value slot = arith::AddIOp::create(units, loc,
+                      cacheBase, ix(units, i));
+                  SmallVector<Value, 3> coordinates, fastCoordinates;
+                  for (int64_t axis = 0; axis != 3; ++axis) {
+                    coordinates.push_back(memref::LoadOp::create(units, loc,
+                        pointCache, ValueRange{slot, ix(units, axis)}));
+                    fastCoordinates.push_back(memref::LoadOp::create(units, loc,
+                        cartesianCache, ValueRange{slot, ix(units, axis)}));
+                  }
+                  Value cartesianI = vector::FromElementsOp::create(units, loc,
+                      fastType, fastCoordinates);
+                  Value pointI = vector::FromElementsOp::create(units, loc,
+                      pointType, coordinates);
+                  Value unitI = load(units, loc, idCache, slot);
+                  Value validI = arith::CmpIOp::create(units, loc,
+                      arith::CmpIPredicate::ne,
+                      arith::AndIOp::create(units, loc, members,
+                          word(units, loc, int64_t(1) << i)), word(units, loc, 0));
+                  Value owns = arith::OrIOp::create(units, loc, sw,
+                      arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult,
+                          arith::AddIOp::create(units, loc, first, ix(units, i)), partnerPlace));
+                  Value eligible = arith::AndIOp::create(units, loc, has,
+                      arith::AndIOp::create(units, loc, validI, owns));
+                  auto accepted = scf::IfOp::create(units, loc, eligible,
+                      [&](OpBuilder &pair, Location) {
+                        Value fastDisplacement = arith::SubFOp::create(pair, loc, cartesianI, shiftedCartesian);
+                        Value fastSquare = arith::MulFOp::create(pair, loc, fastDisplacement, fastDisplacement);
+                        Value fastDistance = vector::ReductionOp::create(pair, loc,
+                            vector::CombiningKind::ADD, fastSquare);
+                        Value finiteDistance = arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLT,
+                            math::AbsFOp::create(pair, loc, fastDistance),
+                            createReal(pair, loc, pair.getF32Type(), std::numeric_limits<float>::infinity()));
+                        Value fastEnabled = arith::AndIOp::create(pair, loc,
+                            certificate.enabled, finiteDistance);
+                        Value fastAccept = arith::AndIOp::create(pair, loc,
+                            arith::AndIOp::create(pair, loc, fastEnabled, certificate.acceptEnabled),
+                            arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLE,
+                                fastDistance, certificate.lower));
+                        Value fastReject = arith::AndIOp::create(pair, loc, fastEnabled,
+                            arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OGT,
+                                fastDistance, certificate.upper));
+                        Value classified = arith::OrIOp::create(pair, loc, fastAccept, fastReject);
+                        auto decision = scf::IfOp::create(pair, loc, classified,
+                            [&](OpBuilder &quick, Location) {
+                              scf::YieldOp::create(quick, loc, ValueRange{fastAccept});
+                            }, [&](OpBuilder &exact, Location) {
+                        Value raw = arith::SubFOp::create(exact, loc, pointI, shifted);
+                        Value displacement = emitLatticeShift(exact, loc, raw, v.cell);
+                        Value square = arith::MulFOp::create(exact, loc, displacement, displacement);
+                        Value distance = vector::ReductionOp::create(exact, loc,
+                            vector::CombiningKind::ADD, square);
+                        Value inside = arith::CmpFOp::create(exact, loc,
+                            arith::CmpFPredicate::OLE, distance, reach2);
+                        scf::YieldOp::create(exact, loc, ValueRange{inside});
+                            });
+                        Value inside = decision.getResult(0);
+                        auto kept = scf::IfOp::create(pair, loc, inside,
+                            [&](OpBuilder &near, Location) {
+                              auto allowed = scf::IfOp::create(near, loc, ss,
+                                  [&](OpBuilder &atom, Location) {
+                                    Value w = arith::IndexCastOp::create(atom, loc, atom.getI32Type(), v.spatial.waters);
+                                    Value a = asIndex(atom, loc, arith::SubIOp::create(atom, loc, unitI, w));
+                                    Value other = arith::SubIOp::create(atom, loc, partner, w);
+                                    Value start = asIndex(atom, loc, load(atom, loc, v.excludedRows, a));
+                                    Value stop = asIndex(atom, loc, load(atom, loc, v.excludedRows,
+                                        arith::AddIOp::create(atom, loc, a, ix(atom, 1))));
+                                    Value found = bound(atom, loc, start, stop, other, false,
+                                        [&](OpBuilder &in, Value j) { return load(in, loc, v.excludedNeighbors, j); });
+                                    Value exists = arith::CmpIOp::create(atom, loc, arith::CmpIPredicate::ult, found, stop);
+                                    auto excluded = scf::IfOp::create(atom, loc, exists,
+                                        [&](OpBuilder &in, Location) {
+                                          Value same = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                              load(in, loc, v.excludedNeighbors, found), other);
+                                          scf::YieldOp::create(in, loc, ValueRange{same});
+                                        }, [&](OpBuilder &in, Location) {
+                                          scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
+                                        });
+                                    Value notExcluded = arith::XOrIOp::create(atom, loc, excluded.getResult(0), boolean(atom, true));
+                                    scf::YieldOp::create(atom, loc, ValueRange{notExcluded});
+                                  }, [&](OpBuilder &in, Location) {
+                                    scf::YieldOp::create(in, loc, ValueRange{boolean(in, true)});
+                                  });
+                              scf::YieldOp::create(near, loc, allowed.getResults());
+                            }, [&](OpBuilder &in, Location) {
+                              scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
+                            });
+                        scf::YieldOp::create(pair, loc, kept.getResults());
+                      }, [&](OpBuilder &in, Location) {
+                        scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
+                      });
+                  mask = arith::OrIOp::create(units, loc, mask,
+                      arith::SelectOp::create(units, loc, accepted.getResult(0),
+                          word(units, loc, int64_t(1) << i), word(units, loc, 0)));
+                  }
+                  Value keep = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
+                                                     mask, word(units, loc, 0));
+                  Value badImage = arith::AndIOp::create(units, loc, keep,
+                    arith::XOrIOp::create(units, loc, imageFits, boolean(units, true)));
+                  scf::IfOp::create(units, loc, badImage, [&](OpBuilder &bad, Location) {
+                  memref::AtomicRMWOp::create(bad, loc, arith::AtomicRMWKind::ori,
+                      integer(bad, loc, TEMPLATE_BUILD_INDEX_OVERFLOW), v.counters,
+                      ValueRange{ix(bad, TEMPLATE_COUNTER_FLAGS)});
+                  scf::YieldOp::create(bad, loc);
+                  });
+                  keep = arith::AndIOp::create(units, loc, keep, imageFits);
+                  return OrderedRowRecord{keep, {partner, imageCode, mask, word(units, loc, 0)}};
+                };
+                auto worker = [&](OpBuilder &run, Value group, ValueRange images) {
+                  auto q = makeQuery(run, images);
+                  Value groupIndex = asIndex(run,loc,group);
+                  Value lower = arith::CmpIOp::create(run,loc,arith::CmpIPredicate::ult,
+                      lane,word(run,loc,16));
+                  Value mayReach = groupMayReach(run,groupIndex,q);
+                  auto evaluated = scf::IfOp::create(run,loc,mayReach,
+                      [&](OpBuilder &accepted,Location) {
+                    auto record = partnerRecord(accepted,groupIndex,lower,q);
+                    SmallVector<Value> values{record.keep};
+                    values.append(record.fields.begin(),record.fields.end());
+                    scf::YieldOp::create(accepted,loc,values);
+                  },[&](OpBuilder &rejected,Location) {
+                    Value no=boolean(rejected,false), zero=word(rejected,loc,0);
+                    scf::YieldOp::create(rejected,loc,ValueRange{no,zero,zero,zero,zero});
+                  });
+                  return OrderedRowRecord{evaluated.getResult(0),
+                      {evaluated.getResult(1),evaluated.getResult(2),
+                       evaluated.getResult(3),evaluated.getResult(4)}};
+                };
+                auto append = [&](OpBuilder &take, TemplateStageState carry,
+                                  Value keep, ValueRange fields) {
+                  return emitAppendTemplateStage(take,loc,stage,carry,keep,fields);
+                };
                 Value allColumns = arith::MulIOp::create(search, loc, v.spatial.columnsX, v.spatial.columnsY);
                 auto result = forState(search, loc, lower[0], upper[0], integer(search, loc, 1), frameState,
-                    [&](OpBuilder &xloop, Value x, TemplateStageState stateX) {
+                    [&](OpBuilder &xloop, Value x, SearchState stateX) {
                       Value sx = floorDivide(xloop, loc, x, wideDimensions[0]);
                       Value cx = asIndex(xloop, loc, arith::SubIOp::create(xloop, loc, x,
                           arith::MulIOp::create(xloop, loc, sx, wideDimensions[0])));
                       return forState(xloop, loc, lower[1], upper[1], integer(xloop, loc, 1), stateX,
-                          [&](OpBuilder &yloop, Value y, TemplateStageState stateY) {
+                          [&](OpBuilder &yloop, Value y, SearchState stateY) {
                             Value sy = floorDivide(yloop, loc, y, wideDimensions[1]);
                             Value cy = asIndex(yloop, loc, arith::SubIOp::create(yloop, loc, y,
                                 arith::MulIOp::create(yloop, loc, sy, wideDimensions[1])));
@@ -452,7 +748,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                             Value end = arith::AddIOp::create(yloop, loc, begin,
                                 asIndex(yloop, loc, load(yloop, loc, v.spatial.counts, column)));
                             return forState(yloop, loc, zBegin, zEnd, integer(yloop, loc, 1), stateY,
-                                [&](OpBuilder &zloop, Value sz, TemplateStageState stateZ) {
+                                [&](OpBuilder &zloop, Value sz, SearchState stateZ) {
                                   Value forwardBegin = begin;
                                   if (searchClass != 1)
                                     forwardBegin = arith::MinUIOp::create(zloop, loc, end,
@@ -463,97 +759,26 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                   Value firstCandidate = forwardBegin;
                                   Value lastCandidate = end;
                                   Value queryImages[] = {sx, sy, sz};
-                                  SmallVector<Value, 3> queryComponents;
-                                  Value magnitude = real(zloop, 4);
-                                  for (int64_t axis = 0; axis != 3; ++axis) {
-                                    Value query = arith::SIToFPOp::create(zloop, loc,
-                                        zloop.getF64Type(), queryImages[axis]);
-                                    queryComponents.push_back(query);
-                                    magnitude = arith::AddFOp::create(zloop, loc, magnitude,
-                                        arith::AddFOp::create(zloop, loc,
-                                            math::AbsFOp::create(zloop, loc, query),
-                                            math::AbsFOp::create(zloop, loc,
-                                                vector::ExtractOp::create(zloop, loc, frame, axis))));
+                                  if (cooperative) {
+                                    return forState(zloop,loc,firstCandidate,lastCandidate,ix(zloop,1),stateZ,
+                                        [&](OpBuilder &produce, Value group, SearchState state) {
+                                      auto next = emitEnqueueOrderedRowWork(produce,loc,ordered,
+                                          {{state.count,state.chunk},state.queued},
+                                          arith::IndexCastOp::create(produce,loc,produce.getI32Type(),group),
+                                          queryImages,worker,append);
+                                      return SearchState{next.stage.count,next.stage.chunk,next.queued};
+                                    });
                                   }
-                                  Value queryVector = vector::FromElementsOp::create(zloop, loc, pointType, queryComponents);
-                                  Value fastQueryShift = emitLatticeShift(zloop, loc,
-                                      arith::TruncFOp::create(zloop, loc, fastType, queryVector), fastCell);
-                                  // 64 eps times the cell 1-norm and frame/image scale
-                                  // covers the <32 rounded operations in box conversion,
-                                  // image addition and the original displacement. Only
-                                  // the prefilter widens; the exact pair test below does not.
-                                  Value boxRoundoff = arith::MulFOp::create(zloop, loc,
-                                      arith::MulFOp::create(zloop, loc, cellNorm, magnitude), real(zloop, 0x1p-46));
-
-                                  SmallVector<Value, 3> imageComponents, imageIntegers;
-                                  for (int64_t axis = 0; axis != 3; ++axis) {
-                                    Value absolute = arith::AddIOp::create(zloop, loc, queryImages[axis],
-                                        arith::FPToSIOp::create(zloop, loc, zloop.getI64Type(),
-                                            vector::ExtractOp::create(zloop, loc, frame, axis)));
-                                    imageIntegers.push_back(absolute);
-                                    imageComponents.push_back(arith::SIToFPOp::create(
-                                        zloop, loc, zloop.getF64Type(), absolute));
-                                  }
-                                  Value image = vector::FromElementsOp::create(zloop, loc, pointType, imageComponents);
+                                  auto q = makeQuery(zloop,queryImages);
                                   return forState(zloop, loc, firstCandidate, lastCandidate, ix(zloop, 32), stateZ,
-                                      [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
+                                      [&](OpBuilder &batch, Value cursor, SearchState state) {
                                         Value position = arith::AddIOp::create(batch, loc, cursor, laneIndex);
                                         Value has = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ult,
                                                                            position, lastCandidate);
                                         Value safe = arith::SelectOp::create(batch, loc, has, position, cursor);
                                         Value partnerGroup = safe;
-                                        SmallVector<Value, 3> boxSides[2], fractionSides[2];
-                                        for (int64_t side = 0; side != 2; ++side) {
-                                          Value row = arith::AddIOp::create(batch, loc,
-                                              arith::MulIOp::create(batch, loc, partnerGroup, ix(batch, 2)), ix(batch, side));
-                                          for (int64_t axis = 0; axis != 3; ++axis) {
-                                            boxSides[side].push_back(memref::LoadOp::create(batch, loc,
-                                                v.groupBoxes, ValueRange{row, ix(batch, axis)}));
-                                            fractionSides[side].push_back(memref::LoadOp::create(batch, loc,
-                                                v.fractionalBoxes, ValueRange{row, ix(batch, axis)}));
-                                          }
-                                        }
-                                        SpatialBoundingBox partnerBox{
-                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[0]),
-                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[1])};
-                                        Value lowGap = arith::SubFOp::create(batch, loc, cartesianBox.minimum,
-                                            arith::AddFOp::create(batch, loc, partnerBox.maximum, fastQueryShift));
-                                        Value highGap = arith::SubFOp::create(batch, loc,
-                                            arith::AddFOp::create(batch, loc, partnerBox.minimum, fastQueryShift), cartesianBox.maximum);
-                                        Value gap = arith::MaximumFOp::create(batch, loc,
-                                            arith::MaximumFOp::create(batch, loc, lowGap, highGap),
-                                            vector::BroadcastOp::create(batch, loc, fastType,
-                                                createReal(batch, loc, batch.getF32Type(), 0)));
-                                        Value boxSquare = arith::MulFOp::create(batch, loc, gap, gap);
-                                        Value boxDistance = vector::ReductionOp::create(batch, loc,
-                                            vector::CombiningKind::ADD, boxSquare);
-                                        Value finiteBox = arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OLT,
-                                            math::AbsFOp::create(batch, loc, boxDistance),
-                                            createReal(batch, loc, batch.getF32Type(), std::numeric_limits<float>::infinity()));
-                                        Value boxReject = arith::AndIOp::create(batch, loc,
-                                            arith::AndIOp::create(batch, loc, certificate.enabled, finiteBox),
-                                            arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OGT,
-                                                boxDistance, certificate.boxUpper));
-                                        Value boxMayReach = arith::XOrIOp::create(batch, loc,
-                                            boxReject, boolean(batch, true));
-                                        SpatialBoundingBox partnerFraction{
-                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[0]),
-                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[1])};
-                                        Value fractionRoundoff = arith::DivFOp::create(batch, loc,
-                                            vector::BroadcastOp::create(batch, loc, pointType,
-                                                arith::MulFOp::create(batch, loc, boxRoundoff, real(batch, 4))), widths);
-                                        auto single = emitSpatialSingleImage(batch, loc,
-                                            box, partnerFraction, radius, fractionRoundoff);
-                                        Value sameImage = boolean(batch, true);
-                                        for (int64_t axis = 0; axis != 3; ++axis)
-                                          sameImage = arith::AndIOp::create(batch, loc, sameImage,
-                                              arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OEQ,
-                                                  vector::ExtractOp::create(batch, loc, single.image, axis),
-                                                  queryComponents[axis]));
-                                        Value imageMayReach = arith::OrIOp::create(batch, loc, sameImage,
-                                            arith::XOrIOp::create(batch, loc, single.proved, boolean(batch, true)));
-                                        has = arith::AndIOp::create(batch, loc, has,
-                                            arith::AndIOp::create(batch, loc, boxMayReach, imageMayReach));
+                                        has = arith::AndIOp::create(batch,loc,has,
+                                            groupMayReach(batch,partnerGroup,q));
                                         // Reject entire groups before any unit loads or broadcasts.
                                         // The ballot and survivor loop are uniform across the warp.
                                         Value survivors = emitWarpBallot(batch, loc, has);
@@ -581,173 +806,30 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                               lower, firstLane, secondLane);
                                           Value selectedGroup = asIndex(units, loc, shuffle(units, loc,
                                               arith::IndexCastOp::create(units, loc, units.getI32Type(), partnerGroup), sourceLane));
-                                          Value start = asIndex(units, loc,
-                                              load(units, loc, v.build.groups.starts, selectedGroup));
-                                          Value length = asIndex(units, loc,
-                                              load(units, loc, v.build.groups.lengths, selectedGroup));
-                                          Value local = asIndex(units, loc,
-                                              arith::AndIOp::create(units, loc, lane, word(units, loc, 15)));
-                                          Value partnerPlace = arith::AddIOp::create(units, loc, start,
-                                              arith::MinUIOp::create(units, loc, local,
-                                                  arith::SubIOp::create(units, loc, length, ix(units, 1))));
-                                          Value partner = load(units, loc, v.spatial.order, partnerPlace);
-                                          Value partnerIndex = asIndex(units, loc, partner);
-                                          Value partnerPoint = loadElement(units, loc, v.spatial.points, partnerIndex);
-                                          Value partnerCartesian = cartesianAnchor(units, loc, v, partnerIndex);
-                                          Value shiftedCartesian = arith::AddFOp::create(units, loc,
-                                              partnerCartesian, fastQueryShift);
-                                          Value has = arith::AndIOp::create(units, loc,
-                                              arith::OrIOp::create(units, loc, lower, two),
-                                              arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult, local, length));
-                                          TemplateStageState state{carried[1], carried[2]};
-                                        SmallVector<Value, 3> wrappedPartner;
-                                        Value code = integer(units, loc, 0);
-                                        Value imageFits = boolean(units, true);
-                                        for (unsigned axis = 0; axis != 3; ++axis) {
-                                          Value coordinate = component(units, partnerPoint, axis);
-                                          Value frame = math::FloorOp::create(units, loc, coordinate);
-                                          wrappedPartner.push_back(arith::SubFOp::create(units, loc, coordinate, frame));
-                                          Value offset = arith::SubIOp::create(units, loc, imageIntegers[axis],
-                                              arith::FPToSIOp::create(units, loc, units.getI64Type(), frame));
-                                          Value lower = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::sge,
-                                              offset, integer(units, loc, -MDRT_TEMPLATE_IMAGE_OFFSET));
-                                          Value upper = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::slt,
-                                              offset, integer(units, loc, MDRT_TEMPLATE_IMAGE_OFFSET));
-                                          imageFits = arith::AndIOp::create(units, loc, imageFits,
-                                              arith::AndIOp::create(units, loc, lower, upper));
-                                          code = arith::OrIOp::create(units, loc, code,
-                                              arith::ShLIOp::create(units, loc,
-                                                  arith::AddIOp::create(units, loc, offset,
-                                                      integer(units, loc, MDRT_TEMPLATE_IMAGE_OFFSET)),
-                                                  integer(units, loc, MDRT_TEMPLATE_IMAGE_BITS * axis)));
-                                        }
-                                        Value imageCode = arith::TruncIOp::create(units, loc, units.getI32Type(), code);
-                                        Value normalizedPartner = vector::FromElementsOp::create(units, loc, pointType, wrappedPartner);
-                                        Value shifted = arith::AddFOp::create(units, loc, normalizedPartner, image);
-                                        Value mask = word(units, loc, 0);
-                                        for (unsigned i = 0; i != 16; ++i) {
-                                          Value slot = arith::AddIOp::create(units, loc,
-                                              cacheBase, ix(units, i));
-                                          SmallVector<Value, 3> coordinates, fastCoordinates;
-                                          for (int64_t axis = 0; axis != 3; ++axis) {
-                                            coordinates.push_back(memref::LoadOp::create(units, loc,
-                                                pointCache, ValueRange{slot, ix(units, axis)}));
-                                            fastCoordinates.push_back(memref::LoadOp::create(units, loc,
-                                                cartesianCache, ValueRange{slot, ix(units, axis)}));
-                                          }
-                                          Value cartesianI = vector::FromElementsOp::create(units, loc,
-                                              fastType, fastCoordinates);
-                                          Value pointI = vector::FromElementsOp::create(units, loc,
-                                              pointType, coordinates);
-                                          Value unitI = load(units, loc, idCache, slot);
-                                          Value validI = arith::CmpIOp::create(units, loc,
-                                              arith::CmpIPredicate::ne,
-                                              arith::AndIOp::create(units, loc, members,
-                                                  word(units, loc, int64_t(1) << i)), word(units, loc, 0));
-                                          Value owns = arith::OrIOp::create(units, loc, sw,
-                                              arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult,
-                                                  arith::AddIOp::create(units, loc, first, ix(units, i)), partnerPlace));
-                                          Value eligible = arith::AndIOp::create(units, loc, has,
-                                              arith::AndIOp::create(units, loc, validI, owns));
-                                          auto accepted = scf::IfOp::create(units, loc, eligible,
-                                              [&](OpBuilder &pair, Location) {
-                                                Value fastDisplacement = arith::SubFOp::create(pair, loc, cartesianI, shiftedCartesian);
-                                                Value fastSquare = arith::MulFOp::create(pair, loc, fastDisplacement, fastDisplacement);
-                                                Value fastDistance = vector::ReductionOp::create(pair, loc,
-                                                    vector::CombiningKind::ADD, fastSquare);
-                                                Value finiteDistance = arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLT,
-                                                    math::AbsFOp::create(pair, loc, fastDistance),
-                                                    createReal(pair, loc, pair.getF32Type(), std::numeric_limits<float>::infinity()));
-                                                Value fastEnabled = arith::AndIOp::create(pair, loc,
-                                                    certificate.enabled, finiteDistance);
-                                                Value fastAccept = arith::AndIOp::create(pair, loc,
-                                                    arith::AndIOp::create(pair, loc, fastEnabled, certificate.acceptEnabled),
-                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLE,
-                                                        fastDistance, certificate.lower));
-                                                Value fastReject = arith::AndIOp::create(pair, loc, fastEnabled,
-                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OGT,
-                                                        fastDistance, certificate.upper));
-                                                Value classified = arith::OrIOp::create(pair, loc, fastAccept, fastReject);
-                                                auto decision = scf::IfOp::create(pair, loc, classified,
-                                                    [&](OpBuilder &quick, Location) {
-                                                      scf::YieldOp::create(quick, loc, ValueRange{fastAccept});
-                                                    }, [&](OpBuilder &exact, Location) {
-                                                Value raw = arith::SubFOp::create(exact, loc, pointI, shifted);
-                                                Value displacement = emitLatticeShift(exact, loc, raw, v.cell);
-                                                Value square = arith::MulFOp::create(exact, loc, displacement, displacement);
-                                                Value distance = vector::ReductionOp::create(exact, loc,
-                                                    vector::CombiningKind::ADD, square);
-                                                Value inside = arith::CmpFOp::create(exact, loc,
-                                                    arith::CmpFPredicate::OLE, distance, reach2);
-                                                scf::YieldOp::create(exact, loc, ValueRange{inside});
-                                                    });
-                                                Value inside = decision.getResult(0);
-                                                auto kept = scf::IfOp::create(pair, loc, inside,
-                                                    [&](OpBuilder &near, Location) {
-                                                      auto allowed = scf::IfOp::create(near, loc, ss,
-                                                          [&](OpBuilder &atom, Location) {
-                                                            Value w = arith::IndexCastOp::create(atom, loc, atom.getI32Type(), v.spatial.waters);
-                                                            Value a = asIndex(atom, loc, arith::SubIOp::create(atom, loc, unitI, w));
-                                                            Value other = arith::SubIOp::create(atom, loc, partner, w);
-                                                            Value start = asIndex(atom, loc, load(atom, loc, v.excludedRows, a));
-                                                            Value stop = asIndex(atom, loc, load(atom, loc, v.excludedRows,
-                                                                arith::AddIOp::create(atom, loc, a, ix(atom, 1))));
-                                                            Value found = bound(atom, loc, start, stop, other, false,
-                                                                [&](OpBuilder &in, Value j) { return load(in, loc, v.excludedNeighbors, j); });
-                                                            Value exists = arith::CmpIOp::create(atom, loc, arith::CmpIPredicate::ult, found, stop);
-                                                            auto excluded = scf::IfOp::create(atom, loc, exists,
-                                                                [&](OpBuilder &in, Location) {
-                                                                  Value same = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
-                                                                      load(in, loc, v.excludedNeighbors, found), other);
-                                                                  scf::YieldOp::create(in, loc, ValueRange{same});
-                                                                }, [&](OpBuilder &in, Location) {
-                                                                  scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
-                                                                });
-                                                            Value notExcluded = arith::XOrIOp::create(atom, loc, excluded.getResult(0), boolean(atom, true));
-                                                            scf::YieldOp::create(atom, loc, ValueRange{notExcluded});
-                                                          }, [&](OpBuilder &in, Location) {
-                                                            scf::YieldOp::create(in, loc, ValueRange{boolean(in, true)});
-                                                          });
-                                                      scf::YieldOp::create(near, loc, allowed.getResults());
-                                                    }, [&](OpBuilder &in, Location) {
-                                                      scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
-                                                    });
-                                                scf::YieldOp::create(pair, loc, kept.getResults());
-                                              }, [&](OpBuilder &in, Location) {
-                                                scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
-                                              });
-                                          mask = arith::OrIOp::create(units, loc, mask,
-                                              arith::SelectOp::create(units, loc, accepted.getResult(0),
-                                                  word(units, loc, int64_t(1) << i), word(units, loc, 0)));
-                                        }
-                                        Value keep = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
-                                                                             mask, word(units, loc, 0));
-                                        Value badImage = arith::AndIOp::create(units, loc, keep,
-                                            arith::XOrIOp::create(units, loc, imageFits, boolean(units, true)));
-                                        scf::IfOp::create(units, loc, badImage, [&](OpBuilder &bad, Location) {
-                                          memref::AtomicRMWOp::create(bad, loc, arith::AtomicRMWKind::ori,
-                                              integer(bad, loc, TEMPLATE_BUILD_INDEX_OVERFLOW), v.counters,
-                                              ValueRange{ix(bad, TEMPLATE_COUNTER_FLAGS)});
-                                          scf::YieldOp::create(bad, loc);
-                                        });
-                                        keep = arith::AndIOp::create(units, loc, keep, imageFits);
-                                        Value fields[] = {partner, imageCode, mask, word(units, loc, 0)};
-                                        auto next = emitAppendTemplateStage(units, loc, stage, state, keep, fields);
+                                          auto record = partnerRecord(units,selectedGroup,
+                                              arith::OrIOp::create(units,loc,lower,two),q);
+                                          TemplateStageState carriedStage{carried[1],carried[2]};
+                                        auto next = emitAppendTemplateStage(units, loc, stage, carriedStage, record.keep, record.fields);
                                         scf::YieldOp::create(units, loc,
                                             ValueRange{remaining, next.count, next.chunk});
                                         });
-                                        return TemplateStageState{selected.getResult(1), selected.getResult(2)};
+                                        return SearchState{selected.getResult(1), selected.getResult(2), state.queued};
                                       });
                                 });
                           });
                     });
-                scf::YieldOp::create(search, loc, ValueRange{result.count, result.chunk});
+                if (cooperative) {
+                  auto flushed = emitFlushOrderedRowWork(search,loc,ordered,
+                      {{result.count,result.chunk},result.queued},worker,append);
+                  result = {flushed.stage.count,flushed.stage.chunk,flushed.queued};
+                }
+                scf::YieldOp::create(search, loc, ValueRange{result.count, result.chunk, result.queued});
                 }, [&](OpBuilder &skip, Location) {
-                  scf::YieldOp::create(skip, loc, ValueRange{frameState.count, frameState.chunk});
+                  scf::YieldOp::create(skip, loc, ValueRange{frameState.count, frameState.chunk, frameState.queued});
                 });
-            return TemplateStageState{query.getResult(0), query.getResult(1)};
+            return SearchState{query.getResult(0), query.getResult(1), query.getResult(2)};
           });
-          scf::YieldOp::create(search, loc, ValueRange{framed.count, framed.chunk});
+          scf::YieldOp::create(search, loc, ValueRange{framed.count, framed.chunk, framed.queued});
         }, [&](OpBuilder &copy, Location) {
           Value tag = arith::SelectOp::create(copy, loc, ww, ix(copy, 0),
               arith::SelectOp::create(copy, loc, sw, ix(copy, 1), ix(copy, 2)));
@@ -763,7 +845,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
           Value begin = asIndex(copy, loc, record(copy, loc, v.build.outerRows, oldRow, 2));
           Value count = asIndex(copy, loc, record(copy, loc, v.build.outerRows, oldRow, 3));
           auto result = forState(copy, loc, ix(copy, 0), count, ix(copy, 32), initial,
-              [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
+              [&](OpBuilder &batch, Value cursor, SearchState state) {
                 Value ordinal = arith::AddIOp::create(batch, loc, cursor, laneIndex);
                 Value has = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ult, ordinal, count);
                 Value safe = arith::SelectOp::create(batch, loc, has, ordinal, cursor);
@@ -771,11 +853,32 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 SmallVector<Value, 4> fields;
                 for (unsigned column = 0; column != 4; ++column)
                   fields.push_back(record(batch, loc, v.build.outerEntries, source, column));
-                return emitAppendTemplateStage(batch, loc, stage, state, has, fields);
+                if (!cooperative) {
+                  auto next = emitAppendTemplateStage(batch,loc,stage,{state.count,state.chunk},has,fields);
+                  return SearchState{next.count,next.chunk,state.queued};
+                }
+                Value owner = arith::CmpIOp::create(batch,loc,arith::CmpIPredicate::ult,
+                    launch.getThreadIds().x,ix(batch,32));
+                auto copied = scf::IfOp::create(batch,loc,owner,[&](OpBuilder &take,Location) {
+                  auto next = emitAppendTemplateStage(take,loc,stage,{state.count,state.chunk},has,fields);
+                  scf::YieldOp::create(take,loc,ValueRange{next.count,next.chunk});
+                },[&](OpBuilder &skip,Location) {
+                  scf::YieldOp::create(skip,loc,ValueRange{state.count,state.chunk});
+                });
+                return SearchState{copied.getResult(0),copied.getResult(1),state.queued};
               });
-          scf::YieldOp::create(copy, loc, ValueRange{result.count, result.chunk});
+          scf::YieldOp::create(copy, loc, ValueRange{result.count, result.chunk, result.queued});
         });
-    emitFinishTemplateStage(at, loc, stage, {chosen.getResult(0), chosen.getResult(1)});
+    auto finish = [&](OpBuilder &owner) {
+      emitFinishTemplateStage(owner,loc,stage,{chosen.getResult(0),chosen.getResult(1)});
+    };
+    if (cooperative) {
+      Value owner = arith::CmpIOp::create(at,loc,arith::CmpIPredicate::ult,
+          launch.getThreadIds().x,ix(at,32));
+      scf::IfOp::create(at,loc,owner,[&](OpBuilder &take,Location) {
+        finish(take); scf::YieldOp::create(take,loc);
+      });
+    } else finish(at);
     scf::YieldOp::create(at, loc);
   });
   gpu::TerminatorOp::create(k, loc);

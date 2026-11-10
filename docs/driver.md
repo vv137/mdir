@@ -106,6 +106,11 @@ Position publication may join an existing fused integration kernel only
 when the same ownership and ordering proofs hold and its constraint run has
 one marked family. Mixed families retain the separate writer. This changes
 no key, validity threshold or reference epoch.
+
+Cooperative SW row scheduling changes no control key or reference epoch.
+Specialized searches preserve every entry field, class count and capacity
+contract; their within-row order may differ. Deterministic execution retains
+the general path.
 The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
 are preserved; deterministic, double, CPU and derivative programs retain

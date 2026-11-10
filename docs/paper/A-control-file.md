@@ -237,6 +237,9 @@ and the decision file give the match, force-output and coverage contracts.
 Combining publication with an eligible single-family integration kernel
 adds no key and leaves reference epochs and validity bounds unchanged.
 
+Cooperative SW search adds no key or independent reference epoch; it keeps
+exact entry sets and the existing capacity and physical contracts.
+
 The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering
 unchanged (D320, Section 8).

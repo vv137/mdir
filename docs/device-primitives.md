@@ -1028,6 +1028,17 @@ the measured mixed-family fusion regressed, so its existing separate
 publication remains. The R2 arithmetic-sharing experiment was discarded
 after its stage screen; the retained writer arithmetic is unchanged.
 
+`OrderedRowWorkEmitter.h` supplies a bounded cooperative row-work strategy.
+One 128-thread block shares a producer cursor and a window of 128 jobs;
+each job yields at most 16 four-word records. Finite warp-local workers
+contain no block barriers, and one owner invokes the append callback in
+stream order. Header, result and carry publication use convergent block
+barriers. The caller must carry uniform queue state through its iterator,
+flush before changing captured frame context, initialize shared caches
+once, and preserve append carry across windows. The current SW composition
+declares at most 45,840 application shared bytes, below its 48 KiB budget;
+this is a source bound, not a measured compiler resource count.
+
 ### 5.1 What is stated
 
 A reduction or a scatter-accumulate combines values in an order that its

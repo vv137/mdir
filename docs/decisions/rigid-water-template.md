@@ -2456,3 +2456,49 @@ Mixed pair arithmetic, site accumulators and the transpose are f32;
 energy and virial accumulators remain f64 and coverage/pruning geometry
 remains f64. Reassociation may change mixed bits; every existing physical
 bound is unchanged. Deterministic mode retains the general path.
+
+### Cooperative SW row windows
+
+The SW search strategy assigns one original row to a block of four warps.
+The existing query iterator produces bounded windows of 128 raw descriptor
+groups, each of at most 16 partners. Workers apply the same group and pair
+predicates as the unsplit reference. One owner consumes the results and
+retains the existing append carry across windows, queries and frames.
+WW and SS retain their existing strategy; no reference epoch changes.
+This is a shared bounded row-work strategy, with geometry supplied by the
+caller, rather than a kernel written for a named solvent model.
+
+All threads enter a flush at the same producer cursor. Worker callbacks
+are finite and contain no block barrier. Barriers publish the headers,
+completed records and owner carry; a partial window is flushed before its
+frame context changes. Unused tail payload is initialized. The declared
+application shared-memory upper bound is 45,840 bytes, including caches;
+the compiled allocation and any reserved storage must be reported separately.
+The existing dense 64-entry chunks and overflow/capacity behavior remain.
+
+The amended specialization contract requires equal entry sets, not equal
+entry order: pair/group, image, mask, ownership, class and every payload
+field are exact, as are per-class counts and capacity behavior. Tests sort
+the full records and preserve multiplicity. Deterministic execution retains
+the general path. Consumers still require contiguous class/row ranges,
+valid counts, and dense chunks of at most 64 entries. The bounded append
+primitive additionally promises the producer's stream order and tests that
+promise directly; specialized search consumers do not require the general
+iterator's within-row order. Physical bounds are unchanged.
+
+The direct primitive fixture defines 27 cases at 0/1/127/128/129 jobs and
+0/1/31/32/63/64/65 retained entries, a partial chunk crossing a frame flush,
+and insufficient capacities. These cases check query metadata, chunk
+ordinals, counts and initialized tails against a dense-stream oracle.
+Search fixtures compare split and unsplit full-record multisets and retain
+the independent all-image coverage checker, including winding, partial
+epochs, tilted cells and growth. GPU validation and performance are pending.
+
+The first CPU build passed. New test-driver checks initially missed NVVM
+and Math dialect registration; explicit dependencies corrected those two
+distinct setup failures and each affected rerun passed. The new primitive
+fixture's explicit device deallocation then exposed an address-space
+mismatch in the test lowering pipeline. Its lifetime was aligned with the
+existing activation-scoped search fixtures; one affected LLVM-lowering
+rerun passed. No numerical execution or criterion change occurred in these
+development corrections.

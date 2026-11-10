@@ -1,0 +1,10 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records %t.split.records %t.unsplit.records
+# RUN: %python %S/Inputs/template_sw_ordered.py generate %t.input.mlir %t.reference.json
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.split.records
+# RUN: mdir-opt %t.input.mlir --test-md-template-search='force-unsplit-sw=true' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.unsplit.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.split.records %t.reference.json
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.unsplit.records %t.reference.json
+# RUN: %python %S/Inputs/template_sw_ordered.py compare %t.split.records %t.unsplit.records
+# The four original phases cover full, atom-only, water-only and retained
+# classes with skewed descriptor lengths and partial worker windows.
