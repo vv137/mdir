@@ -1,0 +1,7 @@
+# REQUIRES: cuda, python-api, hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/template_search_barostat.py %S/../Driver/Inputs/opc %t mdir | FileCheck %s
+# One predeclared native C-RESCALE trajectory; an unmet crossing stops.
+# This is distinct from the deterministic emitter cell-sequence gate.
+# CHECK: native barostat: nearest then conditional; general fallback 0
+# CHECK-NEXT: barostat cells cross the nominal anchor half-diagonal threshold

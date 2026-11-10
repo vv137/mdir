@@ -7,6 +7,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include <limits>
@@ -74,6 +75,18 @@ void mdir::kernels::emitPrepareTemplateSearch(OpBuilder &b, Location loc,
         lane, ix(in, 16));
     scf::IfOp::create(in, loc, arith::AndIOp::create(in, loc, valid, lower),
         [&](OpBuilder &store, Location) {
+      // The selector reads this initialized scalar before the candidate
+      // control clear reuses it as the chunk counter. Include retained
+      // hybrid references: a large origin must select the general fallback.
+      Value maximumFrame = math::AbsFOp::create(store, loc,
+          vector::ExtractOp::create(store, loc, frame.lattice, 0));
+      for (int64_t axis = 1; axis != 3; ++axis)
+        maximumFrame = arith::MaximumFOp::create(store, loc, maximumFrame,
+            math::AbsFOp::create(store, loc,
+                vector::ExtractOp::create(store, loc, frame.lattice, axis)));
+      memref::AtomicRMWOp::create(store, loc, arith::AtomicRMWKind::maxu,
+          arith::BitcastOp::create(store, loc, store.getI64Type(), maximumFrame),
+          v.counters, ValueRange{ix(store, 0)});
       Value base = arith::MulIOp::create(store, loc, asIndex(store, loc, unit), ix(store, 4));
       for (int64_t axis = 0; axis != 3; ++axis) {
         Value bits = arith::BitcastOp::create(store, loc, store.getI32Type(),

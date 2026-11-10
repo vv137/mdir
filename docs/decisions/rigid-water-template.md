@@ -1044,10 +1044,115 @@ also had one deterministic whitespace syntax error, corrected before it
 wrote results. These are harness corrections, not numerical retries.
 
 W1 is retained for its measured gain, but the remaining large prototype
-gap is not closed by this correction. No further search optimization or
-remaining final gate follows without the maintainer's ruling on the next
-whole correction. The parked norm proof guard and evaluation items remain
-pending; this is not a ready claim.
+gap is not closed by this correction. The subsequent ruling authorizes
+the image strategies below. The parked norm proof guard and evaluation
+items remain pending; this is not a ready claim.
+
+### Refresh-selected image strategies
+
+The accepted next correction keeps W1's entry ABI, class ownership,
+incidence masks, epochs, validity and literal final membership predicate.
+It selects separate outlined search functions at refresh scope:
+
+1. One pass image when the greatest actual class reach, including an
+   outward numerical margin, is at most half the least cell diagonal.
+2. Pass-first conditional neighboring images when that padded reach is
+   strictly below the least diagonal. Traversal is c, b, a; b and a are
+   re-centered for each higher-axis prefix, as in D241/D242.
+3. The unchanged covering-image iterator otherwise. Every such refresh
+   logs the general fallback. This is a fallback, not a new refusal.
+
+`ImageEnumerationEmitter` is a common pair-image strategy: it receives
+the cell, displacement, padded reach and a visitor. It knows no water
+model, class tags, entry layout or membership predicate. Its callers
+must establish reduced-cell and numerical preconditions. The template
+adapter uses the same emitter for all site counts and parameter sets.
+Publication is currently specific to the segmented entry ABI because its
+ordering key includes frame-subset and descriptor order. The reusable
+publication mechanism is tracked in #841.
+
+The selector evaluates positive error arithmetic outward in f64, taking
+the next representable value and a min-normal underflow floor. It covers
+the original absolute-frame displacement graph, its rounded squared norm,
+and the new Cartesian c/b/a prefix graph. If $M$ bounds the absolute floor
+of every hybrid reference coordinate and $h$ is the outward sum of cell
+magnitudes, the prefix envelope includes
+$\gamma_{64}h(128+24M)+\beta_{256}$, where
+$\gamma_n=nu/(1-nu)$ and $\beta_n=n\nu/(1-nu)$,
+$u=2^{-53}$ and $\nu=2^{-1022}$. This is a counted rounding bound, not
+physical skin or an observed-error fit. The selected margin also covers
+the ordinary rounded addition of reach and margin. Finite arithmetic,
+reduced-cell and normal-core volume/face-width guards must all hold;
+otherwise the general strategy runs. The entry-image ABI further requires
+$M\le251$: with each provisional image component bounded by eight,
+$2M+8<512$ prevents provisional overflow before the original query-domain
+filter. Larger reference frames use the general iterator.
+
+| Operation | Retained W1 | Image strategies |
+|---|---|---|
+| References, winding, cell, reaches and validity | f64/i64 | Unchanged |
+| Refresh dispatch and margin | General iterator | Outward f64; separate host-selected functions |
+| Pair-local image prefixes | General f64 iterator | f64, correctly rounded reciprocal/multiply and round-to-even |
+| Cartesian boxes and radial certificate | Certified f32, original f64 uncertainty shell | Unchanged |
+| Final domain and membership | Original rounded f64 predicates | Same predicates, including the original query domain |
+| Entry publication | Row/ordinal compaction | Same records; stable canonical ordering restores original frame/x/y/z/partner order |
+
+No image-policy branch is added inside a candidate kernel. The temporary
+canonical-order key uses dead planning/staging storage; sorting, gathering
+all rows and final copying are separate phases so permutation scratch
+cannot alias another row's retained entries. The public reserved word is
+zero again before consumption. The general strategy keeps its original
+publication path.
+
+Gates include exact ordered comparisons against a forced general iterator
+for nearest, conditional, coupled tilted-cell, boundary and refresh cases;
+an independent all-images oracle; and a predeclared native barostat run
+crossing from nearest to conditional. The new outline fixture initially
+failed during construction because a detached callback had no parent
+module. Passing the module explicitly removed the crash. Its next run
+completed lowering and exposed a separate `func.call` versus `call`
+FileCheck spelling error; one correction and rerun passed 1/1. The six
+existing search/refresh lowering fixtures and independent image reference
+then passed 7/7. Device correctness and performance remain unmeasured for
+this correction.
+
+### Target-driven remaining batches and reporting
+
+The subsequent target ruling supersedes a full timing round after every
+single edit. Each batch must pass exact coverage and physical/virial
+gates, with sanitizer coverage for device-code changes. Short profiles and
+static footprints steer implementation. Revert a batch without measured
+stage improvement. Run the full two-job timing protocol when a batch is
+expected to reach a target, or after a few batches to check progress.
+
+| RTX 5090 target | Required GPU time or ratio |
+|---|---|
+| Common evaluation, large OPC/TIP3P boxes | At most 55 us/step each |
+| Common evaluation, small OPC/TIP3P boxes | At most 25/28 us/step |
+| Common evaluation, ubiquitin OPC/TIP3P | At most 32/31 us/step |
+| Ubiquitin search, sort and group planning | At most main neighbor build and prune |
+| Water-box search, sort and group planning | At most retained W1 |
+| Other kernels | At most main, with kernel-level attribution |
+| Whole step | ON/main below one on all six systems |
+
+From the image-path measurement onward wall timings use **100,000 steps**
+and a rate every 1,000 steps, with the unchanged plateau rule, trims and
+two-job interleaving. Each job measures main, retained W1 and the new head
+at that length. Per-kernel profiles may use 10,000 steps and are labeled
+separately; old 10,000-step wall ratios are not a same-length baseline.
+Every result comment includes both ON/main tables, supporting stage/kernel
+numbers, gate counts, exclusions and spread. Only process narrative moves
+to supporting records.
+
+After image paths, inventory the remaining kernels from existing
+captures, then resume evaluation. E1 is the parked norm proof guard;
+E2 streams masks; E3 exposes fixed pair constants. E5 specializes only
+classes present, derived from host descriptor counts. E6 selects separate
+prune and nonprune functions from the invalidation flags already read on
+the host, without another device readback. All specialization comes from
+program properties with checked preconditions and shared emitters; no
+handwritten kernel for a named water model is admitted. Any template-only
+mechanism requires a stated reason and a general-form issue.
 
 ### Precision contract for the whole search port and future pruning
 

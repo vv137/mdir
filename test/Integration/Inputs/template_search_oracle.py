@@ -1,9 +1,9 @@
 """Independent f64 periodic coverage oracle for the combined bin search.
 
-References enumerate every unit pair and all 27 images, independently of
-bins, chunks and masks. Both cells have fractional reach below one, so
-these are all covering images. Odd/128 reaches avoid rounding-boundary
-ties on the dyadic grid. Candidate membership is compared exactly.
+References enumerate every unit pair and a complete inverse-cell-bounded
+image box, independently of bins, chunks and masks. Odd/128 reaches avoid
+rounding-boundary ties on the original dyadic grid. Candidate membership
+is compared exactly; the separate ordered checker retains entry order.
 """
 import argparse
 import itertools
@@ -11,6 +11,7 @@ import json
 import math
 import pathlib
 import struct
+from fractions import Fraction
 
 parser = argparse.ArgumentParser()
 sub = parser.add_subparsers(dest='command', required=True)
@@ -23,6 +24,13 @@ generate.add_argument('--refresh', action='store_true')
 generate.add_argument('--seam', action='store_true')
 generate.add_argument('--boundary', action='store_true')
 generate.add_argument('--growth', action='store_true')
+generate.add_argument('--base-reach', type=float, default=99 / 128)
+generate.add_argument('--extent', type=float, default=18 / 128)
+generate.add_argument('--coupled-images', action='store_true')
+generate.add_argument('--image-order', action='store_true')
+generate.add_argument('--nearest', action='store_true')
+generate.add_argument('--cell-crossing', action='store_true')
+generate.add_argument('--dispatch', action='store_true')
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -42,7 +50,7 @@ def sorted_units(points, waters):
     return sorted(range(len(points)), key=key)
 
 
-def group_reference(order, points, waters):
+def group_reference(order, points, waters, cell):
     """Independent segment cuts; reference pair enumeration never uses these."""
     def column(i):
         x, y = (f32(v - math.floor(v)) for v in points[i][:2])
@@ -50,8 +58,8 @@ def group_reference(order, points, waters):
         return 2 * cx + (1 - cy if cx % 2 else cy)
     z = [min(int(f32((1 << 21) * f32(points[i][2] - math.floor(points[i][2])))),
              (1 << 21) - 1) for i in order]
-    gap = [int(.4 / 2 * (1 << 21)), int(.3 / 2 * (1 << 21))]
-    span = [int(.9 / 2 * (1 << 21)), int(.6 / 2 * (1 << 21))]
+    gap = [int(.4 / cell[2] * (1 << 21)), int(.3 / cell[2] * (1 << 21))]
+    span = [int(.9 / cell[2] * (1 << 21)), int(.6 / cell[2] * (1 << 21))]
     cuts = {i for i in range(len(order)) if i == 0 or i == waters or
             column(order[i]) != column(order[i - 1]) or z[i] - z[i - 1] > gap[i >= waters]}
     while True:
@@ -74,12 +82,25 @@ def group_reference(order, points, waters):
     return groups
 
 
-def expected_pairs(points, waters, atoms, tilted, allow_boundary=False):
+def inverse_image_radii(cell, reach):
+    """Exact conservative L1 rows of (H^T)^-1, not the image iterator.
+
+    If |H^T(d-n)|_2 <= R, each component of d-n is bounded by R times
+    this row norm. Fractions preserve the input f64 values exactly.
+    """
+    ax, by, cz = map(Fraction, cell[:3])
+    bx, cx, cy = map(Fraction, cell[3:] if len(cell) == 6 else [0, 0, 0])
+    return [Fraction(reach) * v for v in (
+        1 / ax + abs(bx / (ax * by)) + abs((bx * cy - by * cx) / (ax * by * cz)),
+        1 / by + abs(cy / (by * cz)), 1 / cz)]
+
+
+def expected_pairs(points, waters, atoms, cell, reach, allow_boundary=False):
     exclusions = {(0, 1), (2, 3), (0, 16)}
     pairs = set()
-    reach = (135 / 128, 117 / 128, 99 / 128)
     minimum_gap = 100.0
     for tag in range(3):
+        radii = inverse_image_radii(cell, reach[tag])
         if tag == 0:
             indices = itertools.combinations(range(waters), 2)
         elif tag == 1:
@@ -88,11 +109,19 @@ def expected_pairs(points, waters, atoms, tilted, allow_boundary=False):
             indices = ((waters + i, waters + j) for i, j in itertools.combinations(range(atoms), 2)
                        if (i, j) not in exclusions)
         for i, j in indices:
-            center = [math.floor(points[i][k]) - math.floor(points[j][k]) for k in range(3)]
-            for offset in itertools.product((-1, 0, 1), repeat=3):
-                image = tuple(center[k] + offset[k] for k in range(3))
+            delta = [Fraction(points[i][k]) - Fraction(points[j][k]) for k in range(3)]
+            # Round the enclosing integer box outward. This deliberately
+            # over-enumerates; membership still uses the original f64 test.
+            ranges = [range(math.floor(delta[k] - radii[k]),
+                            math.ceil(delta[k] + radii[k]) + 1) for k in range(3)]
+            for image in itertools.product(*ranges):
                 d = [points[i][k] - (points[j][k] + image[k]) for k in range(3)]
-                cart = ((2 * d[0] + d[1]) + .5 * d[2], 2 * d[1] + d[2], 2 * d[2]) if tilted else tuple(2 * v for v in d)
+                if len(cell) == 6:
+                    ax, by, cz, bx, cx, cy = cell
+                    cart = ((ax * d[0] + bx * d[1]) + cx * d[2],
+                            by * d[1] + cy * d[2], cz * d[2])
+                else:
+                    cart = tuple(cell[k] * d[k] for k in range(3))
                 r2 = sum(v * v for v in cart)
                 minimum_gap = min(minimum_gap, abs(r2 - reach[tag] ** 2))
                 if r2 <= reach[tag] ** 2:
@@ -107,6 +136,11 @@ if args.command == 'check':
     words = iter(int(x) for x in args.records.read_text().split())
     waters, atoms = reference['waters'], reference['atoms']
     for phase, ref in enumerate(reference['phases']):
+        if reference.get('dispatch'):
+            assert next(words) == 917034 and next(words) == phase
+            path, active = next(words), next(words)
+            assert path in (0, 1, 2)
+            assert active == int(ref['active'][0]) + 2 * int(ref['active'][1])
         assert next(words) == 917031 and next(words) == phase
         n = next(words)
         assert n == len(ref['order']), (phase, 'order length', n)
@@ -162,11 +196,29 @@ if args.command == 'check':
 
 waters, atoms = 19, 17
 size, particles = waters + atoms, 4 * waters + atoms
+reach = (args.base_reach + 2 * args.extent,
+         args.base_reach + args.extent, args.base_reach)
+assert args.base_reach > 0 and args.extent >= 0
+cell = [2., 2., 2., 1., .5, 1.] if args.triclinic else [2., 2., 2.]
+if args.coupled_images:
+    assert not args.cell_crossing and not args.nearest
+    args.triclinic = True
+    cell = [2., 2., 2., -15 / 16, -15 / 16, 0.]
+if args.nearest:
+    assert not args.cell_crossing
+    cell = [17 / 8, 17 / 8, 17 / 8]
+if args.cell_crossing:
+    assert not args.triclinic and not args.reframed and not args.growth
 points = [[((i * 7) % 32) / 32, ((i * 11) % 16) / 16, ((i * 5) % 8) / 8] for i in range(size)]
 points[3] = points[2][:]
 points[5] = points[2][:]
 points[6][0] = 1 - 2 ** -30
 points[22][1] = points[22][2] = 1 - 2 ** -30
+if args.coupled_images:
+    points[0], points[1] = [15 / 16, 31 / 64, 31 / 64], [0., 0., 0.]
+if args.image_order:
+    assert not args.triclinic
+    points[0], points[1] = [3 / 8, 1 / 4, 1 / 4], [5 / 8, 1 / 4, 1 / 4]
 if args.seam:
     # Wrapped keys are close to 1/2, while nearby centered references lie
     # on opposite sides of the lattice-frame seam in all three axes.
@@ -179,8 +231,8 @@ if args.boundary:
     # both sides without a tolerance or a changed membership criterion.
     points = [[((i * 7) % 32) / 32, 0., 0.] for i in range(size)]
     points[0][0] = points[waters][0] = 0.
-    for begin, radius in [(1, 135 / 256), (waters + 4, 99 / 256),
-                          (waters + 7, 117 / 256)]:
+    for begin, radius in [(1, reach[0] / 2), (waters + 4, reach[2] / 2),
+                          (waters + 7, reach[1] / 2)]:
         points[begin][0] = radius
         points[begin + 1][0] = math.nextafter(radius, 0.)
         points[begin + 2][0] = math.nextafter(radius, math.inf)
@@ -191,15 +243,18 @@ phases = []
 water_places = waters
 order = [-1] * size
 retained_groups = [[], []]
-for phase, active in enumerate([(True, True), (False, True), (True, False), (False, False)]):
-    if phase == 1:
+activity = ([(True, True)] * 3 if args.cell_crossing else
+            [(True, True), (False, True), (True, False), (False, False)])
+for phase, active in enumerate(activity):
+    phase_cell = ([17 / 8] * 3 if phase != 1 else [2.] * 3) if args.cell_crossing else cell
+    if phase == 1 and not args.cell_crossing:
         for i in range(waters, size):
             points[i][0] = (points[i][0] + 1 / 8) % 1
             points[i][2] = (points[i][2] + 1 / 16) % 1
     if phase == 2 and args.growth:
         for i in range(waters):
             points[i] = [((i * 7) % 32) / 32, ((i * 11) % 16) / 16, ((i * 5) % 8) / 8]
-    if phase == 2:
+    if phase == 2 and not args.cell_crossing:
         for i in range(waters):
             points[i][0] = (points[i][0] + 1 / 16) % 1
             points[i][1] = (points[i][1] + 1 / 4) % 1
@@ -208,12 +263,14 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
         if active[kind]:
             offset = 0 if kind == 0 else waters
             order[start:start + count] = sorted_ids[offset:offset + count]
-    planned = group_reference(sorted_ids, points, waters)
+    planned = group_reference(sorted_ids, points, waters, phase_cell)
     for kind in range(2):
         if active[kind]:
             retained_groups[kind] = planned[kind]
-    pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
+    pairs, gap = expected_pairs(points, waters, atoms, phase_cell, reach, args.boundary)
     phases.append({'active': active, 'points': [row[:] for row in points], 'order': order[:], 'groups': [g[:] for g in retained_groups], 'pairs': pairs, 'minimum_r2_gap': gap})
+    if args.cell_crossing:
+        phases[-1]['cell'] = phase_cell
 if args.reframed:
     for i, point in enumerate(points):
         for axis in range(3):
@@ -225,15 +282,17 @@ if args.reframed:
             ids = sorted_units(points, waters)
             order[:waters] = ids[:waters]
             order[water_places:water_places + atoms] = ids[waters:]
-            retained_groups = group_reference(ids, points, waters)
-        pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
+            retained_groups = group_reference(ids, points, waters, cell)
+        pairs, gap = expected_pairs(points, waters, atoms, cell, reach, args.boundary)
         phases.append({'active': active, 'points': [row[:] for row in points],
                        'order': order[:], 'groups': [g[:] for g in retained_groups], 'pairs': pairs, 'minimum_r2_gap': gap})
 if args.growth:
     assert len(phases[2]['groups'][0]) > len(phases[0]['groups'][0])
     assert phases[2]['groups'][1] == phases[1]['groups'][1]
-cell = [2., 2., 2., 1., .5, 1.] if args.triclinic else [2., 2., 2.]
-args.reference.write_text(json.dumps({'waters': waters, 'atoms': atoms, 'cell': cell, 'phases': phases}))
+reference = {'waters': waters, 'atoms': atoms, 'cell': cell, 'phases': phases}
+if args.dispatch:
+    reference['dispatch'] = True
+args.reference.write_text(json.dumps(reference))
 
 lines = ['md.particle_set @atoms', '!list = !mdrt.segmented_pairs<@atoms>']
 lines.append('memref.global "private" constant @initial_controls : memref<4xi64> = dense<0>')
@@ -258,6 +317,10 @@ lines.extend([
     'func.func private @mdrtDeviceActivationEnter(!llvm.ptr)',
     'func.func private @mdrtDeviceActivationClose(!llvm.ptr)',
     'func.func private @printI64(i64)', 'func.func private @printNewline()'])
+if args.dispatch:
+    lines.extend([
+        'func.func private @mdrtTemplatePairsImagePath(!list) -> i64',
+        'func.func private @mdrtTemplatePairsSearchActive(!list) -> i64'])
 lines.append(r'''
 func.func @show(%word: i32) {
   %wide = arith.extsi %word : i32 to i64
@@ -406,7 +469,7 @@ w = emit(f'memref.get_global @water : memref<{waters}x4xi32>')
 w = emit(f'memref.cast {w} : memref<{waters}x4xi32> to memref<?x4xi32>')
 ex = emit('memref.get_global @excluded : memref<3x2xi32>')
 ex = emit(f'memref.cast {ex} : memref<3x2xi32> to memref<?x2xi32>')
-state = emit(f'md_exec.empty_segmented_pairs {types}, {w} exclude({ex} : memref<?x2xi32>) cutoff(0.7734375) skin(0.0) extent(0.140625) alpha(0.75) : memref<?xi32, 1>, memref<?x4xi32> -> !list')
+state = emit(f'md_exec.empty_segmented_pairs {types}, {w} exclude({ex} : memref<?x2xi32>) cutoff({args.base_reach}) skin(0.0) extent({args.extent}) alpha(0.75) : memref<?xi32, 1>, memref<?x4xi32> -> !list')
 if not args.refresh:
     required = emit(f'arith.constant {size * size * 27} : i64')
     emit(f'func.call @mdrtTemplatePairsGrow({state}, {required}) : (!list, i64) -> i64')
@@ -415,8 +478,11 @@ controls_host = emit('memref.get_global @initial_controls : memref<4xi64>')
 ready = emit('gpu.wait async')
 done = emit(f'gpu.memcpy async [{ready}] {controls_device}, {controls_host} : memref<4xi64, 1>, memref<4xi64>')
 lines.append(f'  gpu.wait [{done}]')
-cell_value = emit(f'arith.constant dense<{cell}> : {cell_type}')
+if not args.cell_crossing:
+    cell_value = emit(f'arith.constant dense<{cell}> : {cell_type}')
 for phase, ref in enumerate(phases):
+    if args.cell_crossing:
+        cell_value = emit(f'arith.constant dense<{ref["cell"]}> : {cell_type}')
     host = emit(f'memref.get_global @points_{phase} : memref<{size}x3xf64>')
     host = emit(f'memref.cast {host} : memref<{size}x3xf64> to memref<?x3xf64>')
     ready = emit('gpu.wait async')
@@ -434,6 +500,13 @@ for phase, ref in enumerate(phases):
         grew = emit(f'arith.cmpi ugt, {capacity}, {initial} : i64')
         lines.append(f'  cf.assert {grew}, "automatic template arena growth was not exercised"')
     phase_value = emit(f'arith.constant {phase} : i64')
+    if args.dispatch:
+        marker = emit('arith.constant 917034 : i64')
+        selected = emit(f'func.call @mdrtTemplatePairsImagePath({state}) : (!list) -> i64')
+        active = emit(f'func.call @mdrtTemplatePairsSearchActive({state}) : (!list) -> i64')
+        for value in [marker, phase_value, selected, active]:
+            lines.append(f'  func.call @printI64({value}) : (i64) -> ()')
+            lines.append('  func.call @printNewline() : () -> ()')
     lines.append(f'  func.call @dump({state}, {phase_value}, {controls}) : (!list, i64, memref<4xi64>) -> ()')
     lines.append(f'  memref.dealloc {controls} : memref<4xi64>')
 lines.extend(['  func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()', '  return', '}'])

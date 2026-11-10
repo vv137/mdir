@@ -1,0 +1,6 @@
+# RUN: rm -f %t.input.mlir %t.reference.json
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --base-reach=0.9375 --extent=0.5 --coupled-images --dispatch
+# RUN: %python -c "import json; r=json.load(open('%t.reference.json')); assert [0,0,1,2,1,1] in r['phases'][0]['pairs']; print('independent oracle retains global image (2,1,1)')" | FileCheck %s
+# A fixed original-pass +/-1 cube misses this admitted reduced-cell pair.
+# This CPU oracle test does not invoke a device or the search emitter.
+# CHECK: independent oracle retains global image (2,1,1)

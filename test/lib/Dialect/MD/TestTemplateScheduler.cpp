@@ -5,6 +5,7 @@
 #include "mdir/Conversion/TemplateBuildKernels.h"
 #include "mdir/Conversion/TemplateSpatialKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
+#include "mdir/Conversion/TemplateSearchOrder.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
@@ -371,6 +372,24 @@ struct TestTemplateCompaction
             arith::AddIOp::create(b, loc, buffers.rows, createIndex(b, loc, 1023)),
             createIndex(b, loc, 1024)), createIndex(b, loc, 1));
     emitCompactTemplatePairs(b, loc, buffers);
+    Value imagePath = call("mdrtTemplatePairsImagePath", ValueRange{handle}, wide, false);
+    Value flags = call("mdrtTemplatePairsSearchActive", ValueRange{handle}, wide, false);
+    TemplateSpatialBuffers spatial;
+    spatial.keys = view(TEMPLATE_LAYOUT_SPATIAL_KEYS);
+    spatial.places = view(TEMPLATE_LAYOUT_SPATIAL_PLACES);
+    spatial.columnsX = layout(TEMPLATE_LAYOUT_COLUMNS_X);
+    spatial.columnsY = layout(TEMPLATE_LAYOUT_COLUMNS_Y);
+    auto activity = [&](int64_t bit) -> Value {
+      return arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(b, loc, flags, constant(bit)), constant(0));
+    };
+    spatial.waterActive = activity(1); spatial.atomActive = activity(2);
+    Value specialized = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+        imagePath, constant(2));
+    scf::IfOp::create(b, loc, specialized, [&](OpBuilder &at, Location) {
+      emitOrderTemplateSearch(at, loc, buffers, spatial);
+      scf::YieldOp::create(at, loc);
+    });
     func::ReturnOp::create(b, loc);
   }
 };
