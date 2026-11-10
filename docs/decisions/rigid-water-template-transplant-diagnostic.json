@@ -1,0 +1,1294 @@
+{
+  "kind": "never-merged prototype transplant diagnostic",
+  "device": "RTX 5090",
+  "native_base": "5ea35cdb621b5776d359a4798c11f038057f8905",
+  "archive_sha256": "67b7f20293c24783e59798eb99bd2afd5ead2cc810c1d5eecedaeeee5bbe5f81",
+  "archive_global_kernel_bodies_unchanged": 23,
+  "virial": "not applicable: archived prototype is force-only; production contract unchanged",
+  "energy": "retained native observer over transplanted entries",
+  "precision": "archived f32 kernels unchanged; general mixed and double reference on the same exact frame",
+  "timeout_seconds_per_case": 300,
+  "expected_seconds_per_case_lt": 180,
+  "same_frame_results": {
+    "passed": 22,
+    "failed": 1,
+    "not_evaluated_after_stop": 1
+  },
+  "trajectory_sample_results": {
+    "passed": 17,
+    "failed": 0,
+    "not_evaluated_after_stop": 1
+  },
+  "reach_list_differences": {
+    "ubq-opc": {
+      "missing": 0,
+      "extra": 1
+    },
+    "ubq-tip3p": {
+      "missing": 0,
+      "extra": 0
+    },
+    "opc-small": {
+      "missing": 0,
+      "extra": 1
+    },
+    "opc-large": {
+      "missing": 1,
+      "extra": 1
+    },
+    "tip3p-small": {
+      "missing": 1,
+      "extra": 0
+    },
+    "tip3p-large": {
+      "missing": 2,
+      "extra": 1
+    }
+  },
+  "stage_profiles": "none: first pending profile cancelled before execution after physical failure",
+  "cases": {
+    "opc-small": {
+      "physical_pass": true,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.03607473995612054,
+          "baseline_force_rms": 0.001822568479250409,
+          "candidate_force_max": 0.021940119224666432,
+          "candidate_force_rms": 0.0018153999750239866,
+          "force_max_bound": 0.05411210993418081,
+          "force_rms_bound": 0.03782528998529969,
+          "energy_template": -215289.9579607821,
+          "energy_mixed": -215289.99330589408,
+          "energy_double": -215289.9397471673,
+          "energy_difference": 0.01821361482143402,
+          "energy_relative_term_bound": 2.152899397471673
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.02531820876049551,
+          "baseline_force_rms": 0.0018091484009303716,
+          "candidate_force_max": 0.021676252879956337,
+          "candidate_force_rms": 0.0017827742919854458,
+          "force_max_bound": 0.03797731314074326,
+          "force_rms_bound": 0.037531750432581105,
+          "energy_template": -216356.28728047945,
+          "energy_mixed": -216356.29713644274,
+          "energy_double": -216356.26996042812,
+          "energy_difference": 0.017320051323622465,
+          "energy_relative_term_bound": 2.1635626996042814
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.03328652107563812,
+          "baseline_force_rms": 0.001745609500816196,
+          "candidate_force_max": 0.029038270045305126,
+          "candidate_force_rms": 0.0017451957694379057,
+          "force_max_bound": 0.04992978161345718,
+          "force_rms_bound": 0.034823247001272144,
+          "energy_template": -229524.2610560595,
+          "energy_mixed": -229524.26517961593,
+          "energy_double": -229524.24661332974,
+          "energy_difference": 0.014442729763686657,
+          "energy_relative_term_bound": 2.2952424661332977
+        },
+        {
+          "frame": 10,
+          "baseline_force_max": 0.026768217018911855,
+          "baseline_force_rms": 0.0016870698819019877,
+          "candidate_force_max": 0.01660255824572232,
+          "candidate_force_rms": 0.001689473167902804,
+          "force_max_bound": 0.04015232552836778,
+          "force_rms_bound": 0.03751431151506418,
+          "energy_template": -228246.24839760922,
+          "energy_mixed": -228246.2573939967,
+          "energy_double": -228246.24324712297,
+          "energy_difference": 0.005150486249476671,
+          "energy_relative_term_bound": 2.2824624324712297
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 4.5441433726978175e-08,
+          "position_rms": 4.64096004470136e-09,
+          "position_max_bound": 5.048245540000001e-05,
+          "position_rms_bound": 5.048245540000001e-05,
+          "velocity_max": 2.2442912801845516e-05,
+          "velocity_rms": 1.7269300230242204e-06,
+          "velocity_max_bound": 4.668550757513934e-05,
+          "velocity_rms_bound": 1.5667414992532875e-05
+        },
+        {
+          "step": 5,
+          "position_max": 2.439640782725405e-07,
+          "position_rms": 2.4026248727952896e-08,
+          "position_max_bound": 5.048245540000001e-05,
+          "position_rms_bound": 5.048245540000001e-05,
+          "velocity_max": 3.039481479194528e-05,
+          "velocity_rms": 3.488932778807096e-06,
+          "velocity_max_bound": 0.00013073172443422987,
+          "velocity_rms_bound": 4.519424567242296e-05
+        },
+        {
+          "step": 10,
+          "position_max": 3.859289652297093e-07,
+          "position_rms": 4.343351949237991e-08,
+          "position_max_bound": 5.048245540000001e-05,
+          "position_rms_bound": 5.048245540000001e-05,
+          "velocity_max": 4.236771154808583e-05,
+          "velocity_rms": 4.798465134707046e-06,
+          "velocity_max_bound": 0.0001769203541631681,
+          "velocity_rms_bound": 4.753017822513894e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 266214,
+          "missing": 0,
+          "extra": 158158
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 266214,
+          "missing": 0,
+          "extra": 158158
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 266186,
+          "missing": 0,
+          "extra": 158168
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 266186,
+          "missing": 0,
+          "extra": 158168
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 266206,
+          "missing": 0,
+          "extra": 158172
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 266158,
+          "missing": 0,
+          "extra": 158327
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        }
+      ],
+      "coverage_events": 6,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "completed0",
+      "log_sha256": "c69063ebcdd5d6070d47ba3426ca679898eb23a5c8990f9807ef6af8e04a439b"
+    },
+    "tip3p-small": {
+      "physical_pass": true,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.016318894121184258,
+          "baseline_force_rms": 0.0014489658160913486,
+          "candidate_force_max": 0.013734719420995134,
+          "candidate_force_rms": 0.0013646446683087655,
+          "force_max_bound": 0.028886812101388697,
+          "force_rms_bound": 0.028886812101388697,
+          "energy_template": -168132.86469892145,
+          "energy_mixed": -168132.88557895855,
+          "energy_double": -168132.90932842158,
+          "energy_difference": 0.04462950013112277,
+          "energy_relative_term_bound": 1.681329093284216
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.017417218195191708,
+          "baseline_force_rms": 0.0014483489588881316,
+          "candidate_force_max": 0.02176397439552602,
+          "candidate_force_rms": 0.001407705554377771,
+          "force_max_bound": 0.028738477518016434,
+          "force_rms_bound": 0.028738477518016434,
+          "energy_template": -168807.56455143634,
+          "energy_mixed": -168807.59026422398,
+          "energy_double": -168807.6014462713,
+          "energy_difference": 0.03689483494963497,
+          "energy_relative_term_bound": 1.6880760144627132
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.01702671780236642,
+          "baseline_force_rms": 0.0013908664242088449,
+          "candidate_force_max": 0.015343164219075334,
+          "candidate_force_rms": 0.0013544791652117193,
+          "force_max_bound": 0.02574759231513331,
+          "force_rms_bound": 0.02574759231513331,
+          "energy_template": -179196.85428229917,
+          "energy_mixed": -179196.87705158652,
+          "energy_double": -179196.90334980492,
+          "energy_difference": 0.04906750575173646,
+          "energy_relative_term_bound": 1.7919690334980494
+        },
+        {
+          "frame": 10,
+          "baseline_force_max": 0.011494495724910792,
+          "baseline_force_rms": 0.001335460592994058,
+          "candidate_force_max": 0.013922330083914858,
+          "candidate_force_rms": 0.0012779479026399391,
+          "force_max_bound": 0.02373415600521112,
+          "force_rms_bound": 0.02373415600521112,
+          "energy_template": -182308.34974173934,
+          "energy_mixed": -182308.37924576306,
+          "energy_double": -182308.39024901553,
+          "energy_difference": 0.040507276193238795,
+          "energy_relative_term_bound": 1.8230839024901555
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 2.6220607907134763e-08,
+          "position_rms": 3.949709322697181e-09,
+          "position_max_bound": 5.052993170000001e-05,
+          "position_rms_bound": 5.052993170000001e-05,
+          "velocity_max": 1.2056363196621955e-05,
+          "velocity_rms": 1.1004365694530606e-06,
+          "velocity_max_bound": 3.3292564918491196e-05,
+          "velocity_rms_bound": 1.0672736884300697e-05
+        },
+        {
+          "step": 5,
+          "position_max": 1.8597514461760056e-07,
+          "position_rms": 1.554125836250686e-08,
+          "position_max_bound": 5.052993170000001e-05,
+          "position_rms_bound": 5.052993170000001e-05,
+          "velocity_max": 2.1492812194434663e-05,
+          "velocity_rms": 2.2747101705864757e-06,
+          "velocity_max_bound": 6.072313983873645e-05,
+          "velocity_rms_bound": 3.951664642550865e-05
+        },
+        {
+          "step": 10,
+          "position_max": 2.3963379991442935e-07,
+          "position_rms": 2.983110736218122e-08,
+          "position_max_bound": 5.052993170000001e-05,
+          "position_rms_bound": 5.052993170000001e-05,
+          "velocity_max": 2.5818036718527893e-05,
+          "velocity_rms": 2.9285057808527633e-06,
+          "velocity_max_bound": 0.00010326100461766075,
+          "velocity_rms_bound": 4.403179291894123e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 273023,
+          "missing": 0,
+          "extra": 167669
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 273023,
+          "missing": 0,
+          "extra": 167669
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 273008,
+          "missing": 0,
+          "extra": 167685
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 273008,
+          "missing": 0,
+          "extra": 167685
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 273012,
+          "missing": 0,
+          "extra": 167713
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 273108,
+          "missing": 0,
+          "extra": 167601
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        }
+      ],
+      "coverage_events": 6,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "cancelled after numerical PASS",
+      "log_sha256": "b5ba9aefb75692a57a2a13cc6d9821c1e531779c48d2c95e89d414e57f3cdfe9"
+    },
+    "ubq-opc": {
+      "physical_pass": true,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.14925645896528295,
+          "baseline_force_rms": 0.005577828802457855,
+          "candidate_force_max": 0.14852403709028295,
+          "candidate_force_rms": 0.005510508395805726,
+          "force_max_bound": 0.22388468844792442,
+          "force_rms_bound": 0.04165072725346854,
+          "energy_template": -341091.35672195815,
+          "energy_mixed": -341091.37086735666,
+          "energy_double": -341091.3905989295,
+          "energy_difference": 0.03387697134166956,
+          "energy_relative_term_bound": 3.410913905989295
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.170558049493593,
+          "baseline_force_rms": 0.0058827602133697185,
+          "candidate_force_max": 0.171290471368593,
+          "candidate_force_rms": 0.005794340886617967,
+          "force_max_bound": 0.2558370742403895,
+          "force_rms_bound": 0.042845440702838536,
+          "energy_template": -341215.50836103596,
+          "energy_mixed": -341215.4998926567,
+          "energy_double": -341215.5327749811,
+          "energy_difference": 0.0244139451533556,
+          "energy_relative_term_bound": 3.4121553277498116
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.16153115390125095,
+          "baseline_force_rms": 0.006180333496391261,
+          "candidate_force_max": 0.16104287265125095,
+          "candidate_force_rms": 0.006115438481610579,
+          "force_max_bound": 0.24229673085187642,
+          "force_rms_bound": 0.042160925362142374,
+          "energy_template": -341323.46995949186,
+          "energy_mixed": -341323.52507459745,
+          "energy_double": -341323.48726910073,
+          "energy_difference": 0.01730960886925459,
+          "energy_relative_term_bound": 3.4132348726910076
+        },
+        {
+          "frame": 10,
+          "baseline_force_max": 0.1813608599908889,
+          "baseline_force_rms": 0.005946190615601118,
+          "candidate_force_max": 0.1808725787408889,
+          "candidate_force_rms": 0.005856325893711803,
+          "force_max_bound": 0.27204128998633337,
+          "force_rms_bound": 0.0426767584668139,
+          "energy_template": -340985.0628951322,
+          "energy_mixed": -340985.07363040186,
+          "energy_double": -340985.09073367435,
+          "energy_difference": 0.027838542126119137,
+          "energy_relative_term_bound": 3.409850907336744
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 4.032705591683339e-08,
+          "position_rms": 5.1844722390159525e-09,
+          "position_max_bound": 6.17557895312952e-05,
+          "position_rms_bound": 6.17557895312952e-05,
+          "velocity_max": 3.0014476771977883e-05,
+          "velocity_rms": 2.228910170258406e-06,
+          "velocity_max_bound": 9.62068254095616e-05,
+          "velocity_rms_bound": 6.619265807740052e-05
+        },
+        {
+          "step": 5,
+          "position_max": 3.811233462158725e-07,
+          "position_rms": 2.8415623147857803e-08,
+          "position_max_bound": 6.17557895312952e-05,
+          "position_rms_bound": 6.17557895312952e-05,
+          "velocity_max": 8.191605638213639e-05,
+          "velocity_rms": 4.655548378430454e-06,
+          "velocity_max_bound": 0.0002508262115478166,
+          "velocity_rms_bound": 5.9382947671083285e-05
+        },
+        {
+          "step": 10,
+          "position_max": 4.979458978482398e-07,
+          "position_rms": 5.148329845062952e-08,
+          "position_max_bound": 6.17557895312952e-05,
+          "position_rms_bound": 6.17557895312952e-05,
+          "velocity_max": 0.00012939559479852036,
+          "velocity_rms": 6.767749263630106e-06,
+          "velocity_max_bound": 0.00034097434705510077,
+          "velocity_rms_bound": 5.542047014818989e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 381183,
+          "missing": 0,
+          "extra": 224327
+        },
+        {
+          "class": 1,
+          "required": 65810,
+          "missing": 0,
+          "extra": 33286
+        },
+        {
+          "class": 2,
+          "required": 114650,
+          "missing": 0,
+          "extra": 20657
+        },
+        {
+          "class": 0,
+          "required": 381183,
+          "missing": 0,
+          "extra": 224327
+        },
+        {
+          "class": 1,
+          "required": 65810,
+          "missing": 0,
+          "extra": 33286
+        },
+        {
+          "class": 2,
+          "required": 114650,
+          "missing": 0,
+          "extra": 20657
+        },
+        {
+          "class": 0,
+          "required": 381122,
+          "missing": 0,
+          "extra": 224353
+        },
+        {
+          "class": 1,
+          "required": 65789,
+          "missing": 0,
+          "extra": 33327
+        },
+        {
+          "class": 2,
+          "required": 114712,
+          "missing": 0,
+          "extra": 20664
+        },
+        {
+          "class": 0,
+          "required": 381122,
+          "missing": 0,
+          "extra": 224353
+        },
+        {
+          "class": 1,
+          "required": 65789,
+          "missing": 0,
+          "extra": 33327
+        },
+        {
+          "class": 2,
+          "required": 114712,
+          "missing": 0,
+          "extra": 20664
+        },
+        {
+          "class": 0,
+          "required": 381192,
+          "missing": 0,
+          "extra": 224323
+        },
+        {
+          "class": 1,
+          "required": 65803,
+          "missing": 0,
+          "extra": 33285
+        },
+        {
+          "class": 2,
+          "required": 114787,
+          "missing": 0,
+          "extra": 20720
+        },
+        {
+          "class": 0,
+          "required": 381338,
+          "missing": 0,
+          "extra": 224094
+        },
+        {
+          "class": 1,
+          "required": 65726,
+          "missing": 0,
+          "extra": 33376
+        },
+        {
+          "class": 2,
+          "required": 114870,
+          "missing": 0,
+          "extra": 20706
+        }
+      ],
+      "coverage_events": 6,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "completed0",
+      "log_sha256": "4b7f3653d177c250fba5d30039eff3caee4a8e44a321aedd7106cc9663709a09"
+    },
+    "ubq-tip3p": {
+      "physical_pass": true,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.200021482315492,
+          "baseline_force_rms": 0.0070237847911434875,
+          "candidate_force_max": 0.201120115127992,
+          "candidate_force_rms": 0.006975574869570232,
+          "force_max_bound": 0.300032223473238,
+          "force_rms_bound": 0.04517657064482367,
+          "energy_template": -266550.33286175714,
+          "energy_mixed": -266550.356098579,
+          "energy_double": -266550.39093604614,
+          "energy_difference": 0.05807428900152445,
+          "energy_relative_term_bound": 2.6655039093604618
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.21324864517418973,
+          "baseline_force_rms": 0.006738366321673969,
+          "candidate_force_max": 0.21422520767418973,
+          "candidate_force_rms": 0.006681619895845762,
+          "force_max_bound": 0.3198729677612846,
+          "force_rms_bound": 0.03921923188349419,
+          "energy_template": -266492.5017702144,
+          "energy_mixed": -266492.53097158857,
+          "energy_double": -266492.56619352335,
+          "energy_difference": 0.06442330894060433,
+          "energy_relative_term_bound": 2.664925661935234
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.19111080056484298,
+          "baseline_force_rms": 0.006905298533541897,
+          "candidate_force_max": 0.19129390603359298,
+          "candidate_force_rms": 0.006847598221310634,
+          "force_max_bound": 0.28666620084726446,
+          "force_rms_bound": 0.0447946323050271,
+          "energy_template": -266605.17794707674,
+          "energy_mixed": -266605.19292223733,
+          "energy_double": -266605.23414478404,
+          "energy_difference": 0.0561977073084563,
+          "energy_relative_term_bound": 2.6660523414478408
+        },
+        {
+          "frame": 10,
+          "baseline_force_max": 0.26191095903641326,
+          "baseline_force_rms": 0.007148228761977655,
+          "candidate_force_max": 0.26224665239578826,
+          "candidate_force_rms": 0.0070915272819220216,
+          "force_max_bound": 0.3928664385546199,
+          "force_rms_bound": 0.04201867791905539,
+          "energy_template": -266766.34390617465,
+          "energy_mixed": -266766.35468983045,
+          "energy_double": -266766.39150594687,
+          "energy_difference": 0.04759977222420275,
+          "energy_relative_term_bound": 2.6676639150594688
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 4.3488371570532536e-08,
+          "position_rms": 4.50389446153558e-09,
+          "position_max_bound": 6.157545322296905e-05,
+          "position_rms_bound": 6.157545322296905e-05,
+          "velocity_max": 3.338419395210179e-05,
+          "velocity_rms": 1.7947833866809705e-06,
+          "velocity_max_bound": 0.00010077115744072662,
+          "velocity_rms_bound": 6.08847619110109e-05
+        },
+        {
+          "step": 5,
+          "position_max": 2.754238774826945e-07,
+          "position_rms": 2.0757378951511063e-08,
+          "position_max_bound": 6.157545322296905e-05,
+          "position_rms_bound": 6.157545322296905e-05,
+          "velocity_max": 9.207328377525137e-05,
+          "velocity_rms": 3.9209874475932815e-06,
+          "velocity_max_bound": 0.000262073274845509,
+          "velocity_rms_bound": 5.047149831155134e-05
+        },
+        {
+          "step": 10,
+          "position_max": 4.448497925579886e-07,
+          "position_rms": 3.8083723956341126e-08,
+          "position_max_bound": 6.157545322296905e-05,
+          "position_rms_bound": 6.157545322296905e-05,
+          "velocity_max": 0.00018982799023448127,
+          "velocity_rms": 6.110028055893927e-06,
+          "velocity_max_bound": 0.0005931000896028937,
+          "velocity_rms_bound": 6.698631394064713e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 381988,
+          "missing": 0,
+          "extra": 231476
+        },
+        {
+          "class": 1,
+          "required": 65186,
+          "missing": 0,
+          "extra": 34598
+        },
+        {
+          "class": 2,
+          "required": 114189,
+          "missing": 0,
+          "extra": 20516
+        },
+        {
+          "class": 0,
+          "required": 381988,
+          "missing": 0,
+          "extra": 231476
+        },
+        {
+          "class": 1,
+          "required": 65186,
+          "missing": 0,
+          "extra": 34598
+        },
+        {
+          "class": 2,
+          "required": 114189,
+          "missing": 0,
+          "extra": 20516
+        },
+        {
+          "class": 0,
+          "required": 381899,
+          "missing": 0,
+          "extra": 231637
+        },
+        {
+          "class": 1,
+          "required": 65203,
+          "missing": 0,
+          "extra": 34603
+        },
+        {
+          "class": 2,
+          "required": 114164,
+          "missing": 0,
+          "extra": 20485
+        },
+        {
+          "class": 0,
+          "required": 381899,
+          "missing": 0,
+          "extra": 231637
+        },
+        {
+          "class": 1,
+          "required": 65203,
+          "missing": 0,
+          "extra": 34603
+        },
+        {
+          "class": 2,
+          "required": 114164,
+          "missing": 0,
+          "extra": 20485
+        },
+        {
+          "class": 0,
+          "required": 381802,
+          "missing": 0,
+          "extra": 231641
+        },
+        {
+          "class": 1,
+          "required": 65282,
+          "missing": 0,
+          "extra": 34498
+        },
+        {
+          "class": 2,
+          "required": 114101,
+          "missing": 0,
+          "extra": 20518
+        },
+        {
+          "class": 0,
+          "required": 381832,
+          "missing": 0,
+          "extra": 231673
+        },
+        {
+          "class": 1,
+          "required": 65264,
+          "missing": 0,
+          "extra": 34577
+        },
+        {
+          "class": 2,
+          "required": 114150,
+          "missing": 0,
+          "extra": 20543
+        }
+      ],
+      "coverage_events": 6,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "completed0",
+      "log_sha256": "f6c208276b852cfe32a6334548d6610351430991728de92695ad6f886ceb9363"
+    },
+    "opc-large": {
+      "physical_pass": true,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.042610762058075125,
+          "baseline_force_rms": 0.0025321550002801517,
+          "candidate_force_max": 0.05294334149925817,
+          "candidate_force_rms": 0.002993007646189629,
+          "force_max_bound": 0.06391614308711269,
+          "force_rms_bound": 0.044560442046599494,
+          "energy_template": -837514.1996861584,
+          "energy_mixed": -837514.3631005269,
+          "energy_double": -837514.1978915576,
+          "energy_difference": 0.001794600859284401,
+          "energy_relative_term_bound": 8.375141978915577
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.046773186859752514,
+          "baseline_force_rms": 0.0024731917167955544,
+          "candidate_force_max": 0.05454906203533483,
+          "candidate_force_rms": 0.0029872381419479687,
+          "force_max_bound": 0.07015978028962877,
+          "force_rms_bound": 0.044370488055739156,
+          "energy_template": -841746.4690385778,
+          "energy_mixed": -841746.5344707221,
+          "energy_double": -841746.4170961939,
+          "energy_difference": 0.051942383870482445,
+          "energy_relative_term_bound": 8.417464170961939
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.038994915460023094,
+          "baseline_force_rms": 0.0024159973929542724,
+          "candidate_force_max": 0.041815081140612165,
+          "candidate_force_rms": 0.002870861020729242,
+          "force_max_bound": 0.05849237319003464,
+          "force_rms_bound": 0.04187797717941083,
+          "energy_template": -893380.9536801297,
+          "energy_mixed": -893381.0318797436,
+          "energy_double": -893380.9236422647,
+          "energy_difference": 0.030037865042686462,
+          "energy_relative_term_bound": 8.933809236422647
+        },
+        {
+          "frame": 10,
+          "baseline_force_max": 0.034413367643310266,
+          "baseline_force_rms": 0.002317467476512131,
+          "candidate_force_max": 0.03252963561283195,
+          "candidate_force_rms": 0.0027453494718329076,
+          "force_max_bound": 0.0516200514649654,
+          "force_rms_bound": 0.03905546354434065,
+          "energy_template": -888727.1712018736,
+          "energy_mixed": -888727.2348939255,
+          "energy_double": -888727.1456333846,
+          "energy_difference": 0.025568488985300064,
+          "energy_relative_term_bound": 8.887271456333847
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 6.799230511944643e-08,
+          "position_rms": 6.00477093315683e-09,
+          "position_max_bound": 7.901235950000001e-05,
+          "position_rms_bound": 7.901235950000001e-05,
+          "velocity_max": 3.2701253875833114e-05,
+          "velocity_rms": 2.7108819921291645e-06,
+          "velocity_max_bound": 9.770901390199205e-05,
+          "velocity_rms_bound": 1.5738595736219454e-05
+        },
+        {
+          "step": 5,
+          "position_max": 4.0112587385010556e-07,
+          "position_rms": 3.7291733292036014e-08,
+          "position_max_bound": 7.901235950000001e-05,
+          "position_rms_bound": 7.901235950000001e-05,
+          "velocity_max": 5.6400426561076245e-05,
+          "velocity_rms": 5.484979458325587e-06,
+          "velocity_max_bound": 0.0001525595699929383,
+          "velocity_rms_bound": 5.139159578255554e-05
+        },
+        {
+          "step": 10,
+          "position_max": 6.042034890185732e-07,
+          "position_rms": 6.835021271018161e-08,
+          "position_max_bound": 7.901235950000001e-05,
+          "position_rms_bound": 7.901235950000001e-05,
+          "velocity_max": 7.988217505028317e-05,
+          "velocity_rms": 7.497456202706682e-06,
+          "velocity_max_bound": 0.00023631411989977202,
+          "velocity_rms_bound": 4.922047460390275e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 1040650,
+          "missing": 0,
+          "extra": 618825
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1040650,
+          "missing": 0,
+          "extra": 618825
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1040655,
+          "missing": 0,
+          "extra": 618823
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1040655,
+          "missing": 0,
+          "extra": 618823
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1040571,
+          "missing": 0,
+          "extra": 618944
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1040460,
+          "missing": 0,
+          "extra": 619174
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        }
+      ],
+      "coverage_events": 6,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "completed0",
+      "log_sha256": "16e46b1f0249670637fefafb82cb1584d706eceaf5ca9c0e939ff3b27d2dd86b"
+    },
+    "tip3p-large": {
+      "physical_pass": false,
+      "frames": [
+        {
+          "frame": 0,
+          "baseline_force_max": 0.030867809044309524,
+          "baseline_force_rms": 0.0019482918707680904,
+          "candidate_force_max": 0.03760325054611258,
+          "candidate_force_rms": 0.002314903300609622,
+          "force_max_bound": 0.046301713566464286,
+          "force_rms_bound": 0.03299793079472035,
+          "energy_template": -652938.2893149457,
+          "energy_mixed": -652938.3431097493,
+          "energy_double": -652938.478229214,
+          "energy_difference": 0.1889142682775855,
+          "energy_relative_term_bound": 6.52938478229214
+        },
+        {
+          "frame": 1,
+          "baseline_force_max": 0.02955544233401497,
+          "baseline_force_rms": 0.0019553936146787976,
+          "candidate_force_max": 0.030908870583175485,
+          "candidate_force_rms": 0.00229345014580441,
+          "force_max_bound": 0.044333163501022455,
+          "force_rms_bound": 0.032756227332929,
+          "energy_template": -655607.2722425722,
+          "energy_mixed": -655607.3146065054,
+          "energy_double": -655607.4362592059,
+          "energy_difference": 0.16401663376018405,
+          "energy_relative_term_bound": 6.55607436259206
+        },
+        {
+          "frame": 5,
+          "baseline_force_max": 0.019181375554438773,
+          "baseline_force_rms": 0.0018468858941024144,
+          "candidate_force_max": 0.03646473076577195,
+          "candidate_force_rms": 0.0021771497729425604,
+          "force_max_bound": 0.02877206333165816,
+          "force_rms_bound": 0.027912458593426667,
+          "energy_template": -696647.2157821916,
+          "energy_mixed": -696647.2736881506,
+          "energy_double": -696647.3975351104,
+          "energy_difference": 0.18175291875377297,
+          "energy_relative_term_bound": 6.9664739753511045
+        }
+      ],
+      "trajectory": [
+        {
+          "step": 1,
+          "position_max": 3.7281942866229656e-08,
+          "position_rms": 4.555750565129735e-09,
+          "position_max_bound": 7.935109160000001e-05,
+          "position_rms_bound": 7.935109160000001e-05,
+          "velocity_max": 1.8397354122984266e-05,
+          "velocity_rms": 1.6738288545553887e-06,
+          "velocity_max_bound": 5.185007944230602e-05,
+          "velocity_rms_bound": 1.345104599157702e-05
+        },
+        {
+          "step": 5,
+          "position_max": 2.1333685396029978e-07,
+          "position_rms": 2.3465075451569265e-08,
+          "position_max_bound": 7.935109160000001e-05,
+          "position_rms_bound": 7.935109160000001e-05,
+          "velocity_max": 3.377859879660772e-05,
+          "velocity_rms": 3.5491484130755805e-06,
+          "velocity_max_bound": 8.363313014608798e-05,
+          "velocity_rms_bound": 4.84180271720391e-05
+        }
+      ],
+      "coverage": [
+        {
+          "class": 0,
+          "required": 1061743,
+          "missing": 0,
+          "extra": 649704
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1061743,
+          "missing": 0,
+          "extra": 649704
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1061729,
+          "missing": 0,
+          "extra": 649720
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1061729,
+          "missing": 0,
+          "extra": 649720
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 0,
+          "required": 1061827,
+          "missing": 0,
+          "extra": 649619
+        },
+        {
+          "class": 1,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        },
+        {
+          "class": 2,
+          "required": 0,
+          "missing": 0,
+          "extra": 0
+        }
+      ],
+      "coverage_events": 5,
+      "virial": "N/A",
+      "energy_observer": "retained native observer over transplanted entries; archived force-only kernel supplies no energy/virial",
+      "wrapper": "failed1",
+      "log_sha256": "05dbc9acba46c9476de8be73651a1942e924ad2775ef904cb82a5d9c8db30372",
+      "failing_component": {
+        "flat_index": 44867,
+        "atom_zero_based": 14955,
+        "atom_one_based": 14956,
+        "component": "z",
+        "water_zero_based": 4985,
+        "site": "O",
+        "projected_template": -207.57344170304987,
+        "projected_mixed": -207.53709163106606,
+        "projected_double": -207.5369769722841,
+        "signed_difference": -0.03646473076577195,
+        "absolute_difference": 0.03646473076577195,
+        "reference_preserved_bits_only": true
+      }
+    }
+  },
+  "artifacts_sha256": {
+    "physical_fixture": "fedce9e3b199b8487a14d1b6c9faef12cc611f145acf04398c7ccfdc5042487d",
+    "native_driver": "dd443df55565cdab83440a7e002631acec6b089c73cfb2fb2146ae85062ffc8a",
+    "io_adapter": "baa94cc77a25d06c1014d65c9602aa45531b015bef2f1c5d6cdeeec5cb000b0c",
+    "session_coverage": "896c0dde077e15e8520edd999085369c0332ccade29f44bbfd47b86eac40eb84"
+  }
+}
