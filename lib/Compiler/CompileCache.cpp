@@ -223,23 +223,31 @@ std::optional<std::string> findDefaultDirectory(std::string &why) {
   return std::nullopt;
 }
 
-/// Why the default directory `directory`, or its parent, which this
-/// process made private if it made them, may not be used: another user
-/// owns it or group or others may write it. Empty if it may be used.
+/// Why the default directory `directory` may not be used: another user
+/// owns it or its parent, or group or others may write it. A parent of the
+/// user's that group or others may write, such as `~/.cache/mdir` made
+/// under a umask of 002, loses that permission first: whoever may write
+/// the parent could put a directory of their own in the place of this one
+/// once it is checked. Empty if it may be used.
 std::string checkPrivate(StringRef directory) {
-  SmallString<256> parent(directory);
+  SmallString<256> name(directory), parent(directory);
   sys::path::remove_filename(parent);
-  for (StringRef path : {directory, StringRef(parent)}) {
-    SmallString<256> name(path);
-    struct stat status;
-    if (::stat(name.c_str(), &status) != 0)
-      return "'" + path.str() + "' cannot be read";
-    if (status.st_uid != ::geteuid())
-      return "'" + path.str() + "' belongs to user " +
-             std::to_string(status.st_uid);
-    if (status.st_mode & (S_IWGRP | S_IWOTH))
-      return "group or others may write '" + path.str() + "'";
-  }
+  struct stat status;
+  if (::stat(parent.c_str(), &status) != 0)
+    return "'" + parent.str().str() + "' cannot be read";
+  if (status.st_uid != ::geteuid())
+    return "'" + parent.str().str() + "' belongs to user " +
+           std::to_string(status.st_uid);
+  if ((status.st_mode & (S_IWGRP | S_IWOTH)) &&
+      ::chmod(parent.c_str(), status.st_mode & 07777 & ~(S_IWGRP | S_IWOTH)))
+    return "group or others may write '" + parent.str().str() + "'";
+  if (::stat(name.c_str(), &status) != 0)
+    return "'" + directory.str() + "' cannot be read";
+  if (status.st_uid != ::geteuid())
+    return "'" + directory.str() + "' belongs to user " +
+           std::to_string(status.st_uid);
+  if (status.st_mode & (S_IWGRP | S_IWOTH))
+    return "group or others may write '" + directory.str() + "'";
   return "";
 }
 

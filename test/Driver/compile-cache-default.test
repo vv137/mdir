@@ -3,9 +3,10 @@
 # MDIR_COMPILE_CACHE=off comes first and makes nothing; without
 # MDIR_COMPILE_CACHE_DIR the cache is ${XDG_CACHE_HOME}/mdir/compile, made
 # 0700 with its parent, cold then warm; a relative XDG_CACHE_HOME gives
-# HOME/.cache. A default directory that others may write, or whose parent
-# the group may write, is refused with a warning, and its whole and valid
-# entries are neither read nor touched; private again, they are read. A
+# HOME/.cache. A default directory that others may write is refused with a
+# warning, and its whole and valid entries are neither read nor touched;
+# private again, they are read; a parent of the user's that the group may
+# write loses that permission, and the entries are read. A
 # default that is another user's directory is refused; a directory named
 # that others may write is used, with a warning. MDIR_COMPILE_CACHE_MAX_MB=0
 # turns the cache off and a malformed bound is reported. A salt that stands
@@ -23,9 +24,9 @@
 # CHECK-NEXT: relative-xdg: entries in HOME/.cache o 1 ptx 0 cubin 0
 # CHECK-NEXT: open-default: compiled 1 hits 0 rejected 0 stored 0 state same
 # CHECK-NEXT: open-default: warned, entries unchanged
-# CHECK-NEXT: open-parent: compiled 1 hits 0 rejected 0 stored 0 state same
-# CHECK-NEXT: open-parent: warned, entries unchanged
 # CHECK-NEXT: private-again: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: open-parent: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: open-parent: silent, parent 750
 # CHECK-NEXT: foreign-default: compiled 1 hits 0 rejected 0 stored 0 state same
 # CHECK-NEXT: foreign-default: warned
 # CHECK-NEXT: open-named: compiled 1 hits 0 rejected 0 stored 1 state same

@@ -16,10 +16,11 @@ that of a run without a cache bit for bit.
 - --location: MDIR_COMPILE_CACHE=off makes no directory; the default is
   made private (0700, its parent too), stored to cold, and read warm; a
   relative XDG_CACHE_HOME is ignored for HOME/.cache.
-- --security: the warm default directory made writable by others (0777),
-  then its parent writable by the group, is refused: nothing is read,
-  written, or touched, though its entries are whole and valid, and a
-  warning says why; made private again, they are read. A default that is
+- --security: the warm default directory made writable by others (0777)
+  is refused: nothing is read, written, or touched, though its entries are
+  whole and valid, and a warning says why; made private again, they are
+  read. A parent that the group may write, the user's, loses that
+  permission, and the entries are read. A default that is
   another user's directory (a link to `/`) is refused. A directory named by
   MDIR_COMPILE_CACHE_DIR that others may write is used, with a warning.
 - --size: MDIR_COMPILE_CACHE_MAX_MB=0 turns the cache off, and a value that
@@ -142,15 +143,13 @@ def main():
               + ", entries " + ("unchanged" if files(default) == before
                                 else "CHANGED"))
         os.chmod(default, 0o700)
+        stats, out, _ = run("private-again", default=xdg)
+        report("private-again", stats, out)
         os.chmod(default.parent, 0o770)
         stats, out, err = run("open-parent", default=xdg)
         report("open-parent", stats, out)
-        print("open-parent: " + warned(err, "refused the default directory")
-              + ", entries " + ("unchanged" if files(default) == before
-                                else "CHANGED"))
-        os.chmod(default.parent, 0o700)
-        stats, out, _ = run("private-again", default=xdg)
-        report("private-again", stats, out)
+        print(f"open-parent: {warned(err, 'refused')}, parent "
+              f"{mode(default.parent)}")
         foreign = work / "xdg-foreign"
         (foreign / "mdir").mkdir(parents=True, exist_ok=True)
         link = foreign / "mdir" / "compile"

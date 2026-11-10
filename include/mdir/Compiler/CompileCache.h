@@ -143,7 +143,8 @@ struct CompileCacheConfig {
   /// local, else `/var/tmp/mdir-<uid>/compile` if local, else none. A
   /// default directory is made with mode 0700 and refused, before anything
   /// is read or written, when another user owns it or its parent, or group
-  /// or others may write either. Warnings (a refusal, a bound that does not
+  /// or others may write it; a parent of the user's loses the permission of
+  /// group and others to write. Warnings (a refusal, a bound that does not
   /// parse, a directory named that others may write) go to the standard
   /// error once per process.
   static CompileCacheLocation locate();

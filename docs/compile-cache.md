@@ -73,9 +73,13 @@ lookup a round trip, and many jobs at once would load its server. A
 directory named by `MDIR_COMPILE_CACHE_DIR` may be anywhere.
 
 A default directory is the user's alone. It and its parent are made with
-mode 0700, and before anything is read or written, a default directory or
-parent that another user owns, or that group or others may write, is
-refused with a warning, and the cache is off. An entry's BLAKE3 is a
+mode 0700, and before anything is read or written, a default directory
+that another user owns, or that group or others may write, or whose
+parent another user owns, is refused with a warning, and the cache is off.
+A parent of the user's that group or others may write, such as
+`~/.cache/mdir` made under a umask of 002, loses that permission first:
+whoever may write the parent could put a directory of their own in the
+place of the default once it is checked. An entry's BLAKE3 is a
 checksum, not an authentication, and a host object is native code that
 the process runs: anyone who may write the directory could plant an entry
 that is whole and well formed. The directory under `/var/tmp`, whose
