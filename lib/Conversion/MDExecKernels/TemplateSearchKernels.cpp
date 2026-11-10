@@ -150,6 +150,10 @@ static void buildGroupBoxes(OpBuilder &b, Location loc,
         emitLatticeShift(in, loc, frame.wrapped, v.cell), valid);
     Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, lane, ix(in, 0));
     scf::IfOp::create(in, loc, leader, [&](OpBuilder &store, Location) {
+      // Count retained descriptors too: SW reads both hybrid class orders.
+      Value column = asIndex(store, loc,
+          load(store, loc, v.build.groups.columns, descriptor));
+      emitDeviceAtomicAdd(store, loc, v.spatial.counts, column, word(store, loc, 1));
       for (int64_t side = 0; side != 2; ++side) {
         Value row = arith::AddIOp::create(store, loc,
             arith::MulIOp::create(store, loc, descriptor, ix(store, 2)), ix(store, side));
@@ -178,7 +182,33 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     return arith::ConstantOp::create(at, loc, at.getBoolAttr(value));
   };
   Value one = ix(b, 1), block = ix(b, 64);
+  // Spatial sort scratch is dead after group publication. Reuse it for
+  // dense descriptor-column endpoints without changing the arena capacity.
+  Value bins = arith::MulIOp::create(b, loc, ix(b, 2),
+      arith::MulIOp::create(b, loc, v.spatial.columnsX, v.spatial.columnsY));
+  Value columnBlock = ix(b, 256);
+  Value columnGrid = arith::MaxUIOp::create(b, loc, one,
+      arith::DivUIOp::create(b, loc,
+          arith::AddIOp::create(b, loc, bins, ix(b, 255)), columnBlock));
+  auto clearColumns = gpu::LaunchOp::create(b, loc,
+      columnGrid, one, one, columnBlock, one, one);
+  {
+    OpBuilder at = OpBuilder::atBlockEnd(&clearColumns.getBody().front());
+    Value column = arith::AddIOp::create(at, loc,
+        arith::MulIOp::create(at, loc, clearColumns.getBlockIds().x, columnBlock),
+        clearColumns.getThreadIds().x);
+    Value inside = arith::CmpIOp::create(at, loc,
+        arith::CmpIPredicate::ult, column, bins);
+    scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, word(in, loc, 0),
+          v.spatial.counts, ValueRange{column});
+      scf::YieldOp::create(in, loc);
+    });
+    gpu::TerminatorOp::create(at, loc);
+  }
   buildGroupBoxes(b, loc, v);
+  emitDeviceScan(b, loc, v.spatial.counts, v.spatial.starts, v.spatial.cursors,
+      bins, v.spatial.scanScratch, v.spatial.scanBlocks, columnBlock, one);
   auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
   {
     OpBuilder at = OpBuilder::atBlockEnd(&clear.getBody().front());
@@ -380,19 +410,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                         arith::SubIOp::create(yloop, loc, v.spatial.columnsY, ix(yloop, 1)), cy), cy));
                             column = arith::AddIOp::create(yloop, loc, column,
                                 arith::SelectOp::create(yloop, loc, ss, allColumns, ix(yloop, 0)));
-                            Value classBegin = arith::SelectOp::create(yloop, loc,
-                                ss, v.spatial.waters, ix(yloop, 0));
-                            Value classEnd = arith::AddIOp::create(yloop, loc, classBegin,
-                                arith::SelectOp::create(yloop, loc, ss, atomRows, waterRows));
-                            Value columnWord = arith::IndexCastOp::create(yloop, loc,
-                                yloop.getI32Type(), column);
-                            auto columnAt = [&](OpBuilder &in, Value group) -> Value {
-                              return load(in, loc, v.build.groups.columns, group);
-                            };
-                            Value begin = bound(yloop, loc, classBegin, classEnd,
-                                columnWord, false, columnAt);
-                            Value end = bound(yloop, loc, begin, classEnd,
-                                columnWord, true, columnAt);
+                            // Prefix sums count compact descriptors; the SS partition
+                            // still begins at the reserved water-unit capacity.
+                            Value offset = arith::SelectOp::create(yloop, loc, ss,
+                                arith::SubIOp::create(yloop, loc,
+                                    v.spatial.waters, waterRows), ix(yloop, 0));
+                            Value begin = arith::AddIOp::create(yloop, loc, offset,
+                                asIndex(yloop, loc, load(yloop, loc, v.spatial.starts, column)));
+                            Value end = arith::AddIOp::create(yloop, loc, begin,
+                                asIndex(yloop, loc, load(yloop, loc, v.spatial.counts, column)));
                             return forState(yloop, loc, zBegin, zEnd, integer(yloop, loc, 1), stateY,
                                 [&](OpBuilder &zloop, Value sz, TemplateStageState stateZ) {
                                   Value zReal = arith::SIToFPOp::create(zloop, loc, zloop.getF64Type(), sz);
