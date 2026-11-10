@@ -42,10 +42,10 @@ where one exists, within its stated preconditions, including those of
 size, which are not all checked: `emitSortBins` is for bins of a few
 items and `emitRankInBins` for bins of many (#231); a caller that sized
 its grid with a constant gave `emitSortBins` thousands of items a bin and
-made a step 20 to 48 times slower (#795, #817). A new hand-written copy where a shared primitive exists
-states its reason in the PR. A change that adds or changes a part adds or
-updates its row of primitives-map.md, and a new primitive adds its
-section to device-primitives.md.
+made a step 20 to 48 times slower (#795, #817). A new hand-written copy
+where a shared primitive exists states its reason in the PR. A change that
+adds or changes a part adds or updates its row of primitives-map.md, and a
+new primitive adds its section to device-primitives.md.
 
 ## The life of a change
 
