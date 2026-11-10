@@ -1,4 +1,4 @@
-// One combined periodic search over the two mobility groups.
+// Class-specialized periodic search over the two mobility groups.
 #ifndef MDIR_CONVERSION_TEMPLATESEARCHKERNELS_H
 #define MDIR_CONVERSION_TEMPLATESEARCHKERNELS_H
 #include "mdir/Conversion/TemplateBuildKernels.h"
@@ -16,7 +16,7 @@ struct TemplateSearchBuffers {
   /// base reach plus covering extent, as in the isolated search fixtures.
   mlir::Value reaches;
   mlir::Value classCells, classReaches;
-  /// f64 Cartesian min/max of wrapped references, two rows per group.
+  /// f32 Cartesian min/max of wrapped references, two rows per group.
   /// Independent of the growing pair arena; built before candidate search.
   mlir::Value groupBoxes, fractionalBoxes;
 };

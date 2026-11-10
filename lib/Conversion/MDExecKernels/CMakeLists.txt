@@ -15,6 +15,8 @@ add_mlir_conversion_library(MDIRMDExecKernels
   TemplateSpatialKernels.cpp
   TemplateGroupKernels.cpp
   TemplateStageKernels.cpp
+  TemplateSearchGeometry.cpp
+  TemplateSearchPreparation.cpp
   TemplateSearchKernels.cpp
   TemplateParticleKernels.cpp
   TemplateRefreshKernels.cpp

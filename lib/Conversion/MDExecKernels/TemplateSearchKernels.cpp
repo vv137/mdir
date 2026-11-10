@@ -2,6 +2,9 @@
 // for the scalar window and the covering bound of D242.
 #include "mdir/Conversion/TemplateSearchKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
+#include "mdir/Conversion/TemplateSearchPreparation.h"
+#include "mdir/Conversion/ReductionEmitter.h"
+#include "mdir/Conversion/TemplateSearchGeometry.h"
 #include "mdir/Conversion/SpatialFrameEmitter.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
@@ -14,6 +17,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -49,6 +53,32 @@ static Value floorDivide(OpBuilder &b, Location loc, Value a, Value positive) {
   return arith::SelectOp::create(b, loc, negative,
       arith::SubIOp::create(b, loc, quotient, integer(b, loc, 1)), quotient);
 }
+// Search-local cache view: the group plan is complete before these four
+// i32 words per unit are reused as Cartesian f32 coordinates and an ID.
+static Value cartesianAnchor(OpBuilder &b, Location loc,
+    const TemplateSearchBuffers &v, Value unit) {
+  SmallVector<Value, 3> coordinates;
+  for (int64_t axis = 0; axis != 3; ++axis) {
+    Value index = arith::AddIOp::create(b, loc,
+        arith::MulIOp::create(b, loc, unit, createIndex(b, loc, 4)),
+        createIndex(b, loc, axis));
+    coordinates.push_back(arith::BitcastOp::create(b, loc, b.getF32Type(),
+        load(b, loc, v.spatial.sortScratch, index)));
+  }
+  return vector::FromElementsOp::create(b, loc,
+      VectorType::get({3}, b.getF32Type()), coordinates);
+}
+static SpatialBoundingBox cartesianWarpBox(OpBuilder &b, Location loc,
+    Value point, Value valid) {
+  Value infinity = vector::BroadcastOp::create(b, loc, point.getType(),
+      createReal(b, loc, b.getF32Type(), std::numeric_limits<float>::infinity()));
+  Value minimum = arith::NegFOp::create(b, loc, emitWarpReduce(b, loc,
+      arith::NegFOp::create(b, loc, arith::SelectOp::create(b, loc,
+          valid, point, infinity)), Combiner::Max));
+  Value maximum = emitWarpReduce(b, loc, arith::SelectOp::create(b, loc,
+      valid, point, arith::NegFOp::create(b, loc, infinity)), Combiner::Max);
+  return {minimum, maximum};
+}
 // IDX with the same scalar splitting as the common XOR reduction emitter.
 static Value shuffle(OpBuilder &b, Location loc, Value value, Value lane) {
   Type type = value.getType();
@@ -73,9 +103,6 @@ static Value shuffle(OpBuilder &b, Location loc, Value value, Value lane) {
       arith::ShLIOp::create(b, loc,
           arith::ExtUIOp::create(b, loc, b.getI64Type(), take(high)), shift));
   return arith::BitcastOp::create(b, loc, type, joined);
-}
-static Value shuffle(OpBuilder &b, Location loc, Value value, unsigned lane) {
-  return shuffle(b, loc, value, word(b, loc, lane));
 }
 static TemplateStageState forState(OpBuilder &b, Location loc, Value begin, Value end,
     Value step, TemplateStageState initial,
@@ -111,70 +138,6 @@ static Value bound(OpBuilder &b, Location loc, Value begin, Value end, Value wan
 }
 } // namespace
 
-// Boxes are auxiliary build state, never a new physical reference epoch.
-// Descriptor partitions identify the same variable group in WW, SW and SS.
-static void buildGroupBoxes(OpBuilder &b, Location loc,
-                            const TemplateSearchBuffers &v) {
-  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
-  Value one = ix(b, 1), block = ix(b, 256);
-  Value count = arith::AddIOp::create(b, loc,
-      v.build.groups.waterGroups, v.build.groups.atomGroups);
-  Value grid = arith::MaxUIOp::create(b, loc, one,
-      arith::DivUIOp::create(b, loc,
-          arith::AddIOp::create(b, loc, count, ix(b, 7)), ix(b, 8)));
-  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
-  OpBuilder at = OpBuilder::atBlockEnd(&launch.getBody().front());
-  Value thread = arith::AddIOp::create(at, loc,
-      arith::MulIOp::create(at, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
-  Value group = arith::DivUIOp::create(at, loc, thread, ix(at, 32));
-  Value inside = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, group, count);
-  scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
-    Value lane = arith::RemUIOp::create(in, loc, thread, ix(in, 32));
-    Value water = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult,
-        group, v.build.groups.waterGroups);
-    Value descriptor = arith::SelectOp::create(in, loc, water, group,
-        arith::AddIOp::create(in, loc, v.spatial.waters,
-            arith::SubIOp::create(in, loc, group, v.build.groups.waterGroups)));
-    Value start = asIndex(in, loc, load(in, loc, v.build.groups.starts, descriptor));
-    Value length = asIndex(in, loc, load(in, loc, v.build.groups.lengths, descriptor));
-    Value local = arith::AndIOp::create(in, loc, lane, ix(in, 15));
-    Value place = arith::AddIOp::create(in, loc, start,
-        arith::MinUIOp::create(in, loc, local,
-            arith::SubIOp::create(in, loc, length, ix(in, 1))));
-    Value unit = load(in, loc, v.spatial.order, place);
-    Value valid = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, local, length);
-    Value safe = arith::SelectOp::create(in, loc, valid, unit, word(in, loc, 0));
-    Value point = loadElement(in, loc, v.spatial.points, asIndex(in, loc, safe));
-    auto frame = emitSpatialReferenceFrame(in, loc, point);
-    auto fractionalBox = emitSpatialWarpBox(in, loc, frame.wrapped, valid);
-    auto box = emitSpatialWarpBox(in, loc,
-        emitLatticeShift(in, loc, frame.wrapped, v.cell), valid);
-    Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, lane, ix(in, 0));
-    scf::IfOp::create(in, loc, leader, [&](OpBuilder &store, Location) {
-      // Count retained descriptors too: SW reads both hybrid class orders.
-      Value column = asIndex(store, loc,
-          load(store, loc, v.build.groups.columns, descriptor));
-      emitDeviceAtomicAdd(store, loc, v.spatial.counts, column, word(store, loc, 1));
-      for (int64_t side = 0; side != 2; ++side) {
-        Value row = arith::AddIOp::create(store, loc,
-            arith::MulIOp::create(store, loc, descriptor, ix(store, 2)), ix(store, side));
-        for (int64_t axis = 0; axis != 3; ++axis) {
-          memref::StoreOp::create(store, loc,
-              vector::ExtractOp::create(store, loc, side ? box.maximum : box.minimum, axis),
-              v.groupBoxes, ValueRange{row, ix(store, axis)});
-          memref::StoreOp::create(store, loc,
-              vector::ExtractOp::create(store, loc,
-                  side ? fractionalBox.maximum : fractionalBox.minimum, axis),
-              v.fractionalBoxes, ValueRange{row, ix(store, axis)});
-        }
-      }
-      scf::YieldOp::create(store, loc);
-    });
-    scf::YieldOp::create(in, loc);
-  });
-  gpu::TerminatorOp::create(at, loc);
-}
-
 void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                             const TemplateSearchBuffers &v) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
@@ -207,7 +170,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     });
     gpu::TerminatorOp::create(at, loc);
   }
-  buildGroupBoxes(b, loc, v);
+  emitPrepareTemplateSearch(b, loc, v);
   emitDeviceScan(b, loc, v.spatial.counts, v.spatial.starts, v.spatial.cursors,
       bins, v.spatial.scanScratch, v.spatial.scanBlocks, columnBlock, one);
   auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
@@ -254,7 +217,14 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   Value waterRows = v.build.groups.waterGroups;
   Value atomRows = v.build.groups.atomGroups;
   Value ssBegin = arith::AddIOp::create(b, loc, waterRows, atomRows);
-  Value threads = arith::MulIOp::create(b, loc, v.build.rows, ix(b, 32));
+  // One prototype-shaped launch per class. Compile-time class constants
+  // remove the other ownership/exclusion paths from each kernel. Global
+  // row IDs and row-local ordinal compaction preserve the existing order.
+  for (unsigned searchClass = 0; searchClass != 3; ++searchClass) {
+  Value classRows = searchClass == 0 ? waterRows : atomRows;
+  Value rowOffset = searchClass == 0 ? ix(b, 0) :
+      (searchClass == 1 ? waterRows : ssBegin);
+  Value threads = arith::MulIOp::create(b, loc, classRows, ix(b, 32));
   Value grid = arith::MaxUIOp::create(b, loc, one,
       arith::DivUIOp::create(b, loc,
           arith::AddIOp::create(b, loc, threads, ix(b, 63)), block));
@@ -262,19 +232,23 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
       gpu::GPUDialect::getWorkgroupAddressSpace());
   auto pointCacheType = MemRefType::get({32, 3}, b.getF64Type(),
       MemRefLayoutAttrInterface(), sharedSpace);
+  auto cartesianCacheType = MemRefType::get({32, 3}, b.getF32Type(),
+      MemRefLayoutAttrInterface(), sharedSpace);
   auto idCacheType = MemRefType::get({32}, b.getI32Type(),
       MemRefLayoutAttrInterface(), sharedSpace);
   auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one,
       /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
       /*asyncDependencies=*/{},
-      /*workgroupAttributions=*/TypeRange{pointCacheType, idCacheType});
+      /*workgroupAttributions=*/TypeRange{pointCacheType, idCacheType, cartesianCacheType});
   Value pointCache = launch.getWorkgroupAttributionBBArgs()[0];
   Value idCache = launch.getWorkgroupAttributionBBArgs()[1];
+  Value cartesianCache = launch.getWorkgroupAttributionBBArgs()[2];
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
       arith::MulIOp::create(k, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
-  Value row = arith::DivUIOp::create(k, loc, thread, ix(k, 32));
-  Value validRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, row, v.build.rows);
+  Value localRow = arith::DivUIOp::create(k, loc, thread, ix(k, 32));
+  Value row = arith::AddIOp::create(k, loc, localRow, rowOffset);
+  Value validRow = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::ult, localRow, classRows);
   scf::IfOp::create(k, loc, validRow, [&](OpBuilder &at, Location) {
     Value lane = arith::IndexCastOp::create(at, loc, at.getI32Type(),
         arith::RemUIOp::create(at, loc, thread, ix(at, 32)));
@@ -283,18 +257,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     TemplateStageBuffers stage{v.build.stageUnits, v.build.stageEntries, v.counters,
         v.build.counts, asWide(at, loc, v.build.unitCapacity), rowWord, lane};
     TemplateStageState initial{integer(at, loc, 0), integer(at, loc, -1)};
-    Value ww = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, waterRows);
-    Value ss = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::uge, row, ssBegin);
-    Value sw = arith::AndIOp::create(at, loc,
-        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::uge, row, waterRows),
-        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, ssBegin));
+    Value ww = boolean(at, searchClass == 0);
+    Value sw = boolean(at, searchClass == 1);
+    Value ss = boolean(at, searchClass == 2);
     Value active = arith::SelectOp::create(at, loc, ww, v.spatial.waterActive,
         arith::SelectOp::create(at, loc, sw,
             arith::OrIOp::create(at, loc, v.spatial.waterActive, v.spatial.atomActive), v.spatial.atomActive));
     auto chosen = scf::IfOp::create(at, loc, active,
         [&](OpBuilder &search, Location) {
-          Value classRow = arith::SubIOp::create(search, loc, row,
-              arith::SelectOp::create(search, loc, sw, waterRows, ssBegin));
+          Value classRow = localRow;
           Value firstGroup = arith::SelectOp::create(search, loc, ww, row,
               arith::AddIOp::create(search, loc, v.spatial.waters, classRow));
           Value first = asIndex(search, loc,
@@ -313,6 +284,10 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                                     firstUnit, word(search, loc, 0));
           Value firstPoint = loadElement(search, loc, v.spatial.points, asIndex(search, loc, safeUnit));
           auto pointType = cast<VectorType>(firstPoint.getType());
+          auto fastType = VectorType::get({3}, search.getF32Type());
+          Value firstCartesian = cartesianAnchor(search, loc, v, asIndex(search, loc, safeUnit));
+          Value fastCell = arith::TruncFOp::create(search, loc,
+              VectorType::get(cast<VectorType>(v.cell.getType()).getShape(), search.getF32Type()), v.cell);
           // Immutable per-row anchors, following the shared-anchor search
           // structure of the measured prototype while retaining native f64.
           // Only the lower half writes; duplicate upper-half stores would race.
@@ -323,10 +298,14 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
               arith::CmpIPredicate::ult, lane, word(search, loc, 16));
           scf::IfOp::create(search, loc, writesCache, [&](OpBuilder &store, Location) {
             Value slot = arith::AddIOp::create(store, loc, cacheBase, laneIndex);
-            for (int64_t axis = 0; axis != 3; ++axis)
+            for (int64_t axis = 0; axis != 3; ++axis) {
               memref::StoreOp::create(store, loc,
                   vector::ExtractOp::create(store, loc, firstPoint, axis),
                   pointCache, ValueRange{slot, ix(store, axis)});
+              memref::StoreOp::create(store, loc,
+                  vector::ExtractOp::create(store, loc, firstCartesian, axis),
+                  cartesianCache, ValueRange{slot, ix(store, axis)});
+            }
             memref::StoreOp::create(store, loc, safeUnit, idCache, ValueRange{slot});
             scf::YieldOp::create(store, loc);
           });
@@ -365,8 +344,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 [&](OpBuilder &search, Location) {
                 auto box = emitSpatialWarpBox(search, loc, firstFrame.wrapped, member);
                 Value minimum = box.minimum, maximum = box.maximum;
-                auto cartesianBox = emitSpatialWarpBox(search, loc,
-                    emitLatticeShift(search, loc, firstFrame.wrapped, v.cell), member);
+                auto cartesianBox = cartesianWarpBox(search, loc, firstCartesian, member);
                 Value cellNorm = real(search, 0);
                 for (int64_t axis = 0; axis != (isTriclinic(v.cell) ? 6 : 3); ++axis)
                   cellNorm = arith::AddFOp::create(search, loc, cellNorm,
@@ -421,6 +399,29 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 Value zBegin = floorInteger(search, loc, component(search, low, 2));
                 Value zEnd = arith::AddIOp::create(search, loc,
                     floorInteger(search, loc, component(search, high, 2)), integer(search, loc, 1));
+                // Cover the entire original query range, not just this image.
+                // Integer magnitudes are converted only for the certificate;
+                // image accounting and the literal shell retain their f64/i64 graph.
+                SmallVector<Value, 3> imageBounds;
+                for (unsigned axis = 0; axis != 2; ++axis) {
+                  Value loImage = floorDivide(search, loc, lower[axis], wideDimensions[axis]);
+                  Value hiImage = floorDivide(search, loc,
+                      arith::SubIOp::create(search, loc, upper[axis], integer(search, loc, 1)),
+                      wideDimensions[axis]);
+                  Value loReal = arith::SIToFPOp::create(search, loc, search.getF64Type(), loImage);
+                  Value hiReal = arith::SIToFPOp::create(search, loc, search.getF64Type(), hiImage);
+                  imageBounds.push_back(arith::MaximumFOp::create(search, loc,
+                      math::AbsFOp::create(search, loc, loReal), math::AbsFOp::create(search, loc, hiReal)));
+                }
+                imageBounds.push_back(arith::MaximumFOp::create(search, loc,
+                    math::AbsFOp::create(search, loc,
+                        arith::SIToFPOp::create(search, loc, search.getF64Type(), zBegin)),
+                    math::AbsFOp::create(search, loc,
+                        arith::SIToFPOp::create(search, loc, search.getF64Type(),
+                            arith::SubIOp::create(search, loc, zEnd, integer(search, loc, 1))))));
+                Value imageEnvelope = vector::FromElementsOp::create(search, loc, pointType, imageBounds);
+                auto certificate = emitTemplateSearchCertificate(search, loc,
+                    v.cell, frame, imageEnvelope, reach2);
                 Value allColumns = arith::MulIOp::create(search, loc, v.spatial.columnsX, v.spatial.columnsY);
                 auto result = forState(search, loc, lower[0], upper[0], integer(search, loc, 1), frameState,
                     [&](OpBuilder &xloop, Value x, TemplateStageState stateX) {
@@ -452,33 +453,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                 asIndex(yloop, loc, load(yloop, loc, v.spatial.counts, column)));
                             return forState(yloop, loc, zBegin, zEnd, integer(yloop, loc, 1), stateY,
                                 [&](OpBuilder &zloop, Value sz, TemplateStageState stateZ) {
-                                  Value zReal = arith::SIToFPOp::create(zloop, loc, zloop.getF64Type(), sz);
-                                  auto zKey = [&](Value limit, bool upper) -> Value {
-                                    Value scaled = arith::MulFOp::create(zloop, loc,
-                                        arith::SubFOp::create(zloop, loc, limit, zReal), real(zloop, 1 << 21));
-                                    Value rounded = upper ? Value(math::CeilOp::create(zloop, loc, scaled))
-                                                          : Value(math::FloorOp::create(zloop, loc, scaled));
-                                    Value key = arith::FPToSIOp::create(zloop, loc, zloop.getI64Type(), rounded);
-                                    key = arith::AddIOp::create(zloop, loc, key, integer(zloop, loc, upper ? 2 : -2));
-                                    key = arith::MaxSIOp::create(zloop, loc, key, integer(zloop, loc, 0));
-                                    key = arith::MinSIOp::create(zloop, loc, key, integer(zloop, loc, (1 << 21) - 1));
-                                    return arith::TruncIOp::create(zloop, loc, zloop.getI32Type(), key);
-                                  };
-                                  auto groupZ = [&](OpBuilder &in, Value group, bool last) -> Value {
-                                    Value position = asIndex(in, loc,
-                                        load(in, loc, v.build.groups.starts, group));
-                                    if (last) position = arith::AddIOp::create(in, loc, position,
-                                        arith::SubIOp::create(in, loc, asIndex(in, loc,
-                                            load(in, loc, v.build.groups.lengths, group)), ix(in, 1)));
-                                    Value unit = load(in, loc, v.spatial.order, position);
-                                    return load(in, loc, v.spatial.zKeys, asIndex(in, loc, unit));
-                                  };
-                                  Value firstCandidate = bound(zloop, loc, begin, end,
-                                      zKey(component(zloop, low, 2), false), false,
-                                      [&](OpBuilder &in, Value g) { return groupZ(in, g, true); });
-                                  Value lastCandidate = bound(zloop, loc, firstCandidate, end,
-                                      zKey(component(zloop, high, 2), true), true,
-                                      [&](OpBuilder &in, Value g) { return groupZ(in, g, false); });
+                                  Value forwardBegin = begin;
+                                  if (searchClass != 1)
+                                    forwardBegin = arith::MinUIOp::create(zloop, loc, end,
+                                        arith::MaxUIOp::create(zloop, loc, begin, firstGroup));
+                                  // Scan direct column endpoints, as in the prototype.
+                                  // The Cartesian group test rejects z nonreach before
+                                  // units; no dependent group/order/z binary searches.
+                                  Value firstCandidate = forwardBegin;
+                                  Value lastCandidate = end;
                                   Value queryImages[] = {sx, sy, sz};
                                   SmallVector<Value, 3> queryComponents;
                                   Value magnitude = real(zloop, 4);
@@ -492,8 +475,9 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                             math::AbsFOp::create(zloop, loc,
                                                 vector::ExtractOp::create(zloop, loc, frame, axis))));
                                   }
-                                  Value queryShift = emitLatticeShift(zloop, loc,
-                                      vector::FromElementsOp::create(zloop, loc, pointType, queryComponents), v.cell);
+                                  Value queryVector = vector::FromElementsOp::create(zloop, loc, pointType, queryComponents);
+                                  Value fastQueryShift = emitLatticeShift(zloop, loc,
+                                      arith::TruncFOp::create(zloop, loc, fastType, queryVector), fastCell);
                                   // 64 eps times the cell 1-norm and frame/image scale
                                   // covers the <32 rounded operations in box conversion,
                                   // image addition and the original displacement. Only
@@ -530,10 +514,28 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                           }
                                         }
                                         SpatialBoundingBox partnerBox{
-                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[0]),
-                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[1])};
-                                        Value boxMayReach = emitSpatialBoxesWithinReach(batch, loc,
-                                            cartesianBox, partnerBox, queryShift, reach, boxRoundoff);
+                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[0]),
+                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[1])};
+                                        Value lowGap = arith::SubFOp::create(batch, loc, cartesianBox.minimum,
+                                            arith::AddFOp::create(batch, loc, partnerBox.maximum, fastQueryShift));
+                                        Value highGap = arith::SubFOp::create(batch, loc,
+                                            arith::AddFOp::create(batch, loc, partnerBox.minimum, fastQueryShift), cartesianBox.maximum);
+                                        Value gap = arith::MaximumFOp::create(batch, loc,
+                                            arith::MaximumFOp::create(batch, loc, lowGap, highGap),
+                                            vector::BroadcastOp::create(batch, loc, fastType,
+                                                createReal(batch, loc, batch.getF32Type(), 0)));
+                                        Value boxSquare = arith::MulFOp::create(batch, loc, gap, gap);
+                                        Value boxDistance = vector::ReductionOp::create(batch, loc,
+                                            vector::CombiningKind::ADD, boxSquare);
+                                        Value finiteBox = arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OLT,
+                                            math::AbsFOp::create(batch, loc, boxDistance),
+                                            createReal(batch, loc, batch.getF32Type(), std::numeric_limits<float>::infinity()));
+                                        Value boxReject = arith::AndIOp::create(batch, loc,
+                                            arith::AndIOp::create(batch, loc, certificate.enabled, finiteBox),
+                                            arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OGT,
+                                                boxDistance, certificate.boxUpper));
+                                        Value boxMayReach = arith::XOrIOp::create(batch, loc,
+                                            boxReject, boolean(batch, true));
                                         SpatialBoundingBox partnerFraction{
                                             vector::FromElementsOp::create(batch, loc, pointType, fractionSides[0]),
                                             vector::FromElementsOp::create(batch, loc, pointType, fractionSides[1])};
@@ -591,6 +593,9 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                           Value partner = load(units, loc, v.spatial.order, partnerPlace);
                                           Value partnerIndex = asIndex(units, loc, partner);
                                           Value partnerPoint = loadElement(units, loc, v.spatial.points, partnerIndex);
+                                          Value partnerCartesian = cartesianAnchor(units, loc, v, partnerIndex);
+                                          Value shiftedCartesian = arith::AddFOp::create(units, loc,
+                                              partnerCartesian, fastQueryShift);
                                           Value has = arith::AndIOp::create(units, loc,
                                               arith::OrIOp::create(units, loc, lower, two),
                                               arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult, local, length));
@@ -623,10 +628,15 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                         for (unsigned i = 0; i != 16; ++i) {
                                           Value slot = arith::AddIOp::create(units, loc,
                                               cacheBase, ix(units, i));
-                                          SmallVector<Value, 3> coordinates;
-                                          for (int64_t axis = 0; axis != 3; ++axis)
+                                          SmallVector<Value, 3> coordinates, fastCoordinates;
+                                          for (int64_t axis = 0; axis != 3; ++axis) {
                                             coordinates.push_back(memref::LoadOp::create(units, loc,
                                                 pointCache, ValueRange{slot, ix(units, axis)}));
+                                            fastCoordinates.push_back(memref::LoadOp::create(units, loc,
+                                                cartesianCache, ValueRange{slot, ix(units, axis)}));
+                                          }
+                                          Value cartesianI = vector::FromElementsOp::create(units, loc,
+                                              fastType, fastCoordinates);
                                           Value pointI = vector::FromElementsOp::create(units, loc,
                                               pointType, coordinates);
                                           Value unitI = load(units, loc, idCache, slot);
@@ -641,13 +651,37 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                               arith::AndIOp::create(units, loc, validI, owns));
                                           auto accepted = scf::IfOp::create(units, loc, eligible,
                                               [&](OpBuilder &pair, Location) {
-                                                Value raw = arith::SubFOp::create(pair, loc, pointI, shifted);
-                                                Value displacement = emitLatticeShift(pair, loc, raw, v.cell);
-                                                Value square = arith::MulFOp::create(pair, loc, displacement, displacement);
-                                                Value distance = vector::ReductionOp::create(pair, loc,
+                                                Value fastDisplacement = arith::SubFOp::create(pair, loc, cartesianI, shiftedCartesian);
+                                                Value fastSquare = arith::MulFOp::create(pair, loc, fastDisplacement, fastDisplacement);
+                                                Value fastDistance = vector::ReductionOp::create(pair, loc,
+                                                    vector::CombiningKind::ADD, fastSquare);
+                                                Value finiteDistance = arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLT,
+                                                    math::AbsFOp::create(pair, loc, fastDistance),
+                                                    createReal(pair, loc, pair.getF32Type(), std::numeric_limits<float>::infinity()));
+                                                Value fastEnabled = arith::AndIOp::create(pair, loc,
+                                                    certificate.enabled, finiteDistance);
+                                                Value fastAccept = arith::AndIOp::create(pair, loc,
+                                                    arith::AndIOp::create(pair, loc, fastEnabled, certificate.acceptEnabled),
+                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLE,
+                                                        fastDistance, certificate.lower));
+                                                Value fastReject = arith::AndIOp::create(pair, loc, fastEnabled,
+                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OGT,
+                                                        fastDistance, certificate.upper));
+                                                Value classified = arith::OrIOp::create(pair, loc, fastAccept, fastReject);
+                                                auto decision = scf::IfOp::create(pair, loc, classified,
+                                                    [&](OpBuilder &quick, Location) {
+                                                      scf::YieldOp::create(quick, loc, ValueRange{fastAccept});
+                                                    }, [&](OpBuilder &exact, Location) {
+                                                Value raw = arith::SubFOp::create(exact, loc, pointI, shifted);
+                                                Value displacement = emitLatticeShift(exact, loc, raw, v.cell);
+                                                Value square = arith::MulFOp::create(exact, loc, displacement, displacement);
+                                                Value distance = vector::ReductionOp::create(exact, loc,
                                                     vector::CombiningKind::ADD, square);
-                                                Value inside = arith::CmpFOp::create(pair, loc,
+                                                Value inside = arith::CmpFOp::create(exact, loc,
                                                     arith::CmpFPredicate::OLE, distance, reach2);
+                                                scf::YieldOp::create(exact, loc, ValueRange{inside});
+                                                    });
+                                                Value inside = decision.getResult(0);
                                                 auto kept = scf::IfOp::create(pair, loc, inside,
                                                     [&](OpBuilder &near, Location) {
                                                       auto allowed = scf::IfOp::create(near, loc, ss,
@@ -745,4 +779,5 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
     scf::YieldOp::create(at, loc);
   });
   gpu::TerminatorOp::create(k, loc);
+  } // WW, SW, SS
 }

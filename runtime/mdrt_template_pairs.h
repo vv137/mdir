@@ -348,6 +348,21 @@ void _mlir_ciface_mdrtTemplatePairsFrameState(struct Buffer2 *result,
   result->strides[1] = 1;
 }
 
+/* Search-only Cartesian boxes reuse the first half of the existing f64
+ * auxiliary slot. Reference epochs and the generic f64 frame ABI stay intact. */
+void _mlir_ciface_mdrtTemplatePairsGroupBoxesF32(struct Buffer2 *result,
+                                                int64_t handle) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  result->allocated = pairs->frameState;
+  result->aligned = (void *)((uintptr_t)pairs->frameState +
+      (uint64_t)pairs->frameOffsets[TEMPLATE_FRAME_GROUP_BOXES] * sizeof(double));
+  result->offset = 0;
+  result->sizes[0] = pairs->frameRows[TEMPLATE_FRAME_GROUP_BOXES];
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}
+
 /* Host allocation constants only: no device readback or synchronization. */
 int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   struct MdrtTemplatePairLayout *layout =

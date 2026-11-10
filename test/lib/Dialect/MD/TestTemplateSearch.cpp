@@ -74,8 +74,10 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.points = entry->getArgument(1);
     auto boxes = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
         MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
-    v.groupBoxes = call("mdrtTemplatePairsFrameState",
-        ValueRange{handle, integer(TEMPLATE_FRAME_GROUP_BOXES)}, boxes, true);
+    auto searchBoxes = MemRefType::get({ShapedType::kDynamic, 3}, b.getF32Type(),
+        MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+    v.groupBoxes = call("mdrtTemplatePairsGroupBoxesF32",
+        ValueRange{handle}, searchBoxes, true);
     v.fractionalBoxes = call("mdrtTemplatePairsFrameState",
         ValueRange{handle, integer(TEMPLATE_FRAME_FRACTIONAL_BOXES)}, boxes, true);
     v.spatial.places = view(TEMPLATE_LAYOUT_SPATIAL_PLACES);
