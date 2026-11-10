@@ -1214,6 +1214,13 @@ The reference of every op is [dialects/md_exec.md](dialects/md_exec.md).
 | `md_exec.particle_for` | Runs a kernel over particles. |
 | `md_exec.yield` | Terminator of kernels. |
 
+`PairKernelBodyOpInterface` exposes each pair's squared distance, kernel
+region and contribution outputs for `md_exec.pair_for` and
+`md_exec.template_for`. Radial canonicalization and expansion use that
+common contract, including multiple site-pair distances in one structured
+window region. D94's table admission, error criterion and fallback remain
+the same for both implementations (D[rigid-water-template]).
+
 Reductions and accumulation are clauses of the two loop ops, not separate
 ops (S6).
 

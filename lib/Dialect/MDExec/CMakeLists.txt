@@ -5,6 +5,7 @@ add_mlir_dialect_library(MDIRMDExec
   LoopEffects.cpp
   MDExecOps.cpp
   NeighborCoverage.cpp
+  PairKernelBody.cpp
   Scatter.cpp
   StorageSet.cpp
   Transfers.cpp
@@ -18,6 +19,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDExecEnumsIncGen
   MDIRMDExecAttrsIncGen
   MDIRMDExecLoopEffectsIncGen
+  MDIRMDExecPairKernelBodyIncGen
 
   LINK_LIBS PUBLIC
   MDIRMD

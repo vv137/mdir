@@ -17,6 +17,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecEnums.h.inc"
 #include "mdir/Dialect/MDExec/LoopEffects.h"
+#include "mdir/Dialect/MDExec/PairKernelBody.h"
 
 #define GET_ATTRDEF_CLASSES
 #include "mdir/Dialect/MDExec/MDExecAttrs.h.inc"

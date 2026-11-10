@@ -913,7 +913,7 @@ each value. A loop takes no other strategy.
 
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
-Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
+Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 #### Attributes:
 
@@ -1944,7 +1944,7 @@ reduction, not a second physical expression in the scheduler.
 
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
-Interfaces: `MemoryEffectOpInterface`
+Interfaces: `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 #### Attributes:
 

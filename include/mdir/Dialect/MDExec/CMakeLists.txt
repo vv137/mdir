@@ -19,3 +19,8 @@ set(LLVM_TARGET_DEFINITIONS LoopEffects.td)
 mlir_tablegen(LoopEffects.h.inc -gen-op-interface-decls)
 mlir_tablegen(LoopEffects.cpp.inc -gen-op-interface-defs)
 add_public_tablegen_target(MDIRMDExecLoopEffectsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS PairKernelBody.td)
+mlir_tablegen(PairKernelBody.h.inc -gen-op-interface-decls)
+mlir_tablegen(PairKernelBody.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(MDIRMDExecPairKernelBodyIncGen)

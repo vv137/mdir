@@ -449,6 +449,18 @@ These diagnostics change no physical arithmetic, validity predicate,
 cutoff, list policy or comparison bound. The performance cause is reported
 before optimization, separately from the remaining correctness gates.
 
+The radial extension uses `PairKernelBodyOpInterface`, implemented by
+`md_exec.pair_for` and `md_exec.template_for`. Each view names the squared
+distance, its kernel region and its contribution outputs; structured
+windows can expose several site-pair views of one region. Both
+`md-exec-simplify-distance` and the parent matching in
+`md-exec-expand-radial` consume that interface. They retain D94's admission,
+error criterion and analytic fallback. A distance computed inside a region
+is the radial function's input boundary, and its derived values stay after
+its definition. The argument-distance case retains its original placement.
+This extension follows differentiation and changes no launch or group
+layout. The ordinary corpus and order matrix verify the original pair path.
+
 1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
    TIP3P and on #738's water boxes, against an f64 oracle and against
    `main` in double on the same frame, within `main` mixed's own error
