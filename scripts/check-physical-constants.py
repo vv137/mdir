@@ -46,7 +46,8 @@ ALLOWED = [
     ("scripts/validation/charmm/run.py", "138.935458",
      "the constant of the topology of GROMACS, named as such"),
 ]
-EXCLUDED = [":!*.md", ":!include/mdir/Support/PhysicalConstants.h"]
+EXCLUDED = [":!*.md", ":!include/mdir/Support/PhysicalConstants.h",
+            ":!scripts/check-physical-constants.py"]
 
 
 def main():
