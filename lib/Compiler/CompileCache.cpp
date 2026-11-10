@@ -25,7 +25,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <cerrno>
+#include <fcntl.h>
+#include <map>
 #include <mutex>
+#include <thread>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -36,7 +41,7 @@ namespace {
 // The layout of an entry; a change of it changes this tag, so old entries
 // are rejected (and replaced) rather than misread.
 constexpr char kMagic[8] = {'M', 'D', 'I', 'R', 'O', 'B', 'J', '1'};
-constexpr StringLiteral kFormat = "mdir-object-cache 1";
+constexpr StringLiteral kFormat = "mdir-object-cache 2";
 // A temporary file older than this is left by a process that died.
 constexpr auto kStaleTemporary = std::chrono::hours(1);
 // The file of the cache's total, `<directory>/size`: this tag, then the
@@ -47,6 +52,10 @@ constexpr StringLiteral kSizeTag = "mdir-cache-size 1";
 // which removes what processes that died left: bytes they stored and did
 // not add to the total, and their temporary files.
 constexpr auto kListingPeriod = std::chrono::hours(24);
+// How long a store waits for the lock of `size` before it lists the
+// directory without it: a holder adds to the total or lists the directory,
+// which takes seconds on a network file system at most.
+constexpr auto kLockTimeout = std::chrono::milliseconds(10000);
 std::atomic<uint64_t> listings{0};
 
 double now() {
@@ -154,21 +163,179 @@ std::string mdir::compiler::getCodeKey(StringRef module, StringRef pipeline,
   return toHex(hasher.final(), /*LowerCase=*/true);
 }
 
-std::optional<CompileCacheConfig> CompileCacheConfig::fromEnvironment() {
-  if (auto off = sys::Process::GetEnv("MDIR_COMPILE_CACHE"))
-    if (StringRef(*off).equals_insensitive("off"))
-      return std::nullopt;
-  auto directory = sys::Process::GetEnv("MDIR_COMPILE_CACHE_DIR");
-  if (!directory || directory->empty())
-    return std::nullopt;
+namespace {
+/// Writes `message` to the standard error once per process.
+void warnOnce(const std::string &message) {
+  static std::mutex mutex;
+  static std::map<std::string, bool> said;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (said.emplace(message, true).second)
+    errs() << "mdir: " << message << "\n";
+}
+
+std::string getEnvironment(const char *name) {
+  auto value = sys::Process::GetEnv(name);
+  return value ? *value : std::string();
+}
+
+/// Whether the file system of `path`, or of the nearest directory above it
+/// that exists, is local. MDIR_COMPILE_CACHE_TEST_LOCAL=1, for tests only,
+/// takes every one as local.
+bool isLocal(StringRef path) {
+  if (getEnvironment("MDIR_COMPILE_CACHE_TEST_LOCAL") == "1")
+    return true;
+  SmallString<256> existing(path);
+  while (!existing.empty() && !sys::fs::exists(existing))
+    sys::path::remove_filename(existing);
+  bool local = false;
+  return !existing.empty() && !sys::fs::is_local(existing, local) && local;
+}
+
+/// The default directory (D[compile-cache-default]):
+/// `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile` if its file system is
+/// local, else `/var/tmp/mdir-<uid>/compile` if local; nullopt with the
+/// reason otherwise.
+std::optional<std::string> findDefaultDirectory(std::string &why) {
+  std::vector<std::string> bases;
+  // A relative XDG_CACHE_HOME is ignored, as the XDG specification says.
+  std::string xdg = getEnvironment("XDG_CACHE_HOME");
+  std::string home = getEnvironment("HOME");
+  if (sys::path::is_absolute(xdg)) {
+    bases.push_back(xdg);
+  } else if (sys::path::is_absolute(home)) {
+    SmallString<256> path(home);
+    sys::path::append(path, ".cache");
+    bases.push_back(std::string(path));
+  }
+  std::string user = "mdir-" + std::to_string(::geteuid());
+  for (StringRef base : bases) {
+    SmallString<256> path(base);
+    sys::path::append(path, "mdir", "compile");
+    if (isLocal(path))
+      return std::string(path);
+    why += "'" + base.str() + "' is not on a local file system; ";
+  }
+  SmallString<256> path("/var/tmp");
+  sys::path::append(path, user, "compile");
+  if (isLocal(path))
+    return std::string(path);
+  why += "'/var/tmp' is not on a local file system; ";
+  return std::nullopt;
+}
+
+/// Why the default directory `directory`, or its parent, which this
+/// process made private if it made them, may not be used: another user
+/// owns it or group or others may write it. Empty if it may be used.
+std::string checkPrivate(StringRef directory) {
+  SmallString<256> parent(directory);
+  sys::path::remove_filename(parent);
+  for (StringRef path : {directory, StringRef(parent)}) {
+    SmallString<256> name(path);
+    struct stat status;
+    if (::stat(name.c_str(), &status) != 0)
+      return "'" + path.str() + "' cannot be read";
+    if (status.st_uid != ::geteuid())
+      return "'" + path.str() + "' belongs to user " +
+             std::to_string(status.st_uid);
+    if (status.st_mode & (S_IWGRP | S_IWOTH))
+      return "group or others may write '" + path.str() + "'";
+  }
+  return "";
+}
+
+CompileCacheLocation computeLocation() {
+  CompileCacheLocation location;
+  if (StringRef(getEnvironment("MDIR_COMPILE_CACHE")).equals_insensitive("off")) {
+    location.reason = "MDIR_COMPILE_CACHE=off";
+    return location;
+  }
   CompileCacheConfig config;
-  config.directory = *directory;
   if (auto size = sys::Process::GetEnv("MDIR_COMPILE_CACHE_MAX_MB")) {
     uint64_t megabytes = 0;
-    if (!StringRef(*size).trim().getAsInteger(10, megabytes))
+    if (StringRef(*size).trim().getAsInteger(10, megabytes)) {
+      warnOnce("warning: MDIR_COMPILE_CACHE_MAX_MB='" + *size +
+               "' is not a whole number of MiB; the compile cache keeps its "
+               "bound of 2048 MiB");
+    } else if (megabytes == 0) {
+      location.reason = "MDIR_COMPILE_CACHE_MAX_MB=0";
+      return location;
+    } else {
       config.maxBytes = megabytes << 20;
+    }
   }
-  return config;
+  std::string named = getEnvironment("MDIR_COMPILE_CACHE_DIR");
+  if (!named.empty()) {
+    config.directory = named;
+    struct stat status;
+    if (::stat(named.c_str(), &status) == 0 &&
+        (status.st_mode & (S_IWGRP | S_IWOTH)))
+      warnOnce("warning: group or others may write the compile cache '" +
+               named + "' (MDIR_COMPILE_CACHE_DIR); its host objects are "
+               "code that runs, so anyone who may write it can run code as "
+               "you");
+    location.config = std::move(config);
+    location.source = "MDIR_COMPILE_CACHE_DIR";
+    return location;
+  }
+  std::string why;
+  auto directory = findDefaultDirectory(why);
+  if (!directory) {
+    why.resize(why.size() - 2);
+    location.reason = "no default directory: " + why +
+                      "; MDIR_COMPILE_CACHE_DIR names one";
+    warnOnce("note: the compile cache is off: " + location.reason);
+    return location;
+  }
+  // Private: mode 0700 for the directories made here.
+  if (std::error_code error = sys::fs::create_directories(
+          *directory, /*IgnoreExisting=*/true, sys::fs::perms::owner_all)) {
+    location.reason = "cannot make '" + *directory + "': " + error.message();
+    warnOnce("warning: the compile cache is off: " + location.reason);
+    return location;
+  }
+  if (std::string refused = checkPrivate(*directory); !refused.empty()) {
+    location.reason = "refused the default directory: " + refused;
+    warnOnce("warning: the compile cache is off: " + location.reason +
+             "; nothing is read from it or written to it");
+    return location;
+  }
+  config.directory = *directory;
+  location.config = std::move(config);
+  location.source = "default";
+  return location;
+}
+} // namespace
+
+CompileCacheLocation CompileCacheConfig::locate() {
+  // Once per process for each environment that decides it.
+  std::string environment;
+  for (const char *name :
+       {"MDIR_COMPILE_CACHE", "MDIR_COMPILE_CACHE_DIR",
+        "MDIR_COMPILE_CACHE_MAX_MB", "XDG_CACHE_HOME", "HOME",
+        "MDIR_COMPILE_CACHE_TEST_LOCAL"}) {
+    auto value = sys::Process::GetEnv(name);
+    environment += value ? "=" + *value : std::string("-");
+    environment += '\0';
+  }
+  static std::mutex mutex;
+  static std::map<std::string, CompileCacheLocation> located;
+  std::lock_guard<std::mutex> lock(mutex);
+  auto found = located.find(environment);
+  if (found == located.end())
+    found = located.emplace(environment, computeLocation()).first;
+  return found->second;
+}
+
+std::optional<CompileCacheConfig> CompileCacheConfig::fromEnvironment() {
+  return locate().config;
+}
+
+std::optional<std::string> mdir::compiler::getCacheDirectoryToClear() {
+  std::string named = getEnvironment("MDIR_COMPILE_CACHE_DIR");
+  if (!named.empty())
+    return named;
+  std::string why;
+  return findDefaultDirectory(why);
 }
 
 std::string mdir::compiler::describeMachine(const TargetMachine &machine,
@@ -177,6 +344,7 @@ std::string mdir::compiler::describeMachine(const TargetMachine &machine,
   raw_string_ostream os(text);
   const TargetOptions &o = machine.Options;
   os << kFormat << '\n'
+     << getCacheSalt()
      << "groups-abi " << MDRT_GROUPS_ABI_VERSION << '\n'
      << "llvm " << LLVM_VERSION_STRING << '\n'
      << "triple " << machine.getTargetTriple().str() << '\n'
@@ -207,7 +375,9 @@ HostObjectCache::~HostObjectCache() = default;
 std::string HostObjectCache::getKey(const Module &module) const {
   HashStream stream;
   WriteBitcodeToFile(module, stream, /*ShouldPreserveUseListOrder=*/true);
-  return machine + "module " +
+  // The scheduler in force now, as the code generator that follows will
+  // find it.
+  return machine + "sched " + getSchedulerInForce() + "\nmodule " +
          toHex(stream.hasher.final(), /*LowerCase=*/true) + '\n';
 }
 
@@ -380,6 +550,31 @@ uint64_t listAndEvict(StringRef directory, uint64_t maxBytes,
   return total;
 }
 
+/// Locks the file `fd` for writing between processes (fcntl), waiting at
+/// most `timeout`, with pauses that double up to 64 ms: on a network file
+/// system each try is a round trip to the server. Returns whether it holds
+/// the lock.
+bool lockWithin(int fd, std::chrono::milliseconds timeout) {
+  auto end = std::chrono::steady_clock::now() + timeout;
+  auto pause = std::chrono::milliseconds(1);
+  while (true) {
+    struct flock lock;
+    std::memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_SET;
+    if (::fcntl(fd, F_SETLK, &lock) != -1)
+      return true;
+    if (errno != EACCES && errno != EAGAIN)
+      return false;
+    auto current = std::chrono::steady_clock::now();
+    if (current >= end)
+      return false;
+    std::this_thread::sleep_for(
+        std::min<std::chrono::steady_clock::duration>(pause, end - current));
+    pause = std::min(pause * 2, std::chrono::milliseconds(64));
+  }
+}
+
 /// The file of the total of the cache at `directory`, open and locked
 /// against other processes and other threads until it is destroyed. A
 /// process holds it only while it adds to the total or lists the directory.
@@ -397,8 +592,10 @@ public:
     }
     fd = *opened;
     // A lock of the file between processes (fcntl), which a network file
-    // system carries; a file system without locks leaves the file unused.
-    if (sys::fs::lockFile(fd)) {
+    // system carries; a file system without locks, or a lock not given
+    // within the timeout, leaves the file unused: the store then lists the
+    // directory, as one without locks does (D[compile-cache-default]).
+    if (!lockWithin(fd, kLockTimeout)) {
       ::close(fd);
       fd = -1;
     }

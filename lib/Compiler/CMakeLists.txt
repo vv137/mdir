@@ -1,9 +1,28 @@
 # The compile cache (D212): the host objects of the JIT engines and the
 # binaries of the GPU modules (D214).
-add_mlir_library(MDIRCompileCache CompileCache.cpp
+add_mlir_library(MDIRCompileCache CompileCache.cpp CompileCacheSalt.cpp
   PARTIAL_SOURCES_INTENDED
-  LINK_COMPONENTS BitWriter Core Object Support
+  LINK_COMPONENTS BitWriter CodeGen Core Object SelectionDAG Support
 )
+# The commit and the state of the tree in the salt of the keys
+# (D[compile-cache-default]), readable only: the build ID of the image is
+# what tells builds apart.
+set(MDIR_CACHE_BUILD_INFO "${CMAKE_CURRENT_BINARY_DIR}/CompileCacheBuildInfo.h")
+add_custom_target(mdir-compile-cache-build-info
+  COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -DOUTPUT=${MDIR_CACHE_BUILD_INFO}
+          -P ${PROJECT_SOURCE_DIR}/cmake/BuildInfo.cmake
+  BYPRODUCTS ${MDIR_CACHE_BUILD_INFO}
+  COMMENT "Recording the commit of the source for the compile cache"
+  )
+foreach(target MDIRCompileCache obj.MDIRCompileCache)
+  if(TARGET ${target})
+    add_dependencies(${target} mdir-compile-cache-build-info)
+    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_compile_definitions(${target} PRIVATE
+      MDIR_CACHE_VERSION="${PROJECT_VERSION}")
+  endif()
+endforeach()
 
 add_mlir_library(MDIRCompiler Compile.cpp Registry.cpp
   PARTIAL_SOURCES_INTENDED

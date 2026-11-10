@@ -28,6 +28,14 @@ include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
+# Every image carries a build ID (NT_GNU_BUILD_ID), which the keys of the
+# compile cache take as the identity of the build (D[compile-cache-default]).
+include(CheckLinkerFlag)
+check_linker_flag(CXX "LINKER:--build-id=sha1" MDIR_LINKER_BUILD_ID)
+if(MDIR_LINKER_BUILD_ID)
+  add_link_options("LINKER:--build-id=sha1")
+endif()
+
 # An installation holds the driver and its runtime only: the static libraries
 # of the dialects and passes are linked into the driver and are not installed.
 set(LLVM_INSTALL_TOOLCHAIN_ONLY ON)

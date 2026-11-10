@@ -2,6 +2,7 @@
 #define MDIR_COMPILER_COMPILECACHE_H
 
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ExecutionEngine/ObjectCache.h"
 #include "llvm/Support/Error.h"
 #include <cstdint>
@@ -123,16 +124,67 @@ private:
 std::string getCodeKey(llvm::StringRef module, llvm::StringRef pipeline,
                        llvm::StringRef entry, llvm::StringRef machine);
 
+struct CompileCacheLocation;
+
 /// Where the compile cache lives, as the environment says
-/// (D212). `MDIR_COMPILE_CACHE_DIR` names the directory;
-/// without it, or with `MDIR_COMPILE_CACHE=off`, there is no cache.
-/// `MDIR_COMPILE_CACHE_MAX_MB` bounds its size (2048 MiB by default).
+/// (D212, D[compile-cache-default]). `MDIR_COMPILE_CACHE_MAX_MB` bounds its
+/// size (2048 MiB by default); see CompileCacheLocation for the directory.
 struct CompileCacheConfig {
   std::string directory;
   uint64_t maxBytes = uint64_t(2048) << 20;
 
+  /// The cache that a compile uses: locate().config.
   static std::optional<CompileCacheConfig> fromEnvironment();
+  /// Where the cache is, and why there is none, decided once per process
+  /// for each environment (D[compile-cache-default]), in this order:
+  /// `MDIR_COMPILE_CACHE=off` and `MDIR_COMPILE_CACHE_MAX_MB=0` turn it off;
+  /// `MDIR_COMPILE_CACHE_DIR` names it; otherwise the default,
+  /// `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile` if that file system is
+  /// local, else `/var/tmp/mdir-<uid>/compile` if local, else none. A
+  /// default directory is made with mode 0700 and refused, before anything
+  /// is read or written, when another user owns it or its parent, or group
+  /// or others may write either. Warnings (a refusal, a bound that does not
+  /// parse, a directory named that others may write) go to the standard
+  /// error once per process.
+  static CompileCacheLocation locate();
 };
+
+/// What CompileCacheConfig::locate decided.
+struct CompileCacheLocation {
+  /// The cache, if it is on.
+  std::optional<CompileCacheConfig> config;
+  /// When on: "MDIR_COMPILE_CACHE_DIR" or "default".
+  std::string source;
+  /// When off: why, in words.
+  std::string reason;
+};
+
+/// The directory that `mdir.clear_compile_cache()` clears without one
+/// given (D217): `MDIR_COMPILE_CACHE_DIR`, else the default
+/// directory that locate() would take, whether or not the cache is off.
+/// Nothing is made. Nullopt when there is none.
+std::optional<std::string> getCacheDirectoryToClear();
+
+/// The salt in front of every key of the cache and of the code that a
+/// `Program` keeps (D[compile-cache-default]): the ELF build ID of the image
+/// that holds this code (`mdir` or the Python extension, which link LLVM and
+/// MLIR statically), else a hash of its file; the version, commit, and dirty
+/// flag of MDIR and the version and revision of LLVM, which are readable
+/// only; every LLVM option of the command line with its value
+/// (recordCommandLineOptions); and `MDIR_COMPILE_CACHE_SALT_OVERRIDE`, for
+/// tests. The part before the override is computed once per process.
+std::string getCacheSalt();
+/// The name of the instruction scheduler before register allocation
+/// (`-pre-RA-sched`) in force now: "default", "fast", or the one of the
+/// command line. A key of generated code takes it when it is taken.
+std::string getSchedulerInForce();
+/// Records the arguments of the command line that name registered LLVM
+/// options, for getCacheSalt. Called by `mdir` after it parses them.
+void recordCommandLineOptions(int argc, const char *const *argv);
+/// The BLAKE3 of the file at `path`, read once per process for each
+/// device, inode, size, time of modification, and time of change of the
+/// file; nullopt if it cannot be read.
+std::optional<std::string> hashFile(llvm::StringRef path);
 
 /// What clearCache removed (D217).
 struct ClearedCache {
@@ -198,11 +250,12 @@ uint64_t getCacheListingCount();
 /// Marks the entry at `path` as used, for the eviction.
 void touchCacheEntry(llvm::StringRef path);
 
-/// The part of a key that the target machine and the code generator's
-/// options give: the LLVM version, the triple, the CPU and its features,
-/// the level of code generation, the code and relocation models, and the
-/// data layout. `extra` names settings outside the machine that change the
-/// generated code, such as the instruction scheduler.
+/// The part of a key that the build and the target machine and the code
+/// generator's options give: the salt (getCacheSalt), the LLVM version, the
+/// triple, the CPU and its features, the level of code generation, the code
+/// and relocation models, and the data layout. `extra` names settings
+/// outside the machine that change the generated code, such as the level of
+/// the module pipeline.
 std::string describeMachine(const llvm::TargetMachine &machine,
                             llvm::StringRef extra);
 
@@ -211,8 +264,10 @@ std::string describeMachine(const llvm::TargetMachine &machine,
 /// before it generates code, and gives it the object it generated.
 ///
 /// An entry is keyed by the content of the LLVM module (a BLAKE3 hash of
-/// its bitcode) and the machine's description; the MDIR build is not part
-/// of the key, since the object is a function of the module alone. Each
+/// its bitcode), the machine's description with the salt that names the
+/// build of MDIR and LLVM (describeMachine), and the scheduler in force
+/// when the key is taken: the object depends on the module and on the code
+/// of the build that optimizes and generates it (D[compile-cache-default]). Each
 /// entry stores its full key, the length and a BLAKE3 hash of the object,
 /// and the time its generation took; an entry whose key, length, or hash
 /// differs is a miss and is replaced. Entries are written to a temporary

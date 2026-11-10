@@ -101,26 +101,33 @@ llvm::DenseMap<MLIRContext *, CompileStats> &getStatsTable() {
 // Files and tools, once per process
 //===----------------------------------------------------------------------===//
 
-/// The BLAKE3 of the file at `path`, read once per process for each size
-/// and time of modification; nullopt if it cannot be read.
-std::optional<std::string> hashFile(StringRef path) {
-  static std::mutex mutex;
-  static std::map<std::string, std::string> hashes;
-  llvm::sys::fs::file_status status;
-  if (llvm::sys::fs::status(path, status))
-    return std::nullopt;
-  std::string name =
-      (path + "\n" + Twine(status.getSize()) + "\n" +
-       Twine(status.getLastModificationTime().time_since_epoch().count()))
-          .str();
-  std::lock_guard<std::mutex> lock(mutex);
-  if (auto found = hashes.find(name); found != hashes.end())
-    return found->second;
-  auto file = llvm::MemoryBuffer::getFile(path, /*IsText=*/false,
-                                          /*RequiresNullTerminator=*/false);
-  if (!file)
-    return std::nullopt;
-  return hashes[name] = hashText((*file)->getBuffer());
+using mdir::compiler::hashFile;
+
+/// The libdevice that an LLVM built with MLIR_NVVM_EMBED_LIBDEVICE links
+/// in place of the toolkit's (mlir/lib/Target/LLVM/NVVM/Target.cpp,
+/// appendStandardLibs); null in an LLVM without it. The macro is private to
+/// MLIR's NVVM target, so the symbol is looked for instead.
+extern "C" {
+__attribute__((weak)) extern const unsigned char _mlir_embedded_libdevice[];
+__attribute__((weak)) extern const int _mlir_embedded_libdevice_size;
+}
+
+/// The hash of the libdevice that the serialization links: the embedded
+/// one, else the toolkit's file; nullopt if it cannot be read.
+std::optional<std::string> hashLibdevice() {
+  if (reinterpret_cast<const void *>(&_mlir_embedded_libdevice) != nullptr &&
+      reinterpret_cast<const void *>(&_mlir_embedded_libdevice_size) !=
+          nullptr) {
+    static const std::string embedded =
+        "embedded " +
+        hashText(StringRef(
+            reinterpret_cast<const char *>(_mlir_embedded_libdevice),
+            static_cast<size_t>(_mlir_embedded_libdevice_size)));
+    return embedded;
+  }
+  SmallString<256> libdevice(NVVM::getCUDAToolkitPath());
+  llvm::sys::path::append(libdevice, "nvvm", "libdevice", "libdevice.10.bc");
+  return hashFile(libdevice);
 }
 
 /// Runs `program` with `arguments`; its standard output and error go to
@@ -290,8 +297,8 @@ std::optional<std::string> compileCubin(const Ptxas &ptxas, StringRef ptx,
 //===----------------------------------------------------------------------===//
 
 /// The format tags of the keys; a change of what a key holds changes them.
-constexpr StringLiteral kPtxFormat = "mdir-gpu-ptx-cache 1";
-constexpr StringLiteral kCubinFormat = "mdir-gpu-cubin-cache 1";
+constexpr StringLiteral kPtxFormat = "mdir-gpu-ptx-cache 2";
+constexpr StringLiteral kCubinFormat = "mdir-gpu-cubin-cache 2";
 
 bool isPtx(StringRef data) {
   return data.contains(".version") && data.contains(".target");
@@ -384,10 +391,13 @@ private:
   bool writable = false;
 };
 
-/// The key of the PTX of `module` for `target`: a hash of the module's IR,
-/// the target, the libraries it links (libdevice), and the LLVM version.
-/// The MDIR build is not part of it: the module holds only upstream ops of
-/// the LLVM and NVVM dialects. Nullopt if the module cannot be cached.
+/// The key of the PTX of `module` for `target`: the salt, which names the
+/// build of MDIR and LLVM and the LLVM options of the command line
+/// (D[compile-cache-default]), the scheduler in force, a hash of
+/// the module's IR, the target, and the libraries it links (libdevice).
+/// The translation of the module to LLVM IR and its serialization are code
+/// of the build, which the salt names. Nullopt if the module cannot be
+/// cached.
 std::optional<std::string> getPtxKey(gpu::GPUModuleOp module,
                                      NVVM::NVVMTargetAttr target,
                                      StringRef binary) {
@@ -409,12 +419,12 @@ std::optional<std::string> getPtxKey(gpu::GPUModuleOp module,
   std::string key;
   llvm::raw_string_ostream k(key);
   k << kPtxFormat << '\n'
+    << mdir::compiler::getCacheSalt()
+    << "sched " << mdir::compiler::getSchedulerInForce() << '\n'
     << "llvm " << LLVM_VERSION_STRING << '\n'
     << "target " << target << '\n'
     << "binary " << binary << '\n';
-  SmallString<256> libdevice(NVVM::getCUDAToolkitPath());
-  llvm::sys::path::append(libdevice, "nvvm", "libdevice", "libdevice.10.bc");
-  auto hash = hashFile(libdevice);
+  auto hash = hashLibdevice();
   if (!hash)
     return std::nullopt;
   k << "libdevice " << *hash << '\n';
@@ -551,8 +561,15 @@ void GpuModuleToBinary::runOnOperation() {
                 std::to_string(nvvm.getO())};
             std::string cubinKey;
             llvm::raw_string_ostream k(cubinKey);
+            // The binary of ptxas, hashed when the key is taken: its
+            // version text alone does not tell two builds apart.
+            std::optional<std::string> ptxasHash =
+                cache.enabled() ? hashFile(ptxas->path) : std::nullopt;
             k << kCubinFormat << '\n'
+              << mdir::compiler::getCacheSalt()
               << "ptxas " << ptxas->version << '\n'
+              << "ptxas-binary " << (ptxasHash ? *ptxasHash : "unreadable")
+              << '\n'
               << "binary " << binary << '\n'
               << "arguments " << llvm::join(arguments, " ") << '\n'
               << "ptx " << hashText(*ptx) << '\n';
