@@ -566,7 +566,7 @@ loops that compute the energy and the forces.
 | Builder | The description of the run to a module (`Builder.cpp`) | |
 | Energy expressions | The syntax of D22 to a kernel (`Expression.cpp`) | A parser of expressions |
 | Compile and run | Passes in the process, the execution engine (`tools/mdir/Run.cpp`) | MLIR libraries, linked into the tool |
-| Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtWriteFrame`, `mdrtWriteCheckpoint`, `mdrtWriteMinimization`, and those of the files of columns, `mdrtWritePull`, `mdrtWriteFreeEnergy`, `mdrtWriteObservables` (`Output.cpp`) | |
+| Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtStageFrame` (the frames of dynamics, which a thread of their own writes, D[async-output]) and `mdrtWriteFrame` (those of a minimization), `mdrtWriteCheckpoint`, `mdrtWriteMinimization`, and those of the files of columns, `mdrtWritePull`, `mdrtWriteFreeEnergy`, `mdrtWriteObservables` (`Output.cpp`) | |
 | Writers | Trajectories in DCD and XTC (`Trajectory.cpp`, D141) and in H5MD (`H5MD.cpp`, D239); checkpoints in H5MD (`Checkpoint.cpp`) | HDF5 for H5MD |
 | Initial velocities | From `temperature` and `seed`: normal numbers from xoshiro256** seeded by splitmix64, without the components along the constraints and with the center of mass at rest, scaled to the temperature (`System.cpp`) | |
 
@@ -821,6 +821,28 @@ The manifest has no step interval. The other intervals are those of the compiled
 of columns take the interval of the rows of the log, at whose steps the
 energies are computed, and the frames and the checkpoints come at
 multiples of it.
+
+**Frames while the steps go on (D[async-output], #113).** The call of a
+frame of a run of dynamics takes the positions and the numbers of the
+particles where the program holds them and stages copies of them: on a
+GPU, a copy within the device on the stream of the kernels, then a copy to
+pinned memory of the host on a stream of copies of its own, which runs
+beside the next steps; on the CPU, a copy in memory. One thread writes the
+frames from these copies, in the order of the steps, as the call wrote them
+before (the order of the input, Å and f32 for DCD and XTC, nm and the
+type of the state for H5MD), and the changes of the cell of the trajectory
+that a barostat makes go through it between the frames. It holds at most 3
+frames; the call of a fourth waits for it. A checkpoint, which counts the
+frames of the trajectory, waits for the frames queued before it, and so do
+a stop on a signal or the wall time, a failure, the end of the run, the end
+of each part of a Python simulation, and the exit of the process: the
+files are those that a run writing each frame in its call writes, byte for
+byte. Without a periodic cell the call waits for its copies and checks the
+spread of the particles itself (D142), so a run stops at the same step. A
+write that fails on the thread (H5MD) stops the run at the next frame,
+checkpoint, or end, with its error and the status 1; rows of the log of
+the steps between may precede the stop. The rows of the log are written
+in their calls.
 
 **Run manifest (D168).** Optional `manifest = "run.jsonl"` in `[output]`
 writes UTF-8 JSON Lines, one object per line, with `schema_version = 1`.

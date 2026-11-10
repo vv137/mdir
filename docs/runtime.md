@@ -307,6 +307,27 @@ queue at host boundaries. Existing `mgpuMemcpy` callers retain their waits;
 the new path must establish host visibility and release before reuse instead
 of relying on the runtime-wide `finish()`.
 
+**Staged copies of the frames (D[async-output], #113).** The frames of a
+run of dynamics leave the device without a wait of the host, by the
+staging slots of `runtime/mdrt_cuda.c`, which the driver finds by name in
+the loaded library (`lib/Driver/Output.cpp`):
+
+| Function | What it does |
+|---|---|
+| `mdrtStagingCreate()` | A slot: two events, and, at its first copy of each part, a buffer of the device and pinned memory of the host as large. The stream of copies is created once. |
+| `mdrtStagingCopy(slot, part, source, size)` | Copies `size` bytes of the device at `source` into the slot's buffer of the device, on the stream of the kernels: after the work that produced them and before any later work overwrites them. Returns the pinned memory where they will be. |
+| `mdrtStagingEnd(slot)` | Records an event on the stream of the kernels; the stream of copies waits for it and copies the parts to the host, then records the slot's second event. The host does not wait. |
+| `mdrtStagingWait(slot)` | Waits for that event, from any thread (the thread of the frames makes the context current for itself); returns the error of the driver instead of ending the process. |
+| `mdrtStagingDestroy(slot)` | Gives back the slot's memory, unless the driver has shut down. |
+
+The events of the readiness contract above map as follows: the copy within
+the device is the transfer start whose source borrow ends in stream order,
+the second event is the completion that makes the pinned memory visible to
+the host, and the release is the writer's return of the slot to its ring,
+after which `mdrtStagingCopy` may write it again. The device spends the copy
+within itself (about 1 µs for the 0.66 MB of a frame of JAC); the copy over
+PCIe runs on a copy engine beside the kernels.
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:
