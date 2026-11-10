@@ -1121,8 +1121,22 @@ new inputs were corrected to odd-over-128 base reaches, 119/128 for
 conditional/coupled and 97/128 for ordering. All three generators passed
 once with minimum squared-distance gaps 0.00103759765625,
 0.0007934603490866721 and 0.00006103515625. The guard, oracle and comparison
-criteria are unchanged. Device correctness and performance remain
-unmeasured for this correction.
+criteria are unchanged. The controlled device continuation passed all
+five exact ordered comparisons in 92.95 s on RTX 5090, including actual
+nearest/conditional selection, coupled triclinic images, retained classes
+and refresh/growth.
+
+The following 23-fixture gate stopped before numerical comparison on a
+new selector-construction error: native callers provide actual class
+reaches and leave base/extent absent, but the selector constructed the
+unused fallback expression first. Its log contains four concurrent crash
+blocks; the fail-fast summary counts one failed and 22 skipped, not four
+completed comparisons. Constructing the fallback only in its proper
+operand branch corrected the new path. The expanded CPU outline test,
+including the actual native operand form, passed its one controlled
+rerun (1/1, 1.75 s). No host arithmetic, existing lowering, membership
+criterion or comparison bound changed. Native physical/barostat gates
+and performance remain pending for this correction.
 
 ### Target-driven remaining batches and reporting
 

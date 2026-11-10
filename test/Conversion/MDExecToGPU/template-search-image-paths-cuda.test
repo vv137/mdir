@@ -1,8 +1,10 @@
 # REQUIRES: cuda-toolkit
-# RUN: rm -f %t.input.mlir %t.reference.json
+# RUN: rm -f %t.input.mlir %t.reference.json %t.native.mlir %t.native.json
 # RUN: %python %S/../../Integration/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --dispatch --cell-crossing
 # RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | FileCheck %s
 # RUN: mdir-opt %t.input.mlir '--test-md-template-search=force-general' --test-md-template-compaction --convert-md-exec-to-gpu | FileCheck %s --check-prefix=GENERAL
+# RUN: %python %S/../../Integration/Inputs/template_native_oracle.py generate %t.native.mlir %t.native.json --triclinic
+# RUN: mdir-opt %t.native.mlir --convert-md-exec-to-gpu | FileCheck %s --check-prefix=NATIVE
 # The selector calls separate functions; the candidate kernel does not
 # carry a never-taken branch selecting nearest/conditional/general.
 # CHECK-DAG: func.func private @__mdir_template_search_nearest_orthorhombic
@@ -12,3 +14,7 @@
 # CHECK: call @mdrtTemplatePairsSetImagePath
 # GENERAL: func.func private @search_seed
 # GENERAL: call @mdrtTemplatePairsSetImagePath
+# Actual native callers supply reaches and leave base/extent absent.
+# NATIVE-DAG: func.func private @__mdir_template_search_nearest_triclinic
+# NATIVE-DAG: func.func private @__mdir_template_search_conditional_triclinic
+# NATIVE-DAG: func.func private @__mdir_template_search_general_triclinic
