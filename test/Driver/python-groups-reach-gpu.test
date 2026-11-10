@@ -22,6 +22,6 @@
 # CHECK-NEXT: half of the least of the diagonal well below the reach
 # CHECK-NEXT: frames whose potential is not the sum over all images: 0
 
-# STOP:    Python failed: {{.*}}the barostat has made the cell {{[0-9.]+}} Å along x, less than the pairlist distance over 0.999, 20.0200 Å, below which the groups do not hold every pair
+# STOP:    Python failed: {{.*}}the barostat has made the cell {{[0-9.]+}} Ang along x, less than the pairlist distance over 0.999, 20.0200 Ang, below which the groups do not hold every pair
 
 # REFUSED: Python failed: 'pairlist_distance', 23 Å, exceeds 0.999 of the least of a_x, b_y, c_z of the cell, 21.978 Å, the most that the groups take

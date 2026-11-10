@@ -18,7 +18,7 @@
 # CHECK-INPUT: dihedrals:          67, 4 improper
 # CHECK-INPUT: pairs 1-4:          41
 # CHECK-INPUT: total charge:       {{-?}}0.000000 e
-# CHECK-INPUT: box:                27.1882 29.7181 25.397 Å
+# CHECK-INPUT: box:                27.1882 29.7181 25.397 Ang
 
 # The terms at the start. sander of AmberTools 26 gives, with
 # Inputs/dipeptide/sander-single-point.in (eedmeth = 4, vdwmeth = 1):

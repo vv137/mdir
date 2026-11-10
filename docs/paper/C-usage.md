@@ -195,8 +195,8 @@ pairs 1-4:          41
 excluded pairs:     1244
 total charge:       -0.000000 e
 total mass:         7026.29 amu
-box:                27.1882 29.7181 25.397 Å
-density:            0.568579 g/cm³
+box:                27.1882 29.7181 25.397 Ang
+density:            0.568579 g/cm^3
 velocities:         no
 degrees of freedom: 2343
 ```

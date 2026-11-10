@@ -235,7 +235,10 @@ the cluster.
   (`scripts/release/check-path.sh`), and the control characters in the
   tracked text files (none but the tab and the newline, and no tab in a
   Markdown file, #768: an escape such as `\b` or `\t` in a shell or Python
-  string turns TeX such as `\times` into bytes).
+  string turns TeX such as `\times` into bytes), and the non-ASCII
+  characters in the string literals of `tools/mdir/*.cpp`, outside comments
+  and lines marked `// ascii-exempt` (#812; the text that the tool prints is
+  ASCII, [conventions.md](conventions.md#units-and-symbols-in-printed-text)).
   The job runs one script,
   `scripts/check-before-push.sh`, which holds the list; a contributor runs
   the same checks before every push (below), so that the two cannot drift.

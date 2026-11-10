@@ -20,7 +20,7 @@
 # RUN: mdir run %t/start.toml | FileCheck %s --check-prefix=START
 
 # CHECK: INFO:         0         0.0000 {{ *}}-2811.4253 {{ *}}-3522.3477
-# CHECK: MDIR: the temperatures over 2 rows, in K: of the solute {{[0-9.]+}} ± {{[0-9.]+}}, of the solvent {{[0-9.]+}} ± {{[0-9.]+}}; from the velocities of the steps alone
+# CHECK: MDIR: the temperatures over 2 rows, in K: of the solute {{[0-9.]+}} +/- {{[0-9.]+}}, of the solvent {{[0-9.]+}} +/- {{[0-9.]+}}; from the velocities of the steps alone
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # The pressure is that of the groups that the barostat scales, the waters

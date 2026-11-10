@@ -30,10 +30,10 @@
 # RUN: sed '$s/.*/   3.00000   2.82843   2.44949   0.00000   0.00000   2.20000   0.00000  -1.00000   1.41421/' %S/Inputs/gromacs/system.gro > %t/system.gro
 # RUN: mdir check %t/gromacs.toml | FileCheck %s --check-prefix=REDUCED
 
-# AMBER:   box:                30 30 30 Å, angles 109.471 109.471 109.471
-# AMBER:   cell vectors:       a (30, 0, 0), b (-10, 28.2843, 0), c (-10, -14.1421, 24.4949) Å
+# AMBER:   box:                30 30 30 Ang, angles 109.471 109.471 109.471
+# AMBER:   cell vectors:       a (30, 0, 0), b (-10, 28.2843, 0), c (-10, -14.1421, 24.4949) Ang
 # REACH:   'pairlist_distance', 1144 Å, exceeds 127 times 'cutoff', 9 Å, the most that the neighbor matrix of a triclinic cell takes
-# GROMACS: box:                30 30 30 Å, angles 70.5288 109.471 70.5288
-# GROMACS: cell vectors:       a (30, 0, 0), b (10, 28.2843, 0), c (-10, 14.1421, 24.4949) Å
+# GROMACS: box:                30 30 30 Ang, angles 70.5288 109.471 70.5288
+# GROMACS: cell vectors:       a (30, 0, 0), b (10, 28.2843, 0), c (-10, 14.1421, 24.4949) Ang
 # FRAME:   a cell needs a along x and b in the x-y plane
-# REDUCED: cell vectors:       a (30, 0, 0), b (-8, 28.2843, 0), c (-10, 14.1421, 24.4949) Å
+# REDUCED: cell vectors:       a (30, 0, 0), b (-8, 28.2843, 0), c (-10, 14.1421, 24.4949) Ang

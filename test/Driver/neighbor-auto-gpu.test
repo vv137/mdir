@@ -34,9 +34,9 @@
 # RUN: %python -c "import json, sys; [print(json.dumps({k: v for k, v in json.loads(l)['effective'].items() if 'neighbor' in k or 'distance' in k}, sort_keys=True)) for l in open(sys.argv[1]) if '\"start\"' in l]" %t/big.jsonl | FileCheck %s --check-prefix=BIGJSON
 # RUN: %python -c "import json, sys; [print(json.dumps({k: v for k, v in json.loads(l)['effective'].items() if 'neighbor' in k or 'distance' in k}, sort_keys=True)) for l in open(sys.argv[1]) if '\"start\"' in l]" %t/small.jsonl | FileCheck %s --check-prefix=SMALLJSON
 
-# BIG: MDIR: neighbor structure: groups of 16 with the reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
+# BIG: MDIR: neighbor structure: groups of 16 with the reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
 # BIG: MDIR: the inner lists were pruned {{[0-9]+}} times
-# SMALL: MDIR: neighbor structure: the matrix with the reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
+# SMALL: MDIR: neighbor structure: the matrix with the reach 10.5 Ang (AUTO: 8000 particles, fewer than {{[0-9]+}})
 # GIVEN: MDIR: the inner lists were pruned {{[0-9]+}} times
 # BIGJSON: {"neighbor_structure": "groups", "neighbor_structure_reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "neighbor_structure_requested": "auto", "neighbor_structures": ["groups"], "pairlist_distance_angstrom": 12, "pairlist_distance_source": "default", "pruned_distance_angstrom": 9.6, "pruned_distance_source": "default"}
 # SMALLJSON: {"neighbor_structure": "matrix", "neighbor_structure_reason": "8000 particles, fewer than {{[0-9]+}}", "neighbor_structure_requested": "auto", "neighbor_structures": ["matrix"], "pairlist_distance_angstrom": 10.5, "pairlist_distance_source": "default", "pruned_distance_angstrom": null, "pruned_distance_source": "default"}

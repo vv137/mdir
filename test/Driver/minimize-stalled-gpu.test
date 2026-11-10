@@ -19,9 +19,9 @@
 # RUN: cd %t && mdir run double.toml | FileCheck %s --check-prefix=DOUBLE
 # RUN: cd %t && mdir run small.toml | FileCheck %s --check-prefix=SMALL
 
-# MIXED: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Å, below 1e-07 Å (1e-06 of its cap of 0.1 Å), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Å
+# MIXED: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Ang, below 1e-07 Ang (1e-06 of its cap of 0.1 Ang), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Ang
 
-# DOUBLE: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Å, below 1e-11 Å (1e-10 of its cap of 0.1 Å), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Å
+# DOUBLE: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Ang, below 1e-11 Ang (1e-10 of its cap of 0.1 Ang), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Ang
 
 # SMALL:     INFO: 20
 # SMALL-NOT: MDIR: stopped

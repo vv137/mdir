@@ -581,11 +581,11 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   auto note = [&](const SkinTrial &trial) {
     if (!log)
       return;
-    *log << llvm::formatv("MDIR: skins: candidate {0} / {1} Å: ",
+    *log << llvm::formatv("MDIR: skins: candidate {0} / {1} Ang: ",
                           format(trial.outer),
                           trial.inner != 0.0 ? format(trial.inner) : "-");
     if (trial.failure.empty())
-      *log << llvm::formatv("{0:f2} µs a step ± {1:f2}%, builds every {2:f1} "
+      *log << llvm::formatv("{0:f2} us a step +/- {1:f2}%, builds every {2:f1} "
                             "steps, compiled in {3:f1} s (the pipeline "
                             "{4:f1} s, of which the kernels {5:f1} s; the "
                             "host code {6:f1} s)\n",
@@ -749,7 +749,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   if (best != &first && gain > noise) {
     control.pairlistDistance = best->outer;
     control.prunedDistance = best->inner;
-    control.skinReason = llvm::formatv("{0:f1}% faster than {1} / {2} Å, "
+    control.skinReason = llvm::formatv("{0:f1}% faster than {1} / {2} Ang, "
                                        "beyond the noise of {3:f1}%",
                                        100.0 * gain, format(first.outer),
                                        first.inner != 0.0 ? format(first.inner)
@@ -762,7 +762,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     control.skinReason =
         best == &first
             ? std::string("the reference was the fastest")
-            : llvm::formatv("the fastest, {0} / {1} Å, is {2:f1}% faster, "
+            : llvm::formatv("the fastest, {0} / {1} Ang, is {2:f1}% faster, "
                             "within the noise of {3:f1}%",
                             format(best->outer),
                             best->inner != 0.0 ? format(best->inner) : "-",

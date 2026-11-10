@@ -76,7 +76,7 @@
 # NVE: MDIR: the total energy changed by {{[0-9.]+e-0[5-9]}} of its value
 
 # GPU: the terms over triplets of {{\[\[}}energy.triplet{{\]\]}} run on the CPU only yet (D160)
-# BEYOND: the cutoff of the triplets, 5 Å, is beyond that of [energy], 4.3065 Å
+# BEYOND: the cutoff of the triplets, 5 Ang, is beyond that of [energy], 4.3065 Ang
 # NOCUTOFF: expected a 'cutoff' in {{\[\[}}energy.triplet{{\]\]}}
 # ORDER: the energy of a triplet must not change when its two ends are exchanged
 # NAME: the expression uses 'kappa', which is neither r12, r13, r23, theta, the time t, a number of the term, nor a parameter of every {{\[\[}}energy.type{{\]\]}} with the suffix 1, 2, or 3

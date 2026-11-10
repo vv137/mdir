@@ -3,7 +3,8 @@
 # this script), run in the worktree that holds the script: the links, the
 # decision numbers and their table, the changelog fragments, the list of the
 # expected unsupported tests, the release path (#764), and the control
-# characters in the text files, tabs included in Markdown (#768). No build,
+# characters in the text files, tabs included in Markdown (#768), and the
+# non-ASCII characters in the strings of the mdir tool (#812). No build,
 # no network, no GPU; seconds. All checks run even when one fails; one line
 # per check; the exit status is nonzero if any failed. The pre-push hook
 # (scripts/hooks/pre-push) runs it before every push.
@@ -45,12 +46,26 @@ control_chars() {
   [ "$a" -eq 0 ] && [ "$b" -eq 0 ]
 }
 
+# The text that the mdir tool prints is ASCII (D[ascii-cli-output], #812;
+# the spellings are in docs/conventions.md, Units and symbols in printed
+# text): a line of tools/mdir/*.cpp that is not a comment (it begins with
+# //, /*, or * and a space) holds no string literal, "...", with a byte
+# beyond 0x7f.
+# A literal split over lines is checked piece by piece. A string that goes
+# into a file format, not to the terminal, carries the comment
+# `ascii-exempt` on its line and keeps its text until a ruling of its own.
+# Prints file:line of each.
+ascii_strings() {
+  no_match '^(?!\s*(//|/\*|\*(\s|/|$)))(?!.*ascii-exempt).*"[^"]*[^\x00-\x7f][^"]*"' -- 'tools/mdir/*.cpp'
+}
+
 run "Links" python3 scripts/check-markdown-links.py
 run "Decision numbers and their table" scripts/decision-number.sh check --pending
 run "Changelog fragments" python3 scripts/release/changelog.py fragments
 run "The list of the expected unsupported tests" python3 test/mdir_lit.py
 run "The release path" scripts/release/check-path.sh
 run "Control characters in the text files" control_chars
+run "ASCII in the strings of the mdir tool" ascii_strings
 
 if [ "$failed" -ne 0 ]; then
   echo "$failed check(s) failed"

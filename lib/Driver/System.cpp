@@ -520,7 +520,7 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
         return llvm::createStringError(
             llvm::inconvertibleErrorCode(),
             "'born_radius_cutoff' and the largest screened radius reach "
-            "%g Å, beyond the cutoff, %g Å",
+            "%g Ang, beyond the cutoff, %g Ang",
             reach / units::length, control.cutoffDistance);
     }
     system.bornTermNames.push_back("generalized Born");
@@ -1314,9 +1314,9 @@ void mdir::driver::resolveNeighborStructure(Control &control,
     if (outer * units::length > 0.999 * least)
       return matrix((llvm::Twine("the reach of the groups, ") +
                      llvm::formatv("{0}", llvm::format("%g", outer)) +
-                     " Å, exceeds 0.999 of the least edge of the cell, " +
+                     " Ang, exceeds 0.999 of the least edge of the cell, " +
                      llvm::formatv("{0:f2}", 0.999 * least / units::length) +
-                     " Å")
+                     " Ang")
                         .str());
   }
   control.neighborStructure = NeighborStructure::Groups;
