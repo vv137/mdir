@@ -107,14 +107,15 @@ logs retain the exact node, CPU model, and affinity for local audit.
 
 The `ms<T>` and `ds<T>` variants run once under the sampler built from
 `sampler.c` (`SAMPLER`), and `prof.py DIR --program CONTROL` attributes the
-samples to the parallel regions of the entry; it needs `MDIR` and
-`MLIR_TRANSLATE`. Build the sampler with
+samples to the parallel regions of the program; it needs `MDIR`. Each
+region's part comes from the profile map that the compiler writes
+(D[profile-map], [profile-map.md](../../../docs/profile-map.md)):
+`--program` emits it (`mdir emit --profile-map`), and `--map` reads the map
+that a run wrote (`[output] profile_map`). Build the sampler with
 `cc -O2 -shared -fPIC -o libsampler.so sampler.c -lpthread -ldl -lrt`.
 `mdir` exports no dynamic symbols (#655), so the sampler reads the
 descriptor of the GDB JIT interface from the executable's static symbol
-table when `dlsym` does not find it. A loop over pairs in f64 reads no
-radial table, so `prof.py` also takes its Lennard-Jones powers (`powi`) as
-the mark of such a loop.
+table when `dlsym` does not find it.
 
 A program of one thread inlines its loops into the entry, where the sampler
 cannot attribute them. The `mp1` and `dp1` variants therefore run the
