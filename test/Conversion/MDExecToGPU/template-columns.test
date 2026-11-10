@@ -1,0 +1,18 @@
+# RUN: mdir-opt %S/template-columns.mlir --test-md-template-columns | mlir-opt --convert-math-to-libm --convert-vector-to-llvm --convert-arith-to-llvm --convert-index-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# The population doubles the column counts when it grows by eight at fixed
+# volume; fixed density and a doubled box do the same. Arena and anisotropic
+# cases must clamp before floating-point-to-integer conversion.
+# CHECK: 4
+# CHECK-NEXT: 4
+# CHECK-NEXT: 8
+# CHECK-NEXT: 8
+# CHECK-NEXT: 8
+# CHECK-NEXT: 8
+# CHECK-NEXT: 6
+# CHECK-NEXT: 1
+# CHECK-NEXT: 1
+# CHECK-NEXT: 1
+# CHECK-NEXT: 6
+# CHECK-NEXT: 1
+# CHECK-NEXT: 3
+# CHECK-NEXT: 4

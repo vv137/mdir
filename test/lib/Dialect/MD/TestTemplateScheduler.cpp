@@ -364,6 +364,29 @@ struct TestTemplateCompaction
     func::ReturnOp::create(b, loc);
   }
 };
+struct TestTemplateColumns
+    : PassWrapper<TestTemplateColumns, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateColumns)
+  StringRef getArgument() const final { return "test-md-template-columns"; }
+  void getDependentDialects(DialectRegistry &r) const override {
+    r.insert<arith::ArithDialect, func::FuncDialect, math::MathDialect,
+             vector::VectorDialect>();
+  }
+  void runOnOperation() final {
+    for (StringRef name : {"columns3", "columns6"}) {
+      auto function = getOperation().lookupSymbol<func::FuncOp>(name);
+      if (!function || !function.isExternal()) {
+        getOperation().emitError("column fixture expects columns3 and columns6 declarations");
+        return signalPassFailure();
+      }
+      Block *entry = function.addEntryBlock();
+      OpBuilder b = OpBuilder::atBlockEnd(entry);
+      auto columns = emitTemplateColumnGrid(b, function.getLoc(),
+          entry->getArgument(0), entry->getArgument(1), entry->getArgument(2));
+      func::ReturnOp::create(b, function.getLoc(), ValueRange{columns[0], columns[1]});
+    }
+  }
+};
 struct TestTemplateSpatial
     : PassWrapper<TestTemplateSpatial, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateSpatial)
@@ -513,6 +536,7 @@ void registerTestTemplateScheduler() {
   PassRegistration<TestTemplateScheduler>();
   PassRegistration<TestTemplateCompaction>();
   PassRegistration<TestTemplateSpatial>();
+  PassRegistration<TestTemplateColumns>();
   PassRegistration<TestTemplateStage>();
   registerTestTemplateSearch();
   registerTestTemplateParticles();

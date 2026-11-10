@@ -13,6 +13,44 @@
 using namespace mlir;
 using namespace mdir::kernels;
 
+std::array<Value, 2> mdir::kernels::emitTemplateColumnGrid(
+    OpBuilder &b, Location loc, Value cell, Value units, Value bins) {
+  auto ix = [&](int64_t n) { return createIndex(b, loc, n); };
+  auto real = [&](double n) {
+    return createReal(b, loc, b.getF64Type(), n);
+  };
+  // The prototype's (16/rho)^(1/3) scale, over the units in the shared
+  // class-prefixed grid. Orthorhombic volume is the diagonal product too.
+  Value volume = real(1);
+  for (int64_t axis = 0; axis != 3; ++axis)
+    volume = arith::MulFOp::create(b, loc, volume,
+        vector::ExtractOp::create(b, loc, cell, axis));
+  Value population = arith::UIToFPOp::create(b, loc, b.getF64Type(),
+      arith::IndexCastOp::create(b, loc, b.getI64Type(),
+          arith::MaxUIOp::create(b, loc, units, ix(1))));
+  Value edge = math::CbrtOp::create(b, loc,
+      arith::DivFOp::create(b, loc,
+          arith::MulFOp::create(b, loc, real(16), volume), population));
+  Value widths = isTriclinic(cell) ? emitFaceWidths(b, loc, cell) : cell;
+  Value budget = arith::DivUIOp::create(b, loc, bins, ix(2));
+  auto dimension = [&](int64_t axis, Value limit) -> Value {
+    Value rounded = math::FloorOp::create(b, loc,
+        arith::AddFOp::create(b, loc,
+            arith::DivFOp::create(b, loc,
+                vector::ExtractOp::create(b, loc, widths, axis), edge), real(0.5)));
+    Value bound = arith::UIToFPOp::create(b, loc, b.getF64Type(),
+        arith::IndexCastOp::create(b, loc, b.getI64Type(), limit));
+    // Clamp before integer conversion, including highly anisotropic cells.
+    Value safe = arith::MinimumFOp::create(b, loc, bound,
+        arith::MaximumFOp::create(b, loc, real(1), rounded));
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(),
+        arith::FPToUIOp::create(b, loc, b.getI64Type(), safe));
+  };
+  Value x = dimension(0, budget);
+  Value y = dimension(1, arith::DivUIOp::create(b, loc, budget, x));
+  return {x, y};
+}
+
 void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
                                              const TemplateSpatialBuffers &v) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };

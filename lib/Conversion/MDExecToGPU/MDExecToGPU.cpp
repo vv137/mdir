@@ -11,6 +11,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/TemplateWriterKernels.h"
 #include "mdir/Conversion/TemplateRefreshKernels.h"
+#include "mdir/Conversion/TemplateSpatialKernels.h"
 #include "mdir/Conversion/TemplateFrameKernels.h"
 #include "mdir/Conversion/TemplateValidityKernels.h"
 #include "mdir/Conversion/TemplatePruneKernels.h"
@@ -6213,8 +6214,17 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
         real(cold, op.getSkin().convertToDouble()));
     Value prepared = memref::AllocaOp::create(cold, loc, MemRefType::get({}, cold.getI1Type()));
     memref::StoreOp::create(cold, loc, boolean(cold, true), prepared, ValueRange{});
+    auto layout = getOrDeclare("mdrtTemplatePairsLayoutValue",
+        cold.getFunctionType({cold.getI64Type(), cold.getI64Type()},
+                             {cold.getI64Type()}));
+    Value bins = arith::IndexCastOp::create(cold, loc, cold.getIndexType(),
+        func::CallOp::create(cold, loc, layout,
+            ValueRange{state.handle, arith::ConstantIntOp::create(cold, loc,
+                TEMPLATE_LAYOUT_SPATIAL_BINS, 64)}).getResult(0));
+    auto columns = emitTemplateColumnGrid(cold, loc, cell,
+        arith::AddIOp::create(cold, loc, state.waters, state.atoms), bins);
     TemplateRefreshInputs input{state.handle, state.outerReference, cell, {}, {},
-        ix(cold, 3), ix(cold, 2), water, atom, actual};
+        columns[0], columns[1], water, atom, actual};
     auto epochType = getDeviceType({ShapedType::kDynamic, 3}, cold.getF64Type());
     input.classCells = templateRuntimeView(cold, loc, state.handle,
         "mdrtTemplatePairsFrameState", epochType, TEMPLATE_FRAME_OUTER_CELLS);
