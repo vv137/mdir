@@ -5,6 +5,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
@@ -289,7 +290,52 @@ static Value shuffle(OpBuilder &builder, Location loc, Value value,
   }
   return scalar(value);
 }
+struct MaskStreamPlan {
+  SmallVector<Value, 4> upper, keep;
+  Value reverseShift;
+};
+static MaskStreamPlan prepareMaskStream(OpBuilder &builder, Location loc, Value lane) {
+  MaskStreamPlan plan;
+  Value u = arith::AndIOp::create(builder, loc, lane, word(builder, loc, 15));
+  plan.reverseShift = arith::SubIOp::create(builder, loc, word(builder, loc, 15), u);
+  constexpr unsigned lows[] = {0x5555, 0x3333, 0x0f0f, 0x00ff};
+  for (unsigned stage = 0; stage != 4; ++stage) {
+    Value upper = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+        arith::AndIOp::create(builder, loc, u, word(builder, loc, 1 << stage)),
+        word(builder, loc, 0));
+    plan.upper.push_back(upper);
+    plan.keep.push_back(arith::SelectOp::create(builder, loc, upper,
+        word(builder, loc, 0xffff ^ lows[stage]), word(builder, loc, lows[stage])));
+  }
+  return plan;
+}
+static Value emitMaskStream(OpBuilder &builder, Location loc, Value mask,
+                            const MaskStreamPlan &plan) {
+  Value x = arith::AndIOp::create(builder, loc, mask, word(builder, loc, 0xffff));
+  // Exchange one lane-index bit with the corresponding word-index bit.
+  // XOR offsets below 16 keep the two half-warps independent.
+  for (unsigned stage = 0; stage != 4; ++stage) {
+    Value shift = word(builder, loc, 1 << stage);
+    Value peer = shuffle(builder, loc, x, shift, gpu::ShuffleMode::XOR);
+    Value other = arith::AndIOp::create(builder, loc, peer, plan.keep[stage]);
+    Value moved = arith::SelectOp::create(builder, loc, plan.upper[stage],
+        arith::ShRUIOp::create(builder, loc, other, shift),
+        arith::ShLIOp::create(builder, loc, other, shift));
+    x = arith::OrIOp::create(builder, loc,
+        arith::AndIOp::create(builder, loc, x, plan.keep[stage]), moved);
+  }
+  // Bit t must visit partner (u-t) mod 16, matching the frame rotation.
+  Value reversed = LLVM::BitReverseOp::create(builder, loc, x);
+  Value repeated = arith::OrIOp::create(builder, loc, reversed,
+      arith::ShRUIOp::create(builder, loc, reversed, word(builder, loc, 16)));
+  return arith::ShRUIOp::create(builder, loc, repeated, plan.reverseShift);
+}
 } // namespace
+
+Value mdir::kernels::emitTemplateMaskStream(OpBuilder &builder, Location loc,
+                                          Value mask, Value lane) {
+  return emitMaskStream(builder, loc, mask, prepareMaskStream(builder, loc, lane));
+}
 
 SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
     OpBuilder &builder, Location loc, const TemplateUnit &unit,
@@ -317,6 +363,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   Value previous = arith::AndIOp::create(builder, loc,
       arith::AddIOp::create(builder, loc, u, word(builder, loc, 15)), word(builder, loc, 15));
   Value source = arith::OrIOp::create(builder, loc, half, previous);
+  MaskStreamPlan maskPlan = prepareMaskStream(builder, loc, unit.lane);
   SmallVector<Value> initial;
   for (unsigned i = 0; i != fi; ++i) initial.push_back(createZero(builder, loc, forceType));
   for (Type type : unit.sumTypes) initial.push_back(createZero(builder, loc, type));
@@ -334,6 +381,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                                                 unit.hasSite, unit.alpha);
         unsigned frameSize = secondFrame.size();
         Value mask = arith::SelectOp::create(batch, loc, has, partner.mask, word(batch, loc, 0));
+        mask = emitMaskStream(batch, loc, mask, maskPlan);
         unsigned shiftAt = frameSize + partner.parameters.size();
         unsigned maskAt = shiftAt + 1, fjAt = maskAt + 1, fiAt = fjAt + fj;
         unsigned sumsAt = fiAt + fi;
@@ -346,7 +394,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
             word(batch, loc, 16), word(batch, loc, 1), carried,
             [&](OpBuilder &turn, Location, Value, ValueRange state) {
               Value bit = arith::AndIOp::create(turn, loc,
-                  arith::ShRUIOp::create(turn, loc, state[maskAt], u), word(turn, loc, 1));
+                  state[maskAt], word(turn, loc, 1));
               Value paired = arith::CmpIOp::create(turn, loc, arith::CmpIPredicate::ne,
                                                    bit, word(turn, loc, 0));
               paired = arith::AndIOp::create(turn, loc, paired, unit.firstValid);
@@ -380,8 +428,10 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                   });
               ValueRange values(contribution.getResults());
               SmallVector<Value> next;
-              for (Value value : state.take_front(maskAt + 1))
+              for (Value value : state.take_front(maskAt))
                 next.push_back(shuffle(turn, loc, value, source, gpu::ShuffleMode::IDX));
+              next.push_back(arith::ShRUIOp::create(turn, loc,
+                  state[maskAt], word(turn, loc, 1)));
               for (unsigned i = 0; i != fj; ++i) {
                 Value accumulated = arith::AddFOp::create(turn, loc, state[fjAt + i], values[fi + i]);
                 next.push_back(shuffle(turn, loc, accumulated, source, gpu::ShuffleMode::IDX));

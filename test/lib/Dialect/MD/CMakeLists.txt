@@ -9,6 +9,7 @@ add_mlir_library(MDIRTestPasses
   TestTemplateWriter.cpp
   TestTemplatePrune.cpp
   TestTemplateFrames.cpp
+  TestTemplateMaskStream.cpp
   TestLoopEffects.cpp
   TestStageAdjoint.cpp
   TestTranspose.cpp
