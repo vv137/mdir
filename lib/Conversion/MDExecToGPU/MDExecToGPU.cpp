@@ -6493,6 +6493,32 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value grid = createGroups(b, loc, threads, blockSize);
   Value launchedThreads;
   if (nativeEpochs) launchedThreads = arith::MulIOp::create(b, loc, grid, block);
+  // Diagnostic variant only: unchanged f64 pruning in a separate launch.
+  // Active references use currentPoints; inactive references remain unchanged
+  // by the evaluation prologue, so the same hybrid geometry is available here.
+  if (nativeEpochs) {
+    Value requested = arith::OrIOp::create(b, loc, pruning.waterActive, pruning.atomActive);
+    scf::IfOp::create(b, loc, requested, [&](OpBuilder &host, Location) {
+      auto prune = gpu::LaunchOp::create(host, loc, grid, one, one, block, one, one);
+      OpBuilder at = OpBuilder::atBlockEnd(&prune.getBody().front());
+      Value thread = arith::AddIOp::create(at, loc,
+          arith::MulIOp::create(at, loc, prune.getBlockIds().x, block), prune.getThreadIds().x);
+      Value warp = arith::DivUIOp::create(at, loc, thread, warp32);
+      Value lane = arith::IndexCastOp::create(at, loc, at.getI32Type(),
+          arith::RemUIOp::create(at, loc, thread, warp32));
+      Value end = arith::IndexCastUIOp::create(at, loc, at.getIndexType(),
+          memref::LoadOp::create(at, loc, pairs,
+              ValueRange{createIndex(at, loc, TEMPLATE_PAIR_INNER_RANGES + 17)}));
+      scf::ForOp::create(at, loc, warp, end, launched, ValueRange(),
+          [&](OpBuilder &body, Location, Value record, ValueRange) {
+        emitPruneTemplateWork(body, loc, pruning, record, lane);
+        scf::YieldOp::create(body, loc);
+      });
+      gpu::TerminatorOp::create(at, loc);
+      bringIn(prune);
+      scf::YieldOp::create(host, loc);
+    });
+  }
   auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
@@ -6548,7 +6574,6 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
                                frames, waters, op.getCellMutable().get(), groupLengths, hasSite};
   auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
       [&](OpBuilder &body, Location, Value record, ValueRange previous) {
-        if (nativeEpochs) emitPruneTemplateWork(body, loc, pruning, record, lane);
         IRMapping captures;
         auto contributions = emitTemplateWorkUnit(body, loc, op, buffers, record, lane, captures);
         SmallVector<Value> next;
