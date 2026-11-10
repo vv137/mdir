@@ -1686,6 +1686,17 @@ The original quadratic fixture retains zero tolerance.
    largest cell edge, $\max(1\ \mathrm{nm/ps},\max_i\lvert v_i\rvert)$,
    and the general-double volume. Fresh same-frame physical evaluations
    keep the force, energy and virial bounds above unchanged.
+   These checks construct fresh no-step simulation state for each sampled
+   frame, while keeping a separate D236 code store for each of the three
+   routes. Only compiled code is reused under the complete module, pipeline
+   and machine key; coordinates, velocities, cells and reference epochs are
+   fresh. Preparation and trajectory engines use the same keyed stores;
+   their initial state, programs and execution order are unchanged. The
+   fixture reports actual compiler reuse counts and separate creation,
+   evaluation, compilation, oracle and projection wall times. It is expected
+   to finish within three minutes on RTX 5090; gates use a 600-second per-test
+   timeout rather than leaving a slow fixture unbounded. No validation
+   frame, step, tolerance or physical convention is removed.
    Production NVE drift uses ubiquitin with OPC and TIP3P, mixed, 2 fs,
    1 ns, template versus general mixed for each integrator. Fit conserved
    energy versus time and divide its slope by the degrees of freedom;

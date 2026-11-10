@@ -1,6 +1,21 @@
 // Short, identically initialized trajectories; same-frame pair accuracy
 // remains a separate check with the approved physical-oracle envelopes.
 #include "TemplatePhysicsOracle.h"
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
+static double elapsed(Clock::time_point start) {
+  return std::chrono::duration<double>(Clock::now()-start).count();
+}
+struct FrameChecks {
+  // Keep fresh simulation state at each frame, but reuse code only under
+  // D236's complete module/pipeline/machine key. Each route has its own
+  // store so the three precision/execution choices do not evict each other.
+  std::array<compiler::CodeStore,3> code;
+  compiler::CompileStats compile;
+  unsigned instances=0;
+  double createSeconds=0,evaluateSeconds=0,oracleSeconds=0,projectionSeconds=0;
+};
 
 static void installFrame(model::PreparedModel &p, const compiler::SimulationState &s) {
   p.system.positions=s.positions;p.system.velocities=s.velocities;
@@ -71,7 +86,8 @@ static std::vector<double> fullVelocity(const driver::System &system,
     for(unsigned k=0;k!=3;++k) massive.push_back(v[3*i+k]);
   return massive;
 }
-static void sameFrame(model::PreparedModel p,const compiler::SimulationState &frame) {
+static void sameFrame(model::PreparedModel p,const compiler::SimulationState &frame,
+                      FrameChecks &checks) {
   installFrame(p,frame);
   // Potential, forces and molecular virial have no velocity-time offset.
   // Evaluate each route at the exact same x/v/cell with the VV no-step
@@ -80,12 +96,19 @@ static void sameFrame(model::PreparedModel p,const compiler::SimulationState &fr
   p.control.thermostat=p.control.barostat=false;
   std::array<compiler::SimulationState,3> s;
   for(unsigned r=0;r!=3;++r) {
-    auto sim=take(compiler::Simulation::create(route(p,r),false));
+    auto start=Clock::now();
+    auto sim=take(compiler::Simulation::create(route(p,r),true,&checks.code[r]));
+    checks.createSeconds+=elapsed(start);++checks.instances;
+    start=Clock::now();
     succeed(sim->evaluate());s[r]=take(sim->getState());
+    checks.evaluateSeconds+=elapsed(start);
+    checks.compile+=sim->getCompileStats();
     require(bool(s[r].energies),"fresh frame evaluation has no energy");
   }
+  auto oracleStart=Clock::now();
   auto ref=oracle(p.system,frame.positions,p.control.cutoffDistance*driver::units::length);
   auto moments=molecularMoments(p.system,frame.positions,frame.velocities,ref.forces);
+  checks.oracleSeconds+=elapsed(oracleStart);
   double largest=0;for(double f:s[2].forces) largest=std::max(largest,std::abs(f));
   auto oe=error(s[2].forces,ref.forces);
   double uo=std::abs(s[2].energies->potential-ref.energy);
@@ -111,9 +134,11 @@ static void sameFrame(model::PreparedModel p,const compiler::SimulationState &fr
   for(size_t i=0;i!=ref.forces.size();++i)
     record("force-"+std::to_string(i/3)+"-"+std::to_string(i%3),ref.forces[i],
         s[2].forces[i],fOracleBound,ref.forceAbsolute[i],ref.forceTerms[i]);
+  auto projectionStart=Clock::now();
   auto projected=project(p.system,frame.positions,s[2].forces);
   auto baseline=error(project(p.system,frame.positions,s[1].forces),projected);
   auto candidate=error(project(p.system,frame.positions,s[0].forces),projected);
+  checks.projectionSeconds+=elapsed(projectionStart);
   double fb=std::max(1.5*baseline.maximum,1e-5*largest);
   double rb=std::max(1.5*baseline.rms,1e-5*largest);
   double ud=std::abs(s[0].energies->potential-s[2].energies->potential);
@@ -140,13 +165,15 @@ int main(int argc,char **argv) {
   p.system=take(driver::readSystem(p.control));driver::resolveNeighborStructure(p.control,p.system);
   p.execution.target=p.control.target;p.execution.precision=p.control.precision;
   require(p.control.timestep==.001&&!p.control.pme,"expected 1 fs plain-cutoff short fixture");
+  FrameChecks checks;
   auto prep=route(p,2);prep.control.integrator=driver::Integrator::VelocityVerlet;
   prep.control.thermostat=prep.control.barostat=false;
-  auto initial=take(compiler::Simulation::create(prep,false));
+  auto initial=take(compiler::Simulation::create(prep,true,&checks.code[2]));
   require(take(initial->run(1,{},true))==1,"initial constraint preparation failed");
   installFrame(p,take(initial->getState()));initial.reset();
   std::array<std::unique_ptr<compiler::Simulation>,3> sims;
-  for(unsigned r=0;r!=3;++r) sims[r]=take(compiler::Simulation::create(route(p,r),false));
+  for(unsigned r=0;r!=3;++r)
+    sims[r]=take(compiler::Simulation::create(route(p,r),true,&checks.code[r]));
   std::cout<<std::setprecision(17);
   for(unsigned sample=0;sample!=10;++sample) {
     std::array<compiler::SimulationState,3> s;
@@ -185,7 +212,18 @@ int main(int argc,char **argv) {
         <<"; v max "<<ve[0].maximum<<" / "<<vb<<" RMS "<<ve[0].rms<<" / "<<vr<<"; volume "<<vd<<" / "<<vbound<<std::endl;
     require(xe[0].maximum<=xb&&xe[0].rms<=xr&&ve[0].maximum<=vb&&ve[0].rms<=vr&&vd<=vbound,
             "short trajectory exceeds approved factor-three criterion");
-    sameFrame(p,s[0]);
+    sameFrame(p,s[0],checks);
   }
+  const auto &cs=checks.compile;
+  std::cout<<"fresh-frame compilation: instances "<<checks.instances
+      <<" programs "<<cs.programs<<" reused "<<cs.reused
+      <<" host compiled "<<cs.compiled<<" PTX compiled "<<cs.gpuPtxCompiled
+      <<" cubin compiled "<<cs.gpuCubinCompiled<<" bypassed "<<cs.bypassed<<std::endl;
+  std::cout<<"fresh-frame wall seconds: create "<<checks.createSeconds
+      <<" evaluate/get-state "<<checks.evaluateSeconds
+      <<" MLIR pipeline "<<cs.pipelineSeconds<<" host codegen "<<cs.compileSeconds
+      <<" GPU codegen "<<cs.gpuCompileSeconds
+      <<" CPU oracle/moments "<<checks.oracleSeconds
+      <<" CPU force projections "<<checks.projectionSeconds<<std::endl;
   std::cout<<"short template trajectory and ten fresh physical frames passed"<<std::endl;
 }
