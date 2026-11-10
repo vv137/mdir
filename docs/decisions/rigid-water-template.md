@@ -454,24 +454,23 @@ launch sizes, work counts and measurement qualifications.
 |---|---|---|---|
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
-| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 includes the prototype box/search structure:** certified f32 Cartesian boxes and shared anchors, retaining the native general f64 image proof where needed. B1/B2 are no longer standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
-| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After S4: direct descriptor-column endpoints, indirect z searches, explicit image/subset enumeration, late half-list ownership, immutable f64 first-anchor caches and fractional-to-Cartesian pair work; search alone 15.4–22.7 in water boxes, 52.3–55.4 in ubiquitin. Added column indexing costs 0.05–0.12 separately. | **Standalone S2 stopped by the whole-port ruling:** its source is reverted without timing it. Early backward-range removal belongs to W1 as part of the complete prototype search structure. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **S4 closed by `f9ea87ef`, retained for modest local gain:** immutable f64 anchor/i32 ID caches use 896 application shared bytes per block. CPU 6/6, GPU 22/22 and focused four-mode sanitizer 1/1 pass. All 12 net search/ref comparisons improve 1.13–4.79%; whole-step results are mixed, including two recorded slowdowns. Do not claim a consistent end-to-end gain. **W1 required whole search port:** class-specialized WW/SW/SS kernels, prototype direct endpoints, early backward ranges, shared anchors, launch distribution and certified f32 Cartesian geometry with the original f64 uncertainty shell. General covering-image proof, entry format/masks/ownership/order, epochs and validity stay fixed. No further standalone search corrections are measured. |
+| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | After W1: Cartesian f32 and fractional f64 boxes; native f64 Cartesian producer narrows once, shared anchors feed pair/box checks, and distinct first-frame subsets keep the general proof. Cache build costs 0.063–0.153 per step; exact certificate setup is included in candidate cost, not isolated. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 closed by `5ea35cdb`, retained:** certified f32 Cartesian boxes and shared anchors; preparation is 3.61–3.69 us per attempt, versus S4 5.31–5.39. Exact CPU 6/6, GPU 22/22 and focused sanitizer 1/1 pass. B1/B2 are not standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
+| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After W1: class-specialized direct endpoints with early backward clipping, no z binary searches, immutable Cartesian f32 anchors and certified decisions/original f64 shell. Candidate cost is 7.10–9.02 in water boxes and 45.24–47.79 in ubiquitin; explicit native frame/image enumeration remains. The complete nine-kernel budget is recorded below. | **Standalone S2 stopped by the whole-port ruling:** its source is reverted without timing it. Early backward-range removal belongs to W1 as part of the complete prototype search structure. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **S4 closed by `f9ea87ef`, retained for modest local gain:** immutable f64 anchor/i32 ID caches use 896 application shared bytes per block. CPU 6/6, GPU 22/22 and focused four-mode sanitizer 1/1 pass. All 12 net search/ref comparisons improve 1.13–4.79%; whole-step results are mixed, including two recorded slowdowns. Do not claim a consistent end-to-end gain. **W1 closed by `5ea35cdb`, retained for measured gain:** the complete nine-kernel stage improves all 12 per-attempt comparisons by 13.61–60.25%, and all 11 eligible normalized wall comparisons by 3.59–9.05%. General covering-image proof, entry format/masks/ownership/order, epochs and validity stay fixed. **Kept with reason, not prototype-equivalent:** the ordered general frame/image iterator and conservative fractional ranges preserve existing coverage/order. Candidate time remains 7.00–15.05 times the archived prototype per step. The next whole correction requires a ruling; no standalone search item resumes. |
 | Pruning | Separate f32 Cartesian pruning with shared first anchors and CUB selection; 1.397–1.788 in water boxes, 7.436–7.609 in ubiquitin. | Fused pruning in the production evaluation; f64 hybrid-reference geometry, exact class incidence and image accounting. Its cost is not isolated in the current common evaluation. | **Kept on purpose:** fusion; the earlier separate-prune experiment `3eaad4f7` did not establish a total win. **Planned P1:** apply a proved, exact-membership f32/refined predicate separately from search. Keep reference epochs and certified validity reaches f64. |
 | Evaluation: loads | Specialized water coefficients and dynamic solute parameters; compact two-word entries; table coefficients and pair values f32. Included in 24.2–54.9 per common call; not isolated. | Actual source parameter bindings; four-word entries with explicit image/mask fields and original-member mapping; two indexed WW LJ coefficient loads remain. Included in 32.2–91.9 per common call; not isolated. | **Planned E3, after search:** invariant WW LJ operands, preserving coefficient bits and mutable bindings. **Kept on purpose:** explicit image domain, bounded-capacity records and original-particle mapping. Do not narrow their supported domain to match the prototype. |
 | Evaluation: extra point | Linear forward site geometry; the partner site is formed from its rotated frame. The force convention is rule B. Part of evaluation; no isolated time. | Exact typed source `alpha*(H1+H2)` cached per loaded partner and rotated with local geometry; dynamics uses rule A. Part of evaluation; no isolated time. | **Planned E4:** compare rematerialization with the rotated cache as its own correction after the approved evaluation items. **Kept on purpose:** source placement and the approved force convention. Anchor-cache experiment `8de4edec` was discarded by `d53ff917` for no clear measured gain. |
 | Evaluation: radial and LJ | f32 radial tables and scalar LJ arithmetic; one coefficient-vector load per Coulomb site contribution. Part of evaluation; no isolated time. | Same common pair-body interface, D94 criterion and analytic fallback; f32 pair arithmetic. Fixed water coefficient folding retains its existing precision. Part of evaluation; no isolated time. | **Closed `f0151e73` / `8d2cd418` / `f6999f3c`:** common radial route, its oracle and scalar radial forces. **Kept on purpose:** existing table error/admission contract; no approximation change to obtain speed. WW coefficient invariants remain E3. |
 | Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
 | Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
-| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After S1: search uses two group warps per 64-thread block; small-box grids about 138–144, large 537–551. Common evaluation remains one combined launch. S3 adds four column-index launches, measured in its net cost. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
-| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **D0 completed at S4:** six exact-output-preserving fixed-frame captures show the latest/longest WW row spans 99.93–99.95% of instrumented kernel wall. Instrumentation overhead and all stage distributions follow below. **W1 is required next regardless of that result**; no standalone search item intervenes. |
+| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After W1: three class-specialized searches each use two group warps per 64-thread block and original row/ordinal compaction. The whole search stage has nine launches. Empty classes retain a minimum-grid launch (about 0.4 us each), and inactive rows copy retained entries; these costs are included. Common evaluation remains one combined launch. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **W1 launch port closed by `5ea35cdb`:** 64-thread specialized WW/SW/SS launches and fixed global row IDs; empty/inactive native publication semantics remain explicit. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
+| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; W1 uses separate 64-thread class launches with certified f32 Cartesian geometry and retained f64 general query proof. Ubiquitin SW costs 618–627 us per attempt and remains the largest candidate component. No new per-row clocks are inferred from launch p99/max. | **D0 completed at S4:** six exact-output-preserving fixed-frame captures show the latest/longest WW row spans 99.93–99.95% of instrumented kernel wall. Instrumentation overhead and all stage distributions follow below. **W1 closed by `5ea35cdb`:** its measured complete-stage gain is retained. The remaining general-iterator mismatch is explicit above; further whole-search design awaits a ruling rather than another single-mechanism experiment. |
 | Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
 
 S0 was discarded and S1 retained after their isolated comparisons. The
-current required next step is one diagnostic row/stage-clock measurement at
-S4, then **W1, the whole prototype search structure**, regardless of that
-measurement. The later ruling below supersedes the earlier S2/S5/B1/B2
-single-mechanism plan. W1 is measured as one correction against S4. Evaluation items E1–E3 resume
-after search; E4 needs its own concrete proposal before implementation.
+required D0 diagnostic at S4 and **W1 whole search port** are complete.
+W1 has a measured gain but leaves the recorded large prototype gap. The later ruling below supersedes the earlier S2/S5/B1/B2
+single-mechanism plan. W1 was measured as one correction against S4. Further whole search
+work versus resuming evaluation items E1–E3 awaits the next ruling; E4 needs its own concrete proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
 ### S0 isolated measurement: padded-lane box guard
@@ -874,6 +873,181 @@ The first helper attempt failed before JIT execution because the full host runti
 The required next step remains W1, the complete prototype search structure,
 regardless of this diagnostic result. No row-splitting experiment or further
 single-mechanism search correction is inserted before it.
+
+### W1: complete search correction against S4
+
+The whole correction is `5ea35cdb`. The source and build stayed fixed
+through the exact-coverage, sanitizer and two independent timing gates.
+CPU lowering passed 6/6; the first full build had one new helper API
+argument-order error, corrected once before a successful rebuild.
+Independent bounded CPU models passed 2,160 pair/singleton-box decisions
+and 28 directed threshold conversions. Three host underflow coefficients
+were rounded outward during source review, before device comparisons.
+All six push checks passed. Production PTX for all three classes has
+rounded f64 division and square root, ordinary f32 arithmetic/FMA, and no
+FTZ or approximate instructions.
+
+Exact coverage and physical fixtures passed 22/22 in 139.38 seconds on
+RTX 5090, including boundary, seam, triclinic, reframed and growth cases,
+TIP3P/OPC energy/force and molecular virial. The focused sanitizer passed
+1/1 in 22.29 seconds: memcheck, initcheck and synccheck each reported
+zero errors; racecheck reported zero hazards. No numerical retry or bound
+change occurred.
+
+The subsequent documentation CPU tier reported 18 passed and one failed:
+the unchanged output-cleanup checker found nine fixtures added by this PR
+without an initial removal of their temporary outputs. Adding only those
+removal commands fixed the affected checker in one rerun (1/1 passed).
+No production code, checker, refusal or numerical bound changed, and no
+device result was rerun. The measured source head remains `5ea35cdb`;
+the follow-up commits contain fixture cleanup and this report.
+
+Both normal-protocol timing jobs completed with exit zero. All 48 wall
+runs exited zero; 47 were stationary. B ubiquitin TIP3P ON had no stationary
+trimmed plateau and is excluded, with no replacement or rerun. All 12
+profiles completed and were attributed to the nine ordered source roles.
+The unchanged protocol uses 24 main/ON/OFF/main runs and six ON profiles
+per job. S4 `f9ea87ef` is the retained corresponding A/B reference,
+not a same-job pairing. The main reference remains `af7a9f47`.
+
+| System | A ON ms/step | A ON/main | A normalized W1/S4 | B ON ms/step | B ON/main | B normalized W1/S4 |
+|---|---:|---:|---:|---:|---:|---:|
+| ubq OPC | 0.19246 | 1.581 | 0.952 | 0.19348 | 1.591 | 0.964 |
+| ubq TIP3P | 0.18999 | 1.947 | 0.949 | excluded | excluded | excluded |
+| OPC small | 0.09806 | 1.066 | 0.921 | 0.09787 | 1.065 | 0.919 |
+| OPC large | 0.20141 | 1.125 | 0.943 | 0.20120 | 1.122 | 0.942 |
+| TIP3P small | 0.09361 | 1.235 | 0.910 | 0.09340 | 1.232 | 0.910 |
+| TIP3P large | 0.18729 | 1.368 | 0.933 | 0.18737 | 1.368 | 0.932 |
+
+All 11 eligible normalized comparisons improve by 3.59–9.05% against S4;
+none has a raw ON-time slowdown. ON remains slower than main in every
+eligible comparison. OFF/main is 0.999–1.002. The largest bracketing-main
+spread is 0.45%. These are observed differences, not a statistical
+significance or automatic-selection claim.
+
+The following microseconds are per captured refresh attempt, including
+initial growth. W1 net9 includes histogram clear, preparation/boxes,
+three scans, class clear and three candidate kernels. S4 net7 includes
+the corresponding indexing/preparation plus its combined candidate kernel.
+All overhead, including empty-class launches, is included.
+
+| System | Job | Attempts | Index clear | Prep/boxes | Three scans | Class clear | WW | SW | SS | W1 net9 | S4 net7 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ubq OPC | A | 413 | 0.412 | 3.619 | 2.365 | 0.716 | 207.623 | 619.818 | 267.860 | 1102.414 | 1304.301 |
+| ubq OPC | B | 421 | 0.412 | 3.617 | 2.362 | 0.715 | 204.835 | 618.174 | 269.042 | 1099.156 | 1296.071 |
+| ubq TIP3P | A | 425 | 0.422 | 3.611 | 2.401 | 0.708 | 214.297 | 626.556 | 283.587 | 1131.582 | 1309.805 |
+| ubq TIP3P | B | 422 | 0.422 | 3.613 | 2.399 | 0.708 | 215.799 | 626.977 | 276.632 | 1126.551 | 1320.359 |
+| OPC small | A | 174 | 0.426 | 3.618 | 2.469 | 0.714 | 407.188 | 0.403 | 0.402 | 415.219 | 911.250 |
+| OPC small | B | 176 | 0.425 | 3.622 | 2.468 | 0.712 | 408.087 | 0.399 | 0.403 | 416.116 | 912.623 |
+| OPC large | A | 192 | 0.432 | 3.682 | 2.404 | 0.713 | 435.397 | 0.407 | 0.407 | 443.442 | 1113.576 |
+| OPC large | B | 193 | 0.429 | 3.679 | 2.407 | 0.712 | 435.609 | 0.406 | 0.404 | 443.645 | 1111.963 |
+| TIP3P small | A | 190 | 0.418 | 3.628 | 2.414 | 0.708 | 410.943 | 0.412 | 0.404 | 418.927 | 921.705 |
+| TIP3P small | B | 188 | 0.417 | 3.628 | 2.415 | 0.710 | 409.399 | 0.412 | 0.403 | 417.384 | 921.362 |
+| TIP3P large | A | 206 | 0.418 | 3.686 | 2.462 | 0.713 | 437.174 | 0.409 | 0.404 | 445.268 | 1120.258 |
+| TIP3P large | B | 205 | 0.419 | 3.687 | 2.461 | 0.711 | 436.817 | 0.406 | 0.406 | 444.907 | 1118.512 |
+
+Net per-attempt time improves in all 12 comparisons, by 13.61–60.25%.
+Including the actual captured cadence gives 12.06–60.03% improvement in
+net search-stage time per step. Attempts are not active per-class rebuilds:
+WW follows W, SW follows W-or-S and SS follows S; an inactive class copies
+retained rows. Every attempt launches all three classes, including a
+minimum-grid empty launch. These empty SW/SS launches cost about 0.4
+microseconds each in water boxes and remain in the budget.
+
+The direct class-kernel comparison below gives native/prototype
+microseconds per native attempt or prototype class event. It is not
+matched-work causality: native attempts include inactive copies, while
+the prototype has separate WW and SW/SS schedules and different replay
+geometry. Water-only prototype SW/SS launches are absent; native empty
+launches are already included above.
+
+| System | WW A native/prototype | SW A native/prototype | SS A native/prototype | WW B native/prototype | SW B native/prototype | SS B native/prototype |
+|---|---:|---:|---:|---:|---:|---:|
+| ubq OPC | 207.623 / 54.325 | 619.818 / 29.438 | 267.860 / 58.017 | 204.835 / 54.213 | 618.174 / 29.363 | 269.042 / 57.922 |
+| ubq TIP3P | 214.297 / 54.292 | 626.556 / 29.853 | 283.587 / 58.917 | 215.799 / 54.033 | 626.977 / 29.829 | 276.632 / 59.053 |
+| OPC small | 407.188 / 56.425 | empty / absent | empty / absent | 408.087 / 56.370 | empty / absent | empty / absent |
+| OPC large | 435.397 / 63.188 | empty / absent | empty / absent | 435.609 / 63.245 | empty / absent | empty / absent |
+| TIP3P small | 410.943 / 57.159 | empty / absent | empty / absent | 409.399 / 57.115 | empty / absent | empty / absent |
+| TIP3P large | 437.174 / 63.345 | empty / absent | empty / absent | 436.817 / 63.484 | empty / absent | empty / absent |
+
+| System | Native preparation A/B | Prototype WW boxes A/B | Prototype SW/SS boxes A/B |
+|---|---:|---:|---:|
+| ubq OPC | 3.619 / 3.617 | 1.290 / 1.288 | 2.358 / 2.351 |
+| ubq TIP3P | 3.611 / 3.613 | 1.292 / 1.290 | 2.448 / 2.445 |
+| OPC small | 3.618 / 3.622 | 1.271 / 1.272 | absent |
+| OPC large | 3.682 / 3.679 | 1.403 / 1.403 | absent |
+| TIP3P small | 3.628 / 3.628 | 1.260 / 1.259 | absent |
+| TIP3P large | 3.686 / 3.687 | 1.400 / 1.407 | absent |
+
+Native preparation includes all hybrid descriptors, Cartesian-anchor
+cache production, fractional boxes and the descriptor histogram. The
+prototype box events cover their respective active classes. The scopes
+and cadence differ; no combined prototype preparation event is invented.
+
+| System | W1 candidate us/step A/B | Prototype candidate us/step A/B | Ratio A/B |
+|---|---:|---:|---:|
+| ubq OPC | 45.236 / 45.975 | 3.061 / 3.055 | 14.779 / 15.050 |
+| ubq TIP3P | 47.789 / 47.239 | 3.271 / 3.269 | 14.609 / 14.450 |
+| OPC small | 7.099 / 7.196 | 0.980 / 0.979 | 7.244 / 7.350 |
+| OPC large | 8.375 / 8.423 | 1.197 / 1.198 | 6.995 / 7.029 |
+| TIP3P small | 7.823 / 7.712 | 1.083 / 1.082 | 7.224 / 7.126 |
+| TIP3P large | 9.023 / 8.971 | 1.267 / 1.270 | 7.122 / 7.066 |
+
+The prototype figures are the retained unchanged RTX 5090 captures, with
+their own reference schedules and replay geometry. Native dynamics evolves
+independently. The ratios are remaining-gap context, not matched-work
+causality, equivalent coverage contracts or whole-step speedups. Summing
+one prototype WW event and one SW+SS event gives an algebraic aligned-cost
+ratio of 6.894–7.860; it is not a jointly observed event or a literal
+refresh-rate multiplier.
+
+The structural difference still present in source is explicit: native
+first-occurrence frame subsets, integer-image enumeration and conservative
+fractional column/z-image bounds remain, including for SW/SS. The
+prototype scans direct class spans with its narrower nearest-image box
+assumption. Native z binary searches are gone. Certificate setup and the
+literal f64 shell add static code; neither their dynamic contribution nor
+the iterator's isolated time is measured by these profiles. SW is the
+largest observed candidate component in ubiquitin, 618–627 microseconds
+per attempt, versus 205–216 WW and 268–284 SS. Sort and group planning
+are only 62 and 42–44 microseconds there. This evidence does not justify
+attributing the remaining gap to throughput, spills or one instruction.
+
+| Candidate | Registers | Stack bytes | Application shared bytes | ELF shared bytes | Non-NOP SASS |
+|---|---:|---:|---:|---:|---:|
+| W1 WW | 168 | 128 | 1152 | 2176 | 4926 |
+| W1 SW | 128 | 152 | 1152 | 2176 | 4938 |
+| W1 SS | 168 | 136 | 1280 | 2304 | 5590 |
+| S4 combined | 168 | 168 | 896 | 1920 | 4091 |
+| Prototype WW | 112 | 0 | not separated | 34304 | 1137 |
+| Prototype SW | 102 | 0 | not separated | 34304 | 940 |
+| Prototype SS | 102 | 0 | not separated | 34432 | 1368 |
+
+W1/S4 ELF shared figures include the explicit 1024-byte compiler reserve;
+prototype figures are the archived resource reports, without assuming an
+equivalent reserve split. All candidate blocks have 64 threads. Both
+native models produce identical role cubins. Preparation uses 46 registers
+and zero stack/shared, versus S4's 60-register preparation. Clear/scans
+are byte-identical to S4. Static footprints are not executed instruction
+counts or spill traffic; explicit spill bytes were not collected. The
+clear's static 8/CUPTI 16 register discrepancy remains unresolved and is
+not explained by an invented driver-rounding rule. Source order, launch
+resources and surrounding context identify roles; generic kernel names
+alone do not establish actual binary identity.
+
+The two initial timing wrappers failed before opening their first output
+log because preparation omitted group-write permissions. Both records
+were retained; neither reached the MDIR spawn or produced numerical or
+profile artifacts. One permission correction and actual-account write
+preflight preceded the one corrected submission per job. Analyzer setup
+also had one deterministic whitespace syntax error, corrected before it
+wrote results. These are harness corrections, not numerical retries.
+
+W1 is retained for its measured gain, but the remaining large prototype
+gap is not closed by this correction. No further search optimization or
+remaining final gate follows without the maintainer's ruling on the next
+whole correction. The parked norm proof guard and evaluation items remain
+pending; this is not a ready claim.
 
 ### Precision contract for the whole search port and future pruning
 
