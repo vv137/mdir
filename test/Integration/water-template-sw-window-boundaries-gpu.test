@@ -1,0 +1,8 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records
+# RUN: %python %S/Inputs/ordered_row_work_probe.py generate %t.input.mlir %t.reference.json
+# RUN: mdir-opt %t.input.mlir --test-md-ordered-row-work | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/ordered_row_work_probe.py check %t.records %t.reference.json
+# Exact primitive controls/entries across0/1/127/128/129jobs and
+# 0/1/31/32/63/64/65keeps, partial chunk across an explicit frame flush,
+# query metadata transport, and overflow-skipped initialized payload tails.

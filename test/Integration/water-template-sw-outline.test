@@ -1,0 +1,13 @@
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records %t.split.records %t.unsplit.records
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --reframed
+# RUN: mdir-opt %t.input.mlir --test-md-template-search | FileCheck %s --check-prefix=SPLIT
+# RUN: mdir-opt %t.input.mlir --test-md-template-search='force-unsplit-sw=true' | FileCheck %s --check-prefix=UNSPLIT
+# SPLIT: memref<128x16x4xi32
+# SPLIT: memref<128x16xi32
+# SPLIT: memref<2xi64
+# SPLIT: gpu.barrier
+# UNSPLIT-NOT: memref<128x16x4xi32
+# UNSPLIT: func.func @main
+# UNSPLIT-NOT: memref<128x16x4xi32
+# CPU outlining only: default SW owns a bounded descriptor window; the
+# exact ordered reference retains the original single-warp row path.

@@ -1141,6 +1141,13 @@ about 60% of the saving was in the pair kernel and 40% in the lists; in a
 solvated protein the solute's lists and the packing of the waters take
 part of it back.
 
+The native SW strategy can distribute a row's bounded descriptor windows
+among several warps while one owner publishes the surviving records. The
+specialized and general searches must agree on every entry field and on
+class counts and capacity behavior; within-row entry order is not a physical
+contract. Deterministic execution keeps the general path. Reference epochs,
+coverage margins and the physical comparison bounds do not change.
+
 The **class-segmented pair list** is one buffer of cluster pairs divided
 into segments by class-pair tag: WW, SW and SS here. For $P$ particle
 classes, $P(P+1)/2$ unordered class-pair segments, including

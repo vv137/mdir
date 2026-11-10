@@ -234,6 +234,8 @@ and bypasses that floor. CPU, non-mixed, deterministic and derivative
 programs remain general and refuse `ON` by name. The choice is recorded
 in the execution fingerprint and may change on continuation. Section 4.7
 and the decision file give the match, force-output and coverage contracts.
+Cooperative SW search adds no key or independent reference epoch; it keeps
+exact entry sets and the existing capacity and physical contracts.
 
 The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering

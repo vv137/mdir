@@ -19,6 +19,8 @@ struct TemplateSearchBuffers {
   /// f32 Cartesian min/max of wrapped references, two rows per group.
   /// Independent of the growing pair arena; built before candidate search.
   mlir::Value groupBoxes, fractionalBoxes;
+  /// Test-only exact ordered reference; production leaves cooperative SW enabled.
+  bool forceUnsplitSW = false;
 };
 /// Search each active class row once, with explicit periodic images and
 /// per-entry masks. Inactive rows copy retained outer records instead.

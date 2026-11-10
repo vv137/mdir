@@ -102,6 +102,10 @@ The same-accuracy execution choice `[performance]`
 `"water.template" = "AUTO" | "ON" | "OFF"` belongs to
 D[rigid-water-template]. Its implementation is in progress; its accepted
 contract is in the [decision](decisions/rigid-water-template.md).
+Cooperative SW row scheduling changes no control key or reference epoch.
+Specialized searches preserve every entry field, class count and capacity
+contract; their within-row order may differ. Deterministic execution retains
+the general path.
 The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
 are preserved; deterministic, double, CPU and derivative programs retain

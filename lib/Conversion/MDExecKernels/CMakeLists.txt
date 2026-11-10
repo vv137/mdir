@@ -1,4 +1,5 @@
 add_mlir_conversion_library(MDIRMDExecKernels
+  OrderedRowWorkEmitter.cpp
   CompactionEmitter.cpp
   ExpandPrimitives.cpp
   GatherEmitter.cpp
