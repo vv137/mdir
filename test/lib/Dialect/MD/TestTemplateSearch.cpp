@@ -114,6 +114,7 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.build.outerEntries = view(TEMPLATE_LAYOUT_OUTER_ENTRIES);
     v.build.stageUnits = view(TEMPLATE_LAYOUT_STAGE_UNITS);
     v.build.stageEntries = view(TEMPLATE_LAYOUT_STAGE_ENTRIES);
+    v.spatial.sortScratch = v.build.stageEntries;
     v.build.counts = view(TEMPLATE_LAYOUT_BUILD_COUNTS);
     v.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
     v.excludedRows = call("mdrtTemplatePairsMetadata",

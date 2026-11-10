@@ -88,6 +88,9 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       a.arena = call(in, "mdrtTemplatePairsBuffer", ValueRange{v.handle}, device, true);
       a.stageUnits = view(in, TEMPLATE_LAYOUT_STAGE_UNITS);
       a.stageEntries = view(in, TEMPLATE_LAYOUT_STAGE_ENTRIES);
+      // Staging is unused until the subsequent search. Its 256 words per
+      // work capacity cover four words per unit even at the minimum arena.
+      p.sortScratch = a.stageEntries;
       a.counts = view(in, TEMPLATE_LAYOUT_BUILD_COUNTS);
       a.entryOffsets = view(in, TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS);
       a.workCounts = view(in, TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);

@@ -4,11 +4,16 @@ Four activity combinations check keys, z keys, bin counts/starts, sorted
 items, padded order and inverse places. Repeated points test fixed-ID ties;
 coordinates just below one test f32 narrowing and the final-bin clamp.
 """
+import argparse
 import pathlib
 import struct
 import sys
 
-waters, atoms, nx, ny = 19, 21, 3, 2
+parser = argparse.ArgumentParser()
+parser.add_argument('output')
+parser.add_argument('--large', action='store_true')
+args = parser.parse_args()
+waters, atoms, nx, ny = (257, 259, 7, 8) if args.large else (19, 21, 3, 2)
 size = waters + atoms
 points = [[((i * 7) % 32) / 32, ((i * 11) % 16) / 16, ((i * 5) % 8) / 8]
           for i in range(size)]
@@ -44,7 +49,7 @@ seed_inverse = [2000 + i for i in range(size)]
 
 shapes = [f'{size}x3xf64', f'{size}xi32', f'{size}xi32', f'{len(counts)}xi32',
           f'{len(starts)}xi32', f'{len(counts)}xi32', f'{size}xi32', '1xi32',
-          f'{places}xi32', f'{size}xi32']
+          f'{places}xi32', f'{size}xi32', f'{4 * size}xi32']
 device_types = [f'memref<{shape}, 1>' for shape in shapes]
 lines = []
 
@@ -164,4 +169,4 @@ lines.extend([f'  func.call @printI64({one}) : (i64) -> ()',
               '  func.call @printNewline() : () -> ()',
               '  func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()',
               '  return', '}'])
-pathlib.Path(sys.argv[1]).write_text('\n'.join(lines) + '\n')
+pathlib.Path(args.output).write_text('\n'.join(lines) + '\n')

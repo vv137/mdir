@@ -398,8 +398,8 @@ struct TestTemplateSpatial
   }
   void runOnOperation() final {
     auto function = getOperation().lookupSymbol<func::FuncOp>("spatial_probe");
-    if (!function || !function.isExternal() || function.getNumArguments() != 16) {
-      getOperation().emitError("spatial fixture expects the sixteen-argument spatial_probe declaration");
+    if (!function || !function.isExternal() || function.getNumArguments() != 17) {
+      getOperation().emitError("spatial fixture expects the seventeen-argument spatial_probe declaration");
       return signalPassFailure();
     }
     Block *entry = function.addEntryBlock();
@@ -408,6 +408,7 @@ struct TestTemplateSpatial
     TemplateSpatialBuffers v;
     Value *buffers[] = {&v.points, &v.keys, &v.zKeys, &v.counts, &v.starts,
                        &v.cursors, &v.items, &v.scanScratch, &v.order, &v.places,
+                       &v.sortScratch,
                        &v.waters, &v.atoms, &v.columnsX, &v.columnsY,
                        &v.waterActive, &v.atomActive};
     for (auto [i, value] : llvm::enumerate(buffers)) *value = entry->getArgument(i);

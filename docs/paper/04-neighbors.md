@@ -1218,6 +1218,14 @@ one compiler interface. The same radial canonicalization and D94 table
 admission then apply to both, retaining the original error criterion and
 analytic fallback; the physical expression remains the source body.
 
+The native spatial order uses one stable counting sort of the joint
+column and z key, with the unit ID breaking ties. Each digit composes
+the shared scan, cursor scatter and rank primitives. Ranking input
+positions within the digit restores stability after the atomic scatter,
+so successive digits preserve both the lower keys and the fixed-ID ties.
+This changes the construction of the order, not the groups, covering
+predicate or physical pair expression.
+
 ![Which distances the structure tests](figures/rigid-water-members.png)
 
 *Figure 4.1. A pair of OPC waters to scale. Left: in the general
