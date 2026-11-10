@@ -1,6 +1,6 @@
 # The frames of a run of dynamics are staged by the call of each frame and
 # written by a thread of their own while the steps go on (D[async-output],
-# #113). Here the thread holds each frame back by 20 ms
+# #113). Here the thread holds each frame back by 100 ms
 # (MDIR_FRAME_WRITE_DELAY), much longer than the 10 steps between two
 # frames: its ring of 3 slots fills, and the call of a later frame waits for
 # a slot. The checkpoints, which count the frames of the trajectory (D130),
@@ -20,8 +20,8 @@
 # RUN: sed -e 's|run.dcd|run.xtc|' -e 's|run.h5|xtc.h5|' -e 's|energies.txt|xtc.txt|' %t/run.toml > %t/plain/xtc.toml
 # RUN: cp %t/plain/xtc.toml %t/held/xtc.toml
 # RUN: cd %t/plain && mdir run run.toml > out && mdir run xtc.toml > /dev/null
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 mdir run xtc.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run xtc.toml > /dev/null
 # RUN: FileCheck %s < %t/held/err
 # RUN: cmp %t/plain/run.dcd %t/held/run.dcd
 # RUN: cmp %t/plain/run.xtc %t/held/run.xtc
@@ -32,8 +32,8 @@
 # RUN: mdir checkpoint %t/plain/run.h5 %t/held/run.h5 | FileCheck %s --check-prefix=SAME
 # RUN: mdir checkpoint %t/plain/run.h5.prev %t/held/run.h5.prev | FileCheck %s --check-prefix=SAME
 #
-# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 run.toml | FileCheck %s --check-prefix=STOP
-# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 mdir run --continue run.toml > /dev/null
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=100 %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 run.toml | FileCheck %s --check-prefix=STOP
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=100 mdir run --continue run.toml > /dev/null
 # RUN: cmp %t/plain/run.dcd %t/part/run.dcd
 # RUN: cmp %t/plain/energies.txt %t/part/energies.txt
 # RUN: mdir checkpoint %t/plain/run.h5 %t/part/run.h5 | FileCheck %s --check-prefix=SAME

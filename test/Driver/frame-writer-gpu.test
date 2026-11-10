@@ -2,7 +2,7 @@
 # call of each frame copies the positions and the numbers of the particles
 # within the device, on the stream of the kernels, and from there to pinned
 # memory of the host on a stream of copies, which the thread of the frames
-# waits for. Each write is held back by 20 ms, so the ring fills and the
+# waits for. Each write is held back by 100 ms, so the ring fills and the
 # steps go on past frames whose copies the thread has not yet read. The
 # trajectories in DCD and H5MD, the energies, and the checkpoints are those
 # of a run whose frames are not held back, byte for byte, and so are those
@@ -19,8 +19,8 @@
 # RUN: sed -e 's|run.dcd|run.h5md|' -e 's|run.h5"|exact.h5"|' -e 's|energies.txt|exact.txt|' %t/run.toml > %t/plain/exact.toml
 # RUN: cp %t/plain/exact.toml %t/held/exact.toml
 # RUN: cd %t/plain && mdir run run.toml > out && mdir run exact.toml > /dev/null
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=20 mdir run exact.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run exact.toml > /dev/null
 # RUN: FileCheck %s < %t/held/err
 # RUN: cmp %t/plain/run.dcd %t/held/run.dcd
 # RUN: cmp %t/plain/energies.txt %t/held/energies.txt
@@ -31,8 +31,8 @@
 # RUN: diff %t/plain/rows %t/held/rows
 # RUN: mdir checkpoint %t/plain/run.h5 %t/held/run.h5 | FileCheck %s --check-prefix=SAME
 #
-# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 run.toml | FileCheck %s --check-prefix=STOP
-# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=20 mdir run --continue run.toml > /dev/null
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=100 %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 run.toml | FileCheck %s --check-prefix=STOP
+# RUN: cd %t/part && env MDIR_FRAME_WRITE_DELAY=100 mdir run --continue run.toml > /dev/null
 # RUN: cmp %t/plain/run.dcd %t/part/run.dcd
 # RUN: cmp %t/plain/energies.txt %t/part/energies.txt
 # RUN: mdir checkpoint %t/plain/run.h5 %t/part/run.h5 | FileCheck %s --check-prefix=SAME

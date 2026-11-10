@@ -414,7 +414,10 @@ frames from a ring of three slots (Section 3.6). The same runs take
 0.1591 ms/step with DCD (+0.8%) and 0.1594 with XTC (+0.9%), against 0.1579
 with the energies alone; on a box of 12,600 atoms of TIP3P water, 0.1168
 and 0.1164 against 0.1151 (+1.5% and +1.1%), where the frames took 0.1371
-and 0.1605 before (+19.1% and +39.4%). The four runs of each program and
+and 0.1605 before (+19.1% and +39.4%). On Cellulose (408,609 atoms), a DCD
+frame every 100 steps took 5.3 ms of the run and an XTC frame 13.8 ms
+(1.2238 and 1.3082 ms/step against 1.1704 with the energies alone); now
+1.1698 and 1.1715 ms/step. The four runs of each program and
 setting lie within 0.002 ms/step of one another. The files are those of
 before, byte for byte (the contents
 of the H5MD files, whose library writes other bytes from run to run), in
