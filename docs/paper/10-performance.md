@@ -680,7 +680,7 @@ NVE protocol, the step takes 1.48 to 1.70 times less time in mixed precision
 and 1.31 to 1.45 times less in double, at 1 and 16 threads, on an EPYC 7543
 and an EPYC 9354 (the latter with 16 and 8 lanes). At 16 threads in mixed
 precision the loop's share of JAC's step falls from 57.0% to 33.5% on the
-EPYC 7543. In double precision it stays near 75%, since the complementary
+EPYC 7543. In double precision it stays near 75% (EPYC 9354), since the complementary
 error function is still called once a lane. Tables 10.8 and 10.9 were not
 measured again.
 
