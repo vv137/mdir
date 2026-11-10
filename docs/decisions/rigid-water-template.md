@@ -1299,7 +1299,9 @@ unrecognized window expressions retain their existing derivative path.
 The common pair-kernel-body interface supplies D94 radial extraction for
 both ordinary pairs and template windows.
 
-The constructed force layout carries O/H1/H2/E interaction-site forces
+A proved site set with no formed-site contribution keeps three force
+slots per water, including three-site models. Otherwise the constructed
+force layout carries O/H1/H2/E interaction-site forces
 through accumulation, then applies rule A once at each molecular write:
 $\mathbf F_O \mathrel{+}= (1-2\alpha)\mathbf F_E$ and
 $\mathbf F_{H_i} \mathrel{+}= \alpha\mathbf F_E$.

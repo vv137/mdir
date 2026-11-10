@@ -263,7 +263,11 @@ static void mergeOuts(TemplateForOp loop, unsigned into, unsigned from) {
     for (unsigned column = 0; column != outs; ++column) {
       if (column == from) continue;
       int32_t flag = oldFlags ? oldFlags[tag * outs + column] : 0;
-      if (column == into) flag &= oldFlags ? oldFlags[tag * outs + from] : 0;
+      if (column == into) {
+        int32_t other = oldFlags ? oldFlags[tag * outs + from] : 0;
+        if (!loop.getPairs()[tag * columns + into]) flag = other;
+        else if (loop.getPairs()[tag * columns + from]) flag &= other;
+      }
       flags.push_back(flag);
     }
   if (oldFlags)

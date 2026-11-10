@@ -18,13 +18,13 @@
 # MIXED: arith.addf {{.*}} : f64
 # MIXED-LABEL: func.func @window_forces
 # MIXED: scf.if
-# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>)
+# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>)
 # MIXED-LABEL: func.func @window_virial
 # MIXED: scf.if
 # MIXED: arith.extf {{.*}} : vector<9xf32> to vector<9xf64>
 # CHECK-LABEL: func.func @window_forces
 # CHECK: scf.if
-# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>)
+# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>)
 # CHECK: return
 # CHECK-LABEL: func.func @window_virial
 # CHECK: scf.if
