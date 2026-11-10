@@ -126,8 +126,12 @@ for phase, (wa, aa) in enumerate([(True, True), (True, False), (False, True), (F
     yes_w = emit(f'arith.constant {str(wa).lower()}')
     yes_a = emit(f'arith.constant {str(aa).lower()}')
     types = ['memref<?xi32, 1>'] * 5 + ['memref<?x3xf64, 1>'] * 2
-    types += ['index', f'vector<{len(cell)}xf64>', 'vector<3xf64>', 'i1', 'i1', 'memref<?xi32, 1>']
-    args = [v[1] for v in buffers] + [w, c, r, yes_w, yes_a, observed_buffer[1]]
+    types += ['index', f'vector<{len(cell)}xf64>', 'vector<3xf64>', 'i1', 'i1', 'memref<?xi32, 1>', 'memref<?xi32, 1>']
+    lengths = [0] * len(order)
+    for start in (0, 16, 32, 48):
+        lengths[start] = sum(i >= 0 for i in order[start:start + 16])
+    length_buffer = alloc(f'p{phase}_lengths', lengths, 'i32')
+    args = [v[1] for v in buffers] + [w, c, r, yes_w, yes_a, observed_buffer[1], length_buffer[1]]
     lines.append(f'  func.call @prune_work({", ".join(args)}) : ({", ".join(types)}) -> ()')
     checks = [(buffers[0], flatten(units)), (buffers[1], flatten(inner_units)),
               (buffers[2], flatten(entries)), (buffers[3], flatten(inner_entries)),
@@ -148,7 +152,7 @@ for phase, (wa, aa) in enumerate([(True, True), (True, False), (False, True), (F
                       '  func.call @printNewline() : () -> ()', '  }'])
         lines.append(f'  memref.dealloc {host} : memref<{shape}>')
         expected.extend(values)
-    for device, _, shape in buffers + [observed_buffer]:
+    for device, _, shape in buffers + [observed_buffer, length_buffer]:
         generic = emit(f'memref.memory_space_cast {device} : memref<{shape}, 1> to memref<{shape}>')
         lines.append(f'  gpu.dealloc {generic} : memref<{shape}>')
 lines.extend(['  return', '}'])

@@ -26,5 +26,15 @@ SpatialBoundingBox emitSpatialWarpBox(mlir::OpBuilder &, mlir::Location,
 mlir::Value emitSpatialBoxesWithinReach(mlir::OpBuilder &, mlir::Location,
     SpatialBoundingBox first, SpatialBoundingBox second, mlir::Value shift,
     mlir::Value reach, mlir::Value roundoff);
+struct SpatialSingleImage {
+  mlir::Value proved, image;
+};
+/// A fractional difference interval expanded by radius and roundoff has
+/// at most one integer image when its width is strictly below one on all
+/// axes. Returns that integer (or a harmless false-positive image when the
+/// interval contains none). Unproved cases require explicit images.
+SpatialSingleImage emitSpatialSingleImage(mlir::OpBuilder &, mlir::Location,
+    SpatialBoundingBox first, SpatialBoundingBox second, mlir::Value radius,
+    mlir::Value roundoff);
 }
 #endif

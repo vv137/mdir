@@ -28,7 +28,7 @@ def record(row, entry):
 
 for row, count in enumerate(counts):
     tag = row // 2
-    first = 16 * row if tag == 0 else 32 + 16 * (row % 2)
+    first = 16 * row if tag == 0 else 17 + 16 * (row % 2)
     rows.extend([tag, first, offsets[-1], count])
     for begin in range(0, count, 64):
         units.extend([tag, first, offsets[-1] + begin, offsets[-1] + min(begin + 64, count)])
@@ -55,6 +55,7 @@ for name, data in expected.items():
     lines.append(f'memref.global "private" constant @{name} : memref<{len(data)}xi32> = dense<{data}>')
 lines.extend(['func.func private @compact_seed(!list)',
               'func.func private @mdrtTemplatePairsBuffer(!list) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}',
+              'func.func private @mdrtTemplatePairsGroupView(!list, i64) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}',
               'func.func private @mdrtTemplatePairsArenaView(!list, i64) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}',
               'func.func private @mdrtTemplatePairsLayoutValue(!list, i64) -> i64',
               'func.func private @mdrtTemplatePairsGrow(!list, i64) -> i64',
@@ -174,6 +175,19 @@ else:
 lines.extend(['  %ready = gpu.wait async',
               '  %done = gpu.memcpy async [%ready] %arena, %host : memref<?xi32, 1>, memref<?xi32>',
               '  gpu.wait [%done]', '  memref.dealloc %host : memref<?xi32>'])
+# This isolated compactor fixture seeds its explicit two groups per class.
+# The search fixture publishes variable descriptors through the real planner.
+slot = emit('arith.constant 0 : i64')
+groups = emit(f'func.call @mdrtTemplatePairsGroupView(%list, {slot}) : (!list, i64) -> memref<?xi32, 1>')
+length = index(34)
+host = emit(f'memref.alloc({length}) : memref<?xi32>')
+for group, start in [(0, 0), (1, 16), (17, 17), (18, 33)]:
+    at = index(group)
+    value = emit(f'arith.constant {start} : i32')
+    lines.append(f'  memref.store {value}, {host}[{at}] : memref<?xi32>')
+ready = emit('gpu.wait async')
+copied = emit(f'gpu.memcpy async [{ready}] {groups}, {host} : memref<?xi32, 1>, memref<?xi32>')
+lines += [f'  gpu.wait [{copied}]', f'  memref.dealloc {host} : memref<?xi32>']
 if append:
     lines.append('  func.call @append_seed(%list) : (!list) -> ()')
 if not overflow and not index_overflow:

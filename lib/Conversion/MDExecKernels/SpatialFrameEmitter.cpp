@@ -58,3 +58,32 @@ Value mdir::kernels::emitSpatialBoxesWithinReach(OpBuilder &b, Location loc,
   // pair test, rather than becoming a false rejection by the prefilter.
   return arith::CmpFOp::create(b, loc, arith::CmpFPredicate::ULE, lower, upper);
 }
+
+SpatialSingleImage mdir::kernels::emitSpatialSingleImage(OpBuilder &b,
+    Location loc, SpatialBoundingBox first, SpatialBoundingBox second,
+    Value radius, Value roundoff) {
+  Value proved = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
+  SmallVector<Value, 3> images;
+  auto real = [&](double x) { return createReal(b, loc, b.getF64Type(), x); };
+  for (int64_t axis = 0; axis != 3; ++axis) {
+    auto component = [&](Value x) -> Value {
+      return vector::ExtractOp::create(b, loc, x, axis);
+    };
+    Value margin = arith::AddFOp::create(b, loc, component(radius), component(roundoff));
+    Value low = arith::SubFOp::create(b, loc,
+        arith::SubFOp::create(b, loc, component(first.minimum), component(second.maximum)), margin);
+    Value high = arith::AddFOp::create(b, loc,
+        arith::SubFOp::create(b, loc, component(first.maximum), component(second.minimum)), margin);
+    Value width = arith::SubFOp::create(b, loc, high, low);
+    // Wrapped boxes are in [0,1]; this additional absolute envelope
+    // dominates the endpoint/subtraction/center rounding at that scale.
+    Value narrow = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT,
+        width, real(1 - 0x1p-40));
+    proved = arith::AndIOp::create(b, loc, proved, narrow);
+    Value center = arith::MulFOp::create(b, loc,
+        arith::AddFOp::create(b, loc, low, high), real(0.5));
+    images.push_back(math::FloorOp::create(b, loc,
+        arith::AddFOp::create(b, loc, center, real(0.5))));
+  }
+  return {proved, vector::FromElementsOp::create(b, loc, first.minimum.getType(), images)};
+}

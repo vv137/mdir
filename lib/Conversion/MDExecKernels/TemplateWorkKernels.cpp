@@ -36,6 +36,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
   };
   Value tag = record(b, buffers.workOffset, work, 0);
   Value firstBegin = record(b, buffers.workOffset, work, 1);
+  Value firstLength = memref::LoadOp::create(b, loc, buffers.groupLengths,
+      ValueRange{index(b, firstBegin)});
   Value begin = record(b, buffers.workOffset, work, 2);
   Value end = record(b, buffers.workOffset, work, 3);
   SmallVector<Type> sumTypes;
@@ -47,12 +49,16 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
     unsigned firstSize = firstSizes[kind], secondSize = secondSizes[kind];
     unsigned arity = firstSize + secondSize;
     Block &source = loop->getRegion(kind).front();
+    Value local = arith::AndIOp::create(at, loc, lane, word(at, 15));
+    Value inSpan = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, local, firstLength);
+    Value limit = arith::SubIOp::create(at, loc,
+        arith::MaxUIOp::create(at, loc, firstLength, word(at, 1)), word(at, 1));
     Value place = arith::AddIOp::create(at, loc, firstBegin,
-        arith::AndIOp::create(at, loc, lane, word(at, 15)));
+        arith::MinUIOp::create(at, loc, local, limit));
     Value first = memref::LoadOp::create(at, loc, buffers.order,
                                          ValueRange{index(at, place)});
-    Value valid = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::sge,
-                                         first, word(at, 0));
+    Value valid = arith::AndIOp::create(at, loc, inSpan,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::sge, first, word(at, 0)));
     Value safeFirst = arith::SelectOp::create(at, loc, valid, first, word(at, 0));
     auto rowOf = [&](OpBuilder &body, Value unit) -> Value {
       Value water = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,

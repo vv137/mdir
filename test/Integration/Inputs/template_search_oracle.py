@@ -22,6 +22,7 @@ generate.add_argument('--reframed', action='store_true')
 generate.add_argument('--refresh', action='store_true')
 generate.add_argument('--seam', action='store_true')
 generate.add_argument('--boundary', action='store_true')
+generate.add_argument('--growth', action='store_true')
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -39,6 +40,38 @@ def sorted_units(points, waters):
         column = 2 * cx + (1 - cy if cx % 2 else cy)
         return (i >= waters, column, min(int(f32((1 << 21) * z)), (1 << 21) - 1), i)
     return sorted(range(len(points)), key=key)
+
+
+def group_reference(order, points, waters):
+    """Independent segment cuts; reference pair enumeration never uses these."""
+    def column(i):
+        x, y = (f32(v - math.floor(v)) for v in points[i][:2])
+        cx, cy = min(int(f32(3 * x)), 2), min(int(f32(2 * y)), 1)
+        return 2 * cx + (1 - cy if cx % 2 else cy)
+    z = [min(int(f32((1 << 21) * f32(points[i][2] - math.floor(points[i][2])))),
+             (1 << 21) - 1) for i in order]
+    gap = [int(.4 / 2 * (1 << 21)), int(.3 / 2 * (1 << 21))]
+    span = [int(.9 / 2 * (1 << 21)), int(.6 / 2 * (1 << 21))]
+    cuts = {i for i in range(len(order)) if i == 0 or i == waters or
+            column(order[i]) != column(order[i - 1]) or z[i] - z[i - 1] > gap[i >= waters]}
+    while True:
+        starts = sorted(cuts)
+        segments = list(zip(starts, starts[1:] + [len(order)]))
+        added = set()
+        for start, end in segments:
+            for begin in range(start, end, 16):
+                last = min(begin + 15, end - 1)
+                if z[last] - z[begin] > span[begin >= waters]:
+                    added.add(max((z[j] - z[j - 1], j) for j in range(begin + 1, last + 1))[1])
+        if not added:
+            break
+        assert not cuts & added
+        cuts |= added
+    groups = [[], []]
+    for start, end in segments:
+        for begin in range(start, end, 16):
+            groups[begin >= waters].append([begin, min(16, end - begin)])
+    return groups
 
 
 def expected_pairs(points, waters, atoms, tilted, allow_boundary=False):
@@ -73,13 +106,13 @@ if args.command == 'check':
     reference = json.loads(args.reference.read_text())
     words = iter(int(x) for x in args.records.read_text().split())
     waters, atoms = reference['waters'], reference['atoms']
-    water_rows, atom_rows = (waters + 15) // 16, (atoms + 15) // 16
     for phase, ref in enumerate(reference['phases']):
         assert next(words) == 917031 and next(words) == phase
         n = next(words)
         assert n == len(ref['order']), (phase, 'order length', n)
         order = [next(words) for _ in range(n)]
         assert order == ref['order'], (phase, 'order', order, ref['order'])
+        water_rows, atom_rows = map(len, ref['groups'])
         row_count = next(words)
         assert row_count == water_rows + 2 * atom_rows
         actual = set()
@@ -89,7 +122,7 @@ if args.command == 'check':
             tag, first, begin, count = (next(words) for _ in range(4))
             expected_tag = 0 if row < water_rows else 1 if row < water_rows + atom_rows else 2
             class_row = row if tag == 0 else row - water_rows if tag == 1 else row - water_rows - atom_rows
-            expected_first = 16 * class_row + (0 if tag == 0 else 16 * water_rows)
+            expected_first, first_length = ref['groups'][tag != 0][class_row]
             assert (tag, first, begin) == (expected_tag, expected_first, entries), (phase, row, tag, first, begin)
             assert 0 <= count <= 100000
             entries += count
@@ -102,6 +135,7 @@ if args.command == 'check':
                 for lane in range(16):
                     if not mask & (1 << lane):
                         continue
+                    assert lane < first_length, (phase, row, 'out-of-group I bit', lane)
                     i = order[first + lane]
                     assert i >= 0, (phase, row, 'padded I bit', lane)
                     assert (i < waters) if tag == 0 else (waters <= i < waters + atoms)
@@ -150,14 +184,21 @@ if args.boundary:
         points[begin][0] = radius
         points[begin + 1][0] = math.nextafter(radius, 0.)
         points[begin + 2][0] = math.nextafter(radius, math.inf)
+if args.growth:
+    for i in range(waters):
+        points[i] = [1 / 8, 1 / 8, 1 / 8 + (i % 4) / 256]
 phases = []
-water_places = ((waters + 15) // 16) * 16
-order = [-1] * (water_places + ((atoms + 15) // 16) * 16)
+water_places = waters
+order = [-1] * size
+retained_groups = [[], []]
 for phase, active in enumerate([(True, True), (False, True), (True, False), (False, False)]):
     if phase == 1:
         for i in range(waters, size):
             points[i][0] = (points[i][0] + 1 / 8) % 1
             points[i][2] = (points[i][2] + 1 / 16) % 1
+    if phase == 2 and args.growth:
+        for i in range(waters):
+            points[i] = [((i * 7) % 32) / 32, ((i * 11) % 16) / 16, ((i * 5) % 8) / 8]
     if phase == 2:
         for i in range(waters):
             points[i][0] = (points[i][0] + 1 / 16) % 1
@@ -165,12 +206,14 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
     sorted_ids = sorted_units(points, waters)
     for kind, start, count in [(0, 0, waters), (1, water_places, atoms)]:
         if active[kind]:
-            padded = water_places if kind == 0 else len(order) - water_places
-            order[start:start + padded] = [-1] * padded
             offset = 0 if kind == 0 else waters
             order[start:start + count] = sorted_ids[offset:offset + count]
+    planned = group_reference(sorted_ids, points, waters)
+    for kind in range(2):
+        if active[kind]:
+            retained_groups[kind] = planned[kind]
     pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
-    phases.append({'active': active, 'points': [row[:] for row in points], 'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
+    phases.append({'active': active, 'points': [row[:] for row in points], 'order': order[:], 'groups': [g[:] for g in retained_groups], 'pairs': pairs, 'minimum_r2_gap': gap})
 if args.reframed:
     for i, point in enumerate(points):
         for axis in range(3):
@@ -182,9 +225,13 @@ if args.reframed:
             ids = sorted_units(points, waters)
             order[:waters] = ids[:waters]
             order[water_places:water_places + atoms] = ids[waters:]
+            retained_groups = group_reference(ids, points, waters)
         pairs, gap = expected_pairs(points, waters, atoms, args.triclinic, args.boundary)
         phases.append({'active': active, 'points': [row[:] for row in points],
-                       'order': order[:], 'pairs': pairs, 'minimum_r2_gap': gap})
+                       'order': order[:], 'groups': [g[:] for g in retained_groups], 'pairs': pairs, 'minimum_r2_gap': gap})
+if args.growth:
+    assert len(phases[2]['groups'][0]) > len(phases[0]['groups'][0])
+    assert phases[2]['groups'][1] == phases[1]['groups'][1]
 cell = [2., 2., 2., 1., .5, 1.] if args.triclinic else [2., 2., 2.]
 args.reference.write_text(json.dumps({'waters': waters, 'atoms': atoms, 'cell': cell, 'phases': phases}))
 
@@ -287,8 +334,9 @@ func.func @dump(%list: !list, %phase: i64, %counter: memref<4xi64>) {
     %value = memref.load %order[%i] : memref<?xi32>
     func.call @show(%value) : (i32) -> ()
   }
-  %row_words = memref.dim %rows, %c0 : memref<?xi32>
-  %nr = arith.divui %row_words, %c4 : index
+  %row_slot = arith.constant 2 : i64
+  %logical_rows = func.call @mdrtTemplatePairsLayoutValue(%list, %row_slot) : (!list, i64) -> i64
+  %nr = arith.index_cast %logical_rows : i64 to index
   %nrw = arith.index_cast %nr : index to i64
   func.call @printI64(%nrw) : (i64) -> ()
   func.call @printNewline() : () -> ()

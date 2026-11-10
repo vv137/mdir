@@ -716,7 +716,7 @@ not a minimum-image substitute for the enumerated molecule-pair images.
 Exact dyadic fixtures cover both cell representations, independently
 wrapped hydrogens, face crossings, and large unwrapped coordinates.
 
-The physical work-record adapter reads the padded unit order, real-site
+The physical work-record adapter reads the compact unit order, real-site
 particle mapping and packed frames, decodes the partner's lattice image,
 and dispatches the three source bodies through a warp-uniform class tag.
 Input fields follow the same real-site mapping; force atomics target the
@@ -724,7 +724,7 @@ original particles. An isolated seeded-record GPU fixture uses the
 rotated-frame oracle below, with exact equality for all 469 values. It
 tests record consumption, not list generation or validity.
 
-Production GPU lowering uses activation-owned padded-order and packed-frame
+Production GPU lowering uses activation-owned compact-order and packed-frame
 views that survive pair-arena growth. It launches at most one warp per
 original particle and strides over the device-resident work count, so its
 sum scratch retains its fixed particle capacity and no work-count readback
@@ -761,43 +761,51 @@ those positions restores their prior order within a digit, preserving
 lower digits and fixed-ID ties. Digit widths balance the significant key
 bits across passes, with at most 256 buckets and no more buckets than
 the existing spatial-bin storage. Four temporary i32 words per unit
-borrow the staging arena before search; no allocation or persistent
+use independent planning scratch before search; no allocation or persistent
 order of an inactive class changes. The original column counts and
 offsets are republished after sorting for the unchanged search.
-Each class is cut into consecutive groups of sixteen, with padding
-at the class boundary. Rebuilding one mobility group leaves the other's
-padded order and inverse map untouched, while the search bins retain both
-groups' hybrid references. An independent lexicographic oracle checks
-996 integer values over all four group-activity combinations, including
-repeated-point ties and coordinates that round to the final bin edge.
+Each class is cut at column boundaries, adjacent gaps and refined spans
+through `emitSpatialGroupPlan` (device-primitives Section 4.12). Defaults
+are water/solute gaps 0.4/0.3 nm and spans 0.9/0.6 nm, quantized against
+the z face width. Groups have at most sixteen real units. The compact
+order and descriptor partitions have fixed class capacities. Rebuilding
+one mobility group leaves the other's order, lengths and inverse map
+untouched; the common grid stays fixed while a nonempty class is retained.
+Four-word work records keep their first-unit-begin meaning and read the
+explicit length from a separate view. Row-capacity growth preserves old
+completed lists and new spatial data. Inactive class rows use the previous
+header's class prefix when copied into their possibly moved new prefix.
+An independent lexicographic oracle checks 900 integer values over all
+four group-activity combinations, including repeated-point ties and
+coordinates that round to the final bin edge.
 The larger 516-unit variant also crosses launch blocks and exercises a
 different digit decomposition with many equal full keys.
 The search forms boxes in the wrapped key frame through the shared
-`SpatialFrameEmitter.h` helpers. A fixed sixteen-unit group queries each
+`SpatialFrameEmitter.h` helpers. An at-most-sixteen-unit group queries each
 of its distinct lattice-frame subsets once, retaining disjoint masks.
 Query images add the first unit's lattice frame before the original f64
 subtraction and compensate the partner's frame in the stored image code.
 This tightens boxes at the reference-frame seam without changing the pair
-predicate, groups or image coverage. All 32 lanes reach each masked box
+predicate or image coverage. All 32 lanes reach each masked box
 reduction; a queried subset always contains its representative. The
 all-images oracle also covers groups spanning eight distinct frames in
 orthorhombic and triclinic cells. The ordinary group builder is unchanged;
 its eventual use of these shared helpers belongs to #817.
-Before the candidate masks, a shared conservative Cartesian box test
-rejects partner groups whose wrapped-reference boxes cannot reach the
-first-frame subset. Boxes and their distance bounds are f64; an auxiliary
-frame-state slot keeps them separate from pair-arena growth. A conservative
-roundoff allowance admits uncertain cases before the unchanged exact f64
-pair test, as derived in device-primitives Section 4.11. Every lane still
-reaches the first-unit warp broadcasts. The template runtime ABI is 6;
-ordinary builders and physical bounds are unchanged.
-The shared column/gap/span cut helper is implemented separately, with
-native integration in progress. It preserves the prototype's strict-gap
-and rightmost-largest-gap rule, using shared scans and a proved monotone
-refinement bound rather than a fixed eight-pass harness cap. Its integer
-fixture covers an eleven-pass cascade and multiple scan blocks. This
-helper checkpoint does not yet change native grouping or establish a
-physical-system or performance result for the new groups.
+Before unit enumeration, a shared conservative Cartesian box test
+rejects whole partner groups whose wrapped-reference boxes cannot reach
+the first-frame subset. A ballot and warp-uniform survivor loop select
+up to two groups for enumeration. The previous per-unit-lane box check
+is removed. Boxes and distance bounds remain f64; Cartesian and fractional
+auxiliary views survive pair-arena growth. The shared single-image helper
+admits only the proved integer image when the expanded fractional
+intervals each have width strictly below one, retaining explicit images
+otherwise (device-primitives Sections 4.11–4.12). Conservative roundoff
+allowances admit uncertain cases before the unchanged exact f64 pair test.
+All 32 lanes reach every first-unit broadcast in the uniform loop.
+The template runtime ABI is 7; ordinary builders and physical bounds
+are unchanged. The integer helper fixture covers an eleven-pass cascade
+and multiple scan blocks; native correctness and performance are separate
+gates, pending for this integration checkpoint.
 The native cold refresh owns these bins and their combined search.
 Its column dimensions use the population of water anchors plus solute
 atoms and the current cell volume: the target edge is

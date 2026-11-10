@@ -6430,6 +6430,8 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
       ValueRange{handle, arith::ConstantIntOp::create(b, loc, TEMPLATE_MEMBERS, 64)}).getResult(0);
   Value pairs = view("mdrtTemplatePairsBuffer", indexBuffer);
   Value order = view("mdrtTemplatePairsOrder", indexBuffer);
+  Value groupLengths = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsGroupView",
+      indexBuffer, TEMPLATE_GROUP_AT_START);
   Value frames = view("mdrtTemplatePairsFrames", framesType);
   TemplatePruneBuffers pruning;
   Value innerReaches, deviceInnerCells, deviceReaches;
@@ -6443,6 +6445,7 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
     pruning.outerEntries = arena(TEMPLATE_LAYOUT_OUTER_ENTRIES);
     pruning.innerEntries = arena(TEMPLATE_LAYOUT_INNER_ENTRIES);
     pruning.order = order; pruning.currentPoints = state.currentPoints;
+    pruning.groupLengths = groupLengths;
     pruning.innerReference = state.innerReference; pruning.waters = state.waters;
     pruning.cell = op.getCellMutable().get();
     pruning.waterActive = memref::LoadOp::create(b, loc, state.invalid,
@@ -6542,7 +6545,7 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   for (Value initial : op.getReduce()) zeros.push_back(createZero(k, loc, initial.getType()));
   bool hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   TemplateWorkBuffers buffers{pairs, workOffset, entryOffset, order, members,
-                               frames, waters, op.getCellMutable().get(), hasSite};
+                               frames, waters, op.getCellMutable().get(), groupLengths, hasSite};
   auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
       [&](OpBuilder &body, Location, Value record, ValueRange previous) {
         if (nativeEpochs) emitPruneTemplateWork(body, loc, pruning, record, lane);

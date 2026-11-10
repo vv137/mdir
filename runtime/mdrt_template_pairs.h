@@ -10,6 +10,8 @@ struct TemplatePairs {
   void *pairs;
   void *metadata;
   void *order, *frames;
+  void *groups, *planning;
+  int64_t waterGroups, atomGroups, columnsX, columnsY;
   void *frameState;
   int64_t frameOffsets[TEMPLATE_FRAME_SLOTS], frameRows[TEMPLATE_FRAME_SLOTS];
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
@@ -20,6 +22,7 @@ struct TemplatePairs {
 /* Diagnostic counters belong to this route, independently of the general
  * neighbor structures. No force arithmetic or per-step device readback. */
 static int64_t templateRefreshes, templatePrunes, templateGrowths;
+static int64_t templateRowGrowths;
 static int64_t templateStartEntries, templateEndEntries;
 static int64_t templateStartWork, templateEndWork;
 static int64_t templateStartCapacity, templateEndCapacity;
@@ -30,6 +33,13 @@ static int64_t templateStartInnerEntries, templateEndInnerEntries;
  * a synchronization to delimit a step. */
 void mdrtTemplatePairsNoteStep(void) {
   nvtxMarkA("template force interval");
+}
+
+/* Temporary stage attribution for the implementation measurements. */
+void mdrtTemplatePairsTraceStage(int64_t stage) {
+  if (!stage) nvtxRangePop();
+  else if (stage == 1) nvtxRangePushA("template spatial order");
+  else if (stage == 2) nvtxRangePushA("template group plan");
 }
 
 void mdrtTemplatePairsSnapshotOccupancy(int64_t handle, int64_t first) {
@@ -84,6 +94,7 @@ int64_t mdrtGetTemplatePairStatistic(int64_t slot) {
       templateEndWork, templateStartCapacity, templateEndCapacity};
   if (slot == 9) return templateStartInnerEntries;
   if (slot == 10) return templateEndInnerEntries;
+  if (slot == 11) return templateRowGrowths;
   return slot >= 0 && slot < 9 ? values[slot] : 0;
 }
 
@@ -92,6 +103,17 @@ static void allocateTemplatePairs(struct TemplatePairs *pairs) {
   pairs->pairs = mgpuMemAlloc((uint64_t)pairs->layout.words * sizeof(int32_t),
                              NULL, false);
   allocationTag = NULL;
+  /* Defined empty ranges also make a later row-capacity migration safe
+   * before the first completed list. The physical fields are published by
+   * the build; no uninitialized payload is read to discover its ranges. */
+  int32_t header[MDRT_TEMPLATE_PAIR_HEADER_WORDS] = {0};
+  header[TEMPLATE_PAIR_WATERS] = (int32_t)pairs->layout.waters;
+  header[TEMPLATE_PAIR_ATOMS] = (int32_t)pairs->layout.atoms;
+  header[TEMPLATE_PAIR_ROWS] = (int32_t)(pairs->waterGroups + 2 * pairs->atomGroups);
+  header[TEMPLATE_PAIR_CAPACITY] = (int32_t)pairs->layout.entries;
+  enter();
+  check(cuMemcpyHtoD((CUdeviceptr)pairs->pairs, header, sizeof(header)),
+        "template empty header");
 }
 
 static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entries) {
@@ -100,21 +122,32 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
     fprintf(stderr, "mdrt: invalid template-pair capacity or host allocation failure\n");
     abort();
   }
+  pairs->waterGroups = (waters + 15) / 16;
+  pairs->atomGroups = (atoms + 15) / 16;
   allocateTemplatePairs(pairs);
-  int64_t places = ((waters + 15) / 16 + (atoms + 15) / 16) * 16;
-  allocationTag = "template pairs: padded unit order";
-  pairs->order = mgpuMemAlloc((uint64_t)(places ? places : 1) * sizeof(int32_t),
+  int64_t units = waters + atoms, plan = units ? units : 1;
+  int64_t planBlocks = (units + 1023) / 1024;
+  if (!planBlocks) planBlocks = 1;
+  allocationTag = "template pairs: compact unit order";
+  pairs->order = mgpuMemAlloc((uint64_t)(units ? units : 1) * sizeof(int32_t),
                               NULL, false);
+  allocationTag = "template pairs: group descriptors and lengths";
+  pairs->groups = mgpuMemAlloc((uint64_t)(units ? 4 * units : 1) * sizeof(int32_t),
+                               NULL, false);
+  allocationTag = "template pairs: shared sort and group-plan scratch";
+  pairs->planning = mgpuMemAlloc((uint64_t)(6 * plan + 6 + planBlocks) * sizeof(int32_t),
+                                 NULL, false);
   allocationTag = "template pairs: packed real-site frames";
   int64_t rows = 3 * waters + atoms;
   pairs->frames = mgpuMemAlloc((uint64_t)(rows ? rows : 1) * 3 * sizeof(float),
                                NULL, false);
-  int64_t units = waters + atoms, frameWords = 0;
+  int64_t frameWords = 0;
   for (int slot = 0; slot != TEMPLATE_FRAME_SLOTS; ++slot) {
     pairs->frameOffsets[slot] = frameWords;
     pairs->frameRows[slot] = slot < TEMPLATE_FRAME_OUTER_CELLS ? units
         : slot == TEMPLATE_FRAME_REACHES ? 2
-        : slot == TEMPLATE_FRAME_GROUP_BOXES ? 2 * units : 6;
+        : (slot == TEMPLATE_FRAME_GROUP_BOXES || slot == TEMPLATE_FRAME_FRACTIONAL_BOXES)
+            ? 2 * units : 6;
     frameWords += 3 * pairs->frameRows[slot];
   }
   allocationTag = "template pairs: reference epochs and retained packing cells";
@@ -220,8 +253,7 @@ void _mlir_ciface_mdrtTemplatePairsOrder(struct Buffer1 *result, int64_t handle)
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
   result->allocated = result->aligned = pairs->order;
   result->offset = 0;
-  result->size = ((pairs->layout.waters + 15) / 16 +
-                   (pairs->layout.atoms + 15) / 16) * 16;
+  result->size = pairs->layout.waters + pairs->layout.atoms;
   result->stride = 1;
 }
 
@@ -233,6 +265,68 @@ void _mlir_ciface_mdrtTemplatePairsFrames(struct Buffer2 *result, int64_t handle
   result->sizes[1] = 3;
   result->strides[0] = 3;
   result->strides[1] = 1;
+}
+
+void _mlir_ciface_mdrtTemplatePairsGroupView(struct Buffer1 *result,
+                                           int64_t handle, int64_t slot) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  int64_t units = pairs->layout.waters + pairs->layout.atoms;
+  if (slot < 0 || slot >= TEMPLATE_GROUP_VIEWS) {
+    fprintf(stderr, "mdrt: invalid template group view\n");
+    abort();
+  }
+  result->allocated = pairs->groups;
+  result->aligned = (void *)((uintptr_t)pairs->groups +
+      (uint64_t)(slot * units) * sizeof(int32_t));
+  result->offset = 0;
+  result->size = units;
+  result->stride = 1;
+}
+
+void _mlir_ciface_mdrtTemplatePairsPlanningView(struct Buffer1 *result,
+                                              int64_t handle, int64_t slot) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  int64_t units = pairs->layout.waters + pairs->layout.atoms;
+  int64_t m = units ? units : 1, blocks = (units + 1023) / 1024;
+  if (!blocks) blocks = 1;
+  int64_t offset = 0, size = 0;
+  switch (slot) {
+  case TEMPLATE_PLAN_FLAGS: size = m; break;
+  case TEMPLATE_PLAN_SEGMENTS: offset = m; size = m + 1; break;
+  case TEMPLATE_PLAN_STARTS: offset = 2 * m + 1; size = m; break;
+  case TEMPLATE_PLAN_LENGTHS: offset = 3 * m + 1; size = m; break;
+  case TEMPLATE_PLAN_COUNTS: offset = 4 * m + 1; size = m; break;
+  case TEMPLATE_PLAN_OFFSETS: offset = 5 * m + 1; size = m + 1; break;
+  case TEMPLATE_PLAN_CONTROL: offset = 6 * m + 2; size = 4; break;
+  case TEMPLATE_PLAN_SCAN: offset = 6 * m + 6; size = blocks; break;
+  case TEMPLATE_PLAN_SORT: size = 4 * m; break;
+  default:
+    fprintf(stderr, "mdrt: invalid template planning view\n");
+    abort();
+  }
+  result->allocated = pairs->planning;
+  result->aligned = (void *)((uintptr_t)pairs->planning + (uint64_t)offset * sizeof(int32_t));
+  result->offset = 0;
+  result->size = size;
+  result->stride = 1;
+}
+
+/* A retained class must keep its column interpretation. Replan the common
+ * grid only at a joint epoch (empty classes impose no restriction). */
+int64_t mdrtTemplatePairsChooseGrid(int64_t handle, int64_t x, int64_t y,
+                                   int64_t water, int64_t atom) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  int64_t budget = pairs->layout.spatialBins / 2;
+  if (x <= 0 || y <= 0 || x > budget || y > budget / x) {
+    fprintf(stderr, "mdrt: invalid template group grid\n");
+    abort();
+  }
+  if (!pairs->columnsX ||
+      ((!pairs->layout.waters || water) && (!pairs->layout.atoms || atom))) {
+    pairs->columnsX = x;
+    pairs->columnsY = y;
+  }
+  return pairs->columnsX;
 }
 
 /* Reference epochs and packing-cell coordinates do not move on pair
@@ -261,7 +355,9 @@ int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   switch (slot) {
   case TEMPLATE_LAYOUT_WATERS: return layout->waters;
   case TEMPLATE_LAYOUT_ATOMS: return layout->atoms;
-  case TEMPLATE_LAYOUT_ROWS: return layout->rows;
+  case TEMPLATE_LAYOUT_ROWS:
+    return ((struct TemplatePairs *)(intptr_t)handle)->waterGroups +
+        2 * ((struct TemplatePairs *)(intptr_t)handle)->atomGroups;
   case TEMPLATE_LAYOUT_ENTRIES: return layout->entries;
   case TEMPLATE_LAYOUT_UNITS: return layout->units;
   case TEMPLATE_LAYOUT_OUTER_ROWS: return layout->outerRows;
@@ -286,6 +382,11 @@ int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   case TEMPLATE_LAYOUT_SPATIAL_CURSORS: return layout->spatialCursors;
   case TEMPLATE_LAYOUT_SPATIAL_BINS: return layout->spatialBins;
   case TEMPLATE_LAYOUT_SCAN_BLOCKS: return layout->scanBlocks;
+  case TEMPLATE_LAYOUT_WATER_GROUPS: return ((struct TemplatePairs *)(intptr_t)handle)->waterGroups;
+  case TEMPLATE_LAYOUT_ATOM_GROUPS: return ((struct TemplatePairs *)(intptr_t)handle)->atomGroups;
+  case TEMPLATE_LAYOUT_COLUMNS_X: return ((struct TemplatePairs *)(intptr_t)handle)->columnsX;
+  case TEMPLATE_LAYOUT_COLUMNS_Y: return ((struct TemplatePairs *)(intptr_t)handle)->columnsY;
+  case TEMPLATE_LAYOUT_ROW_CAPACITY: return layout->rows;
   default:
     fprintf(stderr, "mdrt: invalid template layout slot\n");
     abort();
@@ -347,6 +448,86 @@ int64_t mdrtTemplatePairsCapacity(int64_t handle) {
   return ((struct TemplatePairs *)(intptr_t)handle)->layout.entries;
 }
 
+static void copyTemplateWords(void *to, int64_t destination,
+                               void *from, int64_t source, int64_t words) {
+  if (words)
+    check(cuMemcpyDtoD((CUdeviceptr)to + (uint64_t)destination * sizeof(int32_t),
+        (CUdeviceptr)from + (uint64_t)source * sizeof(int32_t),
+        (uint64_t)words * sizeof(int32_t)), "template row-growth copy");
+}
+
+/* Row capacity grows monotonically. Preserve completed class ranges and
+ * this plan's spatial index, so changing one class's group count cannot
+ * discard the inactive class. Scratch and unfinished staging are dead. */
+static void growTemplateRows(struct TemplatePairs *pairs, int64_t required) {
+  if (required <= pairs->layout.rows) return;
+  struct MdrtTemplatePairLayout old = pairs->layout, next;
+  int64_t maximum = old.waters + 2 * old.atoms;
+  int64_t capacity = required + required / 4;
+  if (capacity > maximum) capacity = maximum;
+  if (!mdrtTemplatePairLayoutCapacity(old.waters, old.atoms, old.entries, capacity, &next)) {
+    fprintf(stderr, "mdrt: invalid template row capacity\n");
+    abort();
+  }
+  enter();
+  check(cuCtxSynchronize(), "template row-growth readiness");
+  uint32_t header[MDRT_TEMPLATE_PAIR_HEADER_WORDS];
+  check(cuMemcpyDtoH(header, (CUdeviceptr)pairs->pairs, sizeof(header)),
+        "template row-growth header");
+  int64_t rows = 0, entries = 0, work = 0;
+  for (int partition = 0; partition != 2; ++partition)
+    for (int tag = 0; tag != 3; ++tag) {
+      const uint32_t *range = header + (partition ? TEMPLATE_PAIR_INNER_RANGES
+                                                : TEMPLATE_PAIR_OUTER_RANGES) + 6 * tag;
+      if (range[1] > rows) rows = range[1];
+      if (range[3] > entries) entries = range[3];
+      if (range[5] > work) work = range[5];
+    }
+  if (rows > old.rows || entries > old.entries || work > old.units) {
+    fprintf(stderr, "mdrt: invalid template row-growth ranges\n");
+    abort();
+  }
+  void *previous = pairs->pairs;
+  pairs->layout = next;
+  allocateTemplatePairs(pairs);
+  copyTemplateWords(pairs->pairs, 0, previous, 0, MDRT_TEMPLATE_PAIR_HEADER_WORDS);
+  copyTemplateWords(pairs->pairs, next.outerRows, previous, old.outerRows, 4 * rows);
+  copyTemplateWords(pairs->pairs, next.innerRows, previous, old.innerRows, 4 * rows);
+  copyTemplateWords(pairs->pairs, next.outerUnits, previous, old.outerUnits, 4 * work);
+  copyTemplateWords(pairs->pairs, next.innerUnits, previous, old.innerUnits, 4 * work);
+  copyTemplateWords(pairs->pairs, next.outerEntries, previous, old.outerEntries, 4 * entries);
+  copyTemplateWords(pairs->pairs, next.innerEntries, previous, old.innerEntries, 4 * entries);
+  int64_t units = old.waters + old.atoms;
+  copyTemplateWords(pairs->pairs, next.spatialKeys, previous, old.spatialKeys, units);
+  copyTemplateWords(pairs->pairs, next.spatialZKeys, previous, old.spatialZKeys, units);
+  copyTemplateWords(pairs->pairs, next.spatialItems, previous, old.spatialItems, units);
+  copyTemplateWords(pairs->pairs, next.spatialPlaces, previous, old.spatialPlaces, units);
+  int64_t bins = 2 * pairs->columnsX * pairs->columnsY;
+  copyTemplateWords(pairs->pairs, next.spatialCounts, previous, old.spatialCounts, bins);
+  copyTemplateWords(pairs->pairs, next.spatialStarts, previous, old.spatialStarts, bins + 1);
+  copyTemplateWords(pairs->pairs, next.spatialCursors, previous, old.spatialCursors, bins);
+  check(cuCtxSynchronize(), "template row-growth completion");
+  releaseReplaced(previous);
+  ++templateRowGrowths;
+}
+
+int64_t mdrtTemplatePairsCommitGroups(int64_t handle, int64_t waterGroups,
+                                      int64_t atomGroups, int64_t water, int64_t atom) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  if (water) pairs->waterGroups = waterGroups;
+  if (atom) pairs->atomGroups = atomGroups;
+  if (pairs->waterGroups < (pairs->layout.waters + 15) / 16 ||
+      pairs->waterGroups > pairs->layout.waters ||
+      pairs->atomGroups < (pairs->layout.atoms + 15) / 16 ||
+      pairs->atomGroups > pairs->layout.atoms) {
+    fprintf(stderr, "mdrt: invalid template group counts\n");
+    abort();
+  }
+  int64_t rows = pairs->waterGroups + 2 * pairs->atomGroups;
+  growTemplateRows(pairs, rows);
+  return rows;
+}
+
 /* Growth discards every class range. A caller that grows must rebuild
  * all three classes, even if only one mobility group triggered the build.
  * No wait, allocation or host readback occurs on a refresh that fits. */
@@ -359,8 +540,8 @@ int64_t mdrtTemplatePairsGrow(int64_t handle, int64_t required) {
     capacity = required + (INT32_MAX - required < required / 4
                                ? INT32_MAX - required : required / 4);
   struct MdrtTemplatePairLayout next;
-  if (!mdrtTemplatePairLayout(pairs->layout.waters, pairs->layout.atoms,
-                              capacity, &next)) {
+  if (!mdrtTemplatePairLayoutCapacity(pairs->layout.waters, pairs->layout.atoms,
+                                      capacity, pairs->layout.rows, &next)) {
     fprintf(stderr, "mdrt: template-pair capacity exceeds the i32 index bound\n");
     abort();
   }

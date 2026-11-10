@@ -7,6 +7,7 @@ struct TemplatePruneBuffers {
   mlir::Value outerUnits, innerUnits, outerEntries, innerEntries, order;
   mlir::Value currentPoints, innerReference, waters, cell, reaches;
   mlir::Value waterActive, atomActive;
+  mlir::Value groupLengths;
 };
 /// All 32 lanes own one outer work record (at most 64 entries). Filter its
 /// masks using hybrid reference points and compact into its existing

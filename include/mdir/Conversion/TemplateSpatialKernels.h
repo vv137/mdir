@@ -15,20 +15,20 @@ struct TemplateSpatialBuffers {
   /// coordinates remain available to the covering search and its images.
   mlir::Value points, keys, zKeys, counts, starts, cursors, items, scanScratch;
   mlir::Value order, places;
-  /// Four i32 words per unit, borrowed from the unused staging arena while
-  /// ordering. The search may overwrite this storage after ordering ends.
+  /// Four temporary i32 words per unit. The native owner supplies its
+  /// independent planning allocation, reused by cuts after sorting ends.
   mlir::Value sortScratch;
   /// Index sizes, positive column dimensions and enough scan blocks for
   /// 2*columnsX*columnsY bins. Each unit belongs to exactly one bin.
   mlir::Value waters, atoms, columnsX, columnsY, scanBlocks;
-  /// Rebuild only these groups' padded order/inverse maps. The bins always
+  /// Rebuild only these groups' compact order/inverse maps. The bins always
   /// contain both groups' hybrid references for the shared SW search.
   mlir::Value waterActive, atomActive;
 };
 /// Sort once with class-prefixed x-y serpentine columns, then z keys and
 /// fixed-ID ties. Key arithmetic is f32 after wrapping reference coordinates
-/// in f64. Padding occurs only between the two classes; each class
-/// is cut into consecutive clusters of sixteen real units.
+/// in f64. Compact class partitions have fixed capacities; separate group
+/// planning supplies the spans of at most sixteen real units.
 void emitTemplateSpatialOrder(mlir::OpBuilder &, mlir::Location,
                                const TemplateSpatialBuffers &);
 }

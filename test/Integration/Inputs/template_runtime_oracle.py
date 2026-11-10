@@ -13,10 +13,11 @@ assert source.count(anchor) == 1
 source = source.replace(anchor, '  func.call @seed_template(%list) : (!list) -> ()\n' + anchor)
 runtime = r'''
 memref.global "private" constant @runtime_water : memref<2x4xi32> = dense<[[0, 1, 2, 6], [3, 4, 5, 7]]>
-memref.global "private" constant @runtime_order : memref<16xi32> = dense<[0, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]>
+memref.global "private" constant @runtime_order : memref<2xi32> = dense<[0, 1]>
 memref.global "private" constant @runtime_frames : memref<6x3xf32> = dense<[[0.0, 0.0, 0.0], [0.125, 0.0, 0.0], [0.0, 0.125, 0.0], [0.5, 0.0, 0.0], [0.625, 0.0, 0.0], [0.5, 0.125, 0.0]]>
 func.func private @mdrtTemplatePairsBuffer(!list) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}
 func.func private @mdrtTemplatePairsOrder(!list) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}
+func.func private @mdrtTemplatePairsGroupView(!list, i64) -> memref<?xi32, 1> attributes {llvm.emit_c_interface}
 func.func private @mdrtTemplatePairsFrames(!list) -> memref<?x3xf32, 1> attributes {llvm.emit_c_interface}
 func.func private @mdrtTemplatePairsLayoutValue(!list, i64) -> i64
 func.func private @mdrtDeviceActivationOpen() -> !llvm.ptr
@@ -30,6 +31,8 @@ func.func @seed_template(%list: !list) {
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c39 = arith.constant 39 : index
+  %s0 = arith.constant 0 : i64
+  %s3 = arith.constant 3 : i64
   %s8 = arith.constant 8 : i64
   %s10 = arith.constant 10 : i64
   %zero = arith.constant 0 : i32
@@ -60,9 +63,22 @@ func.func @seed_template(%list: !list) {
   memref.store %image, %host[%e1] : memref<?xi32>
   memref.store %one, %host[%e2] : memref<?xi32>
   memref.store %one, %host[%c39] : memref<?xi32>
-  %oh = memref.get_global @runtime_order : memref<16xi32>
+  %group_starts = func.call @mdrtTemplatePairsGroupView(%list, %s0) : (!list, i64) -> memref<?xi32, 1>
+  %group_lengths = func.call @mdrtTemplatePairsGroupView(%list, %s3) : (!list, i64) -> memref<?xi32, 1>
+  %group_host = memref.alloc(%c2) : memref<?xi32>
+  memref.store %zero, %group_host[%c0] : memref<?xi32>
+  memref.store %zero, %group_host[%c1] : memref<?xi32>
+  %gr = gpu.wait async
+  %gs = gpu.memcpy async [%gr] %group_starts, %group_host : memref<?xi32, 1>, memref<?xi32>
+  gpu.wait [%gs]
+  %two = arith.constant 2 : i32
+  memref.store %two, %group_host[%c0] : memref<?xi32>
+  %gl = gpu.memcpy async [%gs] %group_lengths, %group_host : memref<?xi32, 1>, memref<?xi32>
+  gpu.wait [%gl]
+  memref.dealloc %group_host : memref<?xi32>
+  %oh = memref.get_global @runtime_order : memref<2xi32>
   %fh = memref.get_global @runtime_frames : memref<6x3xf32>
-  %ov = memref.cast %oh : memref<16xi32> to memref<?xi32>
+  %ov = memref.cast %oh : memref<2xi32> to memref<?xi32>
   %fv = memref.cast %fh : memref<6x3xf32> to memref<?x3xf32>
   %ready = gpu.wait async
   %p = gpu.memcpy async [%ready] %pairs, %host : memref<?xi32, 1>, memref<?xi32>

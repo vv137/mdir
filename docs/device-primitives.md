@@ -898,7 +898,7 @@ the shared warp maximum reduction to obtain minimum and maximum. All 32
 lanes must reach it; an empty mask returns infinite empty bounds and must
 not be searched. These preconditions are the caller's responsibility.
 
-The template search keeps its fixed sixteen-unit group and partitions
+The template search keeps each group of at most sixteen units and partitions
 the query by distinct first-unit lattice frames. Within each subset its
 box uses the wrapped references, consistently with the keys. The first
 valid unit of each frame, in fixed group order, represents the subset;
@@ -944,9 +944,13 @@ overflowing box arithmetic also falls through to the pair test.
 These allowances only admit extra candidates: the original f64 radial
 predicate, its reach and its less-than-or-equal comparison are unchanged.
 
-All lanes still reach the first-unit broadcasts. A lane rejected by the
-box does not enter its subsequent pair-distance/exclusion predicates;
-it must not diverge around a warp shuffle that supplies other lanes.
+The search iterates partner groups. A ballot selects groups whose boxes
+pass, before loading any partner units. A warp-uniform survivor loop
+selects up to two groups and assigns one to each half warp; only then do
+lanes enumerate their units and form masks. Rejected groups never reach
+unit enumeration. All lanes still reach the first-unit broadcasts in that
+uniform loop; partial groups mask their unused lanes. The former box
+check after point enumeration is removed.
 The exact all-images fixtures include every mobility-group activity,
 reframed groups, both cell shapes, and one-dimensional cutoff rays at
 and one representable coordinate on either side of each class cutoff.
@@ -982,7 +986,32 @@ during a cold plan. The two classes' counts and the number of passes are
 host results; the stable IDs and offsets remain on the device. The
 standalone integer oracle covers empty input, class boundaries even when
 column keys coincide, strict gap equality, rightmost ties, an eleven-pass
-cascade and more than one scan block. Native integration is in progress.
+cascade and more than one scan block.
+
+The template adapter quantizes water/solute gap defaults of 0.4/0.3 nm
+and span defaults of 0.9/0.6 nm against the z face width, rounding down
+and clipping to its 21-bit key domain. Compact unit orders occupy fixed
+class partitions; descriptor partitions have one possible group per unit.
+Only active descriptors and maps are published. Work records retain their
+four-word format and first-unit-begin meaning, with a separate length at
+each group start. The common grid is retained while any nonempty class
+is inactive and may be replanned at a joint rebuild. Row-capacity growth
+preserves completed class ranges and current spatial data; inactive rows
+are copied by the previous header's class range, even if their new row
+prefix moved. These choices do not change ordinary group builders.
+
+`emitSpatialSingleImage` expands the fractional difference interval
+between two boxes by the face-width reach and a roundoff envelope. If
+each axis interval has width strictly below one, it contains at most one
+integer image. The nearest integer to its midpoint is that image whenever
+one exists; otherwise it is a harmless extra candidate. The strict test
+has an additional absolute allowance of $2^{-40}$ for wrapped-coordinate
+endpoint and midpoint arithmetic. Its caller additionally expands the
+fractional interval by four times the Cartesian roundoff envelope divided
+by the face width. Unproved cases retain all explicit images. The search
+rejects other images before enumerating the proved group's units; bin
+and image traversal itself remains explicit. The final covering predicate
+still uses the original f64 displacement and unchanged reach.
 
 ## 5. Reductions by their algebra
 
