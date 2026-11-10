@@ -177,7 +177,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   auto boolean = [&](OpBuilder &at, bool value) -> Value {
     return arith::ConstantOp::create(at, loc, at.getBoolAttr(value));
   };
-  Value one = ix(b, 1), block = ix(b, 256);
+  Value one = ix(b, 1), block = ix(b, 64);
   buildGroupBoxes(b, loc, v);
   auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
   {
@@ -226,7 +226,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   Value threads = arith::MulIOp::create(b, loc, v.build.rows, ix(b, 32));
   Value grid = arith::MaxUIOp::create(b, loc, one,
       arith::DivUIOp::create(b, loc,
-          arith::AddIOp::create(b, loc, threads, ix(b, 255)), block));
+          arith::AddIOp::create(b, loc, threads, ix(b, 63)), block));
   auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
