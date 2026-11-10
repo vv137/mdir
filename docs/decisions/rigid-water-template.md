@@ -453,7 +453,7 @@ launch sizes, work counts and measurement qualifications.
 |---|---|---|---|
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
-| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 implemented, measurement pending:** padded partner lanes bypass box loads/arithmetic and rejoin before the ballot; the six focused CPU lowering tests pass. This row remains open until the exact GPU fixtures and two isolated timing comparisons pass and show a gain. **Planned B1:** reuse the cached first box for proved single-frame groups. **Planned B2:** bounded f32 Cartesian boxes/prefilter. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
+| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **Planned B1:** reuse the cached first box for proved single-frame groups. **Planned B2:** bounded f32 Cartesian boxes/prefilter. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
 | Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | Repeated column and indirect z binary searches, explicit image/subset enumeration, late half-list ownership, f64 first-anchor broadcasts and fractional-to-Cartesian pair work; 23–28 in water boxes, 72–76 in ubiquitin. | **Planned S2:** clip backward WW/SS descriptors before range/box/unit work. **Planned S3:** publish direct column/group endpoints. **Planned S4:** reuse first-anchor data rather than repeat the 128 scalar broadcasts per selected two-group batch. **Planned S5:** local f32 geometry with certified uncertainty and original-f64 refinement. Each is measured separately. |
 | Pruning | Separate f32 Cartesian pruning with shared first anchors and CUB selection; 1.397–1.788 in water boxes, 7.436–7.609 in ubiquitin. | Fused pruning in the production evaluation; f64 hybrid-reference geometry, exact class incidence and image accounting. Its cost is not isolated in the current common evaluation. | **Kept on purpose:** fusion; the earlier separate-prune experiment `3eaad4f7` did not establish a total win. **Planned P1:** apply a proved, exact-membership f32/refined predicate separately from search. Keep reference epochs and certified validity reaches f64. |
 | Evaluation: loads | Specialized water coefficients and dynamic solute parameters; compact two-word entries; table coefficients and pair values f32. Included in 24.2–54.9 per common call; not isolated. | Actual source parameter bindings; four-word entries with explicit image/mask fields and original-member mapping; two indexed WW LJ coefficient loads remain. Included in 32.2–91.9 per common call; not isolated. | **Planned E3, after search:** invariant WW LJ operands, preserving coefficient bits and mutable bindings. **Kept on purpose:** explicit image domain, bounded-capacity records and original-particle mapping. Do not narrow their supported domain to match the prototype. |
@@ -469,6 +469,34 @@ according to their measured contribution. Bounded precision and storage
 changes do not get folded into S1 or S2. Evaluation items E1–E3 resume
 after search; E4 needs its own concrete proposal before implementation.
 Every measured correction updates this table with its head and effect.
+
+### S0 isolated measurement: padded-lane box guard
+
+The tested head was `ac4644f9`, against main `af7a9f47` and the preceding
+radial head `f6999f3c`, on RTX 5090. CPU lowering passed 6/6 and the
+controlled GPU fixtures passed 22/22 in 108.09 seconds. Both independent
+comparisons completed: 48/48 timing rows passed the unchanged stationarity
+rule and 12/12 diagnostic profiles completed. No comparison was retried.
+Precision, inputs, bounds and launch sizes were unchanged. PTX and SASS
+retain the branch before all twelve f64 box loads; 128 registers and a
+464-byte stack remain unchanged.
+
+| System | ON/main A / B | Search microseconds/refresh A / B | ON/main divided by radial A / B |
+|---|---|---|---|
+| ubq OPC | 1.83852 / 1.82597 | 1785.550 / 1782.699 | 1.00490 / 1.01015 |
+| ubq TIP3P | 2.23615 / 2.23802 | 1794.135 / 1776.088 | 0.99298 / 1.00141 |
+| OPC small | 1.24085 / 1.24274 | 1351.195 / 1348.874 | 1.00429 / 1.00456 |
+| OPC large | 1.22164 / 1.22621 | 1379.727 / 1378.939 | 1.00116 / 1.00424 |
+| TIP3P small | 1.45997 / 1.45930 | 1350.367 / 1356.143 | 0.99840 / 0.99764 |
+| TIP3P large | 1.50814 / 1.50935 | 1395.236 / 1394.360 | 1.00378 / 0.99979 |
+
+Search time per refresh changes by -0.49% to +0.58%, with mixed signs;
+per-step costs also reflect different refresh histories. Both comparisons
+show small ON/main slowdowns for the three OPC systems. This does not
+establish a useful consistent gain, so the source guard is discarded.
+The retained implementation is again the radial baseline. S1 next changes
+only the candidate-search block and its ceiling division, leaving boxes,
+row ownership, arithmetic and output compaction unchanged.
 
 ### Precision contract for planned search and pruning changes
 

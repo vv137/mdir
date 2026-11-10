@@ -461,49 +461,40 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                                                            position, lastCandidate);
                                         Value safe = arith::SelectOp::create(batch, loc, has, position, cursor);
                                         Value partnerGroup = safe;
-                                        // Padded lanes still join the ballot, but need no box/image work.
-                                        auto possible = scf::IfOp::create(batch, loc, has,
-                                            [&](OpBuilder &boxes, Location) {
-                                          SmallVector<Value, 3> boxSides[2], fractionSides[2];
-                                          for (int64_t side = 0; side != 2; ++side) {
-                                            Value row = arith::AddIOp::create(boxes, loc,
-                                                arith::MulIOp::create(boxes, loc, partnerGroup, ix(boxes, 2)), ix(boxes, side));
-                                            for (int64_t axis = 0; axis != 3; ++axis) {
-                                              boxSides[side].push_back(memref::LoadOp::create(boxes, loc,
-                                                  v.groupBoxes, ValueRange{row, ix(boxes, axis)}));
-                                              fractionSides[side].push_back(memref::LoadOp::create(boxes, loc,
-                                                  v.fractionalBoxes, ValueRange{row, ix(boxes, axis)}));
-                                            }
+                                        SmallVector<Value, 3> boxSides[2], fractionSides[2];
+                                        for (int64_t side = 0; side != 2; ++side) {
+                                          Value row = arith::AddIOp::create(batch, loc,
+                                              arith::MulIOp::create(batch, loc, partnerGroup, ix(batch, 2)), ix(batch, side));
+                                          for (int64_t axis = 0; axis != 3; ++axis) {
+                                            boxSides[side].push_back(memref::LoadOp::create(batch, loc,
+                                                v.groupBoxes, ValueRange{row, ix(batch, axis)}));
+                                            fractionSides[side].push_back(memref::LoadOp::create(batch, loc,
+                                                v.fractionalBoxes, ValueRange{row, ix(batch, axis)}));
                                           }
-                                          SpatialBoundingBox partnerBox{
-                                              vector::FromElementsOp::create(boxes, loc, pointType, boxSides[0]),
-                                              vector::FromElementsOp::create(boxes, loc, pointType, boxSides[1])};
-                                          Value boxMayReach = emitSpatialBoxesWithinReach(boxes, loc,
-                                              cartesianBox, partnerBox, queryShift, reach, boxRoundoff);
-                                          SpatialBoundingBox partnerFraction{
-                                              vector::FromElementsOp::create(boxes, loc, pointType, fractionSides[0]),
-                                              vector::FromElementsOp::create(boxes, loc, pointType, fractionSides[1])};
-                                          Value fractionRoundoff = arith::DivFOp::create(boxes, loc,
-                                              vector::BroadcastOp::create(boxes, loc, pointType,
-                                                  arith::MulFOp::create(boxes, loc, boxRoundoff, real(boxes, 4))), widths);
-                                          auto single = emitSpatialSingleImage(boxes, loc,
-                                              box, partnerFraction, radius, fractionRoundoff);
-                                          Value sameImage = boolean(boxes, true);
-                                          for (int64_t axis = 0; axis != 3; ++axis)
-                                            sameImage = arith::AndIOp::create(boxes, loc, sameImage,
-                                                arith::CmpFOp::create(boxes, loc, arith::CmpFPredicate::OEQ,
-                                                    vector::ExtractOp::create(boxes, loc, single.image, axis),
-                                                    queryComponents[axis]));
-                                          Value imageMayReach = arith::OrIOp::create(boxes, loc, sameImage,
-                                              arith::XOrIOp::create(boxes, loc, single.proved, boolean(boxes, true)));
-                                          Value accepted = arith::AndIOp::create(boxes, loc,
-                                              boxMayReach, imageMayReach);
-                                          scf::YieldOp::create(boxes, loc, ValueRange{accepted});
-                                            }, [&](OpBuilder &empty, Location) {
-                                              scf::YieldOp::create(empty, loc,
-                                                  ValueRange{boolean(empty, false)});
-                                            });
-                                        has = possible.getResult(0);
+                                        }
+                                        SpatialBoundingBox partnerBox{
+                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[0]),
+                                            vector::FromElementsOp::create(batch, loc, pointType, boxSides[1])};
+                                        Value boxMayReach = emitSpatialBoxesWithinReach(batch, loc,
+                                            cartesianBox, partnerBox, queryShift, reach, boxRoundoff);
+                                        SpatialBoundingBox partnerFraction{
+                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[0]),
+                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[1])};
+                                        Value fractionRoundoff = arith::DivFOp::create(batch, loc,
+                                            vector::BroadcastOp::create(batch, loc, pointType,
+                                                arith::MulFOp::create(batch, loc, boxRoundoff, real(batch, 4))), widths);
+                                        auto single = emitSpatialSingleImage(batch, loc,
+                                            box, partnerFraction, radius, fractionRoundoff);
+                                        Value sameImage = boolean(batch, true);
+                                        for (int64_t axis = 0; axis != 3; ++axis)
+                                          sameImage = arith::AndIOp::create(batch, loc, sameImage,
+                                              arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OEQ,
+                                                  vector::ExtractOp::create(batch, loc, single.image, axis),
+                                                  queryComponents[axis]));
+                                        Value imageMayReach = arith::OrIOp::create(batch, loc, sameImage,
+                                            arith::XOrIOp::create(batch, loc, single.proved, boolean(batch, true)));
+                                        has = arith::AndIOp::create(batch, loc, has,
+                                            arith::AndIOp::create(batch, loc, boxMayReach, imageMayReach));
                                         // Reject entire groups before any unit loads or broadcasts.
                                         // The ballot and survivor loop are uniform across the warp.
                                         Value survivors = emitWarpBallot(batch, loc, has);
