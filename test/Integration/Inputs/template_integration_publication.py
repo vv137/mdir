@@ -160,31 +160,39 @@ if a.snapshot:
 func.func @{name}(%device: memref<?x3x{scalar}, 1>, %rows: index, %cols: index, %tag: i64) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // Copy only initialized components: one contiguous row prefix at a time.
-  // The source offset includes the getter offset plus 3*i; its sole row
-  // has cols consecutive scalar elements, regardless of the row stride.
-  %host = memref.alloc(%cols) : memref<1x?x{scalar}>
+  // Gather only initialized logical components into dense device storage.
+  // A one-row strided subview is rejected by the memcpy lowering, even
+  // though its selected row prefix is contiguous. This copy-only kernel
+  // preserves every floating-point bit and does not inspect capacity tails.
   %size = arith.muli %rows, %cols : index
+  %dense = gpu.alloc(%size) : memref<?x{scalar}, 1>
+  %host = memref.alloc(%size) : memref<?x{scalar}>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+      threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {{
+    scf.for %k = %c0 to %size step %c1 {{
+      %i = arith.divui %k, %cols : index
+      %j = arith.remui %k, %cols : index
+      %x = memref.load %device[%i, %j] : memref<?x3x{scalar}, 1>
+      memref.store %x, %dense[%k] : memref<?x{scalar}, 1>
+    }}
+    gpu.terminator
+  }}
+  %ready = gpu.wait async
+  %done = gpu.memcpy async [%ready] %host, %dense
+      : memref<?x{scalar}>, memref<?x{scalar}, 1>
+  gpu.wait [%done]
   %length = arith.index_cast %size : index to i64
   func.call @printI64(%tag) : (i64) -> ()
   func.call @printNewline() : () -> ()
   func.call @printI64(%length) : (i64) -> ()
   func.call @printNewline() : () -> ()
-  scf.for %i = %c0 to %rows step %c1 {{
-    %source = memref.subview %device[%i, 0] [1, %cols] [1, 1]
-        : memref<?x3x{scalar}, 1> to memref<1x?x{scalar}, strided<[3, 1], offset: ?>, 1>
-    %ready = gpu.wait async
-    %done = gpu.memcpy async [%ready] %host, %source
-        : memref<1x?x{scalar}>, memref<1x?x{scalar}, strided<[3, 1], offset: ?>, 1>
-    gpu.wait [%done]
-    scf.for %j = %c0 to %cols step %c1 {{
-      %x = memref.load %host[%c0, %j] : memref<1x?x{scalar}>
-      %bits = arith.bitcast %x : {scalar} to {bits}
-{widen}      func.call @printI64({value}) : (i64) -> ()
-      func.call @printNewline() : () -> ()
-    }}
+  scf.for %k = %c0 to %size step %c1 {{
+    %x = memref.load %host[%k] : memref<?x{scalar}>
+    %bits = arith.bitcast %x : {scalar} to {bits}
+{widen}    func.call @printI64({value}) : (i64) -> ()
+    func.call @printNewline() : () -> ()
   }}
-  memref.dealloc %host : memref<1x?x{scalar}>
+  memref.dealloc %host : memref<?x{scalar}>
   return
 }}
 """

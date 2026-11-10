@@ -1,5 +1,6 @@
 # Final-SSA publication snapshots across warps and an unmatched marked tuple.
 # REQUIRES: cuda, compute-sanitizer
+# Expected: under 180 seconds on RTX 5090; submit with lit --timeout=300.
 # RUN: rm -f %t.input.mlir %t.reference %t.fused-gpu.mlir %t.fused-snapshot.mlir %t.mlir %t.standalone-gpu.mlir %t.standalone-snapshot.mlir %t.standalone.mlir %t.standalone.records %t.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
 # RUN: %python %S/../Integration/Inputs/template_integration_publication.py %t.input.mlir %t.reference --across --snapshot
 # The SAME marked module is lowered once standalone and once fused.

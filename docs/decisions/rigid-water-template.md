@@ -1697,6 +1697,14 @@ The original quadratic fixture retains zero tolerance.
    to finish within three minutes on RTX 5090; gates use a 600-second per-test
    timeout rather than leaving a slow fixture unbounded. No validation
    frame, step, tolerance or physical convention is removed.
+   The expanded publication fixture initially failed LLVM translation
+   before numerical execution: its one-row strided memcpy left unresolved
+   conversion casts although the preceding MLIR pipeline returned success.
+   A fixture-only copy kernel now gathers only initialized logical
+   components into dense device storage before an identity-layout memcpy.
+   All four fused/unfused and normal/across CPU pipelines passed actual
+   LLVM translation after this correction. The copied values and exact
+   comparisons are unchanged; no production lowering is modified.
    Production NVE drift uses ubiquitin with OPC and TIP3P, mixed, 2 fs,
    1 ns, template versus general mixed for each integrator. Fit conserved
    energy versus time and divide its slope by the degrees of freedom;
