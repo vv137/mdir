@@ -1251,7 +1251,12 @@ A conservative Cartesian bounding box rejects whole partner groups
 before their units are enumerated. A ballot and a warp-uniform survivor
 loop select the groups to enumerate, leaving every lane at each required
 broadcast. Its distance lower bound admits roundoff uncertainty; the
-original f64 covering test still decides membership. Fractional box
+original f64 covering test remains the reference decision. Class-specialized
+searches cache Cartesian f32 anchors and first-group data in shared memory.
+Certified outward bounds admit a fast f32 accept or reject; uncertain
+cases execute the literal original f64 predicate. The Cartesian boxes
+use a separate conservative certificate, so uncertain boxes survive.
+The numerical margins are never credited as physical skin. Fractional box
 intervals also prove when at most one integer image can be within reach;
 uncertain cases retain explicit images. Neither proof changes the
 interaction, the cutoff or its image coverage.

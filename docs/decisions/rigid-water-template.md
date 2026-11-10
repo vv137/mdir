@@ -917,10 +917,78 @@ membership is not**. Existing search and prune checkers remain exact.
 Do not publish numerical padding as additional `classReaches`: that would
 incorrectly credit an incompletely covered shell as validity skin.
 
-These are sufficient proof obligations, not an implemented f32 path or a
-speed claim. The exact all-images, boundary, reframed, triclinic,
+The whole-search implementation uses cached Cartesian anchors, rather
+than a fractional subtraction and cell multiplication for every pair.
+The cache producer retains the original f64 wrap and Cartesian transform
+before narrowing to f32. Three class-specialized searches use two warps
+per block, direct descriptor-column endpoints, early backward-range
+removal and shared first anchors. Direct column scans replace dependent
+z binary searches. The native general image/subset iterator remains:
+the prototype's nearest-image restriction cannot replace its covering
+proof or change within-row output order. The sparse append, compaction,
+entry masks and ownership are unchanged.
+
+The cache uses dead group-planning storage only after group publication.
+Every search attempt rebuilds Cartesian data for active and retained
+hybrid references under the current cell; it does not retain an old-cell
+Cartesian cache. The auxiliary Cartesian box slot has a separate f32
+view, while reference and fractional-box views retain their f64 ABI.
+
+| Operation | S4 | Whole search port |
+|---|---|---|
+| Reference fractions, wrap and cell | f64 | Same f64 |
+| Cartesian anchor producer | f64 for boxes | Same f64 expression, then f32 cache |
+| Query-image Cartesian shift | f64 | f32, with exact-integer and rounding certificate |
+| Pair displacement and norm | f64 fractional subtraction, cell transform and norm | f32 Cartesian subtraction and norm; original f64 graph in uncertainty shell |
+| Cartesian group boxes | f64 | f32 extrema with a certified conservative rejection threshold |
+| Fractional ranges and image uniqueness | f64 | Same general f64 proof |
+| Images, epochs, validity and certified reaches | f64/i64 | Unchanged |
+
+Certificate setup evaluates positive error bounds outward in f64, one
+representable step after each rounded operation. Thresholds narrow
+outward to f32. Ordinary gradual-underflow arithmetic is required; PTX
+must contain no flush-to-zero or approximate arithmetic on this path
+before device validation. NVIDIA's [PTX ISA floating-point
+instructions](https://docs.nvidia.com/cuda/parallel-thread-execution/)
+specify subnormal support for ordinary f32 arithmetic without `.ftz`.
+Unsupported representation, nonfinite or overflow cases disable the
+certificate and retain the literal f64 decision; no new source refusal
+is introduced. Numerical envelopes are never physical skin.
+
+This implementation has no performance conclusion before its gates and
+the two-job measurement against S4. The exact all-images, boundary, reframed, triclinic,
 incidence and growth fixtures remain gates. A coverage counterexample
 stops work; no bound is fitted or widened after a failure.
+
+The implemented certificate uses the equivalent reach-based implication
+to avoid charging a global coordinate norm to each squared-norm threshold.
+For the computed displacement $d_p$ and norm $Q_p$, the counted dot graph
+satisfies $(1-g_p)\lVert d_p\rVert^2-b_p\le Q_p\le
+(1+g_p)\lVert d_p\rVert^2+b_p$, where $g_p=\gamma_{3,p}$ and
+$b_p=\beta_{5,p}$. The Cartesian producer, cast, image shift and original
+absolute-frame graph give an outward
+$\Delta=\delta_{32}+\delta_{64}\ge\lVert d_{32}-d_{64}\rVert$.
+With $T$ the literal original rounded squared reach, form
+$r_+=\mathrm{up}\sqrt{(T+b_{64})/(1-g_{64})}$ and
+$r_-=\mathrm{down}\sqrt{\max(0,T-b_{64})/(1+g_{64})}$.
+The outward thresholds are
+$U=(1+g_{32})(r_++\Delta)^2+b_{32}$ and
+$L=(1-g_{32})(r_--\Delta)^2-b_{32}$.
+An original accepted pair has $Q_{32}\le U$, proving strict rejection
+above its upward f32 conversion. Acceptance below the downward conversion
+of $L$ implies $\lVert d_{64}\rVert\le r_-$ and hence $Q_{64}\le T$.
+Fast acceptance requires both $r_--\Delta$ and $L$ strictly positive.
+All other cases execute the original f64 graph, including zero when
+positivity cannot be proved.
+
+For boxes, let $\alpha$ bound the shared native f64 Cartesian producer's
+error and $\delta_G$ bound the f32 max-gap error after endpoint narrowing
+and image-shift rounding. Min/max is 1-Lipschitz per component; the bound
+accounts for extrema coming from different points. A pair accepted by the
+old predicate proves the conservative box threshold
+$U_B=(1+g_{32})(r_++\delta_{64}+2\alpha+\delta_G)^2+b_{32}$.
+Only a finite box norm strictly above its upward f32 conversion rejects.
+This changes neither the physical reach nor the fractional image proof.
 
 
 ## Gates of the implementation
@@ -1763,7 +1831,7 @@ per-pair device work.
 | Reference epochs and packing shifts | f64 reference positions and cells | f64 fractions, integer-valued f64 packing cells, class cells and actual reaches |
 | Validity deformation and displacement | f64 integrator/reference arithmetic | f64 guarded inverse-cell norm bound, incident-class margins and anchor displacement |
 | Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
-| Covering-search geometry and radial predicate | f32 | f64 reference fractions, cell geometry and covering predicate; source site cutoffs remain f32 |
+| Covering-search geometry and radial predicate | f32 | Cached Cartesian f32 with certified decisions and the literal f64 uncertainty shell; reference fractions and general image proof remain f64; source site cutoffs remain f32 |
 | Inner-block pruning predicate | f32 | f64 hybrid reference fractions, explicit images and covering radius; source site cutoffs remain f32 |
 | Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
 | Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
