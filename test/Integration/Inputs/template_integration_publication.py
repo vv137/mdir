@@ -1,8 +1,7 @@
 """R1 exact publication fixture: identity constraints, final SSA, tail/across.
 
-Generate only; the test declares fused/reference executions before any GPU
-run. The marked tuple set is exactly the real OHH membership, including
-nonconsecutive original members in the across-warp case.
+Generate identical marked input for fused and explicitly unfused executions. The marked tuples include real OHH membership and, in the across-warp case,
+an unmatched constrained triplet and nonconsecutive original members.
 """
 import argparse
 import json
@@ -14,6 +13,7 @@ import sys
 p = argparse.ArgumentParser()
 p.add_argument('program', type=pathlib.Path)
 p.add_argument('reference', type=pathlib.Path)
+p.add_argument('--snapshot', action='store_true')
 p.add_argument('--across', action='store_true')
 p.add_argument('--bad-extent', action='store_true')
 p.add_argument('--no-proof', action='store_true')
@@ -64,6 +64,14 @@ s = s.replace(needle, needle + '''
       : memref<?x3xi32> -> memref<?xi32, 1>
   %pub_predictor = gpu.alloc(%pub_n) : memref<?x3xf64, 1>
   %pub_correction = gpu.alloc(%pub_n) : memref<?x3xf64, 1>
+  // Correction storage includes unmatched particles read by the final writer.
+  // Initialize every component before either fused or standalone execution.
+  md_exec.particle_for ins(%x : memref<?x3xf64, 1>)
+      outs(%pub_correction : memref<?x3xf64, 1>) {
+  ^bb0(%pub_unused: vector<3xf64>):
+    %pub_all_zero = arith.constant dense<0.0> : vector<3xf64>
+    md_exec.yield %pub_all_zero : vector<3xf64>
+  }
   %pub_no = arith.constant false
 ''')
 if a.across:
@@ -106,6 +114,8 @@ for serial, match in reversed(list(enumerate(writers))):
     md_exec.yield %pub_final : vector<3xf64>
   }}
 '''
+    if a.snapshot:
+        event += f'  func.call @r1_snapshot(%r{serial}, %x, %pub_failure{serial}) : (!list, memref<?x3xf64, 1>, i1) -> ()\n'
     if a.across and serial == 0:
         event += '  func.call @check_unmatched_publication(%r0) : (!list) -> ()\n'
     s = s[:match.start()] + predictor + event + s[match.end():]
@@ -136,9 +146,88 @@ func.func @check_unmatched_publication(%list: !list) {
 }
 '''
     s += check
-# Check independent original energy values; epoch bits are compared directly
-# between fused and unfused runs rather than changing their expected values.
+# Keep the independent seven-energy oracle. Snapshot mode separately compares
+# exact initialized publication state between identical marked executions.
 for slot in [4, 5, 6]:
     s = s.replace(f'  func.call @dump_epoch(%view{slot}) : (memref<?x3xf64, 1>) -> ()', '')
+
+if a.snapshot:
+    def dump_helper(name, scalar):
+        bits = 'i64' if scalar == 'f64' else 'i32'
+        widen = '' if bits == 'i64' else '    %wide = arith.extui %bits : i32 to i64\n'
+        value = '%bits' if bits == 'i64' else '%wide'
+        return f"""
+func.func @{name}(%device: memref<?x3x{scalar}, 1>, %rows: index, %cols: index, %tag: i64) {{
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // Copy only initialized components: one contiguous row prefix at a time.
+  // The source offset includes the getter offset plus 3*i; its sole row
+  // has cols consecutive scalar elements, regardless of the row stride.
+  %host = memref.alloc(%cols) : memref<1x?x{scalar}>
+  %size = arith.muli %rows, %cols : index
+  %length = arith.index_cast %size : index to i64
+  func.call @printI64(%tag) : (i64) -> ()
+  func.call @printNewline() : () -> ()
+  func.call @printI64(%length) : (i64) -> ()
+  func.call @printNewline() : () -> ()
+  scf.for %i = %c0 to %rows step %c1 {{
+    %source = memref.subview %device[%i, 0] [1, %cols] [1, 1]
+        : memref<?x3x{scalar}, 1> to memref<1x?x{scalar}, strided<[3, 1], offset: ?>, 1>
+    %ready = gpu.wait async
+    %done = gpu.memcpy async [%ready] %host, %source
+        : memref<1x?x{scalar}>, memref<1x?x{scalar}, strided<[3, 1], offset: ?>, 1>
+    gpu.wait [%done]
+    scf.for %j = %c0 to %cols step %c1 {{
+      %x = memref.load %host[%c0, %j] : memref<1x?x{scalar}>
+      %bits = arith.bitcast %x : {scalar} to {bits}
+{widen}      func.call @printI64({value}) : (i64) -> ()
+      func.call @printNewline() : () -> ()
+    }}
+  }}
+  memref.dealloc %host : memref<1x?x{scalar}>
+  return
+}}
+"""
+    # Four matched waters; across has 33 unmatched real atom units.
+    units, packed = (37, 45) if a.across else (4, 12)
+    helper = """
+func.func private @mdrtTemplatePairsFrames(!list) -> memref<?x3xf32, 1> attributes {llvm.emit_c_interface}
+func.func @r1_snapshot(%list: !list, %x: memref<?x3xf64, 1>, %failed: i1) {
+  %c0 = arith.constant 0 : index
+  %c3 = arith.constant 3 : index
+  %physical = memref.dim %x, %c0 : memref<?x3xf64, 1>
+  %t0 = arith.constant -795100 : i64
+  func.call @r1_dump_f64(%x, %physical, %c3, %t0) : (memref<?x3xf64, 1>, index, index, i64) -> ()
+"""
+    for slot in range(7):
+        rows = units if slot < 4 else (6 if a.across else 2) if slot < 6 else 2
+        cols = 1 if slot == 6 and not a.across else 3
+        helper += f"""
+  %slot{slot} = arith.constant {slot} : i64
+  %view{slot} = func.call @mdrtTemplatePairsFrameState(%list, %slot{slot}) : (!list, i64) -> memref<?x3xf64, 1>
+  %rows{slot} = arith.constant {rows} : index
+  %cols{slot} = arith.constant {cols} : index
+  %tag{slot} = arith.constant {-795101-slot} : i64
+  func.call @r1_dump_f64(%view{slot}, %rows{slot}, %cols{slot}, %tag{slot}) : (memref<?x3xf64, 1>, index, index, i64) -> ()
+"""
+    helper += f"""
+  %packed = func.call @mdrtTemplatePairsFrames(%list) : (!list) -> memref<?x3xf32, 1>
+  %np = arith.constant {packed} : index
+  %tp = arith.constant -795108 : i64
+  func.call @r1_dump_f32(%packed, %np, %c3, %tp) : (memref<?x3xf32, 1>, index, index, i64) -> ()
+  %tf = arith.constant -795109 : i64
+  %one = arith.constant 1 : i64
+  %flag = arith.extui %failed : i1 to i64
+  func.call @printI64(%tf) : (i64) -> ()
+  func.call @printNewline() : () -> ()
+  func.call @printI64(%one) : (i64) -> ()
+  func.call @printNewline() : () -> ()
+  func.call @printI64(%flag) : (i64) -> ()
+  func.call @printNewline() : () -> ()
+  return
+}}
+"""
+    s += dump_helper('r1_dump_f64', 'f64') + dump_helper('r1_dump_f32', 'f32') + helper
+
 a.program.write_text(s)
 a.reference.write_text(json.dumps(json.loads(a.reference.read_text())[:7]) + '\n')
