@@ -14,20 +14,6 @@
 using namespace mlir;
 using namespace mdir::kernels;
 
-std::array<Value, 3> mdir::kernels::emitWholeTemplateFrame(
-    OpBuilder &b, Location loc, ArrayRef<Value> positions, Value cell,
-    Value inverse) {
-  assert(positions.size() == 3);
-  std::array<Value, 3> whole;
-  whole[0] = positions[0];
-  for (unsigned site = 1; site != 3; ++site) {
-    Value displacement = arith::SubFOp::create(b, loc, positions[site], positions[0]);
-    whole[site] = arith::AddFOp::create(b, loc, positions[0],
-        emitMinimumImage(b, loc, displacement, cell, inverse));
-  }
-  return whole;
-}
-
 std::array<Value, 3> mdir::kernels::emitPackTemplateFrame(
     OpBuilder &builder, Location loc, ArrayRef<Value> whole,
     Value shift, Type real) {
@@ -105,7 +91,12 @@ PreparedTemplateFrame mdir::kernels::emitRetainedTemplateFrame(
     Value inverse, Value packingCells, Type packedReal) {
   assert(positions.size() == 3);
   PreparedTemplateFrame result;
-  result.whole = emitWholeTemplateFrame(b, loc, positions, cell, inverse);
+  result.whole[0] = positions[0];
+  for (unsigned site = 1; site != 3; ++site) {
+    Value displacement = arith::SubFOp::create(b, loc, positions[site], positions[0]);
+    result.whole[site] = arith::AddFOp::create(b, loc, positions[0],
+        emitMinimumImage(b, loc, displacement, cell, inverse));
+  }
   result.latticeShift = emitLatticeShift(b, loc, packingCells, cell);
   result.packed = emitPackTemplateFrame(b, loc, result.whole, result.latticeShift, packedReal);
   return result;

@@ -452,8 +452,8 @@ launch sizes, work counts and measurement qualifications.
 
 | Stage | Prototype: algorithm, precision, work and RTX 5090 time | Native: algorithm, precision, work and RTX 5090 time | Difference and status |
 |---|---|---|---|
-| R1: integration and template-writer fusion | Full integration is outside the isolated prototype search/evaluation attribution; no isolated prototype value is claimed. Main fuses the corresponding drift/constraint/writer closure into two kernels. | The template-writer exclusion in `recordIntegration` leaves three kernels for TIP3P drift, position constraints and publication. At W1, the closure costs 11.276–23.598 us/step versus main's 5.834–10.240; excess is 5.433–14.826 across the three systems and A/B captures. Arithmetic precision is unchanged. | **Authorized R1, planned after the image screen:** admit template publication into fused integration under the existing fusion preconditions and proved complete-group ownership. Preserve final SSA precision, constraint-history semantics and the existing flag event/wait. Ordinary integration remains unchanged. This is a general completed-output observer mechanism, not a water-model kernel. |
-| R2: position publication and validity | Full native position publication is outside the isolated prototype attribution; no isolated prototype value is claimed. Main's matching OPC writer costs 1.431–3.100 us/step. | W1's packed-frame publication, epoch-specific reference comparisons and five validity flags cost 5.225–13.809 us/step in OPC; excess is 3.776–10.708 across the three systems and A/B captures. Whole coordinates, extent, fractions and motion tests use f64; published packed coordinates use f32. | **Authorized R2, planned after the image screen:** share proved common arithmetic and perform only publication/validity work needed by the next refresh/prune consumer. Keep independently aged outer/inner references, D80 bounds, epoch ordering, extent enforcement and flag meanings. Measure the complete rest budget against main. |
+| R1: integration and template-writer fusion | Full integration is outside the isolated prototype search/evaluation attribution; no isolated prototype value is claimed. Main fuses the corresponding drift/constraint/writer closure into two kernels. | The template-writer exclusion in `recordIntegration` leaves three kernels for TIP3P drift, position constraints and publication. At W1, the closure costs 11.276–23.598 us/step versus main's 5.834–10.240; excess is 5.433–14.826 across the three systems and A/B captures. Arithmetic precision is unchanged. | **Measured at `8177b18a`, retained only for one marked constraint family:** full rest improves 1.97–2.00 us/step on the small TIP3P box and 6.76–6.80 on the large box. Mixed four-family ubiquitin TIP3P regresses 6.14–6.16 and its new admission is discarded. Preserve existing proofs, final SSA precision, history and flag event/wait; ordinary integration is unchanged. This is a shared completed-output observer with a family-count precondition, not a named-model kernel. |
+| R2: position publication and validity | Full native position publication is outside the isolated prototype attribution; no isolated prototype value is claimed. Main's matching OPC writer costs 1.431–3.100 us/step. | W1's packed-frame publication, epoch-specific reference comparisons and five validity flags cost 5.225–13.809 us/step in OPC; excess is 3.776–10.708 across the three systems and A/B captures. Whole coordinates, extent, fractions and motion tests use f64; published packed coordinates use f32. | **Measured at `8177b18a`, discarded:** none of the three OPC full-rest budgets improves against either W1 reference. The audited ubiquitin OPC writer remains 449 PTX instructions with the same opcode histogram and 40 registers; SASS only loses one MOV (455 to 454 non-NOP instructions). Its instruction schedule/register names differ, so it is not byte-identical, but no arithmetic reduction or measured gain justifies retention. Restore the original writer/window/validity implementation. |
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
 | Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | After W1: Cartesian f32 and fractional f64 boxes; native f64 Cartesian producer narrows once, shared anchors feed pair/box checks, and distinct first-frame subsets keep the general proof. Cache build costs 0.063–0.153 per step; exact certificate setup is included in candidate cost, not isolated. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 closed by `5ea35cdb`, retained:** certified f32 Cartesian boxes and shared anchors; preparation is 3.61–3.69 us per attempt, versus S4 5.31–5.39. Exact CPU 6/6, GPU 22/22 and focused sanitizer 1/1 pass. B1/B2 are not standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
@@ -473,8 +473,9 @@ required D0 diagnostic at S4 and **W1 whole search port** are complete.
 W1 has a measured gain but leaves the recorded large prototype gap. The later ruling below supersedes the earlier S2/S5/B1/B2
 single-mechanism plan. W1 was measured as one correction against S4.
 The subsequent image-path batch passed correctness but was discarded by
-its six-system stage screen. R1/R2 now form the authorized rest batch,
-followed by the remaining evaluation items. E4 needs its own concrete
+its six-system stage screen. The R1/R2 rest batch was measured next:
+retain single-family R1 only, discard mixed-family admission and R2, then
+continue ordered SW work and the remaining evaluation items. E4 needs its own concrete
 proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
@@ -486,18 +487,23 @@ that another lane may already have stored. Publication is admitted only with
 the existing integration ownership, adjacency and flag-consumption proofs.
 Marked constraint tuples that are not members of the selected rigid class
 retain particle publication; the marker alone does not prove class membership.
-TIP3P velocity Verlet satisfies the native fusion preconditions. The OPC
+A single-family TIP3P velocity Verlet run satisfies the native fusion
+preconditions. Mixed-family runs now retain the original fallback after
+their measured regression. The OPC
 extra-point pipeline and the overlapping leapfrog integration runs retain
 their existing separate writer under those same preconditions. This is not
 a promise that every template writer becomes a fused integration kernel.
 
-R2 shares one whole-frame reconstruction between extent checking and packed
-publication. It also shares anchor/cell magnitude arithmetic between the two
-motion tests. The independently aged outer and inner references, their
-separate limits, all five validity meanings and the unbuilt-list guards stay
-unchanged. Whole-frame, extent and validity arithmetic remain f64; retained
-shifts are added before the existing f32 publication narrowing. These are
-unmeasured implementations until their correctness and stage screens pass.
+R2 tested common whole-frame and magnitude arithmetic, preserving precision,
+reference ages and predicates. Its six-system stage screen established no
+OPC gain, so the experiment and its sharing-only test are removed. The
+retained writer/window/validity arithmetic is the preceding implementation.
+
+The retained single-family selection adds a mixed-family CPU fallback test.
+Its first run rejected the fixture's static zero-row tuple buffer before
+lowering; changing only that buffer to a dynamic zero-size allocation made
+the controlled rerun pass both selection/driver tests (2/2). The selection
+predicate and numerical bounds were unchanged by that fixture correction.
 
 The first device-free R1/R2 selection run passed two tests and failed the
 new native-driver structural fixture: it incorrectly required all four

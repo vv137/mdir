@@ -22,12 +22,6 @@ struct PreparedTemplateFrame {
   std::array<mlir::Value, 3> whole, packed;
   mlir::Value latticeShift;
 };
-/// Whole O/H/H reconstruction for a writer that shares it between the
-/// extent predicate and retained-frame packing. Preserves the original
-/// subtract, minimum-image, anchor-add graph without narrowing.
-std::array<mlir::Value, 3> emitWholeTemplateFrame(
-    mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
-    mlir::Value cell, mlir::Value inverse);
 /// Recover both hydrogen images relative to the oxygen in state precision,
 /// then shift the whole molecule into the anchor's central cell before
 /// narrowing. The returned shift is also in state precision. This uses

@@ -2429,6 +2429,10 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   if (!after || inRows.contains(after))
     return false;
   if (templateWriters.contains(after)) {
+    // Measured publication fusion helps a single constraint family.
+    // Mixed families retain the original writer: their larger fused
+    // kernel regressed the complete integration/publication closure.
+    if (loops.size() != 1) return false;
     // The native epoch marker proves ownership of complete matched groups.
     // Without this proof retain the existing standalone publication.
     unsigned owners = llvm::count_if(loops, [](md_exec::TupleForOp loop) {

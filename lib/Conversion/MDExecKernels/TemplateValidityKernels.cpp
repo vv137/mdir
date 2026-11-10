@@ -108,8 +108,7 @@ std::array<Value, 2> mdir::kernels::emitTemplateGroupMotionLimits(
 }
 
 Value mdir::kernels::emitTemplateMotionExceeded(OpBuilder &b, Location loc,
-    Value anchor, Value reference, Value current, Value halfMargin,
-    Value anchorL1, Value cellL1) {
+    Value anchor, Value reference, Value current, Value halfMargin) {
   Value projected = emitLatticeShift(b, loc, reference, current);
   Value difference = arith::SubFOp::create(b, loc, anchor, projected);
   Value squares = arith::MulFOp::create(b, loc, difference, difference);
@@ -125,8 +124,8 @@ Value mdir::kernels::emitTemplateMotionExceeded(OpBuilder &b, Location loc,
   // arithmetic error in projecting that point and subtracting the actual
   // framed anchor, rather than replacing its displacement by a minimum image.
   Value magnitude = arith::AddFOp::create(b, loc, one,
-      arith::AddFOp::create(b, loc, anchorL1 ? anchorL1 : norm1(anchor),
-          arith::MulFOp::create(b, loc, cellL1 ? cellL1 : norm1(current), norm1(reference))));
+      arith::AddFOp::create(b, loc, norm1(anchor),
+          arith::MulFOp::create(b, loc, norm1(current), norm1(reference))));
   Value error = arith::MulFOp::create(b, loc, guard, magnitude);
   Value budget = arith::SubFOp::create(b, loc, halfMargin, error);
   Value nonnegative = arith::MaximumFOp::create(b, loc, zero, budget);
