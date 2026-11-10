@@ -121,11 +121,97 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
     memref::StoreOp::create(at, loc, word(at, bin(2, ix(at, 1 << 21))),
                             v.zKeys, ValueRange{unit});
   });
-  emitDeviceRaggedRows(b, loc, v.keys, size, bins, v.counts, v.starts,
-      v.cursors, v.items, v.scanScratch, v.scanBlocks, block, one);
-  // Ragged rows first order equal-column items by fixed ID. The stable
-  // z-key insertion keeps that tie order after the second key stage.
-  emitSortBins(b, loc, v.starts, v.items, bins, binGrid, block, one, v.zKeys);
+  // One stable LSD counting sort on (class-column,z), starting with fixed
+  // IDs. Each digit scatters *input positions*, then the shared rank restores
+  // their order in the bucket. Stability therefore preserves all lower
+  // digits, including the initial fixed-ID tie order. No site-specific sort
+  // kernel is introduced (docs/device-primitives.md, Section 4).
+  auto scratch = [&](int64_t part) -> Value {
+    return memref::SubViewOp::create(b, loc, v.sortScratch,
+        SmallVector<OpFoldResult>{mul(b, size, ix(b, part))},
+        SmallVector<OpFoldResult>{size},
+        SmallVector<OpFoldResult>{b.getIndexAttr(1)});
+  };
+  Value input = scratch(0), output = scratch(1);
+  Value digitKeys = scratch(2), ranked = scratch(3);
+  launch(size, itemGrid, [&](OpBuilder &at, Value unit) {
+    memref::StoreOp::create(at, loc, word(at, unit), input, ValueRange{unit});
+  });
+  // Use at most 256 buckets, bounded by the existing class-column storage.
+  // Balance the significant joint-key bits over digits so that a final
+  // one-bit digit does not put half of a large population in one rank bin.
+  Value columnBits = ix(b, 0), radixBits = ix(b, 1);
+  Value lastBin = sub(b, bins, one);
+  for (int64_t bit = 0; bit != 31; ++bit) {
+    Value present = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge,
+        lastBin, ix(b, int64_t(1) << bit));
+    columnBits = arith::SelectOp::create(b, loc, present, ix(b, bit + 1), columnBits);
+    if (bit >= 1 && bit <= 8) {
+      Value fits = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge,
+          bins, ix(b, int64_t(1) << bit));
+      radixBits = arith::SelectOp::create(b, loc, fits, ix(b, bit), radixBits);
+    }
+  }
+  Value bits = add(b, columnBits, ix(b, 21));
+  Value passes = arith::DivUIOp::create(b, loc,
+      add(b, bits, sub(b, radixBits, one)), radixBits);
+  Value shortWidth = arith::DivUIOp::create(b, loc, bits, passes);
+  Value wider = arith::RemUIOp::create(b, loc, bits, passes);
+  auto sorted = scf::ForOp::create(b, loc, ix(b, 0), passes, one,
+      ValueRange{input, output, ix(b, 0)},
+      [&](OpBuilder &at, Location, Value pass, ValueRange state) {
+    Value extra = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, pass, wider);
+    Value width = add(at, shortWidth,
+        arith::SelectOp::create(at, loc, extra, one, ix(at, 0)));
+    Value buckets = arith::ShLIOp::create(at, loc, one, width);
+    Value mask = sub(at, buckets, one);
+    // The launch helper must insert each digit's kernels in this loop.
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToEnd(at.getInsertionBlock());
+    launch(buckets, gridFor(buckets), [&](OpBuilder &in, Value bucket) {
+      memref::StoreOp::create(in, loc, word(in, ix(in, 0)), v.counts, ValueRange{bucket});
+    });
+    launch(size, itemGrid, [&](OpBuilder &in, Value position) {
+      Value unit = index(in, memref::LoadOp::create(in, loc, state[0], ValueRange{position}));
+      Value column = index(in, memref::LoadOp::create(in, loc, v.keys, ValueRange{unit}));
+      Value z = index(in, memref::LoadOp::create(in, loc, v.zKeys, ValueRange{unit}));
+      Value joint = arith::OrIOp::create(in, loc,
+          arith::ShLIOp::create(in, loc, column, ix(in, 21)), z);
+      Value digit = arith::AndIOp::create(in, loc,
+          arith::ShRUIOp::create(in, loc, joint, state[2]), mask);
+      memref::StoreOp::create(in, loc, word(in, digit), digitKeys, ValueRange{position});
+      emitDeviceAtomicAdd(in, loc, v.counts, digit, word(in, one));
+    });
+    emitDeviceScan(b, loc, v.counts, v.starts, v.cursors, buckets,
+        v.scanScratch, one, block, one);
+    emitCursorScatter(b, loc, digitKeys, v.cursors, v.items, size,
+        itemGrid, block, one, /*everyKey=*/true);
+    emitRankInBins(b, loc, v.items, digitKeys, v.starts, ranked,
+        buckets, itemGrid, block, one);
+    launch(size, itemGrid, [&](OpBuilder &in, Value rank) {
+      Value position = index(in,
+          memref::LoadOp::create(in, loc, ranked, ValueRange{rank}));
+      Value unit = memref::LoadOp::create(in, loc, state[0], ValueRange{position});
+      memref::StoreOp::create(in, loc, unit, state[1], ValueRange{rank});
+    });
+    at.setInsertionPointToEnd(at.getInsertionBlock());
+    scf::YieldOp::create(at, loc, ValueRange{state[1], state[0], add(at, state[2], width)});
+  });
+  launch(size, itemGrid, [&](OpBuilder &at, Value rank) {
+    Value unit = memref::LoadOp::create(at, loc, sorted.getResult(0), ValueRange{rank});
+    memref::StoreOp::create(at, loc, unit, v.items, ValueRange{rank});
+  });
+  // Publish the original class-column offsets required by the unchanged
+  // covering search; the digit histograms above are only temporary.
+  launch(bins, binGrid, [&](OpBuilder &at, Value bin) {
+    memref::StoreOp::create(at, loc, word(at, ix(at, 0)), v.counts, ValueRange{bin});
+  });
+  launch(size, itemGrid, [&](OpBuilder &at, Value unit) {
+    Value key = index(at, memref::LoadOp::create(at, loc, v.keys, ValueRange{unit}));
+    emitDeviceAtomicAdd(at, loc, v.counts, key, word(at, one));
+  });
+  emitDeviceScan(b, loc, v.counts, v.starts, v.cursors, bins,
+      v.scanScratch, v.scanBlocks, block, one);
   Value waterPlaces = mul(b, arith::DivUIOp::create(b, loc,
       add(b, v.waters, ix(b, 15)), ix(b, 16)), ix(b, 16));
   Value atomPlaces = mul(b, arith::DivUIOp::create(b, loc,

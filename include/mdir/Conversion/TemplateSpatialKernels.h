@@ -15,6 +15,9 @@ struct TemplateSpatialBuffers {
   /// coordinates remain available to the covering search and its images.
   mlir::Value points, keys, zKeys, counts, starts, cursors, items, scanScratch;
   mlir::Value order, places;
+  /// Four i32 words per unit, borrowed from the unused staging arena while
+  /// ordering. The search may overwrite this storage after ordering ends.
+  mlir::Value sortScratch;
   /// Index sizes, positive column dimensions and enough scan blocks for
   /// 2*columnsX*columnsY bins. Each unit belongs to exactly one bin.
   mlir::Value waters, atoms, columnsX, columnsY, scanBlocks;

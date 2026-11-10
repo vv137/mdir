@@ -753,12 +753,25 @@ compaction fixtures; the combined native checks are recorded below.
 The shared spatial-order emitter uses class-prefixed x-y serpentine
 columns, then z keys with fixed-unit-ID ties. Reference fractions wrap
 in f64 before narrowing to f32 for key arithmetic, as the legacy mixed group ordering
-does. Each class is cut into consecutive groups of sixteen, with padding
+does. One stable counting sort orders the joint (class-column, z) key.
+It starts with ascending unit IDs and composes the shared histogram,
+scan, cursor scatter and `emitRankInBins` primitives over successive
+least-significant digits. The scatter carries input positions; ranking
+those positions restores their prior order within a digit, preserving
+lower digits and fixed-ID ties. Digit widths balance the significant key
+bits across passes, with at most 256 buckets and no more buckets than
+the existing spatial-bin storage. Four temporary i32 words per unit
+borrow the staging arena before search; no allocation or persistent
+order of an inactive class changes. The original column counts and
+offsets are republished after sorting for the unchanged search.
+Each class is cut into consecutive groups of sixteen, with padding
 at the class boundary. Rebuilding one mobility group leaves the other's
 padded order and inverse map untouched, while the search bins retain both
 groups' hybrid references. An independent lexicographic oracle checks
 996 integer values over all four group-activity combinations, including
 repeated-point ties and coordinates that round to the final bin edge.
+The larger 516-unit variant also crosses launch blocks and exercises a
+different digit decomposition with many equal full keys.
 The native cold refresh owns these bins and their combined search.
 Its column dimensions use the population of water anchors plus solute
 atoms and the current cell volume: the target edge is
