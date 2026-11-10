@@ -6486,6 +6486,17 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   // records with at most that many warps, rather than sizing scratch by a
   // data-dependent list count or reading that count back to the host.
   Value warps = arith::MinUIOp::create(b, loc, capacity, particles);
+  // Diagnostic only: cap force-only launches by the actual record count.
+  // The blocking host read is a measurement device, not a production design.
+  // Reduction-bearing launches retain their original scratch extent.
+  if (nativeEpochs && op.getReduce().empty()) {
+    auto count = getOrDeclare("mdrtTemplatePairsDiagnosticWorkCount",
+        b.getFunctionType({wide}, {wide}));
+    Value work = func::CallOp::create(b, loc, count, ValueRange{handle}).getResult(0);
+    Value records = arith::IndexCastUIOp::create(b, loc, b.getIndexType(), work);
+    warps = arith::MinUIOp::create(b, loc, warps,
+        arith::MaxUIOp::create(b, loc, records, createIndex(b, loc, 1)));
+  }
   Value one = createIndex(b, loc, 1), warp32 = createIndex(b, loc, 32);
   Value launched = arith::MaxUIOp::create(b, loc, warps, one);
   Value threads = arith::MulIOp::create(b, loc, launched, warp32);
@@ -6509,7 +6520,9 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
       Value end = arith::IndexCastUIOp::create(at, loc, at.getIndexType(),
           memref::LoadOp::create(at, loc, pairs,
               ValueRange{createIndex(at, loc, TEMPLATE_PAIR_INNER_RANGES + 17)}));
-      scf::ForOp::create(at, loc, warp, end, launched, ValueRange(),
+      Value valid = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, warp, launched);
+      Value start = arith::SelectOp::create(at, loc, valid, warp, end);
+      scf::ForOp::create(at, loc, start, end, launched, ValueRange(),
           [&](OpBuilder &body, Location, Value record, ValueRange) {
         emitPruneTemplateWork(body, loc, pruning, record, lane);
         scf::YieldOp::create(body, loc);

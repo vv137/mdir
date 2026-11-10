@@ -393,6 +393,19 @@ int64_t mdrtTemplatePairsLayoutValue(int64_t handle, int64_t slot) {
   }
 }
 
+/* Diagnostic only: a blocking header read gives the launch-size experiment
+ * its exact work count. Its host synchronization is excluded from any claimed
+ * production speedup; this function is not a proposed production policy. */
+int64_t mdrtTemplatePairsDiagnosticWorkCount(int64_t handle) {
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  uint32_t count = 0;
+  enter();
+  check(cuMemcpyDtoH(&count, (CUdeviceptr)pairs->pairs +
+      (TEMPLATE_PAIR_INNER_RANGES + 17) * sizeof(int32_t), sizeof(count)),
+      "diagnostic template work count");
+  return count;
+}
+
 /* Zero-offset views let shared scan emitters use their ordinary identity
  * memref descriptors. The aligned pointer includes the arena's physical
  * offset; all such offsets are computed in i64. Reacquire after growth. */
