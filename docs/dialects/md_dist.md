@@ -314,7 +314,13 @@ operation ::= `md_dist.halo` $layout `,` $positions `,` $cell attr-dict `:` qual
 For each domain, every image `x_j + n H` of every particle, other than
 the domain's own particles in the cell (`n = 0`), whose distance from
 the region of the domain is less than the reach of the result type.
-`positions` are the owned positions of `layout`.
+`positions` are the owned positions of `layout`. Only the images within
+ceil(reach / L) cells are visited, so the halo covers pairs only if the
+positions lie in the cell: a neighborhood or a pack proves coverage
+with the halo only if its positions come from `md_dist.distribute` or
+`md_dist.redistribute` with `image` of this cell (after
+`md_dist.migrate`), or are the reference positions of a
+`md_dist.unpack` (V10, D[distributed-migration]).
 
 ```mlir
 %h = md_dist.halo %l, %xo, %cell
@@ -612,8 +618,11 @@ was built at these positions (`md_dist.halo`); the halo and the
 positions come from one `md_dist.unpack` of a state of that cutoff; or
 the op is in the then-region of an `scf.if` whose condition is a
 `md_dist.covered` of the halo and the positions at a cutoff at least
-the state's. `cell` is the cell of the halo. The state keeps the
-halo's reference positions, for `md_dist.covered` after an unpack.
+the state's. With every witness the halo must have been built at
+positions wrapped into its cell (see `md_dist.halo`), so that a loop
+that rebuilds the halo without migrating is refused. `cell` is the cell
+of the halo. The state keeps the halo's reference positions, for
+`md_dist.covered` after an unpack.
 
 ```mlir
 %s = md_dist.pack %l, %h, %cell fields(%x, %v : !own, !own) : !state
