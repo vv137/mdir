@@ -34,10 +34,10 @@ input or output format, checkpoint, or overwrite behavior.
 
 D313 adds execution-level ownership-epoch migration and field
 redistribution to `md_dist`. D332 adds an execution-level
-collective halo skin predicate. Neither adds a `[distribute]` table, Python
-option, checkpoint or output format, or overwrite behavior. The production
-driver's distributed step state and the approved `[distribute]` keys remain
-#38.
+collective halo skin predicate. D[distributed-migration] adds the step state
+`md_dist.state`. None of them adds a `[distribute]` table, Python
+option, checkpoint or output format, or overwrite behavior. The approved
+`[distribute]` keys arrive with the driver's run on domains (#832).
 
 D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,

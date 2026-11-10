@@ -1,0 +1,157 @@
+# A Lennard-Jones trajectory on domains against one domain, 200 steps of
+# velocity Verlet (D[distributed-migration]); the program is in
+# Inputs/dist-trajectory-lj.mlir. The state of the domains is a
+# md_dist.state carried by scf.for; at every step md_dist.covered decides,
+# for all domains at once, whether the halo is kept or the particles migrate
+# and the halo is rebuilt.
+#
+# The output: the number of rebuilds and 1 if it is more than none and fewer
+# than the steps (both branches ran); then, each as the absolute difference
+# and 1 if it is within the bound times its scale, the positions (to the
+# nearest image, against the edge 4.8), the velocities (against their
+# largest component), the forces of the last step (against their largest
+# component), and the potential, kinetic, and total energy (against the
+# kinetic energy); the change of the total energy since the start on
+# domains and on one domain (against the kinetic energy); and the fields
+# carried through the branch of every step against those before it, in the
+# order of the set: the velocities, forces, and masses (bound 0), and the
+# positions (bound 1e-15 of the edge). The masses are not all equal, and the
+# forces carried through a rebuild are not otherwise read, so these two
+# catch a field given to the wrong particles. dist-trajectory-lj-drift.test
+# runs 2000 steps.
+#
+# Bounds (docs/validation.md, Section 2). The scales are the edge, the
+# largest velocity and force components, and the kinetic energy, none near
+# zero here, so no absolute floor is needed (rule 2). The trajectory is
+# compared with a baseline of rounding on the same system (rule 4): the same
+# program on one domain of md_dist (grid 1 x 1 x 1) against the trajectory
+# of md, which differ only in the order of their sums and in their force
+# kernels, with no decomposition. Measured after 200 steps, relative to the
+# scales, the largest over the routes on the CPU and on an RTX 4090 (the
+# same in three repeats on the device):
+#
+#                 baseline (1 x 1 x 1)    domains (all grids)    bound
+#   double  x     5.7e-15                 6.1e-15                2e-14
+#           v     7.2e-14                 6.7e-14                3e-13
+#           f     6.1e-14                 7.6e-14                2e-13
+#           E     4.5e-15                 5.3e-15                2e-14
+#   mixed   x     5.4e-7                  5.4e-7                 2e-6
+#           v     1.0e-5                  1.0e-5                 4e-5
+#           f     4.9e-6                  4.9e-6                 2e-5
+#           E     4.7e-7                  4.6e-7                 2e-6
+#
+# Each bound is three times the baseline, rounded up to one digit: domains
+# may add their own order of summation, but nothing larger. In mixed the
+# differences on domains are those of one domain. The carried fields are
+# copies, the same arithmetic, so their bound is 0 (rule 5); the positions
+# are wrapped, x - n L, a few roundings of the edge (half an ulp of 4.8 is
+# 9.3e-17 of it; measured 1.9e-16). The change of the total energy in 200
+# steps is 1.47e-4 of the kinetic energy on domains and on one domain, in
+# double and in mixed, the fluctuation of velocity Verlet at the step 0.005;
+# the bound 1e-3 is about seven times that of the existing route (one
+# domain) and holds both.
+#
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# Through md_exec, in double and in mixed precision.
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/2.0e-6/; s/VTOL/4.0e-5/; s/FTOL/2.0e-5/; s/ETOL/2.0e-6/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# Sixteen domains narrower than the cutoff, most of them empty at some step,
+# and an uneven grid; in mixed precision on sixteen.
+# RUN: sed 's/GRID/16, 1, 1/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+# RUN: sed 's/GRID/16, 1, 1/; s/STEPS/200/; s/XTOL/2.0e-6/; s/VTOL/4.0e-5/; s/FTOL/2.0e-5/; s/ETOL/2.0e-6/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+# RUN: sed 's/GRID/3, 2, 1/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# The halo events of D310 inside the step: every start is waited for before
+# its buffers are packed, released, or freed, which the verifier proves.
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra \
+# RUN:     --convert-md-dist-to-md-exec="functions=main halo-events=true" \
+# RUN:     --convert-md-dist-to-loops="halo-events=true" --lower-mdrt-halo-events \
+# RUN:     %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s
+#
+# The particles cross faces, edges, and corners of the 2 x 2 x 2 grid: the
+# trace of the transport counts, at each migration, the particles whose
+# owner changes along one, two, or three axes of the grid, and the totals.
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/2.0e-14/; s/VTOL/3.0e-13/; s/FTOL/2.0e-13/; s/ETOL/2.0e-14/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | env MDRT_DIST_TRACE=1 mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt 2>&1 >/dev/null \
+# RUN: | grep 'mdrt_dist: migrate' | tail -n 1 | FileCheck %s --check-prefix=CROSS
+
+# CHECK: {{^[1-9][0-9]*$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: {{^[0-9.e+-]+$}}
+# CHECK-NEXT: {{^1$}}
+# CHECK-NEXT: -68.61
+
+# CROSS: total {{[1-9][0-9]*}} faces, {{[1-9][0-9]*}} edges, {{[1-9][0-9]*}} corners

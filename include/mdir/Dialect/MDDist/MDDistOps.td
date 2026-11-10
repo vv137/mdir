@@ -8,6 +8,7 @@
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mdir/Dialect/MD/MDTypes.td"
 include "mdir/Dialect/MDDist/MDDistTypes.td"
@@ -192,7 +193,13 @@ def MDDist_HaloOp : MDDist_Op<"halo", [
     For each domain, every image `x_j + n H` of every particle, other than
     the domain's own particles in the cell (`n = 0`), whose distance from
     the region of the domain is less than the reach of the result type.
-    `positions` are the owned positions of `layout`.
+    `positions` are the owned positions of `layout`. Only the images within
+    ceil(reach / L) cells are visited, so the halo covers pairs only if the
+    positions lie in the cell: a neighborhood or a pack proves coverage
+    with the halo only if its positions come from `md_dist.distribute` or
+    `md_dist.redistribute` with `image` of this cell (after
+    `md_dist.migrate`), or are the reference positions of a
+    `md_dist.unpack` (V10, D[distributed-migration]).
 
     ```mlir
     %h = md_dist.halo %l, %xo, %cell
@@ -333,6 +340,76 @@ def MDDist_ZerosOp : MDDist_Op<"zeros", [Pure]> {
   let results = (outs MDDist_FieldType:$result);
   let assemblyFormat = [{
     $rows attr-dict `:` qualified(type($rows)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// The state of a step loop (D[distributed-migration])
+//===----------------------------------------------------------------------===//
+
+def MDDist_PackOp : MDDist_Op<"pack", [
+    Pure,
+    TypesMatchWith<"the halo is of the reach of the state", "result", "halo",
+                   "::llvm::cast<::mdir::md_dist::StateType>($_self)"
+                   ".getHaloType()">,
+    TypesMatchWith<"the layout is of the decomposition of the state",
+                   "result", "layout",
+                   "::mdir::md_dist::LayoutType::get($_self.getContext(), "
+                   "::llvm::cast<::mdir::md_dist::StateType>($_self)"
+                   ".getDecomposition())">
+  ]> {
+  let summary = "A state of a step loop: an epoch, its halo, and its fields";
+  let description = [{
+    Forms a state from a layout, a halo of it, and every carried owned
+    field of that layout, the positions first. The halo must cover the
+    positions at the state's cutoff, by one of three witnesses: the halo
+    was built at these positions (`md_dist.halo`); the halo and the
+    positions come from one `md_dist.unpack` of a state of that cutoff; or
+    the op is in the then-region of an `scf.if` whose condition is a
+    `md_dist.covered` of the halo and the positions at a cutoff at least
+    the state's. With every witness the halo must have been built at
+    positions wrapped into its cell (see `md_dist.halo`), so that a loop
+    that rebuilds the halo without migrating is refused. `cell` is the cell
+    of the halo. The state keeps the halo's reference positions, for
+    `md_dist.covered` after an unpack.
+
+    ```mlir
+    %s = md_dist.pack %l, %h, %cell fields(%x, %v : !own, !own) : !state
+    ```
+  }];
+  let arguments = (ins MDDist_LayoutType:$layout, MDDist_HaloType:$halo,
+                       MD_CellType:$cell, Variadic<MDDist_FieldType>:$fields);
+  let results = (outs MDDist_StateType:$result);
+  let assemblyFormat = [{
+    $layout `,` $halo `,` $cell `fields` `(` $fields `:`
+    qualified(type($fields)) `)` attr-dict `:` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDDist_UnpackOp : MDDist_Op<"unpack", [
+    Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>
+  ]> {
+  let summary = "The layout, halo, reference positions, and fields of a state";
+  let description = [{
+    Consumes a state, its one use, and gives its layout, its halo, the
+    positions the halo was built at, and its fields. The results have the
+    provenance of the state: the fields are of the layout, the halo is of
+    the layout, and the halo covers the first field at the state's cutoff.
+    `cell` is the cell the state is used with; the runtime checks that it
+    is the halo's.
+
+    ```mlir
+    %l, %h, %xr, %x, %v = md_dist.unpack %s, %cell : !state
+    ```
+  }];
+  let arguments = (ins MDDist_StateType:$state, MD_CellType:$cell);
+  let results = (outs MDDist_LayoutType:$layout, MDDist_HaloType:$halo,
+                      MDDist_FieldType:$reference,
+                      Variadic<MDDist_FieldType>:$fields);
+  let assemblyFormat = [{
+    $state `,` $cell attr-dict `:` qualified(type($state))
   }];
   let hasVerifier = 1;
 }

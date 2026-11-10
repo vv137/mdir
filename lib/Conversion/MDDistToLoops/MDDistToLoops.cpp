@@ -27,10 +27,13 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/DenseMap.h"
 
 using namespace mlir;
@@ -60,6 +63,9 @@ struct Storage {
   Value count;
   /// A field (memref<?x?x?xf64>) or a partial sum (memref<?x?xf64>).
   Value buffer;
+  /// A state (D[distributed-migration]): the layout handle, the halo
+  /// handle, the halo's reference positions, and one buffer per field.
+  SmallVector<Value> state;
 };
 
 /// What the second executor keeps of a relation, for each domain: the
@@ -99,7 +105,7 @@ private:
   /// domain, once per module.
   void declareSets();
   /// The particle set of the owned or the local rows of domain `d`.
-  FlatSymbolRefAttr getSet(int64_t d, bool local);
+  FlatSymbolRefAttr getSet(int64_t d, bool local, Value epoch);
   /// The number of rows of domain `d` that the rows of `rows`, a layout or
   /// a halo, give it, as an index.
   Value countOf(OpBuilder &b, Storage &rows, int64_t d);
@@ -144,12 +150,21 @@ private:
   LogicalResult lowerSumParticles(SumParticlesOp op);
   LogicalResult lowerMapParticles(MapParticlesOp op);
   LogicalResult lowerAllReduce(AllReduceOp op);
+  LogicalResult lowerPack(PackOp op);
+  LogicalResult lowerUnpack(UnpackOp op);
+  /// The tuple a state value lowers to.
+  SmallVector<Value> stateOf(Value state);
+  /// A copy of `buffer`, a buffer of all domains, that the state owns: not
+  /// freed at the end of the block.
+  Value copyForState(OpBuilder &b, Value buffer);
 
   /// The decomposition of a type of md_dist, and its number of domains.
   DecompositionOp getDecomposition(Operation *op, FlatSymbolRefAttr name);
   /// The edge lengths of the cell `cell`, which must come from
   /// md.orthorhombic_cell.
   LogicalResult getEdges(Operation *op, Value cell, Value edges[3]);
+  /// The cell a halo was built in (its md_dist.halo or md_dist.unpack).
+  LogicalResult getHaloEdges(Operation *op, Value halo, Value edges[3]);
 
   func::FuncOp declare(StringRef name, FunctionType type, bool cInterface);
   Value index(OpBuilder &b, int64_t value) {
@@ -186,7 +201,8 @@ private:
   Location loc;
   llvm::DenseMap<Value, Storage> storage;
   /// Where the buffers are freed and the handles released: before the
-  /// terminator of the block of the ops.
+  /// terminator of the block of the op being lowered. A buffer of a step of a
+  /// loop is freed at the end of the step; only a state outlives its block.
   Operation *end = nullptr;
   int64_t domains = 0;
   DecompositionOp decomposition;
@@ -195,6 +211,8 @@ private:
   int64_t width, cellsPerReach;
   bool haloEvents;
   llvm::DenseMap<Value, DomainRelation> relations;
+  /// The epochs of the sets of md_exec: layouts and halos, numbered.
+  llvm::DenseMap<Value, int64_t> ownedEpochs, localEpochs;
 };
 
 } // namespace
@@ -222,6 +240,14 @@ LogicalResult Lowering::getEdges(Operation *op, Value cell, Value edges[3]) {
   edges[1] = box.getLy();
   edges[2] = box.getLz();
   return success();
+}
+
+LogicalResult Lowering::getHaloEdges(Operation *op, Value halo,
+                                     Value edges[3]) {
+  Value cell = cellOf(halo);
+  if (!cell)
+    return op->emitOpError() << "cannot find the cell of the halo";
+  return getEdges(op, cell, edges);
 }
 
 func::FuncOp Lowering::declare(StringRef name, FunctionType type,
@@ -676,11 +702,8 @@ LogicalResult Lowering::lowerZeros(ZerosOp op) {
 LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
   // The relation is found where it is traversed; here only the precondition
   // under which it is the relation of md.neighborhood is checked.
-  auto halo = op.getHalo().getDefiningOp<HaloOp>();
-  if (!halo)
-    return op.emitOpError() << "cannot find the cell of the halo";
   Value edges[3];
-  if (failed(getEdges(op, halo.getCell(), edges)))
+  if (failed(getHaloEdges(op, op.getHalo(), edges)))
     return failure();
   OpBuilder b(op);
   Type f64 = b.getF64Type();
@@ -1187,13 +1210,171 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
 }
 
 //===----------------------------------------------------------------------===//
+// The state of a step loop (D[distributed-migration])
+//===----------------------------------------------------------------------===//
+
+SmallVector<Value> Lowering::stateOf(Value state) {
+  auto found = storage.find(state);
+  if (found != storage.end() && !found->second.state.empty())
+    return found->second.state;
+  // A block argument or a result of control flow, after the structural
+  // conversion: the cast from its tuple.
+  if (auto cast = state.getDefiningOp<UnrealizedConversionCastOp>())
+    return SmallVector<Value>(cast.getInputs());
+  return {};
+}
+
+Value Lowering::copyForState(OpBuilder &b, Value buffer) {
+  auto type = cast<MemRefType>(buffer.getType());
+  SmallVector<Value> sizes;
+  for (int64_t i = 0; i < type.getRank(); ++i)
+    sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
+  Value copy = memref::AllocOp::create(b, loc, type, sizes);
+  memref::CopyOp::create(b, loc, buffer, copy);
+  return copy;
+}
+
+LogicalResult Lowering::lowerPack(PackOp op) {
+  OpBuilder b(op);
+  Type i64 = b.getI64Type();
+  Storage &layout = storage[op.getLayout()];
+  Storage &halo = storage[op.getHalo()];
+  Value reference = storage[referenceOf(op.getHalo())].buffer;
+  if (!layout.handle || !halo.handle || !reference)
+    return op.emitOpError() << "cannot find the storage of the state";
+  // The state holds a reference to the layout and to the halo, and copies
+  // of the buffers, so that every buffer of the block is still freed at its
+  // end and the halo events of D310 see allocations of their block.
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistRetainLayout", b.getFunctionType({i64}, {}), false),
+      ValueRange{layout.handle});
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistRetainHalo", b.getFunctionType({i64}, {}), false),
+      ValueRange{halo.handle});
+  SmallVector<Value> tuple = {layout.handle, halo.handle,
+                              copyForState(b, reference)};
+  for (Value field : op.getFields()) {
+    Value buffer = storage[field].buffer;
+    if (!buffer)
+      return op.emitOpError() << "cannot find the buffer of a field";
+    tuple.push_back(copyForState(b, buffer));
+  }
+  storage[op.getResult()].state = tuple;
+  return success();
+}
+
+LogicalResult Lowering::lowerUnpack(UnpackOp op) {
+  OpBuilder b(op);
+  SmallVector<Value> tuple = stateOf(op.getState());
+  if (tuple.size() != op.getFields().size() + 3)
+    return op.emitOpError() << "cannot find the tuple of the state";
+  Type i64 = b.getI64Type(), f64 = b.getF64Type();
+  Value edges[3];
+  if (failed(getEdges(op, op.getCell(), edges)))
+    return failure();
+  Value layoutHandle = tuple[0], haloHandle = tuple[1];
+  // The cell the state is used with must be the halo's: its images and the
+  // regions of ownership were made in it.
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistCheckHaloCell",
+              b.getFunctionType({i64, f64, f64, f64}, {}), false),
+      ValueRange{haloHandle, edges[0], edges[1], edges[2]});
+  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
+  auto idsType =
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
+  // The layout: the unpack takes over the state's reference to it, and
+  // releases it at the end of its block.
+  Value count = toIndex(
+      b, func::CallOp::create(
+             b, loc,
+             declare("mdrtDistLayoutCount", b.getFunctionType({i64}, {i64}),
+                     false),
+             ValueRange{layoutHandle})
+             .getResult(0));
+  Value capacity = arith::MaxUIOp::create(b, loc, count, index(b, 1));
+  Value rows = allocate(b, rowsType, {index(b, domains)});
+  Value ids = allocate(b, idsType, {index(b, domains), capacity});
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistLayoutRows",
+              b.getFunctionType({i64, rowsType, idsType}, {}), true),
+      ValueRange{layoutHandle, rows, ids});
+  // The halo, likewise.
+  Value haloCapacity = toIndex(
+      b, func::CallOp::create(
+             b, loc,
+             declare("mdrtDistHaloCapacity", b.getFunctionType({i64}, {i64}),
+                     false),
+             ValueRange{haloHandle})
+             .getResult(0));
+  Value haloRows = allocate(b, rowsType, {index(b, domains)});
+  Value haloIds = allocate(b, idsType, {index(b, domains), haloCapacity});
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistHaloRows",
+              b.getFunctionType({i64, rowsType, idsType}, {}), true),
+      ValueRange{haloHandle, haloRows, haloIds});
+  OpBuilder atEnd(end);
+  func::CallOp::create(
+      atEnd, loc,
+      declare("mdrtDistReleaseHalo", b.getFunctionType({i64}, {}), false),
+      ValueRange{haloHandle});
+  func::CallOp::create(
+      atEnd, loc,
+      declare("mdrtDistReleaseLayout", b.getFunctionType({i64}, {}), false),
+      ValueRange{layoutHandle});
+  Storage &layout = storage[op.getLayout()];
+  layout.handle = layoutHandle;
+  layout.rows = rows;
+  layout.ids = ids;
+  layout.capacity = capacity;
+  layout.count = count;
+  Storage &halo = storage[op.getHalo()];
+  halo.handle = haloHandle;
+  halo.rows = haloRows;
+  halo.ids = haloIds;
+  halo.capacity = haloCapacity;
+  // The buffers: copies in allocations of this block, freed at its end. The
+  // state's own buffers are freed here, as the state is consumed.
+  SmallVector<Value> results = {op.getReference()};
+  results.append(op.getFields().begin(), op.getFields().end());
+  for (auto [result, buffer] :
+       llvm::zip(results, ArrayRef<Value>(tuple).drop_front(2))) {
+    auto type = cast<MemRefType>(buffer.getType());
+    SmallVector<Value> sizes;
+    for (int64_t i = 0; i < type.getRank(); ++i)
+      sizes.push_back(memref::DimOp::create(b, loc, buffer, i));
+    Value copy = allocate(b, type, sizes);
+    memref::CopyOp::create(b, loc, buffer, copy);
+    memref::DeallocOp::create(b, loc, buffer);
+    storage[result].buffer = copy;
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // The second executor: each domain through md_exec (D290)
 //===----------------------------------------------------------------------===//
 
-FlatSymbolRefAttr Lowering::getSet(int64_t d, bool local) {
-  std::string name = (decomposition.getSymName() + ".d" + Twine(d) +
-                      (local ? ".local" : ".owned"))
-                         .str();
+FlatSymbolRefAttr Lowering::getSet(int64_t d, bool local, Value epoch) {
+  // A set of md_exec has one size in a function, and the rows of a domain
+  // change with its epoch: a layout for the owned rows, a halo for the local
+  // ones (D[distributed-migration]). The first epoch keeps the plain name.
+  auto &epochs = local ? localEpochs : ownedEpochs;
+  int64_t number = epochs.try_emplace(epoch, epochs.size()).first->second;
+  std::string name =
+      (decomposition.getSymName() +
+       (number ? ".e" + Twine(number) : Twine()) + ".d" + Twine(d) +
+       (local ? ".local" : ".owned"))
+          .str();
+  if (!SymbolTable::lookupSymbolIn(module, StringAttr::get(module.getContext(), name))) {
+    OpBuilder b(decomposition);
+    md::ParticleSetOp::create(b, decomposition.getLoc(),
+                              StringAttr::get(module.getContext(), name));
+  }
   return FlatSymbolRefAttr::get(module.getContext(), name);
 }
 
@@ -1201,9 +1382,11 @@ void Lowering::declareSets() {
   OpBuilder b(decomposition);
   for (int64_t d = 0; d < domains; ++d)
     for (bool local : {false, true}) {
-      FlatSymbolRefAttr set = getSet(d, local);
-      if (!SymbolTable::lookupSymbolIn(module, set.getAttr()))
-        md::ParticleSetOp::create(b, decomposition.getLoc(), set.getAttr());
+      std::string name = (decomposition.getSymName() + ".d" + Twine(d) +
+                          (local ? ".local" : ".owned"))
+                             .str();
+      if (!SymbolTable::lookupSymbolIn(module, StringAttr::get(module.getContext(), name)))
+        md::ParticleSetOp::create(b, decomposition.getLoc(), name);
     }
 }
 
@@ -1273,7 +1456,6 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
   // as in the reference executor.
   if (failed(lowerNeighborhood(op)))
     return failure();
-  auto haloOp = op.getHalo().getDefiningOp<HaloOp>();
   OpBuilder b(op);
   Storage &halo = storage[op.getHalo()];
   Storage &layout = storage[layoutOf(op.getHalo())];
@@ -1284,9 +1466,9 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
   double skin = 0.0;
   MLIRContext *context = module.getContext();
   DomainRelation relation;
-  relation.cell = haloOp.getCell();
+  relation.cell = cellOf(op.getHalo());
   for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set = getSet(d, /*local=*/true);
+    FlatSymbolRefAttr set = getSet(d, /*local=*/true, op.getHalo());
     Value nOwned = countOf(b, layout, d);
     Value nGhosts = countOf(b, halo, d);
     // The local rows, owned then ghost; the ghosts carry their images.
@@ -1366,7 +1548,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
   auto neighborhood = relationValue.getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];
-  FlatSymbolRefAttr set = getSet(d, /*local=*/true);
+  FlatSymbolRefAttr set = getSet(d, /*local=*/true, neighborhood.getHalo());
   Value nOwned = relation.centers[d];
   Value nGhosts = countOf(b, halo, d);
   Value selected = isa<SumPairsOp>(op)
@@ -1472,7 +1654,9 @@ LogicalResult Lowering::lowerGatherPairsExec(GatherPairsOp op) {
     ghostOut = allocate(b, halo.capacity, k);
   for (int64_t d = 0; d < domains; ++d) {
     auto localType = md::FieldType::get(module.getContext(),
-                                        getSet(d, /*local=*/true), k,
+                                        getSet(d, /*local=*/true,
+                                               haloOf(op.getRelation())),
+                                        k,
                                         b.getF64Type());
     Value destination = md_exec::ZerosOp::create(b, loc, localType);
     auto loop = createPairLoop(b, op, d, TypeRange{localType},
@@ -1514,7 +1698,8 @@ LogicalResult Lowering::lowerSumParticlesExec(SumParticlesOp op) {
       allocate(b, partialType, {index(b, domains), index(b, length)});
   Storage &layout = rowsOf(op.getGathered()[0]);
   for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set = getSet(d, /*local=*/false);
+    FlatSymbolRefAttr set =
+        getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
     Value count = countOf(b, layout, d);
     SmallVector<Value> ins;
     for (Value field : op.getGathered())
@@ -1558,7 +1743,8 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
   Storage &layout = rowsOf(op.getGathered()[0]);
   Value result = allocate(b, layout.capacity, k);
   for (int64_t d = 0; d < domains; ++d) {
-    FlatSymbolRefAttr set = getSet(d, /*local=*/false);
+    FlatSymbolRefAttr set =
+        getSet(d, /*local=*/false, layoutOf(op.getGathered()[0]));
     Value count = countOf(b, layout, d);
     SmallVector<Value> ins;
     for (Value field : op.getGathered())
@@ -1596,6 +1782,7 @@ LogicalResult Lowering::lowerMapParticlesExec(MapParticlesOp op) {
 
 LogicalResult Lowering::lower(Operation *op) {
   loc = op->getLoc();
+  end = op->getBlock()->getTerminator();
   if (throughExec) {
     if (auto o = dyn_cast<NeighborhoodOp>(op))
       return lowerNeighborhoodExec(o);
@@ -1626,6 +1813,8 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](SumParticlesOp o) { return lowerSumParticles(o); })
       .Case([&](MapParticlesOp o) { return lowerMapParticles(o); })
       .Case([&](AllReduceOp o) { return lowerAllReduce(o); })
+      .Case([&](PackOp o) { return lowerPack(o); })
+      .Case([&](UnpackOp o) { return lowerUnpack(o); })
       .Default([&](Operation *other) {
         return other->emitOpError() << "is not run by the reference executor";
       });
@@ -1634,42 +1823,197 @@ LogicalResult Lowering::lower(Operation *op) {
 /// Whether `type` is a type of md_dist, which the lowered program does not
 /// have.
 static bool isDistributedType(Type type) {
-  return isa<LayoutType, HaloType, FieldType, PartialType, RelationType>(
-      type);
+  return isa<LayoutType, HaloType, FieldType, PartialType, RelationType,
+             StateType>(type);
+}
+
+/// The mark of a loop that carries a state, which the second executor
+/// outlines.
+static constexpr llvm::StringLiteral kStepLoop = "md_dist.step_loop";
+
+/// Gives `scf.for`, `scf.if`, and `scf.while` that carry a md_dist.state its
+/// tuple instead (D[distributed-migration]): the layout and halo handles,
+/// the reference positions, and one buffer per field. The ops of md_dist
+/// keep the state, through unrealized casts from and to the tuple, which
+/// the lowering of pack and unpack resolves.
+static LogicalResult convertStateFlow(func::FuncOp function) {
+  bool carries = false;
+  function.walk([&](Operation *op) {
+    if (isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op))
+      for (Type type : op->getResultTypes())
+        if (isa<StateType>(type)) {
+          carries = true;
+          if (isa<scf::ForOp>(op))
+            op->setAttr(kStepLoop, UnitAttr::get(op->getContext()));
+        }
+  });
+  if (!carries)
+    return success();
+  MLIRContext *context = function.getContext();
+  TypeConverter converter;
+  converter.addConversion([](Type type) { return type; });
+  converter.addConversion(
+      [context](StateType state, SmallVectorImpl<Type> &results) {
+        Type i64 = IntegerType::get(context, 64);
+        auto buffer = MemRefType::get({ShapedType::kDynamic,
+                                       ShapedType::kDynamic,
+                                       ShapedType::kDynamic},
+                                      Float64Type::get(context));
+        results.append({i64, i64, buffer});
+        results.append(state.getFields().size(), buffer);
+        return success();
+      });
+  converter.addSourceMaterialization(
+      [](OpBuilder &b, Type type, ValueRange inputs, Location loc) -> Value {
+        return UnrealizedConversionCastOp::create(b, loc, type, inputs)
+            .getResult(0);
+      });
+  converter.addTargetMaterialization(
+      [](OpBuilder &b, TypeRange types, ValueRange inputs, Location loc,
+         Type) -> SmallVector<Value> {
+        return SmallVector<Value>(
+            UnrealizedConversionCastOp::create(b, loc, types, inputs)
+                .getResults());
+      });
+  RewritePatternSet patterns(context);
+  ConversionTarget target(*context);
+  target.markUnknownOpDynamicallyLegal([](Operation *) { return true; });
+  scf::populateSCFStructuralTypeConversionsAndLegality(converter, patterns,
+                                                       target);
+  return applyPartialConversion(function, target, std::move(patterns));
+}
+
+/// Moves the body of each loop that carried a state into a function of its
+/// own, called by the loop (D[distributed-migration]). The second executor
+/// needs it: a particle set of md_exec has one size in a function, and its
+/// storage is assigned for the whole function, while the rows of a domain
+/// change with every migration and rebuild of the halo. In the function of
+/// a step, the sets of md_exec have the sizes of that step. A cell and the
+/// constants the body reads are made again in the function, so that the
+/// passes that need the op of a cell find it.
+static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function) {
+  SmallVector<scf::ForOp> loops;
+  function.walk([&](scf::ForOp loop) {
+    if (loop->hasAttr(kStepLoop))
+      loops.push_back(loop);
+  });
+  unsigned number = 0;
+  for (scf::ForOp loop : loops) {
+    loop->removeAttr(kStepLoop);
+    llvm::SetVector<Value> captured;
+    getUsedValuesDefinedAbove(loop.getRegion(), captured);
+    // The values made again in the function, and those passed to it.
+    SmallVector<Operation *> remade;
+    SmallVector<Value> passed;
+    llvm::DenseSet<Operation *> seen;
+    std::function<void(Value)> visit = [&](Value value) {
+      Operation *def = value.getDefiningOp();
+      bool remake = def && (def->hasTrait<OpTrait::ConstantLike>() ||
+                            isa<md::OrthorhombicCellOp>(def));
+      if (!remake) {
+        if (!llvm::is_contained(passed, value))
+          passed.push_back(value);
+        return;
+      }
+      if (!seen.insert(def).second)
+        return;
+      for (Value operand : def->getOperands())
+        visit(operand);
+      remade.push_back(def);
+    };
+    for (Value value : captured)
+      visit(value);
+    Block *body = loop.getBody();
+    SmallVector<Type> inputs(body->getArgumentTypes());
+    for (Value value : passed)
+      inputs.push_back(value.getType());
+    SmallVector<Type> results(loop.getResultTypes());
+    OpBuilder b(function);
+    std::string name =
+        (function.getSymName() + "_step" + Twine(number++)).str();
+    while (SymbolTable::lookupSymbolIn(module, name))
+      name += "_";
+    auto step = func::FuncOp::create(b, loop.getLoc(), name,
+                                     b.getFunctionType(inputs, results));
+    step.setPrivate();
+    Block *entry = step.addEntryBlock();
+    IRMapping mapping;
+    for (auto [argument, value] :
+         llvm::zip(body->getArguments(),
+                   entry->getArguments().take_front(body->getNumArguments())))
+      mapping.map(argument, value);
+    for (auto [value, argument] :
+         llvm::zip(passed,
+                   entry->getArguments().drop_front(body->getNumArguments())))
+      mapping.map(value, argument);
+    OpBuilder inside = OpBuilder::atBlockBegin(entry);
+    for (Operation *op : remade)
+      inside.clone(*op, mapping);
+    for (Operation &op : body->without_terminator())
+      inside.clone(op, mapping);
+    auto yield = cast<scf::YieldOp>(body->getTerminator());
+    SmallVector<Value> returned;
+    for (Value value : yield.getOperands())
+      returned.push_back(mapping.lookupOrDefault(value));
+    func::ReturnOp::create(inside, loop.getLoc(), returned);
+    // The loop calls the step.
+    SmallVector<Value> operands(body->getArguments());
+    operands.append(passed.begin(), passed.end());
+    SmallVector<Operation *> moved;
+    for (Operation &op : body->without_terminator())
+      moved.push_back(&op);
+    for (Operation *op : llvm::reverse(moved)) {
+      op->dropAllUses();
+      op->erase();
+    }
+    OpBuilder call(yield);
+    auto result = func::CallOp::create(call, loop.getLoc(), step, operands);
+    yield->setOperands(result.getResults());
+  }
+  return success();
 }
 
 LogicalResult Lowering::run(func::FuncOp function) {
   SmallVector<Operation *> ops;
-  function.walk([&](Operation *op) {
-    if (isa_and_nonnull<MDDistDialect>(op->getDialect()) && !isa<YieldOp>(op) &&
-        !op->getParentOfType<SumPairsOp>() &&
-        !op->getParentOfType<GatherPairsOp>() &&
-        !op->getParentOfType<SumParticlesOp>() &&
-        !op->getParentOfType<MapParticlesOp>())
-      ops.push_back(op);
-  });
+  auto collect = [&] {
+    ops.clear();
+    function.walk([&](Operation *op) {
+      if (isa_and_nonnull<MDDistDialect>(op->getDialect()) &&
+          !isa<YieldOp>(op) && !op->getParentOfType<SumPairsOp>() &&
+          !op->getParentOfType<GatherPairsOp>() &&
+          !op->getParentOfType<SumParticlesOp>() &&
+          !op->getParentOfType<MapParticlesOp>())
+        ops.push_back(op);
+    });
+  };
+  collect();
   if (ops.empty())
     return success();
-  Block *block = ops.front()->getBlock();
   for (BlockArgument argument : function.getArguments())
     if (isDistributedType(argument.getType()))
       return function.emitOpError()
              << "the reference executor runs the values of md_dist within "
                 "a function; an argument of md_dist cannot be run";
-  for (Operation *op : ops) {
-    if (op->getBlock() != block)
-      return op->emitOpError()
-             << "the reference executor runs the ops of md_dist in one "
-                "block, without control flow between them";
+  // Control flow carries only states (D[distributed-migration]); every other
+  // value of md_dist stays in the region of its op and is used by ops of
+  // md_dist.
+  if (failed(verifyStateFlow(function)))
+    return failure();
+  for (Operation *op : ops)
     for (Value result : op->getResults())
       if (isDistributedType(result.getType()))
-        for (Operation *user : result.getUsers())
+        for (Operation *user : result.getUsers()) {
+          if (isa<StateType>(result.getType()) &&
+              isa<scf::YieldOp, scf::ForOp>(user))
+            continue;
           if (!isa_and_nonnull<MDDistDialect>(user->getDialect()))
             return user->emitOpError()
                    << "uses a value of md_dist, which the reference "
                       "executor cannot hand to an op of another dialect";
-  }
-  end = block->getTerminator();
+        }
+  if (failed(convertStateFlow(function)))
+    return failure();
+  collect();
   // One decomposition per function.
   for (Operation *op : ops) {
     for (Type type : op->getResultTypes()) {
@@ -1696,12 +2040,44 @@ LogicalResult Lowering::run(func::FuncOp function) {
   for (Operation *op : ops)
     if (failed(lower(op)))
       return failure();
+  // The casts of the structural conversion: a cast of a state to its tuple
+  // takes the tuple of the state; a cast of a tuple to a state goes with the
+  // ops of the state.
+  SmallVector<UnrealizedConversionCastOp> toTuples, toStates;
+  function.walk([&](UnrealizedConversionCastOp cast) {
+    if (cast.getNumOperands() == 1 &&
+        isa<StateType>(cast.getOperand(0).getType()))
+      toTuples.push_back(cast);
+    else if (cast.getNumResults() == 1 &&
+             isa<StateType>(cast.getResult(0).getType()))
+      toStates.push_back(cast);
+  });
+  for (UnrealizedConversionCastOp cast : toTuples) {
+    SmallVector<Value> tuple = stateOf(cast.getOperand(0));
+    if (tuple.size() != cast.getNumResults())
+      return cast.emitOpError() << "cannot find the tuple of the state";
+    cast.replaceAllUsesWith(tuple);
+    cast.erase();
+  }
   for (Operation *op : llvm::reverse(ops)) {
     op->dropAllUses();
     op->erase();
   }
+  for (UnrealizedConversionCastOp cast : toStates) {
+    if (!cast.use_empty())
+      return cast.emitOpError() << "a state is left after its lowering";
+    cast.erase();
+  }
+  if (throughExec) {
+    if (failed(outlineSteps(module, function)))
+      return failure();
+  } else {
+    function.walk([](scf::ForOp loop) { loop->removeAttr(kStepLoop); });
+  }
   storage.clear();
   relations.clear();
+  ownedEpochs.clear();
+  localEpochs.clear();
   decomposition = nullptr;
   return success();
 }

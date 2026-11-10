@@ -9,6 +9,7 @@
 
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MD/MDExchange.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -167,6 +168,93 @@ FieldType FieldType::with(Role role, bool partial) const {
                         getNumComponents(), getElementType());
 }
 
+Type StateType::parse(AsmParser &parser) {
+  FlatSymbolRefAttr decomposition;
+  double reach, cutoff;
+  if (parser.parseLess() || parser.parseAttribute(decomposition) ||
+      parser.parseComma() || parser.parseKeyword("reach") ||
+      parser.parseEqual() || parser.parseFloat(reach) ||
+      parser.parseComma() || parser.parseKeyword("cutoff") ||
+      parser.parseEqual() || parser.parseFloat(cutoff) ||
+      parser.parseComma() || parser.parseKeyword("fields") ||
+      parser.parseEqual())
+    return {};
+  SmallVector<Type> fields;
+  auto parseOne = [&]() -> ParseResult {
+    unsigned numComponents = 1;
+    OptionalParseResult count = parser.parseOptionalInteger(numComponents);
+    if (count.has_value() && (count.value() || parser.parseKeyword("x")))
+      return failure();
+    Type elementType;
+    if (parser.parseType(elementType))
+      return failure();
+    FieldType field = FieldType::getChecked(
+        [&] { return parser.emitError(parser.getNameLoc()); },
+        parser.getContext(), decomposition, Role::Owned, false,
+        numComponents, elementType);
+    if (!field)
+      return failure();
+    fields.push_back(field);
+    return success();
+  };
+  if (parser.parseCommaSeparatedList(AsmParser::Delimiter::Square, parseOne) ||
+      parser.parseGreater())
+    return {};
+  return getChecked([&] { return parser.emitError(parser.getNameLoc()); },
+                    parser.getContext(), decomposition, llvm::APFloat(reach),
+                    llvm::APFloat(cutoff), fields);
+}
+
+void StateType::print(AsmPrinter &printer) const {
+  printer << "<" << getDecomposition() << ", reach = ";
+  printShortest(printer, getReach().convertToDouble());
+  printer << ", cutoff = ";
+  printShortest(printer, getCutoff().convertToDouble());
+  printer << ", fields = [";
+  llvm::interleaveComma(getFields(), printer, [&](Type type) {
+    auto field = cast<FieldType>(type);
+    if (field.getNumComponents() != 1)
+      printer << field.getNumComponents() << " x ";
+    printer << field.getElementType();
+  });
+  printer << "]>";
+}
+
+LogicalResult StateType::verify(function_ref<InFlightDiagnostic()> emitError,
+                                FlatSymbolRefAttr decomposition,
+                                llvm::APFloat reach, llvm::APFloat cutoff,
+                                ArrayRef<Type> fields) {
+  if (!decomposition)
+    return emitError() << "expected a decomposition";
+  double r = reach.convertToDouble(), c = cutoff.convertToDouble();
+  if (!(c > 0.0 && c < r))
+    return emitError() << "the cutoff must be positive and less than the "
+                          "reach: the skin, the reach minus the cutoff, "
+                          "must be positive";
+  if (fields.empty())
+    return emitError() << "a state carries at least the positions";
+  for (Type type : fields) {
+    auto field = dyn_cast<FieldType>(type);
+    if (!field || !field.isOwned() || field.getPartial() ||
+        field.getDecomposition() != decomposition)
+      return emitError() << "expected complete owned fields of "
+                         << decomposition << ", got " << type;
+  }
+  auto positions = cast<FieldType>(fields.front());
+  if (positions.getNumComponents() != 3 ||
+      !positions.getElementType().isF64())
+    return emitError() << "the first field is the positions, 3 x f64";
+  return success();
+}
+
+HaloType StateType::getHaloType() const {
+  return HaloType::get(getContext(), getDecomposition(), getReach());
+}
+
+FieldType StateType::getFieldType(unsigned i) const {
+  return cast<FieldType>(getFields()[i]);
+}
+
 //===----------------------------------------------------------------------===//
 // Provenance
 //===----------------------------------------------------------------------===//
@@ -209,6 +297,9 @@ Value mdir::md_dist::layoutOf(Value value) {
     return {};
   if (auto op = dyn_cast<HaloOp>(def))
     return op.getLayout();
+  // The results of an unpack are of its layout (D[distributed-migration]).
+  if (auto op = dyn_cast<UnpackOp>(def))
+    return op.getLayout();
   FieldType field = getFieldType(value);
   if (isa<RelationType>(type) || (field && field.isGhost())) {
     Value halo = haloOf(value);
@@ -236,6 +327,148 @@ Value mdir::md_dist::layoutOf(Value value) {
 Value mdir::md_dist::copySourceOf(Value ghosts) {
   auto copy = ghosts.getDefiningOp<HaloCopyOp>();
   return copy ? copy.getField() : Value();
+}
+
+Value mdir::md_dist::referenceOf(Value halo) {
+  if (auto build = halo.getDefiningOp<HaloOp>())
+    return build.getPositions();
+  if (auto unpack = halo.getDefiningOp<UnpackOp>())
+    return unpack.getReference();
+  return {};
+}
+
+Value mdir::md_dist::cellOf(Value halo) {
+  if (auto build = halo.getDefiningOp<HaloOp>())
+    return build.getCell();
+  if (auto unpack = halo.getDefiningOp<UnpackOp>())
+    return unpack.getCell();
+  return {};
+}
+
+/// A cutoff in a diagnostic, as it is written in the program (%g).
+static std::string printCutoff(double value) {
+  char text[32];
+  std::snprintf(text, sizeof(text), "%g", value);
+  return text;
+}
+
+bool mdir::md_dist::isWrapped(Value positions, Value cell) {
+  if (auto op = positions.getDefiningOp<DistributeOp>())
+    return op.getImage() && op.getImage() == cell;
+  // A redistribution to the epoch of a md_dist.migrate, whose cell it uses.
+  if (auto op = positions.getDefiningOp<RedistributeOp>())
+    return op.getImage() && op.getImage() == cell;
+  // The positions a state's halo was built at, wrapped by induction: every
+  // state is packed with a halo whose reference passed this test.
+  if (auto op = positions.getDefiningOp<UnpackOp>())
+    return positions == op.getReference() && op.getCell() == cell;
+  return false;
+}
+
+LogicalResult mdir::md_dist::proveCovers(Operation *op, Value halo,
+                                         Value positions, double cutoff) {
+  // The ghosts of a halo are the images within ceil(reach / L) cells of its
+  // reference positions, which therefore must lie in the cell: a halo built
+  // at positions that drifted out of it (rebuilt without a migration) misses
+  // pairs within the cutoff (V10).
+  Value reference = referenceOf(halo);
+  if (reference && !isWrapped(reference, cellOf(halo))) {
+    InFlightDiagnostic diagnostic =
+        op->emitOpError()
+        << "cannot prove that the halo covers the positions (V10): it was "
+           "built at positions that are not shown to be wrapped into its "
+           "cell; build a halo at positions from md_dist.distribute or "
+           "md_dist.redistribute with 'image' of its cell (after "
+           "md_dist.migrate), or from the reference of a md_dist.unpack";
+    diagnostic.attachNote(reference.getLoc()) << "the positions of the halo";
+    return diagnostic;
+  }
+  // Built at these positions: every image within the reach (V4).
+  if (auto build = halo.getDefiningOp<HaloOp>())
+    if (build.getPositions() == positions)
+      return success();
+  // One unpack: the state's invariant, at the state's cutoff.
+  if (auto unpack = halo.getDefiningOp<UnpackOp>())
+    if (!unpack.getFields().empty() && unpack.getFields()[0] == positions) {
+      double covered = unpack.getState().getType().getCutoff().convertToDouble();
+      if (cutoff <= covered)
+        return success();
+      return op->emitOpError()
+             << "the state covers its positions at the cutoff "
+             << printCutoff(covered) << ", less than " << printCutoff(cutoff);
+    }
+  // The then-region of a branch on md_dist.covered (the agreed bit).
+  for (Region *region = op->getParentRegion(); region;
+       region = region->getParentRegion()) {
+    auto branch = dyn_cast<scf::IfOp>(region->getParentOp());
+    if (!branch || region != &branch.getThenRegion())
+      continue;
+    auto test = branch.getCondition().getDefiningOp<CoveredOp>();
+    if (test && test.getHalo() == halo && test.getCurrent() == positions &&
+        test.getCutoff().convertToDouble() >= cutoff)
+      return success();
+  }
+  return op->emitOpError()
+         << "cannot prove that the halo covers the positions at the cutoff "
+         << printCutoff(cutoff)
+         << " (V10): the halo was not built at them, they do not come from "
+            "one md_dist.unpack, and the op is not in the then-region of an "
+            "scf.if on md_dist.covered of them";
+}
+
+static bool isDistributedValueType(Type type) {
+  return isa<MDDistDialect>(type.getDialect());
+}
+
+LogicalResult mdir::md_dist::verifyStateFlow(Operation *root) {
+  auto checkState = [&](Value value, Block *home,
+                        Operation *anchor) -> LogicalResult {
+    if (!isa<StateType>(value.getType()))
+      return success();
+    if (!value.hasOneUse())
+      return anchor->emitOpError()
+             << "a md_dist.state is linear and must have exactly one use; "
+                "it has "
+             << std::distance(value.use_begin(), value.use_end());
+    Operation *user = *value.user_begin();
+    if (user->getBlock() != home)
+      return user->emitOpError()
+             << "uses a md_dist.state outside the block that defines it: "
+                "a state is consumed once, on every path";
+    return success();
+  };
+  WalkResult result = root->walk([&](Operation *op) {
+    for (Value value : op->getResults())
+      if (failed(checkState(value, op->getBlock(), op)))
+        return WalkResult::interrupt();
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        for (BlockArgument argument : block.getArguments())
+          if (failed(checkState(argument, &block, op)))
+            return WalkResult::interrupt();
+    // Only states cross control flow.
+    bool control = isa<scf::ForOp, scf::IfOp, scf::WhileOp>(op);
+    if (control) {
+      for (Type type : op->getResultTypes())
+        if (isDistributedValueType(type) && !isa<StateType>(type)) {
+          op->emitOpError()
+              << "carries a value of md_dist other than a md_dist.state: "
+                 "carry the layout, the halo, and the fields of a step "
+                 "loop in one md_dist.state";
+          return WalkResult::interrupt();
+        }
+      for (Type type : op->getOperandTypes())
+        if (isDistributedValueType(type) && !isa<StateType>(type)) {
+          op->emitOpError()
+              << "carries a value of md_dist other than a md_dist.state: "
+                 "carry the layout, the halo, and the fields of a step "
+                 "loop in one md_dist.state";
+          return WalkResult::interrupt();
+        }
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
 }
 
 /// Checks that `value` is of `layout`, the epoch of ownership the op works
@@ -502,17 +735,17 @@ LogicalResult HaloOp::verify() {
 }
 
 LogicalResult CoveredOp::verify() {
-  auto build = getHalo().getDefiningOp<HaloOp>();
-  if (!build)
+  Value reference = referenceOf(getHalo());
+  if (!reference)
     return emitOpError() << "cannot prove the halo build source";
-  if (getReference() != build.getPositions())
+  if (getReference() != reference)
     return emitOpError()
            << "reference positions must be the halo build version";
-  if (getCell() != build.getCell())
+  if (getCell() != cellOf(getHalo()))
     return emitOpError() << "cell must be the halo build cell";
   if (failed(verifyOwnedComplete(*this, "current positions", getCurrent())) ||
       failed(verifySameLayout(*this, "current positions", getCurrent(),
-                              build.getLayout())))
+                              layoutOf(getHalo()))))
     return failure();
   double cutoff = getCutoff().convertToDouble();
   if (!(cutoff > 0.0 && cutoff < getHalo().getType().getReach().convertToDouble()))
@@ -590,6 +823,79 @@ LogicalResult ZerosOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// PackOp, UnpackOp (D[distributed-migration])
+//===----------------------------------------------------------------------===//
+
+LogicalResult PackOp::verify() {
+  StateType state = getResult().getType();
+  if (getFields().size() != state.getFields().size())
+    return emitOpError() << "the state carries " << state.getFields().size()
+                         << " fields, given " << getFields().size();
+  Value layout = getLayout();
+  if (layoutOf(getHalo()) != layout)
+    return emitOpError()
+           << "the halo is of another layout (epoch of ownership) than the "
+              "state";
+  for (auto [i, field] : llvm::enumerate(getFields())) {
+    std::string what = "field #" + std::to_string(i);
+    if (failed(verifyOwnedComplete(*this, what, field)) ||
+        failed(verifySameLayout(*this, what, field, layout)))
+      return failure();
+    if (field.getType() != state.getFieldType(i))
+      return emitOpError() << what << " is " << field.getType()
+                           << ", the state carries " << state.getFieldType(i);
+  }
+  Value cell = cellOf(getHalo());
+  if (!cell)
+    return emitOpError() << "cannot show the cell of the halo";
+  if (cell != getCell())
+    return emitOpError() << "the cell must be the halo's";
+  if (!referenceOf(getHalo()))
+    return emitOpError() << "cannot show the positions the halo was built at";
+  if (failed(proveCovers(*this, getHalo(), getFields()[0],
+                         state.getCutoff().convertToDouble())))
+    return failure();
+  Value result = getResult();
+  if (!result.hasOneUse() ||
+      result.user_begin()->getBlock() != (*this)->getBlock())
+    return emitOpError() << "a md_dist.state is linear: it must have exactly "
+                            "one use, in the block of its pack";
+  return success();
+}
+
+LogicalResult UnpackOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    ValueRange operands, DictionaryAttr attributes,
+    PropertyRef properties, RegionRange regions,
+    SmallVectorImpl<Type> &inferred) {
+  if (operands.empty())
+    return failure();
+  auto state = dyn_cast<StateType>(operands[0].getType());
+  if (!state)
+    return failure();
+  inferred.push_back(LayoutType::get(context, state.getDecomposition()));
+  inferred.push_back(state.getHaloType());
+  inferred.push_back(state.getFieldType(0));
+  for (Type field : state.getFields())
+    inferred.push_back(field);
+  return success();
+}
+
+LogicalResult UnpackOp::verify() {
+  Value state = getState();
+  if (!state.hasOneUse())
+    return emitOpError() << "a md_dist.state is linear and must have exactly "
+                            "one use";
+  Block *home = isa<BlockArgument>(state)
+                    ? cast<BlockArgument>(state).getOwner()
+                    : state.getDefiningOp()->getBlock();
+  if ((*this)->getBlock() != home)
+    return emitOpError() << "unpacks a md_dist.state outside the block that "
+                            "defines it";
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // NeighborhoodOp
 //===----------------------------------------------------------------------===//
 
@@ -604,7 +910,10 @@ LogicalResult NeighborhoodOp::verify() {
     return failure();
   if (getPositions().getType().getNumComponents() != 3)
     return emitOpError() << "expected positions with 3 components";
-  return verifyCoverage(*this, *this);
+  if (failed(verifyCoverage(*this, *this)))
+    return failure();
+  return proveCovers(*this, getHalo(), getPositions(),
+                     getCutoff().convertToDouble());
 }
 
 LogicalResult PartitionCentersOp::verify() {

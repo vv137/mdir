@@ -9,6 +9,7 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mdir/Dialect/MD/MDEnums.h"
@@ -71,6 +72,37 @@ mlir::Value haloOf(mlir::Value value);
 /// The owned value that the ghost field `ghosts` is a copy of, or null if
 /// `ghosts` is not the result of `md_dist.halo_copy`.
 mlir::Value copySourceOf(mlir::Value ghosts);
+
+/// The owned positions a halo was built at: the positions of its
+/// md_dist.halo, or the reference of the md_dist.unpack that gives it; null
+/// if neither (D[distributed-migration]).
+mlir::Value referenceOf(mlir::Value halo);
+
+/// The cell of a halo: that of its md_dist.halo or of the md_dist.unpack
+/// that gives it; null if neither.
+mlir::Value cellOf(mlir::Value halo);
+
+/// Whether `positions` are shown to be wrapped into `cell`: a
+/// md_dist.distribute or md_dist.redistribute with `image` of that cell, or
+/// the reference positions of a md_dist.unpack with that cell
+/// (D[distributed-migration]).
+bool isWrapped(mlir::Value positions, mlir::Value cell);
+
+/// Proves that `halo` covers every pair within `cutoff` at the owned
+/// positions `positions` (V10): the halo's reference positions are wrapped
+/// into its cell (isWrapped), and either the halo was built at
+/// `positions`, the two come
+/// from one md_dist.unpack of a state of at least that cutoff, or `op` is in
+/// the then-region of an scf.if on a md_dist.covered of the two at a cutoff
+/// of at least `cutoff`. Emits the reason on `op` otherwise.
+mlir::LogicalResult proveCovers(mlir::Operation *op, mlir::Value halo,
+                                mlir::Value positions, double cutoff);
+
+/// Checks that every value of a md_dist.state in `root` (results and block
+/// arguments) has exactly one use, in its own block, and that no other value
+/// of md_dist is carried through the iteration arguments, results, or
+/// terminators of control flow (D[distributed-migration]).
+mlir::LogicalResult verifyStateFlow(mlir::Operation *root);
 
 /// Checks that `ghosts` is the copy of `owned` through `halo`: V1 (a ghost
 /// value is given), V2 (it is a copy of exactly `owned`, the version that

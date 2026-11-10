@@ -53,7 +53,11 @@ static void fail(const char *message) {
   abort();
 }
 
+/* Layouts and halos count their references (D[distributed-migration]): the
+   op that makes one holds the first, a md_dist.state holds one while it
+   carries it, and a halo holds one of its layout. */
 struct Layout {
+  int64_t references;
   int64_t grid[3], domains, count;
   double edges[3];
   int64_t *owner; /* [count]: the domain that owns each particle */
@@ -63,6 +67,7 @@ struct Layout {
 };
 
 struct Halo {
+  int64_t references;
   struct Layout *layout;
   double reach;
   int64_t capacity; /* the most ghosts of one domain */
@@ -89,6 +94,7 @@ int64_t _mlir_ciface_mdrtDistPartition(struct Memref2D *x, int64_t gx,
   struct Layout *l = calloc(1, sizeof *l);
   if (!l)
     fail("out of memory");
+  l->references = 1;
   l->grid[0] = gx;
   l->grid[1] = gy;
   l->grid[2] = gz;
@@ -132,8 +138,26 @@ void _mlir_ciface_mdrtDistLayoutRows(int64_t handle, struct Memref1I *rows,
   }
 }
 
+void mdrtDistRetainLayout(int64_t handle) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  if (!l || l->references <= 0)
+    fail("retain of a released layout");
+  ++l->references;
+}
+
+int64_t mdrtDistLayoutCount(int64_t handle) {
+  struct Layout *l = (struct Layout *)(intptr_t)handle;
+  if (!l || l->references <= 0)
+    fail("use of a released layout");
+  return l->count;
+}
+
 void mdrtDistReleaseLayout(int64_t handle) {
   struct Layout *l = (struct Layout *)(intptr_t)handle;
+  if (!l || l->references <= 0)
+    fail("release of a released layout");
+  if (--l->references > 0)
+    return;
   free(l->owner);
   free(l->row);
   free(l->rows);
@@ -167,6 +191,35 @@ static void checkIdentities(struct Layout *l) {
   free(seen);
 }
 
+/* The particles whose owner changes, by the number of axes of the grid
+   along which the domain changes: across a face (1), an edge (2), or a
+   corner (3); and the totals of all migrations of the process. */
+static int64_t migratedTotals[4];
+
+static void traceMigration(struct Layout *old, struct Layout *next) {
+  int64_t moved[4] = {0, 0, 0, 0};
+  for (int64_t j = 0; j < old->count; ++j) {
+    int64_t a = old->owner[j], b = next->owner[j];
+    if (a == b)
+      continue;
+    int64_t ca[3] = {a % old->grid[0], (a / old->grid[0]) % old->grid[1],
+                     a / (old->grid[0] * old->grid[1])};
+    int64_t cb[3] = {b % old->grid[0], (b / old->grid[0]) % old->grid[1],
+                     b / (old->grid[0] * old->grid[1])};
+    int axes = 0;
+    for (int k = 0; k < 3; ++k)
+      axes += ca[k] != cb[k];
+    ++moved[axes];
+    ++migratedTotals[axes];
+  }
+  fprintf(stderr,
+          "mdrt_dist: migrate: %lld faces, %lld edges, %lld corners; "
+          "total %lld faces, %lld edges, %lld corners\n",
+          (long long)moved[1], (long long)moved[2], (long long)moved[3],
+          (long long)migratedTotals[1], (long long)migratedTotals[2],
+          (long long)migratedTotals[3]);
+}
+
 int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
                                      struct Memref3D *positions, double lx,
                                      double ly, double lz) {
@@ -182,6 +235,7 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
   struct Layout *next = calloc(1, sizeof *next);
   if (!next)
     fail("out of memory");
+  next->references = 1;
   next->domains = old->domains;
   next->count = old->count;
   for (int k = 0; k < 3; ++k) {
@@ -214,6 +268,8 @@ int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
     ++next->rows[d];
   }
   checkIdentities(next);
+  if (tracing())
+    traceMigration(old, next);
   return (int64_t)(intptr_t)next;
 }
 
@@ -317,7 +373,9 @@ int64_t _mlir_ciface_mdrtDistHalo(int64_t layout, struct Memref3D *x,
   struct Halo *h = calloc(1, sizeof *h);
   if (!h)
     fail("out of memory");
+  h->references = 1;
   h->layout = (struct Layout *)(intptr_t)layout;
+  mdrtDistRetainLayout(layout);
   h->reach = reach;
   int64_t domains = h->layout->domains;
   h->rows = calloc(domains, sizeof(int64_t));
@@ -456,8 +514,34 @@ void _mlir_ciface_mdrtDistHaloSum(int64_t handle, struct Memref3D *ghosts,
             (long long)k, (long long)movedRows(h));
 }
 
+void mdrtDistRetainHalo(int64_t handle) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || h->references <= 0)
+    fail("retain of a released halo");
+  ++h->references;
+}
+
+/* The cell a state is used with must be the one its halo's images and its
+   layout's regions were made in (D[distributed-migration]); this slice has
+   no change of the cell on domains. */
+void mdrtDistCheckHaloCell(int64_t handle, double lx, double ly, double lz) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || h->references <= 0)
+    fail("use of a released halo");
+  double edges[3] = {lx, ly, lz};
+  for (int k = 0; k < 3; ++k)
+    if (!(edges[k] == h->layout->edges[k]))
+      fail("a state is used with another cell than its halo's: a change of "
+           "the cell on domains needs a new layout");
+}
+
 void mdrtDistReleaseHalo(int64_t handle) {
   struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || h->references <= 0)
+    fail("release of a released halo");
+  if (--h->references > 0)
+    return;
+  mdrtDistReleaseLayout((int64_t)(intptr_t)h->layout);
   free(h->rows);
   free(h->sourceDomain);
   free(h->sourceRow);

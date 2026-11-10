@@ -71,9 +71,23 @@ cutoff was at most $r_c+2\Delta_h < R_h$ apart in that same image at build
 time. A periodic wrap invalidates coverage even when the minimum-image
 displacement is small. The predicate is one value for all domains, including empty ones.
 The current coordinate values remain a separate version and require their
-own halo copy before use. This predicate currently runs in the in-process
-reference executor; loop-carried distributed state and the production
-driver remain to be connected.
+own halo copy before use. A step loop carries the layout, the halo, its reference positions, and every
+live per-particle field as one linear value, `md_dist.state`
+(D[distributed-migration]). The state is formed only under a witness of
+coverage: the halo was built at the positions, or the positions and the halo
+come from one earlier state, or the formation is guarded by a true
+`md_dist.covered` of them. With every witness the halo must have been built
+at positions wrapped into the cell, by a distribution with images after a
+migration or as the reference of an earlier state: the ghosts are the images
+within $\lceil R_h/L_x\rceil$ cells of those positions along $x$ (likewise along $y$ and $z$), so a halo rebuilt at
+drifted positions without migrating would miss pairs. The step therefore needs no global argument: by
+induction over the steps, every relation a step builds is that of the global
+neighborhood at the current positions. When the predicate fails, the step
+migrates and redistributes every field the state carries, which its type
+lists, and builds a new halo; a field of the old epoch cannot enter the new
+state. The decision is the one reduced value, so every domain, empty or not,
+takes the same branch. The production driver's `[distribute]` table is
+#832.
 
 ### Execution contracts (design)
 
