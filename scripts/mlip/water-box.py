@@ -37,8 +37,13 @@ usage: water-box.py OUTDIR [--n 3] [--spacing 5.0] [--tilt bx cx cy]
 """
 import argparse
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 KJ_PER_EV = 96.48533212331
 H2O = np.array([[0.0, 0.0, 0.119262], [0.0, 0.763239, -0.477047],
@@ -223,7 +228,7 @@ def main():
         masses = np.array([15.9994, 1.008, 1.008] * (len(positions) // 3))
         rng = np.random.default_rng(args.seed + 1000)
         velocities = rng.normal(size=positions.shape) * np.sqrt(
-            0.0083144626 * args.temperature / masses)[:, None]
+            MOLAR_GAS_CONSTANT * args.temperature / masses)[:, None]
         velocities -= (masses[:, None] * velocities).sum(0) / masses.sum()
         velocities = np.round(velocities, 7)
     write(args.outdir, positions, cell, velocities)

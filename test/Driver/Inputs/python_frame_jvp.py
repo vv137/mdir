@@ -54,6 +54,8 @@ import mdir
 
 sys.path.insert(0, str(Path(__file__).parent))
 import python_frame_product as base  # noqa: E402  (reads sys.argv as this script does)
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 scenario = sys.argv[2]
 double = base.double
@@ -328,7 +330,7 @@ def charges_system(electrostatics=mdir.Electrostatics.Cutoff, tied=True):
 
 
 def run_charges():
-    rc, f = 0.8, 138.93545755023302
+    rc, f = 0.8, COULOMB_NATIVE
     system, state, charge_map = charges_system()
     program = base.compile_(system, state)
     evaluator = mdir.FrameEvaluator(program)

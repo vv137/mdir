@@ -20,15 +20,19 @@ import argparse
 import math
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
 
 try:
     import tomllib
 except ImportError:  # Python before 3.11
     import tomli as tomllib
 
-BOLTZMANN = 0.0019872042586408316  # kcal/(mol K), 0.0083144626181532 / 4.184
+BOLTZMANN = MOLAR_GAS_CONSTANT_CONTROL  # kcal/(mol K)
 
 
 def read_run(path, skip):

@@ -23,15 +23,19 @@ Usage: python3 charged_reference.py
 import math
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mixture_reference import EDGE, read  # noqa: E402
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
 CUTOFF = 9.0
 TYPES = {"AR": (0.238465, 3.4, 0.25), "KR": (0.3253, 3.65, -0.25)}
 NBFIX = {("AR", "KR"): (0.2, 3.3)}
 # kcal Å mol^-1 e^-2, the SI/CODATA 2022 control-unit reference input.
-COULOMB = 332.06371307417066
+COULOMB = COULOMB_CONTROL
 
 
 def pair_parameters(a, b):

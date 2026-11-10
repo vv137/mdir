@@ -5,14 +5,15 @@ gives its names under `mdir` and carries, in an installed wheel, the
 runtime libraries and libdevice that the extension finds beside itself
 (D228, docs/python-package.md).
 """
-from . import _core
+from . import _core, _physical_constants
 from ._core import *  # noqa: F401,F403
 
 __version__ = _core.__version__
 
-#: Boltzmann's constant in kJ/(mol K), the value of the compiled programs
-#: (CODATA 2018), for the weights of a reweighting (docs/python-frames.md).
-KB = 0.0083144626181532
+#: Boltzmann's constant in kJ/(mol K), the molar gas constant k N_A of the
+#: compiled programs (docs/conventions.md, Section 1), for the weights of a
+#: reweighting (docs/python-frames.md).
+KB = _physical_constants.MOLAR_GAS_CONSTANT
 
 
 def _publish():

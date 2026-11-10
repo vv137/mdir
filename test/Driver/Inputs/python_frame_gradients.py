@@ -53,9 +53,13 @@ of 64.
 """
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 import mdir
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 root, scenario, target, precision = sys.argv[1:5]
 double = precision == "Double"
@@ -581,7 +585,7 @@ def run_interface():
 
 
 BETA = 3.5  # the splitting parameter of the comparisons with other programs, 1/nm
-COULOMB = 138.93545755023302  # kJ nm / (mol e^2), SI/CODATA 2022 reference input
+COULOMB = COULOMB_NATIVE  # kJ nm / (mol e^2), docs/conventions.md, Section 1
 
 
 def oracle_model(points, kind="amber", charges=False):

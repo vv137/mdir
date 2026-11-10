@@ -13,9 +13,12 @@ it with [K(v_{n-1/2}) + K(v_{n+1/2})] / 2 at the steps 2..N-1. N_f comes
 from the row of step 0, where K_T = K.
 """
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
 
 log, dt, paths = sys.argv[1], float(sys.argv[2]), sys.argv[3:]
-kB = 0.0083144626181532403 / 4.184
+kB = MOLAR_GAS_CONSTANT_CONTROL
 rows = {}
 for line in open(log):
     words = line.split()

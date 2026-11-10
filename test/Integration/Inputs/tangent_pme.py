@@ -23,14 +23,18 @@ With `fd`, the forces are not requested, for a run under
 md-check-derivatives, which then checks the requests of the tangent alone.
 """
 import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 tolerance = float(sys.argv[1])
 out = sys.argv[2]
 differences = len(sys.argv) > 3 and sys.argv[3] == "fd"
 
-f = 138.935458
+f = COULOMB_NATIVE
 beta = 3.0
 edges = np.array([2.0, 2.2, 1.9])
 grid, order = (48, 54, 48), 8

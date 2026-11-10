@@ -36,13 +36,17 @@ g-BAOAB's by more than 1e-3 nm/ps here, which the test must tell apart.
 import ctypes
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 import mdir
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
+
 inputs, runtime, target, precision = sys.argv[1:5]
 SEED, TEMPERATURE, FRICTION, DT = 2024, 300.0, 1.0, 0.002
-KT = 0.0083144626181532403 * TEMPERATURE
+KT = MOLAR_GAS_CONSTANT * TEMPERATURE
 # nm and nm/ps. In mixed precision the velocities and the changes of the
 # positions are of f32: measured 2.1e-8 nm and 1.0e-5 nm/ps.
 TOLERANCE = {"Double": (1e-12, 1e-9), "Mixed": (1e-7, 1e-4)}[precision]

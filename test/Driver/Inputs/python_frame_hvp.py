@@ -29,11 +29,13 @@ import mdir
 
 sys.path.insert(0, str(Path(__file__).parent))
 import python_frame_product as base  # noqa: E402  (reads sys.argv as this script does)
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 scenario = sys.argv[2]
 work = base.work
 double, mode = base.double, base.mode
-F = 138.93545755023302
+F = COULOMB_NATIVE
 
 
 def hvp(evaluator, x, g, v):

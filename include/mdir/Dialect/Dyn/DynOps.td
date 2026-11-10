@@ -415,7 +415,8 @@ def Dyn_PressureOp : Dyn_Op<"pressure", [Pure]> {
 
     In bar, with `K` the kinetic energy of the groups at the half steps,
     `W` the diagonal of their virial, `C` the virials of the constant terms
-    times the volume, and c_bar = 16.605390671738466 bar nm³ mol/kJ (D264).
+    times the volume, and c_bar = 10^25/N_A bar nm³ mol/kJ, the pressure
+    coefficient of docs/conventions.md, Section 1 (D264).
 
     ```mlir
     %p = dyn.pressure %k, %w, %l0, %l1, %l2, %c : vector<3xf64>

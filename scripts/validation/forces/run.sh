@@ -12,9 +12,10 @@
 #     again at the positions of MDIR.
 #
 # For sander, the charges of the topology that MDIR reads are scaled by
-# sqrt(332.0522173 / 332.0637133), so that its Coulomb constant (CODATA
-# 2018) gives the energies of Amber's, and sander keeps the net force of
-# particle mesh Ewald (netfrc=0), which it removes by default.
+# the square root of Amber's Coulomb constant, 332.0522173, over MDIR's
+# (docs/conventions.md, Sections 1 and 4), so that MDIR gives the energies
+# of Amber's, and sander keeps the net force of particle mesh Ewald
+# (netfrc=0), which it removes by default.
 #
 #   scripts/validation/forces/run.sh WORK MDIR ENGINES
 #
@@ -29,10 +30,12 @@ mkdir -p "$work"
 cd "$work"
 
 scale() {  # scale IN OUT: the charges of a prmtop to Amber's constant
-  "$python" - "$1" "$2" <<'PY'
+  PYTHONPATH="$here/../.." "$python" - "$1" "$2" <<'PY'
 import math, sys, parmed
+from mdir_physical_constants import COULOMB_CONTROL
+AMBER_COULOMB = 332.0522173  # Amber's, 18.2223^2 (docs/conventions.md, Section 4)
 p = parmed.load_file(sys.argv[1])
-factor = math.sqrt(332.0522173 / 332.0637133)
+factor = math.sqrt(AMBER_COULOMB / COULOMB_CONTROL)
 for atom in p.atoms:
     atom.charge *= factor
 p.save(sys.argv[2], overwrite=True)

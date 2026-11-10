@@ -28,6 +28,8 @@ from pathlib import Path
 
 import numpy as np
 import mdir
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 root, scenario = sys.argv[1], sys.argv[2]
 target = sys.argv[3] if len(sys.argv) > 3 else "CPU"
@@ -423,7 +425,7 @@ def run_lj():
 # --- charges ---------------------------------------------------------------
 
 def run_charges():
-    rc, f = 0.8, 138.93545755023302
+    rc, f = 0.8, COULOMB_NATIVE
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.truncation = mdir.Truncation.Switch

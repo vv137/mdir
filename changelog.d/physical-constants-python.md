@@ -1,0 +1,3 @@
+### Changed
+
+- **`mdir.KB` is the molar gas constant of the programs to the last bit** (D394, #805). It is taken from `mdir._physical_constants`, generated from `include/mdir/Support/PhysicalConstants.h`, and changes by one unit in the last place, to 0.0083144626181532403 kJ/(mol K); it had been written as 0.0083144626181532. The scripts of the repository, the references of the tests and of the validation included, import the generated `scripts/mdir_physical_constants.py` instead of writing constants of their own, and `scripts/check-before-push.sh` fails on a file that writes one (`scripts/check-physical-constants.py`, docs/conventions.md, Section 1).

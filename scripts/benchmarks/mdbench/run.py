@@ -31,6 +31,9 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import AVOGADRO  # noqa: E402
 
 MDIR_CONTROL = """[input]
 topology    = "prmtop.parm7"
@@ -106,7 +109,7 @@ def density(volume, work):
             reading = line.split()[1] == "MASS"
         elif reading and not line.startswith("%"):
             masses += [float(v) for v in line.split()]
-    return sum(masses) / 6.02214076e23 / (volume * 1e-24)
+    return sum(masses) / AVOGADRO / (volume * 1e-24)
 
 
 def pmemd(args, data, work):

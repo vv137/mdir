@@ -13,8 +13,11 @@ difference from the file, and whether it is within the tolerance.
 
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
-COULOMB = 332.06371307417066  # kcal Å/(mol e²), SI/CODATA 2022 reference input
+COULOMB = COULOMB_CONTROL  # kcal Å/(mol e²), docs/conventions.md, Section 1
 CUTOFF = 12.0
 
 

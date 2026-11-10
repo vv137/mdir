@@ -8,6 +8,9 @@ pairs of those particles (kcal/mol/Å).
 PLAIN_FORCES and FORCES are `mdir checkpoint --print=forces` of the runs
 without and with the terms."""
 import math, sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
 def sections(path):
     out = {}; name = None; fmt = None
@@ -51,7 +54,7 @@ vals = [float(lines[2 + i // 6][12 * (i % 6):12 * (i % 6) + 12]) for i in range(
 X = [vals[3 * i:3 * i + 3] for i in range(n)]
 box = [float(v) for v in [l for l in lines if l.strip()][-1].split()[:3]]
 cutoff = 9.0
-coulomb = 332.06371307417066
+coulomb = COULOMB_CONTROL
 
 def residue(i):
     return max(r for r in range(len(residues)) if residues[r] <= i) + 1

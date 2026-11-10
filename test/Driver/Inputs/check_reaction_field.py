@@ -10,6 +10,9 @@ those energies (kcal/mol/Å).
 PLAIN_FORCES and FORCES are `mdir checkpoint --print=forces` of the runs
 with a plain cutoff and with the reaction field."""
 import math, sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
 def sections(path):
     out = {}; name = None
@@ -40,7 +43,7 @@ vals = [float(lines[2 + i // 6][12 * (i % 6):12 * (i % 6) + 12]) for i in range(
 X = [vals[3 * i:3 * i + 3] for i in range(n)]
 box = [float(v) for v in [l for l in lines if l.strip()][-1].split()[:3]]
 
-f = 332.06371307417066
+f = COULOMB_CONTROL
 rc = 9.0
 eps = float(sys.argv[3])
 krf = 1 / (2 * rc ** 3) if eps == 0 else (eps - 1) / ((2 * eps + 1) * rc ** 3)

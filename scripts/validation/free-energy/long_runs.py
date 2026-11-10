@@ -37,11 +37,15 @@ Needs NumPy and SciPy.
 import argparse
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 from scipy import stats
 
-KB = 0.0019872042586408316  # kcal/(mol K)
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
+
+KB = MOLAR_GAS_CONSTANT_CONTROL  # kcal/(mol K)
 KCAL = 4.184
 ATM = 1.4583972e-5          # kcal/mol in one atm Angstrom^3
 

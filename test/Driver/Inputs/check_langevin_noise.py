@@ -13,13 +13,16 @@ from `mdir checkpoint --print=velocities`.
 import ctypes
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 library = ctypes.CDLL(sys.argv[1])
 seed, step, temperature = (int(sys.argv[2]), int(sys.argv[3]),
                            float(sys.argv[4]))
 Words4 = ctypes.c_uint32 * 4
 Words2 = ctypes.c_uint32 * 2
-kT = 0.0083144626181532403 * temperature
+kT = MOLAR_GAS_CONSTANT * temperature
 c = math.exp(-1.0)
 worst, count = 0.0, 0
 for line in sys.stdin:

@@ -64,10 +64,14 @@ import argparse
 import math
 import os
 import sys
+from pathlib import Path
 
 import openmm as mm
 import openmm.app as app
 import openmm.unit as unit
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 KCAL = 4.184
 COULOMB = [0.0, 0.25, 0.5, 0.75] + [1.0] * 10
@@ -242,7 +246,7 @@ def direct_shift(system, ligand, positions, box):
             d = [d[a] - box[a] * round(d[a] / box[a]) for a in range(3)]
             if math.sqrt(sum(c * c for c in d)) < CUTOFF:
                 total += charges[i] * charges[j]
-    return 138.935457644 / KCAL * total * math.erfc(BETA * CUTOFF) / CUTOFF
+    return COULOMB_NATIVE / KCAL * total * math.erfc(BETA * CUTOFF) / CUTOFF
 
 
 def point(arguments):

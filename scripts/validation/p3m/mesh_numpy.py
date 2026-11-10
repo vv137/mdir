@@ -19,8 +19,12 @@ edges that MDIR computes).
 """
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
 f = 1.0
 
@@ -172,7 +176,7 @@ def random_systems():
 def energy(prmtop, inpcrd, beta, K, logs):
     import re
     import parmed
-    coulomb = 332.0637133  # kcal/mol A / e^2, Amber's 18.2223^2
+    coulomb = COULOMB_CONTROL  # kcal/mol A / e^2, MDIR's (docs/conventions.md)
     s = parmed.load_file(prmtop, inpcrd)
     q = np.array([a.charge for a in s.atoms])
     L = float(s.box[0])

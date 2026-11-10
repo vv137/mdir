@@ -19,12 +19,16 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "ensembles"))
 from analyze import inefficiency  # noqa: E402
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import AVOGADRO, BOLTZMANN_SI  # noqa: E402
 
 CONTROL = """[input]
 topology    = "opc.prmtop"
@@ -131,8 +135,8 @@ def main():
     # The compressibility from the fluctuations of the volume,
     # beta_T = <dV^2> / (kB T <V>): with V in Å^3, var 1e-30 / (kT mean) is
     # in 1/Pa, and 1e10 times that in 1e-5/bar.
-    kT = 1.380649e-23 * 300.0  # J
-    mass = 1039 * 18.01528 / 6.02214076e23  # g
+    kT = BOLTZMANN_SI * 300.0  # J
+    mass = 1039 * 18.01528 / AVOGADRO  # g
     print(f"{'run':10s} {'density, g/cm^3':>24s} {'beta_T, 1e-5/bar':>22s}"
           f" {'g':>6s} {'edges at the end, nm':>26s}")
     for name in RUNS:
