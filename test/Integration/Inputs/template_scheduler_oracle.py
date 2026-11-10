@@ -11,6 +11,7 @@ This tests scheduling and the derived body, not the physical PME route.
 """
 import argparse
 import json
+import math
 import pathlib
 
 parser = argparse.ArgumentParser()
@@ -18,6 +19,8 @@ parser.add_argument('source', type=pathlib.Path)
 parser.add_argument('destination', type=pathlib.Path)
 parser.add_argument('--summary', action='store_true')
 parser.add_argument('--rotated', action='store_true')
+parser.add_argument('--screened', action='store_true',
+                    help='Check erfc(3.5*r)/r against an independent f64 oracle')
 args = parser.parse_args()
 
 forces = [[0.0] * 3 for _ in range(153)]
@@ -49,22 +52,42 @@ for i in range(13):
         if r2 >= 1.0:
             continue
         pairs += 1
-        totals[0] += 0.5 * r2
+        coefficient = -1.0
+        if args.screened:
+            radius = math.sqrt(r2)
+            beta = 3.5
+            totals[0] += math.erfc(beta * radius) / radius
+            coefficient = (math.erfc(beta * radius) / radius +
+                           2 * beta / math.sqrt(math.pi) * math.exp(-beta * beta * r2)) / r2
+        else:
+            totals[0] += 0.5 * r2
         for member, weight in enumerate(weights):
             for k in range(3):
-                forces[3 * i + member][k] -= weight * d[k]
-                forces[48 + 3 * j + member][k] += weight * d[k]
+                forces[3 * i + member][k] += coefficient * weight * d[k]
+                forces[48 + 3 * j + member][k] -= coefficient * weight * d[k]
         for a_axis in range(3):
             for b_axis in range(3):
-                totals[1 + 3 * a_axis + b_axis] -= d[a_axis] * d[b_axis]
+                totals[1 + 3 * a_axis + b_axis] += coefficient * d[a_axis] * d[b_axis]
 
 if args.summary:
     print(json.dumps({'rotated': args.rotated, 'active_pairs': pairs, 'energy': totals[0],
                       'virial': totals[1:],
                       'max_force_component': max(abs(x) for row in forces for x in row),
-                      'checks': 153 * 3 + 10, 'tolerance': 0.0}))
+                      'checks': 153 * 3 + 10,
+                      'tolerance': 1e-5 if args.screened else 0.0}))
 
-lines = [args.source.read_text(),
+source = args.source.read_text()
+if args.screened:
+    old = ('%half = arith.constant 0.5 : f64\n'
+           '    %e = arith.mulf %half, %r2 : f64')
+    new = ('%radius = math.sqrt %r2 : f64\n'
+           '    %beta = arith.constant 3.5 : f64\n'
+           '    %br = arith.mulf %beta, %radius : f64\n'
+           '    %screen = math.erfc %br : f64\n'
+           '    %e = arith.divf %screen, %radius : f64')
+    assert source.count(old) == 1
+    source = source.replace(old, new)
+lines = [source,
          'func.func private @template_scheduler_probe(memref<153x3xf32>, memref<32x10xf64>)',
          'func.func private @printI64(i64)',
          'func.func private @printNewline()', 'func.func @main() {']
@@ -106,9 +129,22 @@ good = emit('arith.constant true')
 def check(actual, expected, real, number):
     global good
     ref = emit(f'arith.constant {expected:.17e} : {real}')
-    okay = emit(f'arith.cmpf oeq, {actual}, {ref} : {real}')
+    if args.screened:
+        # Use the existing physical gate's 1e-5 scale floor, without its
+        # additional mixed-baseline/cancellation allowances. Padding is exact.
+        scale = (max(abs(x) for row in forces for x in row) if number < 459
+                 else abs(totals[0]) if number == 459
+                 else max(abs(x) for x in totals[1:]))
+        bound = 0.0 if 39 * 3 <= number < 48 * 3 else 1e-5 * scale
+        delta = emit(f'arith.subf {actual}, {ref} : {real}')
+        absolute = emit(f'math.absf {delta} : {real}')
+        limit = emit(f'arith.constant {bound:.17e} : {real}')
+        okay = emit(f'arith.cmpf ole, {absolute}, {limit} : {real}')
+        bad = emit(f'arith.cmpf ugt, {absolute}, {limit} : {real}')
+    else:
+        okay = emit(f'arith.cmpf oeq, {actual}, {ref} : {real}')
+        bad = emit(f'arith.cmpf une, {actual}, {ref} : {real}')
     good = emit(f'arith.andi {good}, {okay} : i1')
-    bad = emit(f'arith.cmpf une, {actual}, {ref} : {real}')
     lines.append(f'  scf.if {bad} {{')
     label = emit(f'arith.constant {number} : i64')
     lines.extend([f'    func.call @printI64({label}) : (i64) -> ()',
