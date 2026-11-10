@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/ProfileMap.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -941,7 +942,8 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   Value filtered = getMatrixEntries(builder, loc, structure.handle);
   if (structure.excluded)
     scf::ParallelOp::create(
-        builder, loc, ValueRange{createIndex(builder, loc, 0)},
+        builder, profile::refine(loc, "exclusion_filter"),
+        ValueRange{createIndex(builder, loc, 0)},
         ValueRange{structure.size}, ValueRange{createIndex(builder, loc, 1)},
         [&](OpBuilder &body, Location, ValueRange ivs) {
           emitExclusionFilter(body, loc, structure.counts, filtered,
@@ -952,8 +954,9 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   scf::ParallelOp::create(
-      builder, loc, ValueRange{zero}, ValueRange{structure.size},
-      ValueRange{one}, [&](OpBuilder &body, Location, ValueRange ivs) {
+      builder, profile::refine(loc, "reference_positions"), ValueRange{zero},
+      ValueRange{structure.size}, ValueRange{one},
+      [&](OpBuilder &body, Location, ValueRange ivs) {
         storeElement(body, loc, loadElement(body, loc, positions, ivs[0]),
                      structure.reference, ivs[0]);
       });
@@ -1064,7 +1067,8 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     Value one = createIndex(at, loc, 1);
     Value none = createZero(at, loc, real);
     auto farthest = scf::ParallelOp::create(
-        at, loc, ValueRange{zero}, ValueRange{structure.size},
+        at, profile::refine(loc, "displacement_check"), ValueRange{zero},
+        ValueRange{structure.size},
         ValueRange{one}, ValueRange{none},
         [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
           Value now = loadElement(body, loc, positions, ivs[0]);
@@ -1550,6 +1554,12 @@ LogicalResult Lowering::run() {
     if (failed(lowerFunction(function)))
       return failure();
 
+  // The loops of the templates are named by their functions
+  // (D[profile-map]).
+  for (auto function : module.getOps<func::FuncOp>())
+    if (function.getSymName().starts_with("mdrt."))
+      profile::tagTemplate(function);
+
   // What is left of the semantic dialects are definitions that nothing
   // refers to any more.
   for (Operation &op : llvm::make_early_inc_range(module)) {
@@ -1583,6 +1593,10 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
+    // Each op's record, read while the buffers still name their sets; the
+    // loops that its lowering creates at its location inherit it
+    // (D[profile-map]).
+    profile::tagOps(getOperation());
     if (failed(md_exec::eraseStorageSets(getOperation())))
       return signalPassFailure();
     // The algebra of every sum is stated (D301): the

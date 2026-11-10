@@ -303,6 +303,9 @@ struct Control {
   std::string logFile;
   /// Optional execution history in JSON Lines (D168).
   std::string manifestFile;
+  /// The profile map of the compiled program, in JSON (D[profile-map]);
+  /// empty for none.
+  std::string profileMapFile;
   std::string energyFile;
   /// The terms over centers of groups at every energy of the log (D145).
   std::string pullFile;

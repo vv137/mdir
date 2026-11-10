@@ -20,6 +20,7 @@
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/ProfileMap.h"
 #include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
@@ -567,7 +568,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail(program.takeError());
   if (emit == Emit::Module) {
     llvm::outs() << printModuleForReading(*program);
-    return 0;
+    // The profile map is of the lowered program (D[profile-map]).
+    if (options.profileMap.empty())
+      return 0;
   }
 
   //===--------------------------------------------------------------------===//
@@ -624,7 +627,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     pipeline = replaced;
   if (emit == Emit::Pipeline) {
     llvm::outs() << pipeline << "\n";
-    return 0;
+    if (options.profileMap.empty())
+      return 0;
   }
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, llvm::errs())))
     return fail("cannot set up the passes");
@@ -654,8 +658,26 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
 
-  if (emit == Emit::Lowered) {
-    module->print(llvm::outs());
+  // The profile map of the lowered program, which names the source of each
+  // parallel region of the host (D[profile-map]).
+  auto writeProfileMap = [&](const std::string &path) -> llvm::Error {
+    auto map = compiler::getProfileMap(*module, *control);
+    if (!map)
+      return map.takeError();
+    std::error_code error;
+    llvm::raw_fd_ostream os(path, error);
+    if (error)
+      return llvm::createStringError(error, "cannot write the profile map '" +
+                                                path + "': " + error.message());
+    os << *map;
+    return llvm::Error::success();
+  };
+  if (emit != Emit::Run) {
+    if (emit == Emit::Lowered)
+      module->print(llvm::outs());
+    if (!options.profileMap.empty())
+      if (llvm::Error error = writeProfileMap(options.profileMap))
+        return fail(std::move(error));
     return 0;
   }
   // Where the compile cache is, or why there is none, and what it gave the
@@ -711,6 +733,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
                                         control->pullFile, control->manifestFile,
+                                        control->profileMapFile,
                                         control->freeEnergyFile,
                                         control->observablesFile};
     if (control->framePeriod > 0)
@@ -745,6 +768,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else {
     output.log.keepNothing();
   }
+  if (!control->profileMapFile.empty())
+    if (llvm::Error error = writeProfileMap(control->profileMapFile))
+      return fail(std::move(error));
 
   //===--------------------------------------------------------------------===//
   // Load

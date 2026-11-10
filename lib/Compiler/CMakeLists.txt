@@ -24,7 +24,7 @@ foreach(target MDIRCompileCache obj.MDIRCompileCache)
   endif()
 endforeach()
 
-add_mlir_library(MDIRCompiler Compile.cpp Registry.cpp
+add_mlir_library(MDIRCompiler Compile.cpp ProfileMap.cpp Registry.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS OrcJIT Passes
   LINK_LIBS PUBLIC
