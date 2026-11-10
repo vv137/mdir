@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**On the CPU target, a loop over the pairs of the neighbor matrix with the policy `(directed, owner_only)` may run each row $W$ candidates at a time in registers of MLIR's `vector` dialect, the strategy `lanes(W)`, which `md-exec-choose-host-pairs` states on the op where one shared precondition holds and the host's measured policy selects it, and which the host lowering builds with one shared emitter; every other loop, and every loop on an unmeasured host, keeps the scalar row of today.** Issue #554, under #549 (step 4 of D267) and #444. *This file is the design of the draft PR; the measurements and the validation are filled in as the implementation lands.*
+**On the CPU target, a loop over the pairs of the neighbor matrix with the policy `(directed, owner_only)` may run each row $W$ candidates at a time in registers of MLIR's `vector` dialect, the strategy `lanes(W)`, which `md-exec-choose-host-pairs` states on the op where one shared precondition holds and the host's measured policy selects it, and which the host lowering builds with one shared emitter; every other loop, and every loop on an unmeasured host, keeps the scalar row of today.** Issue #554, under #549 (step 4 of D267) and #444. The maintainer ruled on the design on PR #823: one constant $W$ in the deterministic mode, `MDIR_HOST_PAIRS=scalar` pinned in the corpus and the lit suite, f32 tables on the host a separate decision, the one-thread share by the proxy below, and Table 10.9 not measured again.
 
 ## The measurement before the choice (#554, the maintainer on PR #555)
 
@@ -56,39 +56,97 @@ Every control file of the corpus of `scripts/builder-equivalence/check.py` (the 
 
 No kernel of the corpus holds an op outside these rows, a nested region, a call, or a write to memory. The nine Amber suite systems have 4 loops (NVE) or 8 (NPT) each: forces with the energy and the virial (72 ops), the energy alone (39), forces alone (40), and, under NPT, forces with the virial (51). The legal subset of the first slice therefore covers every loop of the corpus.
 
-## Design of the first slice
+## The first slice
 
-**Strategy attribute.** An optional attribute of `md_exec.pair_for`, `host(lanes(W))`, printed only where it is set, so that every program without it, and every GPU program, prints as today. `md-exec-choose-host-pairs` sets it on the CPU target only, after `md-exec-assign-algebra` and before `md-exec-assign-storage`, which carries it (as `md-exec-choose-scatter` precedes the storage on a device). Absent, the row is scalar.
+**Strategy attribute.** `host(lanes(W))`, an optional attribute of `md_exec.pair_for`, printed only where it is set. Every program without it, and every GPU program, prints as before. `md-exec-choose-host-pairs` sets it on the CPU target only, after `md-exec-assign-algebra` and before `md-exec-assign-storage`, which carries it. Without it, the row is scalar.
 
-**One precondition** (`md_exec::hostpairs::checkLanes(PairForOp, int64_t W) -> Refusal`, `include/mdir/Dialect/MDExec/HostPairs.h`), called by the pass and again by `convert-md-exec-to-loops`, which fails on an attribute that it refuses (principle 2):
+**One precondition.** `md_exec::hostpairs::checkLanes(PairForOp, W)` (`include/mdir/Dialect/MDExec/HostPairs.h`) is called by the pass and again by `convert-md-exec-to-loops`, which fails on an attribute that it refuses (principle 2):
 
-1. the policy is `(directed, owner_only)`, with no `centers`, `center_set`, `ghost_free`, or `images(explicit)` (the two-ended form adds at neighbors; the others are outside the survey and come later);
-2. the kernel is one block and every op in it is in a row of the table above (refused: regions, calls, writes, an op without a mapping, `fpowi` whose exponent is not a constant);
-3. its computed type is f32 or f64 and its values are scalars or vectors of one dimension;
-4. every reduced value is `any_order`, `any_order_exact`, or `fixed_order`: the lanes order of the row is a function of $W$ alone, which the attribute states (below);
-5. $W$ is a power of two from 1 to 64.
+1. the policy is `(directed, owner_only)`, without `centers`, `center_set`, `ghost_free`, or `images(explicit)`;
+2. the kernel has no regions, and every op in it has a lane mapping (`hostpairs::getLaneMapping`, the table of the survey; `fpowi` needs a constant exponent);
+3. it computes in f32 or f64, and its values are numbers or vectors of one dimension;
+4. the op states the algebra of what it reduces (D301);
+5. $W$ is a power of two from 1 to 64; the verifier of the op also checks this.
 
-With `explain`, the pass remarks the choice, or the first precondition that fails, or the policy's reason (the host is not measured; the switch).
+With `explain`, the pass remarks the choice, or the first condition that fails, or the policy's reason.
 
-**One emitter** (`kernels::emitPairRowLanes`, `lib/Conversion/MDExecKernels/HostPairLanes.cpp`, header `include/mdir/Conversion/HostPairEmitter.h`), which `lowerPairFor` of the host calls in place of `emitPairKernel` where the attribute is set. `emitPairKernel` is not changed, so the device lowering, which also calls it, prints the same bytes, as does the scalar CPU row. No intrinsic of a host is written: the code is `vector`, `arith`, `math`, and `scf`, vectorized by MLIR's lowering to LLVM.
+**One emitter.** `kernels::emitPairRowLanes` (`lib/Conversion/MDExecKernels/HostPairLanes.cpp`) replaces `emitPairKernel` in the host's `lowerPairFor` where the attribute is set. `emitPairKernel` is not changed. The code is `vector`, `arith`, `math`, and `scf`, plus one LLVM intrinsic; no intrinsic of a host is written. The details are in [device-primitives.md, Section 7](../device-primitives.md#7-lanes-of-the-hosts-pair-rows-dhost-pair-vector):
 
-- *Groups of a row.* The row's $n$ candidates in $\lfloor n/W \rfloor$ full groups read by one `vector.load` of the matrix row, then one tail read by `vector.maskedload`. A padding lane takes the row's last candidate, so every lane evaluates the kernel at a pair that the scalar row also evaluates; its contribution is masked.
-- *Gathers.* The positions, the `ins` fields, the rows of the radial tables, and the entries of `md.lookup`, one load a lane, then transposed into components. `vector.gather` and a relaid table are later strategies, chosen by measurement (#419's host counterpart).
-- *The pair.* The difference of the positions, the minimum image (rectangular and triclinic, the same formula lane by lane), $r^2$ as $((0 + d_x^2) + d_y^2) + d_z^2$ in the order of the scalar `vector.reduction`, the kernel's ops by the table, and the mask $(\text{lane} < n) \wedge (r^2 < r_c^2) \wedge (j \ne i)$, with the scalar row's $r_c^2$ (`createCutoff2`).
-- *Reduction order.* Lane $l$ adds the candidates $k \equiv l \pmod W$ in increasing $k$, in the type of today's row sum (a global sum the kernel widens is summed narrow and widened once per row, as today); then the $W$ lanes are combined by halving, lane $l$ with lane $l + W/2$, then $W/4$, down to one, a host lane reduction beside the device's in `ReductionEmitter.h`. The destination is then added or stored as today, and the global sums go to the fixed-order reductions of D171. A row's result is thus a function of its list, $W$, and the kernel alone: it differs from the scalar row by the rounding of the sum (a bound of Higham's form, Section 5.1 of device-primitives.md), and it does not depend on the number of threads or on the run. On a device the lanes of a row already add lane-strided and combine by D301's butterfly, under `fixed_order` as well.
-- *Precision and accumulator.* No accumulator changes type (D301's guard): only the order changes.
+- full groups of a row read by `vector.load`, then one masked tail whose padding lanes repeat the row's last candidate;
+- every value as its components of `vector<W x T>`, and the shared values as scalars;
+- a read a lane for the positions, the fields, `md.lookup`, and the rows of a radial table;
+- `math.fpowi` with a constant exponent as `llvm.intr.powi` of the vector with the scalar exponent, which LLVM's code generator expands as it expands the scalar one;
+- the minimum image and $r^2$ op for op as in the scalar row.
 
-**$W$ from the target.** The capability is the width of the host's vector registers, from the CPU features that LLVM detects for the JIT (`avx512f`: 512 bits; `avx`/`avx2`: 256; otherwise the baseline 128, SSE2 or NEON); $W$ is that width over the bits of the kernel's computed type (8 or 16 in f32, 4 or 8 in f64). The policy is a host column of #433's table, keyed by the CPU that LLVM names (`znver3` for the EPYC 7543, `znver4` for the EPYC 9354 here), with the measured $W$ and default; a host without an entry takes the scalar row and the remark says so (the documented conservative default). The host object of the compile cache is already keyed by the CPU and its features (docs/compile-cache.md), and the module, which holds $W$.
+**Reduction order.** Lane $l$ sums the candidates $k \equiv l \pmod W$ in increasing $k$, in the type of the scalar row's sum. A sum that the kernel widens is widened in each lane. The lanes are combined by halving (`emitLaneReduce`, `ReductionEmitter.h`), the order in which lane 0 of the device's butterfly combines a warp. The destinations and the fixed-order global sums (D171) work as before. A row's result depends on its list, $W$, and the kernel alone.
 
-**Switches.** `MDIR_HOST_PAIRS=scalar|lanes|lanes:W` (`docs/environment.md`) overrides the policy, for the comparisons; the pass's options `mode` and `width` for tests. No control-file key, format, or default output changes; the default on a measured host changes only where the measurement wins beyond the spread of the runs (#549's rule).
+**$W$.**
 
-**Validation plan.**
+- `width`, where given (`MDIR_HOST_PAIRS=lanes:W`).
+- In the deterministic mode, 8 in f32 and 4 in f64 on every host (the ruling).
+- Otherwise the host's register width over the bits of the kernel's type: 512 bits with `avx512f`, 256 with `avx`, 128 otherwise. The CPU and its features are those of the machine that compiles the host code, read as `JITTargetMachineBuilder::detectHost` reads them, so that the Python front end, which builds its pipeline before it initializes the target, sees the same host.
 
-1. Identity: `check.py compare` of `main` and the branch, `--stages lowered`, on the whole corpus for the GPU target (byte-identical), and for the CPU target with `MDIR_HOST_PAIRS=scalar` (byte-identical).
-2. Lane arithmetic: `lanes(1)` against scalar, bitwise, in mixed and double, deterministic mode, on JAC; and `lanes(W)` against scalar, bitwise, on a dilute system whose rows hold one pair within the cutoff (a sum of one term and zeros), so that any lane-wise difference of an op is found.
-3. Lit tests of the IR: the attribute and each refusal through `explain`; the attribute survives `md-exec-assign-storage`; the emitted groups, tail, gathers, and halving tree; the lowering's failure on a refused attribute.
-4. Numbers: `lanes(W)` against scalar on JAC, TIP3P 103k, and Cellulose at step 0 (energy, virial, forces), mixed and double, 1 and 16 threads, with tolerances from the summation bound; against an independent oracle, OpenMM 8.6.1 (CUDA, double) on JAC's energy and forces, both modes.
-5. Determinism: the deterministic mode with `lanes(W)` gives the same bits at 1, 2, 4, 7, and 16 threads and on two runs (as `pme-threads.test`).
-6. Timing: the pair loop's share and the whole step, `main` against the branch interleaved in each job (`bench.py --builds`), at least two jobs per system, per CPU model; the Amber suite's CPU rates; peak memory.
+**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names. A host without an entry keeps the scalar row, and the remark says so. *The entry for `znver3` follows the timing below.*
 
-**Not in this slice.** `cluster(M, N)` (#549, after this is measured); the two-ended form and `centers`, `center_set`, `ghost_free`, `images(explicit)`; `vector.gather` and relaid tables; tables in f32 on the host in mixed precision (a separate decision, bitwise neutral if the f32 table is the rounded f64 one); the builds of the list (D267 step 3).
+**Switches.**
+
+- `MDIR_HOST_PAIRS=scalar|lanes|lanes:W` overrides the policy for comparisons and tests. The lit suite sets `scalar` (`test/lit.cfg.py`), so that `mdir emit` of a CPU program does not depend on the host.
+- `MDIR_HOST_CPU=<cpu>` compiles the host code for the CPU that LLVM names, with that CPU's own features (`x86-64`: SSE2 alone). This is how a narrower host is checked here. The compile cache keys a host object by the CPU and its features, and the module holds $W$.
+
+No control-file key or file format changes.
+
+## Validation
+
+**Identity.** `scripts/builder-equivalence/check.py compare` of `main` and the branch over the whole corpus, with `MDIR_HOST_PAIRS=scalar`, at the stages `module` and `lowered`, printed and raw, for the CPU and GPU targets: FILLCORPUS.
+
+**Lane arithmetic, to the bit** (`test/Driver/host-pair-lanes.test`):
+
+- `lanes(1)` gives the scalar row's state after 20 steps on the dipeptide in OPC with PME, in the mixed and double modes. The same holds on JAC after 2 steps.
+- `lanes(8)` gives the scalar row's state on dimers of argon whose rows hold some twenty candidates with one within the cutoff, in both modes.
+
+**Determinism.** In the deterministic mode with the lanes ($W$ = 8 in f32 and 4 in f64), the states after 20 steps are identical:
+
+- at 1, 2, 4, and 7 threads;
+- from run to run;
+- with the host code compiled for SSE2 alone (`MDIR_HOST_CPU=x86-64`), where 8 lanes of f32 take two registers.
+
+At step 0, the lanes give the same bits at 1 and 16 threads on all three systems in both modes, as the scalar row does.
+
+**Step 0 against the scalar row.** Python API, `lanes(8)` in f32 and `lanes(4)` in f64, 16 threads. The 1-thread results are the same bits.
+
+| System | Mode | $\lvert\Delta U\rvert$, kJ/mol (relative) | virial, relative difference | RMS $\lvert\Delta \mathbf F\rvert$ / RMS $\lvert\mathbf F\rvert$ | max $\lvert\Delta \mathbf F\rvert$, kJ/mol/nm |
+|---|---|---|---|---|---|
+| JAC | mixed | 9.8e-4 (3.2e-9) | 2.0e-8 | 2.6e-7 | 1.5e-3 |
+| TIP3P 103k | mixed | 4.4e-2 (1.1e-8) | 5.1e-8 | 3.5e-7 | 1.7e-3 |
+| Cellulose | mixed | 6.1e-3 (2.1e-9) | 3.0e-8 | 2.4e-7 | 2.2e-3 |
+| JAC | double | 0 | 3.6e-16 | 5.2e-16 | 3.9e-12 |
+| TIP3P 103k | double | 0 | 1.7e-16 | 7.3e-16 | 4.5e-12 |
+| Cellulose | double | 0 | 3.7e-16 | 4.8e-16 | 4.1e-12 |
+
+*The tolerances.* Reordering a sum of $n$ terms changes it by at most $2\gamma_{n-1}\sum_k \lvert t_k\rvert$, with $\gamma_m = m u/(1 - m u)$ [[Higham2002]](../references.md#higham2002). The terms of a row are not recorded, so the bound is applied through the scalar row's own rounding error, which the same sums carry.
+
+- *Mixed mode.* The difference between the lanes and the scalar row must be smaller than the scalar row's own difference from the double result. It is 1.4% of it on JAC, 3.6% on TIP3P, and 0.3% on Cellulose (RMS forces). The energies differ by 9.8e-4 against 4.9e-2 kJ/mol, by 4.4e-2 against 3.4e-1, and by 6.1e-3 against 2.2e-2. The RMS force error against double is the same for both: 1.9570e-2 and 1.9570e-2 kJ/mol/nm on JAC, 9.1603e-3 and 9.1609e-3 on TIP3P, and 7.4986e-2 and 7.4986e-2 on Cellulose.
+- *Double mode.* With rows of at most some 500 candidates, $2\gamma_{n}$ is 1.1e-13 relative to $\sum_k \lvert t_k\rvert$. The force differences are under 1e-15 of the RMS force. The double potentials agree to the bit, since the rows' differences lie below the total's last place.
+
+**Against an independent oracle.** OpenMM 8.6.1, Reference platform, in double precision on JAC: the same Amber model, PME with MDIR's $\beta$ and the $64^3$ grid, and the dispersion correction. OpenMM's PME order is 5 and MDIR's is 4.
+
+- RMS $\lvert\mathbf F_\text{MDIR} - \mathbf F_\text{OpenMM}\rvert$: 0.81193 kJ/mol/nm for both scalar and lanes in mixed precision, and 0.81182 for both in double. That is 7.9e-4 of the RMS force, 1030 kJ/mol/nm.
+- Potential: −302545.45 (mixed scalar), −302545.45 (mixed lanes), and −302545.40 (double, both), against −302492.13 kJ/mol. The offset of 53 kJ/mol is the potential shift of MDIR's Coulomb cutoff and the order of the grid, the same for both rows.
+
+The tolerance is that the lanes leave the agreement with the oracle unchanged: the RMS differences agree to 5 digits in each mode.
+
+## Timing
+
+FILLTIMING
+
+## Left open
+
+- **Deterministic mode on an unmeasured host** (asked on PR #823). With the policy deciding in every mode, a measured host whose policy selects the lanes and an unmeasured host give different deterministic bits. They do not differ across vector widths.
+
+**Not in this slice.**
+
+- `cluster(M, N)` (#549, after this is measured);
+- the two-ended form, and `centers`, `center_set`, `ghost_free`, and `images(explicit)`;
+- `vector.gather` and relaid tables;
+- tables in f32 on the host in mixed precision (a separate decision, the maintainer's ruling 3);
+- the builds of the list (D267 step 3).
