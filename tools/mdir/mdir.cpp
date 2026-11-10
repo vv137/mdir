@@ -95,6 +95,13 @@ static llvm::cl::opt<bool> emitSegments(
                    "of the same model runs, instead of that of the run"),
     llvm::cl::sub(emitCommand));
 
+static llvm::cl::opt<std::string> emitProfileMap(
+    "profile-map",
+    llvm::cl::desc("Also write the profile map of the lowered program, "
+                   "which names the source of each parallel region, as "
+                   "JSON to this file"),
+    llvm::cl::value_desc("file"), llvm::cl::sub(emitCommand));
+
 static llvm::cl::opt<std::string>
     templateName(llvm::cl::Positional,
                  llvm::cl::desc("<kind>: md, amber, minimize, nvt, npt, production"),
@@ -119,7 +126,7 @@ int main(int argc, char **argv) {
       "  mdir run <control file> [--continue [--no-append]] "
       "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline] "
-      "[--segments]\n"
+      "[--segments] [--profile-map=<file>]\n"
       "  mdir check <control file> [--json]\n"
       "  mdir template md|amber|minimize|nvt|npt|production\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
@@ -153,6 +160,7 @@ int main(int argc, char **argv) {
   if (emitCommand) {
     RunOptions options;
     options.segments = emitSegments;
+    options.profileMap = emitProfileMap;
     return runControl(controlFile, stage, argv[0], options);
   }
   if (checkCommand)

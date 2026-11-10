@@ -39,6 +39,9 @@ struct RunOptions {
   /// simulation of the same model runs (compiler::getSegmentsControl,
   /// D215), not the program of the run (#568).
   bool segments = false;
+  /// `mdir emit --profile-map=FILE`: the file that the profile map of the
+  /// lowered program is written to (D[profile-map]), or empty.
+  std::string profileMap;
 };
 
 /// Reads the control file `controlFile`, builds the program of the run,

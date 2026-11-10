@@ -614,7 +614,12 @@ The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
 cost completely would therefore give at most $1/(1-0.64)=2.78$ times the
 rate in that earlier configuration. This is a bound for choosing the next
 strategy, not a measured speedup of the NVE runs below; the next pair-loop
-slice (#554) will measure its share and the full step together.
+slice (#554) will measure its share and the full step together. The
+sampler attributes each parallel region of the host to a part (pairs,
+bonded terms, constraints, PME stages, list builds) by the profile map that
+the compiler writes with the program (D[profile-map]): each region's record
+names the op of the lowering it comes from and the set it runs over, so the
+parts no longer rest on rules about the functions a region calls.
 
 *Table 10.8. CPU time in ms/step, mean $\pm$ sample standard deviation of
 three kept rounds. `m` and `d` are MDIR mixed and double, `g` is GROMACS

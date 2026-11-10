@@ -1,0 +1,210 @@
+# The profile map (D[profile-map], #840): every parallel region of the host
+# has an entry with its source, named as the translation to LLVM IR names
+# the function it is outlined into. The dipeptide of
+# test/Driver/Inputs/dipeptide has Lennard-Jones and Coulomb with PME and
+# its excluded pairs, bonds, angles, dihedrals, 1-4 pairs, and constraints
+# (SETTLE and SHAKE); on two threads in the mixed and the double mode.
+#
+# check.py fails if a function of the LLVM IR has no entry, if an entry
+# names no function or one the IR does not have, or if an entry has no
+# source; it prints the entries by source, set, stage, potentials, and
+# precision, so that a region that loses its entry or changes its source
+# changes the counts below. prof.py --classify gives the parts from the map
+# alone.
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cp %S/../Driver/Inputs/dipeptide/dipeptide.prmtop %S/../Driver/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -e 's|PRECISION|MIXED|' %t/run.toml > %t/mixed.toml
+# RUN: sed -e 's|PRECISION|DOUBLE|' %t/run.toml > %t/double.toml
+# RUN: cd %t && mdir emit mixed.toml --stage=lowered --profile-map=mixed.json > mixed.mlir
+# RUN: mlir-translate --mlir-to-llvmir %t/mixed.mlir -o %t/mixed.ll
+# RUN: %python %t/check.py %t/mixed.json %t/mixed.ll | FileCheck %s --check-prefixes=COMMON,MIXED
+# RUN: cd %t && mdir emit double.toml --stage=lowered --profile-map=double.json > double.mlir
+# RUN: mlir-translate --mlir-to-llvmir %t/double.mlir -o %t/double.ll
+# RUN: %python %t/check.py %t/double.json %t/double.ll | FileCheck %s --check-prefixes=COMMON,DOUBLE
+#
+# The map of a run, and that of an emit, are the same.
+# RUN: cd %t && mdir run mixed.toml > /dev/null
+# RUN: cmp %t/mixed.json %t/run-map.json
+# The manifest of the run names it among its outputs, and mdir check lists
+# it; a second run keeps the first map as a backup (D149).
+# RUN: %python -c "import json, sys; print(json.loads(open(sys.argv[1]).readline())['outputs']['profile_map'])" %t/run.jsonl | FileCheck %s --check-prefix=MANIFEST
+# RUN: cd %t && mdir check mixed.toml | FileCheck %s --check-prefix=CHECK-TEXT
+# RUN: cd %t && mdir run mixed.toml > /dev/null && cmp %t/run-map.json %t/#run-map.json.1#
+# MANIFEST: run-map.json
+# CHECK-TEXT: profile_map: run-map.json (JSON), once, when the program is compiled, exists
+#
+# The parts of prof.py, from the map alone.
+# RUN: %python %S/../../scripts/benchmarks/cpu-breakdown/prof.py --classify %t/mixed.json \
+# RUN:   | cut -f2 | env LC_ALL=C sort | uniq -c | FileCheck %s --check-prefix=PARTS
+#
+# With another stage the map is written as well, and is the same.
+# RUN: cd %t && mdir emit mixed.toml --stage=pipeline --profile-map=pipeline.json > /dev/null
+# RUN: cmp %t/mixed.json %t/pipeline.json
+
+# COMMON:      target CPU threads 2 precision
+# MIXED-SAME:  MIXED
+# DOUBLE-SAME: DOUBLE
+# MIXED-NEXT:  functions 92 entries 92
+# DOUBLE-NEXT: functions 88 entries 88
+
+# The loops over pairs: of the forces (the potential `energy`), and of the
+# energies of the two terms; in the mixed mode, one in f32 alone, of the
+# steps that write no energy.
+# MIXED-NEXT:  1 pair_for atoms - energy f32
+# MIXED-NEXT:  2 pair_for atoms - energy f32+f64
+# MIXED-NEXT:  1 pair_for atoms - term_coulomb,term_lj f32+f64
+# DOUBLE-NEXT: 3 pair_for atoms - energy f64
+# DOUBLE-NEXT: 1 pair_for atoms - term_coulomb,term_lj f64
+# COMMON-NEXT: 3 refresh_neighbors atoms exclusion_filter energy -
+# COMMON-NEXT: 1 refresh_neighbors atoms exclusion_filter term_lj -
+# COMMON-NEXT: 3 refresh_neighbors atoms reference_positions energy -
+# COMMON-NEXT: 1 refresh_neighbors atoms reference_positions term_lj -
+
+# COMMON-NEXT: 3 template mdrt.build_neighbors_matrix
+# COMMON-NEXT: 6 template mdrt.pme_fft
+# COMMON-NEXT: 4 template mdrt.pme_convolve,mdrt.pme_scale
+# COMMON-NEXT: 2 template mdrt.pme_gather
+# COMMON-NEXT: 3 template mdrt.pme_spread,mdrt.pme_real
+# COMMON-NEXT: 1 template mdrt.pme_zero
+
+# The loops over tuples, by set: the constraints (settles, shake1, shake3)
+# in the iterations of SHAKE and RATTLE, the others of the forces, and those
+# of the energies, which name their terms.
+# COMMON-NEXT: 1 tuple_for anchors
+# COMMON-NEXT: 2 tuple_for angles
+# COMMON-NEXT: 2 tuple_for bonds
+# COMMON-NEXT: 2 tuple_for dihedrals
+# COMMON-NEXT: 2 tuple_for excluded
+# COMMON-NEXT: 2 tuple_for pairs14
+# COMMON-NEXT: 7 tuple_for settles
+# COMMON-NEXT: 7 tuple_for shake1
+# COMMON-NEXT: 7 tuple_for shake3
+# COMMON-NEXT: 1 tuple_for angles terms angles
+# COMMON-NEXT: 1 tuple_for bonds terms bonds
+# COMMON-NEXT: 1 tuple_for dihedrals terms dihedrals
+# COMMON-NEXT: 1 tuple_for excluded terms excluded
+# COMMON-NEXT: 1 tuple_for pairs14 terms coulomb14,lj14
+
+# MIXED-NEXT:  17 particle_for atoms
+# DOUBLE-NEXT: 13 particle_for atoms
+# COMMON-NEXT: 6 permute atoms
+# COMMON-NEXT: 1 template mdrt.spatial_order
+# COMMON-NEXT: unmapped 0
+# COMMON-EMPTY:
+
+# PARTS:      6 PME FFT
+# PARTS-NEXT: 4 PME convolution
+# PARTS-NEXT: 2 PME gather
+# PARTS-NEXT: 4 PME spread
+# PARTS-NEXT: 12 bonded
+# PARTS-NEXT: 21 constraints
+# PARTS-NEXT: 3 excluded pairs
+# PARTS-NEXT: 18 list builds
+# PARTS-NEXT: 4 pairs
+# PARTS-NEXT: 18 particles
+# PARTS-EMPTY:
+
+#--- check.py
+import json, re, sys
+from collections import Counter
+
+profile, ll = json.load(open(sys.argv[1])), open(sys.argv[2]).read()
+functions = set(re.findall(r"^define [^@]*@([\w.$]+\.\.omp_par(?:\.\d+)?)\(", ll, re.M))
+entries = profile["regions"]
+named = [entry["function"] for entry in entries]
+if None in named:
+    sys.exit("an entry names no function")
+if len(set(named)) != len(named):
+    sys.exit("two entries name one function")
+if set(named) != functions:
+    sys.exit(f"functions without an entry: {sorted(functions - set(named))}; "
+             f"entries of no function: {sorted(set(named) - functions)}")
+print(f"target {profile['target']} threads {profile['threads']} precision {profile['precision']}")
+print(f"functions {len(functions)} entries {len(entries)}")
+unmapped = sum(1 for entry in entries if entry["source"] is None)
+mapped = [entry for entry in entries if entry["source"] is not None]
+
+def stem(name):
+    # A template without the suffix of its instance.
+    return re.sub(r"_p\d+c\d+f\d+o\d+$", "", re.sub(r"_triclinic(_pass|_images)?|_listed", "", name))
+
+# The loops over pairs and the refreshes of the list, one line each.
+lines = Counter()
+for entry in mapped:
+    source = entry["source"]
+    if source in ("pair_for", "refresh_neighbors"):
+        lines[(source, entry["set"], entry.get("stage", "-"), ",".join(entry["potentials"]),
+               entry["precision"] or "-")] += 1
+for key in sorted(lines):
+    print(lines[key], " ".join(key))
+# The templates, by what they do.
+groups = Counter()
+for entry in mapped:
+    if entry["source"] == "template" and not entry["template"].startswith("mdrt.spatial_order"):
+        name = stem(entry["template"])
+        group = {"mdrt.pme_convolve": "mdrt.pme_convolve,mdrt.pme_scale",
+                 "mdrt.pme_scale": "mdrt.pme_convolve,mdrt.pme_scale",
+                 "mdrt.pme_spread": "mdrt.pme_spread,mdrt.pme_real",
+                 "mdrt.pme_real": "mdrt.pme_spread,mdrt.pme_real"}.get(name, name)
+        group = re.sub(r"^mdrt\.pme_fft_(forward|backward)$", "mdrt.pme_fft", group)
+        groups[group] += 1
+for key in ["mdrt.build_neighbors_matrix", "mdrt.pme_fft", "mdrt.pme_convolve,mdrt.pme_scale",
+            "mdrt.pme_gather", "mdrt.pme_spread,mdrt.pme_real", "mdrt.pme_zero"]:
+    print(groups.pop(key, 0), "template", key)
+if groups:
+    sys.exit(f"templates not checked: {dict(groups)}")
+# The loops over tuples: by set, and those that name terms.
+tuples, terms = Counter(), Counter()
+for entry in mapped:
+    if entry["source"] == "tuple_for":
+        if entry["terms"]:
+            terms[(entry["set"], ",".join(entry["terms"]))] += 1
+        else:
+            tuples[entry["set"]] += 1
+for key in sorted(tuples):
+    print(tuples[key], "tuple_for", key)
+for key in sorted(terms):
+    print(terms[key], "tuple_for", key[0], "terms", key[1])
+others = Counter((entry["source"], entry.get("set", "-")) for entry in mapped
+                 if entry["source"] in ("particle_for", "permute"))
+for key in sorted(others):
+    print(others[key], " ".join(key))
+print(sum(1 for entry in mapped if entry.get("template", "").startswith("mdrt.spatial_order")),
+      "template mdrt.spatial_order")
+rest = [entry for entry in mapped if entry["source"] not in
+        ("pair_for", "refresh_neighbors", "template", "tuple_for", "particle_for", "permute")]
+if rest:
+    sys.exit(f"sources not checked: {Counter(entry['source'] for entry in rest)}")
+print("unmapped", unmapped)
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+profile_map = "run-map.json"
+manifest = "run.jsonl"
+energy_interval = 5
+
+[energy]
+cutoff         = 9.0
+electrostatics = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 10
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+threads   = 2
+precision = "PRECISION"

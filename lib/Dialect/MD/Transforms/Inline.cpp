@@ -5,6 +5,7 @@
 
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/ProfileMap.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 
@@ -19,7 +20,24 @@ static bool isCallee(Operation *op) {
   return isa<md::PotentialOp, md::FunctionOp, dyn::ProgramOp>(op);
 }
 
-/// Replaces `call` with the body of `callee`.
+/// The potential whose body `callee` is: the potential itself, or a function
+/// that `md-differentiate` derived from it, named `<potential>.<requests>`.
+static StringRef getPotential(Operation *callee) {
+  if (auto potential = dyn_cast<md::PotentialOp>(callee))
+    return potential.getSymName();
+  auto function = dyn_cast<md::FunctionOp>(callee);
+  if (!function)
+    return {};
+  StringRef stem = function.getSymName().split('.').first;
+  if (stem == function.getSymName())
+    return {};
+  Operation *named = SymbolTable::lookupNearestSymbolFrom(
+      callee, StringAttr::get(callee->getContext(), stem));
+  return isa_and_nonnull<md::PotentialOp>(named) ? stem : StringRef();
+}
+
+/// Replaces `call` with the body of `callee`. The ops of the body of a
+/// potential are located in it, for the profile map (D[profile-map]).
 static LogicalResult inlineCall(Operation *call, FunctionOpInterface callee) {
   if (callee.isExternal())
     return call->emitOpError() << "cannot inline a declaration";
@@ -34,8 +52,14 @@ static LogicalResult inlineCall(Operation *call, FunctionOpInterface callee) {
     mapping.map(block.getArgument(i), call->getOperand(i));
 
   OpBuilder builder(call);
-  for (Operation &op : block.without_terminator())
-    builder.clone(op, mapping);
+  StringRef potential = getPotential(callee);
+  for (Operation &op : block.without_terminator()) {
+    Operation *copy = builder.clone(op, mapping);
+    if (!potential.empty())
+      copy->walk([&](Operation *inner) {
+        inner->setLoc(profile::inPotential(inner->getLoc(), potential));
+      });
+  }
 
   Operation *terminator = block.getTerminator();
   for (unsigned i = 0, e = call->getNumResults(); i != e; ++i)

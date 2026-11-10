@@ -1,0 +1,109 @@
+# D[profile-map]
+
+Recorded at its merge.
+
+**The compiler records the source of every parallel region of the host in a
+profile map, written as JSON by `mdir emit --profile-map=FILE` and by
+`[output] profile_map`, and the CPU sampler's tools read it instead of
+classifying regions by the functions they call.** Issue #840 (the CPU part;
+the GPU part waits for #795).
+
+*Why.* `scripts/benchmarks/cpu-breakdown/prof.py` gave each region
+`mdir_run..omp_par.N` a part from what it calls: radial tables, `powi`,
+`erf`, trigonometric functions, `sqrt`. The rules broke on the f64 loops
+over pairs (#833) and needed an order fix (#836). On JAC on 2 threads,
+with the rules of #836, the three loops over the 1-4 pairs are "pairs" (they
+call `powi` and no trigonometric function), 20 of the 28 loops of the
+constraints in the mixed mode and 17 in the double mode are "other", and
+the region `mdir_run..omp_par`, which has no number, is not seen; the map
+gives them "bonded", "constraints", and its record.
+
+*What.* A record is a dictionary on a location: the metadata `mdir.profile`
+of a `FusedLoc`. `md-inline` locates each op it copies from a potential's
+body in that potential (`potential: <name>`); `convert-md-exec-to-loops`
+gives each op of md_exec its record (the op, its set, the potentials and
+terms its kernel holds) before the buffers lose the names of their sets,
+and every op its lowering creates at that location, the `scf.parallel`
+among them, inherits it. The loops of the templates take the record of
+their function. The driver copies the lowered module, puts a mark with an
+index at the start of each `omp.parallel`, translates the copy to LLVM IR,
+and pairs each record with the function its mark is in. The format, the
+keys, and the parts that `prof.py` takes from them are in
+[profile-map.md](../profile-map.md). The run's map is an output as the
+others are: backed up by a fresh run (D149), named in the manifest's
+`outputs` (whose schema now lists its keys), and listed by `mdir check`.
+The keys and the scope of the terms were ruled on in #843.
+
+*Alternatives.*
+- Pairing the regions with the outlined functions by the order of the calls
+  of `__kmpc_fork_call` in each function: no copy, but it rests on the order
+  in which the translation emits blocks and outlines regions. The mark tells
+  the function directly.
+- Discardable attributes on `scf.parallel`: `convert-scf-to-openmp` drops
+  them. Locations are the one thing every pass carries.
+- Readable names of the outlined functions (`..pairs.ww`): the names are
+  part of the bitcode, which is the key of the object cache of the host, so
+  every key would change once. The map is the contract; names are left as
+  LLVM gives them.
+- Keeping the classifier as a fallback: a fallback that guesses is what the
+  map replaces, and a profile without a map shows the regions by their
+  names. It is removed.
+
+*What does not change.* The lowered module (`mdir emit --stage=lowered`)
+and its LLVM IR are the same byte for byte, and so are the keys of the
+compile caches: a translation without debug information drops locations,
+and the mark is in a copy. `mdir run` lowers its program before it writes
+the map, so the map does not depend on the compile caches.
+
+*Measured* (the build of this decision against `main` 69d7cafd, on the
+login node's CPU):
+- **Coverage.** `scripts/profile-map/check-corpus.py` over the control
+  files of the corpus of `scripts/builder-equivalence/check.py`, the
+  prepared Amber suite included, on two threads in the mixed and the double
+  mode: 528 cases, 296 with a program, all passing (27,087 regions, each
+  with exactly one entry naming a function of the LLVM IR, and each with a
+  source), none failing. The other 232 make no program: their 122 control
+  files stop on their input (structures and models of a GPU only, files of
+  the test that its RUN lines make, the error cases of the tests), not in
+  the lowering.
+- **Unchanged programs.** `check.py compare` of the module and lowered
+  stages, on the CPU and the GPU targets, for runs and segments: 1044 of
+  1058 cases identical (450 of them stop with the same error in both).
+  The other 14 are expected: the list of the keywords of `[output]` in the
+  error of `test/Driver/keyword-hints.test`, the new key in
+  `test/Lit/profile-map.test`, and six Python cases that fail to import in
+  both builds under the harness's interpreter. The LLVM IR of the
+  dipeptide of the test is the same as `main`'s byte for byte.
+- **The parts of JAC** (the NVE control of `bench.py`: PME on a 64³ grid,
+  cutoff 8 Å, constraints on bonds to hydrogen and rigid water, 2 threads,
+  20 steps, energies every 10). The table below compares, for each region
+  of `mdir_run`, the part that the rules of #836 give it with the part
+  from the map. There are 79 regions in mixed and 75 in double; #836
+  counted 57 and 54 on another schedule, since the number of regions
+  depends on the schedule, not on the classifier.
+
+  | rules of #836 | map | mixed | double |
+  |---|---|---|---|
+  | pairs | pairs | 4 | 4 |
+  | pairs | bonded (the 1-4 pairs) | 3 | 3 |
+  | excluded pairs | excluded pairs | 3 | 3 |
+  | bonded | bonded | 6 | 6 |
+  | bonded or constraints | bonded | 3 | 3 |
+  | bonded or constraints | constraints | 8 | 11 |
+  | other | constraints | 20 | 17 |
+  | other | list builds | 14 | 14 |
+  | other | particles | 17 | 13 |
+  | not seen (`mdir_run..omp_par`) | particles | 1 | 1 |
+
+  Together the rules' "bonded", "bonded or constraints", and the three 1-4
+  "pairs" are the map's "bonded" (12) plus 11 or 14 of its "constraints".
+  The map corrects three things: the 1-4 pairs are bonded; 20 or 17 loops
+  of the constraints are not "other"; and the region without a number is
+  seen. The 20 regions of the templates (PME and the builds of the list)
+  take the same parts from the map as from their names.
+
+*Left open.* The loops of the forces name the potential `energy` and no
+terms: the builder writes the sum of the terms as one potential whose ops
+carry no term (the Lennard-Jones and the Coulomb of the pairs in one
+kernel). The kernels of a device take the same records after #795. A
+program that Python compiles writes no map: it has no key for one.

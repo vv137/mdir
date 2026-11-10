@@ -59,8 +59,9 @@ def gmx_parts(d):
     return out
 
 
+# The parts of prof.py, from the profile map (D[profile-map]).
 MDIR_PARTS = ["pairs", "list builds", "PME spread", "PME FFT", "PME convolution", "PME gather",
-              "excluded pairs", "bonded", "bonded or constraints", "other"]
+              "excluded pairs", "bonded", "constraints", "particles", "other"]
 rows = {}
 for s in systems:
     path = f"{S}/{s}/runs/{tag}/results.jsonl"

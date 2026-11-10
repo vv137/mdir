@@ -1751,8 +1751,8 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
           {"log", "energy", "pull", "free_energy", "observables", "manifest",
-           "trajectory", "trajectory_format", "trajectory_precision",
-           "trajectory_strings",
+           "profile_map", "trajectory", "trajectory_format",
+           "trajectory_precision", "trajectory_strings",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1817,6 +1817,8 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
     return error;
   if (Error error = readPath(table, "manifest", control.manifestFile))
+    return error;
+  if (Error error = readPath(table, "profile_map", control.profileMapFile))
     return error;
   if (Error error = readPath(table, "log", control.logFile))
     return error;
@@ -3529,6 +3531,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
          {std::pair<StringRef, const std::string *>{"log", &control.logFile},
           {"energy", &control.energyFile},
           {"manifest", &control.manifestFile},
+          {"profile_map", &control.profileMapFile},
           {"pull", &control.pullFile},
           {"free_energy", &control.freeEnergyFile},
           {"observables", &control.observablesFile},
