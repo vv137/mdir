@@ -1293,6 +1293,9 @@ second kernel).
 Following the isolated anchor-cache experiment (discarded for no clear
 measured gain), the derivative-window constructor recognizes energy that
 depends on its site displacement only through the existing squared norm.
+The norm proof requires an accumulator-free reduction of the displacement
+squares in the same body; an accumulated reduction retains the general
+derivative and is not treated as a physical squared distance by D94.
 It differentiates that scalar expression and forms
 $\mathbf F=-2wU'(r^2)\mathbf d$. General differentiation is unchanged;
 unrecognized window expressions retain their existing derivative path.

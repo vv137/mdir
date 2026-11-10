@@ -43,7 +43,7 @@ SmallVector<PairKernelBody> TemplateForOp::getPairKernelBodies() {
           for (Operation *use : product.getResult().getUsers())
             if (auto sum = dyn_cast<vector::ReductionOp>(use);
                 sum && sum.getKind() == vector::CombiningKind::ADD &&
-                sum->getBlock() == &region.front()) {
+                sum->getNumOperands() == 1 && sum->getBlock() == &region.front()) {
               squared = sum.getResult();
               break;
             }
