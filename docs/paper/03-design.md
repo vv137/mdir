@@ -758,13 +758,16 @@ constant pressure for the systems of the Amber suite, whatever their size
 the driver writes it, and the lowering outlines 545 GPU modules from it.
 
 A Python simulation compiles on an engine of its own (D199), whose host
-code generation can be cached on disk (D212,
-`MDIR_COMPILE_CACHE_DIR`). The relocatable object is a function of the
-LLVM module and of the code generator alone, so an entry is keyed by a
-hash of the module's bitcode, which holds the PTX of its kernels, and by
-the LLVM version, the CPU and its features, and the options of code
-generation, but not by the build of MDIR: a rebuild that generates the
-same module hits. An entry also stores its full key and a hash of its
+code generation is cached on disk (D212), by default in a private
+directory of the user on a local file system
+(D[compile-cache-default]). An entry is keyed by a hash of the
+module's bitcode, which holds the PTX of its kernels, by the CPU and its
+features and the options of code generation, and by a salt that names
+what generates the object from the module: the ELF build ID of the image
+that holds MDIR's compiler and the LLVM linked into it, the LLVM options of
+the command line, and the scheduler in force. Whenever anything that can
+change the compiled result differs, the entry is not used, so a rebuild
+of MDIR starts cold. An entry also stores its full key and a hash of its
 object, so that a collision or a damaged file is a miss, and a hit is
 linked and checked as a generated object is. The directory is bounded,
 and the entries used least recently are evicted; its total is kept in a

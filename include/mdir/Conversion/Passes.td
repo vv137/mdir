@@ -522,10 +522,10 @@ def GpuModuleToBinary
 
     With `format=bin`, the toolkit's `ptxas` compiles the PTX of each module
     to a cubin. With `binary=auto`, a module stays PTX when there is no
-    `ptxas` or it fails; with `binary=cubin`, that is an error. With
-    `MDIR_COMPILE_CACHE_DIR` set, the PTX and the cubin of each module are
-    read from and written to the compile cache (D212), unless `cache` is
-    false (D217).
+    `ptxas` or it fails; with `binary=cubin`, that is an error. With the
+    compile cache on (by default, D[compile-cache-default]), the PTX and
+    the cubin of each module are read from and written to it (D212),
+    unless `cache` is false (D217).
   }];
   let options = [
     Option<"format", "format", "std::string", /*default=*/"\"isa\"",

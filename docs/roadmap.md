@@ -172,7 +172,7 @@ M2b is Section 6.1. M2a is done; each part is a decision and a document:
 | Persistent simulations and their ownership | D196 (#85, [python-segments.md](python-segments.md)), D199 (#89, [jit-invariants.md](jit-invariants.md)), D211 (#147), D215 (#135) |
 | Velocities, restraints, units, minimization | D198 (#92, [python-velocities-restraints.md](python-velocities-restraints.md)), D200 (#95, [python-units.md](python-units.md)), D202 (#91, [python-minimize.md](python-minimize.md)), D219 (#106), D274 (#369) |
 | Reporters and the example | D207 (#109, [python-reporters.md](python-reporters.md)); `examples/ala3/run.py` (#82) |
-| The compile cache | D212 (#142, [compile-cache.md](compile-cache.md)), D214 (#148), D217 (#163), D227 (#162), D234 (#196), D236 (#236) |
+| The compile cache | D212 (#142, [compile-cache.md](compile-cache.md)), D214 (#148), D217 (#163), D227 (#162), D234 (#196), D236 (#236); on by default, keyed by the build (D[compile-cache-default], #826); `mdir run`'s host code waits for #99 |
 | Tunable parameters | D213 (#130, [python-tunable.md](python-tunable.md)), D226 (#160) |
 | The model's terms and settings | D222 (#161), D232 and D233 (#188, [python-observe.md](python-observe.md)), D245 (#270; the default `AUTO` since D261, #350), D246 (#279), D247 (#275), D248 (#281), D249 (#278) |
 | Views, borrows, topology, checkpoints, the package | D220 (#131, [python-dlpack.md](python-dlpack.md)), D229 (#136), D238 (#206), D244 (#254), D221 (#120, [python-topology.md](python-topology.md)), D223 (#132, [python-checkpoints.md](python-checkpoints.md)), D228 (#133, [python-package.md](python-package.md)) |

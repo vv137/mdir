@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227, D234, D236)
+# The compile cache (D212, D214, D217, D227, D234, D236, D[compile-cache-default])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -12,7 +12,9 @@ the code of its simulations in memory, so that only the first of them
 compiles at all
 ([Reuse within a process](#reuse-within-a-process)). `mdir run`, which still compiles with MLIR's
 `ExecutionEngine`, takes the cache of host objects when it moves onto the
-owned engine (#99).
+owned engine (#99); it takes the PTX and cubins of its kernels from the
+cache already, and so do the candidates of its skin search, host objects
+included.
 
 D214 (#148) serializes the GPU modules in parallel, keeps
 the PTX and the cubin of each module in the same cache, and loads cubins
@@ -27,23 +29,72 @@ an equilibrated cell hits the entry of another; see
 D234 (#196) keeps the total of the entries in a file, so
 that a store does not list the directory; see
 [The bound](#the-bound).
+D[compile-cache-default] (#826) turns the cache on by default
+in a private directory of the user, and begins every key with a salt that
+names the build of MDIR and LLVM, the LLVM options of the command line, and
+the scheduler in force, so that an entry is used only when nothing that
+changes the compiled result differs; see [Where the cache is](#where-the-cache-is)
+and [The key](#the-key).
 
 ## Use
 
-The cache is off unless a directory is given. The environment enables
-it; no control-file key changes. From Python, `mdir.clear_compile_cache()`
+The cache is on by default, for `mdir run` and Python alike
+([Where the cache is](#where-the-cache-is)). The environment moves it or
+turns it off; no control-file key changes. From Python, `mdir.clear_compile_cache()`
 empties it and `cache=False` bypasses it for one compile
 ([Controls from Python](#controls-from-python)).
 
 | Variable | Effect |
 |---|---|
-| `MDIR_COMPILE_CACHE_DIR=<dir>` | Enables the cache. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. |
-| `MDIR_COMPILE_CACHE=off` | Disables the cache even when a directory is set. |
-| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory holds at most 90% of it (#675); 0 keeps none ([The bound](#the-bound)). |
+| `MDIR_COMPILE_CACHE_DIR=<dir>` | The directory of the cache instead of the default. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. One that group or others may write is used, with a warning. |
+| `MDIR_COMPILE_CACHE=off` | Disables the cache, whatever else is set. |
+| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory holds at most 90% of it (#675) ([The bound](#the-bound)). 0 disables the cache; a value that is not a whole number is reported and the bound stays 2048 MiB. |
 
 A directory may be shared by processes that run at the same time, and by
-builds of MDIR (see the key below). Removing it, or any entry in it, is
-always safe.
+builds of MDIR, each of which reads only its own entries (see the key
+below). Removing it, or any entry in it, is always safe.
+
+### Where the cache is
+
+In this order (`CompileCacheConfig::locate`, once per process for each
+environment):
+
+1. `MDIR_COMPILE_CACHE=off`, then `MDIR_COMPILE_CACHE_MAX_MB=0`: no cache.
+2. `MDIR_COMPILE_CACHE_DIR`: that directory.
+3. `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile`, if its file system is
+   local (`llvm::sys::fs::is_local` of the nearest directory of the path
+   that exists). A relative `XDG_CACHE_HOME` is ignored, as the XDG
+   specification says.
+4. `/var/tmp/mdir-<uid>/compile`, `<uid>` the effective user's, if local.
+5. None: the cache is off, and a note says why once.
+
+A network file system is not the default: a home on NFS would make every
+lookup a round trip, and many jobs at once would load its server. A
+directory named by `MDIR_COMPILE_CACHE_DIR` may be anywhere.
+
+A default directory is the user's alone. It and its parent are made with
+mode 0700, and before anything is read or written, a default directory or
+parent that another user owns, or that group or others may write, is
+refused with a warning, and the cache is off. An entry's BLAKE3 is a
+checksum, not an authentication, and a host object is native code that
+the process runs: anyone who may write the directory could plant an entry
+that is whole and well formed. The directory under `/var/tmp`, whose
+parent everyone may write, is the case this guards; a default in a home
+directory is private already. A directory named by
+`MDIR_COMPILE_CACHE_DIR` is the user's choice, which may be a cache shared
+by a group on purpose; one that group or others may write is used, with a
+warning.
+
+`mdir run` writes where the cache is, or why there is none, in its log,
+with what it gave the run's GPU modules and the skin search's host
+objects, for example
+
+```text
+MDIR: compile cache: on, '/home/user/.cache/mdir/compile' (default); GPU modules 253: PTX 0 compiled, 253 read; cubins 0 compiled, 253 read; 0 stored
+```
+
+and the same as `compile_cache` in its manifest (`enabled`, `directory`,
+`source`, `reason`, and the counts; [driver.md](driver.md)).
 
 `Simulation.compile_stats` reports what compiling the simulation's program
 cost and what the cache saved, as a dict:
@@ -82,7 +133,9 @@ sim.compile_stats["cache_bypassed"]           # 1
 simulation lowers and generates everything, and leaves nothing.
 
 `mdir.clear_compile_cache(directory=None)` removes the entries of the
-cache in `directory`, else in `MDIR_COMPILE_CACHE_DIR`.
+cache in `directory`, else in `MDIR_COMPILE_CACHE_DIR`, else in the
+default directory that a compile would take
+([Where the cache is](#where-the-cache-is)), without making it.
 `MDIR_COMPILE_CACHE=off` does not hide that directory from it.
 
 - It removes the host objects (`host/*.o`) and the GPU entries
@@ -98,7 +151,7 @@ It returns what it removed:
 
 | Key | Meaning |
 |---|---|
-| `directory` | The directory cleared, or `None` when none was given or set |
+| `directory` | The directory cleared, or `None` when there is none (no directory given or set, and no default on a local file system) |
 | `host_entries`, `gpu_entries` | Host objects and GPU entries removed |
 | `bytes` | Their bytes |
 
@@ -132,7 +185,10 @@ made, and nothing is evicted.
 
 Where the directory goes:
 
-- Point `MDIR_COMPILE_CACHE_DIR` at a scratch file system
+- The default is a directory of the user on a local file system, on each
+  node its own: under `$HOME/.cache` where the home is local, else under
+  `/var/tmp` ([Where the cache is](#where-the-cache-is)). Where neither
+  suits, point `MDIR_COMPILE_CACHE_DIR` at a scratch file system
   (`$SCRATCH/mdir-cache`) or at storage local to the node
   (`$TMPDIR/mdir-cache`). Do not put it in a home directory with a quota:
   a full suite leaves about 800 MB, and the bound
@@ -174,28 +230,58 @@ Nodes that differ:
 
 ## The key
 
-The host object is a function of the LLVM module and of the code generator
-alone, so its key holds these and nothing of the MDIR build:
+Every key begins with a format tag and a salt
+(D[compile-cache-default]), computed once per process:
 
+- `image`: the ELF build ID (`NT_GNU_BUILD_ID`, read from the notes of the
+  loaded image) of the image that holds the compiler: `mdir`, or the Python
+  extension. LLVM and MLIR are linked statically into both, so the ID
+  names every piece of MDIR and LLVM that runs after a key is taken: the
+  module pipeline of the host code (`optimizeHostModule`), the options of
+  the target machine, how the PTX is serialized and how `ptxas` is called,
+  the translations to LLVM IR, a patched LLVM or one of the same version
+  from another source, and the defaults of LLVM's options. Every image is
+  linked with `--build-id=sha1`; without a note, the BLAKE3 of the image's
+  file is taken instead.
+- `mdir` and `llvm`: the version, commit, and dirty flag of MDIR, and the
+  version and revision of LLVM. They are there to be read; the build ID is
+  what tells builds apart.
+- `cl-opt`: each LLVM option of the command line (`mdir` takes every
+  registered LLVM option, such as `-nvptx-prec-divf32=0` or
+  `-unroll-threshold=0`), by name, with its count and the arguments that
+  gave it. A Python process has none.
+- `test-salt`: `MDIR_COMPILE_CACHE_SALT_OVERRIDE`, for tests only, which
+  stands for another build.
+
+A rebuild of MDIR that changes the image therefore starts cold, as do an
+LLVM option and another LLVM; `mdir` and the Python extension, two images,
+share no entry. This is the rule of D[compile-cache-default]:
+whenever anything that changes the compiled result may differ, the cache
+is not used. Before it, the keys held the LLVM version and the format
+tags, which had to be bumped by hand for any change of MDIR's code
+generation, and a patched LLVM of the same version hit.
+
+The key of the host object holds, after the salt:
+
+- the scheduler before register allocation in force when the key is
+  taken, as the code generator then finds it (`-pre-RA-sched`, D150): the
+  fast one that a simulation selects, or the one of the command line;
 - a BLAKE3 hash of the module's bitcode, taken before LLVM's module
   pipeline and code generation (which change the module), so that a hit
   costs neither (D269);
-- the LLVM version, the target triple, the CPU name and its features, the
-  level of code generation (D197), the code and relocation models, the
-  data layout, the target options that change generated code, and the
-  pre-RA scheduler that the simulation selects (D150), and the level of the
-  module pipeline of the host code (`host-opt=O3`, D269);
-- a format tag.
+- the target triple, the CPU name and its features, the level of code
+  generation (D197), the code and relocation models, the data layout, the
+  target options that change generated code, the scheduler that the
+  simulation selects, and the level of the module pipeline of the host
+  code (`host-opt=O3`, D269).
 
 The PTX of the kernels is a global of the module, so a change of device
 code changes the key too, and everything the program's constants depend on
 is in the module. The values that depend on the state the run starts from
 are not constants of the module but arguments of its entry
-([Values of the start](#values-of-the-start-d227)). A rebuild of MDIR
-that leaves the generated module unchanged therefore hits, and one that
-changes any part of the generated code misses. An object is not portable
-between machines with different CPU features: a different CPU is a
-different key.
+([Values of the start](#values-of-the-start-d227)). An object is not
+portable between machines with different CPU features: a different CPU is
+a different key.
 
 A hit needs the same module from the same inputs, so the text that the
 builder generates must be a function of the model alone, not of what the
@@ -205,9 +291,8 @@ another in one process has the text and the lowered text of a model built
 first (`python-build-history.test`, on the CPU and a GPU).
 
 This follows the design of #142 for the stages after MLIR. The MLIR
-pipeline depends on MDIR's passes, so a cache of its output would need the
-build identity in its key, and would miss after every rebuild; it is not
-part of this item.
+pipeline depends on MDIR's passes; it runs for every program that is
+compiled and is not cached.
 
 ## Values of the start (D227)
 
@@ -407,9 +492,8 @@ onto the device again by each simulation.
 
 **`cache=False`** (D217) bypasses the store as it bypasses the directory:
 such a simulation takes no kept code and leaves none, and lowers and
-generates everything. `MDIR_COMPILE_CACHE=off` and a process without
-`MDIR_COMPILE_CACHE_DIR` do not: the store is independent of the cache on
-disk. A simulation that takes kept code does not read the directory, so it
+generates everything. `MDIR_COMPILE_CACHE=off` and a process without a
+cache on disk do not: the store is independent of the cache on disk. A simulation that takes kept code does not read the directory, so it
 does not mark the entry as used either.
 
 **Memory and threads.** The store belongs to the `Program` and is freed
@@ -568,9 +652,13 @@ between simulations or processes.
 
 `test/mdir_lit.py` gives every test of a suite the directory
 `<build>/test/compile-cache`, so that the suites of different build trees
-share nothing; `-Dcompile_cache=off` (or `MDIR_COMPILE_CACHE=off` in the
-environment of lit) runs a suite without it. A test of the cache itself
-sets its own directory or `MDIR_COMPILE_CACHE=off` in its RUN lines. A full
+share nothing, and always sets `MDIR_COMPILE_CACHE_DIR`, so that a suite
+never reads or writes the user's default directory; `-Dcompile_cache=off`
+(or `MDIR_COMPILE_CACHE=off` in the environment of lit) runs a suite
+without it. A test of the cache itself sets its own directory or
+`MDIR_COMPILE_CACHE=off` in its RUN lines; one of the default directory
+sets `XDG_CACHE_HOME` under its own `%t` and the test-only
+`MDIR_COMPILE_CACHE_TEST_LOCAL=1`, which takes every file system as local. A full
 suite left 86 entries, 139 MB, before the GPU entries; with them, it
 leaves 114 MB of host objects and 684 MB of GPU entries
 (D214).
@@ -649,7 +737,8 @@ directory:
   - A clear removes every entry of the warm cache (1 host object, and on a
     GPU every PTX and cubin) and leaves a file of another format and a
     writer's temporary file. The next process misses and stores, and the
-    one after hits. A clear of another directory, or with no directory,
+    one after hits. A clear of another directory, or with no directory
+    (which clears the default, D[compile-cache-default]),
     removes nothing; under `MDIR_COMPILE_CACHE=off` it still clears the
     directory set.
   - One process clears over and over while another compiles the
@@ -778,35 +867,42 @@ loaded on a device of another fails at load with a message that says so.
 
 ### The cache of the GPU modules
 
-With `MDIR_COMPILE_CACHE_DIR` set, the pass keeps the PTX and the cubin of
-each module in `<dir>/gpu/`, as entries of the format of the host objects
+With the cache on ([Where the cache is](#where-the-cache-is)), the pass
+keeps the PTX and the cubin of each module in `<dir>/gpu/`, as entries of the format of the host objects
 (below: full key, length, BLAKE3 hash, time of generation, data; atomic
 writes; reads that copy). `MDIR_COMPILE_CACHE_MAX_MB` bounds the host and
 GPU entries together, least recently used first.
 
 The key of the PTX of a module (`<hash>.ptx`) holds:
 
+- the format tag and the salt ([The key](#the-key)), and the scheduler
+  in force when it is taken, which NVPTX's code generator also uses;
 - a BLAKE3 hash of the module's IR, printed in the generic form with
   nothing elided and without locations, which do not reach the PTX;
 - its target attribute: the triple, `sm_XY`, the PTX features, and `O`;
 - the value of `MDIR_GPU_BINARY`;
 - a BLAKE3 hash of the libdevice it links, and of any other library its
-  target links;
-- the LLVM version and a format tag.
+  target links; an LLVM built with `MLIR_NVVM_EMBED_LIBDEVICE` links the
+  libdevice embedded in it, which is then hashed instead of the file (no
+  LLVM that MDIR's scripts build embeds it);
+- the LLVM version.
 
-The MDIR build is not part of the key. At this point a module holds only
-upstream ops of the LLVM and NVVM dialects, so a rebuild of MDIR that
-generates the same kernels hits. A module that refers to a
+The hash of a file is taken once per process for each path, device,
+inode, size, time of modification, and time of change of the file, so a
+file replaced in place, even with its size and time of modification kept,
+is hashed again. A module that refers to a
 `dense_resource` blob is not cached, since its printed IR does not hold
 the blob's contents.
 
 The key of a cubin (`<hash>.cubin`) holds:
 
+- the format tag and the salt;
 - a BLAKE3 hash of its PTX;
-- the text of `ptxas --version`;
+- the text of `ptxas --version`, and a BLAKE3 hash of the `ptxas` binary,
+  taken when the key is (two builds of `ptxas` may print the same
+  version);
 - the arguments of `ptxas`;
-- the value of `MDIR_GPU_BINARY`;
-- a format tag.
+- the value of `MDIR_GPU_BINARY`.
 
 A new toolkit therefore compiles the cached PTX again, and a new LLVM
 generates new PTX.
