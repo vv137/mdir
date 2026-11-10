@@ -461,12 +461,14 @@ launch sizes, work counts and measurement qualifications.
 | Evaluation: radial and LJ | f32 radial tables and scalar LJ arithmetic; one coefficient-vector load per Coulomb site contribution. Part of evaluation; no isolated time. | Same common pair-body interface, D94 criterion and analytic fallback; f32 pair arithmetic. Fixed water coefficient folding retains its existing precision. Part of evaluation; no isolated time. | **Closed `f0151e73` / `8d2cd418` / `f6999f3c`:** common radial route, its oracle and scalar radial forces. **Kept on purpose:** existing table error/admission contract; no approximation change to obtain speed. WW coefficient invariants remain E3. |
 | Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
 | Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
-| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | Search uses eight group warps per 256-thread block; small-box grids 35–36, large 134–138. Common evaluation remains one combined launch. The search spill/launch evidence is detailed below. | **S1 implemented, validation/measurement pending:** candidate search uses two warps per block, with matching grid rounding; one row remains one warp and arithmetic is unchanged. Group-box and clear launches retain their sizes. This row remains open until its isolated gates and two timing comparisons establish a gain. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
+| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | Search uses eight group warps per 256-thread block; small-box grids 35–36, large 134–138. Common evaluation remains one combined launch. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
+| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **R1 kept with reason:** existing evidence does not establish longest-row dominance. A conditional split of disjoint query ranges needs direct row/stage diagnostics and ordered subrow compaction before a separate experiment. No scheduling change is hidden in S3/S4/S2. |
 | Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
 
-The immediate order is **S0, S1, S2**, then the remaining search mechanisms
-according to their measured contribution. Bounded precision and storage
-changes do not get folded into S1 or S2. Evaluation items E1–E3 resume
+S0 was discarded and S1 retained after their isolated comparisons. The
+next working priority is **S3, S4, S2**, based on the serial-work diagnosis
+below; each remains an independent measured correction. Bounded precision
+and storage changes do not get folded into these corrections. Evaluation items E1–E3 resume
 after search; E4 needs its own concrete proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
@@ -497,6 +499,113 @@ establish a useful consistent gain, so the source guard is discarded.
 The retained implementation is again the radial baseline. S1 next changes
 only the candidate-search block and its ceiling division, leaving boxes,
 row ownership, arithmetic and output compaction unchanged.
+
+### S1 isolated measurement and row-work diagnosis
+
+Head `5652560d`, base `af7a9f47`, RTX 5090; the retained comparison is
+radial `f6999f3c`. Only candidate launch size and its matching grid ceiling
+change. CPU lowering passes 6/6 (15.34 seconds), pre-push checks 6/6, and
+clean-head GPU fixtures 22/22 (107.27 seconds). Precision is unchanged:
+f64 references/search/pruning geometry, f32 packed pair arithmetic and
+force accumulation, f64 energy/virial accumulation.
+
+Both comparisons complete with 48/48 exit-zero timing executions and
+12/12 complete profiles. Stationarity accepts 47/48 wall timings. The
+first comparison's ubiquitin TIP3P ON timing has no stationary trimmed
+plateau and is excluded, preserved and never rerun or replaced. Its
+independent profile remains usable. Maximum bracketing-main spread is
+0.3885%. All eleven available matched ON/main comparisons improve by
+1.36–6.07%; the other ratio remains unknown. Every search/refresh mean
+improves by 12.4–25.8%. S1 is retained; ON still exceeds main on every
+system, so this is not the performance target or a ready claim.
+
+| System | ON/main A / B | Search microseconds/refresh A / B | Search microseconds/step A / B |
+|---|---|---|---|
+| ubq OPC | 1.71842 / 1.73420 | 1493.058 / 1492.060 | 61.215 / 60.727 |
+| ubq TIP3P | excluded / 2.10159 | 1511.897 / 1512.222 | 63.348 / 63.967 |
+| OPC small | 1.17254 / 1.17216 | 1003.890 / 1006.315 | 17.668 / 17.611 |
+| OPC large | 1.20154 / 1.20232 | 1204.216 / 1206.808 | 23.121 / 23.171 |
+| TIP3P small | 1.37834 / 1.37536 | 1006.407 / 1006.783 | 18.719 / 18.625 |
+| TIP3P large | 1.48197 / 1.47821 | 1216.871 / 1213.404 | 24.946 / 24.996 |
+
+Search PTX differs only in `.maxntid`, but compiler allocation changes:
+168 registers, 168-byte stack and 228/292 spill-store/load bytes replace
+128 registers, 464-byte stack and 560/704 bytes. These are static compiler
+resources, not measured spill traffic. The calculated register-limited
+ceiling falls from 16 to 12 warps/SM. Small-box grids have about 142
+blocks: even perfect distribution cannot occupy every SM, and 12 resident
+warps/SM must not be confused with achieved occupancy. More block
+parallelism and fewer spills accompany the gain; the experiment does not
+isolate their individual effects.
+
+The independent CPU work model uses the six initial unrounded f64 input
+snapshots. Its initial outer-entry totals match all six recorded totals:
+264865, 267364, 113185, 423498, 116491 and 432421 in the table's order.
+Startup constraint changes and later refresh history are not replayed;
+these are reconstructed work counts, not GPU row clocks. Each metric is
+**mean / p99-higher / maximum**, across all class rows. A candidate batch
+is one iteration over at most 32 partner-group descriptors; a partner
+batch handles at most two surviving groups. Separate metric maxima can
+belong to different rows and cannot be added into one longest row.
+
+| System | Rows | Frame subsets | Bin/image enumerations | Candidate-loop batches | Binary-search steps | Partner batches |
+|---|---|---|---|---|---|---|
+| ubq OPC | 723 | 1.29 / 4 / 4 | 82.51 / 196 / 196 | 76.32 / 196 / 196 | 1421.76 / 4142 / 4478 | 66.13 / 144 / 192 |
+| ubq TIP3P | 724 | 1.29 / 4 / 4 | 83.32 / 196 / 196 | 76.92 / 196 / 196 | 1425.21 / 3727 / 4501 | 66.31 / 136 / 193 |
+| OPC small | 283 | 1.12 / 2 / 2 | 87.84 / 98 / 98 | 86.96 / 98 / 98 | 1352.70 / 2159 / 2162 | 78.84 / 119 / 121 |
+| OPC large | 1079 | 1.08 / 2 / 2 | 74.61 / 98 / 98 | 74.37 / 98 / 98 | 1501.85 / 2582 / 2611 | 73.68 / 117 / 123 |
+| TIP3P small | 284 | 1.13 / 2 / 2 | 88.87 / 98 / 98 | 87.99 / 98 / 98 | 1364.81 / 2167 / 2169 | 80.06 / 123 / 125 |
+| TIP3P large | 1087 | 1.09 / 2 / 2 | 74.94 / 98 / 98 | 74.49 / 98 / 98 | 1502.54 / 2582 / 2611 | 74.14 / 119 / 124 |
+
+For an explicit serial-time estimate, calibrate one coefficient on the
+first comparison's OPC-small mean, 1003.890 microseconds. Multiplying
+maximum partner batches by 8.296609 microseconds predicts 1593, 1601,
+1004, 1020, 1037 and 1029 microseconds in table order. Actual means are
+1493, 1512, 1004, 1204, 1006 and 1217. This is an empirical proxy, not a
+measured service time or a conversion of instructions into cycles. Its
+six-system mean absolute percentage error is 7.73%, including the
+calibration case. A mean-column-search proxy fits almost equally well,
+7.99%, so the longest-row explanation is not uniquely established.
+
+Both jobs give essentially the same diagnosis: kernel-mean differences
+are 0.02–0.29%. Reusing the first calibration on the second comparison
+gives 7.76% error for maximum partner batches and 8.03% for mean column
+steps. These differences are descriptive spreads, not confidence intervals.
+The agreement does not remove the identifiability problem.
+
+A separately calibrated aggregate model, total candidate batches divided
+by the maximum possible occupied SM count, has 51.08% error. Water work
+grows 3.24–3.29 times, that aggregate proxy 2.70–2.72 times, while kernel
+time grows only 1.20–1.21 times. This rejects the simplest fixed-cost
+aggregate model, but not throughput with latency hiding and changing
+contention. Warps sharing an SM share issue and memory resources; neither
+all theoretical resident warps nor the grid limit measures actual
+parallelism. Row timestamps/stage counters would be needed to distinguish
+those mechanisms directly.
+
+The S2 counterfactual preserves each row's retained-entry/mask-bit totals
+and class/chunk totals. It approximately halves total water-box batches,
+but maximum candidate batches stay 98 in every box. Partner maxima change
+121 to 110, 123 to 115, 125 to 121 and 124 to 112. Column searches remain
+unchanged. Hence S2 does not promise a twofold critical-path reduction.
+
+The next working order is **S3, S4, S2**, a source-based priority rather
+than a predicted cycle count. S3 removes dependent column searches from
+every query: maximum column steps are 1490/1932/1496/1930 in the four
+boxes and 3224/3220 in ubiquitin; z searches remain. S4 removes repeated
+first-anchor broadcasts from each surviving partner batch. S2 then removes
+backward ownership work, with its unchanged enumeration ceiling explicitly
+recorded. Each is validated and measured alone; an unsuccessful correction
+is discarded. This order may change after its own measured evidence.
+
+**R1, conditional row-splitting proposal:** keep one warp per row for now,
+because longest-row dominance is not proved. If serial tails remain after
+S3/S4, diagnose per-row elapsed clocks and coarse stage work on fixed frames
+before a separate split experiment. A possible split partitions disjoint
+frame/image/column ranges and compacts by original row, subrange and local
+ordinal. Ownership, images, masks and final ordering must remain unchanged;
+allocation/merge/launch costs need a separate measured proposal. R1 is
+kept with this reason, not silently implemented or claimed unnecessary.
 
 ### Precision contract for planned search and pruning changes
 
