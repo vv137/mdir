@@ -33,6 +33,10 @@ per clone, with `git config core.hooksPath scripts/hooks`; `git push
 
 ## What a change carries
 
+Which design patterns the code uses, and what to use when adding a term,
+a pass, a kernel, a strategy, or a target, is summarized in
+[docs/internals.md](docs/internals.md).
+
 - **A test** of what it changes, at the level where it changes it: the IR
   of a pass in `test/Dialect` or `test/Conversion`, a run of the driver in
   `test/Driver`. A value that a test pins after a comparison with another

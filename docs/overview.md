@@ -434,6 +434,7 @@ which later decisions implement (#565 to #573).
 | The Python package | [python-package.md](python-package.md), [python-model.md](python-model.md), [python.md](python.md) (index) |
 | Neighbor structures | [neighbors.md](neighbors.md), [neighbor-groups.md](neighbor-groups.md), [neighbor-tiles.md](neighbor-tiles.md) |
 | Terms and methods | [nonbonded.md](nonbonded.md), [pme.md](pme.md), [constraints.md](constraints.md), [dynamics.md](dynamics.md), [charmm.md](charmm.md), [conventions.md](conventions.md) |
+| The design patterns of the code, and what to use when adding something | [internals.md](internals.md) |
 | Primitives and their lowering | [primitives-map.md](primitives-map.md), [device-primitives.md](device-primitives.md), [device-tuples.md](device-tuples.md) |
 | Contracts | [execution-contracts.md](execution-contracts.md), [principles.md](principles.md) |
 | Learned potentials | [metatomic-ml1.md](metatomic-ml1.md), [ml4-ir.md](ml4-ir.md), [ml4-baselines.md](ml4-baselines.md), [nep.md](nep.md) |
