@@ -299,12 +299,15 @@ other job uses it. A PR that can affect speed reports ms/step or ns/day
 against `main` on the same system and the same kind of device, and states
 any slowdown on the Amber suite.
 
-- **Several jobs.** A comparison runs in at least two separate jobs, on
-  different devices where the scheduler allows. Each job interleaves `main`
-  and the change on its one device (for example `main`, change, `main`).
-  The PR gives the ratio of each job and their spread, not one number. A
+- **Several jobs.** A comparison runs as at least two jobs of the
+  scheduler, submitted together, each with a GPU of its own, so that they
+  run at the same time on different devices. Each job interleaves `main`
+  and the change on its device (for example `main`, change, `main`). The
+  PR gives the ratio of each job and their spread, not one number. A
   single job cannot tell a slow device from slow code: a device can slow
-  under sustained load (#815).
+  under sustained load (#815). On a machine with a single device the jobs
+  run one after another on it, which separates them in time but not by
+  device, and the report says so.
 - **Shorter runs.** Several shorter runs are preferred to one long run. A
   long run is for a quantity that needs it, such as the drift of the
   energy.
