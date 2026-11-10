@@ -699,6 +699,7 @@ operation ::= `md_exec.pair_for` $neighbors `,` $positions `,` $cell (`centers` 
               (`images` `(` $images^ `)`)?
               `policy` `(` $traversal `,` $conflict `)`
               custom<Scatter>($scatter)
+              (`host` `(` `lanes` `(` $hostLanes^ `)` `)`)?
               $kernel attr-dict
               `:` qualified(type($neighbors)) `,` qualified(type($positions))
               (`->` qualified(type($results))^)?
@@ -803,6 +804,14 @@ before an atomic of the device, from `L` units of work of a launch on.
 Without it, or with `scatter(atomic)`, by an atomic of the device for
 each value. A loop takes no other strategy.
 
+`host(lanes(W))`, which `md-exec-choose-host-pairs` sets on the CPU
+target (D[host-pair-vector], include/mdir/Dialect/MDExec/HostPairs.h),
+states that the host lowering runs each row `W` candidates at a time
+in registers of the `vector` dialect: lane `l` sums the candidates
+`k = l (mod W)` of the row in increasing `k`, and the lanes are then
+combined by halving. Without it the row is scalar, in the order of its
+list.
+
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
 Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
@@ -820,6 +829,7 @@ Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
 <tr><td><code>ghostFree</code></td><td>::mlir::BoolAttr</td><td>bool attribute</td></tr>
 <tr><td><code>images</code></td><td>::mdir::md_exec::ImagesAttr</td><td>images of a displacement</td></tr>
 <tr><td><code>scatter</code></td><td>::mdir::md_exec::ScatterAttr</td><td>The strategy of a scatter-accumulate</td></tr>
+<tr><td><code>hostLanes</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
 #### Operands:
