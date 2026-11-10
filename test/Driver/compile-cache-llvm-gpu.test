@@ -2,7 +2,8 @@
 # (D[compile-cache-default]). On the dipeptide with PME, a warm run
 # reads every PTX and cubin and gives the energies of the cold one; an
 # LLVM option of the command line (-nvptx-prec-divf32=0) misses every PTX
-# and cubin, in either order, and the option given again hits; the
+# and cubin, in either order, and the option given again hits, also from a
+# response file, whose file of another value misses every entry; the
 # scheduler of the command line misses every PTX, and the cubins of the PTX
 # it changes (one of the same PTX, which ptxas compiles alone, hits); a salt that stands for another
 # build (MDIR_COMPILE_CACHE_SALT_OVERRIDE) misses every entry and gives the
@@ -17,6 +18,8 @@
 # CHECK-NEXT: warm: ptx compiled 0 read [[M:[1-9][0-9]*]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
 # CHECK-NEXT: divf32: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
 # CHECK-NEXT: divf32-again: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
+# CHECK-NEXT: response-same: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0
+# CHECK-NEXT: response-other: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
 # CHECK-NEXT: plain-again: ptx compiled 0 read [[M]] cubins compiled 0 read [[M]]; new ptx 0 cubin 0 energies same
 # CHECK-NEXT: divf32-first: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]]
 # CHECK-NEXT: plain-after: ptx compiled {{[1-9][0-9]*}} read {{[0-9]+}} cubins compiled {{[1-9][0-9]*}} read {{[0-9]+}}; new ptx [[P]] cubin [[C]] energies same

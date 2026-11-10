@@ -1,4 +1,5 @@
 set(LIBS
+  MDIRCompileCache
   MDIRDyn
   MDIRMD
   MDIRMDDist

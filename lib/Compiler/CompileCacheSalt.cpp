@@ -13,12 +13,14 @@
 #include "llvm/CodeGen/MachinePassRegistry.h"
 #include "llvm/CodeGen/SchedulerRegistry.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/BLAKE3.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/VCSRevision.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstring>
@@ -37,14 +39,20 @@ using namespace llvm;
 
 namespace {
 
-/// The arguments of the command line that named registered LLVM options,
-/// by the name of the option.
+/// An argument of the command line, or two (`-option value`), that named a
+/// registered LLVM option, with the indices of its arguments in the
+/// command line with its response files expanded.
+struct RecordedArgument {
+  const cl::Option *option = nullptr;
+  unsigned first = 0, last = 0;
+  std::string text;
+};
 std::mutex &getOptionsMutex() {
   static std::mutex mutex;
   return mutex;
 }
-std::map<std::string, std::vector<std::string>> &getRecordedOptions() {
-  static std::map<std::string, std::vector<std::string>> recorded;
+std::vector<RecordedArgument> &getRecordedArguments() {
+  static std::vector<RecordedArgument> recorded;
   return recorded;
 }
 
@@ -118,32 +126,62 @@ std::string getImageIdentity() {
   return "unknown";
 }
 
-/// The LLVM options of the command line, sorted by name: each with the
-/// arguments that gave it, or with its count when no recorded argument
-/// names it. The scheduler is left out: every key takes the one in force
-/// when it is taken.
-std::string describeOptions() {
-  std::vector<std::string> lines;
+/// The LLVM options set on the command line, each once, by its name, with
+/// the arguments that set it; and the names of those set whose arguments
+/// were not recorded. The scheduler is left out: every key takes the one in
+/// force when it is taken.
+struct SetOptions {
+  std::map<std::string, std::vector<std::string>> recorded;
+  std::vector<std::string> unrecorded;
+};
+
+SetOptions findSetOptions() {
+  SetOptions set;
   std::lock_guard<std::mutex> lock(getOptionsMutex());
-  const auto &recorded = getRecordedOptions();
+  const auto &arguments = getRecordedArguments();
+  // An option is registered under its name and, with a parser of named
+  // values (the passes of `mdir-opt`), under each value's name: each
+  // option once, under its own name or else its first.
+  std::map<const cl::Option *, std::string> options;
   for (const auto &entry : cl::getRegisteredOptions()) {
     const cl::Option *option = entry.second;
     if (!option->getNumOccurrences() || entry.first == "pre-RA-sched")
       continue;
-    std::string line = entry.first.str() + " x" +
-                       std::to_string(option->getNumOccurrences()) + ":";
-    if (auto found = recorded.find(entry.first.str());
-        found != recorded.end())
-      for (const std::string &argument : found->second)
-        line += " " + argument;
-    else
-      line += " (not from the command line)";
-    lines.push_back(std::move(line));
+    std::string &name = options[option];
+    if (option->ArgStr == entry.first || name.empty())
+      name = entry.first.str();
   }
-  std::sort(lines.begin(), lines.end());
+  for (const auto &[option, name] : options) {
+    std::vector<std::string> texts;
+    for (const RecordedArgument &argument : arguments) {
+      // A `cl::alias` passes its occurrences on to the option it names,
+      // which takes the index of the alias's argument as its position.
+      bool alias = argument.option->getNumOccurrences() == 0 &&
+                   option->getPosition() >= argument.first &&
+                   option->getPosition() <= argument.last;
+      if (argument.option == option || alias)
+        texts.push_back(argument.text);
+    }
+    if (texts.empty())
+      set.unrecorded.push_back(name);
+    else
+      set.recorded[name + " x" +
+                   std::to_string(option->getNumOccurrences())] =
+          std::move(texts);
+  }
+  return set;
+}
+
+/// The LLVM options of the command line, sorted by name, each with the
+/// arguments that gave it.
+std::string describeOptions() {
   std::string text;
-  for (const std::string &line : lines)
-    text += "cl-opt " + line + "\n";
+  for (const auto &[name, texts] : findSetOptions().recorded) {
+    text += "cl-opt " + name + ":";
+    for (const std::string &argument : texts)
+      text += " " + argument;
+    text += "\n";
+  }
   return text;
 }
 
@@ -151,11 +189,20 @@ std::string describeOptions() {
 
 void mdir::compiler::recordCommandLineOptions(int argc,
                                               const char *const *argv) {
+  // The arguments as cl::ParseCommandLineOptions takes them: with each
+  // `@file` replaced by the arguments it holds, which it reads in a copy of
+  // its own. An expansion that fails records nothing; then the options set
+  // are unrecorded and the cache is off (getUnrecordedOptions).
+  BumpPtrAllocator allocator;
+  StringSaver saver(allocator);
+  SmallVector<const char *, 32> expanded(argv, argv + argc);
+  if (!cl::ExpandResponseFiles(saver, cl::TokenizeGNUCommandLine, expanded))
+    return;
   auto &options = cl::getRegisteredOptions();
   std::lock_guard<std::mutex> lock(getOptionsMutex());
-  auto &recorded = getRecordedOptions();
-  for (int i = 1; i < argc; ++i) {
-    StringRef argument(argv[i]);
+  auto &recorded = getRecordedArguments();
+  for (unsigned i = 1, e = expanded.size(); i < e; ++i) {
+    StringRef argument(expanded[i]);
     if (argument == "--")
       break;
     if (!argument.starts_with("-"))
@@ -165,14 +212,20 @@ void mdir::compiler::recordCommandLineOptions(int argc,
     auto found = options.find(name);
     if (found == options.end())
       continue;
-    std::string text = argument.str();
+    RecordedArgument entry{found->second, i, i, argument.str()};
     // `-option value`: the value is the next argument.
     if (!body.contains('=') &&
         found->second->getValueExpectedFlag() == cl::ValueRequired &&
-        i + 1 < argc)
-      text += std::string(" ") + argv[++i];
-    recorded[name.str()].push_back(std::move(text));
+        i + 1 < e) {
+      entry.last = ++i;
+      entry.text += std::string(" ") + expanded[i];
+    }
+    recorded.push_back(std::move(entry));
   }
+}
+
+std::vector<std::string> mdir::compiler::getUnrecordedOptions() {
+  return findSetOptions().unrecorded;
 }
 
 std::string mdir::compiler::getSchedulerInForce() {

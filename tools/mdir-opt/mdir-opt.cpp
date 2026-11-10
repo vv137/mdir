@@ -2,6 +2,7 @@
 // knows every pass and dialect of MLIR as well, so that it replays the
 // pipeline of `mdir run` from a reproducer (docs/debugging.md).
 
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -46,6 +47,12 @@ int main(int argc, char **argv) {
                   mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect,
                   mdir::md_dist::MDDistDialect>();
 
+  auto [input, output] = mlir::registerAndParseCLIOptions(
+      argc, argv, "MDIR optimizer driver\n", registry);
+  // The LLVM options given, with their values, are part of every key of
+  // the compile cache, which `--mdir-gpu-module-to-binary` uses
+  // (D[compile-cache-default]).
+  mdir::compiler::recordCommandLineOptions(argc, argv);
   return mlir::asMainReturnCode(
-      mlir::MlirOptMain(argc, argv, "MDIR optimizer driver\n", registry));
+      mlir::MlirOptMain(argc, argv, input, output, registry));
 }

@@ -15,7 +15,9 @@ the counts compiled and read alone do not tell a miss.
 GROUP is one of:
 
 - llvm: cold, warm, an LLVM option of the command line
-  (-nvptx-prec-divf32=0) in both orders, the scheduler of the command line
+  (-nvptx-prec-divf32=0) in both orders, the option through a response
+  file (`@file`) with the same value (a hit) and with another (a miss),
+  the scheduler of the command line
   (-pre-RA-sched=list-ilp), and MDIR_COMPILE_CACHE_SALT_OVERRIDE, which
   stands for another build; the energies of a hit are those of the cold run.
 - target: `mdir emit --stage=lowered` for the device's architecture, then
@@ -140,6 +142,13 @@ if group == "llvm":
     run("warm", "one", same_as="cold")
     run("divf32", "one", args=["-nvptx-prec-divf32=0"])
     run("divf32-again", "one", args=["-nvptx-prec-divf32=0"])
+    # The same options through response files: the keys hold the arguments
+    # the files expand to, so the file of the value given before hits and
+    # one of another value misses.
+    (work / "divf32-0.rsp").write_text("-nvptx-prec-divf32=0\n")
+    (work / "divf32-1.rsp").write_text("-nvptx-prec-divf32=1\n")
+    run("response-same", "one", args=["@" + str(work / "divf32-0.rsp")])
+    run("response-other", "one", args=["@" + str(work / "divf32-1.rsp")])
     run("plain-again", "one", same_as="cold")
     run("divf32-first", "two", args=["-nvptx-prec-divf32=0"])
     run("plain-after", "two", same_as="cold")
