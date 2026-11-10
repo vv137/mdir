@@ -316,10 +316,31 @@ the cluster.
 ## Performance
 
 Timings are taken on a GPU that runs nothing else, after checking that no
-other job uses it. During development one long run is enough; a figure for
-publication is the mean and standard deviation of repeated runs. A PR that
-can affect speed reports ms/step or ns/day against `main` on the same
-system, and states any slowdown on the Amber suite.
+other job uses it. A PR that can affect speed reports ms/step or ns/day
+against `main` on the same system and the same kind of device, and states
+any slowdown on the Amber suite.
+
+- **Several jobs.** A comparison runs as at least two jobs of the
+  scheduler, submitted together, each with a GPU of its own, so that they
+  run at the same time on different devices. Each job interleaves `main`
+  and the change on its device (for example `main`, change, `main`). The
+  PR gives the ratio of each job and their spread, not one number. A
+  single job cannot tell a slow device from slow code: a device can slow
+  under sustained load (#815). On a machine with a single device the jobs
+  run one after another on it, which separates them in time but not by
+  device, and the report says so.
+- **Shorter runs.** Several shorter runs are preferred to one long run. A
+  long run is for a quantity that needs it, such as the drift of the
+  energy.
+- **Reading a run.** The start of a run's per-step timings is trimmed
+  progressively, and the rate is the mean once it is roughly stationary.
+- **Outliers.** A run whose rate drifts through the run, or a job whose
+  `main` differs from the other jobs' `main` by more than their spread, is
+  reported as such and left out of the comparison until it is explained.
+  The first thing to check is the SM clock range and the maximum
+  temperature under load that the job recorded at its end.
+- **Publication.** A figure for publication is the mean and standard
+  deviation of repeated runs.
 
 ## Shared machines
 
