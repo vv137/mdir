@@ -2,9 +2,6 @@
 // for the scalar window and the covering bound of D242.
 #include "mdir/Conversion/TemplateSearchKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
-#include "mdir/Conversion/TemplateImageSearchKernels.h"
-#include "mdir/Conversion/TemplateImagePolicy.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mdir/Conversion/TemplateSearchPreparation.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/TemplateSearchGeometry.h"
@@ -20,8 +17,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
-#include "llvm/ADT/STLExtras.h"
-#include <string>
 #include <limits>
 
 using namespace mlir;
@@ -143,14 +138,82 @@ static Value bound(OpBuilder &b, Location loc, Value begin, Value end, Value wan
 }
 } // namespace
 
-static void emitGeneralTemplateCandidates(OpBuilder &b, Location loc,
-    const TemplateSearchBuffers &v) {
+void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
+                                            const TemplateSearchBuffers &v) {
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   auto real = [&](OpBuilder &at, double n) { return createReal(at, loc, at.getF64Type(), n); };
-  auto boolean = [&](OpBuilder &at, bool yes) -> Value {
-    return arith::ConstantOp::create(at, loc, at.getBoolAttr(yes));
+  auto boolean = [&](OpBuilder &at, bool value) -> Value {
+    return arith::ConstantOp::create(at, loc, at.getBoolAttr(value));
   };
   Value one = ix(b, 1), block = ix(b, 64);
+  // Spatial sort scratch is dead after group publication. Reuse it for
+  // dense descriptor-column endpoints without changing the arena capacity.
+  Value bins = arith::MulIOp::create(b, loc, ix(b, 2),
+      arith::MulIOp::create(b, loc, v.spatial.columnsX, v.spatial.columnsY));
+  Value columnBlock = ix(b, 256);
+  Value columnGrid = arith::MaxUIOp::create(b, loc, one,
+      arith::DivUIOp::create(b, loc,
+          arith::AddIOp::create(b, loc, bins, ix(b, 255)), columnBlock));
+  auto clearColumns = gpu::LaunchOp::create(b, loc,
+      columnGrid, one, one, columnBlock, one, one);
+  {
+    OpBuilder at = OpBuilder::atBlockEnd(&clearColumns.getBody().front());
+    Value column = arith::AddIOp::create(at, loc,
+        arith::MulIOp::create(at, loc, clearColumns.getBlockIds().x, columnBlock),
+        clearColumns.getThreadIds().x);
+    Value inside = arith::CmpIOp::create(at, loc,
+        arith::CmpIPredicate::ult, column, bins);
+    scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, word(in, loc, 0),
+          v.spatial.counts, ValueRange{column});
+      scf::YieldOp::create(in, loc);
+    });
+    gpu::TerminatorOp::create(at, loc);
+  }
+  emitPrepareTemplateSearch(b, loc, v);
+  emitDeviceScan(b, loc, v.spatial.counts, v.spatial.starts, v.spatial.cursors,
+      bins, v.spatial.scanScratch, v.spatial.scanBlocks, columnBlock, one);
+  auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
+  {
+    OpBuilder at = OpBuilder::atBlockEnd(&clear.getBody().front());
+    Value thread = clear.getThreadIds().x;
+    Value leader = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, thread, ix(at, 0));
+    scf::IfOp::create(at, loc, leader, [&](OpBuilder &in, Location) {
+      // The shared scan eagerly reads element zero even for empty input.
+      for (Value buffer : {v.build.counts, v.build.workCounts})
+        memref::StoreOp::create(in, loc, word(in, loc, 0), buffer, ValueRange{ix(in, 0)});
+      scf::YieldOp::create(in, loc);
+    });
+    Value inside = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, thread, ix(at, 3));
+    scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, integer(in, loc, 0), v.counters, ValueRange{thread});
+      if (v.classCells) {
+        assert(v.classReaches && v.reaches);
+        Value ww = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 0));
+        Value ss = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 2));
+        Value active = arith::SelectOp::create(in, loc, ww, v.spatial.waterActive,
+            arith::SelectOp::create(in, loc, ss, v.spatial.atomActive,
+                arith::OrIOp::create(in, loc, v.spatial.waterActive, v.spatial.atomActive)));
+        scf::IfOp::create(in, loc, active, [&](OpBuilder &publish, Location) {
+          int width = isTriclinic(v.cell) ? 6 : 3;
+          for (int64_t axis = 0; axis != 6; ++axis) {
+            Value component = axis < width
+                ? Value(vector::ExtractOp::create(publish, loc, v.cell, axis)) : real(publish, 0);
+            Value row = arith::AddIOp::create(publish, loc,
+                arith::MulIOp::create(publish, loc, thread, ix(publish, 2)), ix(publish, axis / 3));
+            memref::StoreOp::create(publish, loc, component, v.classCells,
+                ValueRange{row, ix(publish, axis % 3)});
+          }
+          Value radius = vector::ExtractOp::create(publish, loc, v.reaches, OpFoldResult(thread));
+          memref::StoreOp::create(publish, loc, radius, v.classReaches,
+              ValueRange{ix(publish, 0), thread});
+          scf::YieldOp::create(publish, loc);
+        });
+      }
+      scf::YieldOp::create(in, loc);
+    });
+    gpu::TerminatorOp::create(at, loc);
+  }
   Value waterRows = v.build.groups.waterGroups;
   Value atomRows = v.build.groups.atomGroups;
   Value ssBegin = arith::AddIOp::create(b, loc, waterRows, atomRows);
@@ -717,212 +780,4 @@ static void emitGeneralTemplateCandidates(OpBuilder &b, Location loc,
   });
   gpu::TerminatorOp::create(k, loc);
   } // WW, SW, SS
-}
-
-// The outlined host functions own distinct GPU kernels. Mode selection
-// therefore never adds an image-policy branch inside a candidate kernel.
-static SmallVector<Value *> searchFields(TemplateSearchBuffers &v, bool includeAbsent = false) {
-  SmallVector<Value *> fields;
-  auto add = [&](Value &field) { if (field || includeAbsent) fields.push_back(&field); };
-  auto &p = v.spatial; auto &a = v.build; auto &g = a.groups;
-  for (Value *field : {&p.points,&p.keys,&p.zKeys,&p.counts,&p.starts,&p.cursors,
-       &p.items,&p.scanScratch,&p.order,&p.places,&p.sortScratch,&p.waters,&p.atoms,
-       &p.columnsX,&p.columnsY,&p.scanBlocks,&p.waterActive,&p.atomActive,
-       &a.arena,&a.stageUnits,&a.stageEntries,&a.counts,&a.entryOffsets,&a.workCounts,
-       &a.workOffsets,&a.scanScratch,&a.outerRows,&a.innerRows,&a.outerUnits,&a.innerUnits,
-       &a.outerEntries,&a.innerEntries,&a.waters,&a.atoms,&a.rows,&a.unitCapacity,&a.scanBlocks,
-       &g.starts,&g.lengths,&g.columns,&g.atStart,&g.waterGroups,&g.atomGroups,&g.rows,
-       &v.counters,&v.excludedRows,&v.excludedNeighbors,&v.handle,&v.imageMargin,
-       &v.cell,&v.baseReach,&v.extent,&v.reaches,&v.classCells,&v.classReaches,
-       &v.groupBoxes,&v.fractionalBoxes}) add(*field);
-  return fields;
-}
-
-static func::FuncOp outlineSearch(OpBuilder &b, Location loc, ModuleOp module,
-    const TemplateSearchBuffers &values, unsigned path) {
-  TemplateSearchBuffers args = values;
-  auto fields = searchFields(args);
-  SmallVector<Type> types;
-  for (Value *field : fields) types.push_back(field->getType());
-  auto type = b.getFunctionType(types, {});
-  std::string stem = std::string("__mdir_template_search_") +
-      (path == 0 ? "nearest" : path == 1 ? "conditional" : "general") +
-      (isTriclinic(values.cell) ? "_triclinic" : "_orthorhombic");
-  auto schemaFields = searchFields(args, true);
-  assert(schemaFields.size() <= 64);
-  uint64_t schema = 0;
-  for (unsigned i = 0; i != schemaFields.size(); ++i)
-    if (*schemaFields[i]) schema |= uint64_t(1) << i;
-  stem += "_s" + std::to_string(schema);
-  std::string name = stem;
-  unsigned suffix = 0;
-  while (auto found = module.lookupSymbol<func::FuncOp>(name)) {
-    if (found.getFunctionType() == type) return found;
-    name = stem + "_" + std::to_string(++suffix);
-  }
-  OpBuilder symbols(module.getBodyRegion());
-  auto function = func::FuncOp::create(symbols, loc, name, type);
-  function.setPrivate();
-  Block *entry = function.addEntryBlock();
-  for (auto [field, argument] : llvm::zip(fields, entry->getArguments())) *field = argument;
-  OpBuilder at = OpBuilder::atBlockEnd(entry);
-  if (path == 2) emitGeneralTemplateCandidates(at, loc, args);
-  else emitSpecializedTemplateSearch(at, loc, args, path == 1);
-  func::ReturnOp::create(at, loc);
-  return function;
-}
-
-Value mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
-    ModuleOp module, const TemplateSearchBuffers &v) {
-  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
-  auto real = [&](OpBuilder &at, double n) { return createReal(at, loc, at.getF64Type(), n); };
-  Value one = ix(b, 1);
-  // Spatial sort scratch is dead after group publication. Reuse it for
-  // dense descriptor-column endpoints without changing the arena capacity.
-  Value bins = arith::MulIOp::create(b, loc, ix(b, 2),
-      arith::MulIOp::create(b, loc, v.spatial.columnsX, v.spatial.columnsY));
-  Value columnBlock = ix(b, 256);
-  Value columnGrid = arith::MaxUIOp::create(b, loc, one,
-      arith::DivUIOp::create(b, loc,
-          arith::AddIOp::create(b, loc, bins, ix(b, 255)), columnBlock));
-  auto clearColumns = gpu::LaunchOp::create(b, loc,
-      columnGrid, one, one, columnBlock, one, one);
-  {
-    OpBuilder at = OpBuilder::atBlockEnd(&clearColumns.getBody().front());
-    Value column = arith::AddIOp::create(at, loc,
-        arith::MulIOp::create(at, loc, clearColumns.getBlockIds().x, columnBlock),
-        clearColumns.getThreadIds().x);
-    Value inside = arith::CmpIOp::create(at, loc,
-        arith::CmpIPredicate::ult, column, bins);
-    scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
-      memref::StoreOp::create(in, loc, word(in, loc, 0),
-          v.spatial.counts, ValueRange{column});
-      Value first = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
-          column, ix(in, 0));
-      scf::IfOp::create(in, loc, first, [&](OpBuilder &clear, Location) {
-        memref::StoreOp::create(clear, loc, integer(clear, loc, 0),
-            v.counters, ValueRange{ix(clear, 0)});
-        scf::YieldOp::create(clear, loc);
-      });
-      scf::YieldOp::create(in, loc);
-    });
-    gpu::TerminatorOp::create(at, loc);
-  }
-  emitPrepareTemplateSearch(b, loc, v);
-  emitDeviceScan(b, loc, v.spatial.counts, v.spatial.starts, v.spatial.cursors,
-      bins, v.spatial.scanScratch, v.spatial.scanBlocks, columnBlock, one);
-  // Read only the initialized maximum-frame scalar, not other control
-  // words that a standalone fixture need not have initialized yet.
-  auto scalarDevice = MemRefType::get({1}, b.getI64Type(),
-      MemRefLayoutAttrInterface(), cast<MemRefType>(v.counters.getType()).getMemorySpace());
-  Value frameDevice = memref::ReinterpretCastOp::create(b, loc, scalarDevice,
-      v.counters, b.getIndexAttr(0), ArrayRef<OpFoldResult>{b.getIndexAttr(1)},
-      ArrayRef<OpFoldResult>{b.getIndexAttr(1)});
-  Value frameHost = memref::AllocaOp::create(b, loc, MemRefType::get({1}, b.getI64Type()));
-  Type token = gpu::AsyncTokenType::get(b.getContext());
-  Value ready = gpu::WaitOp::create(b, loc, token, ValueRange()).getAsyncToken();
-  Value copied = gpu::MemcpyOp::create(b, loc, token, ValueRange{ready},
-      frameHost, frameDevice).getAsyncToken();
-  gpu::WaitOp::create(b, loc, Type(), ValueRange{copied});
-  Value maxFrame = arith::BitcastOp::create(b, loc, b.getF64Type(),
-      load(b, loc, frameHost, ix(b, 0)));
-  Value maxReach;
-  if (v.reaches) {
-    maxReach = vector::ExtractOp::create(b, loc, v.reaches, 0);
-    for (int64_t kind = 1; kind != 3; ++kind)
-      maxReach = arith::MaximumFOp::create(b, loc, maxReach,
-          vector::ExtractOp::create(b, loc, v.reaches, kind));
-  } else {
-    maxReach = arith::AddFOp::create(b, loc, v.baseReach,
-        arith::MulFOp::create(b, loc, real(b, 2), v.extent));
-  }
-  auto policy = emitTemplateImagePolicy(b, loc, v.cell, maxReach, maxFrame);
-  Value path = v.forcedImagePath < 0 ? policy.path : integer(b, loc, v.forcedImagePath);
-  TemplateSearchBuffers selected = v;
-  selected.imageMargin = policy.margin;
-  auto clear = gpu::LaunchOp::create(b, loc, one, one, one, ix(b, 32), one, one);
-  {
-    OpBuilder at = OpBuilder::atBlockEnd(&clear.getBody().front());
-    Value thread = clear.getThreadIds().x;
-    Value leader = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, thread, ix(at, 0));
-    scf::IfOp::create(at, loc, leader, [&](OpBuilder &in, Location) {
-      // The shared scan eagerly reads element zero even for empty input.
-      for (Value buffer : {v.build.counts, v.build.workCounts})
-        memref::StoreOp::create(in, loc, word(in, loc, 0), buffer, ValueRange{ix(in, 0)});
-      scf::YieldOp::create(in, loc);
-    });
-    Value inside = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, thread, ix(at, 3));
-    scf::IfOp::create(at, loc, inside, [&](OpBuilder &in, Location) {
-      memref::StoreOp::create(in, loc, integer(in, loc, 0), v.counters, ValueRange{thread});
-      if (v.classCells) {
-        assert(v.classReaches && v.reaches);
-        Value ww = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 0));
-        Value ss = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, thread, ix(in, 2));
-        Value active = arith::SelectOp::create(in, loc, ww, v.spatial.waterActive,
-            arith::SelectOp::create(in, loc, ss, v.spatial.atomActive,
-                arith::OrIOp::create(in, loc, v.spatial.waterActive, v.spatial.atomActive)));
-        scf::IfOp::create(in, loc, active, [&](OpBuilder &publish, Location) {
-          int width = isTriclinic(v.cell) ? 6 : 3;
-          for (int64_t axis = 0; axis != 6; ++axis) {
-            Value component = axis < width
-                ? Value(vector::ExtractOp::create(publish, loc, v.cell, axis)) : real(publish, 0);
-            Value row = arith::AddIOp::create(publish, loc,
-                arith::MulIOp::create(publish, loc, thread, ix(publish, 2)), ix(publish, axis / 3));
-            memref::StoreOp::create(publish, loc, component, v.classCells,
-                ValueRange{row, ix(publish, axis % 3)});
-          }
-          Value radius = vector::ExtractOp::create(publish, loc, v.reaches, OpFoldResult(thread));
-          memref::StoreOp::create(publish, loc, radius, v.classReaches,
-              ValueRange{ix(publish, 0), thread});
-          scf::YieldOp::create(publish, loc);
-        });
-      }
-      scf::YieldOp::create(in, loc);
-    });
-    gpu::TerminatorOp::create(at, loc);
-  }
-  SmallVector<Value> metadata{v.handle, path,
-      arith::ExtUIOp::create(b, loc, b.getI64Type(), v.spatial.waterActive),
-      arith::ExtUIOp::create(b, loc, b.getI64Type(), v.spatial.atomActive)};
-  // Scalar host inputs let an explicitly installed test observer associate
-  // a successful refresh with its exact selection geometry, without reads
-  // of device metadata or any change to the public entry representation.
-  for (int64_t axis = 0; axis != 6; ++axis)
-    metadata.push_back(axis < (isTriclinic(v.cell) ? 6 : 3)
-        ? Value(vector::ExtractOp::create(b, loc, v.cell, axis)) : real(b, 0));
-  for (int64_t kind = 0; kind != 3; ++kind)
-    metadata.push_back(v.reaches
-        ? Value(vector::ExtractOp::create(b, loc, v.reaches, kind))
-        : Value(arith::AddFOp::create(b, loc, v.baseReach,
-            arith::MulFOp::create(b, loc, real(b, 2 - kind), v.extent))));
-  auto metadataType = b.getFunctionType(ValueRange(metadata).getTypes(), TypeRange{b.getI64Type()});
-  auto setter = module.lookupSymbol<func::FuncOp>("mdrtTemplatePairsSetImagePath");
-  if (!setter) {
-    OpBuilder symbols(module.getBodyRegion());
-    setter = func::FuncOp::create(symbols, loc, "mdrtTemplatePairsSetImagePath", metadataType);
-    setter.setPrivate();
-  }
-  assert(setter.getFunctionType() == metadataType && "template image-path runtime type mismatch");
-  func::CallOp::create(b, loc, setter, metadata);
-  auto call = [&](OpBuilder &at, unsigned mode) {
-    auto function = outlineSearch(at, loc, module, selected, mode);
-    auto fields = searchFields(selected);
-    SmallVector<Value> operands;
-    for (Value *field : fields) operands.push_back(*field);
-    func::CallOp::create(at, loc, function, operands);
-  };
-  Value nearest = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, path, integer(b, loc, 0));
-  scf::IfOp::create(b, loc, nearest, [&](OpBuilder &at, Location) {
-    call(at, 0); scf::YieldOp::create(at, loc);
-  }, [&](OpBuilder &at, Location) {
-    Value conditional = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
-        path, integer(at, loc, 1));
-    scf::IfOp::create(at, loc, conditional, [&](OpBuilder &chosen, Location) {
-      call(chosen, 1); scf::YieldOp::create(chosen, loc);
-    }, [&](OpBuilder &fallback, Location) {
-      call(fallback, 2); scf::YieldOp::create(fallback, loc);
-    });
-    scf::YieldOp::create(at, loc);
-  });
-  return path;
 }

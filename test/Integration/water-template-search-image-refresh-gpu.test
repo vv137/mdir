@@ -1,7 +1,0 @@
-# REQUIRES: cuda
-# RUN: rm -f %t.auto %t.general %t.input.mlir %t.reference.json
-# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --cell-crossing --dispatch --refresh
-# RUN: mdir-opt %t.input.mlir '--test-md-template-search=force-general refresh' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.general
-# RUN: mdir-opt %t.input.mlir '--test-md-template-search=refresh' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.auto
-# RUN: %python %S/Inputs/template_search_ordered.py %t.general %t.auto %t.reference.json --auto-paths=0,1,0
-# Deterministic current-cell refresh/growth gate, not a barostat trajectory.

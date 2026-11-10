@@ -1,6 +1,5 @@
 #include "mdir/Conversion/TemplateRefreshKernels.h"
 #include "mdir/Conversion/TemplateSearchKernels.h"
-#include "mdir/Conversion/TemplateSearchOrder.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -61,7 +60,6 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
         [&](OpBuilder &in, Location) {
       prepare(in, state[1], state[2]);
       TemplateSearchBuffers s;
-      s.handle = v.handle; s.forcedImagePath = v.forcedImagePath;
       s.cell = v.cell; s.baseReach = v.baseReach; s.extent = v.extent;
       s.reaches = v.reaches;
       s.classCells = v.classCells; s.classReaches = v.classReaches;
@@ -120,7 +118,7 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
           ValueRange{v.handle, wide(in, TEMPLATE_SS_ROWS)}, device, true);
       s.excludedNeighbors = call(in, "mdrtTemplatePairsMetadata",
           ValueRange{v.handle, wide(in, TEMPLATE_SS_NEIGHBORS)}, device, true);
-      Value imagePath = emitSearchTemplatePairs(in, loc, module, s);
+      emitSearchTemplatePairs(in, loc, s);
       Type token = gpu::AsyncTokenType::get(in.getContext());
       Value ready = gpu::WaitOp::create(in, loc, token, ValueRange()).getAsyncToken();
       Value copied = gpu::MemcpyOp::create(in, loc, token, ValueRange{ready},
@@ -150,12 +148,6 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
             ValueRange{boolean(grow, false), boolean(grow, true), boolean(grow, true)});
       }, [&](OpBuilder &compact, Location) {
         emitCompactTemplatePairs(compact, loc, a);
-        Value specialized = arith::CmpIOp::create(compact, loc,
-            arith::CmpIPredicate::ne, imagePath, wide(compact, 2));
-        scf::IfOp::create(compact, loc, specialized, [&](OpBuilder &order, Location) {
-          emitOrderTemplateSearch(order, loc, a, p);
-          scf::YieldOp::create(order, loc);
-        });
         scf::YieldOp::create(compact, loc, ValueRange{boolean(compact, true), state[1], state[2]});
       });
       scf::YieldOp::create(in, loc, result.getResults());

@@ -1,8 +1,0 @@
-# REQUIRES: cuda
-# RUN: rm -f %t.auto %t.general %t.input.mlir %t.reference.json
-# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --base-reach=0.7578125 --extent=0.5 --image-order --dispatch
-# RUN: mdir-opt %t.input.mlir '--test-md-template-search=force-general base-reach=0.7578125 extent=0.5' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.general
-# RUN: mdir-opt %t.input.mlir '--test-md-template-search=base-reach=0.7578125 extent=0.5' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.auto
-# RUN: %python %S/Inputs/template_search_ordered.py %t.general %t.auto %t.reference.json --auto-paths=1,1,1,1
-# A nearest image may follow another accepted image in the general order.
-# Comparing pair sets or sorted entries would hide this regression.

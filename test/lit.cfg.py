@@ -59,7 +59,6 @@ tools = [
     "mdir-template-report-test",
     "mdir-template-physics-test",
     "mdir-template-trajectory-test",
-    "mdir-template-image-barostat-test",
     "mdir-jit-memory-test",
     "mdir-compile-cache-test",
     "mlir-opt",

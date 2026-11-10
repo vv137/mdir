@@ -3,7 +3,6 @@ add_mlir_conversion_library(MDIRMDExecKernels
   ExpandPrimitives.cpp
   GatherEmitter.cpp
   MDExecKernels.cpp
-  ImageEnumerationEmitter.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
   ScatterEmitter.cpp
@@ -16,9 +15,6 @@ add_mlir_conversion_library(MDIRMDExecKernels
   TemplateSpatialKernels.cpp
   TemplateGroupKernels.cpp
   TemplateStageKernels.cpp
-  TemplateImagePolicy.cpp
-  TemplateImageSearchKernels.cpp
-  TemplateSearchOrder.cpp
   TemplateSearchGeometry.cpp
   TemplateSearchPreparation.cpp
   TemplateSearchKernels.cpp

@@ -452,6 +452,8 @@ launch sizes, work counts and measurement qualifications.
 
 | Stage | Prototype: algorithm, precision, work and RTX 5090 time | Native: algorithm, precision, work and RTX 5090 time | Difference and status |
 |---|---|---|---|
+| R1: integration and template-writer fusion | Full integration is outside the isolated prototype search/evaluation attribution; no isolated prototype value is claimed. Main fuses the corresponding drift/constraint/writer closure into two kernels. | The template-writer exclusion in `recordIntegration` leaves three kernels for TIP3P drift, position constraints and publication. At W1, the closure costs 11.276–23.598 us/step versus main's 5.834–10.240; excess is 5.433–14.826 across the three systems and A/B captures. Arithmetic precision is unchanged. | **Authorized R1, planned after the image screen:** admit template publication into fused integration under the existing fusion preconditions and proved complete-group ownership. Preserve final SSA precision, constraint-history semantics and the existing flag event/wait. Ordinary integration remains unchanged. This is a general completed-output observer mechanism, not a water-model kernel. |
+| R2: position publication and validity | Full native position publication is outside the isolated prototype attribution; no isolated prototype value is claimed. Main's matching OPC writer costs 1.431–3.100 us/step. | W1's packed-frame publication, epoch-specific reference comparisons and five validity flags cost 5.225–13.809 us/step in OPC; excess is 3.776–10.708 across the three systems and A/B captures. Whole coordinates, extent, fractions and motion tests use f64; published packed coordinates use f32. | **Authorized R2, planned after the image screen:** share proved common arithmetic and perform only publication/validity work needed by the next refresh/prune consumer. Keep independently aged outer/inner references, D80 bounds, epoch ordering, extent enforcement and flag meanings. Measure the complete rest budget against main. |
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
 | Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | After W1: Cartesian f32 and fractional f64 boxes; native f64 Cartesian producer narrows once, shared anchors feed pair/box checks, and distinct first-frame subsets keep the general proof. Cache build costs 0.063–0.153 per step; exact certificate setup is included in candidate cost, not isolated. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 closed by `5ea35cdb`, retained:** certified f32 Cartesian boxes and shared anchors; preparation is 3.61–3.69 us per attempt, versus S4 5.31–5.39. Exact CPU 6/6, GPU 22/22 and focused sanitizer 1/1 pass. B1/B2 are not standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
@@ -469,8 +471,11 @@ launch sizes, work counts and measurement qualifications.
 S0 was discarded and S1 retained after their isolated comparisons. The
 required D0 diagnostic at S4 and **W1 whole search port** are complete.
 W1 has a measured gain but leaves the recorded large prototype gap. The later ruling below supersedes the earlier S2/S5/B1/B2
-single-mechanism plan. W1 was measured as one correction against S4. Further whole search
-work versus resuming evaluation items E1–E3 awaits the next ruling; E4 needs its own concrete proposal before implementation.
+single-mechanism plan. W1 was measured as one correction against S4.
+The subsequent image-path batch passed correctness but was discarded by
+its six-system stage screen. R1/R2 now form the authorized rest batch,
+followed by the remaining evaluation items. E4 needs its own concrete
+proposal before implementation.
 Every measured correction updates this table with its head and effect.
 
 ### S0 isolated measurement: padded-lane box guard
@@ -1050,6 +1055,13 @@ items remain pending; this is not a ready claim.
 
 ### Refresh-selected image strategies
 
+**Measured and discarded.** The implementation and its tests below are
+the validated experiment at `30844760`; its six-system stage screen was
+slower than retained W1, so the complete image optimization batch was
+reverted under the target ruling. The active implementation retains W1's
+general iterator. Experimental source, correctness results and logs remain
+available in that commit's history; this section is not a shipping claim.
+
 The accepted next correction keeps W1's entry ABI, class ownership,
 incidence masks, epochs, validity and literal final membership predicate.
 It selects separate outlined search functions at refresh scope:
@@ -1268,6 +1280,49 @@ CPU preflight first passed one fixture and failed one because a proposed
 fixture `gpu.memset` remained unlowered in the existing pipeline. Reusing
 the supported upload of host zeros avoided any shared lowering change;
 the one affected CPU rerun passed 1/1 in 36.13 s.
+
+The affected four-mode sanitizer continuation at `30844760` passed 1/1
+in 26.27 s: memcheck, initcheck and synccheck zero errors, racecheck zero
+hazards. Together with the prior native/prune passes, all three focused
+fixtures are validated. The original 101-error record is retained.
+
+#### Image stage screen and batch rollback
+
+Six new ON captures at `30844760` each ran 10,000 steps on RTX 5090 and
+exited zero. All six exports, 18 current/W1 source-context checks and
+integer duration partitions passed. Main `af7a9f47` and W1 `5ea35cdb`
+references are historical 10,000-step A/B captures with the same six
+controls and inputs, rather than contemporaneous measurements. No new
+unprofiled wall ratio, repeat spread or statistical significance estimate
+is available. No 100,000-step run followed this failed stage screen.
+
+The full construction closure includes sort, group plan, index/cache
+preparation, candidate search, compaction and all three new canonical-order
+kernels. Earlier published rest included compaction; this comparison
+moves it into **both** native construction budgets and subtracts it from
+both rest budgets. New ordering is always charged to construction.
+
+| System | Image full construction | W1 A full | W1 B full | Main A neighbor build/prune | Main B neighbor build/prune | New canonical ordering |
+|---|---|---|---|---|---|---|
+| Ubiquitin OPC | 81.206866 | 54.467589 | 55.460235 | 22.670185 | 22.419927 | 3.705709 |
+| Ubiquitin TIP3P | 84.823360 | 57.322060 | 56.748152 | 19.698702 | 19.697685 | 3.911580 |
+| OPC small | 24.465447 | 10.311543 | 10.444678 | 20.924885 | 21.009729 | 1.311541 |
+| OPC large | 33.811373 | 13.085061 | 13.146270 | 27.263994 | 27.122827 | 2.094050 |
+| TIP3P small | 26.824696 | 11.340111 | 11.202876 | 18.119364 | 18.083272 | 1.471330 |
+| TIP3P large | 36.433365 | 14.036528 | 13.966508 | 23.483346 | 23.577742 | 2.304716 |
+
+All values are GPU duration sums in us/step. Construction increased
+46.424–160.862% against the two W1 references, missing every construction
+target. Candidate register use rose to 254 for WW/SS and 161 for SW,
+versus W1's 168/168 and 128; this is a resource observation, not a proven
+hardware limiter. Neither the added ordering alone nor a guessed occupancy
+loss is assigned the entire regression.
+
+The batch is therefore discarded, retaining W1 rather than its slower
+image specialization. The independent fixture-copy initialization and
+bounded-download repair remains. The next authorized rest batch includes
+R1 and R2 in the mechanism table; the remaining evaluation items stay
+planned under the established order and targets.
 
 ### Target-driven remaining batches and reporting
 
