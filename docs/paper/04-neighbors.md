@@ -1212,6 +1212,12 @@ candidate image's cell contribution. Ordinary `md.sum_tuples` coordinates
 retain their minimum-image semantics; they cannot substitute one anchor
 image for all the images of the window.
 
+After differentiation, ordinary pair kernels and structured window bodies
+expose their squared distances, regions and contribution outputs through
+one compiler interface. The same radial canonicalization and D94 table
+admission then apply to both, retaining the original error criterion and
+analytic fallback; the physical expression remains the source body.
+
 ![Which distances the structure tests](figures/rigid-water-members.png)
 
 *Figure 4.1. A pair of OPC waters to scale. Left: in the general

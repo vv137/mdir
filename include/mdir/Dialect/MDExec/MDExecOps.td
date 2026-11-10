@@ -17,6 +17,7 @@ include "mdir/Dialect/MDExec/MDExecAttrs.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
 include "mdir/Dialect/MDExec/LoopEffects.td"
+include "mdir/Dialect/MDExec/PairKernelBody.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
 
 def MDExec_Buffer : Type<
@@ -170,6 +171,7 @@ def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
 
 def MDExec_TemplateForOp : MDExec_Op<"template_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MDExec_PairKernelBodyOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Executes explicit window bodies over the three list segments";
   let description = [{
@@ -1090,6 +1092,7 @@ def MDExec_TabulateOp : MDExec_Op<"tabulate", [
 
 def MDExec_PairForOp : MDExec_Op<"pair_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MDExec_PairKernelBodyOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
   ]> {

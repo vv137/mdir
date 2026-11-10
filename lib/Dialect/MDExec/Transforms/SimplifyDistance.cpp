@@ -35,8 +35,8 @@ using Form = SmallVector<Term, 4>;
 /// Rewrites one kernel.
 class Rewriter {
 public:
-  Rewriter(PairForOp op, bool radial)
-      : op(op), builder(op.getContext()), separates(radial) {}
+  Rewriter(PairKernelBodyOpInterface op, PairKernelBody body, bool radial)
+      : op(op), body(std::move(body)), builder(op.getContext()), separates(radial) {}
 
   void run();
 
@@ -103,7 +103,8 @@ private:
     return arith::MulFOp::create(builder, loc, lhs, rhs);
   }
 
-  PairForOp op;
+  PairKernelBodyOpInterface op;
+  PairKernelBody body;
   OpBuilder builder;
   Block *fresh = nullptr;
 
@@ -240,7 +241,11 @@ Value Rewriter::emitPowerOfDistance(int power, Location loc) {
   } else if (half < 0) {
     if (!inverse) {
       OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToStart(fresh);
+      if (Operation *definition = r2.getDefiningOp();
+          definition && definition->getBlock() == fresh)
+        builder.setInsertionPointAfter(definition);
+      else
+        builder.setInsertionPointToStart(fresh);
       inverse = arith::DivFOp::create(builder, loc,
                                       createConstant(1.0, loc), r2);
     }
@@ -249,7 +254,11 @@ Value Rewriter::emitPowerOfDistance(int power, Location loc) {
   if (odd) {
     if (!distance) {
       OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPointToStart(fresh);
+      if (Operation *definition = r2.getDefiningOp();
+          definition && definition->getBlock() == fresh)
+        builder.setInsertionPointAfter(definition);
+      else
+        builder.setInsertionPointToStart(fresh);
       distance = math::SqrtOp::create(builder, loc, r2);
     }
     result = multiplyValues(result, distance, loc);
@@ -350,6 +359,9 @@ func::FuncOp Rewriter::createRadialFunction(ArrayRef<Term> terms,
       pending.push_back(value);
   while (!pending.empty()) {
     Value value = pending.pop_back_val();
+    // The declared squared distance is the function's input, including
+    // when it is defined in the enclosing kernel rather than passed in.
+    if (value == r2) continue;
     Operation *def = value.getDefiningOp();
     if (!def || !cone.insert(def))
       continue;
@@ -444,13 +456,7 @@ Form Rewriter::separate(const Form &form, Location loc) {
     func::FuncOp function = createRadialFunction(parts, loc);
     // A function that no table holds stays in the kernel, in its type,
     // rather than as itself in f64 (D159).
-    auto loop = builder.getInsertionBlock()->getParentOp()
-                    ->getParentOfType<PairForOp>();
-    if (!loop) {
-      Operation *parent = builder.getInsertionBlock()->getParentOp();
-      loop = dyn_cast<PairForOp>(parent);
-    }
-    if (loop && !canTabulate(function, loop.getCutoff().convertToDouble(),
+    if (!canTabulate(function, op.getPairKernelCutoff(),
                              radialTolerance)) {
       function.erase();
       for (Term part : parts) {
@@ -521,7 +527,7 @@ bool Rewriter::carry(Operation *oldOp) {
 
   // The square root of the squared distance is the distance.
   if (isa<math::SqrtOp>(oldOp) &&
-      oldOp->getOperand(0) == op.getKernel().front().getArgument(0)) {
+      oldOp->getOperand(0) == body.squaredDistance) {
     Term term;
     term.power = 1;
     forms[result] = Form{term};
@@ -608,7 +614,7 @@ bool Rewriter::carry(Operation *oldOp) {
 //===----------------------------------------------------------------------===//
 
 void Rewriter::run() {
-  Region &region = op.getKernel();
+  Region &region = *body.region;
   Block &old = region.front();
 
   fresh = new Block();
@@ -618,10 +624,12 @@ void Rewriter::run() {
                 fresh->addArgument(argument.getType(), argument.getLoc()));
   builder.setInsertionPointToEnd(fresh);
 
-  r2 = fresh->getArgument(0);
+  // A pair loop passes r2 as an argument; a structured window computes
+  // it in the region. Both use the same forms and radial admission.
+  r2 = mapping.lookupOrNull(body.squaredDistance);
   Term squared;
   squared.power = 2;
-  forms[old.getArgument(0)] = Form{squared};
+  if (r2) forms[body.squaredDistance] = Form{squared};
 
   for (Operation &oldOp : old) {
     if (carry(&oldOp))
@@ -631,6 +639,10 @@ void Rewriter::run() {
       if (forms.count(operand))
         mapping.map(operand, materialize(operand));
     builder.clone(oldOp, mapping);
+    if (body.squaredDistance.getDefiningOp() == &oldOp) {
+      r2 = mapping.lookup(body.squaredDistance);
+      forms[body.squaredDistance] = Form{squared};
+    }
   }
   old.erase();
 }
@@ -648,10 +660,21 @@ public:
   using impl::SimplifyDistanceBase<SimplifyDistance>::SimplifyDistanceBase;
 
   void runOnOperation() final {
-    SmallVector<PairForOp> loops;
-    getOperation()->walk([&](PairForOp loop) { loops.push_back(loop); });
-    for (PairForOp loop : loops)
-      Rewriter(loop, radial).run();
+    SmallVector<PairKernelBodyOpInterface> loops;
+    getOperation()->walk([&](Operation *operation) {
+      if (auto loop = dyn_cast<PairKernelBodyOpInterface>(operation))
+        loops.push_back(loop);
+    });
+    for (auto loop : loops) {
+      unsigned count = loop.getPairKernelBodies().size();
+      for (unsigned i = 0; i != count; ++i) {
+        // Several site pairs can share a region. Reacquire their live
+        // distance/output values after each region rewrite.
+        auto bodies = loop.getPairKernelBodies();
+        assert(bodies.size() == count && "radial rewrite changed pair identity");
+        Rewriter(loop, bodies[i], radial).run();
+      }
+    }
   }
 };
 } // namespace

@@ -486,11 +486,13 @@ public:
       // one with a pole at the cutoff or that vanishes there with all its
       // derivatives (the factor exp(sigma / (r - a sigma)) of the
       // Stillinger-Weber form), is evaluated as itself in f64 (D159).
+      PairKernelBodyOpInterface loop;
+      for (Operation *parent = op->getParentOp(); parent;
+           parent = parent->getParentOp())
+        if ((loop = dyn_cast<PairKernelBodyOpInterface>(parent))) break;
       bool asItself = !op.getType().isF32();
-      if (!asItself)
-        if (auto loop = op->getParentOfType<PairForOp>())
-          asItself = !canTabulate(function, loop.getCutoff().convertToDouble(),
-                                  tolerance);
+      if (!asItself && loop)
+        asItself = !canTabulate(function, loop.getPairKernelCutoff(), tolerance);
       if (asItself) {
         // The function itself, in f64 or the type of the kernel.
         IRMapping values;
@@ -508,12 +510,11 @@ public:
         op.erase();
         continue;
       }
-      auto loop = op->getParentOfType<PairForOp>();
       if (!loop) {
         op.emitOpError() << "is not in the kernel of a loop over pairs";
         return signalPassFailure();
       }
-      double cutoff = loop.getCutoff().convertToDouble();
+      double cutoff = loop.getPairKernelCutoff();
       double high = cutoff * cutoff;
       double low = high * std::ldexp(1.0, -10);
       auto key = std::make_pair(op.getFunction().str(), high);
