@@ -329,6 +329,8 @@ Every other primitive is written at its site.
 
 | Stable spatial group cuts (D[rigid-water-template]) | integer boundary map, shared scans, segment maps and monotone span refinement | class order and fixed-ID ties retained; strict gap threshold and rightmost-largest-gap span split; at most $N+1$ passes | `emitSpatialGroupPlan`; standalone exact integer oracle includes empty storage and an eleven-pass cascade | shared: `SpatialGroupEmitter.h`, composing `CompactionEmitter.h` scans/atomics; native adapter publishes active compact orders and explicit lengths | broader grid/ownership plan #817 |
 
+| Pair-local image traversal (D[rigid-water-template]) | c/b/a prefix map with pass-first conditional neighbors and a scalar visitor | reduced finite cell, proved padded reach, finite correctly rounded f64 arithmetic; visitor owns membership | one-image and conditional-neighbor strategies; refresh-selected separate functions with general fallback | shared: `ImageEnumerationEmitter.h`; template adapter proves margins and retains the original f64 shell | general segmented publication #841; ordinary callers unchanged |
+
 ### 3.2 Short range
 
 | Part | Primitives | Properties | Strategies today, and measurements | State | Gaps |

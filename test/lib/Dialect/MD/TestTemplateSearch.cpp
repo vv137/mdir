@@ -23,6 +23,15 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
   TestTemplateSearch(const TestTemplateSearch &pass) : PassWrapper(pass) {}
   Option<bool> refresh{*this, "refresh", llvm::cl::desc("Use the shared cold refresh and automatic arena growth"),
                         llvm::cl::init(false)};
+  Option<bool> forceGeneral{*this, "force-general",
+      llvm::cl::desc("Force the retained general image iterator for exact comparisons"),
+      llvm::cl::init(false)};
+  Option<double> baseReach{*this, "base-reach",
+      llvm::cl::desc("Anchor-list base reach of the search fixture"),
+      llvm::cl::init(99.0 / 128)};
+  Option<double> extent{*this, "extent",
+      llvm::cl::desc("Rigid-water anchor extent of the search fixture"),
+      llvm::cl::init(18.0 / 128)};
   StringRef getArgument() const final { return "test-md-template-search"; }
   StringRef getDescription() const final { return "Outlines the combined periodic template bin search"; }
   void getDependentDialects(DialectRegistry &r) const override {
@@ -71,6 +80,8 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
       gpu::WaitOp::create(b, loc, Type(), ValueRange{done});
     };
     TemplateSearchBuffers v;
+    v.handle = handle;
+    v.forcedImagePath = forceGeneral ? 2 : -1;
     v.spatial.points = entry->getArgument(1);
     auto boxes = MemRefType::get({ShapedType::kDynamic, 3}, b.getF64Type(),
         MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
@@ -93,13 +104,15 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.columnsY = createIndex(b, loc, 2);
     if (refresh) {
       TemplateRefreshInputs input{handle, v.spatial.points, v.cell,
-          createReal(b, loc, b.getF64Type(), 99.0 / 128),
-          createReal(b, loc, b.getF64Type(), 18.0 / 128),
+          createReal(b, loc, b.getF64Type(), baseReach.getValue()),
+          createReal(b, loc, b.getF64Type(), extent.getValue()),
           v.spatial.columnsX, v.spatial.columnsY,
           v.spatial.waterActive, v.spatial.atomActive};
+      input.forcedImagePath = forceGeneral ? 2 : -1;
       input.reaches = arith::ConstantOp::create(b, loc,
           DenseElementsAttr::get(VectorType::get({3}, b.getF64Type()),
-              ArrayRef<double>{135.0 / 128, 117.0 / 128, 99.0 / 128}));
+              ArrayRef<double>{baseReach.getValue() + 2 * extent.getValue(),
+                  baseReach.getValue() + extent.getValue(), baseReach.getValue()}));
       // The fixture supplies the already prepared hybrid references.
       // A real owner refreshes its requested reference epochs here.
       emitRefreshTemplatePairArena(b, loc, module, input,
@@ -132,9 +145,9 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
         ValueRange{handle, integer(TEMPLATE_SS_ROWS)}, device, true);
     v.excludedNeighbors = call("mdrtTemplatePairsMetadata",
         ValueRange{handle, integer(TEMPLATE_SS_NEIGHBORS)}, device, true);
-    v.baseReach = createReal(b, loc, b.getF64Type(), 99.0 / 128);
-    v.extent = createReal(b, loc, b.getF64Type(), 18.0 / 128);
-    emitSearchTemplatePairs(b, loc, v);
+    v.baseReach = createReal(b, loc, b.getF64Type(), baseReach.getValue());
+    v.extent = createReal(b, loc, b.getF64Type(), extent.getValue());
+    emitSearchTemplatePairs(b, loc, module, v);
     transfer(entry->getArgument(2), v.spatial.places);
     func::ReturnOp::create(b, loc);
   }

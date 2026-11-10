@@ -8,6 +8,11 @@ struct TemplateSearchBuffers {
   TemplateSpatialBuffers spatial;
   TemplateBuildBuffers build;
   mlir::Value counters, excludedRows, excludedNeighbors;
+  /// Host owner and a uniform numerical image margin. The latter is
+  /// supplied to separately outlined nearest/conditional functions.
+  mlir::Value handle, imageMargin;
+  /// Fixture-only override; production always selects from the refresh.
+  int forcedImagePath = -1;
   /// Current reduced cell, base reach (cutoff + skin), and covering extent,
   /// all f64. The caller proves baseReach+2*extent < every cell diagonal.
   mlir::Value cell, baseReach, extent;
@@ -30,7 +35,7 @@ struct TemplateSearchBuffers {
 /// retaining the extent control.
 /// Compaction must wait for the caller to handle overflow flags and an
 /// entry total exceeding the final arena capacity (staging includes slack).
-void emitSearchTemplatePairs(mlir::OpBuilder &, mlir::Location,
-                              const TemplateSearchBuffers &);
+mlir::Value emitSearchTemplatePairs(mlir::OpBuilder &, mlir::Location,
+                              mlir::ModuleOp, const TemplateSearchBuffers &);
 }
 #endif
