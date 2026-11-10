@@ -17,6 +17,10 @@ func.func private @mdrtTemplatePairsMetadata(!list, i64) -> !device attributes {
 func.func private @mdrtDeviceActivationOpen() -> !llvm.ptr
 func.func private @mdrtDeviceActivationEnter(!llvm.ptr)
 func.func private @mdrtDeviceActivationClose(!llvm.ptr)
+func.func private @mdrtDeviceTuplesOpen() -> !llvm.ptr
+func.func private @mdrtDeviceTuplesBegin(!llvm.ptr)
+func.func private @mdrtDeviceTuplesEnter(!llvm.ptr)
+func.func private @mdrtDeviceTuplesClose(!llvm.ptr)
 func.func private @printI64(i64)
 func.func private @printNewline()
 func.func @expect(%device: !device, %expected: !host) -> i1 {
@@ -126,10 +130,14 @@ func.func @exercise(%sort: i1) {
 func.func @main() {
   %activation = func.call @mdrtDeviceActivationOpen() : () -> !llvm.ptr
   func.call @mdrtDeviceActivationEnter(%activation) : (!llvm.ptr) -> ()
+  %store = func.call @mdrtDeviceTuplesOpen() : () -> !llvm.ptr
+  func.call @mdrtDeviceTuplesBegin(%store) : (!llvm.ptr) -> ()
+  func.call @mdrtDeviceTuplesEnter(%store) : (!llvm.ptr) -> ()
   %false = arith.constant false
   %true = arith.constant true
   func.call @exercise(%false) : (i1) -> ()
   func.call @exercise(%true) : (i1) -> ()
+  func.call @mdrtDeviceTuplesClose(%store) : (!llvm.ptr) -> ()
   func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()
   return
 }
