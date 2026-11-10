@@ -894,27 +894,44 @@ order of the particle set. This is in `lib/Driver/Builder*`.
 
 *Validation* (`test/Integration/dist-trajectory-lj.test`,
 `dist-trajectory-lj-drift.test`, `dist-trajectory-lj-gpu.test`). 64
-Lennard-Jones particles (shifted force, cutoff 2.0, reach 2.4) in a 4.8
-cube, the 8 at the corners of the 2 x 2 x 2 grid aimed at them, 200 steps
-of velocity Verlet with the step 0.005, against the same trajectory on one
-domain through `md`, `md-differentiate`, and the neighbor structures of
-`md_exec`. The halo was rebuilt 11 times; the trace counted 77 crossings
-of a face, 6 of an edge, and 8 of a corner.
+Lennard-Jones particles (shifted force, cutoff 2.0, reach 2.4) of masses
+1, 1.25, 1.5, and 1.75 in turn in a 4.8 cube, the 8 at the corners of the
+2 x 2 x 2 grid aimed at them, 200 steps of velocity Verlet with the step
+0.005, against the same trajectory on one domain through `md`,
+`md-differentiate`, and the neighbor structures of `md_exec`. The halo was
+rebuilt 11 times; the trace counted 72 crossings of a face, 4 of an edge,
+and 8 of a corner. Every difference is relative to its scale; the largest
+over the CPU and an RTX 4090, the 2 x 2 x 2, 16 x 1 x 1, and 3 x 2 x 1
+grids, and both executors.
 
-| Quantity | Bound | Double, measured | Mixed, measured |
-|---|---|---|---|
-| Positions, nearest image, against the edge | 1e-12 (double), 1e-5 (mixed) | 8.1e-15 | 9.9e-7 |
-| Velocities, against the largest component | 1e-11, 1e-4 | 1.1e-13 | 1.2e-5 |
-| Potential, kinetic, total energy, against the kinetic energy | 1e-12, 1e-5 | 1.4e-14 | 1.2e-6 |
-| Change of the total energy in 200 steps, against the kinetic energy | 1e-3 | 1.9e-4 on domains and on one domain | 1.9e-4 |
-| Change of the total energy in 2000 steps (about 125 rebuilds) | 2e-3 | 1.0e-5 on domains, 1.2e-4 on one domain | 5.0e-5, 5.3e-4 |
+The bounds follow docs/validation.md, Section 2. A short trajectory is
+compared with a baseline of rounding on the same system (rule 4): the same
+`md_dist` program on one domain (1 x 1 x 1) against `md`, which differ only
+in the order of their sums and in their force kernels. Each bound is three
+times that baseline, rounded up to one digit. The scales (the edge, the
+largest velocity and force components, the kinetic energy) are not near
+zero, so no absolute floor is needed (rule 2).
 
-The double values hold on the 2 x 2 x 2, 16 x 1 x 1, and 3 x 2 x 1 grids
-through both executors. The mixed differences are those of the two
-programs' f32 force kernels and are the same on one domain of `md_dist`
-(1 x 1 x 1) as on 8 or 16 domains. After 2000 steps the trajectories have
-separated, as two runs of a chaotic system with sums in other orders do,
-and only the energy is compared.
+| Quantity | Baseline, double | Domains, double | Bound | Baseline, mixed | Domains, mixed | Bound |
+|---|---|---|---|---|---|---|
+| Positions, nearest image, against the edge | 5.7e-15 | 6.1e-15 | 2e-14 | 5.4e-7 | 5.4e-7 | 2e-6 |
+| Velocities, against the largest component | 7.2e-14 | 6.7e-14 | 3e-13 | 1.0e-5 | 1.0e-5 | 4e-5 |
+| Forces of the last step, against the largest component | 6.1e-14 | 7.6e-14 | 2e-13 | 4.9e-6 | 4.9e-6 | 2e-5 |
+| Potential, kinetic, total energy, against the kinetic energy | 4.5e-15 | 5.3e-15 | 2e-14 | 4.7e-7 | 4.6e-7 | 2e-6 |
+
+At every step the velocities, forces, and masses unpacked after the branch
+are compared with those before it, in the order of the set: they are copies,
+so the bound is 0 (rule 5), and the difference is 0, including the forces
+carried through a rebuild, which the step does not otherwise read. The
+positions, wrapped by $x - nL$, agree within 1.9e-16 of the edge (bound
+1e-15, a few roundings of the edge). The change of the total energy in 200
+steps is 1.47e-4 of the kinetic energy on domains and on one domain, in
+double and mixed (bound 1e-3, about seven times that of the existing route).
+Over 2000 steps (about 124 rebuilds) the trajectories have separated, as
+two runs of a chaotic system with sums in other orders do, and only the
+energy is compared with the existing route: its change is 1.1e-4 of the
+kinetic energy on domains and 1.3e-4 on one domain in double, 9.0e-5 and
+2.9e-4 in mixed (bound 2e-3).
 
 ## 9. Transports
 

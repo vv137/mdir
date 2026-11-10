@@ -107,12 +107,18 @@ domains (#41); a neighbor structure of `md_exec` kept across steps on
 domains.
 
 *Validation* ([distributed-ml2.md](../distributed-ml2.md), Section 8.1).
-A 200-step Lennard-Jones trajectory of 64 particles on 2 x 2 x 2, 16 x 1 x 1,
-and 3 x 2 x 1 grids, with 77 crossings of faces, 6 of edges, and 8 of
-corners and 11 rebuilds of the halo, against the same trajectory on one
-domain: in double the positions agree to 8.1e-15 of the edge (bound 1e-12),
-the velocities to 1.1e-13 of the largest component (1e-11), and the
-energies to 1.4e-14 of the kinetic energy (1e-12); in mixed to 9.9e-7,
-1.2e-5, and 1.2e-6 (bounds 1e-5, 1e-4, 1e-5), the same as on one domain of
-`md_dist`. Over 2000 steps the total energy changes by 1.0e-5 of the
-kinetic energy on domains and 1.2e-4 on one domain (bound 2e-3).
+A 200-step Lennard-Jones trajectory of 64 particles of four masses on
+2 x 2 x 2, 16 x 1 x 1, and 3 x 2 x 1 grids, with 72 crossings of faces, 4 of
+edges, and 8 of corners and 11 rebuilds of the halo, against the same
+trajectory on one domain, on the CPU and an RTX 4090. The bounds are three
+times a baseline of rounding, the same program on one domain of `md_dist`
+against `md` (docs/validation.md, Section 2, rule 4). In double the
+positions agree to 6.1e-15 of the edge (baseline 5.7e-15, bound 2e-14),
+the velocities to 6.7e-14 of the largest component (7.2e-14, 3e-13), the
+forces to 7.6e-14 of theirs (6.1e-14, 2e-13), and the energies to 5.3e-15
+of the kinetic energy (4.5e-15, 2e-14); in mixed to 5.4e-7, 1.0e-5,
+4.9e-6, and 4.6e-7 (bounds 2e-6, 4e-5, 2e-5, 2e-6), the same as on one
+domain. The velocities, forces, and masses carried through every branch
+agree exactly with those before it (bound 0). Over 2000 steps the total
+energy changes by 1.1e-4 of the kinetic energy on domains and 1.3e-4 on
+one domain in double, 9.0e-5 and 2.9e-4 in mixed (bound 2e-3).

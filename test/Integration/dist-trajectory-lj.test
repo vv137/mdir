@@ -27,17 +27,18 @@
 # program on one domain of md_dist (grid 1 x 1 x 1) against the trajectory
 # of md, which differ only in the order of their sums and in their force
 # kernels, with no decomposition. Measured after 200 steps, relative to the
-# scales, the largest over the routes on the CPU (RTX 4090 pending):
+# scales, the largest over the routes on the CPU and on an RTX 4090 (the
+# same in three repeats on the device):
 #
 #                 baseline (1 x 1 x 1)    domains (all grids)    bound
-#   double  x     5.7e-15                    6.1e-15                   2e-14
-#           v     7.2e-14                    6.7e-14                   3e-13
-#           f     5.1e-14                    5.9e-14                   2e-13
-#           E     4.5e-15                    5.3e-15                   2e-14
-#   mixed   x     5.4e-7                     5.4e-7                    2e-6
-#           v     1.0e-5                     1.0e-5                    4e-5
-#           f     4.9e-6                     4.9e-6                    2e-5
-#           E     4.5e-7                     4.4e-7                    2e-6
+#   double  x     5.7e-15                 6.1e-15                2e-14
+#           v     7.2e-14                 6.7e-14                3e-13
+#           f     6.1e-14                 7.6e-14                2e-13
+#           E     4.5e-15                 5.3e-15                2e-14
+#   mixed   x     5.4e-7                  5.4e-7                 2e-6
+#           v     1.0e-5                  1.0e-5                 4e-5
+#           f     4.9e-6                  4.9e-6                 2e-5
+#           E     4.7e-7                  4.6e-7                 2e-6
 #
 # Each bound is three times the baseline, rounded up to one digit: domains
 # may add their own order of summation, but nothing larger. In mixed the
