@@ -791,6 +791,13 @@ roundoff allowance admits uncertain cases before the unchanged exact f64
 pair test, as derived in device-primitives Section 4.11. Every lane still
 reaches the first-unit warp broadcasts. The template runtime ABI is 6;
 ordinary builders and physical bounds are unchanged.
+The shared column/gap/span cut helper is implemented separately, with
+native integration in progress. It preserves the prototype's strict-gap
+and rightmost-largest-gap rule, using shared scans and a proved monotone
+refinement bound rather than a fixed eight-pass harness cap. Its integer
+fixture covers an eleven-pass cascade and multiple scan blocks. This
+helper checkpoint does not yet change native grouping or establish a
+physical-system or performance result for the new groups.
 The native cold refresh owns these bins and their combined search.
 Its column dimensions use the population of water anchors plus solute
 atoms and the current cell volume: the target edge is
