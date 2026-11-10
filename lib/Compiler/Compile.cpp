@@ -15,8 +15,9 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/Module.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/Target/TargetMachine.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
+#include "llvm/TargetParser/X86TargetParser.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/FileSystem.h"
@@ -181,22 +182,26 @@ static std::string getHostPairsOptions() {
     os << "mode=lanes width=" << chosen << " ";
   else if (!chosen.empty())
     os << "mode=" << chosen << " ";
-  if (auto builder = getHostBuilder()) {
-    int64_t bits = 128;
-    if (auto machine = builder->createTargetMachine()) {
-      const llvm::MCSubtargetInfo &target = (*machine)->getMCSubtargetInfo();
-      if ((*machine)->getTargetTriple().isX86())
-        bits = target.checkFeatures("+avx512f") ? 512
-               : target.checkFeatures("+avx")   ? 256
-                                                 : 128;
-      os << "cpu=" << (*machine)->getTargetCPU() << " ";
-    } else {
-      llvm::consumeError(machine.takeError());
+  // The CPU and its features as getHostBuilder gives them to the machine
+  // of the host code, read without a machine: the pipeline of a Python
+  // program is built before its simulation initializes the target.
+  llvm::Triple triple(llvm::sys::getProcessTriple());
+  llvm::StringRef cpu = llvm::sys::getHostCPUName();
+  bool avx = false, avx512 = false;
+  if (const char *named = std::getenv("MDIR_HOST_CPU"); named && *named) {
+    cpu = named;
+    if (triple.isX86()) {
+      llvm::SmallVector<llvm::StringRef> features;
+      llvm::X86::getFeaturesForCPU(cpu, features);
+      avx = llvm::is_contained(features, "avx");
+      avx512 = llvm::is_contained(features, "avx512f");
     }
-    os << "vector-bits=" << bits;
-  } else {
-    llvm::consumeError(builder.takeError());
+  } else if (triple.isX86()) {
+    llvm::StringMap<bool> features = llvm::sys::getHostCPUFeatures();
+    avx = features.lookup("avx");
+    avx512 = features.lookup("avx512f");
   }
+  os << "cpu=" << cpu << " vector-bits=" << (avx512 ? 512 : avx ? 256 : 128);
   return options;
 }
 
