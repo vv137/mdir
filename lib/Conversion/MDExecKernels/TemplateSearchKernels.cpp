@@ -450,6 +450,12 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                 asIndex(yloop, loc, load(yloop, loc, v.spatial.starts, column)));
                             Value end = arith::AddIOp::create(yloop, loc, begin,
                                 asIndex(yloop, loc, load(yloop, loc, v.spatial.counts, column)));
+                            // Earlier WW/SS descriptors contain only smaller places:
+                            // every ownership bit is zero, for every periodic image.
+                            // Keep the self descriptor and the complete SW range.
+                            Value forward = arith::MinUIOp::create(yloop, loc, end,
+                                arith::MaxUIOp::create(yloop, loc, begin, firstGroup));
+                            begin = arith::SelectOp::create(yloop, loc, sw, begin, forward);
                             return forState(yloop, loc, zBegin, zEnd, integer(yloop, loc, 1), stateY,
                                 [&](OpBuilder &zloop, Value sz, TemplateStageState stateZ) {
                                   Value zReal = arith::SIToFPOp::create(zloop, loc, zloop.getF64Type(), sz);
