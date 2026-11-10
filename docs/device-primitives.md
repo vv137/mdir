@@ -886,6 +886,36 @@ transposed strategy needs a measured benefit (#419), while a change to
 the lanes and tiles at orders 6 and 8 belongs to #411. No control-file
 key or allocation is added.
 
+### 4.10 Spatial reference frames and boxes (D[rigid-water-template])
+
+`SpatialFrameEmitter.h` shares the fractional frame used by spatial keys
+and conservative query boxes. For a finite `vector<3xf64>` reference
+$\mathbf u$, `emitSpatialReferenceFrame` returns
+$\mathbf f=\lfloor\mathbf u\rfloor$ and
+$\mathbf w=\mathbf u-\mathbf f$. Wrapping is in f64, before key narrowing.
+`emitSpatialWarpBox` takes finite points and a validity mask and composes
+the shared warp maximum reduction to obtain minimum and maximum. All 32
+lanes must reach it; an empty mask returns infinite empty bounds and must
+not be searched. These preconditions are the caller's responsibility.
+
+The template search keeps its fixed sixteen-unit group and partitions
+the query by distinct first-unit lattice frames. Within each subset its
+box uses the wrapped references, consistently with the keys. The first
+valid unit of each frame, in fixed group order, represents the subset;
+a ballot prevents querying the same subset twice. For query image
+$\mathbf s$ and first-unit frame $\mathbf f_i$, the original partner
+image is $\mathbf s+\mathbf f_i-\mathbf f_j$. The original f64 predicate
+still tests $\mathbf u_i-(\mathbf w_j+\mathbf s+\mathbf f_i)$,
+forming the integer image sum before the f64 addition as before. The
+subsets have disjoint masks, so every admitted pair/image occurs once.
+No minimum-image assumption replaces the explicit image coverage.
+
+The helper is available to ordinary group builders, but this decision
+migrates only its new template caller. Grid sizing and group-cut planning
+remain the broader work of #817; a frame conversion does not change the
+sort keys, class order or fixed-ID ties. Orthorhombic/triclinic all-images
+oracles cover independent reframing and groups spanning eight frames.
+
 ## 5. Reductions by their algebra
 
 ### 5.1 What is stated

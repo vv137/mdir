@@ -20,8 +20,9 @@ struct TemplateSearchBuffers {
 /// Search each active class row once, with explicit periodic images and
 /// per-entry masks. Inactive rows copy retained outer records instead.
 /// References are fractions in nearby unit-local lattice frames; inactive
-/// groups retain their order and references. Keys wrap, but the I bounding
-/// box keeps its frame. A partner's entry image compensates its own frame.
+/// groups retain their order and references. Query boxes use the wrapped
+/// key frame, partitioned by first-unit lattice frame; entry images
+/// compensate both reference frames before the original f64 predicate.
 /// The spatial bins contain both groups. Clears chunk/flag/entry counters,
 /// retaining the extent control.
 /// Compaction must wait for the caller to handle overflow flags and an

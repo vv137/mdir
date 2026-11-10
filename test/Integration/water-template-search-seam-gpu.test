@@ -1,0 +1,10 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --seam
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_search_oracle.py generate %t.tilt.mlir %t.tilt.json --seam --triclinic
+# RUN: mdir-opt %t.tilt.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.tilt.records
+# RUN: %python %S/Inputs/template_search_oracle.py check %t.tilt.records %t.tilt.json
+# Eight lattice-frame subsets share compact wrapped keys. Brute-force f64
+# all-images coverage checks missing, duplicated and excluded pairs and
+# unchanged inactive rows in both cell shapes, with the original predicate.
