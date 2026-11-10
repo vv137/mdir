@@ -1930,7 +1930,7 @@ static LogicalResult outlineSteps(ModuleOp module, func::FuncOp function) {
     SmallVector<Type> results(loop.getResultTypes());
     OpBuilder b(function);
     std::string name =
-        (function.getSymName() + ".step" + Twine(number++)).str();
+        (function.getSymName() + "_step" + Twine(number++)).str();
     while (SymbolTable::lookupSymbolIn(module, name))
       name += "_";
     auto step = func::FuncOp::create(b, loop.getLoc(), name,

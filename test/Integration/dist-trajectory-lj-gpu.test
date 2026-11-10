@@ -1,0 +1,26 @@
+# The trajectory of dist-trajectory-lj.test with the loops of each domain on
+# a GPU (D[distributed-migration], D290): the md_dist.state and the
+# transfers on the host, the pair loops of md_exec on the device, in double
+# and mixed precision, with the bounds of that test.
+#
+# REQUIRES: cuda
+#
+# RUN: sed 's/GRID/2, 2, 2/; s/STEPS/200/; s/XTOL/1.0e-12/; s/VTOL/1.0e-11/; s/ETOL/1.0e-12/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/dist-trajectory-lj.test
+# RUN: sed 's/GRID/16, 1, 1/; s/STEPS/200/; s/XTOL/1.0e-5/; s/VTOL/1.0e-4/; s/ETOL/1.0e-5/; s/DTOL/1.0e-3/' %S/Inputs/dist-trajectory-lj.mlir \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/dist-trajectory-lj.test

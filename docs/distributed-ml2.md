@@ -336,6 +336,7 @@ the verifiers and the lowering, and each has a negative test
 | V7 | A partial value has exactly one use, and the two partial operands of `halo_sum` are the two results of one traversal | Contributions lost or counted twice |
 | V8 | A unique traversal, or the two-ended gather over a directed one, states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
 | V9 | The relation's positions are those of the op that traverses it | A relation of another configuration without a coverage witness |
+| V10 | A neighborhood or a `pack` at positions other than its halo's build positions has a witness of coverage: the two come from one `unpack`, or the op is in the then-region of an `scf.if` on `covered` of them at a cutoff at least its own (Section 8.1) | A halo used after the particles moved, without the skin test |
 
 Where a check cannot be decided (a value through a block argument whose
 layout is unknown), the verifier rejects with the reason, so that a proven
@@ -700,9 +701,11 @@ an RTX 4090).
   the centers only.
 - **A half list by identity** for the unique traversal, and the two-valued
   pair kernel (#391).
-- **Migration and `covered`** (Section 8, #38): a structure kept across
-  steps needs the skin test over explicit images; today a structure with
-  `centers` or explicit images is built at every evaluation, with the halo.
+- **A structure of `md_exec` kept across steps on domains.** The halo is
+  kept across steps (Section 8.1), but a structure with `centers` or
+  explicit images is still built at every evaluation, and the step of a
+  loop on domains is outlined into a function of its own, because a set of
+  `md_exec` has one size in a function.
 - **MPI on CPU ranks** (transport order 2): the per-domain code is emitted
   from a domain's number, and the copies at the boundary of `md_exec` are
   where a rank sends and receives; a rank then holds its own rows, and the
@@ -758,13 +761,7 @@ the old row of each identity and produces a new field for the new layout.
 The old fields and buffers remain valid until their existing users finish.
 Every live field needed after migration must be redistributed before it is
 used with the new layout; the verifier rejects an old-epoch field there.
-This slice does not make the step loop of Section 8 executable: the current
-executor requires all `md_dist` ops of a function in one block. A later
-part of #38 adds `covered`, a collective branch over all domains (including
-empty ones), loop-carried layout and field state, completion of halo events
-before buffer retirement, and the production driver's `[distribute]`
-boundary. Repeated independent snapshots in tests are not an integrated
-trajectory.
+The step loop itself is D[distributed-migration], Section 8.1.
 
 The first temporal-validity slice, D332 (#542), adds
 `md_dist.covered` as a collective Verlet skin predicate
@@ -781,9 +778,131 @@ only when twice the maximum displacement is strictly less than the halo
 reach minus the requested cutoff. Empty domains contribute no displacement
 but participate in the one result. This predicate describes validity of the
 candidate halo membership; a current coordinate payload must still receive
-its own `halo_copy` before a pair kernel reads it. The existing one-block
-executor can evaluate the predicate, but does not yet carry a halo through a
-step loop or branch collectively on the result. Those uses remain in #38.
+its own `halo_copy` before a pair kernel reads it. The predicate is used by
+the step loop below.
+
+### 8.1 The state of a step loop (D[distributed-migration])
+
+The verifier follows epochs (V5), copy versions (V2), and coverage through
+defining ops, which a block argument does not have. A loop therefore
+carries one value, a state, and nothing else of `md_dist`:
+
+```mlir
+!state = !md_dist.state<@dd, reach = 2.4, cutoff = 2.0,
+                        fields = [3 x f64, 3 x f64, 3 x f64, f64]>
+%s0 = md_dist.pack %l0, %h0, %cell fields(%x, %v, %f, %m : ...) : !state
+%sN = scf.for %step = ... iter_args(%s = %s0) -> (!state) {
+  %l, %h, %xr, %x, %v, %f, %m = md_dist.unpack %s, %cell : !state
+  %v1 = md_dist.map_particles ...           // kick
+  %x1 = md_dist.map_particles ...           // drift
+  %ok = md_dist.covered %h, %xr, %x1, %cell cutoff(2.0)
+  %s1 = scf.if %ok -> (!state) {
+    %t = md_dist.pack %l, %h, %cell fields(%x1, %v1, %f, %m : ...)
+    scf.yield %t
+  } else {
+    %l2 = md_dist.migrate %l, %x1, %cell
+    %x2 = md_dist.redistribute %x1, %l, %l2 image(%cell)
+    ...                                     // v, f, m likewise
+    %h2 = md_dist.halo %l2, %x2, %cell
+    %t = md_dist.pack %l2, %h2, %cell fields(%x2, %v2, %f2, %m2 : ...)
+    scf.yield %t
+  }
+  %lb, %hb, %xrb, %xb, ... = md_dist.unpack %s1, %cell
+  %xg = md_dist.halo_copy %xb, %hb image(%cell)   // the payload, every step
+  %n  = md_dist.neighborhood %xb, %xg, %hb cutoff(2.0)
+  ...                                       // forces, kick
+  %s2 = md_dist.pack %lb, %hb, %cell fields(...)
+  scf.yield %s2
+}
+```
+
+- **The type** names the halo's decomposition and reach, the cutoff the
+  halo is proved to cover, and the carried fields, all complete owned
+  fields; the first is the positions. Migration redistributes exactly the
+  fields the type lists: a state of the new epoch cannot be packed with a
+  field of the old one (V5), so no field is left behind and no state is
+  partly migrated.
+- **The witness of `pack`** (V10) is one of three: the halo was built at
+  the positions; the halo and the positions come from one `unpack` (the
+  state's invariant, by induction over the steps); or the pack is in the
+  then-region of an `scf.if` on `covered` of that halo and those positions
+  at a cutoff at least the state's. `md_dist.neighborhood` needs the same
+  witness. The reuse of the halo's membership (the candidate map) is thus
+  proved, while its payload is fresh: every evaluation copies the current
+  positions through the kept halo.
+- **Linearity.** A state has exactly one use, in its own block: an
+  `unpack`, an `scf.yield`, or the init of an `scf.for`. It is neither read
+  twice nor dropped on one path.
+- **Only states cross control flow**: another value of `md_dist` as an
+  iteration argument or a result of `scf.for`, `scf.if`, or `scf.while` is
+  refused with the reason.
+- **Positions are not wrapped between rebuilds**: the halo's images are
+  explicit, and `covered` counts a wrap as a move. `redistribute ...
+  image` wraps them at a migration.
+
+*Lowering (in-process).* A state is a tuple: the layout handle, the halo
+handle, the reference positions, and one buffer per field. MLIR's
+structural type conversion of `scf` carries the tuple. `pack` copies the
+buffers and holds a reference to the layout and the halo (the runtime
+counts them; a halo holds one of its layout); `unpack` copies them into
+allocations of its block and takes the references over. Every other buffer
+of a step is freed at the end of its block. With the copies, each buffer a
+halo event of D310 transfers is a `memref.alloc` of its block, and the
+verifier proves, inside the step as before, that no pack, release, or
+deallocation of a buffer or handle of a transfer comes before its wait.
+Moving the buffers into the state instead of copying them is an
+optimization with this as its baseline. `unpack` checks at run time that
+the cell it is given is the halo's: a change of the cell needs a new
+layout, which this slice does not make. On the route through `md_exec`
+(D290) the sets of a domain are named by epoch (the layout for the owned
+rows, the halo for the local rows), and the body of the loop becomes a
+function of its own, called by the loop: a set of `md_exec` has one size
+in a function, and its storage is assigned for the whole function.
+
+*Rank-uniform choices and coordinated failure.* The grid, the reach, the
+cutoff, the carried fields, and the traversal are in the types and
+attributes of one program text, so every domain chooses alike. The branch
+is the one value of `covered`, reduced over all domains. The capacity of
+the ghost buffers is the largest count of any domain, so every domain
+allocates alike. A failure of the runtime (a non-finite position, a cell
+other than the halo's, an identity table that is not a bijection) is found
+before any domain writes the new epoch, and stops all of them. A
+transport of #828 keeps these three: a reduced bit for the branch, a
+reduced maximum for capacities, and an agreed failure.
+
+*The boundary with the driver.* The driver does not emit this loop yet
+(#832). It is to build, from the run's potential and integrator: the
+decomposition from `[distribute]` (`domains`, `transport`, `traversal`,
+Section 13); the state type of the integrator's per-particle state (for
+velocity Verlet the positions, velocities, forces, and masses, and every
+further field of the run, such as the identities of bond partners of #41);
+the reach as the cutoff plus the skin; the loop of this section in a
+segment; and `collect` of the fields for outputs and checkpoints, in the
+order of the particle set. This is in `lib/Driver/Builder*`.
+
+*Validation* (`test/Integration/dist-trajectory-lj.test`,
+`dist-trajectory-lj-drift.test`, `dist-trajectory-lj-gpu.test`). 64
+Lennard-Jones particles (shifted force, cutoff 2.0, reach 2.4) in a 4.8
+cube, the 8 at the corners of the 2 x 2 x 2 grid aimed at them, 200 steps
+of velocity Verlet with the step 0.005, against the same trajectory on one
+domain through `md`, `md-differentiate`, and the neighbor structures of
+`md_exec`. The halo was rebuilt 11 times; the trace counted 77 crossings
+of a face, 6 of an edge, and 8 of a corner.
+
+| Quantity | Bound | Double, measured | Mixed, measured |
+|---|---|---|---|
+| Positions, nearest image, against the edge | 1e-12 (double), 1e-5 (mixed) | 8.1e-15 | 9.9e-7 |
+| Velocities, against the largest component | 1e-11, 1e-4 | 1.1e-13 | 1.2e-5 |
+| Potential, kinetic, total energy, against the kinetic energy | 1e-12, 1e-5 | 1.4e-14 | 1.2e-6 |
+| Change of the total energy in 200 steps, against the kinetic energy | 1e-3 | 1.9e-4 on domains and on one domain | 1.9e-4 |
+| Change of the total energy in 2000 steps (about 125 rebuilds) | 2e-3 | 1.0e-5 on domains, 1.2e-4 on one domain | 5.0e-5, 5.3e-4 |
+
+The double values hold on the 2 x 2 x 2, 16 x 1 x 1, and 3 x 2 x 1 grids
+through both executors. The mixed differences are those of the two
+programs' f32 force kernels and are the same on one domain of `md_dist`
+(1 x 1 x 1) as on 8 or 16 domains. After 2000 steps the trajectories have
+separated, as two runs of a chaotic system with sums in other orders do,
+and only the energy is compared.
 
 ## 9. Transports
 

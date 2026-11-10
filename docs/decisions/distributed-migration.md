@@ -74,7 +74,12 @@ D310 require, so that a halo start and its wait inside a loop body are
 proved as before: no buffer or handle of a transfer is packed, released,
 or deallocated before its wait. Moving buffers into the state instead of
 copying is an optimization for a later strategy, with this as its
-baseline.
+baseline. On the route through `md_exec` (D290) the particle sets of a
+domain are named by epoch, and the body of the loop becomes a function of
+its own called by the loop, because a set of `md_exec` has one size in a
+function and its storage is assigned for the whole function; without this
+the storage of the first evaluation was reused after a migration and
+overflowed.
 
 *Alternatives.* Separate block arguments for the layout, the halo, and
 each field (rejected: the verifier loses the epoch at the block argument,
@@ -93,5 +98,13 @@ transports (#828); asynchronous overlap (#481, #536); bonded terms across
 domains (#41); a neighbor structure of `md_exec` kept across steps on
 domains.
 
-*Validation.* In the PR and in [distributed-ml2.md](../distributed-ml2.md),
-Section 8.
+*Validation* ([distributed-ml2.md](../distributed-ml2.md), Section 8.1).
+A 200-step Lennard-Jones trajectory of 64 particles on 2 x 2 x 2, 16 x 1 x 1,
+and 3 x 2 x 1 grids, with 77 crossings of faces, 6 of edges, and 8 of
+corners and 11 rebuilds of the halo, against the same trajectory on one
+domain: in double the positions agree to 8.1e-15 of the edge (bound 1e-12),
+the velocities to 1.1e-13 of the largest component (1e-11), and the
+energies to 1.4e-14 of the kinetic energy (1e-12); in mixed to 9.9e-7,
+1.2e-5, and 1.2e-6 (bounds 1e-5, 1e-4, 1e-5), the same as on one domain of
+`md_dist`. Over 2000 steps the total energy changes by 1.0e-5 of the
+kinetic energy on domains and 1.2e-4 on one domain (bound 2e-3).
