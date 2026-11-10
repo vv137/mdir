@@ -1027,7 +1027,7 @@ the backward's communication is the AD's transpose of the forward's.
 Next parts of stage 1, each with its own tests: `md-distribute` and the
 rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the schedule print and trace, the
 `md_exec` path with the `mixed` mode and GPUs (built, Section 7.2), migration and `covered` with a trajectory
-(Section 8), MPI on CPU ranks, then several GPUs.
+(built, Section 8.1), MPI on CPU ranks, then several GPUs.
 
 ## 13. What has been ruled (the maintainer on PR #379, 2026-10-16)
 

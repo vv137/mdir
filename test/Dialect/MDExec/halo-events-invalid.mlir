@@ -94,3 +94,36 @@ func.func @cross_block_wait(%halo: i64, %condition: i1) {
   }
   return
 }
+
+// -----
+
+// D[distributed-migration]: a md_dist.pack lowers to a copy of each field
+// into the state and a reference to the halo; neither may come between a
+// start and its wait.
+func.func @pack_before_wait(%halo: i64, %image: i64) {
+  %source = memref.alloc() : memref<2x2x2xf64>
+  %destination = memref.alloc() : memref<2x2x2xf64>
+  %state = memref.alloc() : memref<2x2x2xf64>
+  %event = mdrt.halo_copy_start %halo, %source, %destination, %image
+      : memref<2x2x2xf64>, memref<2x2x2xf64>
+  // expected-error@+1 {{uses a halo transfer buffer or handle before completion}}
+  memref.copy %source, %state : memref<2x2x2xf64> to memref<2x2x2xf64>
+  %ready = mdrt.halo_wait %event, %halo, %source, %destination
+      : memref<2x2x2xf64>, memref<2x2x2xf64> -> memref<2x2x2xf64>
+  return
+}
+
+// -----
+
+func.func private @mdrtDistReleaseHalo(i64)
+func.func @release_before_wait(%halo: i64, %image: i64) {
+  %source = memref.alloc() : memref<2x2x2xf64>
+  %destination = memref.alloc() : memref<2x2x2xf64>
+  %event = mdrt.halo_copy_start %halo, %source, %destination, %image
+      : memref<2x2x2xf64>, memref<2x2x2xf64>
+  // expected-error@+1 {{uses a halo transfer buffer or handle before completion}}
+  func.call @mdrtDistReleaseHalo(%halo) : (i64) -> ()
+  %ready = mdrt.halo_wait %event, %halo, %source, %destination
+      : memref<2x2x2xf64>, memref<2x2x2xf64> -> memref<2x2x2xf64>
+  return
+}
