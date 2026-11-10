@@ -19,6 +19,9 @@ N particles is then (3/2) N kT / (1 - a/2).
 """
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 if sys.argv[1] == "write":
     out, n = sys.argv[2], int(sys.argv[3])
@@ -81,7 +84,7 @@ for line in open(log):
         if int(words[1]) >= 2000:
             energies.append(float(words[column]))
 kcal = 4.184
-kT = 0.0083144626181532403 * temp
+kT = MOLAR_GAS_CONSTANT * temp
 # k in kcal/mol/A^2 to kJ/mol/nm^2.
 a = k * kcal * 100 * dt / (mass * gamma)
 exact = 1.5 * n * kT / (1 - a / 2) / kcal

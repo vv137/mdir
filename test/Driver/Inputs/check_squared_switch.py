@@ -12,11 +12,14 @@ import argparse
 from pathlib import Path
 import re
 import subprocess
+import sys
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
 
 
 DISTANCES = [6.0, 9.999, 10.0, 10.001, 10.5, 11.0, 11.999,
              12.0, 12.001, 13.0]
-COULOMB = 332.06371307417066
+COULOMB = COULOMB_CONTROL
 
 
 def potential(r, sigma, epsilon):

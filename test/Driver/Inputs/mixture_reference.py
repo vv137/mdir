@@ -17,6 +17,10 @@ Usage: python3 mixture_reference.py
 
 import math
 import os
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL, PRESSURE_BAR  # noqa: E402
 
 EDGE = 23.2
 CUTOFF = 9.0
@@ -29,8 +33,8 @@ MASSES = {"AR": 39.95, "KR": 83.80}
 TYPES = {"AR": (0.238465, 3.4), "KR": (0.3253, 3.65)}
 
 # kcal/(mol K), and atm in one kcal/(mol Å^3).
-BOLTZMANN = 0.0083144626181532403 / 4.184
-ATM = 4.184 * 1000.0 * 16.605390671738466 / 1.01325
+BOLTZMANN = MOLAR_GAS_CONSTANT_CONTROL
+ATM = 4.184 * 1000.0 * PRESSURE_BAR / 1.01325
 # kcal/mol in one amu Å^2 / ps^2.
 KINETIC = 0.01 / 4.184
 

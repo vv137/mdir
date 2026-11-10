@@ -15,6 +15,10 @@ solvent with exp(-kappa f_GB), kappa scaled by 0.73; the integral of the
 descreening cut at R Å; and the radii and screening of mbondi2 by element
 in place of those of the topology."""
 import argparse, math, re, sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import (  # noqa: E402
+    AVOGADRO, BOLTZMANN_SI, COULOMB_NATIVE, ELEMENTARY_CHARGE, VACUUM_PERMITTIVITY)
 
 parser = argparse.ArgumentParser()
 for name in ('topology', 'coordinates', 'plain', 'forces'):
@@ -66,12 +70,12 @@ if args.mbondi2:
 cut = args.radius_cutoff * 0.1
 kappa = 0.0
 if args.salt > 0:
-    kappa = 0.73 * math.sqrt(2 * 6.02214076e23 * 1.602176634e-19 ** 2 * args.salt * 1000 /
-                             (8.8541878188e-12 * 78.5 * 1.380649e-23 * args.temperature)) * 1e-9
+    kappa = 0.73 * math.sqrt(2 * AVOGADRO * ELEMENTARY_CHARGE ** 2 * args.salt * 1000 /
+                             (VACUUM_PERMITTIVITY * 78.5 * BOLTZMANN_SI * args.temperature)) * 1e-9
 lines = open(sys.argv[2]).read().split('\n')
 vals = [float(lines[2 + i // 6][12 * (i % 6):12 * (i % 6) + 12]) for i in range(3 * n)]
 X = [[v * 0.1 for v in vals[3 * i:3 * i + 3]] for i in range(n)]
-f = 138.93545755023302; tau = 1 / 1.0 - 1 / 78.5; gamma = 0.0054 * 4.184 * 100
+f = COULOMB_NATIVE; tau = 1 / 1.0 - 1 / 78.5; gamma = 0.0054 * 4.184 * 100
 alpha, beta, gamma3 = {'OBC1': (0.8, 0.0, 2.909125), 'OBC2': (1.0, 0.8, 4.85)}.get(args.model, (0, 0, 0))
 
 def screened(distance):

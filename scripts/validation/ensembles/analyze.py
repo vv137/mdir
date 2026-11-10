@@ -27,12 +27,16 @@ Needs numpy.
 import math
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
-KB = 0.0083144626181532 / 4.184          # kcal/(mol K)
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import AVOGADRO, MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
+
+KB = MOLAR_GAS_CONSTANT_CONTROL  # kcal/(mol K)
 # 1 atm in kcal/(mol Å^3): 101325 J/m^3, 1e-30 m^3/Å^3, N_A, 4184 J/kcal.
-ATM = 101325.0 * 1e-30 * 6.02214076e23 / 4184.0
+ATM = 101325.0 * 1e-30 * AVOGADRO / 4184.0
 WATERS = 1039
 MASS = WATERS * (16.00000 + 2 * 1.00800)   # g/mol, the masses of the prmtop
 FREEDOM = 3 * 3 * WATERS - 3 * WATERS - 3  # rigid waters, the center of mass
@@ -227,7 +231,7 @@ def main():
                -(300.0 - 1.0) * ATM / (KB * t1))
 
     def density(v):
-        return MASS / (6.02214076e23 * v * 1e-24)
+        return MASS / (AVOGADRO * v * 1e-24)
 
     for name, run in (("MDIR", c),):
         v = run["VOLUME"]

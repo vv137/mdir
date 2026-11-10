@@ -15,6 +15,8 @@ from collections import Counter
 
 import numpy as np
 import mdir
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 inputs = pathlib.Path(sys.argv[1])
 charmm = pathlib.Path(sys.argv[2])
@@ -460,7 +462,7 @@ def constraints(o):
                                        mdir.Execution(), schedule))
     sim.run(0, energy=True)
     energies = sim.state().energies
-    engine = 2.0 * energies["kinetic"] / (0.0083144626181532403 * energies["temperature"])
+    engine = 2.0 * energies["kinetic"] / (MOLAR_GAS_CONSTANT * energies["temperature"])
     assert abs(engine - dof) < 1e-6, (engine, dof)
     del sim
     print(f"constraints: {len(top.constraints)} bonds of hydrogen and "

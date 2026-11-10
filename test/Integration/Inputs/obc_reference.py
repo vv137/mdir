@@ -10,6 +10,8 @@ q = [-0.5, 0.3, 0.25, -0.35, 0.3]
 rho = [0.17, 0.12, 0.155, 0.15, 0.13]
 S = [0.72, 0.85, 0.72, 0.79, 0.85]
 off = 0.009; alpha, beta, gamma = 1.0, 0.8, 4.85
+# The coupling of obc.mlir, which writes c itself: a parameter of the test,
+# not the engine's constant (docs/conventions.md, Section 1).
 c = -(1-1/78.5)*138.935457644
 n = 5
 def energy(x):

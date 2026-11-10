@@ -9,6 +9,9 @@ rate is within TOLERANCE of RATE.
 
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
 
 
 def rows(path):
@@ -24,7 +27,7 @@ cold, warm = rows(sys.argv[1]), rows(sys.argv[2])
 particles, temperature, span = (int(sys.argv[3]), float(sys.argv[4]),
                                 float(sys.argv[5]))
 expected, tolerance = float(sys.argv[6]), float(sys.argv[7])
-equilibrium = 1.5 * particles * 0.0083144626181532403 / 4.184 * temperature
+equilibrium = 1.5 * particles * MOLAR_GAS_CONSTANT_CONTROL * temperature
 start, k0 = cold[-1]
 points = [(t - start, math.log((equilibrium - k) / (equilibrium - k0)))
           for t, k in warm if t - start <= span and k < equilibrium]

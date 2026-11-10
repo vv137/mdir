@@ -130,8 +130,9 @@ It returns a `FrameEnergies`:
 
 There is no kinetic energy and no pressure: a frame has no velocities. A
 script forms the pressure from the virial, the volume, and the kinetic term
-of its ensemble. `mdir.KB` is Boltzmann's constant of the programs,
-0.0083144626181532 kJ/(mol K) (ruling Q8).
+of its ensemble. `mdir.KB` is Boltzmann's constant of the programs in
+kJ/(mol K), the molar gas constant $kN_A$ of
+[conventions, Section 1](conventions.md#1-units) (ruling Q8).
 
 **Memory.** The frames stay where the caller keeps them (ruling Q12): the
 evaluator reads them in batches of at most 64 MiB of float64 positions and

@@ -21,6 +21,9 @@ LOG, all before that action, with that of the oscillator.
 """
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 if sys.argv[1] == "hot":
     lines = open(sys.argv[2]).read().splitlines()
@@ -34,7 +37,7 @@ if sys.argv[1] == "hot":
     sys.exit(0)
 
 log, nf, steps = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
-kB = 0.0083144626181532403
+kB = MOLAR_GAS_CONSTANT
 kT = kB * 150.0
 kcal = 4.184
 omega2 = 2.0 * kcal * 100 / 39.948

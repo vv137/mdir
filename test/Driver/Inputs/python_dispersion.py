@@ -27,6 +27,8 @@ import mdir
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import check_pair_tail as oracle  # noqa: E402
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import PRESSURE_BAR  # noqa: E402
 
 work = pathlib.Path(sys.argv[1])
 target_name = sys.argv[2]
@@ -203,7 +205,7 @@ for precision in ("Double", "Mixed"):
         reference = tail_energy + (shift_estimate if shift else 0.0)
         # P = (2K + W) / 3V: the tail's virial over 3V, in bar (kJ/mol/nm^3
         # is 10^25 / N_A bar).
-        reference_pressure = tail_virial * KCAL / (3 * volume * 1e-3) * 1e25 / 6.02214076e23
+        reference_pressure = tail_virial * KCAL / (3 * volume * 1e-3) * PRESSURE_BAR
         tolerance = 1e-9 if precision == "Double" else 1e-5
         for what, value, ref in (("energy", energy, reference), ("virial", virial, tail_virial),
                                  ("pressure", pressure, reference_pressure)):

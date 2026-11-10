@@ -41,6 +41,11 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
+# CHARMM's Coulomb constant, kcal Å mol⁻¹ e⁻² (docs/charmm.md).
+CHARMM_COULOMB = 332.0716
 
 SEQUENCE = ("ASN LEU TYR ILE GLN TRP LEU LYS ASP GLY GLY PRO SER SER GLY ARG "
             "PRO PRO PRO SER")
@@ -717,7 +722,7 @@ precision = "DOUBLE"
             "Coulomb excluded": t["Coulomb excluded"],
             "Coulomb reciprocal": t["Coulomb reciprocal"],
             "Coulomb self": t["Coulomb self"]}
-    ratio = 332.0716 / 332.0637
+    ratio = CHARMM_COULOMB / COULOMB_CONTROL
     print(f"{len(kept)} waters in a hexagonal cell; kcal/mol, MDIR from the "
           "PSF and the CRD against CHARMM; the electrostatics over the ratio "
           f"of the Coulomb constants, {ratio:.7f}")

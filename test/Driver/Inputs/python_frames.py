@@ -83,9 +83,13 @@ import gc
 import os
 import re
 import sys
+from pathlib import Path
 
 import numpy as np
 import mdir
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT  # noqa: E402
 
 root, scenario, target, precision = sys.argv[1:5]
 TCACHE_OFF = "glibc.malloc.tcache_count=0"
@@ -490,7 +494,7 @@ def run_refusals():
     integrator.timestep = 0.0005
     plain = mdir.compile(system, state, integrator, mdir.Ensemble(), execution_(), mdir.Schedule())
     expect(mdir.InputError, lambda: mdir.FrameEvaluator(plain), "declares no tunable")
-    assert abs(mdir.KB - 0.0083144626181532) == 0.0
+    assert mdir.KB == MOLAR_GAS_CONSTANT
     print("refusals passed")
 
 

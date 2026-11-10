@@ -322,7 +322,10 @@ def check_nonbonded(x, tuples):
 # Tables of pairs of types
 #===------------------------------------------------------------------------===
 
-COULOMB = 138.935457644  # kJ mol^-1 nm e^-2, from CODATA 2018
+# The coupling of the generated programs (tables.mlir writes it too), kJ
+# mol^-1 nm e^-2: a parameter of these tests, not the engine's constant
+# (docs/conventions.md, Section 1).
+COULOMB = 138.935457644
 TYPE_SIGMA = [0.22, 0.25, 0.28]
 TYPE_EPSILON = [0.3, 0.5, 0.8]
 TYPE_CHARGE = [0.4, -0.3, -0.1]

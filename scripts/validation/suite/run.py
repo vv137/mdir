@@ -21,9 +21,10 @@ the influence function of Amber ('influence = "OPTIMAL"'), and no
 correction for the dispersion, which the two programs average differently
 (white paper, Section 5.4). MDIR runs on the CPU in double precision from
 a copy of the topology whose charges are scaled by
-sqrt(332.0522173 / 332.0637133), so that its Coulomb constant (CODATA 2018)
-gives the energies of Amber's; Amber keeps the net force of particle mesh
-Ewald (netfrc=0).
+sqrt(AMBER_COULOMB / COULOMB_CONTROL), Amber's Coulomb constant over
+MDIR's (docs/conventions.md, Sections 1 and 4), so that MDIR gives the
+energies of Amber's; Amber keeps the net force of particle mesh Ewald
+(netfrc=0).
 
 The energies are those of step 0. The forces are those that MDIR writes
 into a checkpoint after one step of 1e-9 ps, and that Amber writes after
@@ -38,8 +39,14 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_CONTROL  # noqa: E402
+# Amber's Coulomb constant, 18.2223^2 kcal Å mol⁻¹ e⁻² (docs/conventions.md, Section 4).
+AMBER_COULOMB = 332.0522173
 
 # The systems and their directories in the suite.
 SYSTEMS = {
@@ -118,7 +125,7 @@ def scale_charges(src, dst):
     else:
         natom = int(lines[1][:6])
         start = 1 + 3 + (natom + 19) // 20
-    factor = math.sqrt(332.0522173 / 332.0637133)
+    factor = math.sqrt(AMBER_COULOMB / COULOMB_CONTROL)
     values = []
     for line in lines[start:start + (natom + 4) // 5]:
         values += [float(line[i:i + 16]) for i in range(0, len(line), 16)

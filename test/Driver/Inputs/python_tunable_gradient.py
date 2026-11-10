@@ -52,9 +52,13 @@ Scenarios:
             estimate
 """
 import sys
+from pathlib import Path
 
 import numpy as np
 import mdir
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
 root = sys.argv[1]
 scenario = sys.argv[2]
@@ -274,7 +278,7 @@ def run_terms(target, precision):
 
 def run_charges(target, precision):
     double = precision == "Double"
-    rc, f = 0.8, 138.93545755023302
+    rc, f = 0.8, COULOMB_NATIVE
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     # The defaults of before D248, with which this was written.
@@ -513,7 +517,7 @@ def run_torchpme(target, precision):
     import torchpme
     torch.set_default_dtype(torch.float64)
     double = precision == "Double"
-    rc, f, beta = 0.8, 138.93545755023302, 3.5
+    rc, f, beta = 0.8, COULOMB_NATIVE, 3.5
 
     def simulate(points):
         loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")

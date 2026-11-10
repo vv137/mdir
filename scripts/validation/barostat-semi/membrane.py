@@ -42,12 +42,16 @@ import shutil
 import struct
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "ensembles"))
 from analyze import inefficiency  # noqa: E402
+
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import BOLTZMANN_SI  # noqa: E402
 
 LIPIDS_PER_LEAFLET = 63
 
@@ -477,7 +481,7 @@ def analyze(args, w):
     sets = {"MDIR": (times, cells)}
     if os.path.exists(os.path.join(w, "prod-gmx.edr")):
         sets["GROMACS"] = gromacs_cells(args, w)
-    kT = 1.380649e-23 * 303.0
+    kT = BOLTZMANN_SI * 303.0
     print(f"{'':8s} {'frames':>6s} {'area per lipid, Å²':>22s} "
           f"{'height, Å':>18s} {'volume, nm³':>20s} {'sd of A, Å²':>12s} "
           f"{'K_A, mN/m':>14s}")

@@ -12,8 +12,11 @@ gives its distance. Prints each term in kcal/mol."""
 
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
-F = 138.93545755023302  # kJ mol⁻¹ nm e⁻², SI/CODATA 2022 (docs/conventions.md)
+F = COULOMB_NATIVE  # kJ mol⁻¹ nm e⁻², docs/conventions.md, Section 1
 KCAL = 4.184
 
 

@@ -27,8 +27,13 @@ Sohnel and Novotny 1985), and V_w the molar volume of pure water at 25 C.
 import argparse
 import math
 import pathlib
+import sys
 
 import numpy as np
+
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
+from mdir_physical_constants import (  # noqa: E402
+    AVOGADRO, MOLAR_GAS_CONSTANT, MOLAR_GAS_CONSTANT_CONTROL, PRESSURE_BAR)
 
 # The Lorentz-Berthelot K-Cl pair of the Joung-Cheatham ions for TIP3P
 # (Joung and Cheatham, J. Phys. Chem. B 112, 9020 (2008)): R_min/2 of
@@ -37,10 +42,10 @@ SIG0 = (1.705 + 2.513) * 2 ** (5 / 6) / 2      # 3.757811 A
 EPS0 = math.sqrt(0.1936829 * 0.0355910)        # 0.0830263 kcal/mol
 C12, C6 = 4 * EPS0 * SIG0 ** 12, 4 * EPS0 * SIG0 ** 6
 
-KB = 0.0019872043          # kcal/mol/K
-BAR = 69476.95             # bar per kcal/mol/A^3
-NA_L = 6.02214076e-4       # (mol/L) per A^-3: c = n / (V NA_L)
-R = 8.314462618            # J/mol/K
+KB = MOLAR_GAS_CONSTANT_CONTROL       # kcal/mol/K
+BAR = 4184 * PRESSURE_BAR            # bar per kcal/mol/A^3
+NA_L = AVOGADRO * 1e-27             # (mol/L) per A^-3: c = n / (V NA_L)
+R = MOLAR_GAS_CONSTANT * 1e3        # J/mol/K
 M_W, V_W = 0.0180153, 18.0686e-6   # kg/mol; m^3/mol (0.99705 g/cm^3 at 25 C)
 
 # Hamer and Wu (1972), Table 28: phi of KCl(aq) at 25 C against molality.

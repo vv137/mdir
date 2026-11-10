@@ -12,8 +12,11 @@ from scipy.spatial import cKDTree
 from scipy.special import erfc
 from numpy.polynomial import legendre as Lg
 import pswf
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE  # noqa: E402
 
-F = 138.935457644
+F = COULOMB_NATIVE
 D = os.path.join(os.environ.get('ESP_WORK', '.'), '')  # the work directory
 SUITE = os.path.join(os.environ.get('MDIR_BENCH_DIR', '.'), 'Amber24_Benchmark_Suite', 'PME', '')
 DIRS = {'jac': 'JAC_production_NVE', 'cel': 'Cellulose_production_NVE', 'stmv': 'STMV_production_NPT_4fs'}

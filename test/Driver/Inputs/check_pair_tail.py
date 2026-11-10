@@ -27,9 +27,12 @@ of [free_energy] and `observe` of lambda(-off).dhdl and observe(-off).obs
 
 import math
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import PRESSURE_ATMOSPHERE  # noqa: E402
 
 KCAL = 4.184
-ATM = 69476.95 / 1.01325  # atm per kcal/mol/Å^3, the pressure of the log
+ATM = KCAL * 1e3 * PRESSURE_ATMOSPHERE  # atm per kcal/mol/Å^3, the pressure of the log
 SIGMA, EPSILON = 3.4, 0.24
 SIG, EPS = 3.7, 0.5
 C8, A, L = 2.0e4, 0.8, 3.0

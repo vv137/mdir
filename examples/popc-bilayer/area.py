@@ -12,8 +12,13 @@ K_A = k_B T <A> / var(A). Needs numpy.
 import argparse
 import math
 import struct
+import sys
+from pathlib import Path
 
 import numpy as np
+
+sys.path.append(str(Path(__file__).resolve().parents[2] / "scripts"))
+from mdir_physical_constants import BOLTZMANN_SI  # noqa: E402
 
 
 def cells(path):
@@ -64,7 +69,7 @@ def main():
     apl = area / (args.lipids / 2)
     g = inefficiency(apl)
     error = apl.std(ddof=1) * math.sqrt(g / len(apl))
-    kT = 1.380649e-23 * args.temperature
+    kT = BOLTZMANN_SI * args.temperature
     modulus = kT * area.mean() / area.var(ddof=1) * 1e23  # mN/m
     print(f"{len(c)} frames after {args.skip:g} ps, "
           f"{len(c) / g:.0f} independent")

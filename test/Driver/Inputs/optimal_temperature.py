@@ -14,10 +14,13 @@ configurations, 2 <U> / (3 N k_B), to the log's temperature against these
 closed forms, with N_f = 3N - 3 for the temperatures of the log.
 """
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import MOLAR_GAS_CONSTANT_CONTROL  # noqa: E402
 
 log, n, wdt, target = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), \
     float(sys.argv[4])
-kB = 0.0083144626181532403 / 4.184
+kB = MOLAR_GAS_CONSTANT_CONTROL
 nf = 3 * n - 3
 rows = []
 for line in open(log):

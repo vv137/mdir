@@ -85,12 +85,11 @@ phase `pair`) settle what the documentation of CHARMM does not write out:
   r², within 2.8 × 10⁻⁹. It is not the potential switch of GROMACS, a
   polynomial in r (`truncation(switch)` of ops.md, Section 4.8).
 - **The Coulomb constant is 332.0716 kcal/mol Å/e²**: unit charges 10 Å
-  apart give −33.20716 kcal/mol. MDIR keeps the constant of CODATA 2018,
-  138.935457644 kJ/mol nm/e² or 332.0637 kcal/mol Å/e² (GROMACS rounds the
-  same value to 138.935458), whatever the format it reads
-  ([conventions.md](conventions.md), Section 4): its Coulomb energies are
-  2.38 × 10⁻⁵ below CHARMM's, as they are 3.5 × 10⁻⁵ above sander's
-  (332.0522).
+  apart give −33.20716 kcal/mol. MDIR keeps its own constant, derived from
+  the SI definitions and CODATA 2022 ([conventions.md](conventions.md),
+  Section 1), 332.0637 kcal/mol Å/e² to seven digits, whatever the format
+  it reads (Section 4 there): its Coulomb energies are 2.38 × 10⁻⁵ below
+  CHARMM's, as they are 3.5 × 10⁻⁵ above sander's (332.0522).
 
 ## 3. The power force switch in MDIR
 
