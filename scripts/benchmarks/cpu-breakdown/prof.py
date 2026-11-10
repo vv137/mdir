@@ -1,45 +1,55 @@
 """Reads the output of the sampler (sampler.c).
 
-    prof.py DIR [--program CONTROL] [--top N] [--json OUT]
-    prof.py --classify CONTROL|FILE.ll
+    prof.py DIR [--program CONTROL | --map MAP] [--top N] [--json OUT]
+    prof.py --classify CONTROL|MAP
 
-DIR is the SAMPLER_OUT of a run. With --program, the control file of that
-run is emitted (`$MDIR emit --stage=lowered`) and translated to LLVM IR
-(`$MLIR_TRANSLATE`), and each parallel region of the entry
-(mdir_run..omp_par.N) is given a part from what it calls and reads: the
-loops over pairs read the radial tables or, in f64, which reads none, call
-the Lennard-Jones powers (powi); the corrections of the excluded pairs call
-erf, the bonded terms call the trigonometric functions. The
-compiled code of a run and of an emit are the same, region for region.
+DIR is the SAMPLER_OUT of a run. Each parallel region of the program
+(mdir_run..omp_par.N, mdrt.pme_spread_..omp_par) is given a part from the
+profile map of the program (D[profile-map], docs/profile-map.md), which
+the compiler writes: with --map, the map of the run (`[output]
+profile_map`); with --program, the control file of the run is emitted
+(`$MDIR emit CONTROL --stage=pipeline --profile-map=FILE`), whose compiled
+code is that of the run, region for region. The map names the op that
+each region comes from and the set it runs over; the part follows from
+them alone (`part_of_region`). Without a map, the regions are not
+attributed to parts: there is no fallback that guesses from the code.
 
 Prints, for the samples of the main thread's wall clock and for those of the
 CPU time of all threads: the share by leaf symbol, and by "owner", the first
 frame of the stack that is compiled code of the program (a function of the
 JIT) together with whether the leaf is that code or a library it called.
+
+--classify prints the part of each region of the map of CONTROL (or of the
+map MAP) and its record, one line each, and reads no samples
+(test/Lit/profile-map.test).
 """
 import bisect
 import json
 import os
 import re
 import struct
+import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 
 d = sys.argv[1]
-# prof.py --classify CONTROL|FILE.ll: the part of each parallel region of the
-# program of CONTROL (or of LLVM IR already translated) alone, one line
-# each, and no samples (test/Lit/prof-classify.test).
 classify_only = d == "--classify"
 top = 40
 jout = None
 regions = {}
+profile_map = None
 program = None
-a = ["--program"] + sys.argv[2:] if classify_only else sys.argv[2:]
+a = sys.argv[2:]
+if classify_only:
+    if len(a) != 1:
+        sys.exit("prof.py --classify CONTROL|MAP")
+    a = ["--map" if a[0].endswith(".json") else "--program", a[0]]
 while a:
     if a[0] == "--top":
         top = int(a[1]); a = a[2:]
     elif a[0] == "--map":
-        regions = json.load(open(a[1])); a = a[2:]
+        profile_map = json.load(open(a[1])); a = a[2:]
     elif a[0] == "--program":
         program = a[1]; a = a[2:]
     elif a[0] == "--json":
@@ -47,59 +57,80 @@ while a:
     else:
         sys.exit("unknown " + a[0])
 
-def classify(ll):
-    """The part of each parallel region of the entry, from its LLVM IR."""
-    out = {}
-    for f in re.split(r"\n(?=define )", ll):
-        m = re.match(r"define [^@]*@(mdir_run\.\.omp_par\.\d+)", f)
-        if not m:
-            continue
-        body = f[:f.find("\n}\n")]
-        calls = set(re.findall(r"call [^@]*@([\w.$]+)", body))
-        glob = set(re.findall(r"@(md_[\w]+)", body))
-        trig = any("atan2" in c or ".sin." in c or ".cos." in c or "acos" in c for c in calls)
-        if any(g.startswith("md_radial") for g in glob):
-            part = "pairs"
-        # The loops over pairs in f64 read no radial table (D280 tabulates
-        # f32 kernels under fast_math); the Lennard-Jones powers (powi) mark
-        # them (#554), where the region calls no trigonometric function: a
-        # region of the bonded terms that also evaluates the 1-4
-        # Lennard-Jones (a fused tuple pass) calls powi as well and stays
-        # bonded.
-        elif any("powi" in c for c in calls) and not trig:
-            part = "pairs"
-        elif "erff" in calls or "erfcf" in calls or "erf" in calls or "erfc" in calls:
-            part = "excluded pairs"
-        # The prolate kernel (D266) reads a radial table in f32 kernels under
-        # fast_math (D280), above; elsewhere (f64, MDIR_PROLATE_CELLS=1) its
-        # direct term is a table of cells of polynomials, found by floor. Its
-        # loop over pairs has the Lennard-Jones powers and is taken above;
-        # the excluded pairs have none.
-        elif "llvm.floor.f32" in calls or "llvm.floor.f64" in calls:
-            part = "excluded pairs"
-        elif trig:
-            part = "bonded"
-        elif any("sqrt" in c for c in calls):
-            part = "bonded or constraints"
-        else:
-            part = "other"
-        out[m.group(1)] = part
-    return out
+PATTERNS = [
+    # The parallel regions of the templates (mdrt.pme_spread_..omp_par.N)
+    # are named after the function they are outlined from.
+    (r"^mdrt\.pme_(spread|zero|real)", "PME spread"),
+    (r"^mdrt\.pme_(convolve|scale|tables|influence|point_sums)", "PME convolution"),
+    (r"^mdrt\.pme_(gather|potential|splines)", "PME gather"),
+    (r"^mdrt\.pme_fft", "PME FFT"),
+    # The B-splines and places, where the frame of their caller is not
+    # seen: those of the spreading and the gathering together.
+    (r"^mdrt\.pme_(bspline|raise|place|spline|window|clenshaw|inverse_cell)", "PME splines"),
+    (r"^(_mlir_ciface_)?mdrtFFT|^(pass|rad[fb]|cfft|rfft|pass_all|copy_and_norm|cfftp|rfftp)", "PME FFT"),
+    (r"^mdrt\.(build_neighbors|spatial_order|minimum_image|cell_|wrap)|^(_mlir_ciface_)?mdrtHostMatrix|^mdrtCountBuild",
+     "list builds"),
+    (r"^mdrt(Tuples|Write|Finish|AddBath|Bussi|CheckSpread)|^_mlir_ciface_mdrt", "runtime calls"),
+]
+
+# The parts of the loops over tuples, by their tuple set; the other sets
+# (bonds, angles, dihedrals, pairs14, urey_bradley, impropers, cmaps, ...)
+# are of the bonded terms. The sets are named by the builder.
+TUPLE_PARTS = [
+    (r"^excluded$", "excluded pairs"),
+    (r"^(settles|shake\d+)$", "constraints"),
+    (r"^anchors$", "particles"),
+]
+# The parts of the other ops of the lowering.
+SOURCE_PARTS = {
+    "pair_for": "pairs",
+    "particle_for": "particles",
+    "scatter_add": "particles",
+    "refresh_neighbors": "list builds",
+    "spatial_order": "list builds",
+    "permute": "list builds",
+}
 
 
-if program and program.endswith(".ll"):
-    regions = classify(open(program).read())
-elif program:
-    import subprocess
-    lowered = subprocess.run([os.environ.get("MDIR", "mdir"), "emit", os.path.abspath(program), "--stage=lowered"],
-                             cwd=os.path.dirname(os.path.abspath(program)), capture_output=True, text=True,
-                             check=True).stdout
-    ll = subprocess.run([os.environ.get("MLIR_TRANSLATE", "mlir-translate"), "--mlir-to-llvmir"],
-                        input=lowered, capture_output=True, text=True, check=True).stdout
-    regions = classify(ll)
+def part_of_region(record):
+    """The part of a region of the profile map, from its record alone."""
+    source = record.get("source")
+    if source is None:
+        return "unmapped"
+    if source == "tuple_for":
+        for pattern, part in TUPLE_PARTS:
+            if re.search(pattern, record.get("set", "")):
+                return part
+        return "bonded"
+    if source == "template":
+        for pattern, part in PATTERNS:
+            if re.search(pattern, record.get("template", "")):
+                return part
+        return "other: " + record.get("template", "")
+    return SOURCE_PARTS.get(source, "other: " + source)
+
+
+if program:
+    with tempfile.TemporaryDirectory() as scratch:
+        path = os.path.join(scratch, "profile-map.json")
+        subprocess.run([os.environ.get("MDIR", "mdir"), "emit", os.path.abspath(program), "--stage=pipeline",
+                        "--profile-map=" + path],
+                       cwd=os.path.dirname(os.path.abspath(program)), stdout=subprocess.DEVNULL, check=True)
+        profile_map = json.load(open(path))
+if profile_map is not None:
+    for record in profile_map["regions"]:
+        if record.get("function"):
+            regions[record["function"]] = part_of_region(record)
 if classify_only:
-    for name in sorted(regions, key=lambda n: int(n.rsplit(".", 1)[1])):
-        print(name, regions[name])
+    for record in profile_map["regions"]:
+        name = record.get("function") or "(no function)"
+        detail = " ".join(f"{key}={record[key]}" for key in ("source", "stage", "set", "template")
+                          if record.get(key))
+        if record.get("potentials"):
+            detail += " potentials=" + ",".join(record["potentials"])
+        if record.get("terms"):
+            detail += " terms=" + ",".join(record["terms"])
+        print(f"{name}\t{part_of_region(record)}\t{detail} precision={record.get('precision') or '-'}")
     sys.exit(0)
 
 DEPTH = 10
@@ -209,21 +240,6 @@ recs = [REC.unpack_from(raw, k * REC.size) for k in range(len(raw) // REC.size)]
 jit_times = [r[2] for r in recs if r[0] == 1 and any(name(pc)[1] == "jit" for pc in r[5:5 + r[3]])]
 lo_t = (jit_times[0] + jit_times[-1]) / 2 if jit_times else 0
 hi_t = jit_times[-1] if jit_times else 1 << 63
-PATTERNS = [
-    # The parallel regions of the templates (mdrt.pme_spread_..omp_par.N)
-    # are named after the function they are outlined from.
-    (r"^mdrt\.pme_(spread|zero|real)", "PME spread"),
-    (r"^mdrt\.pme_(convolve|scale|tables|influence|point_sums)", "PME convolution"),
-    (r"^mdrt\.pme_(gather|potential|splines)", "PME gather"),
-    (r"^mdrt\.pme_fft", "PME FFT"),
-    # The B-splines and places, where the frame of their caller is not
-    # seen: those of the spreading and the gathering together.
-    (r"^mdrt\.pme_(bspline|raise|place|spline|window|clenshaw|inverse_cell)", "PME splines"),
-    (r"^(_mlir_ciface_)?mdrtFFT|^(pass|rad[fb]|cfft|rfft|pass_all|copy_and_norm|cfftp|rfftp)", "PME FFT"),
-    (r"^mdrt\.(build_neighbors|spatial_order|minimum_image|cell_|wrap)|^(_mlir_ciface_)?mdrtHostMatrix|^mdrtCountBuild",
-     "list builds"),
-    (r"^mdrt(Tuples|Write|Finish|AddBath|Bussi|CheckSpread)|^_mlir_ciface_mdrt", "runtime calls"),
-]
 
 
 def part_of(frames):
