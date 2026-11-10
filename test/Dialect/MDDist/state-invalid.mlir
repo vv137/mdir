@@ -349,3 +349,70 @@ func.func @not_imaged(%x: !vec, %cell: !md.cell) {
       : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
   return
 }
+
+// -----
+
+// A migration whose step forgets to rebuild the halo: the old epoch's halo
+// with the new epoch's fields.
+!vec = !md.field<@atoms, 3 x f64>
+!own = !md_dist.field<@dd, owned, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.4>
+!lay = !md_dist.layout<@dd>
+!state = !md_dist.state<@dd, reach = 2.4, cutoff = 2.0, fields = [3 x f64, 3 x f64]>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+func.func @halo_of_old_epoch(%x: !vec, %v: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !lay
+  %x0 = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %v0 = md_dist.distribute %v, %l : !vec -> !own
+  %h = md_dist.halo %l, %x0, %cell : !own -> !halo
+  %l2 = md_dist.migrate %l, %x0, %cell : !lay, !own -> !lay
+  %x2 = md_dist.redistribute %x0, %l, %l2 image(%cell) : !own, !lay, !lay -> !own
+  %v2 = md_dist.redistribute %v0, %l, %l2 : !own, !lay, !lay -> !own
+  // expected-error @+1 {{the halo is of another layout (epoch of ownership) than the state}}
+  %s = md_dist.pack %l2, %h, %cell fields(%x2, %v2 : !own, !own) : !state
+  %r:5 = md_dist.unpack %s, %cell : !state
+  return
+}
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!own = !md_dist.field<@dd, owned, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.4>
+!state = !md_dist.state<@dd, reach = 2.4, cutoff = 2.0, fields = [3 x f64, f64]>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+func.func @field_type(%x: !vec, %v: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %x0 = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %v0 = md_dist.distribute %v, %l : !vec -> !own
+  %h = md_dist.halo %l, %x0, %cell : !own -> !halo
+  // expected-error @+1 {{field #1 is '!md_dist.field<@dd, owned, 3 x f64>', the state carries '!md_dist.field<@dd, owned, f64>'}}
+  %s = md_dist.pack %l, %h, %cell fields(%x0, %v0 : !own, !own) : !state
+  %r:5 = md_dist.unpack %s, %cell : !state
+  return
+}
+
+// -----
+
+// The unpack's witness holds at the state's cutoff, not above it.
+!vec = !md.field<@atoms, 3 x f64>
+!own = !md_dist.field<@dd, owned, 3 x f64>
+!gho = !md_dist.field<@dd, ghost, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.4>
+!state = !md_dist.state<@dd, reach = 2.4, cutoff = 2.0, fields = [3 x f64]>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+func.func @unpack_cutoff(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %x0 = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %x0, %cell : !own -> !halo
+  %s = md_dist.pack %l, %h, %cell fields(%x0 : !own) : !state
+  %l1, %h1, %r1, %x1 = md_dist.unpack %s, %cell : !state
+  %xg = md_dist.halo_copy %x1, %h1 image(%cell) : !own, !halo -> !gho
+  // expected-error @+1 {{the state covers its positions at the cutoff 2, less than 2.2}}
+  %n = md_dist.neighborhood %x1, %xg, %h1 cutoff(2.2)
+      : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
+  return
+}
