@@ -461,6 +461,26 @@ its definition. The argument-distance case retains its original placement.
 This extension follows differentiation and changes no launch or group
 layout. The ordinary corpus and order matrix verify the original pair path.
 
+At implementation checkpoint `f0151e73`, the ordinary corpus checks 1,050
+cases: 1,046 are identical, including 454 identical error cases, and the
+same four previously accepted keyword-hint diagnostics differ. Its entire
+comparison log is byte-identical to the accepted pre-extension log; there
+is no new generated-program or diagnostic difference. The order matrix
+passes 560/560 cases across its exact, padded and search modes. The new
+common-interface CPU fixture checks multiple distances in one region,
+all three classes, admitted tables and the unchanged analytic fallback;
+it and the four existing radial fixtures pass.
+
+Seven focused RTX 5090 tests pass with the current bounds: the original
+zero-tolerance scheduler; independent f64 screened-Coulomb energy, analytic
+forces and strain for the differentiated body and radial table; OPC,
+TIP3P and solute physical comparisons; and the molecular-virial fixtures.
+The screened case uses `erfc(3.5*r)/r`, rotated affine sites, 243 active
+pairs and 469 checks. It uses the current physical gate's scale floors
+without its additional baseline/cancellation allowances, and checks
+untouched padding exactly. It is not an independent full-PME oracle.
+The original quadratic fixture retains zero tolerance.
+
 1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
    TIP3P and on #738's water boxes, against an f64 oracle and against
    `main` in double on the same frame, within `main` mixed's own error
@@ -1183,7 +1203,7 @@ per-pair device work.
 | Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
 | Squared distance and site cutoff | f32 | f32 |
 | Charge products | f32 from loaded parameters | Water constants may fold in f64 at compile time, then narrow to f32; dynamic solute products are f32 |
-| LJ and erfc/exp arithmetic | f32; existing approximation under `fast_math` | f32; the same approximation pass visits the three new bodies |
+| LJ and erfc/exp arithmetic | f32; existing approximation under `fast_math` | f32; the common radial interface enables D94's admitted table and analytic fallback, with the same approximation pass on the three bodies |
 | Per-pair and per-thread real-atom forces | f32 | f32 |
 | Force destination | f32 | f32 atomics at the mapped original particles |
 | Per-pair virial products | f32 | f32 |
