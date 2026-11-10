@@ -435,9 +435,10 @@ Both jobs exited zero: 36 successful native/main wall runs, 35 stationary accept
 
 This table is the performance plan required by the search-first ruling.
 The controlled reference uses the unchanged prototype on RTX 5090 and
-native `f6999f3c` against `af7a9f47`. The active search-control source is
-`2810717d`, whose implementation matches `f6999f3c`; evaluation changes
-`33dfacf7` and `c5f4ea57` are parked for after search. A planned row is
+native `f6999f3c` against `af7a9f47` as the initial baseline. Current search
+includes the retained S1 and S3 corrections; rows and isolated results below
+record their measured effects. Evaluation changes `33dfacf7` and `c5f4ea57`
+are parked for after search. A planned row is
 not closed by a smaller instruction count alone: its correction needs
 its own validation and two independent timing comparisons. Every row
 must be closed or kept with a stated reason before ready.
@@ -454,14 +455,14 @@ launch sizes, work counts and measurement qualifications.
 | Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
 | Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
 | Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | Cartesian and fractional f64 boxes, 32-lane reductions; source requests 120 scalar reduction shuffles before optimization; 0.091–0.223 for the cache build. Search additionally forms boxes for distinct first-group lattice subsets and currently evaluates the partner prefilter in padded lanes. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **Planned B1:** reuse the cached first box for proved single-frame groups. **Planned B2:** bounded f32 Cartesian boxes/prefilter. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. |
-| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | Repeated column and indirect z binary searches, explicit image/subset enumeration, late half-list ownership, f64 first-anchor broadcasts and fractional-to-Cartesian pair work; 23–28 in water boxes, 72–76 in ubiquitin. | **Planned S2:** clip backward WW/SS descriptors before range/box/unit work. **S3 implemented, validation/measurement pending:** publish direct descriptor-column endpoints by reusing dead spatial histogram/scan scratch. Count active and retained groups once, retain the SS descriptor offset, and leave z search unchanged. Extra clear/scan costs belong to this isolated comparison. **Planned S4:** reuse first-anchor data rather than repeat the 128 scalar broadcasts per selected two-group batch. **Planned S5:** local f32 geometry with certified uncertainty and original-f64 refinement. Each is measured separately. |
+| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After S3: direct descriptor-column endpoints, indirect z searches, explicit image/subset enumeration, late half-list ownership, f64 first-anchor broadcasts and fractional-to-Cartesian pair work; search alone 16.1–23.1 in water boxes, 54.8–58.7 in ubiquitin. Added column indexing costs 0.05–0.12 separately. | **Planned S2:** clip backward WW/SS descriptors before range/box/unit work. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **Planned S4:** reuse first-anchor data rather than repeat the 128 scalar broadcasts per selected two-group batch. **Planned S5:** local f32 geometry with certified uncertainty and original-f64 refinement. Each is measured separately. |
 | Pruning | Separate f32 Cartesian pruning with shared first anchors and CUB selection; 1.397–1.788 in water boxes, 7.436–7.609 in ubiquitin. | Fused pruning in the production evaluation; f64 hybrid-reference geometry, exact class incidence and image accounting. Its cost is not isolated in the current common evaluation. | **Kept on purpose:** fusion; the earlier separate-prune experiment `3eaad4f7` did not establish a total win. **Planned P1:** apply a proved, exact-membership f32/refined predicate separately from search. Keep reference epochs and certified validity reaches f64. |
 | Evaluation: loads | Specialized water coefficients and dynamic solute parameters; compact two-word entries; table coefficients and pair values f32. Included in 24.2–54.9 per common call; not isolated. | Actual source parameter bindings; four-word entries with explicit image/mask fields and original-member mapping; two indexed WW LJ coefficient loads remain. Included in 32.2–91.9 per common call; not isolated. | **Planned E3, after search:** invariant WW LJ operands, preserving coefficient bits and mutable bindings. **Kept on purpose:** explicit image domain, bounded-capacity records and original-particle mapping. Do not narrow their supported domain to match the prototype. |
 | Evaluation: extra point | Linear forward site geometry; the partner site is formed from its rotated frame. The force convention is rule B. Part of evaluation; no isolated time. | Exact typed source `alpha*(H1+H2)` cached per loaded partner and rotated with local geometry; dynamics uses rule A. Part of evaluation; no isolated time. | **Planned E4:** compare rematerialization with the rotated cache as its own correction after the approved evaluation items. **Kept on purpose:** source placement and the approved force convention. Anchor-cache experiment `8de4edec` was discarded by `d53ff917` for no clear measured gain. |
 | Evaluation: radial and LJ | f32 radial tables and scalar LJ arithmetic; one coefficient-vector load per Coulomb site contribution. Part of evaluation; no isolated time. | Same common pair-body interface, D94 criterion and analytic fallback; f32 pair arithmetic. Fixed water coefficient folding retains its existing precision. Part of evaluation; no isolated time. | **Closed `f0151e73` / `8d2cd418` / `f6999f3c`:** common radial route, its oracle and scalar radial forces. **Kept on purpose:** existing table error/admission contract; no approximation change to obtain speed. WW coefficient invariants remain E3. |
 | Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
 | Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
-| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | Search uses eight group warps per 256-thread block; small-box grids 35–36, large 134–138. Common evaluation remains one combined launch. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
+| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After S1: search uses two group warps per 64-thread block; small-box grids about 138–144, large 537–551. Common evaluation remains one combined launch. S3 adds four column-index launches, measured in its net cost. The search spill/launch evidence is detailed below. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
 | Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; S1 uses 64-thread blocks, unchanged f64 query predicates; included in measured search time, with maximum 98 candidate batches in every water box. | **R1 kept with reason:** existing evidence does not establish longest-row dominance. A conditional split of disjoint query ranges needs direct row/stage diagnostics and ordered subrow compaction before a separate experiment. No scheduling change is hidden in S3/S4/S2. |
 | Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
 
@@ -606,6 +607,69 @@ frame/image/column ranges and compacts by original row, subrange and local
 ordinal. Ownership, images, masks and final ordering must remain unchanged;
 allocation/merge/launch costs need a separate measured proposal. R1 is
 kept with this reason, not silently implemented or claimed unnecessary.
+
+### S3 isolated measurement: direct descriptor-column endpoints
+
+Head `8115bceb`, matched retained S1 `5652560d`, main `af7a9f47`, RTX 5090.
+Inputs, protocol and precision remain unchanged. CPU lowering passes 6/6
+in 15.58 seconds, pre-push checks 6/6, and the clean-head controlled GPU
+fixtures 22/22 in 110.65 seconds. Both comparisons complete: 48/48 wall
+executions exit zero and pass stationarity; 12/12 profiles complete.
+The matched S1 first ubiquitin TIP3P wall timing remains unknown, without
+substitution; S3's accepted timing does not create that missing comparison.
+
+The new index reuses dead spatial scratch, counts every active and retained
+descriptor, and scans it without new arena allocation. The SS partition
+offset is preserved. Z searches, images, covering predicates, ownership
+and final compaction order remain unchanged. Candidate PTX removes the two
+column-bound loops; all 511 f64-typed instructions and 259 scalar shuffles
+remain. Static candidate resources are 168 registers, a 176-byte stack and
+236/284 spill-store/load bytes, versus S1's 168/168/228/292.
+
+All eleven available matched ON/main comparisons improve 0.48–3.94%.
+All twelve **net search-stage** costs improve 6.8–10.8%. The net accounts
+for seven S3 kernels versus three in S1: histogram clear, atomic boxes,
+three scans, flag clear and candidate search. New clear plus scans cost
+2.78–2.90 microseconds per refresh; they are never omitted from the gain.
+The existing grouping and sort stages remain outside this subtotal.
+
+| System | ON/main A / B | S3/S1 normalized A / B | Column index microseconds/refresh A / B | Net stage microseconds/refresh A / B | S1 net microseconds/refresh A / B |
+|---|---|---|---|---|---|
+| ubq OPC | 1.70455 / 1.66592 | 0.99193 / 0.96063 | 2.778 / 2.773 | 1352.039 / 1336.583 | 1499.031 / 1498.033 |
+| ubq TIP3P | 2.03912 / 2.05066 | unknown / 0.97576 | 2.826 / 2.819 | 1375.645 / 1374.874 | 1517.846 / 1518.176 |
+| OPC small | 1.15947 / 1.16093 | 0.98885 / 0.99042 | 2.897 / 2.899 | 933.564 / 935.327 | 1009.849 / 1012.273 |
+| OPC large | 1.19267 / 1.19298 | 0.99262 / 0.99223 | 2.834 / 2.833 | 1127.877 / 1126.439 | 1210.233 / 1212.830 |
+| TIP3P small | 1.35763 / 1.36228 | 0.98497 / 0.99049 | 2.835 / 2.830 | 941.597 / 939.092 | 1012.364 / 1012.740 |
+| TIP3P large | 1.46929 / 1.47114 | 0.99144 / 0.99522 | 2.882 / 2.880 | 1133.077 / 1136.684 | 1222.891 / 1219.425 |
+
+Helper binaries also serve sorting and compaction, so attribution uses the
+seven source-ordered roles within each refresh, rather than global function
+name counts. An initial new-analysis resource assertion failed once; the
+single corrected affected CPU extraction passed, with no recurrence in the
+remaining first-pass extractions. No GPU comparison was retried. PTX scan
+application shared memory is 36 bytes; ELF total 1060 includes an explicit
+1024-byte compiler reserve. The clear's static 8 registers and measured
+CUPTI 16 remain separate unresolved observations: no actual-run binary
+identity or driver-rounding cause is claimed. Semantic stage selection,
+production classification, numerical bounds and refusals never changed.
+
+Both-job accounting checks verify exactly that saved candidate time minus
+index, atomic-box and flag-clear deltas equals the net gain. Candidate
+savings are 73.68–92.77 microseconds per refresh in water boxes and
+145.10–164.30 in ubiquitin. A one-case calibrated maximum-column-step
+proxy predicts the savings with 11.95%/10.20% error, versus
+95.15%/94.41% for aggregate work per potential SM. This is compatible with
+serial sensitivity, without measuring row clocks or a particular stall.
+A negative control is instructive: the old mean-column-step proxy still
+fits residual S3 runtime at 7.22%/7.02% error even though those searches
+are gone. Cross-system correlation therefore cannot identify the remaining
+bottleneck or prove longest-row dominance.
+
+S3 is retained. Its modest isolated gain does not establish that column
+searches alone dominated the old serial path. The row model still has the
+same enumeration, partner batches and z searches, with column-bound steps
+removed. S4 next targets repeated first-anchor broadcasts, as a separate
+correction with unchanged f64 operands and its own shared-memory gates.
 
 ### Precision contract for planned search and pruning changes
 
