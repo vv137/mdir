@@ -20,6 +20,12 @@ VARIANT:
   m<T>r<D>     the same with pairlist_distance D (A)
   ms<T>        one run of m<T> under the sampler (sampler.c), not timed
   m<T>@NAME    (and ms<T>@NAME) the same with the program NAME of --builds
+  mp1, dp1     one run under the sampler of the program of two threads run by
+               one OpenMP thread (OMP_THREAD_LIMIT=1), not timed: the proxy
+               of the one-thread share (#833), since a program of one thread
+               inlines its loops into the entry, where the sampler cannot
+               attribute them; its step is 1.5 to 6.0% longer than that of
+               the true program of one thread (#554)
   g<T>         GROMACS -nb cpu -pme cpu, T OpenMP threads, its default list policy
   x<T>         GROMACS with an exact buffer: verlet-buffer-tolerance -1,
                rlist = cutoff + 3 A, nstlist 10
@@ -193,14 +199,23 @@ def mdir_control(threads, steps, reach=None, precision="MIXED"):
 
 
 def run_mdir(variant, d):
-    sampled = variant[1] == "s"
-    m = re.match(r"[md]s?(\d+)(?:r([0-9.]+))?(?:@(\w+))?$", variant)
+    sampled = variant[1] in "sp"
+    # m p 1 / d p 1 (#554): the program of two threads run by one OpenMP
+    # thread (OMP_THREAD_LIMIT=1), under the sampler, so that its loops are
+    # outlined regions that the sampler can attribute; the program of one
+    # thread inlines every loop into the entry.
+    proxy = variant[1] == "p"
+    m = re.match(r"[md][sp]?(\d+)(?:r([0-9.]+))?(?:@(\w+))?$", variant)
     threads, reach = int(m.group(1)), m.group(2)
+    if proxy and threads != 1:
+        raise RuntimeError("a proxy variant is of one thread")
     program = BUILDS[m.group(3)] if m.group(3) else MDIR
     steps = steps_for(threads, "m")
     precision = "DOUBLE" if variant[0] == "d" else "MIXED"
-    open(d + "/mdir.toml", "w").write(mdir_control(threads, steps, reach, precision))
+    open(d + "/mdir.toml", "w").write(mdir_control(2 if proxy else threads, steps, reach, precision))
     env = dict(os.environ, MDIR_COMPILE_CACHE="off", OMP_PROC_BIND="close", OMP_PLACES="cores")
+    if proxy:
+        env["OMP_THREAD_LIMIT"] = "1"
     if sampled:
         os.makedirs(d + "/prof", exist_ok=True)
         env.update(LD_PRELOAD=SAMPLER, SAMPLER_OUT=d + "/prof")
@@ -212,6 +227,7 @@ def run_mdir(variant, d):
     rate = re.search(r"from step [0-9]+ to step [0-9]+, ([0-9.]+) ms per step", log)
     b = re.search(r"built (\d+) times, every ([0-9.]+) steps", log)
     return dict(rate_ms=float(rate.group(1)) if rate else None, steps=steps, threads=threads, reach=reach,
+                proxy_one_thread=proxy,
                 precision=precision, ensemble=ensemble,
                 program=program,
                 builds=int(b.group(1)) if b else None, build_interval=float(b.group(2)) if b else None,
@@ -299,10 +315,10 @@ def run(variant, r):
 
 print(f"{system}: {natoms} sites; grid {GRID}; host {os.uname().nodename}; cpu {MODEL}; "
       f"affinity {sorted(os.sched_getaffinity(0))}", flush=True)
-timed = [v for v in variants if v[1] != "s"]
+timed = [v for v in variants if v[1] not in "sp"]
 for r in range(rounds):
     for v in (timed if r % 2 == 0 else timed[::-1]):
         run(v, r)
 for v in variants:
-    if v[1] == "s":
+    if v[1] in "sp":
         run(v, 0)
