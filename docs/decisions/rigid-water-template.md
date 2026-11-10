@@ -436,6 +436,19 @@ orders. Its CPU check follows the initializer's copy back to the
 registered renumbered buffer in device-tuples mode and to actual host
 renumbering in the host configuration.
 
+Performance diagnosis counts successful full template refreshes, fused
+prune events and automatic arena growths separately from the general
+neighbor structures. The log reports mean intervals as the number of
+requested steps divided by the event count minus the initial event,
+and outer-entry, inner-entry, work-record and capacity occupancy at the
+first successful build and the end. Occupancy acquisition waits and reads
+the device only at those two diagnostic boundaries; it adds no per-step
+readback. NVTX marks delimit host force-evaluation intervals without a
+device wait, so a timeline can correlate their launches and copies.
+These diagnostics change no physical arithmetic, validity predicate,
+cutoff, list policy or comparison bound. The performance cause is reported
+before optimization, separately from the remaining correctness gates.
+
 1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
    TIP3P and on #738's water boxes, against an f64 oracle and against
    `main` in double on the same frame, within `main` mixed's own error

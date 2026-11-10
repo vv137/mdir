@@ -1539,6 +1539,32 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(over));
 
   // The runtime has counted the builds of the neighbor structures.
+  if (auto statistic = (*engine)->lookup("mdrtGetTemplatePairStatistic")) {
+    auto get = reinterpret_cast<int64_t (*)(int64_t)>(*statistic);
+    if (int64_t refreshes = get(0)) {
+      output.log.print("MDIR: template full refreshes %lld, prunes %lld, "
+                       "automatic growths %lld\n",
+          static_cast<long long>(refreshes), static_cast<long long>(get(1)),
+          static_cast<long long>(get(2)));
+      if (control->numSteps > 0 && refreshes > 1)
+        output.log.print("MDIR: template mean refresh interval %.3f steps "
+                         "(initial event excluded)\n",
+            double(control->numSteps) / (refreshes - 1));
+      if (control->numSteps > 0 && get(1) > 1)
+        output.log.print("MDIR: template mean prune interval %.3f steps "
+                         "(initial event excluded)\n",
+            double(control->numSteps) / (get(1) - 1));
+      output.log.print("MDIR: template outer occupancy start/end: entries "
+                       "%lld/%lld, work records %lld/%lld, capacity %lld/%lld\n",
+          static_cast<long long>(get(3)), static_cast<long long>(get(4)),
+          static_cast<long long>(get(5)), static_cast<long long>(get(6)),
+          static_cast<long long>(get(7)), static_cast<long long>(get(8)));
+      output.log.print("MDIR: template inner occupancy start/end: entries %lld/%lld\n",
+          static_cast<long long>(get(9)), static_cast<long long>(get(10)));
+    }
+  } else {
+    llvm::consumeError(statistic.takeError());
+  }
   if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {
     auto getCount = reinterpret_cast<int64_t (*)()>(*count);
     int64_t builds = getCount();
