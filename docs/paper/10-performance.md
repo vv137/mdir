@@ -673,6 +673,17 @@ the compiler writes with the program (D398): each region's record
 names the op of the lowering it comes from and the set it runs over, so the
 parts no longer rest on rules about the functions a region calls.
 
+The first strategy of #554 runs each row of the loop over pairs eight
+candidates at a time in f32 and four in f64, in vector registers
+(D[host-pair-vector], Section 7.1). Against `main` on the same CPU, in this
+NVE protocol, the step takes 1.48 to 1.70 times less time in mixed precision
+and 1.31 to 1.45 times less in double, at 1 and 16 threads, on an EPYC 7543
+and an EPYC 9354 (the latter with 16 and 8 lanes). At 16 threads in mixed
+precision the loop's share of JAC's step falls from 57.0% to 33.5% on the
+EPYC 7543. In double precision it stays near 75%, since the complementary
+error function is still called once a lane. Tables 10.8 and 10.9 were not
+measured again.
+
 *Table 10.8. CPU time in ms/step, mean $\pm$ sample standard deviation of
 three kept rounds. `m` and `d` are MDIR mixed and double, `g` is GROMACS
 with its default list, `x` is GROMACS with the exact 3 Å buffer and a

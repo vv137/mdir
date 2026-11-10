@@ -88,7 +88,7 @@ With `explain`, the pass remarks the choice, or the first condition that fails, 
 **The deterministic mode takes the lanes on every host,** measured or not (the maintainer's ruling on PR #823, option 2): one order on every host comes first there, and the rule that an unmeasured host keeps the scalar row is a performance default of the ordinary modes. Its bits are then the same on every host, and they differ from those of the scalar row of before. `MDIR_HOST_PAIRS=scalar` still selects the scalar row.
 - Otherwise the host's register width over the bits of the kernel's type: 512 bits with `avx512f`, 256 with `avx`, 128 otherwise. The CPU and its features are those of the machine that compiles the host code, read as `JITTargetMachineBuilder::detectHost` reads them, so that the Python front end, which builds its pipeline before it initializes the target, sees the same host.
 
-**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names. Outside the deterministic mode, a host without an entry keeps the scalar row, and the remark says so. *The entry for `znver3` follows the timing below.*
+**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names. Outside the deterministic mode, a host without an entry keeps the scalar row, and the remark says so. The entry for `znver3` (EPYC 7543) takes the lanes, from the timing below.
 
 **Switches.**
 
@@ -139,7 +139,61 @@ The tolerance is that the lanes leave the agreement with the oracle unchanged: t
 
 ## Timing
 
-FILLTIMING
+The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and grids of the measurement above. `main` 69d7cafd ran against the branch with the lanes (`MDIR_HOST_PAIRS=lanes`: $W$ = 8 in f32 and 4 in f64 on AVX2, and 16 and 8 on AVX-512), interleaved in each job. On JAC the branch's scalar row also ran. The jobs used 16 cores each, with alternating orders by round and round 0 dropped. Jobs a and b were submitted together, and c afterwards. The scheduler placed them on two CPU models, reported apart.
+
+- *The whole step* takes 1.48 to 1.70 times less time in mixed precision and 1.31 to 1.45 times less in double, on both CPU models. On the EPYC 7543 the two jobs of each system agree within 0.05 of the ratio.
+- *The branch's scalar row* runs at `main`'s rate: within 0.5% on JAC `m16` and 0.2% on `d16`. Its lowered program is the same text (Identity, above).
+- *The pair loop's share* (the sampler of D267 on the fixed tools of #833, the sampled runs of JAC). On the EPYC 7543, `m16` goes from 57.0% to 33.5%. On the EPYC 9354, over two jobs:
+  - `m16`: 54.6% to 32.9%;
+  - `d16`: 79.3% and 82.4% to 75.2% and 75.6%;
+  - the one-thread proxy (`OMP_THREAD_LIMIT=1`, whose step is 1.5 to 6.0% longer than the true one-thread step): 65.2% and 65.4% to 44.2% in mixed precision, and 88.3% to 83.1% in double.
+- *Why double gains less.* In double the loop stays most of the step because `erfc` is called once a lane from libm (no vector library is linked). That is the next measurable step for the f64 loops.
+
+**AMD EPYC 7543** (ms/step, mean ± sample standard deviation of the kept rounds; ratio = main / lanes)
+
+| System | Job | Variant | `main` | lanes | Ratio | branch scalar |
+|---|---|---|---|---|---|---|
+| JAC | a | `m16` | 10.13 ± 0.06 | 6.521 ± 0.037 | 1.554 | 10.18 ± 0.0047 |
+| JAC | a | `m1` | 129.9 ± 1.2 | 76.27 ± 0.13 | 1.703 | — |
+| JAC | a | `d16` | 26.29 ± 0.038 | 19.92 ± 0.29 | 1.319 | 26.34 ± 0.082 |
+| JAC | a | `d1` | 358.4 ± 0.42 | 269 ± 1.2 | 1.332 | — |
+| JAC | c | `m16` | 10.13 ± 0.027 | 6.545 ± 0.043 | 1.549 | 10.15 ± 0.03 |
+| JAC | c | `m1` | 128.3 ± 0.27 | 76.08 ± 0.0074 | 1.687 | — |
+| JAC | c | `d16` | 26.25 ± 0.079 | 19.79 ± 0.092 | 1.326 | 26.22 ± 0.005 |
+| JAC | c | `d1` | 357 ± 0.66 | 268.5 ± 0.78 | 1.329 | — |
+| TIP3P 103k | a | `m16` | 148.1 ± 1.3 | 92.77 ± 0.59 | 1.596 | — |
+| TIP3P 103k | a | `m1` | 2004 ± 3.4 | 1185 ± 1.6 | 1.692 | — |
+| TIP3P 103k | a | `d16` | 427.4 ± 0.74 | 315.5 ± 0.68 | 1.354 | — |
+| TIP3P 103k | a | `d1` | 5951 ± 49 | 4392 ± 2.5 | 1.355 | — |
+| TIP3P 103k | c | `m16` | 147.8 ± 0.021 | 90.5 ± 0.13 | 1.634 | — |
+| TIP3P 103k | c | `m1` | 2009 ± 4.3 | 1187 ± 3.1 | 1.692 | — |
+| TIP3P 103k | c | `d16` | 425.9 ± 1.3 | 325.7 ± 16 | 1.308 | — |
+| TIP3P 103k | c | `d1` | 5877 ± 21 | 4368 ± 9 | 1.346 | — |
+| Cellulose | a | `m16` | 198.7 ± 0.055 | 133.9 ± 0.61 | 1.483 | — |
+| Cellulose | a | `m1` | 2488 ± 0.8 | 1542 ± 0.65 | 1.613 | — |
+| Cellulose | a | `d16` | 510 ± 0.35 | 387 ± 0.38 | 1.318 | — |
+| Cellulose | a | `d1` | 6706 ± 17 | 5073 ± 44 | 1.322 | — |
+| Cellulose | b | `m16` | 199.5 ± 0.39 | 134.7 ± 0.66 | 1.481 | — |
+| Cellulose | b | `m1` | 2476 ± 0.018 | 1542 ± 6.4 | 1.605 | — |
+| Cellulose | b | `d16` | 521.9 ± 17 | 387.1 ± 0.4 | 1.348 | — |
+| Cellulose | b | `d1` | 6669 ± 0.59 | 5037 ± 3.5 | 1.324 | — |
+
+**AMD EPYC 9354** (ms/step, mean ± sample standard deviation of the kept rounds; ratio = main / lanes)
+
+| System | Job | Variant | `main` | lanes | Ratio | branch scalar |
+|---|---|---|---|---|---|---|
+| JAC | b | `m16` | 9.396 ± 0.049 | 6.338 ± 0.043 | 1.482 | 9.349 ± 0.033 |
+| JAC | b | `m1` | 123.5 ± 0.096 | 75.34 ± 0.069 | 1.639 | — |
+| JAC | b | `d16` | 23.55 ± 0.043 | 16.85 ± 0.093 | 1.398 | 24.16 ± 1.1 |
+| JAC | b | `d1` | 339.9 ± 0.38 | 239.2 ± 0.29 | 1.421 | — |
+| TIP3P 103k | b | `m16` | 130.6 ± 0.65 | 83.85 ± 0.52 | 1.558 | — |
+| TIP3P 103k | b | `m1` | 1905 ± 4 | 1142 ± 3.6 | 1.668 | — |
+| TIP3P 103k | b | `d16` | 375.8 ± 1 | 259 ± 1.3 | 1.451 | — |
+| TIP3P 103k | b | `d1` | 5582 ± 8.3 | 3876 ± 2.7 | 1.440 | — |
+
+**Policy.** On the EPYC 7543 (`znver3`) the lanes win in every variant of every system, by 31 to 70%, far beyond the spread of the runs (under 1% of a rate, except single slow rounds of up to 5%: `d16` of the lanes in TIP3P job c and of `main` in Cellulose job b). So `findPolicy` makes them the default there. The EPYC 9354 (`znver4`) has one timing job per system so far. It stays unmeasured, so it keeps the scalar row outside the deterministic mode, until a second job confirms it.
+
+**Peak memory.** The lanes allocate nothing. Their registers and the stack of a row are the only storage they add, and every buffer of the program is the same as before.
 
 ## Left open
 
