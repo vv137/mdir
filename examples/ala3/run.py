@@ -42,7 +42,10 @@ import numpy as np
 import mdir
 # g/cm^3 per g/mol/nm^3, the coefficient of the programs (docs/conventions.md,
 # Section 1), from the package, so that a copy of this directory runs anywhere.
-from mdir._physical_constants import DENSITY_G_PER_CM3
+try:
+    from mdir._physical_constants import DENSITY_G_PER_CM3
+except ImportError:  # the wheels of 0.2.1 and before, which lack the module
+    DENSITY_G_PER_CM3 = 1e21 / 6.02214076e23
 
 HERE = pathlib.Path(__file__).resolve().parent
 KCAL_A2 = 4.184 / (0.1 * 0.1)  # kJ/mol/nm^2 per kcal/mol/Å^2

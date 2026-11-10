@@ -45,6 +45,9 @@ ALLOWED = [
      "a pattern of FileCheck that checks the constant MDIR writes"),
     ("scripts/validation/charmm/run.py", "138.935458",
      "the constant of the topology of GROMACS, named as such"),
+    ("examples/ala3/run.py", "6.02214076",
+     "N_A for a wheel of 0.2.1 or before, which lacks mdir._physical_constants; "
+     "remove it once the example's pin is a later version"),
 ]
 EXCLUDED = [":!*.md", ":!include/mdir/Support/PhysicalConstants.h",
             ":!scripts/check-physical-constants.py"]
