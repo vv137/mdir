@@ -4,6 +4,7 @@
 #ifndef MDIR_COMPILER_SKINS_H
 #define MDIR_COMPILER_SKINS_H
 
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
 #include "llvm/Support/Error.h"
@@ -31,6 +32,8 @@ struct SkinTrial {
   /// of the host code.
   double compileSeconds = 0.0, runSeconds = 0.0;
   double pipelineSeconds = 0.0, kernelSeconds = 0.0, hostSeconds = 0.0;
+  /// What its compilation took from the compile cache and stored there.
+  CompileStats cache;
   /// Empty, or why it could not be measured.
   std::string failure;
 };

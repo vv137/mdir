@@ -436,6 +436,80 @@
         "compile_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "compile_cache": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "directory": {
+              "type": ["string", "null"]
+            },
+            "source": {
+              "enum": ["MDIR_COMPILE_CACHE_DIR", "default", null]
+            },
+            "reason": {
+              "type": ["string", "null"]
+            },
+            "gpu_modules": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ptx_compiled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ptx_read": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cubin_compiled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cubin_read": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gpu_stored": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "gpu_rejected": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skin_search_host_compiled": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skin_search_host_read": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skin_search_host_stored": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "enabled",
+            "directory",
+            "source",
+            "reason",
+            "gpu_modules",
+            "ptx_compiled",
+            "ptx_read",
+            "cubin_compiled",
+            "cubin_read",
+            "gpu_stored",
+            "gpu_rejected",
+            "skin_search_host_compiled",
+            "skin_search_host_read",
+            "skin_search_host_stored"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
