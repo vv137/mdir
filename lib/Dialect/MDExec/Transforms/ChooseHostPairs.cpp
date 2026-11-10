@@ -77,7 +77,10 @@ private:
     if (hostpairs::Refusal refused = hostpairs::checkLanes(op, lanes))
       return explainRefused(op, "no lanes(" + std::to_string(lanes) +
                                     "): " + *refused);
-    if (mode == "auto") {
+    // The deterministic mode takes the lanes on every host, measured or
+    // not, so that its bits are the same everywhere (the maintainer's
+    // ruling on PR #823); `mode=scalar` still keeps the scalar row.
+    if (mode == "auto" && !deterministic) {
       std::optional<hostpairs::Policy> policy = hostpairs::findPolicy(cpu);
       if (!policy)
         return explainRefused(

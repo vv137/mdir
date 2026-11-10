@@ -82,8 +82,8 @@ combined by halving. The result depends on the list, $n_\text{lane}$, and
 the kernel alone. A sum of $n$ terms $t_k$ taken in another order differs
 by at most $2(n-1)\mathsf u\sum_k \lvert t_k\rvert$ to first order in the
 unit roundoff $\mathsf u$ [[Higham2002]](references.md#higham2002), which
-bounds the difference from the scalar row. In the deterministic mode
-$n_\text{lane}$ is 8 in f32 and 4 in f64 on every host. A host with narrower
+bounds the difference from the scalar row. The deterministic mode takes the lanes on every host, with
+$n_\text{lane}$ 8 in f32 and 4 in f64. A host with narrower
 registers holds the eight lanes in several of them, in the same order, so
 the bits do not depend on the host's vector width.
 

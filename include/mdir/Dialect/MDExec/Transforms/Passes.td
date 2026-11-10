@@ -238,7 +238,9 @@ def ChooseHostPairs
       of the type that the kernel computes in.
     - `mode=auto` (the default): the lanes where the policy of the host
       `cpu` (HostPairs.h, `findPolicy`) makes them the default; a host
-      that was not measured keeps the scalar row. `mode=lanes`: every loop
+      that was not measured keeps the scalar row; in the deterministic
+      mode every loop that the precondition admits, on every host.
+      `mode=lanes`: every loop
       where the precondition holds. `mode=scalar`: none.
 
     With `explain`, each choice and each refusal is a remark on its op.

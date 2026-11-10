@@ -61,10 +61,14 @@
 # RUN: mdir checkpoint det-double-4.h5 det-double-sse.h5 | FileCheck %s
 #
 # What the programs are: the lanes of the deterministic mode, whatever the
-# host, and the scalar row of the suite's default.
+# host, measured or not and without MDIR_HOST_PAIRS (the maintainer's ruling
+# on PR #823), and the scalar row that MDIR_HOST_PAIRS=scalar, the suite's
+# setting, selects.
 # RUN: env MDIR_HOST_PAIRS=lanes mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
 # RUN: env MDIR_HOST_PAIRS=lanes MDIR_HOST_CPU=x86-64 mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
 # RUN: env MDIR_HOST_PAIRS=lanes mdir emit det-double-4.toml --stage=lowered | FileCheck %s --check-prefix=DOUBLE
+# RUN: env -u MDIR_HOST_PAIRS mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
+# RUN: env -u MDIR_HOST_PAIRS MDIR_HOST_CPU=x86-64 mdir emit det-double-4.toml --stage=lowered | FileCheck %s --check-prefix=DOUBLE
 # RUN: mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=SCALAR
 # RUN: mdir emit det-mixed-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE
 

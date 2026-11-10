@@ -84,9 +84,11 @@ With `explain`, the pass remarks the choice, or the first condition that fails, 
 
 - `width`, where given (`MDIR_HOST_PAIRS=lanes:W`).
 - In the deterministic mode, 8 in f32 and 4 in f64 on every host (the ruling).
+
+**The deterministic mode takes the lanes on every host,** measured or not (the maintainer's ruling on PR #823, option 2): one order on every host comes first there, and the rule that an unmeasured host keeps the scalar row is a performance default of the ordinary modes. Its bits are then the same on every host, and they differ from those of the scalar row of before. `MDIR_HOST_PAIRS=scalar` still selects the scalar row.
 - Otherwise the host's register width over the bits of the kernel's type: 512 bits with `avx512f`, 256 with `avx`, 128 otherwise. The CPU and its features are those of the machine that compiles the host code, read as `JITTargetMachineBuilder::detectHost` reads them, so that the Python front end, which builds its pipeline before it initializes the target, sees the same host.
 
-**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names. A host without an entry keeps the scalar row, and the remark says so. *The entry for `znver3` follows the timing below.*
+**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names. Outside the deterministic mode, a host without an entry keeps the scalar row, and the remark says so. *The entry for `znver3` follows the timing below.*
 
 **Switches.**
 
@@ -141,7 +143,7 @@ FILLTIMING
 
 ## Left open
 
-- **Deterministic mode on an unmeasured host** (asked on PR #823). With the policy deciding in every mode, a measured host whose policy selects the lanes and an unmeasured host give different deterministic bits. They do not differ across vector widths.
+- Nothing for the maintainer. The deterministic mode on an unmeasured host was asked on PR #823 and ruled above (option 2).
 
 **Not in this slice.**
 

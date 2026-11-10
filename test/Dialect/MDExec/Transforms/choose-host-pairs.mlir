@@ -11,6 +11,10 @@
 // RUN: | FileCheck %s --check-prefix=AVX
 // RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-host-pairs="mode=lanes vector-bits=128" \
 // RUN: | FileCheck %s --check-prefix=AVX
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-host-pairs="cpu=unmeasured vector-bits=128" \
+// RUN: | FileCheck %s --check-prefix=AVX
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-host-pairs="mode=scalar" \
+// RUN: | FileCheck %s --check-prefix=OFF
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="mode=lanes width=2" \
 // RUN: | FileCheck %s --check-prefix=TWO
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="mode=lanes vector-bits=256" \
@@ -31,7 +35,8 @@
 // mode selects it. W is the host's register over the bits of the kernel's
 // type (8 in f32 and 4 in f64 for 256 bits, 16 and 8 for 512), or, in the
 // deterministic mode, 8 and 4 whatever the host. `mode=auto` keeps the
-// scalar row on a host that was not measured.
+// scalar row on a host that was not measured, except in the deterministic
+// mode, which takes the lanes on every host; `mode=scalar` takes none.
 
 !vec = !md.field<@atoms, 3 x f32>
 !vec64 = !md.field<@atoms, 3 x f64>

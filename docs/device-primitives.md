@@ -1339,8 +1339,11 @@ otherwise, from the machine that compiles the host code
 
 Whether the lanes are the default is the host's measured policy
 (`hostpairs::findPolicy`, keyed by the CPU that LLVM names, #433's host
-column). A host without an entry keeps the scalar row (the documented
-conservative default), and the remark of `explain` says so.
+column). Outside the deterministic mode a host without an entry keeps the
+scalar row (the documented conservative default), and the remark of
+`explain` says so. The deterministic mode takes the lanes on every host,
+measured or not, so that its bits are the same everywhere (the maintainer's
+ruling on PR #823); `MDIR_HOST_PAIRS=scalar` still selects the scalar row.
 `MDIR_HOST_PAIRS=scalar|lanes|lanes:W` overrides it for comparisons and
 tests ([environment.md](environment.md)), and `MDIR_HOST_CPU` compiles the
 host code for another CPU, such as `x86-64` (SSE2 alone). The lit suite
