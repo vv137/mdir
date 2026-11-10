@@ -1,6 +1,7 @@
 """Reads the output of the sampler (sampler.c).
 
     prof.py DIR [--program CONTROL] [--top N] [--json OUT]
+    prof.py --classify CONTROL|FILE.ll
 
 DIR is the SAMPLER_OUT of a run. With --program, the control file of that
 run is emitted (`$MDIR emit --stage=lowered`) and translated to LLVM IR
@@ -25,11 +26,15 @@ import sys
 from collections import Counter, defaultdict
 
 d = sys.argv[1]
+# prof.py --classify CONTROL|FILE.ll: the part of each parallel region of the
+# program of CONTROL (or of LLVM IR already translated) alone, one line
+# each, and no samples (test/Lit/prof-classify.test).
+classify_only = d == "--classify"
 top = 40
 jout = None
 regions = {}
 program = None
-a = sys.argv[2:]
+a = ["--program"] + sys.argv[2:] if classify_only else sys.argv[2:]
 while a:
     if a[0] == "--top":
         top = int(a[1]); a = a[2:]
@@ -52,23 +57,27 @@ def classify(ll):
         body = f[:f.find("\n}\n")]
         calls = set(re.findall(r"call [^@]*@([\w.$]+)", body))
         glob = set(re.findall(r"@(md_[\w]+)", body))
+        trig = any("atan2" in c or ".sin." in c or ".cos." in c or "acos" in c for c in calls)
         if any(g.startswith("md_radial") for g in glob):
             part = "pairs"
         # The loops over pairs in f64 read no radial table (D280 tabulates
-        # f32 kernels under fast_math); the Lennard-Jones powers (powi)
-        # are theirs alone (#554).
-        elif any("powi" in c for c in calls):
+        # f32 kernels under fast_math); the Lennard-Jones powers (powi) mark
+        # them (#554), where the region calls no trigonometric function: a
+        # region of the bonded terms that also evaluates the 1-4
+        # Lennard-Jones (a fused tuple pass) calls powi as well and stays
+        # bonded.
+        elif any("powi" in c for c in calls) and not trig:
             part = "pairs"
         elif "erff" in calls or "erfcf" in calls or "erf" in calls or "erfc" in calls:
             part = "excluded pairs"
         # The prolate kernel (D266) reads a radial table in f32 kernels under
-        # fast_math (D280), above; elsewhere (f64,
-        # MDIR_PROLATE_CELLS=1) its direct term is a table of cells of
-        # polynomials, found by floor; the loop over pairs also has the
-        # Lennard-Jones (powi), the excluded pairs not.
+        # fast_math (D280), above; elsewhere (f64, MDIR_PROLATE_CELLS=1) its
+        # direct term is a table of cells of polynomials, found by floor. Its
+        # loop over pairs has the Lennard-Jones powers and is taken above;
+        # the excluded pairs have none.
         elif "llvm.floor.f32" in calls or "llvm.floor.f64" in calls:
-            part = "pairs" if any("powi" in c for c in calls) else "excluded pairs"
-        elif any("atan2" in c or ".sin." in c or ".cos." in c or "acos" in c for c in calls):
+            part = "excluded pairs"
+        elif trig:
             part = "bonded"
         elif any("sqrt" in c for c in calls):
             part = "bonded or constraints"
@@ -78,7 +87,9 @@ def classify(ll):
     return out
 
 
-if program:
+if program and program.endswith(".ll"):
+    regions = classify(open(program).read())
+elif program:
     import subprocess
     lowered = subprocess.run([os.environ.get("MDIR", "mdir"), "emit", os.path.abspath(program), "--stage=lowered"],
                              cwd=os.path.dirname(os.path.abspath(program)), capture_output=True, text=True,
@@ -86,6 +97,10 @@ if program:
     ll = subprocess.run([os.environ.get("MLIR_TRANSLATE", "mlir-translate"), "--mlir-to-llvmir"],
                         input=lowered, capture_output=True, text=True, check=True).stdout
     regions = classify(ll)
+if classify_only:
+    for name in sorted(regions, key=lambda n: int(n.rsplit(".", 1)[1])):
+        print(name, regions[name])
+    sys.exit(0)
 
 DEPTH = 10
 REC = struct.Struct("<IIQII" + "Q" * DEPTH)

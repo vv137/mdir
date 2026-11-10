@@ -1,0 +1,117 @@
+# The classifier of the CPU breakdown (scripts/benchmarks/cpu-breakdown/
+# prof.py, #833): each parallel region of the entry is given a part from what
+# it calls and reads. A loop over pairs reads a radial table, or, in f64,
+# calls the Lennard-Jones powers (powi) and no trigonometric function; a
+# region of the bonded terms that also evaluates a 1-4 Lennard-Jones (powi
+# with a dihedral's cosine) stays bonded. The synthetic regions check each
+# rule and its precedence; the dipeptide of test/Driver/Inputs/dipeptide with
+# PME, its bonds,
+# angles, and dihedrals, the 1-4 pairs, and the excluded pairs, checks the
+# parts of a real program on two threads in the mixed and double modes (a
+# change of the program changes these counts).
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: %python %S/../../scripts/benchmarks/cpu-breakdown/prof.py --classify %t/regions.ll | FileCheck %s --check-prefix=RULES
+# RUN: cp %S/../Driver/Inputs/dipeptide/dipeptide.prmtop %S/../Driver/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -e 's|PRECISION|MIXED|' %t/run.toml > %t/mixed.toml
+# RUN: sed -e 's|PRECISION|DOUBLE|' %t/run.toml > %t/double.toml
+# RUN: env MDIR=mdir MLIR_TRANSLATE=mlir-translate %python %S/../../scripts/benchmarks/cpu-breakdown/prof.py --classify %t/mixed.toml \
+# RUN:   | sed 's/^[^ ]* //' | sort | uniq -c | FileCheck %s --check-prefix=MIXED
+# RUN: env MDIR=mdir MLIR_TRANSLATE=mlir-translate %python %S/../../scripts/benchmarks/cpu-breakdown/prof.py --classify %t/double.toml \
+# RUN:   | sed 's/^[^ ]* //' | sort | uniq -c | FileCheck %s --check-prefix=DOUBLE
+
+# RULES:      mdir_run..omp_par.1 pairs
+# RULES-NEXT: mdir_run..omp_par.2 pairs
+# RULES-NEXT: mdir_run..omp_par.3 bonded
+# RULES-NEXT: mdir_run..omp_par.4 excluded pairs
+# RULES-NEXT: mdir_run..omp_par.5 excluded pairs
+# RULES-NEXT: mdir_run..omp_par.6 pairs
+# RULES-NEXT: mdir_run..omp_par.7 bonded
+# RULES-NEXT: mdir_run..omp_par.8 bonded or constraints
+# RULES-NEXT: mdir_run..omp_par.9 other
+
+# MIXED:      6 bonded
+# MIXED-NEXT: 9 bonded or constraints
+# MIXED-NEXT: 3 excluded pairs
+# MIXED-NEXT: {{[0-9]+}} other
+# MIXED-NEXT: 7 pairs
+
+# DOUBLE:      6 bonded
+# DOUBLE-NEXT: 12 bonded or constraints
+# DOUBLE-NEXT: 3 excluded pairs
+# DOUBLE-NEXT: {{[0-9]+}} other
+# DOUBLE-NEXT: 7 pairs
+
+#--- regions.ll
+; 1: a radial table (f32 under fast_math).
+define internal void @mdir_run..omp_par.1() {
+  %a = load float, ptr @md_radial_table
+  ret void
+}
+; 2: the Lennard-Jones powers in f64, no radial table.
+define internal void @mdir_run..omp_par.2() {
+  %a = call double @llvm.powi.f64.i32(double 1.0, i32 6)
+  ret void
+}
+; 3: a dihedral with the 1-4 Lennard-Jones: bonded.
+define internal void @mdir_run..omp_par.3() {
+  %a = call double @llvm.powi.f64.i32(double 1.0, i32 6)
+  %b = call double @llvm.cos.f64(double 1.0)
+  ret void
+}
+; 4: the correction of the excluded pairs.
+define internal void @mdir_run..omp_par.4() {
+  %a = call double @erf(double 1.0)
+  ret void
+}
+; 5: the prolate direct term of the excluded pairs (floor, no powi).
+define internal void @mdir_run..omp_par.5() {
+  %a = call double @llvm.floor.f64(double 1.0)
+  ret void
+}
+; 6: the prolate loop over pairs (floor and powi).
+define internal void @mdir_run..omp_par.6() {
+  %a = call double @llvm.floor.f64(double 1.0)
+  %b = call double @llvm.powi.f64.i32(double 1.0, i32 6)
+  ret void
+}
+; 7: an angle.
+define internal void @mdir_run..omp_par.7() {
+  %a = call double @acos(double 1.0)
+  ret void
+}
+; 8: a bond or a constraint.
+define internal void @mdir_run..omp_par.8() {
+  %a = call double @llvm.sqrt.f64(double 1.0)
+  ret void
+}
+; 9: anything else.
+define internal void @mdir_run..omp_par.9() {
+  ret void
+}
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff         = 9.0
+electrostatics = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 10
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+threads   = 2
+precision = "PRECISION"
