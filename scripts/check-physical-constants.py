@@ -46,8 +46,8 @@ ALLOWED = [
     ("scripts/validation/charmm/run.py", "138.935458",
      "the constant of the topology of GROMACS, named as such"),
     ("examples/ala3/run.py", "6.02214076",
-     "N_A for a wheel of 0.2.1 or before, which lacks mdir._physical_constants; "
-     "remove it once the example's pin is a later version"),
+     "N_A for the wheel that the example pins if it lacks "
+     "mdir._physical_constants; remove it once the pin has the module"),
 ]
 EXCLUDED = [":!*.md", ":!include/mdir/Support/PhysicalConstants.h",
             ":!scripts/check-physical-constants.py"]
