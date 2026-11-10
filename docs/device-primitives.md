@@ -77,6 +77,39 @@ The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
 the profile points.
 
+### 1.1 Preconditions at a glance
+
+The preconditions of the sections below, gathered in one table for a
+contributor who is about to call a primitive or write its like
+([workflow.md](workflow.md#a-piece-of-work)). The sections remain the
+statement; this table only points to them. "Not checked" means that
+nothing in the compiler or the runtime refuses a call that breaks the
+precondition: it holds because the caller sizes its inputs for it. A
+template's `func.call @mdir.primitive.<name>` is checked for its operands
+and results when it is expanded (Section 4.2), not for these
+preconditions.
+
+| Primitive | Emitter | Precondition | Where checked |
+|---|---|---|---|
+| Privatized scatter-accumulate, `tile` and `hash` (Section 2.3) | `ScatterEmitter.h` | The values may be added in another order (the algebra, Section 5) | `checkReorder` (`Scatter.h`): `md-exec-choose-scatter` refuses, the lowering fails |
+| `tile` | the PME tile template | The footprint of a tile wraps the grid once at most: every edge has at least $E + P - 1$ points | `checkTile`: the pass refuses, the lowering fails |
+| `tile`, `hash` | as above | The copy fits 48 KiB of block memory | `getTileBytes`, `getHashBytes`: the pass refuses; a tile fails in the lowering, a run of loops keeps the atomics |
+| `hash` | `BlockHashTable` | A fallback exists: every destination has an atomic of the device | `getHashDestination`: the pass refuses, the lowering fails |
+| `hash` | `BlockHashTable` | The site scatters | the verifier, the pass |
+| Warp compaction (Section 4.1) | `emitLanesBelow`, `emitWarpBallot`, `emitWarpRank`, `emitWarpCount` | Every lane of the warp reaches the ballot; warps of 32 | not checked |
+| Warp scan | `emitWarpScan` | Every lane reaches it | not checked |
+| Block scan | `emitBlockScan` | A buffer of one i32 a warp and one for the total in block memory; every thread reaches its two barriers | not checked |
+| Device scan | `emitDeviceScan` | The caller gives the buffer of the sums of the blocks, $\max(\lceil n/1024 \rceil, 1)$ of them | not checked |
+| Single-pass scan (Section 4.8) | `emitSinglePassScan` | An i64 buffer of $\max(\lceil n/1024 \rceil, 1) + 1$ words; every count and total fits i32 | not checked |
+| Chunked and serial scans | `emitChunkedScan`, `emitSerialScan` | none stated; they are for a few thousand counts | not checked |
+| Scatter of a counting sort | `emitCursorScatter` | The cursor holds the offsets of the keys | not checked |
+| Order within bins, by insertion | `emitSortBins` | **Bins of a few items**; a thread sorts a bin. Bins of many take `emitRankInBins` (#231) | **not checked**: nothing bounds the items of a bin or warns. The grid that sets the size of the bins is chosen by each caller; a shared plan and a size contract are #817, items 1 and 2 |
+| Order within bins, the stable rank | `emitRankInBins` | The items of a bin are distinct | not checked |
+| Ragged rows, a row (Section 4.7) | `emitRaggedRow` | Unchecked form: $i < N$ | the checked form gives no row past $N$ |
+| Ragged rows, an entry | `emitRaggedEntry` | $k$ below the row's count | not checked |
+| Ragged rows, the build | `emitDeviceRaggedRows` | Blocks of 256 threads; the caller's scratch; at most $2^{31} - 1$ entries | the count of entries: the runtime refuses more (`mdrtTuplesSize`); the rest not checked |
+| Reductions (Section 5) | `ReductionEmitter.h` | Every reduced value states its algebra, and the order the lowering takes is one its algebra allows | the verifier of `md_exec.algebra`, `--md-exec-check-algebra`, and the lowerings, which refuse an op without one (Section 5.2) |
+
 ## 2. The privatized scatter-accumulate
 
 ### 2.1 What it does

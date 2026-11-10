@@ -32,6 +32,21 @@ alone, decides the order. For example, two features that both rewrite
 `Differentiate.cpp` are sequential, while a new reciprocal sum and a new
 thermostat are not.
 
+A piece that writes device code, or a kernel that searches neighbors,
+sorts, scans, compacts, or reduces, first looks up the part in
+[primitives-map.md](primitives-map.md) (which primitives it uses, and
+whether each is shared, hand-written, or missing) and the primitive in
+[device-primitives.md](device-primitives.md) (what it does, its
+preconditions, and where they are checked). It uses the shared primitive
+where one exists, within its stated preconditions, including those of
+size, which are not all checked: `emitSortBins` is for bins of a few
+items and `emitRankInBins` for bins of many (#231); a caller that sized
+its grid with a constant gave `emitSortBins` thousands of items a bin and
+made a step 20 to 48 times slower (#795, #817). A new hand-written copy
+where a shared primitive exists states its reason in the PR. A change that
+adds or changes a part adds or updates its row of primitives-map.md, and a
+new primitive adds its section to device-primitives.md.
+
 ## The life of a change
 
 1. **Branch.** Start from a GitHub issue; open one if the work has none.
@@ -109,6 +124,9 @@ The description states:
   GPU, in the `mixed` and `double` modes;
 - the performance against `main` on the same system, if the change can
   affect it;
+- for device code, the shared primitives it uses, and the reason for each
+  hand-written copy where a shared primitive exists (see
+  [A piece of work](#a-piece-of-work));
 - what is left open.
 
 Every PR adds its changelog entry as a fragment,
