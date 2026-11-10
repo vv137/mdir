@@ -1113,8 +1113,16 @@ module. Passing the module explicitly removed the crash. Its next run
 completed lowering and exposed a separate `func.call` versus `call`
 FileCheck spelling error; one correction and rerun passed 1/1. The six
 existing search/refresh lowering fixtures and independent image reference
-then passed 7/7. Device correctness and performance remain unmeasured for
-this correction.
+then passed 7/7. The first five-fixture device job stopped during CPU
+generation of the new conditional input, before either MDIR route ran:
+the chosen dyadic reach coincided with a lattice distance and violated
+the existing nonboundary-input guard (one failed, four skipped). Only the
+new inputs were corrected to odd-over-128 base reaches, 119/128 for
+conditional/coupled and 97/128 for ordering. All three generators passed
+once with minimum squared-distance gaps 0.00103759765625,
+0.0007934603490866721 and 0.00006103515625. The guard, oracle and comparison
+criteria are unchanged. Device correctness and performance remain
+unmeasured for this correction.
 
 ### Target-driven remaining batches and reporting
 
