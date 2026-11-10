@@ -47,12 +47,60 @@ keys, and the parts that `prof.py` takes from them are in
   names. It is removed.
 
 *What does not change.* The lowered module (`mdir emit --stage=lowered`)
-and its LLVM IR are the same byte for byte, so are the keys of the compile
-caches: locations are dropped by a translation without debug information,
-and the mark is in a copy. Checked over the corpus of
-`scripts/builder-equivalence/check.py` (see the PR).
+and its LLVM IR are the same byte for byte, and so are the keys of the
+compile caches: a translation without debug information drops locations,
+and the mark is in a copy. `mdir run` lowers its program before it writes
+the map, so the map does not depend on the compile caches.
+
+*Measured* (the build of this decision against `main` 69d7cafd, on the
+login node's CPU):
+- **Coverage.** `scripts/profile-map/check-corpus.py` over the control
+  files of the corpus of `scripts/builder-equivalence/check.py`, the
+  prepared Amber suite included, on two threads in the mixed and the double
+  mode: 528 cases, 296 with a program, all passing (27,087 regions, each
+  with exactly one entry naming a function of the LLVM IR, and each with a
+  source), none failing. The other 232 make no program: their 122 control
+  files stop on their input (structures and models of a GPU only, files of
+  the test that its RUN lines make, the error cases of the tests), not in
+  the lowering.
+- **Unchanged programs.** `check.py compare` of the module and lowered
+  stages, on the CPU and the GPU targets, for runs and segments: 1044 of
+  1058 cases identical (450 of them stop with the same error in both).
+  The other 14 are expected: the list of the keywords of `[output]` in the
+  error of `test/Driver/keyword-hints.test`, the new key in
+  `test/Lit/profile-map.test`, and six Python cases that fail to import in
+  both builds under the harness's interpreter. The LLVM IR of the
+  dipeptide of the test is the same as `main`'s byte for byte.
+- **The parts of JAC** (the NVE control of `bench.py`: PME on a 64³ grid,
+  cutoff 8 Å, constraints on bonds to hydrogen and rigid water, 2 threads,
+  20 steps, energies every 10). The table below compares, for each region
+  of `mdir_run`, the part that the rules of #836 give it with the part
+  from the map. There are 79 regions in mixed and 75 in double; #836
+  counted 57 and 54 on another schedule, since the number of regions
+  depends on the schedule, not on the classifier.
+
+  | rules of #836 | map | mixed | double |
+  |---|---|---|---|
+  | pairs | pairs | 4 | 4 |
+  | pairs | bonded (the 1-4 pairs) | 3 | 3 |
+  | excluded pairs | excluded pairs | 3 | 3 |
+  | bonded | bonded | 6 | 6 |
+  | bonded or constraints | bonded | 3 | 3 |
+  | bonded or constraints | constraints | 8 | 11 |
+  | other | constraints | 20 | 17 |
+  | other | list builds | 14 | 14 |
+  | other | particles | 17 | 13 |
+  | not seen (`mdir_run..omp_par`) | particles | 1 | 1 |
+
+  Together the rules' "bonded", "bonded or constraints", and the three 1-4
+  "pairs" are the map's "bonded" (12) plus 11 or 14 of its "constraints".
+  The map corrects three things: the 1-4 pairs are bonded; 20 or 17 loops
+  of the constraints are not "other"; and the region without a number is
+  seen. The 20 regions of the templates (PME and the builds of the list)
+  take the same parts from the map as from their names.
 
 *Left open.* The loops of the forces name the potential `energy` and no
 terms: the builder writes the sum of the terms as one potential whose ops
 carry no term (the Lennard-Jones and the Coulomb of the pairs in one
-kernel). The kernels of a device take the same records after #795.
+kernel). The kernels of a device take the same records after #795. A
+program that Python compiles writes no map: it has no key for one.
