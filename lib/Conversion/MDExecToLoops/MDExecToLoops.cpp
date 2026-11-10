@@ -607,6 +607,8 @@ LogicalResult Lowering::addTemplates(Type real, bool centers) {
       continue;
     }
     op.remove();
+    // The loops of a template are named by its function (D[profile-map]).
+    profile::tagTemplate(&op);
     module.push_back(&op);
   }
   return success();
@@ -674,6 +676,8 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
       continue;
     }
     op.remove();
+    // The loops of a template are named by its function (D[profile-map]).
+    profile::tagTemplate(&op);
     module.push_back(&op);
   }
   return success();
@@ -1553,12 +1557,6 @@ LogicalResult Lowering::run() {
   for (func::FuncOp function : functions)
     if (failed(lowerFunction(function)))
       return failure();
-
-  // The loops of the templates are named by their functions
-  // (D[profile-map]).
-  for (auto function : module.getOps<func::FuncOp>())
-    if (function.getSymName().starts_with("mdrt."))
-      profile::tagTemplate(function);
 
   // What is left of the semantic dialects are definitions that nothing
   // refers to any more.
