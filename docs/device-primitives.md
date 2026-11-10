@@ -1013,27 +1013,6 @@ rejects other images before enumerating the proved group's units; bin
 and image traversal itself remains explicit. The final covering predicate
 still uses the original f64 displacement and unchanged reach.
 
-### 4.13 Pair-image strategies (D[rigid-water-template])
-
-`ImageEnumerationEmitter` emits one pass image or pass-first conditional
-neighbors in c/b/a order. Each b/a prefix is re-centered after the
-higher-axis choice. The visitor owns membership and scalar payloads;
-the emitter has no molecule model, class, mask or entry-format knowledge.
-Its preconditions are a reduced finite cell, the strategy's reach bound,
-finite intermediates and correctly rounded gradual-underflow f64
-arithmetic. It is available to ordinary pair and segmented-list callers;
-existing ordinary lowering is unchanged.
-
-The template caller proves these conditions at refresh scope using
-`TemplateImagePolicy`, selects separate outlined functions, and keeps the
-general iterator as a logged fallback. It retains the certified f32
-Cartesian tests and original f64 uncertainty shell. Original query-domain
-filtering and stable canonical publication preserve the exact entry order.
-The current publication adapter uses the template entry ABI; general
-segmented publication is #841. The counted numerical margin, precision
-table and correctness gates are in the
-[decision](decisions/rigid-water-template.md#refresh-selected-image-strategies).
-
 ## 5. Reductions by their algebra
 
 ### 5.1 What is stated

@@ -1,8 +1,0 @@
-# REQUIRES: cuda, python-api, hdf5
-# RUN: rm -rf %t && mkdir -p %t
-# RUN: %mdir_python %S/Inputs/template_search_barostat.py %S/../Driver/Inputs/opc %t mdir-template-image-barostat-test %mdrt_cuda %mdrt %mlir_c_runner_utils mdir-opt mlir-opt mlir-runner | FileCheck %s
-# One predeclared native C-RESCALE trajectory; an unmet crossing stops.
-# This is distinct from the deterministic emitter cell-sequence gate.
-# CHECK: native checkpoint refresh: nearest then conditional; general fallback 0
-# CHECK-NEXT: native refresh/general iterator: {{[1-9][0-9]*}} exact ordered snapshots passed
-# CHECK-NEXT: barostat physical checks: four frames passed unchanged bounds

@@ -52,7 +52,6 @@ without compute-sanitizer: Sanitizer/target-gpu.test
 without compute-sanitizer: Sanitizer/triclinic-gpu.test
 without compute-sanitizer: Sanitizer/tuple-block-sums-gpu.test
 without compute-sanitizer: Sanitizer/water-template-native-gpu.test
-without compute-sanitizer: Sanitizer/water-template-search-images-gpu.test
 without compute-sanitizer: Sanitizer/water-template-prune-gpu.test
 
 # The plugin of learned potentials (-DMDIR_ENABLE_METATOMIC=ON) and what its

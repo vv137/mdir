@@ -1,7 +1,0 @@
-# REQUIRES: cuda
-# RUN: rm -f %t.auto %t.general %t.input.mlir %t.reference.json
-# RUN: %python %S/Inputs/template_search_oracle.py generate %t.input.mlir %t.reference.json --nearest --dispatch
-# RUN: mdir-opt %t.input.mlir '--test-md-template-search=force-general' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.general
-# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.auto
-# RUN: %python %S/Inputs/template_search_ordered.py %t.general %t.auto %t.reference.json --auto-paths=0,0,0,0
-# Independent coverage plus exact raw logical records, all activity phases.

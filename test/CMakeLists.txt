@@ -90,10 +90,6 @@ add_llvm_executable(mdir-template-trajectory-test Driver/TemplateTrajectoryTest.
 llvm_update_compile_flags(mdir-template-trajectory-test)
 target_link_libraries(mdir-template-trajectory-test PRIVATE MDIRSimulation)
 
-add_llvm_executable(mdir-template-image-barostat-test Driver/TemplateImageBarostatTest.cpp)
-llvm_update_compile_flags(mdir-template-image-barostat-test)
-target_link_libraries(mdir-template-image-barostat-test PRIVATE MDIRSimulation ${CMAKE_DL_LIBS})
-
 add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
 llvm_update_compile_flags(mdir-jit-memory-test)
 target_compile_options(mdir-jit-memory-test PRIVATE -fexceptions)
@@ -112,7 +108,6 @@ set(MDIR_TEST_DEPENDS
   mdir-template-report-test
   mdir-template-physics-test
   mdir-template-trajectory-test
-  mdir-template-image-barostat-test
   mdir-model-test
   mdir-dihedral-tunables-test
   mdir-output-rows-test
