@@ -1,0 +1,21 @@
+# Bounded work windows, frame carry, payload tails and stage chunk edges.
+# REQUIRES: cuda, compute-sanitizer
+# RUN: rm -f %t.input.mlir %t.reference.json %t.mlir %t.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
+# RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py generate %t.input.mlir %t.reference.json
+# RUN: mdir-opt %t.input.mlir --test-md-ordered-row-work | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 --log-file %t.memcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.memcheck
+# RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py check %t.records %t.reference.json
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 --log-file %t.initcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.initcheck
+# RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py check %t.records %t.reference.json
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 --log-file %t.racecheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=RACE < %t.racecheck
+# RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py check %t.records %t.reference.json
+# RUN: %compute_sanitizer --tool synccheck --error-exitcode 1 --log-file %t.synccheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.synccheck
+# RUN: %python %S/../Integration/Inputs/ordered_row_work_probe.py check %t.records %t.reference.json
+# CLEAN: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards
+# The existing exact 27-case oracle covers empty/full/odd windows,
+# 127/128/129 jobs, 63/64/65 keeps, frame flush carry and overflow tails.
