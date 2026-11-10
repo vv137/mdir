@@ -814,6 +814,7 @@ there is no restart file besides it.
 | The observed terms and their derivatives | `observables` | every `energy_interval` steps (D189) | columns |
 | The trajectory | `trajectory`, `trajectory_format`, `trajectory_precision`, `trajectory_strings` | every `trajectory_interval` steps | DCD or XTC (D141), or H5MD without loss (D239, [python-h5md.md](python-h5md.md)) |
 | The manifest | `manifest` | at execution start and end | JSON Lines (D168) |
+| The profile map | `profile_map` | once, when the program is compiled: the source of each parallel region of the host ([profile-map.md](profile-map.md), D[profile-map]) | JSON |
 | The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
 
 The manifest has no step interval. The other intervals are those of the compiled schedule (Section 2.2): the files
@@ -955,6 +956,7 @@ subcommands; `mdir-opt` stays a program for developers.
 | `mdir template md` | Prints a control file with every keyword |
 | `mdir check control.toml` | Reads the input and prints what it found: particles, types, the mass and the density, the cell, the degrees of freedom, the integrator and the target; with a topology also the tuples of each kind, the charges and their sum. Compiles nothing, so it gives no energies: a run of zero steps does. |
 | `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |
+| `mdir emit control.toml --profile-map=<file>` | Writes as well the profile map of the lowered program, the source of each parallel region of the host, as JSON ([profile-map.md](profile-map.md), D[profile-map]); with any `--stage` |
 | `mdir emit control.toml --segments` | Prints instead the program of segments that a Python simulation of the same model runs (D215): with the branches of the start and the loop over the parts, built from the control of a simulation (`compiler::getSegmentsControl`); with `--stage`, as above (#568) |
 | `mdir checkpoint <file>` | Prints what a checkpoint holds (`mdir-checkpoint` of M0) |
 | `mdir version` | The version, the LLVM it was built with, the targets it has |
