@@ -1751,10 +1751,10 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
           {"log", "energy", "pull", "free_energy", "observables", "manifest",
-           "trajectory", "trajectory_format", "trajectory_precision",
-           "trajectory_strings",
+           "profile_map", "trajectory", "trajectory_format",
+           "trajectory_precision", "trajectory_strings",
            "checkpoint", "energy_interval", "trajectory_interval",
-           "checkpoint_interval", "profile_map"},
+           "checkpoint_interval"},
           {}))
     return error;
   if (Error error = readPath(table, "trajectory", control.trajectoryFile))
