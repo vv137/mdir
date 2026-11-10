@@ -1214,6 +1214,10 @@ energy and D264 molecular-virial bounds all remain as approved. The
 independent no-step references retain the small-system matrix route.
 The two CPU lowering fixtures (native operand forms and published-group
 replay) passed 2/2 in 1.61 s before the controlled device run.
+Its first submission stopped before launching the native helper because
+the new executable was missing from lit's tool substitutions (one failed,
+22 skipped). Registering that tool and passing the replay tools explicitly
+corrected the harness without changing an input or numerical criterion.
 
 ### Target-driven remaining batches and reporting
 

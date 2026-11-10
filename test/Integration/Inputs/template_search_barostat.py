@@ -18,6 +18,9 @@ parser.add_argument('helper')
 parser.add_argument('runtime_cuda')
 parser.add_argument('runtime_base')
 parser.add_argument('runner_utils')
+parser.add_argument('mdir_opt')
+parser.add_argument('mlir_opt')
+parser.add_argument('mlir_runner')
 args = parser.parse_args()
 args.work.mkdir(parents=True, exist_ok=True)
 declared = dict(steps=100, seed=11, pressure_atm=20000.0,
@@ -105,10 +108,10 @@ for observation in observations:
             snapshot.with_suffix('.generate.log'))
     option = ('--test-md-template-search=reuse-published-groups force-general '
               f'columns-x={captured["columns_x"]} columns-y={captured["columns_y"]}')
-    command(['mdir-opt', str(program), option, '--convert-md-exec-to-gpu'], converted)
-    command(['mlir-opt', '--gpu-lower-to-nvvm-pipeline=cubin-format=isa',
+    command([args.mdir_opt, str(program), option, '--convert-md-exec-to-gpu'], converted)
+    command([args.mlir_opt, '--gpu-lower-to-nvvm-pipeline=cubin-format=isa',
              '--reconcile-unrealized-casts'], lowered, converted)
-    command(['mlir-runner', '-e', 'main', '--entry-point-result=void',
+    command([args.mlir_runner, '-e', 'main', '--entry-point-result=void',
              '--shared-libs=' + ','.join([args.runner_utils, args.runtime_base, args.runtime_cuda])],
             records, lowered)
     command([sys.executable, str(replay), 'check', str(snapshot), str(records)],
