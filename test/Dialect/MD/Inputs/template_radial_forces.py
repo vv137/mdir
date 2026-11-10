@@ -6,9 +6,12 @@ import sys
 
 binary, source = sys.argv[1:]
 original = Path(source).read_text()
-for kind, width in [('ww', 8), ('sw', 5), ('ss', 2), ('anisotropic', 6)]:
+for kind, width in [('ww', 8), ('sw', 5), ('ss', 2), ('three-site', 6), ('anisotropic', 6)]:
     text = original
-    if kind == 'anisotropic':
+    if kind == 'three-site':
+        text = text.replace('@water on(@atoms) arity(4)', '@water on(@atoms) arity(3)').replace('relation<@atoms, 4, ordered, @water>', 'relation<@atoms, 3, ordered, @water>')
+        text = text.replace('%fromA = arith.addf %base, %pa', '%fromA = arith.addf %base, %a1').replace('%d = arith.subf %fromA, %pb', '%d = arith.subf %fromA, %b1')
+    elif kind == 'anisotropic':
         text = text.replace('%e = arith.mulf %half, %r2 : f64',
                             '%axis = vector.extract %d[0] : f64 from vector<3xf64>\n'
                             '    %e = arith.mulf %axis, %axis : f64')
@@ -35,7 +38,7 @@ for kind, width in [('ww', 8), ('sw', 5), ('ss', 2), ('anisotropic', 6)]:
     run = subprocess.run(args, input=text, text=True, capture_output=True)
     assert run.returncode == 0, (kind, run.stderr)
     output = run.stdout
-    assert ('md.template_site_forces' in output) == (kind != 'anisotropic'), kind
+    assert ('md.template_site_forces' in output) == (kind not in ('anisotropic', 'three-site')), kind
     # Fusion retains one cutoff displacement for each of force, energy and virial.
     yields = re.findall(r'md_exec.yield[^\n]* : ([^\n]+)', output)
     assert any(types.count('vector<3xf32>') == width + 3 for types in yields), kind

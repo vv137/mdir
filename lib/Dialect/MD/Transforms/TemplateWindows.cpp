@@ -129,6 +129,7 @@ LogicalResult mdir::md::buildTemplateWindowDerivative(
   ScalarEmitter emit(kernel, loc);
   SmallVector<Value> radialDistances;
   bool radial = true;
+  bool formedSite = arity == 2;
   for (auto [energy, displacement] : llvm::zip_equal(energies, displacements)) {
     Value r2;
     for (Operation *user : displacement.getUsers())
@@ -148,12 +149,16 @@ LogicalResult mdir::md::buildTemplateWindowDerivative(
       if (!definition || definition->getBlock() != &block) return true;
       return proved[value] = llvm::all_of(definition->getOperands(), onlyRadial);
     };
-    radial &= bool(r2) && onlyRadial(energy) &&
-              getTemplateWindowSites(displacement, block, arity,
-                                     source.getAlpha().convertToDouble()).has_value();
+    auto sites = getTemplateWindowSites(displacement, block, arity,
+                                         source.getAlpha().convertToDouble());
+    radial &= bool(r2) && onlyRadial(energy) && sites.has_value();
+    if (sites && arity != 2)
+      formedSite |= (arity == 6 && ((*sites)[0] == 3 || (*sites)[1] == 7)) ||
+                    (arity == 4 && (*sites)[1] == 4);
     radialDistances.push_back(r2);
   }
-  if (radial && !virial)
+  bool siteLayout = radial && formedSite;
+  if (siteLayout && !virial)
     derived->setAttr(kTemplateSiteForces, builder.getDenseI32ArrayAttr({1, 1, 1}));
   SmallVector<Value> contributions;
   for (auto [pair, energy] : llvm::enumerate(energies)) {
@@ -176,7 +181,9 @@ LogicalResult mdir::md::buildTemplateWindowDerivative(
       } else {
         auto sites = *getTemplateWindowSites(displacements[pair], block, arity,
                                              source.getAlpha().convertToDouble());
-        unsigned slots = arity == 6 ? 8 : arity == 4 ? 5 : 2;
+        unsigned slots = siteLayout ? (arity == 6 ? 8 : arity == 4 ? 5 : 2) : arity;
+        if (!siteLayout && arity == 6)
+          for (unsigned &site : sites) if (site >= 4) --site;
         for (unsigned site = 0; site != slots; ++site)
           contributions.push_back(site == sites[0] ? force : site == sites[1]
               ? emit.neg(force) : emit.constant(0.0, vector));
