@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -257,7 +258,18 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   Value grid = arith::MaxUIOp::create(b, loc, one,
       arith::DivUIOp::create(b, loc,
           arith::AddIOp::create(b, loc, threads, ix(b, 63)), block));
-  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
+  auto sharedSpace = gpu::AddressSpaceAttr::get(b.getContext(),
+      gpu::GPUDialect::getWorkgroupAddressSpace());
+  auto pointCacheType = MemRefType::get({32, 3}, b.getF64Type(),
+      MemRefLayoutAttrInterface(), sharedSpace);
+  auto idCacheType = MemRefType::get({32}, b.getI32Type(),
+      MemRefLayoutAttrInterface(), sharedSpace);
+  auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one,
+      /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+      /*asyncDependencies=*/{},
+      /*workgroupAttributions=*/TypeRange{pointCacheType, idCacheType});
+  Value pointCache = launch.getWorkgroupAttributionBBArgs()[0];
+  Value idCache = launch.getWorkgroupAttributionBBArgs()[1];
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
       arith::MulIOp::create(k, loc, launch.getBlockIds().x, block), launch.getThreadIds().x);
@@ -301,6 +313,25 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                                     firstUnit, word(search, loc, 0));
           Value firstPoint = loadElement(search, loc, v.spatial.points, asIndex(search, loc, safeUnit));
           auto pointType = cast<VectorType>(firstPoint.getType());
+          // Immutable per-row anchors, following the shared-anchor search
+          // structure of the measured prototype while retaining native f64.
+          // Only the lower half writes; duplicate upper-half stores would race.
+          Value cacheBase = arith::MulIOp::create(search, loc,
+              arith::DivUIOp::create(search, loc,
+                  launch.getThreadIds().x, ix(search, 32)), ix(search, 16));
+          Value writesCache = arith::CmpIOp::create(search, loc,
+              arith::CmpIPredicate::ult, lane, word(search, loc, 16));
+          scf::IfOp::create(search, loc, writesCache, [&](OpBuilder &store, Location) {
+            Value slot = arith::AddIOp::create(store, loc, cacheBase, laneIndex);
+            for (int64_t axis = 0; axis != 3; ++axis)
+              memref::StoreOp::create(store, loc,
+                  vector::ExtractOp::create(store, loc, firstPoint, axis),
+                  pointCache, ValueRange{slot, ix(store, axis)});
+            memref::StoreOp::create(store, loc, safeUnit, idCache, ValueRange{slot});
+            scf::YieldOp::create(store, loc);
+          });
+          // The sibling row may be absent/inactive: synchronize only this warp.
+          NVVM::SyncWarpOp::create(search, loc, word(search, loc, -1));
           auto firstFrame = emitSpatialReferenceFrame(search, loc, firstPoint);
           // Query each distinct frame of this at-most-sixteen-unit group:
           // lattice-frame subset in the wrapped key frame. The stored image
@@ -590,12 +621,19 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                         Value shifted = arith::AddFOp::create(units, loc, normalizedPartner, image);
                                         Value mask = word(units, loc, 0);
                                         for (unsigned i = 0; i != 16; ++i) {
-                                          Value pointI = shuffle(units, loc, firstPoint, i);
-                                          Value unitI = shuffle(units, loc, safeUnit, i);
-                                          Value validI = shuffle(units, loc,
-                                              arith::ExtUIOp::create(units, loc, units.getI32Type(), member), i);
-                                          validI = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
-                                                                           validI, word(units, loc, 0));
+                                          Value slot = arith::AddIOp::create(units, loc,
+                                              cacheBase, ix(units, i));
+                                          SmallVector<Value, 3> coordinates;
+                                          for (int64_t axis = 0; axis != 3; ++axis)
+                                            coordinates.push_back(memref::LoadOp::create(units, loc,
+                                                pointCache, ValueRange{slot, ix(units, axis)}));
+                                          Value pointI = vector::FromElementsOp::create(units, loc,
+                                              pointType, coordinates);
+                                          Value unitI = load(units, loc, idCache, slot);
+                                          Value validI = arith::CmpIOp::create(units, loc,
+                                              arith::CmpIPredicate::ne,
+                                              arith::AndIOp::create(units, loc, members,
+                                                  word(units, loc, int64_t(1) << i)), word(units, loc, 0));
                                           Value owns = arith::OrIOp::create(units, loc, sw,
                                               arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult,
                                                   arith::AddIOp::create(units, loc, first, ix(units, i)), partnerPlace));
