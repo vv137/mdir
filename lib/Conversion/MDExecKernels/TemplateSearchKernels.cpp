@@ -826,13 +826,15 @@ Value mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
   gpu::WaitOp::create(b, loc, Type(), ValueRange{copied});
   Value maxFrame = arith::BitcastOp::create(b, loc, b.getF64Type(),
       load(b, loc, frameHost, ix(b, 0)));
-  Value maxReach = arith::AddFOp::create(b, loc, v.baseReach,
-      arith::MulFOp::create(b, loc, real(b, 2), v.extent));
+  Value maxReach;
   if (v.reaches) {
     maxReach = vector::ExtractOp::create(b, loc, v.reaches, 0);
     for (int64_t kind = 1; kind != 3; ++kind)
       maxReach = arith::MaximumFOp::create(b, loc, maxReach,
           vector::ExtractOp::create(b, loc, v.reaches, kind));
+  } else {
+    maxReach = arith::AddFOp::create(b, loc, v.baseReach,
+        arith::MulFOp::create(b, loc, real(b, 2), v.extent));
   }
   auto policy = emitTemplateImagePolicy(b, loc, v.cell, maxReach, maxFrame);
   Value path = v.forcedImagePath < 0 ? policy.path : integer(b, loc, v.forcedImagePath);
