@@ -28,9 +28,12 @@ std::array<Value, 2> mdir::kernels::emitTemplateColumnGrid(
   Value population = arith::UIToFPOp::create(b, loc, b.getF64Type(),
       arith::IndexCastOp::create(b, loc, b.getI64Type(),
           arith::MaxUIOp::create(b, loc, units, ix(1))));
-  Value edge = math::CbrtOp::create(b, loc,
+  // pow is already lowered by the native host pipeline; introducing a
+  // new math.cbrt here would require changing that shared pipeline.
+  Value edge = math::PowFOp::create(b, loc,
       arith::DivFOp::create(b, loc,
-          arith::MulFOp::create(b, loc, real(16), volume), population));
+          arith::MulFOp::create(b, loc, real(16), volume), population),
+      real(1.0 / 3.0));
   Value widths = isTriclinic(cell) ? emitFaceWidths(b, loc, cell) : cell;
   Value budget = arith::DivUIOp::create(b, loc, bins, ix(2));
   auto dimension = [&](int64_t axis, Value limit) -> Value {
