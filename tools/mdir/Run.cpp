@@ -1249,7 +1249,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         columns.push_back({(term.name + "." + quantity).str(), unit.str()});
       };
       if (term.arity == 2) {
-        // The line of units of the file, not printed (D[ascii-cli-output]).
+        // The line of units of the file, not printed (D396).
         for (StringRef quantity : {"r", "dx", "dy", "dz"})
           add(quantity, "Å"); // ascii-exempt
         add("energy", "kcal/mol");

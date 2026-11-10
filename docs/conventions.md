@@ -76,7 +76,7 @@ part 2 of #805.
 The text that the `mdir` tool prints to the terminal (the summary of
 `mdir check`, the log of `mdir run`, which its log file copies, and the
 warnings and errors of the libraries that the tool reports) is ASCII only
-(D[ascii-cli-output], #812). A unit or a symbol is spelled as follows:
+(D396, #812). A unit or a symbol is spelled as follows:
 
 | Unicode | Printed | Example |
 |---|---|---|

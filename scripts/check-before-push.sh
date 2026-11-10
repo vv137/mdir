@@ -46,7 +46,7 @@ control_chars() {
   [ "$a" -eq 0 ] && [ "$b" -eq 0 ]
 }
 
-# The text that the mdir tool prints is ASCII (D[ascii-cli-output], #812;
+# The text that the mdir tool prints is ASCII (D396, #812;
 # the spellings are in docs/conventions.md, Units and symbols in printed
 # text): a line of tools/mdir/*.cpp that is not a comment (it begins with
 # //, /*, or * and a space) holds no string literal, "...", with a byte
