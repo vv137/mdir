@@ -33,7 +33,7 @@ SmallVector<Value> mdir::md::emitTemplateWindowBody(
   auto yield = cast<YieldOp>(source.getTerminator());
   bool gather = isa<GatherTemplateWindowOp>(op);
   unsigned arity = cast<RelationType>(op->getOperand(0).getType()).getArity();
-  unsigned stride = gather ? arity : 1;
+  unsigned stride = gather ? getTemplateForceArity(op, arity) : 1;
   unsigned pairs = yield.getNumOperands() / (stride + 1);
   double cutoff = op->getAttrOfType<FloatAttr>("cutoff").getValueAsDouble();
   Location loc = op->getLoc();
@@ -65,7 +65,15 @@ SmallVector<Value> mdir::md::emitTemplateWindowBody(
           for (Type type : types) zeros.push_back(emit.constant(0.0, type));
           scf::YieldOp::create(body, loc, zeros);
         });
-    llvm::append_range(results, guarded.getResults());
+    if (gather && stride != arity) {
+      // The semantic reference scatters real members. The native scheduler
+      // retains these site slots until its accumulated write boundary.
+      auto values = guarded.getResults();
+      unsigned first = arity == 6 ? 4 : 1;
+      double alpha = op->getAttrOfType<FloatAttr>("alpha").getValueAsDouble();
+      llvm::append_range(results, emitTemplateForceTranspose(builder, loc, values.take_front(first), alpha));
+      llvm::append_range(results, emitTemplateForceTranspose(builder, loc, values.drop_front(first), alpha));
+    } else llvm::append_range(results, guarded.getResults());
   }
   return results;
 }
@@ -119,8 +127,62 @@ LogicalResult mdir::md::buildTemplateWindowDerivative(
   SmallVector<Value> displacements(yield.getOperands().drop_front(pairs));
   OpBuilder kernel(yield);
   ScalarEmitter emit(kernel, loc);
+  SmallVector<Value> radialDistances;
+  bool radial = true;
+  for (auto [energy, displacement] : llvm::zip_equal(energies, displacements)) {
+    Value r2;
+    for (Operation *user : displacement.getUsers())
+      if (auto product = dyn_cast<arith::MulFOp>(user);
+          product && product.getLhs() == displacement && product.getRhs() == displacement)
+        for (Operation *use : product.getResult().getUsers())
+          if (auto norm = dyn_cast<vector::ReductionOp>(use);
+              norm && norm.getKind() == vector::CombiningKind::ADD)
+            r2 = norm.getResult();
+    llvm::DenseMap<Value, bool> proved;
+    std::function<bool(Value)> onlyRadial = [&](Value value) -> bool {
+      if (value == r2) return true;
+      if (auto found = proved.find(value); found != proved.end()) return found->second;
+      if (auto arg = dyn_cast<BlockArgument>(value))
+        return arg.getOwner() != &block || arg.getArgNumber() >= coordinates.size();
+      Operation *definition = value.getDefiningOp();
+      if (!definition || definition->getBlock() != &block) return true;
+      return proved[value] = llvm::all_of(definition->getOperands(), onlyRadial);
+    };
+    radial &= bool(r2) && onlyRadial(energy) &&
+              getTemplateWindowSites(displacement, block, arity,
+                                     source.getAlpha().convertToDouble()).has_value();
+    radialDistances.push_back(r2);
+  }
+  if (radial && !virial)
+    derived->setAttr(kTemplateSiteForces, builder.getDenseI32ArrayAttr({1, 1, 1}));
   SmallVector<Value> contributions;
-  for (Value energy : energies) {
+  for (auto [pair, energy] : llvm::enumerate(energies)) {
+    if (radial) {
+      Value slope;
+      ScalarDerivative derivative(kernel, radialDistances[pair]);
+      if (failed(derivative.get(energy, slope))) { derived->erase(); return failure(); }
+      Value factor = emit.scale(-2.0, emit.mul(weight, slope));
+      Value force = factor ? emit.mul(
+          vector::BroadcastOp::create(kernel, loc, vector, factor), displacements[pair])
+          : emit.constant(0.0, vector);
+      if (virial) {
+        SmallVector<Value> tensorValues;
+        for (unsigned a = 0; a != 3; ++a)
+          for (unsigned b = 0; b != 3; ++b)
+            tensorValues.push_back(emit.mul(
+                vector::ExtractOp::create(kernel, loc, displacements[pair], a),
+                vector::ExtractOp::create(kernel, loc, force, b)));
+        contributions.push_back(vector::FromElementsOp::create(kernel, loc, tensor, tensorValues));
+      } else {
+        auto sites = *getTemplateWindowSites(displacements[pair], block, arity,
+                                             source.getAlpha().convertToDouble());
+        unsigned slots = arity == 6 ? 8 : arity == 4 ? 5 : 2;
+        for (unsigned site = 0; site != slots; ++site)
+          contributions.push_back(site == sites[0] ? force : site == sites[1]
+              ? emit.neg(force) : emit.constant(0.0, vector));
+      }
+      continue;
+    }
     SmallVector<Value> forces(arity);
     SmallVector<Value> elements(9);
     for (auto [index, members] : llvm::enumerate(coordinates)) {

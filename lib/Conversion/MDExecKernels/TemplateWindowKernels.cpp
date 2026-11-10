@@ -1,4 +1,5 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -190,6 +191,9 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
   constexpr unsigned second[] = {3, 3, 1};
   unsigned arity = first[tag] + second[tag];
   unsigned outs = loop.getOuts().size();
+  bool siteForces = outs && mdir::md::getTemplateForceArity(loop, arity, 0, outs) != arity;
+  unsigned firstSlots = first[tag] + (siteForces && first[tag] == 3);
+  unsigned secondSlots = second[tag] + (siteForces && second[tag] == 3);
   unsigned columns = outs + loop.getReduce().size();
   Block &source = loop->getRegion(tag).front();
   Operation *yield = source.getTerminator();
@@ -199,14 +203,14 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
   TemplateContribution result;
   if (outs) {
     Type force = mdir::md_exec::getKernelValueType(loop.getOuts()[0].getType());
-    result.firstForces.assign(first[tag], zero(force));
-    result.secondForces.assign(second[tag], zero(force));
+    result.firstForces.assign(firstSlots, zero(force));
+    result.secondForces.assign(secondSlots, zero(force));
   }
   for (Value initial : loop.getReduce()) result.sums.push_back(zero(initial.getType()));
   unsigned offset = 0;
   for (unsigned column = 0; column != columns; ++column) {
     bool scatter = column < outs;
-    unsigned stride = scatter ? arity : 1;
+    unsigned stride = scatter ? mdir::md::getTemplateForceArity(loop, arity, column, outs) : 1;
     unsigned pairs = loop.getPairs()[tag * columns + column];
     for (unsigned pair = 0; pair != pairs; ++pair) {
       Value displacement = materializeWindowValue(builder,
@@ -236,8 +240,8 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
           });
       for (unsigned member = 0; member != stride; ++member) {
         Value *destination = !scatter ? &result.sums[column - outs]
-            : member < first[tag] ? &result.firstForces[member]
-                                 : &result.secondForces[member - first[tag]];
+            : member < firstSlots ? &result.firstForces[member]
+                                 : &result.secondForces[member - firstSlots];
         *destination = arith::AddFOp::create(builder, loc, *destination,
                                              guarded.getResult(member));
       }
@@ -301,7 +305,11 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   assert(cast<VectorType>(forceType).getElementType().isF32());
   auto firstFrame = prepareTemplateFrame(builder, loc, unit.first,
                                          unit.hasSite, unit.alpha);
-  unsigned fi = unit.forces ? ni : 0, fj = unit.forces ? nj : 0;
+  unsigned fi = unit.forces ? ni + (unit.siteForces && ni == 3) : 0;
+  unsigned fj = unit.forces ? nj + (unit.siteForces && nj == 3) : 0;
+  auto realForces = [&](OpBuilder &at, ValueRange values) {
+    return mdir::md::emitTemplateForceTranspose(at, loc, values, unit.alpha);
+  };
   SmallVector<Type> resultTypes(fi + fj, forceType);
   llvm::append_range(resultTypes, unit.sumTypes);
   Value u = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 15));
@@ -388,7 +396,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         if (unit.forces)
           scf::IfOp::create(batch, loc, has, [&](OpBuilder &body, Location) {
             // Sixteen rotations restore the original partner and its force.
-            writeSecond(body, entry, final.slice(fjAt, fj));
+            writeSecond(body, entry, realForces(body, final.slice(fjAt, fj)));
             scf::YieldOp::create(body, loc);
           });
         scf::YieldOp::create(batch, loc, final.drop_front(fiAt));
@@ -403,7 +411,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                                             unit.lane, word(builder, loc, 16));
     Value writes = arith::AndIOp::create(builder, loc, lowerHalf, unit.firstValid);
     scf::IfOp::create(builder, loc, writes, [&](OpBuilder &body, Location) {
-      writeFirst(body, combined);
+      writeFirst(body, realForces(body, combined));
       scf::YieldOp::create(body, loc);
     });
   }

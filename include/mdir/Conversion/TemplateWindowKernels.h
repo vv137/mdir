@@ -89,6 +89,8 @@ struct TemplateUnit {
   llvm::SmallVector<mlir::Type, 2> sumTypes;
   bool hasSite = false;
   double alpha = 0.0;
+  /// Retain O/H1/H2/E forces until the write boundary, then apply rule A.
+  bool siteForces = false;
 };
 /// Borrowed views of the one pair arena and the fixed-size unit state.
 /// `work` indexes four-word work records at `workOffset`; entries are

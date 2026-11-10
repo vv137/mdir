@@ -257,17 +257,45 @@ static void mergeOuts(TemplateForOp loop, unsigned into, unsigned from) {
       loop.getIns(), destinations, loop.getReduce(), loop.getScratch(),
       builder.getDenseI32ArrayAttr(pairs), loop.getCutoffAttr(),
       loop.getExtentAttr(), loop.getAlphaAttr());
+  auto oldFlags = loop->getAttrOfType<DenseI32ArrayAttr>(md::kTemplateSiteForces);
+  SmallVector<int32_t> flags;
+  for (unsigned tag = 0; tag != 3; ++tag)
+    for (unsigned column = 0; column != outs; ++column) {
+      if (column == from) continue;
+      int32_t flag = oldFlags ? oldFlags[tag * outs + column] : 0;
+      if (column == into) flag &= oldFlags ? oldFlags[tag * outs + from] : 0;
+      flags.push_back(flag);
+    }
+  if (oldFlags)
+    merged->setAttr(md::kTemplateSiteForces, builder.getDenseI32ArrayAttr(flags));
   constexpr unsigned arities[] = {6, 4, 2};
   for (unsigned tag = 0; tag != 3; ++tag) {
     Region &region = merged->getRegion(tag);
     region.takeBody(loop->getRegion(tag));
     Operation *yield = region.front().getTerminator();
-    SmallVector<ValueRange> contributions, displacements;
+    SmallVector<SmallVector<Value>> contributions;
+    SmallVector<ValueRange> displacements;
     unsigned offset = 0;
     for (unsigned column = 0; column != columns; ++column) {
       unsigned count = loop.getPairs()[tag * columns + column];
-      unsigned values = count * (column < outs ? arities[tag] : 1);
-      contributions.push_back(yield->getOperands().slice(offset, values));
+      unsigned stride = column < outs
+          ? md::getTemplateForceArity(loop, arities[tag], column, outs) : 1;
+      unsigned values = count * stride;
+      SmallVector<Value> contribution;
+      bool mergedReal = (column == into || column == from) &&
+          !flags[tag * (outs - 1) + (into < from ? into : into - 1)];
+      if (column < outs && mergedReal && stride != arities[tag]) {
+        OpBuilder body(yield);
+        unsigned first = arities[tag] == 6 ? 4 : 1;
+        for (unsigned pair = 0; pair != count; ++pair) {
+          auto sites = yield->getOperands().slice(offset + pair * stride, stride);
+          llvm::append_range(contribution, md::emitTemplateForceTranspose(
+              body, loc, sites.take_front(first), loop.getAlpha().convertToDouble()));
+          llvm::append_range(contribution, md::emitTemplateForceTranspose(
+              body, loc, sites.drop_front(first), loop.getAlpha().convertToDouble()));
+        }
+      } else llvm::append_range(contribution, yield->getOperands().slice(offset, values));
+      contributions.push_back(std::move(contribution));
       displacements.push_back(yield->getOperands().slice(offset + values, count));
       offset += values + count;
     }

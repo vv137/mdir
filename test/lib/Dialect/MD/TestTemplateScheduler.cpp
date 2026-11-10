@@ -6,6 +6,7 @@
 #include "mdir/Conversion/TemplateSpatialKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -132,6 +133,7 @@ struct TestTemplateScheduler
     TemplateUnit unit{TemplatePairClass::WaterWater, lane, word(k, 0), word(k, 35), valid};
     unit.first = frame(k, first, false);
     unit.hasSite = true; unit.alpha = loop.getAlpha().convertToDouble();
+    unit.siteForces = mdir::md::getTemplateForceArity(loop, 6, 0, loop.getOuts().size()) != 6;
     unit.sumTypes = {f64, VectorType::get({9}, f64)};
     Block &source = loop.getWater().front();
     IRMapping captures;

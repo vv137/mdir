@@ -889,6 +889,15 @@ static bool fuseTemplateLoopsOnce(Block &block) {
           first.getCell(), inputs.getArrayRef(), outs, reduce, ValueRange(),
           builder.getDenseI32ArrayAttr(pairs), first.getCutoffAttr(),
           first.getExtentAttr(), first.getAlphaAttr());
+      SmallVector<int32_t> siteFlags;
+      for (unsigned tag = 0; tag != 3; ++tag)
+        for (TemplateForOp source : {first, second}) {
+          auto flags = source->getAttrOfType<DenseI32ArrayAttr>(md::kTemplateSiteForces);
+          for (unsigned column = 0; column != source.getOuts().size(); ++column)
+            siteFlags.push_back(flags ? flags[tag * source.getOuts().size() + column] : 0);
+        }
+      if (llvm::any_of(siteFlags, [](int32_t flag) { return flag != 0; }))
+        fused->setAttr(md::kTemplateSiteForces, builder.getDenseI32ArrayAttr(siteFlags));
       constexpr unsigned arities[] = {6, 4, 2};
       constexpr unsigned geometry[] = {5, 3, 1};
       for (unsigned tag = 0; tag != 3; ++tag) {
@@ -920,7 +929,7 @@ static bool fuseTemplateLoopsOnce(Block &block) {
           for (unsigned column = 0; column != columns; ++column) {
             bool scatter = column < loop.getOuts().size();
             unsigned count = loop.getPairs()[tag * columns + column] *
-                             (1 + (scatter ? arities[tag] : 1));
+                             (1 + (scatter ? md::getTemplateForceArity(loop, arities[tag], column, loop.getOuts().size()) : 1));
             auto &yielded = scatter ? yieldedOuts : yieldedSums;
             for (Value value : from.getTerminator()->getOperands().slice(offset, count))
               yielded.push_back(mapping.lookupOrDefault(value));

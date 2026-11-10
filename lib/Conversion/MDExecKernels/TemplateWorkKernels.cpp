@@ -2,6 +2,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -96,6 +97,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
     unit.forces = !loop.getOuts().empty();
     unit.hasSite = buffers.hasSite;
     unit.alpha = loop.getAlpha().convertToDouble();
+    unit.siteForces = unit.forces && mdir::md::getTemplateForceArity(
+        loop, arity, 0, loop.getOuts().size()) != arity;
     llvm::append_range(unit.sumTypes, sumTypes);
     auto write = [&](OpBuilder &body, Value unit, ValueRange values) {
       if (values.empty()) return;

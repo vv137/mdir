@@ -1287,3 +1287,25 @@ no virtual sites or generated code) and
 [[Nikolskiy2020]](../references.md#nikolskiy2020) (TIP4P on a GPU: the
 virtual charge placed once per molecule and stored, its force spread by a
 second kernel).
+
+### Radial force construction and site accumulation
+
+Following the isolated anchor-cache experiment (discarded for no clear
+measured gain), the derivative-window constructor recognizes energy that
+depends on its site displacement only through the existing squared norm.
+It differentiates that scalar expression and forms
+$\mathbf F=-2wU'(r^2)\mathbf d$. General differentiation is unchanged;
+unrecognized window expressions retain their existing derivative path.
+The common pair-kernel-body interface supplies D94 radial extraction for
+both ordinary pairs and template windows.
+
+The constructed force layout carries O/H1/H2/E interaction-site forces
+through accumulation, then applies rule A once at each molecular write:
+$\mathbf F_O \mathrel{+}= (1-2\alpha)\mathbf F_E$ and
+$\mathbf F_{H_i} \mathrel{+}= \alpha\mathbf F_E$.
+Site displacements, per-site cutoffs and the strain chain rule retain the
+candidate image. The transpose does not use the normalized bisector.
+Mixed pair arithmetic, site accumulators and the transpose are f32;
+energy and virial accumulators remain f64 and coverage/pruning geometry
+remains f64. Reassociation may change mixed bits; every existing physical
+bound is unchanged. Deterministic mode retains the general path.

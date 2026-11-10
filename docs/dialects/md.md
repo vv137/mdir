@@ -607,6 +607,12 @@ displacements. Each force group is included only inside that site's
 cutoff. The four-site stored particle is absent: the body's constant
 placement arithmetic supplies rule A's transpose to O, H1 and H2.
 
+A constructed radial derivative may carry `md.template_site_forces`,
+three binary class flags. In that layout each water contributes
+O/H1/H2/E slots (WW has 8, SW 5, SS 2) instead of real-member slots.
+These are interaction-site forces; scatter applies the constant rule-A
+transpose after accumulation. The stored field still has real members.
+
 Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 #### Attributes:

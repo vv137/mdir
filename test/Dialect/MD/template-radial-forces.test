@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/template_radial_forces.py mdir-opt %S/../../Conversion/MDToMDExec/template-execution-site.mlir | FileCheck %s
+# CHECK: radial construction: WW/SW/SS and anisotropic fallback passed
