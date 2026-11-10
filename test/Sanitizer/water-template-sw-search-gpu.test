@@ -1,0 +1,28 @@
+# Real SW search: tilted, reframed, partial groups/windows and retained epochs.
+# REQUIRES: cuda, compute-sanitizer
+# RUN: rm -f %t.input.mlir %t.reference.json %t.mlir %t.records %t.unsplit.mlir %t.unsplit.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
+# RUN: %python %S/../Integration/Inputs/template_sw_ordered.py generate %t.input.mlir %t.reference.json --triclinic --reframed
+# RUN: mdir-opt %t.input.mlir --test-md-template-search --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: mdir-opt %t.input.mlir --test-md-template-search='force-unsplit-sw=true' --test-md-template-compaction --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.unsplit.mlir
+# RUN: mlir-runner %t.unsplit.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.unsplit.records
+# RUN: %python %S/../Integration/Inputs/template_search_oracle.py check %t.unsplit.records %t.reference.json
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 --log-file %t.memcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.memcheck
+# RUN: %python %S/../Integration/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/../Integration/Inputs/template_sw_ordered.py compare %t.records %t.unsplit.records
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 --log-file %t.initcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.initcheck
+# RUN: %python %S/../Integration/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/../Integration/Inputs/template_sw_ordered.py compare %t.records %t.unsplit.records
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 --log-file %t.racecheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=RACE < %t.racecheck
+# RUN: %python %S/../Integration/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/../Integration/Inputs/template_sw_ordered.py compare %t.records %t.unsplit.records
+# RUN: %compute_sanitizer --tool synccheck --error-exitcode 1 --log-file %t.synccheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: FileCheck %s --check-prefix=CLEAN < %t.synccheck
+# RUN: %python %S/../Integration/Inputs/template_search_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/../Integration/Inputs/template_sw_ordered.py compare %t.records %t.unsplit.records
+# CLEAN: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards
+# The independent coverage checker is unchanged; sorted comparison keeps
+# every entry field and multiplicity, group/class counts, chunks and flags.
