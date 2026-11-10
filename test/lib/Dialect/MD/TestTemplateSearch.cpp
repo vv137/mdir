@@ -26,6 +26,11 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
   Option<bool> forceGeneral{*this, "force-general",
       llvm::cl::desc("Force the retained general image iterator for exact comparisons"),
       llvm::cl::init(false)};
+  Option<bool> reusePublished{*this, "reuse-published-groups",
+      llvm::cl::desc("Replay the owner's committed descriptors without planning or sorting"),
+      llvm::cl::init(false)};
+  Option<unsigned> columnsX{*this, "columns-x", llvm::cl::init(3)};
+  Option<unsigned> columnsY{*this, "columns-y", llvm::cl::init(2)};
   Option<double> baseReach{*this, "base-reach",
       llvm::cl::desc("Anchor-list base reach of the search fixture"),
       llvm::cl::init(99.0 / 128)};
@@ -41,8 +46,10 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
   void runOnOperation() final {
     ModuleOp module = getOperation();
     auto function = module.lookupSymbol<func::FuncOp>("search_seed");
-    if (!function || !function.isExternal() || function.getNumArguments() != 6) {
-      module.emitError("search fixture expects the six-argument search_seed declaration");
+    if (!function || !function.isExternal() ||
+        function.getNumArguments() != (reusePublished ? 7u : 6u) ||
+        (reusePublished && (refresh || !forceGeneral || !columnsX || !columnsY))) {
+      module.emitError("search fixture expects six arguments, or seven with published groups, positive grid, force-general and no refresh");
       return signalPassFailure();
     }
     Block *entry = function.addEntryBlock();
@@ -100,8 +107,8 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.atomActive = entry->getArgument(5);
     v.spatial.waters = layout(TEMPLATE_LAYOUT_WATERS);
     v.spatial.atoms = layout(TEMPLATE_LAYOUT_ATOMS);
-    v.spatial.columnsX = createIndex(b, loc, 3);
-    v.spatial.columnsY = createIndex(b, loc, 2);
+    v.spatial.columnsX = createIndex(b, loc, columnsX);
+    v.spatial.columnsY = createIndex(b, loc, columnsY);
     if (refresh) {
       TemplateRefreshInputs input{handle, v.spatial.points, v.cell,
           createReal(b, loc, b.getF64Type(), baseReach.getValue()),
@@ -130,7 +137,20 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.spatial.starts = view(TEMPLATE_LAYOUT_SPATIAL_STARTS);
     v.spatial.cursors = view(TEMPLATE_LAYOUT_SPATIAL_CURSORS);
     v.spatial.scanScratch = view(TEMPLATE_LAYOUT_BUILD_SCAN_SCRATCH);
-    v.build.groups = emitPrepareTemplateGroups(b, loc, module, handle, v.spatial, v.cell);
+    if (reusePublished) {
+      v.spatial.sortScratch = call("mdrtTemplatePairsPlanningView",
+          ValueRange{handle, integer(TEMPLATE_PLAN_SORT)}, device, true);
+      auto groupView = [&](int64_t slot) {
+        return call("mdrtTemplatePairsGroupView", ValueRange{handle, integer(slot)}, device, true);
+      };
+      v.build.groups = {groupView(TEMPLATE_GROUP_STARTS), groupView(TEMPLATE_GROUP_LENGTHS),
+          groupView(TEMPLATE_GROUP_COLUMNS), groupView(TEMPLATE_GROUP_AT_START),
+          layout(TEMPLATE_LAYOUT_WATER_GROUPS), layout(TEMPLATE_LAYOUT_ATOM_GROUPS),
+          layout(TEMPLATE_LAYOUT_ROWS)};
+      v.reaches = entry->getArgument(6);
+    } else {
+      v.build.groups = emitPrepareTemplateGroups(b, loc, module, handle, v.spatial, v.cell);
+    }
     v.build.rows = v.build.groups.rows;
     v.build.arena = call("mdrtTemplatePairsBuffer", ValueRange{handle}, device, true);
     v.build.unitCapacity = layout(TEMPLATE_LAYOUT_UNITS);
@@ -140,6 +160,16 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.build.stageEntries = view(TEMPLATE_LAYOUT_STAGE_ENTRIES);
     v.build.counts = view(TEMPLATE_LAYOUT_BUILD_COUNTS);
     v.build.workCounts = view(TEMPLATE_LAYOUT_BUILD_WORK_COUNTS);
+    v.build.entryOffsets = view(TEMPLATE_LAYOUT_BUILD_ENTRY_OFFSETS);
+    v.build.workOffsets = view(TEMPLATE_LAYOUT_BUILD_WORK_OFFSETS);
+    v.build.scanScratch = v.spatial.scanScratch;
+    v.build.innerRows = view(TEMPLATE_LAYOUT_INNER_ROWS);
+    v.build.outerUnits = view(TEMPLATE_LAYOUT_OUTER_UNITS);
+    v.build.innerUnits = view(TEMPLATE_LAYOUT_INNER_UNITS);
+    v.build.innerEntries = view(TEMPLATE_LAYOUT_INNER_ENTRIES);
+    v.build.waters = v.spatial.waters;
+    v.build.atoms = v.spatial.atoms;
+    v.build.scanBlocks = v.spatial.scanBlocks;
     v.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
     v.excludedRows = call("mdrtTemplatePairsMetadata",
         ValueRange{handle, integer(TEMPLATE_SS_ROWS)}, device, true);
@@ -148,6 +178,18 @@ struct TestTemplateSearch : PassWrapper<TestTemplateSearch, OperationPass<Module
     v.baseReach = createReal(b, loc, b.getF64Type(), baseReach.getValue());
     v.extent = createReal(b, loc, b.getF64Type(), extent.getValue());
     emitSearchTemplatePairs(b, loc, module, v);
+    if (reusePublished) {
+      auto hostType = MemRefType::get({4}, wide);
+      Value host = memref::AllocOp::create(b, loc, hostType);
+      transfer(host, v.counters);
+      Value flags = memref::LoadOp::create(b, loc, host,
+          ValueRange{createIndex(b, loc, TEMPLATE_COUNTER_FLAGS)});
+      Value clean = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+          flags, integer(0));
+      cf::AssertOp::create(b, loc, clean, "published replay search flags must be zero");
+      memref::DeallocOp::create(b, loc, host);
+      emitCompactTemplatePairs(b, loc, v.build);
+    }
     transfer(entry->getArgument(2), v.spatial.places);
     func::ReturnOp::create(b, loc);
   }

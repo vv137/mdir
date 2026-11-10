@@ -1163,6 +1163,58 @@ of the declared fixture's refresh schedule and selector inputs using the
 preserved frames before proposing any new device run. Sanitizer and
 performance measurements for this correction have not run.
 
+#### Ruling: refresh-time selection and the redesigned barostat gate
+
+The maintainer ruled that the observation above is **not a correctness
+defect**. An image strategy is selected only at a refresh. Between
+refreshes D80, including the cell scaling $\min(\mathbf m)$, keeps the
+previous list covering all physical site pairs within $r_c$. In
+particular, the deformed built reach minus the current physical reach,
+with the displacement allowance, determines validity; crossing half the
+current diagonal alone does not invalidate a list. A list built under
+one image strategy remains valid until the next refresh. Only that next
+refresh re-selects the strategy. The two observed refreshes preceded the
+crossing. A tight outer/inner gap does not force exhaustion of the outer
+list's physical-to-built margin.
+
+The redesigned fixture predeclares the same 100-step compression and
+physical inputs, then continues its exact step-100 checkpoint in a new
+native allocation for one step and four more steps. The checkpoint does
+not serialize a template list, so the new allocation necessarily takes
+a cold refresh after the barostat-produced cell contraction. This is
+explicitly a checkpoint crossing test, **not** a claim of an uninterrupted
+validity-triggered refresh. It must observe nearest selection initially
+and conditional selection at the successful new refresh; a missing
+transition stops rather than prompting a seed, pressure or duration
+search.
+
+A route-private, explicitly registered test observer records only
+successful compacted/ordered lists. It receives the actual refresh cell
+and all three actual reaches, along with path and mobility activity.
+Observation is null by default, introduces no environment key, and adds
+no device reads, synchronization, allocation or logging when disabled.
+The test synchronizes its own snapshots through the runtime copy service.
+Floating inputs are serialized as integer bit patterns, without a
+floating JSON or decimal-coordinate round trip.
+
+Each snapshot seeds an isolated owner with its exact hybrid references,
+published groups, grid, order, maps, retained records and actual reaches.
+The test-only published-group replay skips sorting and planning and runs
+the retained **general** search emitter and normal compaction. It checks
+every row's ordered four-word entries, class row/entry boundaries and
+order, with zero overflow flags and a matching entry count. Physical
+staging addresses are not semantic ordering and are not compared. The
+live native owner is never replayed into or mutated.
+
+The existing `sameFrame` physical checker is shared without changing its
+code or bounds. It checks frames 5, 100, 101 and 105, spanning compression,
+the checkpoint and the newly selected list. General-double versus the
+independent oracle, projected-force mixed baselines, cancellation-aware
+energy and D264 molecular-virial bounds all remain as approved. The
+independent no-step references retain the small-system matrix route.
+The two CPU lowering fixtures (native operand forms and published-group
+replay) passed 2/2 in 1.61 s before the controlled device run.
+
 ### Target-driven remaining batches and reporting
 
 The subsequent target ruling supersedes a full timing round after every

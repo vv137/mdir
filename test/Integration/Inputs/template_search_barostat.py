@@ -1,34 +1,36 @@
-"""Predeclared native C-RESCALE crossing gate; never retune or retry here.
+"""Native barostat crossing, checkpoint cold refresh and exact entry replay.
 
-The actual owner logs establish dispatch. The nominal anchor reach below
-only checks the observed cell contraction; it is not the f64 margin policy.
-Ordered entry equality is tested separately on identical seeded frames.
+D80 keeps the old list valid across a geometric regime boundary. Force a
+new allocation by continuing the exact compressed checkpoint, not by
+changing validity criteria or tuning compression after observing a result.
 """
 import argparse
 import json
 import pathlib
-import re
 import subprocess
-
-import mdir
+import sys
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('fixtures', type=pathlib.Path)
 parser.add_argument('work', type=pathlib.Path)
-parser.add_argument('mdir')
+parser.add_argument('helper')
+parser.add_argument('runtime_cuda')
+parser.add_argument('runtime_base')
+parser.add_argument('runner_utils')
 args = parser.parse_args()
 args.work.mkdir(parents=True, exist_ok=True)
 declared = dict(steps=100, seed=11, pressure_atm=20000.0,
                 barostat_tau_ps=0.5, barostat_interval=5,
                 timestep_ps=0.001, pairlist_angstrom=18.0,
                 pruned_angstrom=17.9, cutoff_angstrom=9.0,
-                deterministic=False)
-# The tight outer/inner gap requests cold refreshes as the cell deforms;
-# a cell crossing without any refresh would not exercise the selector.
-# Chosen before the first device run, without changing a validity bound.
-# Written before the one subprocess: a failed crossing is an unmet gate,
-# not a reason to search seeds, change pressure, or run the test again.
+                deterministic=False, continuation_steps=[1, 4],
+                physical_frames=[5, 100, 101, 105],
+                cold_refresh='new native allocation from exact step-100 checkpoint',
+                entry_reference='forced general iterator on each actual refresh snapshot')
+# One predeclared protocol, including checkpoint restart. This does not
+# claim an uninterrupted validity-triggered transition. Failure stops;
+# pressure, duration, seed and physical bounds are never searched.
 (args.work / 'predeclared.json').write_text(json.dumps(declared, indent=2))
 control = args.work / 'control.toml'
 control.write_text(f'''[input]
@@ -72,53 +74,47 @@ deterministic = false
 [performance]
 "water.template" = "ON"
 ''')
-with (args.work / 'run.log').open('w') as log:
-    status = subprocess.run([args.mdir, 'run', str(control)], cwd=args.work,
-                            stdout=log, stderr=subprocess.STDOUT).returncode
-text = (args.work / 'run.log').read_text()
-assert status == 0 and 'MDIR: ran in ' in text, ('native barostat failed; stop', status)
-assert not re.search(r'\b(?:nan|inf)\b', text, re.I), 'nonfinite native result; stop'
-paths = re.findall(r'MDIR: template search image path (nearest|conditional)', text)
-assert paths and paths[0] == 'nearest', ('initial actual path', paths)
-assert 'conditional' in paths, ('barostat did not cross in the declared run; stop', paths)
-assert paths.index('conditional') > paths.index('nearest')
-assert 'template search general fallback' not in text, 'unexpected general fallback; stop'
+def command(argv, stdout, stdin=None):
+    with stdout.open('w') as out, stdout.with_suffix(stdout.suffix + '.stderr').open('w') as err:
+        if stdin is None:
+            result = subprocess.run(argv, cwd=args.work, stdout=out, stderr=err)
+        else:
+            with stdin.open() as source:
+                result = subprocess.run(argv, cwd=args.work, stdin=source, stdout=out, stderr=err)
+    assert result.returncode == 0, ('native crossing/replay failed; stop', argv, result.returncode,
+                                    stdout.read_text(), stdout.with_suffix(stdout.suffix + '.stderr').read_text())
 
 
-def amber_section(name):
-    raw = (args.fixtures / 'three.prmtop').read_text()
-    section = raw.split('%FLAG ' + name + '\n', 1)[1].split('%FLAG ', 1)[0]
-    return [word for line in section.splitlines() if not line.startswith('%')
-            for word in line.split()]
-
-
-numbers = list(map(int, amber_section('ATOMIC_NUMBER')))
-bonds = list(map(int, amber_section('BONDS_INC_HYDROGEN')))
-equilibria = [float(x.replace('D', 'E')) for x in amber_section('BOND_EQUIL_VALUE')]
-oh = []
-for i in range(0, len(bonds), 3):
-    a, b, kind = bonds[i:i + 3]
-    if {numbers[a // 3], numbers[b // 3]} == {1, 8}:
-        oh.append(equilibria[kind - 1])
-assert oh
-# OPC's O-H distance controls this nominal molecular extent. Include the
-# model's fixed 0.001-A extent allowance, not the image-policy margin.
-nominal_reach_nm = (18.0 + 2 * (max(oh) + 0.001)) * 0.1
-initial_box = list(map(float, (args.fixtures / 'three.inpcrd').read_text().splitlines()[-1].split()))
-assert len(initial_box) == 6 and initial_box[3:] == [90.0] * 3
-initial_half_nm = 0.05 * min(initial_box[:3])
-assert initial_half_nm > nominal_reach_nm
-frames = list(mdir.read_h5md(str(args.work / 'frames.h5md')))
-assert frames, 'missing native barostat frames'
-cells = [dict(step=int(frame.step), diagonal_nm=list(map(float, frame.cell.diagonal)))
-         for frame in frames]
-halves = [0.5 * min(frame['diagonal_nm']) for frame in cells]
-assert min(halves) < nominal_reach_nm, ('actual cells did not cross nominal reach; stop', halves)
-assert min(halves) < initial_half_nm
-(args.work / 'crossing.json').write_text(json.dumps(dict(
-    actual_paths=paths, cells=cells, nominal_reach_nm=nominal_reach_nm,
-    initial_half_nm=initial_half_nm, general_fallbacks=0,
-    note='Actual path logs establish selection; nominal reach is not the production margin policy.'),
-    indent=2))
-print('native barostat: nearest then conditional; general fallback 0')
-print('barostat cells cross the nominal anchor half-diagonal threshold')
+command([args.helper, str(control), str(args.work), args.runtime_cuda], args.work / 'run.log')
+native = json.loads((args.work / 'native.json').read_text())
+assert native['physical_frames'] == 4
+assert native['nearest_refreshes'] > 0 and native['conditional_refreshes'] > 0
+assert native['general_refreshes'] == 0
+observations = native['observations']
+assert observations and observations[0]['phase'] == 0 and observations[0]['path'] == 0
+assert any(o['phase'] == 1 and o['path'] == 1 for o in observations)
+replay = pathlib.Path(__file__).with_name('template_search_native_replay.py')
+for observation in observations:
+    snapshot = args.work / observation['file']
+    captured = json.loads(snapshot.read_text())
+    program = snapshot.with_suffix('.mlir')
+    converted = snapshot.with_suffix('.gpu.mlir')
+    lowered = snapshot.with_suffix('.llvm.mlir')
+    records = snapshot.with_suffix('.records')
+    command([sys.executable, str(replay), 'generate', str(snapshot), str(program)],
+            snapshot.with_suffix('.generate.log'))
+    option = ('--test-md-template-search=reuse-published-groups force-general '
+              f'columns-x={captured["columns_x"]} columns-y={captured["columns_y"]}')
+    command(['mdir-opt', str(program), option, '--convert-md-exec-to-gpu'], converted)
+    command(['mlir-opt', '--gpu-lower-to-nvvm-pipeline=cubin-format=isa',
+             '--reconcile-unrealized-casts'], lowered, converted)
+    command(['mlir-runner', '-e', 'main', '--entry-point-result=void',
+             '--shared-libs=' + ','.join([args.runner_utils, args.runtime_base, args.runtime_cuda])],
+            records, lowered)
+    command([sys.executable, str(replay), 'check', str(snapshot), str(records)],
+            snapshot.with_suffix('.check.log'))
+native['ordered_refresh_replays'] = len(observations)
+(args.work / 'crossing.json').write_text(json.dumps(native, indent=2))
+print('native checkpoint refresh: nearest then conditional; general fallback 0')
+print(f'native refresh/general iterator: {len(observations)} exact ordered snapshots passed')
+print('barostat physical checks: four frames passed unchanged bounds')

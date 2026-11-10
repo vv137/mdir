@@ -3,6 +3,7 @@
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Runtime/TemplateMembership.h"
 #include "mdir/Runtime/TemplateExclusions.h"
+#include "mdir/Runtime/TemplateRefreshObserver.h"
 #include <nvtx3/nvToolsExt.h>
 
 struct TemplatePairs {
@@ -18,7 +19,18 @@ struct TemplatePairs {
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
   int diagnosticBuilt;
   int imagePath, searchActive;
+  double observedRefreshInputs[9];
 };
+
+/* Tests explicitly install this observer before running a simulation. */
+static MdrtTemplateRefreshObserver templateRefreshObserver;
+static void *templateRefreshObserverData;
+
+void mdrtTemplatePairsSetRefreshObserver(MdrtTemplateRefreshObserver callback,
+                                        void *data) {
+  templateRefreshObserver = callback;
+  templateRefreshObserverData = callback ? data : NULL;
+}
 
 /* Diagnostic counters belong to this route, independently of the general
  * neighbor structures. No force arithmetic or per-step device readback. */
@@ -80,9 +92,16 @@ void mdrtTemplatePairsSnapshotOccupancy(int64_t handle, int64_t first) {
 }
 
 void mdrtTemplatePairsNoteRefresh(int64_t handle) {
-  ((struct TemplatePairs *)(intptr_t)handle)->diagnosticBuilt = 1;
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  pairs->diagnosticBuilt = 1;
   if (++templateRefreshes == 1)
     mdrtTemplatePairsSnapshotOccupancy(handle, 1);
+  /* The native owner calls this only after a successful compact/order.
+   * Growth attempts are deliberately not observable as completed lists. */
+  if (templateRefreshObserver)
+    templateRefreshObserver(handle, pairs->imagePath, pairs->searchActive,
+                            pairs->observedRefreshInputs,
+                            templateRefreshObserverData);
 }
 
 void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
@@ -368,7 +387,9 @@ void _mlir_ciface_mdrtTemplatePairsGroupBoxesF32(struct Buffer2 *result,
 /* Image selection is host metadata of a cold refresh, never an epoch or
  * a per-step device readback. The general proof is always available. */
 int64_t mdrtTemplatePairsSetImagePath(int64_t handle, int64_t path,
-                                      int64_t water, int64_t atom) {
+    int64_t water, int64_t atom, double ax, double by, double cz,
+    double bx, double cx, double cy, double wwReach, double swReach,
+    double ssReach) {
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
   if (path == 2)
     fprintf(stderr, "MDIR: template search general fallback\n");
@@ -377,6 +398,17 @@ int64_t mdrtTemplatePairsSetImagePath(int64_t handle, int64_t path,
             path == 0 ? "nearest" : "conditional");
   pairs->imagePath = (int)path;
   pairs->searchActive = (water ? 1 : 0) | (atom ? 2 : 0);
+  if (templateRefreshObserver) {
+    pairs->observedRefreshInputs[0] = ax;
+    pairs->observedRefreshInputs[1] = by;
+    pairs->observedRefreshInputs[2] = cz;
+    pairs->observedRefreshInputs[3] = bx;
+    pairs->observedRefreshInputs[4] = cx;
+    pairs->observedRefreshInputs[5] = cy;
+    pairs->observedRefreshInputs[6] = wwReach;
+    pairs->observedRefreshInputs[7] = swReach;
+    pairs->observedRefreshInputs[8] = ssReach;
+  }
   return path;
 }
 
