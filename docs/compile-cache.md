@@ -48,7 +48,7 @@ empties it and `cache=False` bypasses it for one compile
 |---|---|
 | `MDIR_COMPILE_CACHE_DIR=<dir>` | The directory of the cache instead of the default. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. One that group or others may write is used, with a warning. |
 | `MDIR_COMPILE_CACHE=off` | Disables the cache, whatever else is set. |
-| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory holds at most 90% of it (#675) ([The bound](#the-bound)). 0 disables the cache; a value that is not a whole number is reported and the bound stays 2048 MiB. |
+| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory holds at most 90% of it (#675) ([The bound](#the-bound)). 0 disables the cache; a value that is not a whole number, or whose bytes do not fit in 64 bits, is reported and the bound stays 2048 MiB. |
 
 A directory may be shared by processes that run at the same time, and by
 builds of MDIR, each of which reads only its own entries (see the key
@@ -60,13 +60,16 @@ In this order (`CompileCacheConfig::locate`, once per process for each
 environment):
 
 1. `MDIR_COMPILE_CACHE=off`, then `MDIR_COMPILE_CACHE_MAX_MB=0`: no cache.
-2. `MDIR_COMPILE_CACHE_DIR`: that directory.
-3. `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile`, if its file system is
+2. An LLVM option set on the command line whose value no recorded argument
+   gives (`cl-opt` in [The key](#the-key)): no cache, with a note that
+   names it.
+3. `MDIR_COMPILE_CACHE_DIR`: that directory.
+4. `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile`, if its file system is
    local (`llvm::sys::fs::is_local` of the nearest directory of the path
    that exists). A relative `XDG_CACHE_HOME` is ignored, as the XDG
    specification says.
-4. `/var/tmp/mdir-<uid>/compile`, `<uid>` the effective user's, if local.
-5. None: the cache is off, and a note says why once.
+5. `/var/tmp/mdir-<uid>/compile`, `<uid>` the effective user's, if local.
+6. None: the cache is off, and a note says why once.
 
 A network file system is not the default: a home on NFS would make every
 lookup a round trip, and many jobs at once would load its server. A
@@ -84,7 +87,30 @@ checksum, not an authentication, and a host object is native code that
 the process runs: anyone who may write the directory could plant an entry
 that is whole and well formed. The directory under `/var/tmp`, whose
 parent everyone may write, is the case this guards; a default in a home
-directory is private already. A directory named by
+directory is private already.
+
+The checks hold for the whole process because the directory is opened
+once and used only through its descriptor (`CacheDirectory`):
+
+- The base (`$XDG_CACHE_HOME`, `$HOME/.cache`, or `/var/tmp`) is opened
+  as given. The parent (`mdir` or `mdir-<uid>`) is then made and opened
+  relative to it, and `compile` relative to the parent, each with
+  `O_DIRECTORY | O_NOFOLLOW`: a symbolic link at either is refused, even
+  one to a private directory of the user's. Another user may replace a
+  link of theirs under the sticky `/var/tmp`, so a link that passes the
+  checks once could later point to a directory of theirs.
+- Owner and mode are checked with `fstat` (and the parent tightened with
+  `fchmod`) on the descriptors opened, not on the names.
+- The descriptor of `compile` is kept. `host/`, `gpu/`, every entry, its
+  temporary file, and `size` are opened, made, renamed, touched, listed,
+  and removed relative to it (`openat`, `mkdirat`, `renameat`,
+  `utimensat`, `unlinkat`), none following a link. An entry that is a link
+  is rejected. A rename of the directory or of a parent after the checks
+  therefore does not move the cache.
+
+The same fd-relative access serves a directory named by
+`MDIR_COMPILE_CACHE_DIR`, which is opened as given, links included, when
+it is first used. A directory named by
 `MDIR_COMPILE_CACHE_DIR` is the user's choice, which may be a cache shared
 by a group on purpose; one that group or others may write is used, with a
 warning.
@@ -250,10 +276,24 @@ Every key begins with a format tag and a salt
 - `mdir` and `llvm`: the version, commit, and dirty flag of MDIR, and the
   version and revision of LLVM. They are there to be read; the build ID is
   what tells builds apart.
-- `cl-opt`: each LLVM option of the command line (`mdir` takes every
-  registered LLVM option, such as `-nvptx-prec-divf32=0` or
+- `cl-opt`: each LLVM option of the command line (`mdir` and `mdir-opt`
+  take every registered LLVM option, such as `-nvptx-prec-divf32=0` or
   `-unroll-threshold=0`), by name, with its count and the arguments that
   gave it. A Python process has none.
+  - Both tools record their arguments after they parse them
+    (`recordCommandLineOptions`), with each `@file` expanded as
+    `cl::ParseCommandLineOptions` expands it, so an option from a response
+    file is keyed by its value.
+  - An option is recorded once, under its own name, also when its
+    arguments named one of its values (a pass of `mdir-opt`) or a
+    `cl::alias` (`-p` for `--pass-pipeline`): an alias passes its
+    occurrence on, and the option takes the index of the alias's argument
+    as its position.
+  - Fail closed: an option set (other than `-pre-RA-sched`, which every key
+    takes as it is in force) whose value no recorded argument gives turns
+    the cache off for the process, with a note that names it. A tool that
+    does not record, or an argument form the recorder does not know, so
+    cannot let entries of two values meet.
 - `test-salt`: `MDIR_COMPILE_CACHE_SALT_OVERRIDE`, for tests only, which
   stands for another build.
 
@@ -754,6 +794,19 @@ directory:
     it against a forked writer of 3000 entries under 50 keys: 85 clears
     removed 2947 entries, every write succeeded, and the 14 entries left
     were intact, with no temporary file.
+- **The default directory and the salt (D[compile-cache-default]).**
+  `compile-cache-default.test` refuses, with a warning, a default that is a
+  symbolic link to `/`, one that is a link to the user's own private warm
+  cache, and one whose parent (`mdir`) is such a link; nothing in the
+  target is read or touched. It reads a stored key and finds the build ID
+  of the Python extension's ELF notes in it, and reports a
+  `MDIR_COMPILE_CACHE_MAX_MB` of $2^{44}$ (whose bytes do not fit in 64
+  bits) as malformed. `compile-cache.test` rejects an entry that is a link,
+  turns the cache off for an LLVM option set but not recorded, and records
+  an option given through a `cl::alias` and through a response file.
+  `compile-cache-llvm-gpu.test` gives `-nvptx-prec-divf32` through response
+  files: the file of the value given before on the command line hits, one
+  of another value misses every PTX and cubin.
 - **Ownership.** `jit-memory.test` runs the D199 checks without a cache,
   with a cold one, and with a warm one, and the Python lifetime tests
   (`python-simulation-lifetime*`, CPU and GPU, three import orders) pass

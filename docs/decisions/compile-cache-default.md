@@ -8,7 +8,7 @@ Recorded at its merge.
 
 - `image`: the ELF build ID (`NT_GNU_BUILD_ID`) of the image that holds `lib/Compiler`: `mdir`, or the Python extension. LLVM and MLIR are linked statically into both, so the ID covers every MDIR and LLVM effect that runs after a key is taken: `optimizeHostModule`, the target machine's options, how the PTX is serialized and ptxas called, a patched LLVM or one at the same version from another source, the dialect translations registered, the runtime templates. Every image is linked with `--build-id=sha1`. Without a note, the BLAKE3 of the image's file, once per process.
 - `mdir`, `llvm`: the version, commit, and dirty flag of MDIR, the LLVM version and revision. Readable only; nothing relies on them.
-- `cl-opts`: every LLVM option of the command line (`mdir` parses all registered options), by name with its value, sorted. A Python process has none.
+- `cl-opts`: every LLVM option of the command line (`mdir` and `mdir-opt` parse all registered options), by name with its value, sorted, recorded from the arguments with each `@file` expanded; an option given through a `cl::alias` or one of its value names is recorded once, under its own name. A Python process has none. The salt fails closed: an option set (other than `-pre-RA-sched`) whose value no recorded argument gives turns the cache off for the process, with a note.
 - `test-salt`: `MDIR_COMPILE_CACHE_SALT_OVERRIDE`, for tests only: it stands for another build.
 
 The scheduler before register allocation is not in the static part: the key of a host object and of a PTX holds `sched <name>`, the value of `-pre-RA-sched` when the key is taken, read from the option itself. The three format tags become 2, so entries of before are not read.
@@ -18,13 +18,14 @@ The scheduler before register allocation is not in the static part: the key of a
 *Where the cache is.* In order:
 
 1. `MDIR_COMPILE_CACHE=off` turns it off.
-2. `MDIR_COMPILE_CACHE_MAX_MB=0` turns it off; a value that is not a whole number is reported and the bound stays 2048 MiB.
-3. `MDIR_COMPILE_CACHE_DIR` names the directory, as before. One that group or others may write is used, with a warning.
-4. Otherwise `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile`, if that file system is local.
-5. Otherwise `/var/tmp/mdir-<uid>/compile`, if local.
-6. Otherwise none, and the log says why.
+2. `MDIR_COMPILE_CACHE_MAX_MB=0` turns it off; a value that is not a whole number, or whose bytes do not fit in 64 bits, is reported and the bound stays 2048 MiB.
+3. An LLVM option whose value the salt did not record turns it off (above).
+4. `MDIR_COMPILE_CACHE_DIR` names the directory, as before. One that group or others may write is used, with a warning.
+5. Otherwise `${XDG_CACHE_HOME:-$HOME/.cache}/mdir/compile`, if that file system is local.
+6. Otherwise `/var/tmp/mdir-<uid>/compile`, if local.
+7. Otherwise none, and the log says why.
 
-A default directory and its parent are made with mode 0700. Before any entry is read or written, a default directory whose owner, or whose parent's owner, is not the effective user, or that group or others may write, is refused with a warning, and the cache is off; a parent of the user's that group or others may write (`~/.cache/mdir` under a umask of 002) loses that permission first, since whoever may write it could put another directory in the place of the default once it is checked: an entry's BLAKE3 is a checksum, not an authentication, and a host object is native code that runs. `mdir.clear_compile_cache()` without a directory clears the directory that a compile would use (`MDIR_COMPILE_CACHE_DIR`, else the default), and `MDIR_COMPILE_CACHE=off` still does not hide it.
+A default directory and its parent are made with mode 0700. Before any entry is read or written, a default directory whose owner, or whose parent's owner, is not the effective user, or that group or others may write, is refused with a warning, and the cache is off; a parent of the user's that group or others may write (`~/.cache/mdir` under a umask of 002) loses that permission first, since whoever may write it could put another directory in the place of the default once it is checked: an entry's BLAKE3 is a checksum, not an authentication, and a host object is native code that runs. The checks are made on descriptors, and hold for the process: the base (`$XDG_CACHE_HOME`, `$HOME/.cache`, `/var/tmp`) is opened as given, the parent and `compile` are made and opened relative to it with `O_DIRECTORY | O_NOFOLLOW`, so a symbolic link at either is refused (another user may later replace a link of theirs that passed, under the sticky `/var/tmp`), and their owner and mode are read with `fstat`. The descriptor of `compile` is kept; `host/`, `gpu/`, every entry, its temporary file, and `size` are opened, made, renamed, touched, listed, and removed relative to it (`openat`, `mkdirat`, `renameat`, `utimensat`, `unlinkat`), without following a link, and an entry that is a link is rejected. A directory named by `MDIR_COMPILE_CACHE_DIR` is opened as given, when first used, and accessed the same way. `mdir.clear_compile_cache()` without a directory clears the directory that a compile would use (`MDIR_COMPILE_CACHE_DIR`, else the default, opened and checked as a compile opens it, and not made), and `MDIR_COMPILE_CACHE=off` still does not hide it.
 
 *Writes.* The lock of the file `size` (D234) is taken with a timeout of 10 s instead of waiting without bound; a store that does not get it lists the directory as a store without locks does. No `fsync` before the rename: a torn entry fails its length and hash and is a miss, and a cold compile stores about 800 entries.
 

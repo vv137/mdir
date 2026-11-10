@@ -767,7 +767,12 @@ what generates the object from the module: the ELF build ID of the image
 that holds MDIR's compiler and the LLVM linked into it, the LLVM options of
 the command line, and the scheduler in force. Whenever anything that can
 change the compiled result differs, the entry is not used, so a rebuild
-of MDIR starts cold. An entry also stores its full key and a hash of its
+of MDIR starts cold; an LLVM option of the command line whose value the
+salt could not record turns the cache off. The default directory is opened
+once, refused if it is a symbolic link, another user's, or writable by
+others, and every entry is opened relative to its descriptor, so a
+directory swapped in after the check is never used. An entry also stores
+its full key and a hash of its
 object, so that a collision or a damaged file is a miss, and a hit is
 linked and checked as a generated object is. The directory is bounded,
 and the entries used least recently are evicted; its total is kept in a
