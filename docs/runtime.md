@@ -324,9 +324,11 @@ The events of the readiness contract above map as follows: the copy within
 the device is the transfer start whose source borrow ends in stream order,
 the second event is the completion that makes the pinned memory visible to
 the host, and the release is the writer's return of the slot to its ring,
-after which `mdrtStagingCopy` may write it again. The device spends the copy
-within itself (about 1 µs for the 0.66 MB of a frame of JAC); the copy over
-PCIe runs on a copy engine beside the kernels.
+after which `mdrtStagingCopy` may write it again. On JAC on an RTX 4090
+(nsys) the device spends 1.3 and 1.0 µs on the copies within itself of the
+positions (565 KB) and the numbers (94 KB) of a frame, on the stream of the
+kernels; the copies over PCIe, 22 and 4.5 µs, run on a copy engine beside
+the kernels.
 
 ## 6. Reference interpreter
 
