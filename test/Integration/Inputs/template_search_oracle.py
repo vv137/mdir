@@ -296,6 +296,7 @@ args.reference.write_text(json.dumps(reference))
 
 lines = ['md.particle_set @atoms', '!list = !mdrt.segmented_pairs<@atoms>']
 lines.append('memref.global "private" constant @initial_controls : memref<4xi64> = dense<0>')
+lines.append(f'memref.global "private" constant @initial_inverse : memref<{size}xi32> = dense<0>')
 members = [[3 * w, 3 * w + 1, 3 * w + 2, 3 * waters + w] for w in range(waters)]
 world_atom = 4 * waters
 excluded = [[world_atom + a, world_atom + b] for a, b in [(0, 1), (2, 3), (0, 16)]]
@@ -328,12 +329,15 @@ func.func @show(%word: i32) {
   func.call @printNewline() : () -> ()
   return
 }
-func.func @download(%device: memref<?xi32, 1>) -> memref<?xi32> {
+func.func @download(%device: memref<?xi32, 1>, %n: index) -> memref<?xi32> {
   %c0 = arith.constant 0 : index
-  %n = memref.dim %device, %c0 : memref<?xi32, 1>
+  %capacity = memref.dim %device, %c0 : memref<?xi32, 1>
+  %fits = arith.cmpi ule, %n, %capacity : index
+  cf.assert %fits, "logical download exceeds fixture view"
+  %prefix = memref.reinterpret_cast %device to offset: [0], sizes: [%n], strides: [1] : memref<?xi32, 1> to memref<?xi32, 1>
   %host = memref.alloc(%n) : memref<?xi32>
   %ready = gpu.wait async
-  %done = gpu.memcpy async [%ready] %host, %device : memref<?xi32>, memref<?xi32, 1>
+  %done = gpu.memcpy async [%ready] %host, %prefix : memref<?xi32>, memref<?xi32, 1>
   gpu.wait [%done]
   return %host : memref<?xi32>
 }
@@ -386,9 +390,17 @@ func.func @dump(%list: !list, %phase: i64, %counter: memref<4xi64>) {
   %od = func.call @mdrtTemplatePairsOrder(%list) : (!list) -> memref<?xi32, 1>
   %rd = func.call @mdrtTemplatePairsArenaView(%list, %s5) : (!list, i64) -> memref<?xi32, 1>
   %ed = func.call @mdrtTemplatePairsArenaView(%list, %s9) : (!list, i64) -> memref<?xi32, 1>
-  %order = func.call @download(%od) : (memref<?xi32, 1>) -> memref<?xi32>
-  %rows = func.call @download(%rd) : (memref<?xi32, 1>) -> memref<?xi32>
-  %entries = func.call @download(%ed) : (memref<?xi32, 1>) -> memref<?xi32>
+  %row_slot = arith.constant 2 : i64
+  %logical_rows = func.call @mdrtTemplatePairsLayoutValue(%list, %row_slot) : (!list, i64) -> i64
+  %nr = arith.index_cast %logical_rows : i64 to index
+  %row_words = arith.muli %nr, %c4 : index
+  %logical_entries = memref.load %counter[%c2] : memref<4xi64>
+  %ne = arith.index_cast %logical_entries : i64 to index
+  %entry_words = arith.muli %ne, %c4 : index
+  %order_count = memref.dim %od, %c0 : memref<?xi32, 1>
+  %order = func.call @download(%od, %order_count) : (memref<?xi32, 1>, index) -> memref<?xi32>
+  %rows = func.call @download(%rd, %row_words) : (memref<?xi32, 1>, index) -> memref<?xi32>
+  %entries = func.call @download(%ed, %entry_words) : (memref<?xi32, 1>, index) -> memref<?xi32>
   %n = memref.dim %order, %c0 : memref<?xi32>
   %nw = arith.index_cast %n : index to i64
   func.call @printI64(%nw) : (i64) -> ()
@@ -397,9 +409,6 @@ func.func @dump(%list: !list, %phase: i64, %counter: memref<4xi64>) {
     %value = memref.load %order[%i] : memref<?xi32>
     func.call @show(%value) : (i32) -> ()
   }
-  %row_slot = arith.constant 2 : i64
-  %logical_rows = func.call @mdrtTemplatePairsLayoutValue(%list, %row_slot) : (!list, i64) -> i64
-  %nr = arith.index_cast %logical_rows : i64 to index
   %nrw = arith.index_cast %nr : index to i64
   func.call @printI64(%nrw) : (i64) -> ()
   func.call @printNewline() : () -> ()
@@ -465,6 +474,14 @@ units = emit(f'arith.constant {size} : index')
 types = emit(f'gpu.alloc({n}) : memref<?xi32, 1>')
 device_points = emit(f'gpu.alloc({units}) : memref<?x3xf64, 1>')
 inverse = emit(f'gpu.alloc({units}) : memref<?xi32, 1>')
+# The fixture transfers this inverse before the first plan overwrites it.
+# Give that initial transfer defined input, without initializing or hiding
+# any production workspace or changing the checked logical records.
+inverse_host = emit(f'memref.get_global @initial_inverse : memref<{size}xi32>')
+inverse_host = emit(f'memref.cast {inverse_host} : memref<{size}xi32> to memref<?xi32>')
+inverse_ready = emit('gpu.wait async')
+inverse_done = emit(f'gpu.memcpy async [{inverse_ready}] {inverse}, {inverse_host} : memref<?xi32, 1>, memref<?xi32>')
+lines.append(f'  gpu.wait [{inverse_done}]')
 w = emit(f'memref.get_global @water : memref<{waters}x4xi32>')
 w = emit(f'memref.cast {w} : memref<{waters}x4xi32> to memref<?x4xi32>')
 ex = emit('memref.get_global @excluded : memref<3x2xi32>')

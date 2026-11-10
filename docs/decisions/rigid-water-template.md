@@ -1219,6 +1219,56 @@ the new executable was missing from lit's tool substitutions (one failed,
 22 skipped). Registering that tool and passing the replay tools explicitly
 corrected the harness without changing an input or numerical criterion.
 
+The controlled continuation at `86aa758c` passed **23/23**, 371.20 s on
+RTX 5090. Three successful native refresh snapshots matched the general
+iterator exactly in row-local entry order, class ranges and particle
+order, with zero flags. The checkpoint-triggered refresh selected
+conditional after the barostat contraction; all four physical frames
+passed unchanged bounds.
+
+| Successful refresh | Phase | Cell diagonal (nm) | Half diagonal (nm) | Actual maximum reach (nm) | Selected path |
+|---|---|---|---|---|---|
+| 1 | Compression | 4.0 | 2.0 | 1.9747226260000001 | nearest |
+| 2 | Compression | 4.0 | 2.0 | 1.9747226260000001 | nearest |
+| 3 | Exact checkpoint continuation | 3.7611447879364923 | 1.8805723939682462 | 1.9747204763030917 | conditional |
+
+The following entries are absolute error / evaluated bound. Projected
+force units are kJ/mol/nm; energy and molecular virial are kJ/mol.
+
+| Frame | Projected force maximum | Projected force RMS | Energy | Molecular virial |
+|---|---|---|---|---|
+| 5 | 0.00209034975 / 0.0142782984 | 0.000615315755 / 0.0142782984 | 0.0000263915111 / 0.00907542526 | 0.00120279789 / 0.00955813613 |
+| 100 | 0.00208857179 / 0.0121522757 | 0.000535385244 / 0.0121522757 | 0.000144237865 / 0.00952499035 | 0.000752093271 / 0.0100103390 |
+| 101 | 0.00147330943 / 0.0117832935 | 0.000378430357 / 0.0117832935 | 0.0000914881422 / 0.00953321246 | 0.000386723036 / 0.0100099108 |
+| 105 | 0.00314297749 / 0.0104304061 | 0.000826148100 / 0.0104304061 | 0.000100153429 / 0.00961129990 | 0.00147953767 / 0.0100675715 |
+
+The largest independent-oracle differences over these frames were
+$2.5011104298755527\times10^{-12}$ in force,
+$9.7344354799133725\times10^{-13}$ in energy and
+$1.0587086762825493\times10^{-12}$ in molecular virial; each passed the
+existing general-double oracle bound. These are four validation frames,
+not repeated timing samples.
+
+The subsequent focused sanitizer run passed native ownership and pruning
+but failed the new search-images fixture: **2 passed, 1 failed**, 44.41 s.
+Memcheck passed and its exact coverage checks reported no missing, extra
+or duplicate pairs in all three phases. Initcheck reported 101 errors,
+with 100 detailed reports and one suppressed. All printed reports were
+host-API `cudaMemcpy` source accesses: the fixture copied its uninitialized
+36-word inverse before the first plan, and downloaded row/entry capacity
+tails although it printed only logical records. No production kernel or
+growth defect was evidenced by those reports.
+
+The narrow fixture correction initializes only its inverse and downloads
+only the logical row and entry prefixes. It retains the bounds assertions,
+record format, oracle and exact checker; it does not initialize production
+padding to hide accesses. One affected sanitizer rerun remains required;
+stage profiling stays blocked until it is clean.
+CPU preflight first passed one fixture and failed one because a proposed
+fixture `gpu.memset` remained unlowered in the existing pipeline. Reusing
+the supported upload of host zeros avoided any shared lowering change;
+the one affected CPU rerun passed 1/1 in 36.13 s.
+
 ### Target-driven remaining batches and reporting
 
 The subsequent target ruling supersedes a full timing round after every
