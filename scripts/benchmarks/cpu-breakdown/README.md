@@ -102,3 +102,25 @@ reads those records. With `CPU_BENCH_DIR` set, it reads the original
 rates, step counts, simulation conditions, and round number, but omit local
 paths and host allocation details. The original benchmark JSONL and Slurm
 logs retain the exact node, CPU model, and affinity for local audit.
+
+## Sampled runs
+
+The `ms<T>` and `ds<T>` variants run once under the sampler built from
+`sampler.c` (`SAMPLER`), and `prof.py DIR --program CONTROL` attributes the
+samples to the parallel regions of the entry; it needs `MDIR` and
+`MLIR_TRANSLATE`. Build the sampler with
+`cc -O2 -shared -fPIC -o libsampler.so sampler.c -lpthread -ldl -lrt`.
+`mdir` exports no dynamic symbols (#655), so the sampler reads the
+descriptor of the GDB JIT interface from the executable's static symbol
+table when `dlsym` does not find it. A loop over pairs in f64 reads no
+radial table, so `prof.py` also takes its Lennard-Jones powers (`powi`) as
+the mark of such a loop.
+
+A program of one thread inlines its loops into the entry, where the sampler
+cannot attribute them. The `mp1` and `dp1` variants therefore run the
+program of two threads on one OpenMP thread (`OMP_THREAD_LIMIT=1`) under
+the sampler, as a proxy of the one-thread share. Its step took 1.5 to 6.0%
+longer than the true one-thread program's on JAC, TIP3P 103k, and Cellulose
+(#554), and that overhead (PME's atomic spreading, forks and joins) lies
+outside the loop over pairs. The proxy's share therefore understates the
+one-thread share. Report the method and this difference with the figures.

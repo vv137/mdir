@@ -6,8 +6,9 @@ DIR is the SAMPLER_OUT of a run. With --program, the control file of that
 run is emitted (`$MDIR emit --stage=lowered`) and translated to LLVM IR
 (`$MLIR_TRANSLATE`), and each parallel region of the entry
 (mdir_run..omp_par.N) is given a part from what it calls and reads: the
-loops over pairs read the radial tables, the corrections of the excluded
-pairs call erf, the bonded terms call the trigonometric functions. The
+loops over pairs read the radial tables or, in f64, which reads none, call
+the Lennard-Jones powers (powi); the corrections of the excluded pairs call
+erf, the bonded terms call the trigonometric functions. The
 compiled code of a run and of an emit are the same, region for region.
 
 Prints, for the samples of the main thread's wall clock and for those of the
@@ -53,7 +54,12 @@ def classify(ll):
         glob = set(re.findall(r"@(md_[\w]+)", body))
         if any(g.startswith("md_radial") for g in glob):
             part = "pairs"
-        elif "erff" in calls or "erfcf" in calls:
+        # The loops over pairs in f64 read no radial table (D280 tabulates
+        # f32 kernels under fast_math); the Lennard-Jones powers (powi)
+        # are theirs alone (#554).
+        elif any("powi" in c for c in calls):
+            part = "pairs"
+        elif "erff" in calls or "erfcf" in calls or "erf" in calls or "erfc" in calls:
             part = "excluded pairs"
         # The prolate kernel (D266) reads a radial table in f32 kernels under
         # fast_math (D280), above; elsewhere (f64,

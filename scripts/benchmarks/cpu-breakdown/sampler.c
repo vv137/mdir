@@ -7,14 +7,18 @@
    Each sample keeps the thread, the interrupted PC, and a short stack from
    backtrace(). The code that the JIT made is kept by copying the objects of
    the GDB JIT interface (__jit_debug_descriptor), whose sections carry the
-   addresses where they were loaded. Output in SAMPLER_OUT (a directory):
+   addresses where they were loaded; the descriptor is found through dlsym,
+   or, in an executable that exports no dynamic symbols (#655), in its
+   static symbol table. Output in SAMPLER_OUT (a directory):
    samples.bin, maps.txt, jit-<n>.o. */
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <dlfcn.h>
+#include <elf.h>
 #include <errno.h>
 #include <execinfo.h>
 #include <fcntl.h>
+#include <link.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -118,8 +122,62 @@ static void copyFile(const char *from, const char *to) {
 static const void *seen[MAX_SEEN];
 static int numSeen;
 
+/* The descriptor of the GDB JIT interface from the static symbol table of
+   the executable, for a program that exports no dynamic symbols (#655):
+   dlsym does not see it there. The address is that of the symbol plus the
+   load bias of the executable (zero for one that is not position
+   independent). */
+static int mainBias(struct dl_phdr_info *info, size_t size, void *data) {
+  (void)size;
+  *(uintptr_t *)data = info->dlpi_addr; /* the first object is the executable */
+  return 1;
+}
+static void *staticDescriptor(void) {
+  static void *found;
+  static int tried;
+  if (tried)
+    return found;
+  tried = 1;
+  FILE *f = fopen("/proc/self/exe", "rb");
+  if (!f)
+    return NULL;
+  Elf64_Ehdr eh;
+  if (fread(&eh, sizeof eh, 1, f) != 1) { fclose(f); return NULL; }
+  Elf64_Shdr *sh = calloc(eh.e_shnum, sizeof *sh);
+  fseek(f, (long)eh.e_shoff, SEEK_SET);
+  if (!sh || fread(sh, sizeof *sh, eh.e_shnum, f) != eh.e_shnum) { free(sh); fclose(f); return NULL; }
+  for (int i = 0; i < eh.e_shnum && !found; ++i) {
+    if (sh[i].sh_type != SHT_SYMTAB)
+      continue;
+    Elf64_Shdr *strs = &sh[sh[i].sh_link];
+    char *names = malloc(strs->sh_size);
+    fseek(f, (long)strs->sh_offset, SEEK_SET);
+    if (!names || fread(names, 1, strs->sh_size, f) != strs->sh_size) { free(names); continue; }
+    size_t n = sh[i].sh_size / sizeof(Elf64_Sym);
+    fseek(f, (long)sh[i].sh_offset, SEEK_SET);
+    for (size_t k = 0; k < n; ++k) {
+      Elf64_Sym sym;
+      if (fread(&sym, sizeof sym, 1, f) != 1)
+        break;
+      if (sym.st_name < strs->sh_size &&
+          strcmp(names + sym.st_name, "__jit_debug_descriptor") == 0) {
+        uintptr_t bias = 0;
+        dl_iterate_phdr(mainBias, &bias);
+        found = (void *)(bias + sym.st_value);
+        break;
+      }
+    }
+    free(names);
+  }
+  free(sh);
+  fclose(f);
+  return found;
+}
+
 static void pollJit(void) {
   struct jit_descriptor *d = dlsym(RTLD_DEFAULT, "__jit_debug_descriptor");
+  if (!d)
+    d = staticDescriptor();
   if (!d)
     return;
   int added = 0;
