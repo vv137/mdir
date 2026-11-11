@@ -2117,8 +2117,8 @@ adds 108 launches and 6 blocking readbacks of 16 to 32 bytes and 707 µs of
 span, of which 500 are kernels; its 196 µs of gaps are 3.7 µs/step at the
 19 builds of 999 steps (52.6 steps a build) on ubiquitin in TIP3P (3.3
 µs/step on ubiquitin in OPC, 17 builds), against main's 1.8 in its build
-and refresh. A launch costs the host 1.9 µs, longer than most of
-those kernels.
+and refresh. A launch costs the host 1.9 µs (host time a launch, not
+device gaps), longer than most of those kernels.
 
 ### U7: the build's readbacks and launches
 
@@ -2135,10 +2135,11 @@ previous plan needed before its first readback, and reads on one pass at
 a time only while the last one split a group. The device records the last
 pass that split a group (word 4 of eight controls), so the plan reports
 the passes it needed, not those it ran, and the next build takes that
-number. Of the 188 builds of a 10,000-step run of ubiquitin in TIP3P,
-129 then read the plan once, 55 twice and 4 three times; a build whose
-plan needs fewer passes than the last one's runs the passes it does not
-need.
+number. In a 10,000-step run of ubiquitin in TIP3P at 31199f1d, of 188
+of the 197 builds (the 9 others coincide with other copies), 129 then
+read the plan once, 55 twice and 4 three times; at a03416b0, 139, 43 and
+6 in round 1 and 138, 42 and 7 in round 2. A build whose plan needs
+fewer passes than the last one's runs the passes it does not need.
 
 **31199f1d: the compaction before the search's readback.** The
 host read the search's controls (flags and entries) before it launched
@@ -2204,13 +2205,15 @@ of about 51 steps a build, 55 on ubiquitin in OPC):
 
 Against main, the device now idles 0.7 µs/step more on ubiquitin in
 TIP3P, 0.9 more in OPC and 0.1 less on the large box (it was 2.0, 2.1 and
-0.8 more). Ubiquitin in OPC runs 8.3/8.5 µs/step of wall below main, the
+0.8 more). Ubiquitin in OPC runs 8.2/8.5 µs/step of wall below main, the
 large box 28.1/28.1; ubiquitin in TIP3P is 4.1/3.4 above, most of it in
 the evaluation (U6).
 
-**What remains in the build.** About 100 launches a build, at a host cost
-of about 1.4 µs each, set its gaps. A CUDA Graph can hold only a stretch
-whose launch parameters are fixed between two readbacks: the spatial sort
+**What remains in the build.** About 100 launches a build set its gaps:
+about 1.4 µs of device gaps a launch (the gaps of the table above divided
+by its launches, not U6's 1.9 µs of host time a launch). A CUDA Graph can
+hold only a stretch whose launch parameters are fixed between two
+readbacks: the spatial sort
 (about 40 launches, keyed on the unit count, the column grid and the arena
 address) would save at most about 1 µs/step on ubiquitin, and the whole
 build would also need the rows, the group counts and the plan's passes in
