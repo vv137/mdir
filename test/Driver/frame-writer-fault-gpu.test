@@ -7,7 +7,8 @@
 # frames write those whose copies had arrived. Here
 # MDRT_FAULT_AFTER_FRAMES=2 makes a kernel trap after the copies of the
 # 2nd frame (step 20) have arrived, while the thread of the frames holds
-# each write back by 100 ms: both frames are still queued when the run meets
+# each write back by 2 s, longer than the driver takes to report the trap:
+# both frames are still queued when the run meets
 # the failure, and the ring of 3 slots is not full, so nothing else waits
 # for them. They are written, as a run whose frames had no thread wrote them
 # before the failure, the frames of the reference to the byte, and the run
@@ -23,7 +24,7 @@
 # RUN: printf '[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/run.toml
 # RUN: sed -e 's|run.dcd|plain.dcd|' %t/run.toml > %t/plain.toml
 # RUN: cd %t && mdir run plain.toml > /dev/null
-# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDRT_FAULT_AFTER_FRAMES=2 not --crash mdir run run.toml > out 2> err
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDRT_FAULT_AFTER_FRAMES=2 not --crash mdir run run.toml > out 2> err
 # RUN: FileCheck %s < %t/err
 # RUN: grep -c 'failed with CUDA_ERROR' %t/err | FileCheck %s --check-prefix=ONCE
 # RUN: %python %S/Inputs/dcd_prefix.py %t/run.dcd %t/plain.dcd | FileCheck %s --check-prefix=FRAMES

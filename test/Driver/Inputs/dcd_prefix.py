@@ -9,6 +9,9 @@ import sys
 
 def read(path):
     data = open(path, 'rb').read()
+    if not data:
+        # A writer that never wrote a frame leaves the file empty.
+        return 0, [], 3
     pos = 0
     records = []
     while pos < len(data):
