@@ -1863,10 +1863,25 @@ between builds the validity test keeps $\sigma_\mathrm{min} R - 2d$ (the least
 singular value of the deformation of the cell since the build times the
 reach, less twice the largest displacement of an anchor) above
 the cutoff, so no second image comes within it before the next build.
-`AUTO` does not select the template yet (its particle-count floor is not
-published), so only `ON` reaches this stop; once `AUTO` selects it, its
-selection keeps a margin below the bound, and the stop stays its backstop
-(the route cannot fall back to the general path within a run). Gates: a
+`AUTO` keeps a margin below the bound, so that its runs do not reach this
+stop (the route cannot fall back to the general path within a run): the
+reach plus $2 \times 0.25$ Å must be at most half the least face width,
+times $0.95$ under a barostat; beyond it `AUTO` takes the general path,
+naming the lengths, and `ON` is not held to it. The $0.25$ Å on the larger
+of $r_\mathrm m$ and $\rho$ covers the first, unconstrained build, which
+widens them to the input's measured distances: an X–H bond $23\,\%$
+beyond $1.09$ Å or a water's extent $29\,\%$ beyond OPC's $0.873$ Å (the
+stretched input below, a bond a fifth long, widens $\rho$ by $0.218$ Å).
+The $5\,\%$ of the half width covers a barostat's shrinkage, $14\,\%$ of
+the volume: the gate at 2000 bar with a time constant of 0.1 ps shrank it
+by $2.0\,\%$ in 400 steps, and an equilibrated run at 1 bar fluctuates
+by well under $1\,\%$. It is distinct from the extent's numerical
+margin of $10^{-3}$ Å (ruling 5). The driver does not route `AUTO` to the
+template yet (its particle-count floor is not published), so the margin
+is exercised by the selection fixture (`mdir-water-template-test
+--select`), and the run-time stop stays the backstop of `ON` and, later,
+of `AUTO`; it reads the lowered skin, so a tuned pairlist distance is
+checked too. Gates: a
 barostat run at 2000 bar whose cell shrinks from 12.58 to 12.33 Å of half
 width against a reach of 12.38 Å, and the stretched input at a pairlist
 distance of 10 Å, whose first build widens $\rho$ to 1.308 Å and the
@@ -1877,8 +1892,9 @@ the stretched coverage input runs at 9.9 Å (12.52 Å).
 file's system: free X–H bonds under `AUTO` (the `hydrogen_bonds` reason),
 double precision (general under `AUTO`, refused under `ON`, and its `AUTO`
 program equal to `OFF`'s in the emit fixture), the reach bound in both
-directions, and a minimization (general under `AUTO`, refused under
-`ON`). A program minimizes or takes dynamics steps, never both, so a
+directions, `AUTO`'s margin on both sides with and without a barostat
+(`ON` within the band takes the template), and a minimization (general
+under `AUTO`, refused under `ON`). A program minimizes or takes dynamics steps, never both, so a
 minimized state reaches the template only as the input of a dynamics run;
 the coverage gate takes an input with HH31 a fifth beyond its bond length,
 whose first, unconstrained build widens $\rho$ by the measured distance,

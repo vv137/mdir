@@ -281,6 +281,7 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
     result.reason = std::to_string(result.plan.unconstrainedHydrogens) +
         " solute hydrogens have no constrained bond to a heavy atom (the "
         "solute's units need [constraints] hydrogen_bonds)";
+  double reach = 0.0, half = 0.0;
   if (result.reason.empty() && control.periodic) {
     // The covering reach of the lists, the pairlist distance plus twice the
     // larger of the water's covering extent and the solute units' radius
@@ -289,8 +290,8 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
     // within it, in an orthorhombic and in a reduced triclinic cell alike.
     double extent = std::max(result.plan.model.extent,
         getAnchorRadius(result.plan, control.precision == Precision::Double));
-    double reach = control.pairlistDistance * units::length + 2.0 * extent;
-    double half = 0.5 * getLeastFaceWidth(system.box, system.tilt);
+    reach = control.pairlistDistance * units::length + 2.0 * extent;
+    half = 0.5 * getLeastFaceWidth(system.box, system.tilt);
     if (!(reach <= half)) {
       char text[256];
       std::snprintf(text, sizeof text,
@@ -316,6 +317,39 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
     if (system.getNumParticles() < measuredParticleFloor) {
       result.reason = "below AUTO's measured particle-count floor";
       return result;
+    }
+    // AUTO's margin below the bound (D[rigid-water-template], Up-front
+    // reach). The bound above holds for the input cell and the nominal
+    // extent and radius; every build checks it again and a run beyond it
+    // stops, since a run cannot fall back to the general path. AUTO keeps
+    // clear of that stop: the reach plus twice 0.25 Å must be at most half
+    // the least face width, less 5 % of it under a barostat.
+    // - 0.25 Å on the larger of the extent and the radius covers the first,
+    //   unconstrained build, which widens them to the input's measured
+    //   distances: an X-H bond 23 % beyond 1.09 Å, or a water's extent 29 %
+    //   beyond OPC's 0.873 Å (the stretched gate input, a bond a fifth
+    //   long, widens the radius by 0.218 Å).
+    // - 5 % of the half width covers a barostat's shrinkage, 14 % of the
+    //   volume: the gate at 2000 bar with a time constant of 0.1 ps shrank
+    //   it by 2.0 % in 400 steps, and the fluctuations of an equilibrated
+    //   run at 1 bar are well below 1 %.
+    // This is not the numerical margin of the extent (10^-3 Å, ruling 5).
+    if (control.periodic) {
+      constexpr double widening = 0.25, shrinkage = 0.05;
+      double allowed = (control.barostat ? 1.0 - shrinkage : 1.0) * half;
+      double kept = reach + 2.0 * widening * units::length;
+      if (!(kept <= allowed)) {
+        char text[320];
+        std::snprintf(text, sizeof text,
+            "AUTO keeps a margin below half the least face width: its "
+            "covering reach, %.4g Å, plus twice %.2g Å for a widened "
+            "extent or radius at the first build, exceeds %.4g Å (half the "
+            "least face width, %.4g Å%s)", reach / units::length, widening,
+            allowed / units::length, half / units::length,
+            control.barostat ? ", less 5 % for the barostat" : "");
+        result.reason = text;
+        return result;
+      }
     }
   }
   result.enabled = true;
