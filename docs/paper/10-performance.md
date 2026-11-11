@@ -59,7 +59,9 @@ timed run of the searched variant took its reaches from that cache, and
 every run of the default variant took the defaults, and their logs say
 so. A run at the threshold affords fewer candidates, those whose
 compilation and steps fit within 2% of its time, so the cached choice is
-that of a run several times longer. The cost of the search, once per key
+that of a run several times longer; the entry records the budget and the
+candidates, and the timed runs reused it rather than searching again
+(D[skin-budget-record]). The cost of the search, once per key
 (Section 4.5), is in neither the rates nor the wall times.
 
 ## 10.2 Rates

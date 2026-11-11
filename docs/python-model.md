@@ -244,7 +244,10 @@ the log of `mdir run`), `Program.plan["pairlist_distance"]` the reach of the
 lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
 list in nm, `0.0` without one; `Program.plan["pairlist_distance_source"]`
 and `["pruned_distance_source"]` where each came from (`"given"`,
-`"default"`, or `"cached"`), and `["skin_reason"]` why (D281). `Program.pipeline` has
+`"default"`, or `"cached"`), and `["skin_reason"]` why (D281). The key
+of the cache of the skins holds the build ID of the image (D[skin-budget-record]),
+and the extension is an image of its own, which measures no candidates, so
+it does not take a choice that `mdir run` cached. `Program.pipeline` has
 `md-exec-choose-neighbors{kind=groups}` and the `prune-skin` of
 `md-exec-reuse-neighbors`, so the key of the code that a `Program` keeps
 (D236), which holds the pipeline and the module, tells the structures
