@@ -2111,14 +2111,112 @@ time); 2-word entries (a load a batch, not a turn); the f64 of the search
 turn stalls, the table loads on its chain or the shuffles or issue, and
 main's issue efficiency on the same system: counters requested.
 
-**The extra idle.** All of the 1.9 µs/step more idle than main is in the
-refresh. Against the stretch between two evaluations without one, a build
+**The extra idle** (at 74ea3f31; U7 removes most of it). All of the 1.9
+µs/step more idle than main is in the refresh. Against the stretch between two evaluations without one, a build
 adds 108 launches and 6 blocking readbacks of 16 to 32 bytes and 707 µs of
 span, of which 500 are kernels; its 196 µs of gaps are 3.7 µs/step at the
 19 builds of 999 steps (52.6 steps a build) on ubiquitin in TIP3P (3.3
 µs/step on ubiquitin in OPC, 17 builds), against main's 1.8 in its build
 and refresh. A launch costs the host 1.9 µs, longer than most of
 those kernels.
+
+### U7: the build's readbacks and launches
+
+The build of U6's extra idle, made of launches shorter than their host
+cost and of blocking readbacks, changed in three commits; each measured
+faster on all three systems in both rounds (the first two measured
+together, as 31199f1d). The evaluation is unchanged.
+
+**7454a3b1: the passes of the group plan unread.** The plan read
+its controls after every refinement pass (three to seven a build). A pass
+after convergence changes nothing (the flags only accumulate and the
+totals are recounted), so the plan now runs as many passes as the list's
+previous plan needed before its first readback, and reads on one pass at
+a time only while the last one split a group. The device records the last
+pass that split a group (word 4 of eight controls), so the plan reports
+the passes it needed, not those it ran, and the next build takes that
+number. Of the 188 builds of a 10,000-step run of ubiquitin in TIP3P,
+129 then read the plan once, 55 twice and 4 three times; a build whose
+plan needs fewer passes than the last one's runs the passes it does not
+need.
+
+**31199f1d: the compaction before the search's readback.** The
+host read the search's controls (flags and entries) before it launched
+the compaction, so the device waited for its launches. The compaction now
+follows the search at once and reads the controls itself: unless the flags
+are clear and the entries fit the capacity, its kernels write no row,
+unit, entry or header range, so an overflowed search leaves no partial
+list in the arena that the host then grows. The one readback after it
+decides, as before, whether to grow and search again; a second overflow
+still stops the run.
+
+**a03416b0: the clears folded into kernels that run anyway.** Each digit
+of the spatial sort cleared its counts with a launch of its own, and so
+did the class-column counts after the sort; each pass of the plan
+cleared its controls and its segment fields with two more. The identity
+kernel and each digit's last kernel now clear the next digit's counts
+(the scan has consumed them), the copy of the order clears the
+class-column counts, the plan clears its starts, lengths and counts once
+(its segments only grow within a plan), and each pass's normalizing
+kernel clears the totals that the pass's later kernels add to.
+
+**Three readbacks remain, not one.** The snapshot's (the count of
+positions that are not numbers, the extent and the solute radius) feeds
+the stop before the search, the reach check and the search's host
+arguments; the plan's gives the group counts that size the rows and the
+search's grids; the last decides growth.
+
+10,000-step captures, RTX 5090, main b7d801d9 against the three heads,
+two rounds, the second in the reverse order (round 1 / round 2, µs/step;
+wall and idle as in U1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.2/114.5 | 22.4/22.6 | 122.9/123.1 | 8.1/8.1 |
+| | 74ea3f31 | 104.9/104.9 | 8.7/8.6 | 115.9/115.7 | 10.2/10.2 |
+| | 31199f1d | 105.1/105.2 | 8.8/9.0 | 115.4/115.6 | 9.6/9.7 |
+| | a03416b0 | 104.9/104.9 | 8.8/8.7 | 114.6/114.6 | 9.1/9.1 |
+| Ubiquitin TIP3P | main | 90.9/91.4 | 19.6/19.7 | 98.9/99.3 | 7.5/7.4 |
+| | 74ea3f31 | 94.0/94.3 | 9.7/9.7 | 104.0/104.3 | 9.5/9.4 |
+| | 31199f1d | 94.1/94.1 | 9.7/9.8 | 103.5/103.5 | 8.7/8.8 |
+| | a03416b0 | 94.2/94.0 | 9.7/9.6 | 103.0/102.7 | 8.2/8.1 |
+| Large OPC box | main | 175.2/175.5 | 27.1/27.2 | 184.2/184.6 | 8.5/8.6 |
+| | 74ea3f31 | 147.2/147.4 | 5.2/5.3 | 157.1/157.3 | 9.3/9.3 |
+| | 31199f1d | 147.4/147.6 | 5.3/5.3 | 156.8/157.1 | 8.8/8.9 |
+| | a03416b0 | 147.1/147.4 | 5.3/5.2 | 156.1/156.5 | 8.4/8.4 |
+
+A build against the stretch between two evaluations without one (the
+medians of `idle.py` in the two rounds; gaps are the span less its
+kernels and copies, and a step's share is the gaps at the mean interval
+of about 51 steps a build, 55 on ubiquitin in OPC):
+
+| System | Build | Launches | Readbacks | Kernels (µs) | Gaps (µs) | Gaps a step (µs) |
+|---|---|---|---|---|---|---|
+| Ubiquitin TIP3P | 74ea3f31 | 108 | 6 | 507/502 | 205/195 | 4.04/3.88 |
+| | 31199f1d | 116 | 3 | 507/509 | 165/166 | 3.22/3.28 |
+| | a03416b0 | 100 | 3 | 505/503 | 136/135 | 2.68/2.64 |
+| Ubiquitin OPC | 74ea3f31 | 108 | 6 | 492/487 | 206/206 | 3.75/3.78 |
+| | 31199f1d | 116 | 3 | 496/507 | 170/172 | 3.10/3.14 |
+| | a03416b0 | 100 | 3 | 494/490 | 137/137 | 2.50/2.50 |
+| Large OPC box | 74ea3f31 | 100 | 5 | 277/277 | 137/137 | 2.67/2.69 |
+| | 31199f1d | 100 | 3 | 278/279 | 111/114 | 2.16/2.23 |
+| | a03416b0 | 88 | 3 | 274/273 | 88/88 | 1.74/1.74 |
+
+Against main, the device now idles 0.7 µs/step more on ubiquitin in
+TIP3P, 0.9 more in OPC and 0.1 less on the large box (it was 2.0, 2.1 and
+0.8 more). Ubiquitin in OPC runs 8.3/8.5 µs/step of wall below main, the
+large box 28.1/28.1; ubiquitin in TIP3P is 4.1/3.4 above, most of it in
+the evaluation (U6).
+
+**What remains in the build.** About 100 launches a build, at a host cost
+of about 1.4 µs each, set its gaps. A CUDA Graph can hold only a stretch
+whose launch parameters are fixed between two readbacks: the spatial sort
+(about 40 launches, keyed on the unit count, the column grid and the arena
+address) would save at most about 1 µs/step on ubiquitin, and the whole
+build would also need the rows, the group counts and the plan's passes in
+its key, and a runtime whose launch, accounting and growth paths can be
+captured. It was not built. Each digit's scan over at most 256 buckets
+still takes the general scan's three kernels.
 
 ### Precision contract for the whole search port and future pruning
 
