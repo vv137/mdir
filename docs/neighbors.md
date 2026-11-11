@@ -632,11 +632,15 @@ share 0.02, the most 7, the estimated seconds of the run, and the seconds
 of a candidate and of its compilation), the reason, the seconds, and the
 candidates. It is taken whole or not at all: an entry that does not parse
 or is not an object, of another format (format 1 named none), of another
-key, without the reaches or with one not positive, without the search, a
-budget of at least 3, its candidates, any candidate, its reason, or its
-seconds, with more candidates than its budget, with a candidate that is
-not an object or lacks its reach, or whose chosen reaches are not among
-its candidates, is refused; the run then goes on as without an entry, its
+key, without either reach, with a reach of the lists not positive or a
+pruned reach negative (0 is one list), without the search, a budget of at
+least 3, the basis of the budget or one of its six fields, its candidates,
+any candidate, its reason, or its seconds, with more candidates than its
+budget, with a candidate that is not an object or lacks its reach, its
+pruned reach (a number, or null for one list), its prediction, or its
+seconds of compilation or of steps, or whose chosen reaches are not among
+its candidates, is refused (a candidate's time, error, and intervals are
+copied as they are); the run then goes on as without an entry, its
 log says so (`MDIR: skins: the entry '...' of the cache is refused: ...`),
 a search replaces it, and `mdir check` notes it (`skin_cache_refused`).
 `mdir check --json` gives the key (`run.skins.cache_key`), and
