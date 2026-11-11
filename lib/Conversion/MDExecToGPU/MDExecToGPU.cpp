@@ -363,6 +363,12 @@ private:
       md_exec::ParticleForOp, TemplatePairState &, kernels::TemplateWriterBuffers &,
       bool constrainedHere = false);
   LogicalResult lowerTemplateParticleFor(md_exec::ParticleForOp);
+  /// One thread per unit reads the unit's stored final positions and
+  /// packs its frame and takes its tests, as emitUpdateTemplateFrame;
+  /// it sets the five validity flags. No extra point is read.
+  void launchTemplatePublication(OpBuilder &, Location,
+      const TemplatePairState &, const kernels::TemplateWriterBuffers &,
+      Value positions, ArrayRef<Flag> validityFlags);
   LogicalResult planTemplateWriters(func::FuncOp function);
   void recordTemplateConstraintEpoch(OpBuilder &, Location,
                                      ArrayRef<Operation *> operations);
@@ -2451,17 +2457,18 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   }
   if (!after || inRows.contains(after))
     return false;
+  bool publishSeparately = false;
   if (templateWriters.contains(after)) {
-    // Measured publication fusion helps a single constraint family.
-    // Mixed families retain the original writer: their larger fused
-    // kernel regressed the complete integration/publication closure.
-    if (loops.size() != 1) return false;
-    // The native epoch marker proves ownership of complete matched groups.
-    // Without this proof retain the existing standalone publication.
+    // Publication inside the integration's threads is measured to help a
+    // single constraint family whose native epoch marker proves ownership
+    // of complete matched groups. Mixed families (water and the solute's
+    // bond clusters) would make that kernel larger and slower; they fuse
+    // the update as without the template, and a kernel of its own, one
+    // thread per unit, publishes the frames from the stored positions.
     unsigned owners = llvm::count_if(loops, [](md_exec::TupleForOp loop) {
       return loop.getArity() == 3 && loop->hasAttr(md::kTemplateConstraintEpoch);
     });
-    if (owners != 1) return false;
+    publishSeparately = loops.size() != 1 || owners != 1;
     // A shared event may not postpone a constraint failure past an
     // intervening consumer. The existing writer planner proves this order.
     for (auto loop : loops)
@@ -2482,6 +2489,7 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   integration.before = before;
   integration.loops = loops;
   integration.after = after;
+  integration.publishSeparately = publishSeparately;
   for (md_exec::TupleForOp loop : loops) {
     SmallVector<bool, 2> keep;
     for (Value out : loop.getOuts())
@@ -2504,7 +2512,8 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   purpose += "_integration" + std::to_string(run.loops.size());
 
   bool publishesTemplate = templateWriters.contains(after);
-  if (publishesTemplate) purpose += "_template_publication";
+  bool separate = publishesTemplate && run.publishSeparately;
+  if (publishesTemplate && !separate) purpose += "_template_publication";
   TemplatePairState templateState;
   TemplateWriterBuffers writer;
   if (publishesTemplate && failed(prepareTemplateWriter(builder, loc, after,
@@ -2677,7 +2686,7 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   };
   llvm::function_ref<void(OpBuilder &, md_exec::TupleForOp, ArrayRef<Value>,
       ArrayRef<SmallVector<Value>>)> observer;
-  if (publishesTemplate) observer = observe;
+  if (publishesTemplate && !separate) observer = observe;
   // The particles in no tuple and the tuples within a warp, which list
   // the tuples across warps; then those. The count of the list is
   // allocated once, where the function begins, and the second kernel
@@ -2725,6 +2734,9 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
     gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
                            /*asyncDependencies=*/ValueRange(), plain);
   }
+  if (separate)
+    launchTemplatePublication(builder, loc, templateState, writer,
+        after.getOuts()[writer.positionOutput], validityFlags);
 
   SmallVector<Value> contributions, partials;
   for (unsigned i = 0; i != numSums; ++i) {
@@ -6578,6 +6590,53 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
   v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
   return success();
+}
+
+void Lowering::launchTemplatePublication(OpBuilder &b, Location loc,
+    const TemplatePairState &state, const TemplateWriterBuffers &given,
+    Value positions, ArrayRef<Flag> validityFlags) {
+  TemplateWriterBuffers v = given;
+  v.positionOutput = 0;
+  std::string saved = purpose;
+  purpose += "_template_writer";
+  Value units = arith::AddIOp::create(b, loc, state.waters, state.atoms);
+  launchOver(b, loc, units, [&](OpBuilder &at, Value unit) {
+    auto site = [&](OpBuilder &in, Value row) {
+      Value id = memref::LoadOp::create(in, loc, state.realMembers, ValueRange{row});
+      TemplateParticleResult result;
+      result.particle = arith::IndexCastOp::create(in, loc, in.getIndexType(), id);
+      result.outputs.push_back(loadElement(in, loc, positions, result.particle));
+      return result;
+    };
+    auto publish = [&](OpBuilder &in, ArrayRef<TemplateParticleResult> results) {
+      Value word = arith::IndexCastOp::create(in, loc, in.getI32Type(), unit);
+      auto changed = emitUpdateTemplateFrame(in, loc, v, word, results);
+      Value values[] = {changed.waterOuter, changed.atomOuter,
+          changed.waterInner, changed.atomInner, changed.extent};
+      for (auto [flag, value] : llvm::zip(validityFlags, values))
+        scf::IfOp::create(in, loc, value, [&](OpBuilder &set, Location) {
+          memref::StoreOp::create(set, loc, arith::ConstantIntOp::create(set, loc, 1, 32),
+              flag.device, ValueRange{createIndex(set, loc, 0)});
+          scf::YieldOp::create(set, loc);
+        });
+    };
+    Value water = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, unit, state.waters);
+    scf::IfOp::create(at, loc, water, [&](OpBuilder &in, Location) {
+      Value row = arith::MulIOp::create(in, loc, unit, createIndex(in, loc, 3));
+      SmallVector<TemplateParticleResult, 3> results;
+      for (int64_t s = 0; s != 3; ++s)
+        results.push_back(site(in, arith::AddIOp::create(in, loc, row, createIndex(in, loc, s))));
+      publish(in, results);
+      scf::YieldOp::create(in, loc);
+    }, [&](OpBuilder &in, Location) {
+      Value row = arith::AddIOp::create(in, loc, unit,
+          arith::MulIOp::create(in, loc, state.waters, createIndex(in, loc, 2)));
+      TemplateParticleResult result = site(in, row);
+      publish(in, ArrayRef<TemplateParticleResult>{result});
+      scf::YieldOp::create(in, loc);
+    });
+  });
+  purpose = saved;
 }
 
 LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {

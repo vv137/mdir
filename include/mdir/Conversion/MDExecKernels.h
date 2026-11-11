@@ -241,6 +241,9 @@ struct IntegrationRun {
   /// where the kernel yields true after the destinations (the test of the
   /// constraints, D278), or no value.
   llvm::SmallVector<mlir::Value, 4> flags;
+  /// Whether the loop after is a template writer whose frames a kernel of
+  /// their own publishes after the run, rather than its threads.
+  bool publishSeparately = false;
 };
 
 /// The particles that a warp of the first kernel of an integration run
