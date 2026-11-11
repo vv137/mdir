@@ -905,14 +905,17 @@ checks scheduling and cached geometry, not a physical-system trajectory.
 Terminology follows the [decision's glossary](../decisions/rigid-water-template.md#glossary).
 A **class-segmented pair list** is one buffer divided into WW, SW and SS
 **segments**, each with outer and inner ranges. A **unit** is a matched
-water with oxygen **anchor** and radius $r_\mathrm m$, or a solute
-particle with radius zero. Its **class** selects the computation; WW, SW
-and SS are **class pairs**. A **mobility group** shares a displacement
-test and refresh schedule: matched-water anchors or atoms. A **refresh**
+water with oxygen **anchor** and radius $r_\mathrm m$, or a solute unit,
+a heavy atom with its constrained hydrogens and radius $r_\mathrm u$ (a
+particle without them has radius zero). Its **class** selects the
+computation; WW, SW and SS are **class pairs**. A **mobility group** shares
+a displacement test and refresh schedule: here one, the anchors of the
+matched waters and of the solute units. A **refresh**
 rebuilds or prunes the affected segments. The **template kernel** is the
 fused launch evaluating all three class pairs. The **extent** is the
 largest site distance from its anchor; the **covering bound** uses
-$R+2r_\mathrm m$ for WW and $R+r_\mathrm m$ for SW. **Rule (A)** is the
+$R+2r_\mathrm m$ for WW, $R+r_\mathrm m+r_\mathrm u$ for SW and
+$R+2r_\mathrm u$ for SS. **Rule (A)** is the
 extra point's constant transpose used by dynamics. Written forces use
 the general bisector transpose, rule (B), in a separate no-step
 evaluation; the carried state and checkpoint forces retain rule (A).
@@ -985,7 +988,28 @@ $$
 The list of pairs between $\mathcal S$ and $\mathcal T$ takes $r_c +
 r_\mathrm m$ and $R + r_\mathrm m$, with $d$ over the particles of
 $\mathcal S$ and the anchors; the pairs within $\mathcal S$ are the
-structure of Section 4.4. The inner lists of the dual list (Section 4.5)
+structure of Section 4.4.
+
+**Solute units.** The solute's hydrogens move fastest: on ubiquitin in OPC
+the test of the solute particles at the inner skin of 0.6 Å failed every
+2.6 steps, set off by hydrogens, against every 8.5 steps for the water
+anchors (#799). Where the constraints hold the bonds of the hydrogens, a
+heavy atom $X(A)$ and its hydrogens form a unit $A$ anchored at $X(A)$.
+The failure test of the constraints, which stops a run, keeps
+$\lvert r^2/d^2 - 1\rvert \le \tau_\mathrm c$ after every position
+constraint, so each member is within $d\sqrt{1+\tau_\mathrm c} <
+d(1+\tau_\mathrm c)$ of its anchor, and every unit's extent is at most
+$r_\mathrm u = d^{\max}_{XH}(1+\tau_\mathrm c)$. The proposition then
+holds with $r_\mathrm u$ for a solute unit as for a water: its pairs with
+a water take $R + r_\mathrm m + r_\mathrm u$, those of two units
+$R + 2r_\mathrm u$, and the theorem of Section 4.1 takes $d$ over the
+anchors alone. The units select candidates only; each member keeps its
+own entries, exclusions and 1–4 scaling, and the search and the pruning
+read the anchor's point for each member. One mobility group, the anchors
+of the waters and of the units, then refreshes all three segments: on
+ubiquitin the pruning interval goes from 2.6 to 8.5 steps and the
+interval of builds from 25 to 56, while the entries of the inner list grow
+by about 8%. The inner lists of the dual list (Section 4.5)
 take $R_\text{in}$ for $R$ in each. In the cell of the build every
 condition is the half-skin test $d \le s/2$; under a scaling the margin is
 $(1 - \min(\mathbf m))(R + 2r_\mathrm m)$ instead of $(1 -
@@ -1153,10 +1177,10 @@ into segments by class-pair tag: WW, SW and SS here. For $P$ particle
 classes, $P(P+1)/2$ unordered class-pair segments, including
 self-pairs, occupy ranges of one buffer, compacted by tag with offsets.
 There are $C\le P$ displacement tests, one per mobility group; the number
-of classes does not set the number of tests. Water anchors and atoms give
-two tests even with four classes (water, solute, ions, perturbed atoms)
-and ten segments. Segment $(a,b)$ refreshes at the faster participating
-cadence. The spatial search and sort run once. A segment without a measured
+of classes does not set the number of tests. The anchors of the waters
+and of the solute units give one test even with four classes (water,
+solute, ions, perturbed atoms) and ten segments. Segment $(a,b)$ refreshes
+at the faster participating cadence. The spatial search and sort run once. A segment without a measured
 specialization gain uses the general path in the same launch.
 
 **One launch.** The pairs of clusters are of three classes: water–water,

@@ -274,7 +274,7 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
 }
 
 def MD_TemplatePairsOp : MD_Op<"template_pairs", [
-    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+    Pure, AttrSizedOperandSegments, DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "Partitions pair work into water, mixed and atom classes";
   let description = [{
@@ -300,17 +300,27 @@ def MD_TemplatePairsOp : MD_Op<"template_pairs", [
     These relations have no implicit spatial cutoff. The structured site
     kernels state their own cutoffs. A physical finite list is selected
     only after proving that support and its molecular covering bound.
-    Execution keeps the three class-pair segments in one buffer and two
-    mobility-group tests; a segment is not a separate kernel or list.
+    Execution keeps the three class-pair segments in one buffer and one
+    mobility group; a segment is not a separate kernel or list.
+
+    `anchored` holds ordered (member, anchor) solute pairs: a member that
+    a constrained bond keeps within `radius` of its heavy-atom anchor.
+    Each solute unit is an anchor and its members; every other solute
+    particle is its own anchor. The radius is proved by the compiler from
+    the constraint lengths and their tolerance. Units select candidates
+    only: exclusions and 1-4 pairs keep their per-atom meaning.
   }];
   let arguments = (ins MD_ReferenceFieldType:$universe,
                        MD_RelationType:$molecules,
-                       Optional<MD_RelationType>:$excluded);
+                       Optional<MD_RelationType>:$excluded,
+                       Optional<MD_RelationType>:$anchored,
+                       OptionalAttr<F64Attr>:$radius);
   let results = (outs MD_RelationType:$water_water,
                       MD_RelationType:$solute_water,
                       MD_RelationType:$solute_solute);
   let assemblyFormat = [{
-    $universe `,` $molecules (`exclude` `(` $excluded^ `)`)? attr-dict
+    $universe `,` $molecules (`exclude` `(` $excluded^ `)`)?
+    (`anchor` `(` $anchored^ `)` `radius` `(` $radius `)`)? attr-dict
     `:` functional-type(operands, results)
   }];
   let hasVerifier = 1;

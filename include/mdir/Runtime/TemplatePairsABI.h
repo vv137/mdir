@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 7
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 8
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -19,8 +19,15 @@
 enum MdrtTemplateMetadataSlot {
   TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,
   TEMPLATE_SS_ROWS = 2, TEMPLATE_SS_NEIGHBORS = 3,
-  TEMPLATE_METADATA_SLOTS = 4
+  /* Heavy-atom anchors of the solute units (D[rigid-water-template]): for
+   * each atom unit, the fixed unit ID of its anchor (its own ID for an
+   * anchor), then MDRT_TEMPLATE_ANCHOR_DEPENDENTS unit IDs per atom unit of
+   * the units anchored to it, -1 after the last. A unit's reference point
+   * is its anchor's, in the unit's own packing frame. */
+  TEMPLATE_ATOM_ANCHORS = 4, TEMPLATE_ATOM_DEPENDENTS = 5,
+  TEMPLATE_METADATA_SLOTS = 6
 };
+#define MDRT_TEMPLATE_ANCHOR_DEPENDENTS 4
 /* Fixed-size f64 views, independent of pair-arena capacity. Every view
  * has three columns. A class cell occupies two rows (ax,by,cz,bx,cx,cy),
  * with the second row unused for an orthorhombic cell. */
@@ -84,7 +91,11 @@ enum MdrtTemplatePairHeader {
  * the chunk count is also TEMPLATE_PAIR_STAGE_COUNT, after bounds checks. */
 enum MdrtTemplateCounterSlot {
   TEMPLATE_COUNTER_CHUNKS = 0, TEMPLATE_COUNTER_FLAGS = 1,
-  TEMPLATE_COUNTER_ENTRIES = 2, TEMPLATE_COUNTER_EXTENT = 3
+  TEMPLATE_COUNTER_ENTRIES = 2, TEMPLATE_COUNTER_EXTENT = 3,
+  /* During a snapshot, before the search clears it, the chunk counter
+   * holds the f64 bits of the largest squared member-anchor distance of
+   * the solute units, as the flags word holds the bad-position count. */
+  TEMPLATE_COUNTER_ANCHOR_EXTENT = TEMPLATE_COUNTER_CHUNKS
 };
 enum MdrtTemplateBuildFlag {
   TEMPLATE_BUILD_INDEX_OVERFLOW = 1, TEMPLATE_BUILD_CAPACITY_OVERFLOW = 2

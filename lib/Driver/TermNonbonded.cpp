@@ -1407,7 +1407,8 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 static mlir::Value buildTemplatePrimary(
     mlir::OpBuilder &builder, mlir::ValueRange values,
     const PrimaryNonbondedIRConfig &config, const WaterTemplateModel &model,
-    mlir::Value molecules, mlir::Value excluded) {
+    mlir::Value molecules, mlir::Value excluded, mlir::Value anchored,
+    double radius) {
   using namespace mlir;
   auto loc = builder.getUnknownLoc();
   auto *context = builder.getContext();
@@ -1419,7 +1420,8 @@ static mlir::Value buildTemplatePrimary(
   };
   auto classes = mdir::md::TemplatePairsOp::create(builder, loc,
       domain("template_ww", 6), domain("template_sw", 4), domain("template_ss", 2),
-      values[3], molecules, excluded);
+      values[3], molecules, excluded, anchored,
+      anchored ? builder.getF64FloatAttr(radius) : FloatAttr());
   // These temporary sums provide the existing scalar expressions only.
   // None survives in the resulting program or selects a second pair path.
   std::array<mdir::md::SumRelationOp, 4> kernels;
@@ -1837,6 +1839,13 @@ public:
       for (const auto &members : waterPlan->instances)
         for (unsigned i = 0; i != waterPlan->model.sites; ++i)
           set.members.push_back(members[i]);
+      if (!waterPlan->anchored.empty()) {
+        auto &units = addTupleSet(context.getTupleSets(), "template_anchor", 2);
+        units.reversible = false;
+        units.oriented = true;
+        for (const auto &pair : waterPlan->anchored)
+          for (unsigned member : pair) units.members.push_back(member);
+      }
     }
   }
   void appendTermDefinitions(
@@ -2054,7 +2063,9 @@ public:
       }
       if (waterPlan && !point.lambdaArguments && !gradientArguments && !alchemicalOnly)
         add(buildTemplatePrimary(builder, values, config, waterPlan->model,
-                                 point.relation("template_water"), point.relation("excluded")));
+            point.relation("template_water"), point.relation("excluded"),
+            waterPlan->anchored.empty() ? mlir::Value() : point.relation("template_anchor"),
+            getAnchorRadius(*waterPlan, context.getControl().precision == Precision::Double)));
       else
         add(buildNonbondedPrimary(builder, values, config).front());
 

@@ -86,6 +86,10 @@ add_llvm_executable(mdir-template-physics-test Driver/TemplatePhysicsTest.cpp)
 llvm_update_compile_flags(mdir-template-physics-test)
 target_link_libraries(mdir-template-physics-test PRIVATE MDIRSimulation)
 
+add_llvm_executable(mdir-template-solute-test Driver/TemplateSoluteTest.cpp)
+llvm_update_compile_flags(mdir-template-solute-test)
+target_link_libraries(mdir-template-solute-test PRIVATE MDIRSimulation)
+
 add_llvm_executable(mdir-template-trajectory-test Driver/TemplateTrajectoryTest.cpp)
 llvm_update_compile_flags(mdir-template-trajectory-test)
 target_link_libraries(mdir-template-trajectory-test PRIVATE MDIRSimulation)
@@ -108,6 +112,7 @@ set(MDIR_TEST_DEPENDS
   mdir-template-report-test
   mdir-template-physics-test
   mdir-template-trajectory-test
+  mdir-template-solute-test
   mdir-model-test
   mdir-dihedral-tunables-test
   mdir-output-rows-test

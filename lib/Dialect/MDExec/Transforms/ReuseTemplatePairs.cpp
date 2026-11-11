@@ -24,7 +24,9 @@ static bool sameMembership(EmptySegmentedPairsOp a, EmptySegmentedPairsOp b) {
          a.getCutoffAttr() == b.getCutoffAttr() &&
          a.getSkinAttr() == b.getSkinAttr() &&
          a.getExtentAttr() == b.getExtentAttr() &&
-         a.getAlphaAttr() == b.getAlphaAttr();
+         a.getAlphaAttr() == b.getAlphaAttr() &&
+         a.getExcluded() == b.getExcluded() && a.getAnchored() == b.getAnchored() &&
+         a.getRadiusAttr() == b.getRadiusAttr();
 }
 
 // Each refresh consumes the last state of its allocation. A nested loop's
@@ -135,8 +137,8 @@ void reuseTemplatePairs(Operation *root, double pruneSkin) {
     auto empty = EmptySegmentedPairsOp::create(
         builder, build.getLoc(), build.getResult().getType(),
         build.getUniverse(), build.getMolecules(), build.getExcluded(),
-        build.getCutoffAttr(), build.getSkinAttr(), build.getExtentAttr(),
-        build.getAlphaAttr());
+        build.getAnchored(), build.getCutoffAttr(), build.getSkinAttr(),
+        build.getExtentAttr(), build.getAlphaAttr(), build.getRadiusAttr());
     double margin = build.getSkin().convertToDouble();
     if (pruneSkin > 0.0) margin = std::min(margin, pruneSkin);
     auto refresh = RefreshSegmentedPairsOp::create(

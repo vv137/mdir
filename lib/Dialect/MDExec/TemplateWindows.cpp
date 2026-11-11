@@ -16,6 +16,27 @@ static LogicalResult bounds(Operation *op) {
   }
   return success();
 }
+template <typename Op>
+static LogicalResult anchors(Op op, bool storage) {
+  if (bool(op.getAnchored()) != bool(op.getRadius()))
+    return op.emitOpError("expected solute anchors together with their radius");
+  if (!op.getAnchored()) return success();
+  double radius = op.getRadius()->convertToDouble();
+  if (!(radius > 0.0) || !std::isfinite(radius))
+    return op.emitOpError("expected a positive finite anchor radius");
+  if (storage != isa<MemRefType>(op.getAnchored().getType()))
+    return op.emitOpError("expected fields/relations together or buffers together");
+  if (storage) {
+    auto type = cast<MemRefType>(op.getAnchored().getType());
+    if (type.getRank() != 2 || type.getDimSize(1) != 2)
+      return op.emitOpError("expected (member, anchor) rows");
+  } else {
+    auto type = cast<mdir::md::RelationType>(op.getAnchored().getType());
+    if (type.getArity() != 2 || type.getOrientation() != mdir::md::Orientation::Ordered)
+      return op.emitOpError("expected ordered (member, anchor) pairs");
+  }
+  return success();
+}
 template <typename Effect>
 static void effect(SmallVectorImpl<MemoryEffects::EffectInstance> &effects,
                    OpOperand &operand) {
@@ -49,6 +70,7 @@ LogicalResult BuildSegmentedPairsOp::verify() {
     return emitOpError("expected three- or four-member template molecules");
   if (!getKernelValueType(getUniverse().getType()).isInteger(32))
     return emitOpError("expected a scalar i32 universe");
+  if (failed(anchors(*this, storage))) return failure();
   auto positions = dyn_cast<VectorType>(getKernelValueType(getPositions().getType()));
   if (!positions || positions.getShape() != ArrayRef<int64_t>{3} ||
       (!positions.getElementType().isF32() && !positions.getElementType().isF64()))
@@ -80,7 +102,7 @@ LogicalResult EmptySegmentedPairsOp::verify() {
     return emitOpError("expected three- or four-member template molecules");
   if (!getKernelValueType(getUniverse().getType()).isInteger(32))
     return emitOpError("expected a scalar i32 universe");
-  return success();
+  return anchors(*this, storage);
 }
 
 LogicalResult RefreshSegmentedPairsOp::verify() {
@@ -106,7 +128,8 @@ void EmptySegmentedPairsOp::getEffects(
   if (isa<MemRefType>(getUniverse().getType())) {
     effect<MemoryEffects::Read>(effects, getUniverseMutable());
     effect<MemoryEffects::Read>(effects, getMoleculesMutable());
-    if (getExcluded()) effect<MemoryEffects::Read>(effects, getOperation()->getOpOperand(2));
+    if (getExcluded()) effect<MemoryEffects::Read>(effects, getExcludedMutable()[0]);
+    if (getAnchored()) effect<MemoryEffects::Read>(effects, getAnchoredMutable()[0]);
     effects.emplace_back(MemoryEffects::Allocate::get(),
                          getOperation()->getOpResults().front(), 0, true,
                          SideEffects::DefaultResource::get());

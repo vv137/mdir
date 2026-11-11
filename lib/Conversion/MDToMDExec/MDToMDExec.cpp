@@ -133,8 +133,9 @@ LogicalResult Converter::convertTemplateWindow(OpTy op, bool gather) {
     list = md_exec::BuildSegmentedPairsOp::create(builder, loc,
         mdrt::SegmentedPairsType::get(builder.getContext(), relation.getParticleSet()),
         source.getUniverse(), source.getMolecules(), source.getExcluded(),
-        op.getPositions(), op.getCell(), op.getCutoffAttr(), builder.getF64FloatAttr(skin),
-        op.getExtentAttr(), op.getAlphaAttr());
+        source.getAnchored(), op.getPositions(), op.getCell(), op.getCutoffAttr(),
+        builder.getF64FloatAttr(skin), op.getExtentAttr(), op.getAlphaAttr(),
+        source.getRadiusAttr());
     known.push_back({op.getPositions(), op.getCell(), list, op.getCutoffAttr(),
                      op.getExtentAttr(), op.getAlphaAttr()});
   }

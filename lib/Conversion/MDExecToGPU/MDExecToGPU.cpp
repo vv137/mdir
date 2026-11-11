@@ -274,6 +274,9 @@ public:
   /// which stops the run if they differ (`check-pruning`,
   /// D268).
   bool checkPruning = false;
+  /// Whether each template evaluation calls the runtime's coverage check
+  /// (`check-template-coverage`, D[rigid-water-template]).
+  bool checkTemplateCoverage = false;
   /// Whether the first loop over pairs after a refresh of a dual list, at
   /// the same positions and in the same cell, prunes the inner list in its
   /// own kernel, a warp a group, where the refresh prunes, from
@@ -323,6 +326,10 @@ private:
   struct TemplatePairState {
     Value handle, waters, atoms, members, excluded;
     Value built, extent, invalid;
+    /// The solute units' anchor radius in use (f64 scalar buffer), widened
+    /// at an initial build like `extent`, and its fixed anchor tables.
+    Value anchorExtent, atomAnchors, atomDependents;
+    double radius = 0.0;
     Value frames, slots, realMembers, packingCells, currentPoints;
     Value outerReference, innerReference;
     Value hostCells, hostReaches;
@@ -352,6 +359,11 @@ private:
   LogicalResult lowerTemplateFor(md_exec::TemplateForOp op);
   LogicalResult lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairsOp op);
   LogicalResult getTemplateState(Operation *op, Value value, TemplatePairState &state);
+  /// The physical WW/SW/SS reaches in one addition order, shared by the
+  /// build, the prune and the validity theorem: cutoff + 2 extent,
+  /// cutoff + extent + radius, cutoff + 2 radius.
+  Value templatePhysicalReaches(OpBuilder &, Location, const TemplatePairState &,
+                                Value cell, double cutoff);
   Value templateRuntimeView(OpBuilder &, Location, Value handle, StringRef name,
                             MemRefType type, std::optional<int64_t> slot = {});
 
@@ -6156,6 +6168,24 @@ void Lowering::recordTemplateConstraintEpoch(OpBuilder &b, Location loc,
   memref::StoreOp::create(b, loc, yes, templateConstraintHistory, ValueRange{});
 }
 
+Value Lowering::templatePhysicalReaches(OpBuilder &b, Location loc,
+    const TemplatePairState &state, Value cell, double cutoffValue) {
+  auto real = [&](double x) { return createReal(b, loc, b.getF64Type(), x); };
+  Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
+  Value radius = memref::LoadOp::create(b, loc, state.anchorExtent, ValueRange{});
+  Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
+      math::AbsFOp::create(b, loc, cell));
+  Value cutoff = arith::AddFOp::create(b, loc, real(cutoffValue),
+      arith::MulFOp::create(b, loc, magnitude, real(3.e-6)));
+  // Anchors within R + rho_A + rho_B cover every site pair within R
+  // (#799); rho is zero for a water's solute partner without anchors.
+  SmallVector<Value, 3> radii{
+      arith::AddFOp::create(b, loc, cutoff, arith::MulFOp::create(b, loc, real(2), extent)),
+      arith::AddFOp::create(b, loc, arith::AddFOp::create(b, loc, cutoff, extent), radius),
+      arith::AddFOp::create(b, loc, cutoff, arith::MulFOp::create(b, loc, real(2), radius))};
+  return vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), radii);
+}
+
 Value Lowering::templateRuntimeView(OpBuilder &b, Location loc, Value handle,
                                     StringRef name, MemRefType type,
                                     std::optional<int64_t> slot) {
@@ -6217,18 +6247,26 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
     excluded = memref::AllocaOp::create(builder, loc,
         MemRefType::get({0, 2}, builder.getI32Type()));
   Value hostExcluded = onHost(excluded);
+  Value anchored = op.getAnchored();
+  if (!anchored)
+    anchored = memref::AllocaOp::create(builder, loc,
+        MemRefType::get({0, 2}, builder.getI32Type()));
+  Value hostAnchored = onHost(anchored);
   // A universal rank-two descriptor supports either model and every
   // particle-set tag with one runtime declaration. Device member buffers
   // are read back only here, at initialization outside the step loop.
   func::FuncOp create = getOrDeclare("mdrtTemplatePairsCreateMembers",
-      builder.getFunctionType({hostType, wide, wide, hostType}, {wide}));
+      builder.getFunctionType({hostType, wide, wide, hostType, hostType}, {wide}));
   create->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   create.setArgAttr(0, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   create.setArgAttr(3, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
+  create.setArgAttr(4, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value handle = func::CallOp::create(builder, loc, create,
-      ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded}).getResult(0);
+      ValueRange{hostMembers, makeWide(particles), makeWide(estimate), hostExcluded,
+                 hostAnchored}).getResult(0);
   for (Value host : copied) memref::DeallocOp::create(builder, loc, host);
   TemplatePairState state{handle, waters, atoms, op.getMolecules(), op.getExcluded()};
+  if (auto radius = op.getRadius()) state.radius = radius->convertToDouble();
   auto scalar = [&](Type type, Value initial) -> Value {
     Value buffer = memref::AllocaOp::create(builder, loc, MemRefType::get({}, type));
     memref::StoreOp::create(builder, loc, initial, buffer, ValueRange{});
@@ -6239,6 +6277,7 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   Value zero = createReal(builder, loc, builder.getF64Type(), 0);
   state.built = scalar(builder.getI1Type(), no);
   state.extent = scalar(builder.getF64Type(), zero);
+  state.anchorExtent = scalar(builder.getF64Type(), zero);
   state.invalid = memref::AllocaOp::create(builder, loc, MemRefType::get({5}, builder.getI1Type()));
   for (int64_t flag = 0; flag != 5; ++flag)
     memref::StoreOp::create(builder, loc, flag == 4 ? no : yes, state.invalid,
@@ -6264,6 +6303,8 @@ LogicalResult Lowering::lowerEmptyTemplatePairs(md_exec::EmptySegmentedPairsOp o
   state.frames = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsFrames", frameType);
   state.realMembers = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_MEMBERS);
   state.slots = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_PARTICLE_SLOTS);
+  state.atomAnchors = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_ATOM_ANCHORS);
+  state.atomDependents = templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsMetadata", indices, TEMPLATE_ATOM_DEPENDENTS);
   auto reference = [&](int64_t slot) {
     return templateRuntimeView(builder, loc, handle, "mdrtTemplatePairsFrameState", referenceType, slot);
   };
@@ -6327,8 +6368,11 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
   };
   Value built = memref::LoadOp::create(b, loc, state.built, ValueRange{});
   Value initial = arith::XOrIOp::create(b, loc, built, boolean(b, true));
-  Value water = arith::OrIOp::create(b, loc, initial, invalid(0));
-  Value atom = arith::OrIOp::create(b, loc, initial, invalid(1));
+  // One mobility group: the anchors of the waters and of the solute units
+  // share one test and one schedule (#799), so either flag refreshes all.
+  Value water = arith::OrIOp::create(b, loc, initial,
+      arith::OrIOp::create(b, loc, invalid(0), invalid(1)));
+  Value atom = water;
   Value extentValid = arith::XOrIOp::create(b, loc, invalid(4), boolean(b, true));
   cf::AssertOp::create(b, loc, extentValid,
       "template water exceeds its covering extent after position constraints");
@@ -6343,7 +6387,7 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
         state.outerReference, state.packingCells, state.currentPoints, counters,
         state.waters, state.atoms, cell, inverse,
         cast<MemRefType>(state.members.getType()).getDimSize(1) == 4,
-        op.getAlpha().convertToDouble()};
+        op.getAlpha().convertToDouble(), state.radius > 0.0 ? state.atomAnchors : Value()};
     emitSnapshotTemplateFrames(cold, loc, frames, water, atom);
     Value host = memref::AllocaOp::create(cold, loc,
         MemRefType::get({4}, cold.getI64Type()));
@@ -6370,20 +6414,33 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
         arith::MaximumFOp::create(cold, loc, previous, measured));
     Value extent = arith::SelectOp::create(cold, loc, constrained, nominal, widened);
     memref::StoreOp::create(cold, loc, extent, state.extent, ValueRange{});
+    if (state.radius > 0.0) {
+      // The solute units' radius: the constraint tolerance proves it after
+      // every position constraint; before the first, the input's measured
+      // member-anchor distances widen it for that build, as for the waters.
+      Value anchorBits = memref::LoadOp::create(cold, loc, host,
+          ValueRange{ix(cold, TEMPLATE_COUNTER_ANCHOR_EXTENT)});
+      Value anchor2 = arith::BitcastOp::create(cold, loc, cold.getF64Type(), anchorBits);
+      Value radius = real(cold, state.radius);
+      cf::AssertOp::create(cold, loc, arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::OLT,
+          anchor2, real(cold, std::numeric_limits<double>::infinity())),
+          "template solute unit has a nonfinite anchor distance");
+      Value inside = arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::OLE, anchor2,
+          arith::MulFOp::create(cold, loc, radius, radius));
+      cf::AssertOp::create(cold, loc, arith::OrIOp::create(cold, loc, initialPhase, inside),
+          "template solute member exceeds its anchor radius after position constraints");
+      Value earlier = memref::LoadOp::create(cold, loc, state.anchorExtent, ValueRange{});
+      Value grown = arith::MaximumFOp::create(cold, loc, radius,
+          arith::MaximumFOp::create(cold, loc, earlier, math::SqrtOp::create(cold, loc, anchor2)));
+      memref::StoreOp::create(cold, loc,
+          arith::SelectOp::create(cold, loc, constrained, radius, grown),
+          state.anchorExtent, ValueRange{});
+    }
     // Candidate-only padding covers f32 frame geometry, as in the legacy
     // mixed route. Neither the source site cutoff nor its arithmetic is
     // widened. The validity margins use these same actual class reaches.
-    Value magnitude = vector::ReductionOp::create(cold, loc, vector::CombiningKind::ADD,
-        math::AbsFOp::create(cold, loc, cell));
-    Value cutoff = arith::AddFOp::create(cold, loc, real(cold, op.getCutoff().convertToDouble()),
-        arith::MulFOp::create(cold, loc, magnitude, real(cold, 3.e-6)));
-    SmallVector<Value, 3> physical;
-    physical.push_back(arith::AddFOp::create(cold, loc, cutoff,
-        arith::MulFOp::create(cold, loc, real(cold, 2), extent)));
-    physical.push_back(arith::AddFOp::create(cold, loc, cutoff, extent));
-    physical.push_back(cutoff);
     Value actual = emitTemplateFreshReaches(cold, loc,
-        vector::FromElementsOp::create(cold, loc, VectorType::get({3}, cold.getF64Type()), physical),
+        templatePhysicalReaches(cold, loc, state, cell, op.getCutoff().convertToDouble()),
         real(cold, op.getSkin().convertToDouble()));
     Value prepared = memref::AllocaOp::create(cold, loc, MemRefType::get({}, cold.getI1Type()));
     memref::StoreOp::create(cold, loc, boolean(cold, true), prepared, ValueRange{});
@@ -6458,18 +6515,8 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
   if (failed(getTemplateState(op, refresh->getOperand(0), state))) return failure();
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   Value cell = refresh.getCellMutable().get();
-  Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
-  Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
-      math::AbsFOp::create(b, loc, cell));
-  Value cutoff = arith::AddFOp::create(b, loc,
-      createReal(b, loc, b.getF64Type(), refresh.getCutoff().convertToDouble()),
-      arith::MulFOp::create(b, loc, magnitude, createReal(b, loc, b.getF64Type(), 3.e-6)));
-  SmallVector<Value, 3> radii{
-      arith::AddFOp::create(b, loc, cutoff,
-          arith::MulFOp::create(b, loc, createReal(b, loc, b.getF64Type(), 2), extent)),
-      arith::AddFOp::create(b, loc, cutoff, extent), cutoff};
-  Value physical = vector::FromElementsOp::create(b, loc,
-      VectorType::get({3}, b.getF64Type()), radii);
+  Value physical = templatePhysicalReaches(b, loc, state, cell,
+      refresh.getCutoff().convertToDouble());
   auto limits = [&](int64_t epoch, double skin) {
     SmallVector<Value, 3> cells, reaches;
     for (int64_t tag = 0; tag != 3; ++tag) {
@@ -6482,9 +6529,13 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
           VectorType::get({getCellSize()}, b.getF64Type()), components));
       reaches.push_back(memref::LoadOp::create(b, loc, state.hostReaches, ValueRange{e, t}));
     }
-    return emitTemplateGroupMotionLimits(b, loc, cell, cells,
+    auto incident = emitTemplateGroupMotionLimits(b, loc, cell, cells,
         vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), reaches),
         physical, createReal(b, loc, b.getF64Type(), skin));
+    // One mobility group (#799): its one test takes the least margin of
+    // all three classes, for the water and the solute anchors alike.
+    Value least = arith::MinimumFOp::create(b, loc, incident[0], incident[1]);
+    return std::array<Value, 2>{least, least};
   };
   v.frames = state.frames; v.packingCells = state.packingCells;
   v.currentPoints = state.currentPoints; v.outerReference = state.outerReference;
@@ -6497,6 +6548,10 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
   if (constrainedHere)
     v.constrained = arith::OrIOp::create(b, loc, v.constrained,
         arith::ConstantOp::create(b, loc, b.getBoolAttr(true)));
+  if (state.radius > 0.0) {
+    v.atomAnchors = state.atomAnchors;
+    v.atomDependents = state.atomDependents;
+  }
   v.positionOutput = plan.positionOutput;
   v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
@@ -6632,27 +6687,19 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
     pruning.groupLengths = groupLengths;
     pruning.innerReference = state.innerReference; pruning.waters = state.waters;
     pruning.cell = op.getCellMutable().get();
-    pruning.waterActive = memref::LoadOp::create(b, loc, state.invalid,
-        ValueRange{createIndex(b, loc, 2)});
-    pruning.atomActive = memref::LoadOp::create(b, loc, state.invalid,
-        ValueRange{createIndex(b, loc, 3)});
+    // One mobility group: either pruning flag prunes every class.
+    pruning.waterActive = arith::OrIOp::create(b, loc,
+        memref::LoadOp::create(b, loc, state.invalid, ValueRange{createIndex(b, loc, 2)}),
+        memref::LoadOp::create(b, loc, state.invalid, ValueRange{createIndex(b, loc, 3)}));
+    pruning.atomActive = pruning.waterActive;
     func::CallOp::create(b, loc,
         getOrDeclare("mdrtTemplatePairsNotePrune",
             b.getFunctionType({wide, wide}, {})),
         ValueRange{arith::ExtUIOp::create(b, loc, wide, pruning.waterActive),
                    arith::ExtUIOp::create(b, loc, wide, pruning.atomActive)});
-    Value extent = memref::LoadOp::create(b, loc, state.extent, ValueRange{});
-    Value magnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
-        math::AbsFOp::create(b, loc, pruning.cell));
-    Value cutoff = arith::AddFOp::create(b, loc,
-        createReal(b, loc, b.getF64Type(), state.specification.getCutoff().convertToDouble()),
-        arith::MulFOp::create(b, loc, magnitude, createReal(b, loc, b.getF64Type(), 3.e-6)));
-    SmallVector<Value, 3> physical{
-        arith::AddFOp::create(b, loc, cutoff,
-            arith::MulFOp::create(b, loc, createReal(b, loc, b.getF64Type(), 2), extent)),
-        arith::AddFOp::create(b, loc, cutoff, extent), cutoff};
     innerReaches = emitTemplateFreshReaches(b, loc,
-        vector::FromElementsOp::create(b, loc, VectorType::get({3}, b.getF64Type()), physical),
+        templatePhysicalReaches(b, loc, state, pruning.cell,
+            state.specification.getCutoff().convertToDouble()),
         createReal(b, loc, b.getF64Type(), state.specification.getPruneSkin().convertToDouble()));
     pruning.reaches = innerReaches;
     auto epochType = getDeviceType({ShapedType::kDynamic, 3}, b.getF64Type());
@@ -6755,6 +6802,21 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   }
   gpu::TerminatorOp::create(k, loc);
   bringIn(launch);
+  if (nativeEpochs && checkTemplateCoverage) {
+    // The test-only coverage diagnostic of the evaluated lists.
+    SmallVector<Value, 10> arguments{handle,
+        createReal(b, loc, b.getF64Type(), state.specification.getCutoff().convertToDouble()),
+        createReal(b, loc, b.getF64Type(), state.specification.getAlpha().convertToDouble()),
+        arith::ConstantIntOp::create(b, loc, hasSite, 64)};
+    for (int64_t axis = 0; axis != 6; ++axis)
+      arguments.push_back(axis < getCellSize()
+          ? Value(vector::ExtractOp::create(b, loc, pruning.cell, axis))
+          : createReal(b, loc, b.getF64Type(), 0));
+    SmallVector<Type, 10> types(ValueRange(arguments).getTypes());
+    func::CallOp::create(b, loc,
+        getOrDeclare("mdrtTemplatePairsCheckCoverage", b.getFunctionType(types, {})),
+        arguments);
+  }
   if (nativeEpochs) {
     for (int64_t tag = 0; tag != 3; ++tag) {
       Value active = tag == 0 ? pruning.waterActive : tag == 2 ? pruning.atomActive
@@ -10062,6 +10124,7 @@ public:
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
+    lowering.checkTemplateCoverage = checkTemplateCoverage;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;

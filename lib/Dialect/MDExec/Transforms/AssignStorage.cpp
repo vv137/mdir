@@ -1084,15 +1084,19 @@ LogicalResult Assignment::convertSegmentedBuild(BuildSegmentedPairsOp op, Scope 
       failed(getBuffer(op.getPositions(), scope, positions))) return failure();
   Value molecules = mapping.lookupOrNull(op.getMolecules());
   if (!molecules) return op.emitOpError("template molecules have no member buffer");
-  Value excluded;
+  Value excluded, anchored;
   if (op.getExcluded()) {
     excluded = mapping.lookupOrNull(op.getExcluded());
     if (!excluded) return op.emitOpError("template exclusions have no member buffer");
   }
+  if (op.getAnchored()) {
+    anchored = mapping.lookupOrNull(op.getAnchored());
+    if (!anchored) return op.emitOpError("template solute anchors have no member buffer");
+  }
   auto list = BuildSegmentedPairsOp::create(scope.builder, op.getLoc(),
-      op.getResult().getType(), universe, molecules, excluded, positions,
+      op.getResult().getType(), universe, molecules, excluded, anchored, positions,
       mapping.lookup(op.getCell()), op.getCutoffAttr(), op.getSkinAttr(),
-      op.getExtentAttr(), op.getAlphaAttr());
+      op.getExtentAttr(), op.getAlphaAttr(), op.getRadiusAttr());
   mapping.map(op.getResult(), list.getResult());
   return success();
 }
@@ -2339,12 +2343,15 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     Value molecules = mapping.lookupOrNull(empty.getMolecules());
     Value excluded = empty.getExcluded()
                          ? mapping.lookupOrNull(empty.getExcluded()) : Value();
-    if (!molecules || (empty.getExcluded() && !excluded))
+    Value anchored = empty.getAnchored()
+                         ? mapping.lookupOrNull(empty.getAnchored()) : Value();
+    if (!molecules || (empty.getExcluded() && !excluded) ||
+        (empty.getAnchored() && !anchored))
       return empty.emitOpError("template membership has no member buffer");
     auto list = EmptySegmentedPairsOp::create(
         builder, op->getLoc(), empty.getResult().getType(), universe,
-        molecules, excluded, empty.getCutoffAttr(), empty.getSkinAttr(),
-        empty.getExtentAttr(), empty.getAlphaAttr());
+        molecules, excluded, anchored, empty.getCutoffAttr(), empty.getSkinAttr(),
+        empty.getExtentAttr(), empty.getAlphaAttr(), empty.getRadiusAttr());
     mapping.map(empty.getResult(), list.getResult());
     return success();
   }

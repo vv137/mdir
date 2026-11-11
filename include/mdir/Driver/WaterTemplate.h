@@ -31,12 +31,27 @@ struct WaterTemplatePlan {
   std::map<std::string, size_t> mismatches;
   size_t candidates = 0;
 
+  /// Solute units (#799): each solute particle that a constrained bond
+  /// keeps near a heavy atom is listed as (member, anchor); every other
+  /// solute particle anchors itself. The units partition the solute.
+  std::vector<std::array<unsigned, 2>> anchored;
+  /// The longest constrained member-anchor length, in nm.
+  double anchorLength = 0.0;
+  /// Solute hydrogens with no constrained bond to an anchor. Any makes
+  /// the template inapplicable: the run takes the general path.
+  size_t unconstrainedHydrogens = 0;
+
   /// The class-segmented pair list holds WW, SW and SS in one buffer.
-  /// Refresh a segment when either participating mobility group needs it:
-  /// bit 0 is anchors and bit 1 atoms. Thus adding atom classes does not
-  /// add a displacement test (P(P+1)/2 segments, C <= P tests).
-  static constexpr std::array<unsigned, 3> mobilityMasks = {1, 3, 2};
+  /// One mobility group, the anchors of the waters and of the solute
+  /// units, refreshes every segment: P(P+1)/2 segments, one test.
+  static constexpr std::array<unsigned, 3> mobilityMasks = {1, 1, 1};
 };
+
+/// The radius of the solute units: the longest constrained length with
+/// the constraints' relative tolerance, rho = d (1 + tol), which their
+/// failure test enforces after every position constraint. Zero without
+/// anchored members.
+double getAnchorRadius(const WaterTemplatePlan &, bool doublePrecision);
 
 /// Match an already validated, prepared topology. This proves only the
 /// topology; execution-mode selection and the measured AUTO floor are

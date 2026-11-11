@@ -42,6 +42,21 @@ static System input(unsigned four = 2, unsigned three = 1) {
   s.types = t.types; s.masses = t.masses;
   return s;
 }
+/// A methyl-like solute fragment: a carbon and three hydrogens, with or
+/// without the SHAKE group of its X-H bonds.
+static void addMethyl(System &s, bool constrained) {
+  auto &t = *s.topology;
+  unsigned c = t.getNumParticles();
+  t.residueStarts.push_back(c); t.residueNames.push_back("MET");
+  for (unsigned k = 0; k != 4; ++k) {
+    t.atomicNumbers.push_back(k ? 1 : 6); t.atomNames.push_back(k ? "H" : "C");
+    t.masses.push_back(k ? 1.008 : 12.0); t.charges.push_back(k ? 0.1 : -0.3);
+    t.types.push_back(3); t.residueOf.push_back(t.residueNames.size() - 1);
+    if (k) t.exclusions.emplace_back(c, c + k);
+  }
+  if (constrained) t.shakes.push_back({c, {c + 1, c + 2, c + 3}, {0.109, 0.108, 0.109}});
+  s.types = t.types; s.masses = t.masses;
+}
 static WaterTemplatePlan match(const System &s, const Control &c = {}) {
   auto plan = matchWaterTemplate(c, s);
   if (!plan) { llvm::errs() << llvm::toString(plan.takeError()) << '\n'; std::exit(1); }
@@ -174,7 +189,34 @@ int main(int argc, char **argv) {
     System s; s.types = {0}; auto p = match(s);
     require(p.instances.empty() && p.solute == std::vector<unsigned>{0}, "no-topology partition"); ++cases;
   }
-  require(WaterTemplatePlan::mobilityMasks == std::array<unsigned, 3>{1, 3, 2}, "segment mobility incidence");
+  require(WaterTemplatePlan::mobilityMasks == std::array<unsigned, 3>{1, 1, 1}, "segment mobility incidence");
+  {
+    auto s = input(); addMethyl(s, true);
+    auto p = match(s);
+    unsigned c = s.types.size() - 4;
+    // The three-site minority water is solute too: two more members.
+    require(p.anchored.size() == 5 && p.unconstrainedHydrogens == 0 &&
+            p.anchored[0] == std::array<unsigned, 2>{c + 1, c} &&
+            p.anchored[2] == std::array<unsigned, 2>{c + 3, c} &&
+            p.anchorLength == 0.109 &&
+            std::abs(getAnchorRadius(p, false) - 0.109 * (1 + 1e-4)) < 1e-17 &&
+            std::abs(getAnchorRadius(p, true) - 0.109 * (1 + 1e-8)) < 1e-17,
+            "heavy-atom units from constrained X-H bonds"); ++cases;
+  }
+  {
+    auto s = input(); addMethyl(s, false);
+    auto p = match(s);
+    require(p.anchored.size() == 2 && p.unconstrainedHydrogens == 3,
+            "unconstrained solute hydrogens are counted, not anchored"); ++cases;
+  }
+  {
+    // Unmatched rigid water stays solute: a unit of its oxygen.
+    auto s = input(); s.topology->epsilon[5] = 0.1;
+    auto p = match(s);
+    require(p.instances.empty() && p.anchored.size() == 6 && p.anchorLength == 0.1 &&
+            p.anchored[1] == std::array<unsigned, 2>{2, 0} && p.unconstrainedHydrogens == 0,
+            "solute rigid water units"); ++cases;
+  }
   llvm::outs() << "water template topology contracts: " << cases << " passed\n";
   Control c; c.target = Target::GPU; c.precision = Precision::Mixed;
   auto selection = [&](const System &s, size_t floor) {
@@ -205,6 +247,20 @@ int main(int argc, char **argv) {
   auto empty = input(0, 0); auto missing = selectWaterTemplate(c, empty, 0);
   require(!missing, "ON without matching water");
   require(llvm::toString(missing.takeError()).find("no rigid water") != std::string::npos, "no-match reason"); ++policies;
+  {
+    auto loose = input(); addMethyl(loose, false);
+    auto result = selectWaterTemplate(c, loose, 0);
+    require(!result, "ON accepted unconstrained solute hydrogens");
+    require(llvm::toString(result.takeError()).find("3 solute hydrogens have no constrained bond") !=
+            std::string::npos, "unconstrained-hydrogen ON refusal"); ++policies;
+    auto held = input(); addMethyl(held, true);
+    require(selection(held, 0).enabled, "ON with constrained solute units"); ++policies;
+    c.waterTemplate = WaterTemplateChoice::Auto;
+    auto general = selection(loose, 0);
+    require(!general.enabled && general.reason.find("hydrogen_bonds") != std::string::npos,
+            "AUTO takes the general path without constrained hydrogens"); ++policies;
+    c.waterTemplate = WaterTemplateChoice::On;
+  }
   c.waterTemplate = WaterTemplateChoice::Off; c.target = Target::CPU;
   require(!selection(input(), 0).enabled, "OFF ordinary path"); ++policies;
   c.waterTemplate = WaterTemplateChoice::Auto;

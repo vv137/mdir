@@ -1,4 +1,4 @@
-// Conservative cell deformation for the two mobility-group validity tests.
+// Conservative cell deformation for the mobility-group validity tests.
 #ifndef MDIR_CONVERSION_TEMPLATEVALIDITYKERNELS_H
 #define MDIR_CONVERSION_TEMPLATEVALIDITYKERNELS_H
 #include "mlir/IR/Builders.h"
