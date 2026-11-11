@@ -2061,11 +2061,14 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
   cuEventQuery and cuEventSynchronize return it for every event, those
   that had completed before as well; and the driver still runs a function
   of the host that was enqueued behind copies that never ran. The device
-  writes no mark after the failure. (Measured with CUDA 13.2 on an RTX 4090
-  and an RTX 5090: CUDA_ERROR_LAUNCH_FAILED for an event whose stream had
-  been synchronized before the failing launch; a function of the host
-  enqueued behind a copy that waited for the failed stream ran; a value
-  written by cuStreamWriteValue32 there was not written.) */
+  writes no mark after the failure. (Measured with the driver API 13.2, on
+  an RTX 4090 with the driver 595.45.04 and on an RTX 5090 with 595.104.02:
+  CUDA_ERROR_LAUNCH_FAILED for an event whose stream had been synchronized
+  before the failing launch; a function of the host enqueued behind a copy
+  that waited for the failed stream ran; a value of cuStreamWriteValue32
+  there was not written. The probes queue the copy behind the failed
+  stream; a copy already running on the copy engine at the trap was not
+  measured.) */
 
 #define MDRT_STAGING_PARTS 4
 

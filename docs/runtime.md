@@ -337,11 +337,15 @@ was not. Once a kernel has failed, the error belongs to the context, and the
 driver returns it for every event, those that had completed before as well,
 and it still runs a function of the host that was enqueued behind copies
 that never ran; the device writes no value after the failure. Measured with
-CUDA 13.2 on an RTX 4090 and an RTX 5090: `cuEventQuery` and
-`cuEventSynchronize` both returned `CUDA_ERROR_LAUNCH_FAILED` for an event
-of a stream that had been synchronized before the failing launch; a function
-of the host enqueued on a stream behind a copy that waited for the failed
-stream ran; a `cuStreamWriteValue32` there wrote nothing. The mark is the
+the driver API 13.2 on an RTX 4090 (driver 595.45.04) and an RTX 5090
+(driver 595.104.02), with three small programs of the driver API:
+`cuEventQuery` and `cuEventSynchronize` both returned
+`CUDA_ERROR_LAUNCH_FAILED` for an event of a stream that had been
+synchronized before the failing launch; a function of the host enqueued on
+a stream behind a copy that waited for the failed stream ran; a
+`cuStreamWriteValue32` there wrote nothing. The probes queue the copy behind
+the failed stream; a copy already running on the copy engine when the
+kernel traps was not measured. The mark is the
 number of the staging, not a flag: it may land after the wait for that
 staging's event has returned, the writer has given the slot back, and the
 slot has been staged again, and a flag set then would claim the new copies
