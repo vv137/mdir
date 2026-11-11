@@ -104,8 +104,10 @@ D[rigid-water-template]. Its implementation is in progress; its accepted
 contract is in the [decision](decisions/rigid-water-template.md).
 Position publication may join an existing fused integration kernel only
 when the same ownership and ordering proofs hold and its constraint run has
-one marked family. Mixed families retain the separate writer. This changes
-no key, validity threshold or reference epoch.
+one marked family. Otherwise the update fuses as without the template and
+a kernel of its own, one thread per unit, publishes after it; its
+displacement and extent tests are in f32 with bounds that keep them
+conservative (the decision, U5). This changes no key or reference epoch.
 The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
 are preserved; deterministic, double, CPU, minimization and derivative

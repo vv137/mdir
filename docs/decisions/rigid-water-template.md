@@ -1877,6 +1877,106 @@ run (3 unsupported) and the sanitizer tier (3 fixtures) pass. The
 dipeptide checks: OPC NPT 309 checks, 3,899,162 pairs; TIP3P NVT 249
 checks, 3,179,900 pairs; none without an entry or twice.
 
+### U5: the fused update before the writer, and the writer in f32
+
+**The update of mixed families.** With ubiquitin in TIP3P the run before
+the writer has four constraint families (SETTLE and the solute's bond
+clusters of three sizes), and the writer was the loop after the run: the
+rule that kept publication inside the integration's threads to one marked
+family refused the fusion, so the kick, the constraints and the drift ran
+as three kernels (1.7, 12.4 and 10.6 µs/step against the 9.6 of `main`'s
+fused update). Such a run now fuses as without the template, and a kernel
+of its own follows it and publishes the frames from the stored final
+positions; one marked family keeps its publication in the integration's
+threads. The writer's deferred constraint flags and its validity flags
+share one event, as before. The exact fixture compares the mixed families'
+separate writer with the unfused one (across warps, with 33 unmatched atom
+units).
+
+**The writer.** The per-step writer (b78aa15b) held a whole unit in one lane of three
+or four, evaluated the loop's body once for each site, and took its
+geometry and tests in f64 (228 f64 additions, multiplications and FMAs in
+its SASS). Every writer loop now lowers as any particle loop, and the
+kernel above packs the frames, one thread per unit:
+
+- An O–H displacement is the f64 difference narrowed to f32, imaged in
+  f32 unless that moves it (a water split by a face, imaged in f64 and
+  narrowed); a hydrogen's frame is the narrowed, shifted anchor plus it.
+  The build packs the same way. The extent test takes these
+  displacements once (the wrap was computed twice), in f32, against
+  $r_\mathrm m^2(1 - 2^{-20})$: the f32 square has a relative error below
+  $11\cdot2^{-24}$, so no true excess passes.
+- The displacement test is in f32: the narrowed framed anchor
+  $\mathbf y$ plus the narrowed $H\mathbf t$, less the f32 product of the
+  narrowed $H$ and reference point $\mathbf p$, against
+  $L_\zeta = (\zeta - \delta_\zeta)^2(1 - 2^{-20})$, narrowed once per
+  launch, with $\zeta$ the half margin and $\delta_\zeta =
+  2^{-18}(\lvert H\rvert_1 + \zeta)$; $L_\zeta = -1$ when
+  $\zeta - \delta_\zeta$ is negative. A point with
+  $\lvert\mathbf p\rvert_\infty > 2$ fails, which the bound assumes. The
+  bound is derived in the paper, Section 4.7; no unit computes a guard of
+  its own. On a 5 nm cell $\delta_\zeta$ is $6\times10^{-5}$ nm.
+- The writer stores no current point: where a group prunes, a kernel
+  before the prune computes every unit's point from the positions and the
+  packing cells of its anchor (a member takes its anchor's).
+- The validity booleans are bytes of one flag word, read once: the outer
+  test, the inner test (water and atoms share each, one mobility group)
+  and the extent. The word is mapped host memory, where a kernel may not
+  take atomics (the sanitizer refused an atomic OR), so each byte is set by
+  plain stores of 1.
+
+The SASS of the writer now has 24 f64 arithmetic instructions, most on
+the rare path of a split water. The per-particle writer helper and its two
+fixtures are gone. The writer fixture adds displacements at the margins:
+$2^{-23}$ of a margin beyond it must fail and $2^{-12}$ inside it must
+pass, orthorhombic and triclinic at $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$;
+in a simulation of the f32 test without $\delta_\zeta$ and the factor
+$1 - 2^{-20}$ on these inputs, every one of the 16 units that exceed their
+margin passes.
+
+Kernels of the step, 10,000 steps, RTX 5090 (µs/step):
+
+| Kernel | Ubiquitin TIP3P | Ubiquitin OPC | Large OPC box |
+|---|---|---|---|
+| main: fused update | 9.6 | 10.1 | 10.4 |
+| main: extra points' update | | 2.0 | 3.2 |
+| b78aa15b: kick + constraints + writer | 1.7 + 12.4 + 10.6 | | |
+| b78aa15b: fused update | | 10.0 | 9.3 |
+| b78aa15b: writer (with the extra points) | | 11.1 | 14.2 |
+| U5: fused update | 9.2 | 10.0 | 9.3 |
+| U5: extra points' update | | 1.2 | 2.0 |
+| U5: writer | 2.6 | 2.7 | 2.8 |
+| U5: current points at a prune (per step) | 0.1 | 0.1 | 0.1 |
+
+### Status after U5
+
+10,000-step captures, RTX 5090, main b7d801d9 against 74ea3f31, two rounds
+in alternated order (round 1 / round 2, µs/step; wall and idle as in U1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5/114.3 | 22.5/22.5 | 123.1/122.9 | 8.1/8.2 |
+| | b78aa15b | 111.8/112.0 | 8.6/8.6 | 122.3/122.7 | 9.8/10.0 |
+| | 74ea3f31 | 105.0/105.0 | 8.7/8.8 | 115.9/115.9 | 10.2/10.2 |
+| Ubiquitin TIP3P | main | 91.1/91.3 | 19.6/19.7 | 99.0/99.2 | 7.4/7.4 |
+| | b78aa15b | 106.5/106.2 | 9.7/9.6 | 116.6/116.2 | 9.4/9.4 |
+| | 74ea3f31 | 94.1/94.1 | 9.7/9.7 | 104.2/104.0 | 9.4/9.3 |
+| Large OPC box | main | 176.8/176.9 | 27.1/27.1 | 185.9/186.0 | 8.6/8.6 |
+| | b78aa15b | 156.9/157.0 | 5.2/5.3 | 166.5/166.7 | 9.0/9.0 |
+| | 74ea3f31 | 147.2/147.4 | 5.3/5.3 | 157.2/157.3 | 9.4/9.3 |
+
+Ubiquitin in OPC runs 9.5 µs/step of kernels and 7.1 of wall below main,
+the large OPC box 29.5 and 28.7 below. Ubiquitin in TIP3P is still 2.9
+µs/step of kernels and 4.9 of wall above main: the template's evaluation
+takes 35.4 against main's 26.2 (the pair kernel 24.4 and its two small
+kernels 1.8), its maintenance 9.7 against 19.7, the writer 2.6, and the
+device idles 1.9 µs/step more than on main. The covering reach is still
+checked against the input cell alone (U4).
+
+Gates at 74ea3f31: the 107 template fixtures in one run (3 unsupported;
+the list lost the two fixtures of the per-particle helper) and the
+sanitizer tier (3 fixtures, 35 s) pass.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,

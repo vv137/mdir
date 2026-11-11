@@ -1380,11 +1380,42 @@ solvated protein the solute's lists and the packing of the waters take
 part of it back.
 
 Eligible single-family integration runs publish through the shared
-final-output observer; mixed families retain the separate writer. The
-arithmetic-sharing experiment did not establish a stage gain and was
-discarded. The retained writer arithmetic and independently aged references
-are unchanged. Publication fusion does not change the class-list validity
+final-output observer; mixed families, and writers after an extra point,
+publish in a kernel of their own after the update, one thread per unit.
+The arithmetic-sharing experiment did not establish a stage gain and was
+discarded. Publication fusion does not change the class-list validity
 contract.
+
+**The writer's arithmetic.** The writer packs a water's frame from its
+anchor, shifted to its packing cell in f64 and narrowed, plus the O–H
+displacements, each the f64 difference narrowed to f32 (imaged in f64 when
+a face splits the water). Its displacement test is in f32 as well. With
+$\mathbf y$ the framed anchor, $\mathbf p$ its reference point (a fraction
+plus $\mathbf t$) and $\zeta$ the half margin of its group, the true
+displacement is $\mathbf D = \mathbf y + H\mathbf t - H\mathbf p$, and the
+writer computes $\hat{\mathbf d}$ from the narrowed $\mathbf y$, $H$,
+$H\mathbf t$ and $\mathbf p$ in f32. The sum $\lvert H\rvert_1$ of the
+magnitudes of the cell's components bounds every row sum of $\lvert H\rvert$.
+Where $\lvert\mathbf p\rvert_\infty \le 2$ (tested; a point beyond it fails)
+and $t_a \le \tfrac12$, each component of $\mathbf y$ is at most
+$\tfrac52\lvert H\rvert_1 + \lvert D_a\rvert$, and the roundings of the
+narrowings, the products and the sums give
+$\lVert\hat{\mathbf d} - \mathbf D\rVert \le \mathsf u\,(28\lvert H\rvert_1 +
+2\lVert\mathbf D\rVert + \lVert\hat{\mathbf d}\rVert)$. The test passes where
+the f32 sum of squares is at most $L_\zeta = (\zeta - \delta_\zeta)^2(1 -
+2^{-20})$, narrowed once per launch, with $\delta_\zeta = 2^{-18}(\lvert
+H\rvert_1 + \zeta)$; that sum is at least $\lVert\hat{\mathbf d}\rVert^2(1 -
+3\mathsf u)$, so a pass gives $\lVert\hat{\mathbf d}\rVert < \zeta -
+\delta_\zeta$ and $\lVert\mathbf D\rVert(1 - 2\mathsf u) < (\zeta -
+\delta_\zeta)(1 + \mathsf u) + 28\mathsf u\lvert H\rvert_1 \le \zeta(1 -
+2\mathsf u)$, since $\delta_\zeta \ge 28\mathsf u\lvert H\rvert_1 +
+3\mathsf u\zeta$. A negative $\zeta - \delta_\zeta$ makes $L_\zeta = -1$, and
+every unit fails. On a cubic cell of 5 nm, $\delta_\zeta$ is $6\times10^{-5}$
+nm. The extent test compares the f32 square of the largest site distance,
+whose relative error is below $11\mathsf u$, with $r_\mathrm m^2(1 -
+2^{-20})$, so that no true excess passes. The writer no longer stores the
+current points each step: where a group prunes, a kernel before the prune
+takes them from the positions and the packing cells of the anchors.
 
 The **class-segmented pair list** is one buffer of cluster pairs divided
 into segments by class-pair tag: WW, SW and SS here. For $P$ particle
