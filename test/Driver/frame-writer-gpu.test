@@ -5,8 +5,10 @@
 # waits for. Each write is held back by 100 ms, so the ring fills and the
 # steps go on past frames whose copies the thread has not yet read. The
 # trajectories in DCD and H5MD, the energies, and the checkpoints are those
-# of a run whose frames are not held back, byte for byte, and so are those
-# of a run stopped at its first checkpoint and continued.
+# of a run whose frames are not held back, byte for byte (H5MD by content:
+# every dataset and attribute, the fields that the call takes at its step
+# among them), and so are those of a run stopped at its first checkpoint
+# and continued.
 #
 # REQUIRES: hdf5, cuda, h5py
 #
@@ -25,7 +27,8 @@
 # RUN: cmp %t/plain/run.dcd %t/held/run.dcd
 # RUN: cmp %t/plain/energies.txt %t/held/energies.txt
 # RUN: cmp %t/plain/exact.txt %t/held/exact.txt
-# RUN: %h5md_python -c "import h5py, numpy, sys; a, b = (h5py.File(p, 'r')['particles/all/position/value'][()] for p in sys.argv[1:]); print('frames', len(a), 'identical' if a.shape == b.shape and numpy.array_equal(a.view(numpy.uint64), b.view(numpy.uint64)) else 'different')" %t/plain/run.h5md %t/held/run.h5md | FileCheck %s --check-prefix=EXACT
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/run.h5md %t/held/run.h5md | FileCheck %s --check-prefix=EXACT
+# RUN: %h5md_python -c "import h5py, sys; f = h5py.File(sys.argv[1], 'r'); [print(n, len(f[n])) for n in ('particles/all/position/value', 'particles/all/position/step', 'particles/all/position/time', 'particles/all/box/edges/value', 'observables/potential_energy/value', 'observables/potential_energy/step')]" %t/held/run.h5md | FileCheck %s --check-prefix=FIELDS
 # RUN: grep 'INFO: ' %t/plain/out > %t/plain/rows
 # RUN: grep 'INFO: ' %t/held/out > %t/held/rows
 # RUN: diff %t/plain/rows %t/held/rows
@@ -40,7 +43,16 @@
 # CHECK: MDIR: times of the frame at step {{[0-9]+}}: copy {{[0-9.]+}} ms, wait {{[1-9][0-9]+}}.{{[0-9]}} ms
 # CHECK: MDIR: times of the write of the frame at step {{[0-9]+}}: copy
 
-# EXACT: frames 20 identical
+# EXACT: identical contents
+# The fields that the call of a frame takes at its step, which the thread
+# writes later: the positions, the step, the time, the cell, and the
+# potential energy of the step, 20 frames each.
+# FIELDS:      particles/all/position/value 20
+# FIELDS-NEXT: particles/all/position/step 20
+# FIELDS-NEXT: particles/all/position/time 20
+# FIELDS-NEXT: particles/all/box/edges/value 20
+# FIELDS-NEXT: observables/potential_energy/value 20
+# FIELDS-NEXT: observables/potential_energy/step 20
 
 # STOP: MDIR: stopped after step 100 on the wall time
 # STOP: exit status 75
