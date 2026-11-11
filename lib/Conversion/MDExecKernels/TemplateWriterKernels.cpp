@@ -3,7 +3,6 @@
 #include "mdir/Conversion/TemplateValidityKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
-#include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -12,12 +11,26 @@
 using namespace mlir;
 using namespace mdir::kernels;
 
+void mdir::kernels::prepareTemplateWriterConstants(OpBuilder &b, Location loc,
+    TemplateWriterBuffers &v) {
+  auto narrow = [&](Value x) -> Value {
+    return arith::TruncFOp::create(b, loc,
+        VectorType::get(cast<VectorType>(x.getType()).getShape(), b.getF32Type()), x);
+  };
+  v.narrowCell = narrow(v.cell);
+  v.narrowInverse = narrow(v.inverse);
+  Value offset = vector::BroadcastOp::create(b, loc,
+      VectorType::get({3}, b.getF64Type()), createReal(b, loc, b.getF64Type(), v.pointOffset));
+  v.narrowOffset = narrow(emitLatticeShift(b, loc, offset, v.cell));
+}
+
 TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
     Location loc, const TemplateWriterBuffers &v, Value unit,
     ArrayRef<TemplateParticleResult> results) {
   assert((results.size() == 1 || results.size() == 3) && "whole unit required");
   for (const auto &result : results)
     assert(v.positionOutput < result.outputs.size());
+  assert(v.narrowCell && "prepareTemplateWriterConstants before the launch");
   auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
   Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
   Value real = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge, unit,
@@ -29,14 +42,17 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
     Value extentBad = no;
     SmallVector<Value, 3> positions;
     for (const auto &result : results) positions.push_back(result.outputs[v.positionOutput]);
+    std::array<Value, 2> local;
     if (water) {
-      Value zero = createZero(at, loc, positions[0].getType());
-      auto whole = emitRetainedTemplateFrame(at, loc, positions, v.cell, v.inverse,
-                                               zero, at.getF32Type());
-      Value h1 = arith::SubFOp::create(at, loc, whole.whole[1], whole.whole[0]);
-      Value h2 = arith::SubFOp::create(at, loc, whole.whole[2], whole.whole[0]);
-      Value squared = mdir::md::emitTemplateExtentSquared(at, loc, v.alpha, v.hasSite, h1, h2);
-      Value bound = createReal(at, loc, at.getF64Type(), v.extent * v.extent);
+      local = emitTemplateLocalGeometry(at, loc, positions, v.cell, v.inverse,
+                                        v.narrowCell, v.narrowInverse);
+      Value squared = mdir::md::emitTemplateExtentSquared(at, loc, v.alpha, v.hasSite,
+                                                          local[0], local[1]);
+      // The f32 square has a relative error below 11 * 2^-24 (the narrowed
+      // displacements, alpha, the sum and the squares); a bound lowered by
+      // 2^-20 keeps every true excess flagged.
+      Value bound = createReal(at, loc, at.getF32Type(),
+          float(v.extent * v.extent * (1 - 0x1p-20)));
       extentBad = arith::AndIOp::create(at, loc, v.constrained,
           arith::CmpFOp::create(at, loc, arith::CmpFPredicate::UGT, squared, bound));
     }
@@ -45,64 +61,37 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
       Value cells = loadElement(in, loc, v.packingCells, index);
       Value framed = arith::AddFOp::create(in, loc, positions[0],
           emitLatticeShift(in, loc, cells, v.cell));
-      Value row;
+      Value anchor = convertReal(in, loc, framed, in.getF32Type());
       if (water) {
-        row = arith::MulIOp::create(in, loc, index, ix(in, 3));
-        auto frame = emitRetainedTemplateFrame(in, loc, positions, v.cell, v.inverse,
-                                                cells, in.getF32Type());
-        for (int site = 0; site != 3; ++site)
-          storeElement(in, loc, frame.packed[site], v.frames,
-              arith::AddIOp::create(in, loc, row, ix(in, site)));
+        Value row = arith::MulIOp::create(in, loc, index, ix(in, 3));
+        storeElement(in, loc, anchor, v.frames, row);
+        for (int site = 1; site != 3; ++site)
+          storeElement(in, loc, arith::AddFOp::create(in, loc, anchor, local[site - 1]),
+              v.frames, arith::AddIOp::create(in, loc, row, ix(in, site)));
       } else {
-        row = arith::AddIOp::create(in, loc, index,
+        Value row = arith::AddIOp::create(in, loc, index,
             arith::MulIOp::create(in, loc, v.waters, ix(in, 2)));
-        storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
+        storeElement(in, loc, anchor, v.frames, row);
       }
       unsigned group = water ? 0 : 1;
-      auto publish = [&](OpBuilder &at) -> std::array<Value, 2> {
-        Value fraction = emitTemplateFractional(at, loc, framed, v.cell, v.inverse);
-        Value tested = framed;
-        if (v.pointOffset != 0.0) {
-          Value offset = vector::BroadcastOp::create(at, loc, fraction.getType(),
-              createReal(at, loc, at.getF64Type(), v.pointOffset));
-          fraction = arith::AddFOp::create(at, loc, fraction, offset);
-          tested = arith::AddFOp::create(at, loc, framed, emitLatticeShift(at, loc, offset, v.cell));
-        }
-        storeElement(at, loc, fraction, v.currentPoints, index);
-        if (!water && v.atomDependents) {
-          // A member's point is its anchor's, in the anchor's frame: the
-          // member's frame lies at the minimum image of its bond from the
-          // anchor's, whatever lattice vector separates their packing cells.
-          Value atom = arith::SubIOp::create(at, loc, index, v.waters);
-          for (int64_t d = 0; d != MDRT_TEMPLATE_ANCHOR_DEPENDENTS; ++d) {
-            Value slot = arith::AddIOp::create(at, loc,
-                arith::MulIOp::create(at, loc, atom, ix(at, MDRT_TEMPLATE_ANCHOR_DEPENDENTS)),
-                ix(at, d));
-            Value dependent = memref::LoadOp::create(at, loc, v.atomDependents, ValueRange{slot});
-            Value present = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::sge, dependent,
-                arith::ConstantIntOp::create(at, loc, 0, 32));
-            scf::IfOp::create(at, loc, present, [&](OpBuilder &member, Location) {
-              Value place = arith::IndexCastOp::create(member, loc, member.getIndexType(), dependent);
-              storeElement(member, loc, fraction, v.currentPoints, place);
-              scf::YieldOp::create(member, loc);
-            });
-          }
-        }
-        Value outer = emitTemplateMotionExceeded(at, loc, tested,
-            loadElement(at, loc, v.outerReference, index), v.cell, v.outerLimits[group]);
-        Value inner = emitTemplateMotionExceeded(at, loc, tested,
-            loadElement(at, loc, v.innerReference, index), v.cell, v.innerLimits[group]);
+      auto test = [&](OpBuilder &at) -> std::array<Value, 2> {
+        Value outer = emitTemplateMotionExceededNarrow(at, loc, anchor,
+            loadElement(at, loc, v.outerReference, index), v.narrowCell,
+            v.narrowOffset, v.outerLimits[group]);
+        Value inner = emitTemplateMotionExceededNarrow(at, loc, anchor,
+            loadElement(at, loc, v.innerReference, index), v.narrowCell,
+            v.narrowOffset, v.innerLimits[group]);
         return {outer, inner};
       };
       if (water || !v.atomAnchors) {
-        auto flags = publish(in);
+        auto flags = test(in);
         scf::YieldOp::create(in, loc, ValueRange{flags[0], flags[1]});
       } else {
         Value atom = arith::SubIOp::create(in, loc, index, v.waters);
-        Value anchor = memref::LoadOp::create(in, loc, v.atomAnchors, ValueRange{atom});
-        Value own = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, anchor, unit);
+        Value owner = memref::LoadOp::create(in, loc, v.atomAnchors, ValueRange{atom});
+        Value own = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, owner, unit);
         auto tested = scf::IfOp::create(in, loc, own, [&](OpBuilder &at, Location) {
-          auto flags = publish(at);
+          auto flags = test(at);
           scf::YieldOp::create(at, loc, ValueRange{flags[0], flags[1]});
         }, [&](OpBuilder &at, Location) {
           scf::YieldOp::create(at, loc, ValueRange{no, no});
@@ -119,4 +108,35 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
   return {water ? active.getResult(0) : no, water ? no : active.getResult(0),
           water ? active.getResult(1) : no, water ? no : active.getResult(1),
           active.getResult(2)};
+}
+
+void mdir::kernels::emitTemplateCurrentPoint(OpBuilder &b, Location loc,
+    const TemplatePointBuffers &v, Value unit) {
+  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
+  Value owner = unit;
+  if (v.atomAnchors) {
+    Value water = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, unit, v.waters);
+    Value atom = arith::SelectOp::create(b, loc, water, ix(b, 0),
+        arith::SubIOp::create(b, loc, unit, v.waters));
+    Value anchor = arith::IndexCastOp::create(b, loc, b.getIndexType(),
+        memref::LoadOp::create(b, loc, v.atomAnchors, ValueRange{atom}));
+    owner = arith::SelectOp::create(b, loc, water, unit, anchor);
+  }
+  // The anchor's row: a water's O, or the solute unit's own site.
+  Value ownerWater = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, owner, v.waters);
+  Value row = arith::SelectOp::create(b, loc, ownerWater,
+      arith::MulIOp::create(b, loc, owner, ix(b, 3)),
+      arith::AddIOp::create(b, loc, owner, arith::MulIOp::create(b, loc, v.waters, ix(b, 2))));
+  Value particle = row;
+  if (v.members)
+    particle = arith::IndexCastOp::create(b, loc, b.getIndexType(),
+        memref::LoadOp::create(b, loc, v.members, ValueRange{row}));
+  Value framed = arith::AddFOp::create(b, loc, loadElement(b, loc, v.positions, particle),
+      emitLatticeShift(b, loc, loadElement(b, loc, v.packingCells, owner), v.cell));
+  Value fraction = emitTemplateFractional(b, loc, framed, v.cell, v.inverse);
+  if (v.pointOffset != 0.0)
+    fraction = arith::AddFOp::create(b, loc, fraction,
+        vector::BroadcastOp::create(b, loc, fraction.getType(),
+            createReal(b, loc, b.getF64Type(), v.pointOffset)));
+  storeElement(b, loc, fraction, v.currentPoints, unit);
 }

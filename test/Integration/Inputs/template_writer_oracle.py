@@ -16,6 +16,10 @@ p.add_argument('program', type=pathlib.Path)
 p.add_argument('reference', type=pathlib.Path)
 p.add_argument('--triclinic', action='store_true')
 p.add_argument('--point-offset', type=float, default=0.0)
+# Displacements at the margins: 2^-25 beyond a margin must fail, and 2^-12
+# inside it must pass. The f32 test passes the first unless its bound
+# keeps the error margin delta (U5); the second lies beyond delta.
+p.add_argument('--near-margin', action='store_true')
 a = p.parse_args()
 if a.mode == 'check':
     got = [int(v) for v in a.program.read_text().split()]
@@ -107,10 +111,18 @@ for case, (built, constrained) in enumerate([(True, False), (True, True),
     def point(x):
         return [f + t for f in solve(x)]
     fractions = [point(x) for x in anchors]
-    outer = [point([x[0] - (0. if u % 2 == 0 else .5), x[1], x[2]])
-             for u, x in enumerate(anchors)]
-    inner = [point([x[0] - (0. if u % 2 else .5), x[1], x[2]])
-             for u, x in enumerate(anchors)]
+    if a.near_margin:
+        # Margins .25 (outer) and .125 (inner): beyond by 2^-25 or 2^-26
+        # (one f32 ulp of the margin) fails, inside by 2^-12 passes.
+        far = lambda m: m + m * 2.**-23
+        near = lambda m: m - 2.**-12
+        outer_d = [near(.25) if u % 2 == 0 else far(.25) for u in range(4)]
+        inner_d = [far(.125) if u % 2 == 0 else near(.125) for u in range(4)]
+    else:
+        outer_d = [0. if u % 2 == 0 else .5 for u in range(4)]
+        inner_d = [.5 if u % 2 == 0 else 0. for u in range(4)]
+    outer = [point([x[0] - outer_d[u], x[1], x[2]]) for u, x in enumerate(anchors)]
+    inner = [point([x[0] - inner_d[u], x[1], x[2]]) for u, x in enumerate(anchors)]
     packed = whole if built else [[-7.] * 3 for _ in range(8)]
     current = fractions if built else [[-9.] * 3 for _ in range(4)]
     flags = [[int(built and u < 2 and u % 2 == 1),

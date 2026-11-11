@@ -1,5 +1,6 @@
 // Exercise the production final-SSA packing/validity callback.
 #include "mdir/Conversion/TemplateWriterKernels.h"
+#include "mdir/Conversion/TemplateValidityKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -35,16 +36,25 @@ struct TestTemplateWriter : PassWrapper<TestTemplateWriter, OperationPass<Module
     auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
     TemplateWriterBuffers v;
     v.frames = f.getArgument(1); v.packingCells = f.getArgument(2);
-    v.currentPoints = f.getArgument(3); v.outerReference = f.getArgument(4);
+    v.outerReference = f.getArgument(4);
     v.innerReference = f.getArgument(5); v.waters = f.getArgument(7);
     v.cell = f.getArgument(8); v.inverse = createInverse(b, loc, v.cell);
     v.built = f.getArgument(9); v.constrained = f.getArgument(10);
     v.hasSite = true; v.alpha = .75; v.extent = .25; v.pointOffset = pointOffset;
+    // The half margins, as the production writer's launch squares them.
     for (int64_t g = 0; g != 2; ++g) {
-      v.outerLimits[g] = vector::ExtractOp::create(b, loc, f.getArgument(11), g);
-      v.innerLimits[g] = vector::ExtractOp::create(b, loc, f.getArgument(11), g + 2);
+      v.outerLimits[g] = emitTemplateMotionLimitSquared(b, loc,
+          vector::ExtractOp::create(b, loc, f.getArgument(11), g), v.cell);
+      v.innerLimits[g] = emitTemplateMotionLimitSquared(b, loc,
+          vector::ExtractOp::create(b, loc, f.getArgument(11), g + 2), v.cell);
     }
-    Value n = memref::DimOp::create(b, loc, v.currentPoints, ix(b, 0));
+    prepareTemplateWriterConstants(b, loc, v);
+    // The prune's current points, from the same positions and cells.
+    TemplatePointBuffers points;
+    points.positions = f.getArgument(0); points.packingCells = v.packingCells;
+    points.currentPoints = f.getArgument(3); points.waters = v.waters;
+    points.cell = v.cell; points.inverse = v.inverse; points.pointOffset = pointOffset;
+    Value n = memref::DimOp::create(b, loc, points.currentPoints, ix(b, 0));
     Value one = ix(b, 1), block = ix(b, 128);
     auto launch = gpu::LaunchOp::create(b, loc,
         arith::CeilDivUIOp::create(b, loc, n, block), one, one, block, one, one);
@@ -74,6 +84,10 @@ struct TestTemplateWriter : PassWrapper<TestTemplateWriter, OperationPass<Module
           memref::StoreOp::create(in, loc,
               arith::ExtUIOp::create(in, loc, in.getI32Type(), flag), f.getArgument(6),
               ValueRange{unit, ix(in, i)});
+        scf::IfOp::create(in, loc, v.built, [&](OpBuilder &then, Location) {
+          emitTemplateCurrentPoint(then, loc, points, unit);
+          scf::YieldOp::create(then, loc);
+        });
       };
       scf::IfOp::create(at, loc, water, [&](OpBuilder &in, Location) {
         emit(in, true); scf::YieldOp::create(in, loc);
