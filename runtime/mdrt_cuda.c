@@ -37,9 +37,19 @@ static const char *getKernelName(CUfunction function);
 
 /* A failure of the driver is reported and ends the run: compiled code has no
    way to continue without its device. */
+/* What the host runs once before a failure of the driver ends the process
+   (mdrtSetFailureHook): the writer of the frames writes those whose copies
+   had arrived (D[async-output]). */
+static void (*failureHook)(void) = NULL;
+
 static void check(CUresult result, const char *what) {
   if (result == CUDA_SUCCESS)
     return;
+  static int failing = 0;
+  if (failureHook && !failing) {
+    failing = 1;
+    failureHook();
+  }
   const char *name = NULL;
   cuGetErrorName(result, &name);
   fprintf(stderr, "mdrt: %s failed with %s\n", what,
@@ -2039,15 +2049,29 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
   overwrites it, a copy within the device of a few microseconds.
   mdrtStagingEnd then copies those buffers into pinned memory of the host on
   a stream of copies of its own, which runs beside the kernels of the next
-  steps, and records an event. mdrtStagingWait, from any thread, waits for
-  that event; until it returns, and until the writer is done with the
-  memory of the host, the slot is not given to another frame (the caller
-  keeps a ring of slots). */
+  steps, records an event, and has the stream run a function of the host
+  that marks the slot's copies as arrived. mdrtStagingWait, from any
+  thread, returns at once for a slot so marked and otherwise waits for the
+  event; until it returns, and until the writer is done with the memory of
+  the host, the slot is not given to another frame (the caller keeps a ring
+  of slots).
+
+  The mark is what tells a frame copied before a kernel failed from one
+  that was not: once a kernel has failed, the error is the context's, and
+  cuEventQuery and cuEventSynchronize return it for every event, those
+  that had completed before as well (measured with CUDA 13.2 on an RTX
+  4090: CUDA_ERROR_LAUNCH_FAILED for an event whose stream had been
+  synchronized before the failing launch). */
 
 #define MDRT_STAGING_PARTS 4
 
 struct Staging {
   CUevent produced, copied;
+  /* Set by a function of the host that the stream of copies runs after the
+     copies of the last end (markArrived): unlike the event, whose query
+     returns the error of the context once a later kernel has failed, it
+     tells that the copies had arrived before. */
+  int arrived;
   struct {
     CUdeviceptr device;
     void *host;
@@ -2107,12 +2131,45 @@ void *mdrtStagingCopy(void *opaque, int32_t part, const void *source,
   return slot->parts[part].host;
 }
 
+static void CUDA_CB markArrived(void *opaque) {
+  struct Staging *slot = opaque;
+  __atomic_store_n(&slot->arrived, 1, __ATOMIC_RELEASE);
+}
+
+/* MDRT_FAULT_AFTER_FRAMES=N, for the tests: after the N-th end of a slot,
+   once its copies have arrived, a kernel on the stream of the kernels
+   fails (a trap), as a defect of a kernel would fail a run, so that the
+   frames queued then meet the error of the context. */
+static void injectFault(void) {
+  static int64_t ends = 0, failing = -1;
+  if (failing < 0) {
+    const char *value = getenv("MDRT_FAULT_AFTER_FRAMES");
+    failing = value && *value ? strtoll(value, NULL, 10) : 0;
+  }
+  if (++ends != failing)
+    return;
+  static const char trap[] = ".version 7.5\n.target sm_75\n"
+                             ".address_size 64\n"
+                             ".visible .entry mdrtFault() { trap; }\n";
+  CUmodule module;
+  CUfunction function;
+  check(cuStreamSynchronize(copyStream), "cuStreamSynchronize");
+  check(cuModuleLoadData(&module, trap), "cuModuleLoadData");
+  check(cuModuleGetFunction(&function, module, "mdrtFault"),
+        "cuModuleGetFunction");
+  check(cuLaunchKernel(function, 1, 1, 1, 1, 1, 1, 0, mgpuStreamCreate(),
+                       NULL, NULL),
+        "cuLaunchKernel");
+  isPending = 1;
+}
+
 /* Copies the parts copied into the slot since its last end to the host, on
    the stream of copies, once the stream of the kernels has copied them; the
    host does not wait. */
 void mdrtStagingEnd(void *opaque) {
   struct Staging *slot = opaque;
   CUstream stream = mgpuStreamCreate();
+  __atomic_store_n(&slot->arrived, 0, __ATOMIC_RELEASE);
   check(cuEventRecord(slot->produced, stream), "cuEventRecord");
   check(cuStreamWaitEvent(copyStream, slot->produced, 0),
         "cuStreamWaitEvent");
@@ -2129,18 +2186,40 @@ void mdrtStagingEnd(void *opaque) {
           "cuMemcpyDtoHAsync");
   }
   check(cuEventRecord(slot->copied, copyStream), "cuEventRecord");
+  check(cuLaunchHostFunc(copyStream, markArrived, slot), "cuLaunchHostFunc");
+  injectFault();
 }
 
 /* Waits, on any thread, until the copies of the last end of the slot are in
-   the memory of the host. Returns 0, or the error of the driver, which the
-   caller reports: this may be the thread of a writer, which must not end
-   the process. */
+   the memory of the host. Returns 0, or the error of the driver if a kernel
+   failed before they arrived, which the caller hands to mdrtStagingFail on
+   the thread of the steps: this may be the thread of a writer, which does
+   not end the process itself. */
 int32_t mdrtStagingWait(void *opaque) {
   struct Staging *slot = opaque;
+  if (__atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE))
+    return 0;
   CUresult result = cuCtxSetCurrent(context);
   if (result == CUDA_SUCCESS)
     result = cuEventSynchronize(slot->copied);
+  /* The mark may have been set while the event was waited for. */
+  if (result != CUDA_SUCCESS &&
+      __atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE))
+    return 0;
   return (int32_t)result;
+}
+
+/* Has the host run `hook` once before a failure of the driver ends the
+   process (check): the writer of the frames, which waits with
+   mdrtStagingWait and never calls check, writes there the frames whose
+   copies had arrived. */
+void mdrtSetFailureHook(void (*hook)(void)) { failureHook = hook; }
+
+/* Reports the error `result` that mdrtStagingWait returned on the thread of
+   a writer, as any failure of the driver is reported, and ends the
+   process: from the thread of the steps, which the writer has told. */
+void mdrtStagingFail(int32_t result) {
+  check((CUresult)result, "cuEventSynchronize of a staged frame");
 }
 
 void mdrtStagingDestroy(void *opaque) {

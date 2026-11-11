@@ -1,0 +1,32 @@
+# A kernel that fails after frames have been staged (D[async-output],
+# #113). Once a kernel has failed, the driver returns the error for every
+# event, also for those whose copies had arrived before, so the runtime
+# marks a slot's copies as arrived with a function of the host that the
+# stream of copies runs after them. Here MDRT_FAULT_AFTER_FRAMES=5 makes a
+# kernel trap after the copies of the 5th frame (step 50) have arrived,
+# while the thread of the frames holds each write back by 100 ms: the
+# 5 frames are still queued when the run meets the failure. They are
+# written, as a run whose frames had no thread wrote them before the
+# failure, the frames of the reference to the byte, and the run ends with
+# the runtime's report of the failure, once, not with a failure of the
+# copy of a frame.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|energy_interval = 50|energy_interval = 10\ntrajectory = "run.dcd"\ntrajectory_interval = 10|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: printf '[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/run.toml
+# RUN: sed -e 's|run.dcd|plain.dcd|' %t/run.toml > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDRT_FAULT_AFTER_FRAMES=5 not --crash mdir run run.toml > out 2> err
+# RUN: FileCheck %s < %t/err
+# RUN: grep -c 'failed with CUDA_ERROR' %t/err | FileCheck %s --check-prefix=ONCE
+# RUN: %python %S/Inputs/dcd_prefix.py %t/run.dcd %t/plain.dcd | FileCheck %s --check-prefix=FRAMES
+
+# CHECK-NOT: the copy of the frame
+# CHECK: mdrt: {{.*}} failed with CUDA_ERROR_LAUNCH_FAILED
+# CHECK-NOT: the copy of the frame
+# ONCE: {{^1$}}
+# FRAMES: 5 frames, 5 in the header, the first of the reference
