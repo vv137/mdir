@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
@@ -19,9 +20,14 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdlib>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <fstream>
+#include <limits>
+#include <mutex>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 #include <vector>
 
@@ -435,6 +441,221 @@ void startCheckpointThread(const std::string &path, int64_t step,
   });
 }
 
+/// The functions of the runtime of a device that stage the copies of a
+/// frame (D[async-output], runtime/mdrt_cuda.c), from the library that the
+/// run has loaded.
+struct StagingFunctions {
+  void *(*create)() = nullptr;
+  void *(*copy)(void *, int32_t, const void *, uint64_t) = nullptr;
+  void (*end)(void *) = nullptr;
+  int32_t (*wait)(void *, const char **) = nullptr;
+  void (*destroy)(void *) = nullptr;
+  void (*fail)(int32_t, const char *) = nullptr;
+  void (*setFailureHook)(void (*)()) = nullptr;
+
+  bool isComplete() const {
+    return create && copy && end && wait && destroy && fail && setFailureHook;
+  }
+};
+
+void drainFramesOnFailure();
+
+const StagingFunctions &getStagingFunctions() {
+  static StagingFunctions functions;
+  if (!functions.isComplete()) {
+    auto find = [](const char *name) {
+      return llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name);
+    };
+    functions.create = reinterpret_cast<void *(*)()>(find("mdrtStagingCreate"));
+    functions.copy = reinterpret_cast<void *(*)(void *, int32_t, const void *,
+                                                uint64_t)>(
+        find("mdrtStagingCopy"));
+    functions.end = reinterpret_cast<void (*)(void *)>(find("mdrtStagingEnd"));
+    // MDIR_STAGING_INCOMPLETE=1, for the tests: the wait is not looked
+    // up, as if the runtime lacked it (docs/environment.md).
+    static const bool incomplete = [] {
+      const char *value = std::getenv("MDIR_STAGING_INCOMPLETE");
+      return value && *value && std::strcmp(value, "0") != 0;
+    }();
+    functions.wait = incomplete
+                         ? nullptr
+                         : reinterpret_cast<int32_t (*)(void *, const char **)>(
+                               find("mdrtStagingWait"));
+    functions.destroy =
+        reinterpret_cast<void (*)(void *)>(find("mdrtStagingDestroy"));
+    functions.fail =
+        reinterpret_cast<void (*)(int32_t, const char *)>(
+            find("mdrtStagingFail"));
+    functions.setFailureHook = reinterpret_cast<void (*)(void (*)())>(
+        find("mdrtSetFailureHook"));
+    // Before a failure of the device ends the process, the frames whose
+    // copies had arrived are written, as the run wrote them before the
+    // failure when the frames had no thread.
+    if (functions.isComplete())
+      functions.setFailureHook(&drainFramesOnFailure);
+  }
+  return functions;
+}
+
+/// The copy of the buffers of one frame that the thread of the frames
+/// reads: on a device, a slot of the runtime's staging (the copies arrive
+/// in its pinned memory of the host once its event has passed); on the
+/// host, copies that the call made. The views describe the copies as the
+/// descriptors of the program described the buffers.
+struct FrameSlot {
+  void *staging = nullptr;
+  std::vector<char> positions;
+  std::vector<char> ids;
+  StridedMemRefType<char, 2> positionView{};
+  StridedMemRefType<int32_t, 1> idView{};
+};
+
+/// What a work of the thread of the frames failed with: the error of a
+/// write, which the run stops with (stopRun), or the error of the device
+/// that the wait for the copies of a frame met (`device`), which the
+/// runtime reports and ends the process with, as it ends it at a failure
+/// of the device on the thread of the steps (mdrtStagingFail).
+struct FrameFailure {
+  std::string message;
+  int32_t device = 0;
+  /// The call of the driver that returned `device`.
+  const char *call = "";
+
+  bool empty() const { return message.empty() && device == 0; }
+};
+
+/// The thread of the frames (D[async-output], #113): one thread, which
+/// runs the writes of the frames and the changes of the cell of the
+/// trajectory in the order in which the steps queue them. A frame holds a
+/// slot of a ring of at most `MaxSlots`; the call of a frame that finds
+/// them all taken waits for the thread (back-pressure), so the memory of
+/// the copies stays bounded. A work that fails records its error; the
+/// works after it are dropped, as the run that stopped at the failure did
+/// not do them, and the next call of a frame or wait reports it.
+class FrameThread {
+public:
+  static constexpr size_t MaxSlots = 3;
+
+  /// A free slot, waiting while the thread holds all of them.
+  FrameSlot *takeSlot() {
+    std::unique_lock<std::mutex> lock(mutex);
+    if (available.empty() && slots.size() < MaxSlots) {
+      slots.push_back(std::make_unique<FrameSlot>());
+      return slots.back().get();
+    }
+    freed.wait(lock, [&] { return !available.empty(); });
+    FrameSlot *slot = available.back();
+    available.pop_back();
+    return slot;
+  }
+
+  /// Gives back a slot that the call took and did not queue.
+  void returnSlot(FrameSlot *slot) {
+    std::lock_guard<std::mutex> lock(mutex);
+    available.push_back(slot);
+    freed.notify_all();
+  }
+
+  /// Queues `work`, which returns its error or an empty string; `slot`,
+  /// if any, is free again once it has run.
+  void post(std::function<FrameFailure()> work, FrameSlot *slot = nullptr) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!thread.joinable()) {
+      // The library's handler of the exit runs after this one, which
+      // waits for the frames still queued (an H5MD trajectory is written
+      // by the library): the handlers run in the reverse order of their
+      // registration.
+      openCheckpointLibrary();
+      static bool registered = [] {
+        // At the exit the frames still queued are written. A run that
+        // ends by its end or by stopRun has waited for them and reported
+        // their failures; an exit of another failure, which has been
+        // reported (waitForCheckpoint), adds none of theirs.
+        std::atexit([] { (void)FrameThread::getFrameThread().wait(); });
+        return true;
+      }();
+      (void)registered;
+      thread = std::thread([this] { run(); });
+    }
+    jobs.push_back({std::move(work), slot});
+    wake.notify_one();
+  }
+
+  /// Waits until every work queued has run; returns the error of the first
+  /// that failed since the last wait, and forgets it.
+  FrameFailure wait() {
+    std::unique_lock<std::mutex> lock(mutex);
+    idle.wait(lock, [&] { return jobs.empty() && !busy; });
+    return std::exchange(failure, FrameFailure());
+  }
+
+  /// Whether a work has failed since the last wait.
+  bool hasFailed() {
+    std::lock_guard<std::mutex> lock(mutex);
+    return !failure.empty();
+  }
+
+  /// After a wait: the slots, which `release` gives back to the runtime.
+  std::vector<std::unique_ptr<FrameSlot>> takeSlots() {
+    std::lock_guard<std::mutex> lock(mutex);
+    available.clear();
+    return std::move(slots);
+  }
+
+  static FrameThread &getFrameThread() {
+    // Never destroyed: the thread waits for work until the process ends.
+    static FrameThread *frames = new FrameThread;
+    return *frames;
+  }
+
+private:
+  struct Job {
+    std::function<FrameFailure()> work;
+    FrameSlot *slot;
+  };
+
+  void run() {
+    std::unique_lock<std::mutex> lock(mutex);
+    for (;;) {
+      wake.wait(lock, [&] { return !jobs.empty(); });
+      Job job = std::move(jobs.front());
+      jobs.pop_front();
+      busy = true;
+      bool skip = !failure.empty();
+      lock.unlock();
+      FrameFailure error = skip ? FrameFailure() : job.work();
+      job.work = nullptr;
+      lock.lock();
+      if (!error.empty() && failure.empty())
+        failure = std::move(error);
+      if (job.slot) {
+        available.push_back(job.slot);
+        freed.notify_all();
+      }
+      busy = false;
+      if (jobs.empty())
+        idle.notify_all();
+    }
+  }
+
+  std::mutex mutex;
+  std::condition_variable wake, idle, freed;
+  std::deque<Job> jobs;
+  bool busy = false;
+  FrameFailure failure;
+  std::thread thread;
+  std::vector<std::unique_ptr<FrameSlot>> slots;
+  std::vector<FrameSlot *> available;
+};
+
+FrameThread &getFrameThread() { return FrameThread::getFrameThread(); }
+
+/// The runtime's hook before a failure of the device ends the process
+/// (mdrtSetFailureHook): the frames queued before it are written, those
+/// whose copies had arrived, and the error of the device that a wait met is
+/// left to the runtime, which reports its own.
+void drainFramesOnFailure() { (void)getFrameThread().wait(); }
+
 } // namespace
 
 void mdir::driver::waitForCheckpoint() {
@@ -456,7 +677,14 @@ static void stopOnFailure(const Output &output, const std::string &message) {
     output.fail(message);
     return;
   }
-  std::fprintf(stderr, "mdir: %s\n", message.c_str());
+  // The frames queued before the failure are written first, as a run
+  // wrote them before it failed; one whose write failed reports its own
+  // error, which came first (D[async-output]).
+  FrameFailure earlier = getFrameThread().wait();
+  if (earlier.device)
+    getStagingFunctions().fail(earlier.device, earlier.call);
+  std::fprintf(stderr, "mdir: %s\n",
+               (earlier.message.empty() ? message : earlier.message).c_str());
   std::exit(1);
 }
 
@@ -997,9 +1225,18 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   output.volume = lx * ly * lz;
   double edges[3] = {lx / units::length, ly / units::length,
                      lz / units::length};
+  // The thread of the frames changes the cell of the trajectory between
+  // the frames queued before and after (D[async-output]).
   if (output.trajectory) {
-    output.trajectory->setBox(edges);
-    output.trajectory->setExactEdges(output.box);
+    std::array<double, 3> scaled = {edges[0], edges[1], edges[2]};
+    std::array<double, 3> exact = {output.box[0], output.box[1],
+                                   output.box[2]};
+    getFrameThread().post([trajectory = output.trajectory.get(), scaled,
+                           exact] {
+      trajectory->setBox(scaled.data());
+      trajectory->setExactEdges(exact.data());
+      return FrameFailure();
+    });
   }
   output.checkpoint.box[0] = lx;
   output.checkpoint.box[1] = ly;
@@ -1066,9 +1303,14 @@ void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
   double tilts[3] = {bx / units::length, cx / units::length,
                      cy / units::length};
   if (output.trajectory) {
-    output.trajectory->setTilt(tilts);
-    double exact[3] = {bx, cx, cy};
-    output.trajectory->setExactTilt(exact);
+    std::array<double, 3> scaled = {tilts[0], tilts[1], tilts[2]};
+    std::array<double, 3> exact = {bx, cx, cy};
+    getFrameThread().post([trajectory = output.trajectory.get(), scaled,
+                           exact] {
+      trajectory->setTilt(scaled.data());
+      trajectory->setExactTilt(exact.data());
+      return FrameFailure();
+    });
   }
   output.checkpoint.tilt[0] = bx;
   output.checkpoint.tilt[1] = cx;
@@ -1393,6 +1635,9 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
+  // After the frames and the changes of the cell that the thread of the
+  // frames still holds (D[async-output]).
+  waitForFrames(output);
   ReturnMark returns;
   // With MDIR_CHECKPOINT_TIMES, the time of the frame when it returns.
   struct FrameTimes {
@@ -1428,6 +1673,217 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   output.trajectory->writeFrame(narrow.data(), step, output.getTime(step));
 }
 
+namespace {
+
+/// The number of elements of a buffer of `count` rows that a descriptor
+/// of strides `rows` and `columns` (0 for a buffer of one dimension)
+/// spans, from its offset.
+int64_t getSpan(int64_t count, int64_t rows, int64_t columns, int64_t width) {
+  if (count == 0)
+    return 0;
+  return 1 + (count - 1) * rows + (width - 1) * columns;
+}
+
+/// MDIR_FRAME_WRITE_DELAY=<ms>: the thread of the frames waits that long
+/// before it reads the copies of each frame, so that a test can fill the
+/// ring and make a checkpoint, a stop, or the end wait for it
+/// (docs/environment.md).
+long getFrameWriteDelay() {
+  static const long delay = [] {
+    const char *value = std::getenv("MDIR_FRAME_WRITE_DELAY");
+    return value ? std::strtol(value, nullptr, 10) : 0L;
+  }();
+  return delay;
+}
+
+/// Stages the positions `positions`, of `element`, and the numbers `ids`
+/// of a frame in `slot`: on a device, copies issued in the order of the
+/// stream, which have arrived once the slot's wait returns; on the host,
+/// copies made here. The views of the slot describe the copies. False if
+/// the run has stopped instead (an embedding program goes on, D196).
+bool stageFrame(const Output &output, FrameSlot &slot, void *positions,
+                void *ids, Element element) {
+  auto *x = static_cast<StridedMemRefType<char, 2> *>(positions);
+  auto *n = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  int64_t count = x->sizes[0];
+  size_t size = element == Element::F32 ? sizeof(float) : sizeof(double);
+  size_t xBytes = size * getSpan(count, x->strides[0], x->strides[1], 3);
+  size_t nBytes =
+      sizeof(int32_t) * getSpan(n->sizes[0], n->strides[0], 0, 1);
+  const char *xData = x->data + x->offset * size;
+  const char *nData = reinterpret_cast<const char *>(n->data + n->offset);
+  char *xCopy, *nCopy;
+  if (output.onDevice) {
+    const StagingFunctions &staging = getStagingFunctions();
+    if (!staging.isComplete()) {
+      stopRun("the runtime of the device has no copies of the frames; "
+              "this is a defect of mdir");
+      return false;
+    }
+    if (!slot.staging)
+      slot.staging = staging.create();
+    xCopy = static_cast<char *>(staging.copy(slot.staging, 0, xData, xBytes));
+    nCopy = static_cast<char *>(staging.copy(slot.staging, 1, nData, nBytes));
+    staging.end(slot.staging);
+  } else {
+    slot.positions.assign(xData, xData + xBytes);
+    slot.ids.assign(nData, nData + nBytes);
+    xCopy = slot.positions.data();
+    nCopy = slot.ids.data();
+  }
+  slot.positionView = *x;
+  slot.positionView.basePtr = xCopy;
+  slot.positionView.data = xCopy;
+  slot.positionView.offset = 0;
+  slot.idView = *n;
+  slot.idView.basePtr = reinterpret_cast<int32_t *>(nCopy);
+  slot.idView.data = reinterpret_cast<int32_t *>(nCopy);
+  slot.idView.offset = 0;
+  return true;
+}
+
+/// Waits until the copies of `slot` have arrived; the error of the device
+/// if they have not and will not (a kernel failed before they arrived),
+/// with the call that returned it in `failure`, or 0.
+int32_t waitForSlot(FrameSlot &slot, FrameFailure &failure) {
+  if (!slot.staging)
+    return 0;
+  failure.device = getStagingFunctions().wait(slot.staging, &failure.call);
+  return failure.device;
+}
+
+/// MDIR_FRAME_COPY_FAIL=<step>, for the tests: the thread of the frames
+/// takes the wait for the copies of the frame of that step as failed with
+/// CUDA_ERROR_LAUNCH_FAILED (719), with the device well
+/// (docs/environment.md).
+int64_t getFailingCopy() {
+  static const int64_t step = [] {
+    const char *value = std::getenv("MDIR_FRAME_COPY_FAIL");
+    return value && *value ? std::strtoll(value, nullptr, 10)
+                           : std::numeric_limits<int64_t>::min();
+  }();
+  return step;
+}
+
+} // namespace
+
+void mdir::driver::waitForFrames(Output &output) {
+  FrameFailure failure = getFrameThread().wait();
+  // The runtime reports an error of the device and ends the process, as at
+  // a failure of the device on this thread.
+  if (failure.device)
+    getStagingFunctions().fail(failure.device, failure.call);
+  if (!failure.message.empty())
+    stopOnFailure(output, failure.message);
+}
+
+void mdir::driver::finishFrames(Output &output) {
+  waitForFrames(output);
+  std::vector<std::unique_ptr<FrameSlot>> slots =
+      getFrameThread().takeSlots();
+  for (const std::unique_ptr<FrameSlot> &slot : slots)
+    if (slot->staging)
+      getStagingFunctions().destroy(slot->staging);
+}
+
+void _mlir_ciface_mdrtStageFrame(int64_t step, void *positions, void *ids) {
+  Output &output = *current;
+  if (!output.hasTrajectory)
+    return;
+  ReturnMark returns;
+  Clock::time_point entered = Clock::now();
+  FrameThread &frames = getFrameThread();
+  // A frame whose write failed stops the run here, at the next frame,
+  // with the error that its call would have stopped the run with.
+  if (frames.hasFailed())
+    waitForFrames(output);
+  FrameSlot *slot = frames.takeSlot();
+  Clock::time_point taken = Clock::now();
+  if (!stageFrame(output, *slot, positions, ids, output.state)) {
+    frames.returnSlot(slot);
+    return;
+  }
+  // Without a periodic cell the spread of the particles may stop the run
+  // at this step (D142): the call waits for the copies and checks them
+  // here, before the steps go on.
+  if (!output.periodic) {
+    FrameFailure copy;
+    if (waitForSlot(*slot, copy)) {
+      frames.returnSlot(slot);
+      getStagingFunctions().fail(copy.device, copy.call);
+      return;
+    }
+    checkSpread(output, readVectors(&slot->positionView, &slot->idView,
+                                    output.state),
+                step);
+  }
+  TrajectoryWriter *trajectory = output.trajectory.get();
+  bool exact = trajectory->isExact();
+  double time = output.getTime(step);
+  Element element = output.state;
+  H5MDExtras extras;
+  if (exact) {
+    if (output.lastEnergies.step == step)
+      extras.potential = output.lastEnergies.potential;
+    extras.tunablesVersion = std::max<int64_t>(output.tunablesVersion, 0);
+  }
+  bool timed = getTimes().enabled;
+  frames.post(
+      [slot, trajectory, exact, step, time, element, extras, timed] {
+        if (long delay = getFrameWriteDelay())
+          std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        Clock::time_point begun = Clock::now();
+        FrameFailure failure;
+        // A kernel failed before the copies arrived: the frame is not
+        // written, and the runtime reports the failure.
+        if (slot->staging && step == getFailingCopy()) {
+          failure.device = 719;
+          failure.call = "cuEventSynchronize (MDIR_FRAME_COPY_FAIL)";
+          return failure;
+        }
+        if (waitForSlot(*slot, failure))
+          return failure;
+        Clock::time_point arrived = Clock::now();
+        if (exact) {
+          // The state as the run has it, in nm (D239): a buffer of f32
+          // (the single mode) widens to f64 without loss.
+          std::vector<double> values =
+              readVectors(&slot->positionView, &slot->idView, element);
+          auto &writer = static_cast<H5MDWriter &>(*trajectory);
+          if (!writer.writeState(values.data(), nullptr, nullptr, step, time,
+                                 extras))
+            failure.message = writer.getFailure();
+        } else {
+          std::vector<double> values =
+              readVectors(&slot->positionView, &slot->idView, element,
+                          1.0 / units::length);
+          std::vector<float> narrow(values.begin(), values.end());
+          trajectory->writeFrame(narrow.data(), step, time);
+        }
+        if (timed)
+          std::fprintf(stderr,
+                       "MDIR: times of the write of the frame at step %lld: "
+                       "copy %.1f ms, write %.1f ms\n",
+                       static_cast<long long>(step),
+                       getMilliseconds(begun, arrived),
+                       getMilliseconds(arrived, Clock::now()));
+        return failure;
+      },
+      slot);
+  OutputTimes &times = getTimes();
+  if (times.enabled) {
+    Clock::time_point now = Clock::now();
+    times.written += 1.0e-3 * getMilliseconds(entered, now);
+    std::fprintf(stderr,
+                 "MDIR: times of the frame at step %lld: copy %.1f ms, "
+                 "wait %.1f ms, stage %.1f ms\n",
+                 static_cast<long long>(step),
+                 getMilliseconds(times.lastReturn, entered),
+                 getMilliseconds(entered, taken),
+                 getMilliseconds(taken, now));
+  }
+}
+
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
                              void *ids) {
   Output &output = *current;
@@ -1450,6 +1906,9 @@ static void writeState(int64_t step, void *positions, void *velocities,
   ReturnMark returns;
   OutputTimes &times = getTimes();
   Clock::time_point entered = Clock::now();
+  // The frames queued before the checkpoint are in the trajectory before
+  // it counts them (D130, D[async-output]).
+  waitForFrames(output);
   // The wait of a checkpoint: for events 2 and 3 of the one before (the
   // release of its staging buffers and its commit), before this one stages
   // its state (CheckpointThread). A failed write stops the run here, with
@@ -1537,6 +1996,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
     return;
   // The wait of a stop: for all three events of this checkpoint.
   waitForCheckpoint();
+  waitForFrames(output);
   if (output.trajectory)
     output.trajectory->close();
   output.log.print(

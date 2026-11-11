@@ -1,0 +1,19 @@
+# REQUIRES: python-api, hdf5
+# A failed write of a frame on the thread of the frames in a Python
+# simulation (D[async-output], #113), Inputs/python_frame_failures.py:
+# MDIR_FRAME_WRITE_FAIL makes the write of the frame of step 50 to the
+# trajectory in H5MD fail, with each write held back by 100 ms. The part
+# raises the frame's error and keeps the state from before it (D196), the
+# frames of steps 10 to 40 are in the file, and the simulation's later
+# calls, which wait for the frames outside a part, and a second
+# simulation go on: the wait in the part has taken the error.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env MDIR_FRAME_WRITE_FAIL=50 MDIR_FRAME_WRITE_DELAY=100 %mdir_python %S/Inputs/python_frame_failures.py %S/Inputs/triclinic %t write CPU | FileCheck %s
+
+# CHECK:      the part of 100 steps raised SimulationError: the simulation failed after step 0: the frame of step 50 could not be written to the trajectory in H5MD (a full disk?); it keeps the state of step 0
+# CHECK-NEXT: step 0
+# CHECK-NEXT: frames 10 20 30 40{{$}}
+# CHECK:      the close of the reporters returned
+# CHECK-NEXT: a second simulation of 30 steps returned
+# CHECK-NEXT: alive

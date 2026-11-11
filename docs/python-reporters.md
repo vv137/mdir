@@ -106,18 +106,19 @@ Reports must not cut parts:
    cost is that of a part boundary plus the copy plus the function, measured
    below.
 
-### Asynchronous writers (#113)
+### Asynchronous writers (#113, D[async-output])
 
-A frame copies the positions to the host and writes the file while the
-device waits, in `mdir run` as here. Issue #113 proposes copies to pinned
-buffers on a stream of their own and a writer thread with a bounded ring.
-Since the reporters write through the CLI's own host functions, making those
-asynchronous changes both front ends at once and needs nothing more from
-this design. **Proposal: #113 follows this PR**, on the shared path: it
-changes what `mdir run` writes at every frame and must show byte-identical
-files, continuation, signals, and checkpoints (D129–D132, D149), a
-validation of its own; folding it in would double this PR. If the
-maintainer prefers, the order can be reversed.
+The frames of the reporters are written as those of `mdir run`: the call of
+each frame stages copies of the positions and the numbers of the particles
+(on a GPU, on a stream of copies of its own, into pinned memory), and one
+thread writes them while the steps go on ([driver.md](driver.md),
+Section 2.8). The end of each part (`mdrtPartBoundary`) waits for the frames
+of the part, so a part returns to Python with its frames in the file, as
+before. That is the one wait: the simulation gets control back only at the
+end of a part, so the changes of the reporters, the cell set from Python, a
+checkpoint, a frame written from the state, and the end of the simulation
+find nothing queued. A failed write of a frame raises its error from the
+part, which keeps the state of before it.
 
 ## Determinism
 

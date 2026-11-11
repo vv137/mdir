@@ -1,0 +1,88 @@
+# A kernel that fails while frames are staged (D[async-output], #113).
+# Once a kernel has failed, the driver returns the error of the context for
+# every event, also for those whose copies had arrived before, and still
+# runs a function of the host enqueued behind copies that never ran; so the
+# stream of copies has the device write a mark into pinned memory after
+# each staging's copies, which it does not do after the failure. The runtime
+# ends the process with abort at a failure of the driver, and first has the
+# thread of the frames write those whose marks have landed. The thread of
+# the frames holds each write back by 2 s, longer than the driver takes to
+# report a trap, so the frames are still queued when the run meets it.
+#
+# After: MDRT_FAULT_AFTER_FRAMES=2 makes a kernel trap after the copies of
+# the 2nd frame (step 20) have arrived. Both frames are written, the frames
+# of the reference to the byte, and the run ends with the report of the
+# runtime at its own next call, once, which names the last kernel launched.
+#
+# Before: MDRT_FAULT_BEFORE_COPY=3 makes a kernel trap after the copies of
+# the first 2 frames have arrived and before those of the 3rd (step 30),
+# which never run. The 2 frames are written and the 3rd is not; a run whose
+# frames had no thread would have written it before the fault, but its
+# copies were not on the host when the kernel failed.
+#
+# Without a periodic cell the call of a frame waits for its own copies
+# (D142): with MDRT_FAULT_BEFORE_COPY=3 that wait meets the failure, and the
+# runtime reports it as the wait's, the frames of steps 5 and 10 written.
+#
+# MDIR_FRAME_COPY_FAIL=30 takes the wait of the thread for the copies of the
+# frame of step 30 as failed, with the device well: the frames of steps 10
+# and 20 are written, that of 30 and those queued after it are not, and the
+# call of a later frame hands the error to the runtime, which reports it
+# once and ends the process: the last row of the log is after step 30 and
+# at most that of step 70, the frames of the ring behind the failing one
+# and the call that waits for a slot. Without a cell, the same error of the frame of
+# step 10 is reported rather than the spread that the frame of step 25
+# meets while the thread still holds it.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %S/no-cell.test %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|energy_interval = 50|energy_interval = 10\ntrajectory = "run.dcd"\ntrajectory_interval = 10|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: printf '[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/run.toml
+# RUN: sed -e 's|run.dcd|plain.dcd|' %t/run.toml > %t/plain.toml
+# RUN: sed -e 's|run.dcd|before.dcd|' %t/run.toml > %t/before.toml
+# RUN: sed -e 's|run.dcd|copy.dcd|' %t/run.toml > %t/copy.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null
+#
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDRT_FAULT_AFTER_FRAMES=2 not --crash mdir run run.toml > out 2> err
+# RUN: FileCheck %s --check-prefix=RUNTIME < %t/err
+# RUN: grep -c 'failed with CUDA_ERROR' %t/err | FileCheck %s --check-prefix=ONCE
+# RUN: %python %S/Inputs/dcd_prefix.py %t/run.dcd %t/plain.dcd | FileCheck %s --check-prefix=TWO
+#
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDRT_FAULT_BEFORE_COPY=3 not --crash mdir run before.toml > before.out 2> before.err
+# RUN: FileCheck %s --check-prefix=RUNTIME < %t/before.err
+# RUN: grep -c 'failed with CUDA_ERROR' %t/before.err | FileCheck %s --check-prefix=ONCE
+# RUN: %python %S/Inputs/dcd_prefix.py %t/before.dcd %t/plain.dcd | FileCheck %s --check-prefix=TWO
+#
+# RUN: sed -e '/^checkpoint/d' -e 's/^energy_interval = 25/energy_interval = 50\ntrajectory = "two.dcd"\ntrajectory_interval = 5/' %t/two.toml > %t/spread.toml
+# RUN: printf '[execution]\ntarget = "GPU"\n' >> %t/spread.toml
+# RUN: sed -e 's/two.dcd/reference.dcd/' %t/spread.toml > %t/reference.toml
+# RUN: cd %t && not mdir run reference.toml > /dev/null 2>&1
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDRT_FAULT_BEFORE_COPY=3 not --crash mdir run spread.toml > spread.out 2> spread.err
+# RUN: FileCheck %s --check-prefix=WAIT < %t/spread.err
+# RUN: grep -c 'failed with CUDA_ERROR' %t/spread.err | FileCheck %s --check-prefix=ONCE
+# RUN: %python %S/Inputs/dcd_prefix.py %t/two.dcd %t/reference.dcd | FileCheck %s --check-prefix=TWO
+#
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDIR_FRAME_COPY_FAIL=30 not --crash mdir run copy.toml > copy.out 2> copy.err
+# RUN: FileCheck %s --check-prefix=COPY < %t/copy.err
+# RUN: grep -c 'failed with CUDA_ERROR' %t/copy.err | FileCheck %s --check-prefix=ONCE
+# RUN: %python %S/Inputs/dcd_prefix.py %t/copy.dcd %t/plain.dcd | FileCheck %s --check-prefix=TWO
+# RUN: grep 'INFO: ' %t/copy.out | tail -n 1 | FileCheck %s --check-prefix=STOP
+#
+# RUN: sed -e 's/two.dcd/held.dcd/' %t/spread.toml > %t/held.toml
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDIR_FRAME_COPY_FAIL=10 not --crash mdir run held.toml > held.out 2> held.err
+# RUN: FileCheck %s --check-prefix=EARLIER < %t/held.err
+
+# RUNTIME-NOT: staged frame
+# RUNTIME:     mdrt: {{.*}} failed with CUDA_ERROR_LAUNCH_FAILED
+# RUNTIME-NEXT: mdrt: the last kernel launched was
+# RUNTIME-NOT: staged frame
+# ONCE: {{^1$}}
+# TWO: 2 frames, 2 in the header, the first of the reference
+# WAIT: mdrt: cuEventSynchronize of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED
+# COPY: mdrt: cuEventSynchronize (MDIR_FRAME_COPY_FAIL) of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED
+# STOP: INFO: {{[4-7]}}0 
+# EARLIER-NOT: the particles spread {{[0-9]}}
+# EARLIER: mdrt: cuEventSynchronize (MDIR_FRAME_COPY_FAIL) of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED

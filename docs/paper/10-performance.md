@@ -396,7 +396,37 @@ order of each segment, which the run with the energies alone, one
 segment, does not have. The peak resident memory rose by 63 MB on STMV
 (1552 to 1615 MB) and by 28 to 31 MB on Cellulose, one checkpoint's
 staging buffers and ordered state. The frame of DCD, 23 to 48 ms on STMV
-on the two nodes measured, is still written between the steps.
+on the two nodes measured, was then still written between the steps.
+
+**The cost of a frame (D[async-output]).**
+A frame copied the positions and the numbers of the particles from the
+device into memory of the host, waiting for the stream after each copy, and
+the host put them into the order of the input, converted them, and wrote the
+file while the device waited. On JAC on RTX 4090s (mixed precision, NVE
+velocity Verlet of 2 fs, groups, energies every 10 steps; runs of 100,000
+steps, two jobs on two cards, each running both programs alternated twice,
+the mean of the last 90 of the 100 windows of 1000 steps), a DCD frame every
+10 steps took the run from 0.1615 to 0.1951 ms/step (+20.8%), and an XTC
+frame, whose compression the host did between the steps, to 0.2388
+(+47.9%). The call of a frame now copies the two buffers within the device
+on the stream of the kernels and from there to pinned memory on a stream of
+copies, and a thread writes the frames from a ring of three slots
+(Section 3.6). The same runs take 0.1633 ms/step with DCD (+1.1%) and 0.1631
+with XTC (+1.0%); the ratios of the two jobs, 0.835 and 0.839 for DCD and
+0.681 and 0.685 for XTC, differ by less than 0.004, while the cards differ by
+3% in the rate of both programs. On a box of 12,600 atoms of TIP3P water,
+0.1187 and 0.1186 against 0.1171 (+1.4% and +1.3%), where the frames took
+0.1369 and 0.1592 before (+17.0% and +36.1%). On Cellulose (408,609 atoms),
+a DCD frame every 100 steps took 5.9 ms of the run and an XTC frame 18.6 ms
+(1.2722 and 1.3994 ms/step against 1.2131 with the energies alone); now
+1.2120 and 1.2134 ms/step. The files are those of
+before, byte for byte (the contents
+of the H5MD files, whose library writes other bytes from run to run), in
+the deterministic mode on the GPU and on the CPU, in mixed and double
+precision, and for a run stopped at its checkpoints and continued. A row
+of energies costs what it did, about 0.23 ms on JAC, most of it the
+energy kernels (about 180 µs of the device's time under nsys); its waits for
+the device at three copies of the sums, about 50 µs, remain.
 
 **Reading a large GROMACS coordinate file (D323).** After the
 neighbor count at the start became exact and bounded by cells (D316),

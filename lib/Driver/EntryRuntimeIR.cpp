@@ -48,6 +48,8 @@ void mdir::driver::builder::emitRuntimeDeclarations(mlir::OpBuilder &builder,
     }
     declare("mdrtWriteVirial", signature(0, 3), {}, true);
     declare("mdrtWriteFrame", {i64, positions, ids}, {}, true);
+    // The frames of dynamics, taken in place and staged (D[async-output]).
+    declare("mdrtStageFrame", {i64, positions, ids}, {}, true);
     declare("mdrtCheckSpread", {i64, positions, ids}, {}, true);
     if (config.frames) {
       declare("mdrtFrameBoundary", {buffer(6, f64), buffer(2, f64)},

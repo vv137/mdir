@@ -1,0 +1,32 @@
+# The cell of the frames at constant pressure with the frames on their own
+# thread (D[async-output], #113): the barostat changes the cell of the
+# trajectory through the queue of the thread (mdrtSetBox, mdrtSetTilt), so
+# that every frame keeps the cell of its step while the thread holds frames
+# of earlier steps. With each write held back by 100 ms
+# (MDIR_FRAME_WRITE_DELAY), the trajectories in DCD and H5MD, with the cell
+# of each frame, are those of a run whose frames are not held back, byte
+# for byte (H5MD by content, every dataset): the mixture of barostat.test
+# under isotropic stochastic cell rescaling. frame-writer-cell-gpu.test
+#
+# REQUIRES: hdf5, h5py
+#
+# RUN: rm -rf %t && mkdir -p %t/plain %t/held && split-file %S/barostat.test %t/split
+# RUN: sed -e 's|mixture.pdb|%S/Inputs/mixture.pdb|' -e 's|^steps *= 2000|steps = 400|' \
+# RUN:     -e 's|energy_interval = 1000|energy_interval = 10\nenergy = "iso.txt"\ntrajectory = "iso.dcd"\ntrajectory_interval = 10|' \
+# RUN:     %t/split/run.toml > %t/plain/iso.toml
+# RUN: sed -e 's|iso.dcd|iso.h5md|' -e 's|iso.txt|iso-h5.txt|' %t/plain/iso.toml > %t/plain/iso-h5.toml
+# RUN: cp %t/plain/*.toml %t/held/
+# RUN: cd %t/plain && mdir run iso.toml > /dev/null && mdir run iso-h5.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso-h5.toml > /dev/null
+# RUN: cmp %t/plain/iso.dcd %t/held/iso.dcd
+# RUN: cmp %t/plain/iso.txt %t/held/iso.txt
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/iso.h5md %t/held/iso.h5md | FileCheck %s --check-prefix=SAME
+#
+# The cells of the frames differ from frame to frame, so that a frame
+# written with the cell of a later step would differ.
+#
+# RUN: %h5md_python -c "import h5py, numpy, sys; e = h5py.File(sys.argv[1], 'r')['particles/all/box/edges/value'][()]; print('frames', len(e), 'cells', len(numpy.unique(e.reshape(len(e), -1), axis=0)))" %t/plain/iso.h5md | FileCheck %s --check-prefix=ISO
+
+# SAME: identical contents
+# ISO: frames 40 cells 40

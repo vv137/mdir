@@ -131,7 +131,7 @@ that of the work; P0 is what a production run on a cluster needs.
 | U10 | Distribution | P2 | Done in part: the container recipes in `packaging/`, whose kernels are cubins (a driver older than the toolkit cannot compile PTX; D214). 0.2.0 is source only |
 | U11 | Many runs of one plan (as GROMACS's `-multidir`) | Later | With `ensemble` |
 | U12 | Outputs as one system | P1 | Done (2026-10-03, D149, D151). Not taken: intervals of their own for the files of columns |
-| U13 | The cost of a checkpoint on a large system | P1 | Done (#548, D335, D336). Next: the DCD frame between the steps, and the order on the device with a copy into pinned memory (#567) |
+| U13 | The cost of a checkpoint on a large system | P1 | Done (#548, D335, D336); the frames are staged and written on a thread of their own (#113, D[async-output]). Next: the order of a checkpoint on the device with a copy into pinned memory (#567), and the waits of a row of energies (the readbacks and the D113 overlap on energy steps) |
 | U14 | `mdir explain`: one report of the plan, memory, and time of a run (#727) | P1 | Planned |
 | U15 | MDIR as a module in other programs: an ASE calculator first, then an external driver (#588) | P1 | Planned |
 

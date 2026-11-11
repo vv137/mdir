@@ -1,0 +1,67 @@
+# Failures with the frames on their own thread (D[async-output], #113),
+# with each write held back by 100 ms (MDIR_FRAME_WRITE_DELAY), so that the
+# steps go on past the frame that fails. MDIR_FRAME_WRITE_FAIL makes the
+# write of the frame of one step to the trajectory in H5MD fail, as a write
+# that the library refuses.
+#
+# A write that fails on the thread drops the works queued after it, and the
+# next call of a frame stops the run with its error and status 1: the frames
+# in the file are those before the failure, and rows of the log past the
+# failing frame, up to the frame that stops the run, are printed. Here the
+# frame of step 100 fails; the frames of steps 110 and 120 are queued
+# behind it and that of 130 waits for a slot; they are dropped (the thread
+# reads none of their copies: MDIR_CHECKPOINT_TIMES reports no write of
+# them), and the call of the frame of step 140 stops the run, at its step,
+# not at the end of the run.
+#
+# REQUIRES: hdf5, h5py
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %S/no-cell.test %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 600|' \
+# RUN:     -e 's|energy_interval = 50|energy_interval = 10\ntrajectory = "run.h5md"\ntrajectory_interval = 10|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_WRITE_FAIL=100 MDIR_CHECKPOINT_TIMES=1 %python %S/Inputs/exit_status.py mdir run run.toml > out 2>&1
+# RUN: grep -v '^MDIR: times' %t/out | FileCheck %s --check-prefix=WRITE
+# RUN: FileCheck %s --check-prefix=DROPPED < %t/out
+# RUN: %h5md_python -c "import h5py, sys; print('steps', *h5py.File(sys.argv[1], 'r')['particles/all/position/step'][()])" %t/run.h5md | FileCheck %s --check-prefix=FRAMES
+#
+# Without a periodic cell (D142) the call of a frame waits for its copies
+# and checks the spread of the particles before it queues the frame, so
+# that the run stops at the step of that frame with the error of the
+# spread, as when the frames had no thread: the two atoms of no-cell.test
+# that fly apart stop the run at the frame of step 25, whose rows come only
+# every 50 steps, with and without the writes held back, and the frames of
+# the two runs are the same 4.
+#
+# RUN: sed -e '/^checkpoint/d' -e 's/^energy_interval = 25/energy_interval = 50\ntrajectory = "two.dcd"\ntrajectory_interval = 5/' %t/two.toml > %t/spread.toml
+# RUN: sed -e 's/two.dcd/held.dcd/' %t/spread.toml > %t/held.toml
+# RUN: cd %t && not mdir run spread.toml 2>&1 | FileCheck %s --check-prefix=SPREAD
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 not mdir run held.toml 2>&1 | FileCheck %s --check-prefix=SPREAD
+# RUN: cmp %t/two.dcd %t/held.dcd
+# RUN: %python %S/Inputs/dcd_prefix.py %t/held.dcd %t/two.dcd | FileCheck %s --check-prefix=FOUR
+#
+# A failure while the thread still holds a frame whose write fails reports
+# the failure of the frame, which came first, as the run that wrote its
+# frames itself stopped at it: the frame of step 20 fails while the call of
+# the frame of step 25 meets the spread.
+#
+# RUN: sed -e 's/two.dcd/two.h5md/' %t/spread.toml > %t/first.toml
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_WRITE_FAIL=20 %python %S/Inputs/exit_status.py mdir run first.toml > first.out 2>&1
+# RUN: FileCheck %s --check-prefix=FIRST < %t/first.out
+
+# WRITE:      INFO:       130
+# WRITE-NEXT: INFO:       140
+# WRITE-NEXT: mdir: the frame of step 100 could not be written to the trajectory in H5MD (a full disk?)
+# WRITE-NEXT: exit status 1
+# WRITE-NOT:  INFO:
+# DROPPED:     MDIR: times of the write of the frame at step 100:
+# DROPPED-NOT: MDIR: times of the write of the frame at step
+# DROPPED:     exit status 1
+# FRAMES: steps 10 20 30 40 50 60 70 80 90{{$}}
+
+# SPREAD: mdir: at step 25 the particles spread {{.*}} (D142)
+# FOUR: 4 frames, 4 in the header, the first of the reference
+
+# FIRST-NOT: the particles spread {{[0-9]}}
+# FIRST:     mdir: the frame of step 20 could not be written to the trajectory in H5MD (a full disk?)
+# FIRST-NEXT: exit status 1

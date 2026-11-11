@@ -307,6 +307,56 @@ queue at host boundaries. Existing `mgpuMemcpy` callers retain their waits;
 the new path must establish host visibility and release before reuse instead
 of relying on the runtime-wide `finish()`.
 
+**Staged copies of the frames (D[async-output], #113).** The frames of a
+run of dynamics leave the device without a wait of the host, by the
+staging slots of `runtime/mdrt_cuda.c`, which the driver finds by name in
+the loaded library (`lib/Driver/Output.cpp`):
+
+| Function | What it does |
+|---|---|
+| `mdrtStagingCreate()` | A slot: two events, a mark in pinned memory of the host mapped for the device, and, at its first copy of each part, a buffer of the device and pinned memory of the host as large. The stream of copies is created once. |
+| `mdrtStagingCopy(slot, part, source, size)` | Copies `size` bytes of the device at `source` into the slot's buffer of the device, on the stream of the kernels: after the work that produced them and before any later work overwrites them. Returns the pinned memory where they will be. |
+| `mdrtStagingEnd(slot)` | Records an event on the stream of the kernels; the stream of copies waits for it and copies the parts to the host, records the slot's second event, and writes the number of the staging into the slot's mark (`cuStreamWriteValue32`). The host does not wait. |
+| `mdrtStagingWait(slot, call)` | Returns at once for a slot whose mark is the number of its last staging, and otherwise waits for its second event, from any thread (the thread of the frames makes the context current for itself); returns the error of the driver, and the call that returned it, instead of ending the process. |
+| `mdrtStagingFail(error, call)` | Reports an error that `mdrtStagingWait` returned, naming the call, as any failure of the driver is reported, and ends the process; the thread of the steps calls it. |
+| `mdrtSetFailureHook(hook)` | A function of the host that the runtime calls once before a failure of the driver ends the process: the driver writes there the frames whose copies had arrived. |
+| `mdrtStagingDestroy(slot)` | Gives back the slot's memory, unless the driver has shut down. |
+
+The events of the readiness contract above map as follows: the copy within
+the device is the transfer start whose source borrow ends in stream order,
+the second event is the completion that makes the pinned memory visible to
+the host, and the release is the writer's return of the slot to its ring,
+after which `mdrtStagingCopy` may write it again. On JAC on an RTX 4090
+(nsys) the device spends 1.3 and 1.0 µs on the copies within itself of the
+positions (565 KB) and the numbers (94 KB) of a frame, on the stream of the
+kernels; the copies over PCIe, 22 and 4.5 µs, run on a copy engine beside
+the kernels.
+
+The mark is what tells a frame copied before a kernel failed from one that
+was not. Once a kernel has failed, the error belongs to the context, and the
+driver returns it for every event, those that had completed before as well,
+and it still runs a function of the host that was enqueued behind copies
+that never ran; the device writes no value after the failure. Measured with
+the driver API 13.2 on an RTX 4090 (driver 595.45.04) and an RTX 5090
+(driver 595.104.02), with three small programs of the driver API:
+`cuEventQuery` and `cuEventSynchronize` both returned
+`CUDA_ERROR_LAUNCH_FAILED` for an event of a stream that had been
+synchronized before the failing launch; a function of the host enqueued on
+a stream behind a copy that waited for the failed stream ran; a
+`cuStreamWriteValue32` there wrote nothing. The probes queue the copy behind
+the failed stream; a copy already running on the copy engine when the
+kernel traps was not measured. The mark is the
+number of the staging, not a flag: it may land after the wait for that
+staging's event has returned, the writer has given the slot back, and the
+slot has been staged again, and a flag set then would claim the new copies
+before they arrive (`MDRT_STAGING_MARK_DELAY` holds the mark back to test
+it, `test/Driver/frame-writer-gpu.test`). A failure of the driver ends the
+process with `abort` (no handler of the exit runs), so the runtime calls the
+hook first; the frames queued then are written if their marks had landed and
+dropped otherwise, a frame whose copies were in flight at the failure among
+them, and the run ends with the runtime's report of the failure, once
+(`test/Driver/frame-writer-fault-gpu.test`).
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:
