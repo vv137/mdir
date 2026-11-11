@@ -67,28 +67,14 @@ Value mdir::kernels::emitTemplateFractional(OpBuilder &b, Location loc,
 
 Value mdir::kernels::emitTemplatePackingCells(OpBuilder &b, Location loc,
     Value anchor, Value cell, Value inverse) {
-  if (!isTriclinic(cell))
-    return arith::NegFOp::create(b, loc, math::RoundEvenOp::create(b, loc,
-        arith::MulFOp::create(b, loc, anchor, inverse)));
-  auto component = [&](Value v, int64_t axis) -> Value {
-    return vector::ExtractOp::create(b, loc, v, axis);
-  };
-  Value raw[] = {component(anchor, 0), component(anchor, 1), component(anchor, 2)};
-  Value shift[3];
-  for (int axis = 2; axis >= 0; --axis) {
-    Value count = math::RoundEvenOp::create(b, loc,
-        arith::MulFOp::create(b, loc, raw[axis], component(inverse, axis)));
-    shift[axis] = arith::NegFOp::create(b, loc, count);
-    // Only the not-yet-reduced Cartesian components are needed to choose
-    // the remaining lattice coordinates. The layout is ax,by,cz,bx,cx,cy.
-    for (int row = 0; row < axis; ++row) {
-      int column = axis == 2 ? 4 + row : 3;
-      raw[row] = arith::SubFOp::create(b, loc, raw[row],
-          arith::MulFOp::create(b, loc, count, component(cell, column)));
-    }
-  }
-  return vector::FromElementsOp::create(b, loc, anchor.getType(),
-                                        ValueRange{shift[0], shift[1], shift[2]});
+  // The nearest lattice point in fractional coordinates, in either cell:
+  // the framed point then lies in [-1/2, 1/2] on the cell's own lattice
+  // frame. In a triclinic cell the sequential Cartesian central image
+  // (c, then b, then a) leaves the fractions of a and b spread over
+  // about (-1/4, 5/4), so one group of units mixes lattice frames and
+  // the search splits its entries by frame.
+  return arith::NegFOp::create(b, loc, math::RoundEvenOp::create(b, loc,
+      emitTemplateFractional(b, loc, anchor, cell, inverse)));
 }
 
 std::array<Value, 2> mdir::kernels::emitTemplateLocalGeometry(
