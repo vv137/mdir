@@ -15,7 +15,7 @@
 #    SSE2 alone (MDIR_HOST_CPU=x86-64), which holds 8 lanes of f32 in two
 #    registers.
 #
-# REQUIRES: hdf5
+# REQUIRES: hdf5, host-x86
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
@@ -71,12 +71,14 @@
 # RUN: env -u MDIR_HOST_PAIRS MDIR_HOST_CPU=x86-64 mdir emit det-double-4.toml --stage=lowered | FileCheck %s --check-prefix=DOUBLE
 # RUN: mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=SCALAR
 # RUN: mdir emit det-mixed-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE
+# RUN: env MDIR_HOST_CPU=x86-64 mdir emit det-mixed-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE-SSE2
 
 # CHECK: the states are identical
 
 # MIXED: llvm.intr.powi({{.*}}) : (vector<8xf32>, i32) -> vector<8xf32>
 # DOUBLE: llvm.intr.powi({{.*}}) : (vector<4xf64>, i32) -> vector<4xf64>
 # SCALAR-NOT: llvm.intr.powi({{.*}}) : (vector<
+# PIPELINE-SSE2: md-exec-choose-host-pairs{mode=scalar cpu=x86-64 vector-bits=128},md-exec-assign-storage,
 # PIPELINE: md-exec-choose-host-pairs{mode=scalar cpu={{[a-z0-9-]+}} vector-bits={{128|256|512}}},md-exec-assign-storage,
 
 #--- opc.toml

@@ -31,6 +31,12 @@
 // RUN: | FileCheck %s --check-prefix=MODE
 // RUN: not mdir-opt %s --md-exec-choose-host-pairs="mode=lanes width=3" 2>&1 \
 // RUN: | FileCheck %s --check-prefix=WIDTH
+// RUN: not mdir-opt %s --md-exec-choose-host-pairs="mode=lanes width=128" 2>&1 \
+// RUN: | FileCheck %s --check-prefix=WIDE-WIDTH
+// RUN: not mdir-opt %s --md-exec-choose-host-pairs="mode=lanes width=-4" 2>&1 \
+// RUN: | FileCheck %s --check-prefix=NEGATIVE-WIDTH
+// RUN: not mdir-opt %s --md-exec-choose-host-pairs="vector-bits=0" 2>&1 \
+// RUN: | FileCheck %s --check-prefix=BITS
 
 // The rows of the loops over pairs on the host take `host(lanes(W))`
 // (D[host-pair-vector]) where the precondition of HostPairs.h holds and the
@@ -49,10 +55,13 @@
 md.particle_set @atoms
 
 // OFF-NOT: host(
-// AUTO: remark: host pairs: scalar: the host 'znver4' is not measured, which keeps the scalar row (mode=auto)
+// AUTO: remark: host pairs: scalar: the host 'znver4' has no measured policy of lanes, which keeps the scalar row (mode=auto)
 // SCALAR: remark: host pairs: scalar: mode=scalar
 // MODE: error: expected 'auto', 'lanes', or 'scalar' for 'mode', got 'fast'
 // WIDTH: error: expected a width of 0 or of lanes: the lanes are a power of two from 1 to 64, not 3
+// WIDE-WIDTH: error: expected a width of 0 or of lanes: the lanes are a power of two from 1 to 64, not 128
+// NEGATIVE-WIDTH: error: expected a width of 0 or of lanes: the lanes are a power of two from 1 to 64, not -4
+// BITS: error: expected vector-bits of at least 1
 // NOALGEBRA: remark: host pairs: scalar: no lanes(4): states no algebra of the values it reduces; run 'md-exec-assign-algebra'
 
 // A Lennard-Jones loop in f32 with the forces, the energy widened to f64,
@@ -118,7 +127,7 @@ func.func @lj(%x: !vec, %x64: !vec64, %q: !real, %cell: !md.cell)
 // AVX-NOT: host(
 // AVX: return
 // WHY: remark: host pairs: scalar: no lanes(8): the policy is not (directed, owner_only): the lanes write at the centers alone
-// WHY: remark: host pairs: scalar: no lanes(8): the exponent of 'math.fpowi' is not a constant
+// WHY: remark: host pairs: scalar: no lanes(8): the exponent of 'math.fpowi' is not a scalar constant
 // WHY: remark: host pairs: scalar: no lanes(8): the kernel holds 'scf.if', which has no lane mapping
 // WHY: remark: host pairs: scalar: no lanes(8): the kernel holds 'vector.reduction', which has no lane mapping
 func.func @refused(%x: !vec, %t: !type, %cell: !md.cell) -> (!vec, f32, f32, f32) {
@@ -163,4 +172,57 @@ func.func @refused(%x: !vec, %t: !type, %cell: !md.cell) -> (!vec, f32, f32, f32
     md_exec.yield %e : f32
   } : !nl, !vec -> f32
   return %f, %p, %c, %s : !vec, f32, f32, f32
+}
+
+// The loops over a domain, a power by a vector of exponents, and a value
+// that is not a number or a vector of one dimension keep the scalar row. The
+// lanes always take the minimum image, so a loop whose rows carry their
+// images (images(explicit), which the distributed lowering builds) must not
+// take them. The types of the kernel's arguments, f32 or f64 and numbers or
+// vectors of one dimension, are the verifier's (host-pairs-invalid.mlir).
+// AVX-LABEL: func.func @domain(
+// AVX-NOT: host(
+// AVX: return
+// WHY: remark: host pairs: scalar: no lanes(8): the loop is over a domain (centers, center_set, ghost_free, or images(explicit)), which the first slice does not take
+// WHY: remark: host pairs: scalar: no lanes(8): the loop is over a domain (centers, center_set, ghost_free, or images(explicit)), which the first slice does not take
+// WHY: remark: host pairs: scalar: no lanes(8): the exponent of 'math.fpowi' is not a scalar constant
+// WHY: remark: host pairs: scalar: no lanes(8): a value of 'arith.constant' is neither a number nor a vector of one dimension
+func.func @domain(%x: !vec, %cell: !md.cell, %n: index) -> (f32, f32, f32, f32) {
+  %cells = md_exec.build_cells %x, %cell width(1.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(matrix) width(48)
+      : !mdrt.cells<@atoms>, !vec -> !nl
+  %centered = md_exec.build_neighbors %cells, %x, %cell centers(%n)
+      cutoff(1.0) skin(0.0) kind(matrix) width(48)
+      : !mdrt.cells<@atoms>, !vec -> !nl
+  %imaged = md_exec.build_neighbors %cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(matrix) width(48) images(explicit)
+      : !mdrt.cells<@atoms>, !vec -> !nl
+  %z = arith.constant 0.0 : f32
+  %a = md_exec.pair_for %centered, %x, %cell centers(%n) reduce(%z : f32)
+      cutoff(1.0) exchange [symmetric] policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    md_exec.yield %r2 : f32
+  } : !nl, !vec -> f32
+  %b = md_exec.pair_for %imaged, %x, %cell reduce(%z : f32) cutoff(1.0)
+      exchange [symmetric] images(explicit) policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    md_exec.yield %r2 : f32
+  } : !nl, !vec -> f32
+  %c = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
+      exchange [symmetric] policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %k = arith.constant dense<3> : vector<3xi32>
+    %p = math.fpowi %d, %k : vector<3xf32>, vector<3xi32>
+    %e = vector.extract %p[0] : f32 from vector<3xf32>
+    md_exec.yield %e : f32
+  } : !nl, !vec -> f32
+  %e2 = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
+      exchange [symmetric] policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %m = arith.constant dense<1.0> : vector<2x2xf32>
+    md_exec.yield %r2 : f32
+  } : !nl, !vec -> f32
+  return %a, %b, %c, %e2 : f32, f32, f32, f32
 }

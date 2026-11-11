@@ -1,0 +1,23 @@
+# REQUIRES: python-api, hdf5
+# The deterministic properties with the lanes of the host pair rows
+# (D[host-pair-vector]): the shipped default of the deterministic mode takes
+# lanes(8) in f32 and lanes(4) in f64 on every host, while the suite pins
+# MDIR_HOST_PAIRS=scalar, so the tests of these properties ran the scalar
+# row. Here they run with MDIR_HOST_PAIRS unset, the default.
+# Output independence (Inputs/output_independence.py, as output-independence.test
+# and output-independence-double.test): an output leaves the final state and the
+# rows of the log as they are without it.
+#
+# RUN: rm -rf %t && mkdir -p %t/mixed %t/double
+# RUN: env -u MDIR_HOST_PAIRS %mdir_python %S/Inputs/output_independence.py %S/Inputs/dipeptide CPU mdir %t/mixed Mixed NVE NPT-TROTTER | FileCheck %s --check-prefix=MIXED
+# RUN: env -u MDIR_HOST_PAIRS %mdir_python %S/Inputs/output_independence.py %S/Inputs/dipeptide CPU mdir %t/double Double NPT-TROTTER | FileCheck %s --check-prefix=DOUBLE
+
+# MIXED: CPU Mixed NVE: {{[0-9]+}} builds of the neighbor structure in 40 steps
+# MIXED: CPU Mixed NPT-TROTTER: {{[0-9]+}} builds
+# MIXED-SAME: compared observables, free_energy, pull, files, interval-files, rows-at-end
+# MIXED: CPU Mixed mdir run: the outputs leave the final state and the rows of the log as they are without them, in 2 ensembles
+# MIXED: CPU Mixed Python: state() and view() between the parts and the reporters
+# MIXED: output independence passed
+# DOUBLE: CPU Double NPT-TROTTER: {{[0-9]+}} builds
+# DOUBLE: CPU Double mdir run: the outputs leave the final state and the rows of the log as they are without them, in 1 ensembles
+# DOUBLE: output independence passed
