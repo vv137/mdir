@@ -83,9 +83,12 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
       Value id = memref::LoadOp::create(in, loc, v.members, ValueRange{row});
       return arith::IndexCastOp::create(in, loc, in.getIndexType(), id);
     };
-    auto publish = [&](OpBuilder &in, Value anchor, Value cells) {
+    // The reference point is the anchor's framed position at the anchor's
+    // own cells; `cells` is the unit's packing cell. For a water, a lone
+    // atom or an anchor the two cells are the same.
+    auto publish = [&](OpBuilder &in, Value anchor, Value anchorCells, Value cells) {
       Value framed = arith::AddFOp::create(in, loc, anchor,
-          emitLatticeShift(in, loc, cells, v.cell));
+          emitLatticeShift(in, loc, anchorCells, v.cell));
       Value fractional = emitTemplateFractional(in, loc, framed, v.cell, v.inverse);
       if (v.pointOffset != 0.0)
         fractional = arith::AddFOp::create(in, loc, fractional,
@@ -108,7 +111,7 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
         for (int site = 0; site != 3; ++site)
           storeElement(in, loc, frame.packed[site], v.frames,
               arith::AddIOp::create(in, loc, row, ix(in, site)));
-        publish(in, positions[0], cells);
+        publish(in, positions[0], cells, cells);
         Value h1 = arith::SubFOp::create(in, loc, frame.whole[1], frame.whole[0]);
         Value h2 = arith::SubFOp::create(in, loc, frame.whole[2], frame.whole[0]);
         Value extent = mdir::md::emitTemplateExtentSquared(in, loc, v.alpha, v.hasSite, h1, h2);
@@ -129,7 +132,7 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
           Value framed = arith::AddFOp::create(in, loc, position,
               emitLatticeShift(in, loc, cells, v.cell));
           storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
-          publish(in, position, cells);
+          publish(in, position, cells, cells);
           scf::YieldOp::create(in, loc);
         });
         scf::YieldOp::create(in, loc);
@@ -153,14 +156,18 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
         Value anchorCells = packing(in, anchor);
         Value bond = arith::SubFOp::create(in, loc, position, anchor);
         Value near = emitMinimumImage(in, loc, bond, v.cell, v.inverse);
-        // near - bond is a lattice vector: shift the member by it as well.
+        // near - bond is a lattice vector: shift the member by it as well,
+        // so that its frame lies at the minimum image of its bond from the
+        // anchor's frame. The point stays the anchor's, in the anchor's
+        // frame: frame minus point is then the minimum-image bond, also
+        // when the input splits the bond across a face.
         Value cells = arith::AddFOp::create(in, loc, anchorCells,
             math::RoundEvenOp::create(in, loc, emitTemplateFractional(in, loc,
                 arith::SubFOp::create(in, loc, near, bond), v.cell, v.inverse)));
         Value framed = arith::AddFOp::create(in, loc, position,
             emitLatticeShift(in, loc, cells, v.cell));
         storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
-        publish(in, anchor, cells);
+        publish(in, anchor, anchorCells, cells);
         Value extent = vector::ReductionOp::create(in, loc, vector::CombiningKind::ADD,
             arith::MulFOp::create(in, loc, near, near));
         memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu,

@@ -7,13 +7,22 @@
 # contains the f32 predicate) must have an inner entry: a superset of the
 # general path's pairs. A check at 1.5 times the cutoff, beyond every inner
 # reach, must find pairs without one, so the check can fail.
-# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide
+# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/split-opc %t/split-tip3p
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/opc OPC NPT 200
 # RUN: cd %t/opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/tip3p TIP3P NVT 200
 # RUN: cd %t/tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# The input wrapped per atom, as a .gro file is: the HH31-CH3 bond of ACE
+# and waters on the faces are split across the cell, so a member's raw bond
+# from its anchor is not its minimum image. The reference point of the
+# member must still be its anchor's, in the anchor's frame.
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/split-opc OPC NPT 100 --split | FileCheck %s --check-prefix=SPLIT
+# RUN: cd %t/split-opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/split-tip3p TIP3P NVT 100 --split | FileCheck %s --check-prefix=SPLIT
+# RUN: cd %t/split-tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
 # RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
 # CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry
+# SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
 # WIDE: mdrt: template coverage: units
 # WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry
