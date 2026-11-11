@@ -1,0 +1,26 @@
+# REQUIRES: cuda
+# The covering reach of the template's lists ('pairlist_distance' plus
+# twice the larger of the water's extent and the solute units' radius) is
+# checked against half the least face width of the cell at the selection,
+# with the input cell and the nominal values, and again at every build, with
+# the current cell and the values that build holds. Alanine dipeptide in
+# OPC, whose least face width is 25.16 Å, half 12.58 Å; the nominal radius,
+# 1.09 Å, is the larger.
+# Under NPT at 2000 bar with a barostat of 0.1 ps the cell shrinks: a reach
+# of 12.38 Å (10.2 + 2 x 1.09) passes the selection and a later build stops
+# the run, naming both lengths.
+# RUN: rm -rf %t && mkdir -p %t/shrink %t/stretch
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/shrink OPC NPT 400 --pairlist=10.2 --pressure=2000
+# RUN: cd %t/shrink && not mdir run control.toml > run.log 2>&1
+# RUN: FileCheck %s --check-prefix=SHRINK < %t/shrink/run.log
+# SHRINK: INFO: 0 0.0000
+# SHRINK: mdir: the template's covering reach, 12.38 Å ('pairlist_distance' plus twice 1.09 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.{{[0-3][0-9]*}} Å; the run has failed
+# A member beyond the radius at the input (HH31 a fifth away from CH3):
+# the selection's reach, 12.18 Å (10 + 2 x 1.09), fits, and the first
+# build, which widens the radius to the measured 1.308 Å, stops the run at
+# 12.62 Å, before any step.
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch
+# RUN: cd %t/stretch && not mdir run control.toml > run.log 2>&1
+# RUN: FileCheck %s --check-prefix=STRETCH < %t/stretch/run.log
+# STRETCH-NOT: INFO: 0 0.0000
+# STRETCH: mdir: the template's covering reach, 12.62 Å ('pairlist_distance' plus twice 1.308 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.58 Å; the run has failed

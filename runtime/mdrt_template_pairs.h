@@ -85,6 +85,25 @@ void mdrtTemplatePairsNoteRefresh(int64_t handle) {
     mdrtTemplatePairsSnapshotOccupancy(handle, 1);
 }
 
+/* A build found the covering reach of the lists beyond half the least face
+ * width of the current cell (the cell shrank under the barostat, or the
+ * input widened the water's extent or the solute units' radius): a pair
+ * could have two images within it. The selection checked the input cell
+ * with the nominal values; the run has failed. Lengths inside MDIR are nm;
+ * the message gives Å, as the selection's does. */
+void mdrtTemplatePairsStopReach(double reach, double widest, double half) {
+  char message[512];
+  snprintf(message, sizeof message,
+           "the template's covering reach, %.4g Å ('pairlist_distance' plus "
+           "twice %.4g Å, the larger of the water's extent and the solute "
+           "units' radius at this build), exceeds half the least face width "
+           "of the current cell, %.4g Å; the run has failed (the cell shrank "
+           "or the input widened the extent since the selection: use a "
+           "larger cell or 'water.template = \"OFF\"')",
+           10.0 * reach, 10.0 * widest, 10.0 * half);
+  stopWith(message);
+}
+
 void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
   if (water || atom) ++templatePrunes;
 }
