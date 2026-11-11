@@ -2269,9 +2269,14 @@ $h=\lvert H\rvert_1$ and in the magnitudes of the fractions, hold as
 before (the framed fractions now lie in $[-\tfrac12,\tfrac12]$). The
 first-step potential energy of the dodecahedron in OPC moves by 4e-4
 kcal/mol (−65880.3972 to −65880.3976; `main` −65880.4064). The coverage
-check now counts the inner entries and those split by lattice frame; the
-dodecahedron fixture requires none (at the old packing: 952,840 of
-6,285,360 in its 89 checks). The frames oracle takes the new cells, and
+check now counts the row groups of the inner list whose members lie in
+more than one lattice frame of their reference points, and the
+dodecahedron fixture and the solute fixtures require none. At the old packing, 952,840 of the 6,285,360
+inner entries of the dodecahedron fixture's 89 checks were second entries
+of a row group for one partner unit; that count cannot separate a split
+from a partner's second image within the reach, which a smaller cell
+has (the solute fixtures' cell, 25.2 Å on its shortest axis), so it
+was not kept. The frames oracle takes the new cells, and
 the retained-packing fixture checks two tilted anchors whose cells
 differ between the two conventions.
 
