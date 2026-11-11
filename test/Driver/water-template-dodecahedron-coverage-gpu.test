@@ -1,0 +1,15 @@
+# REQUIRES: cuda
+# The template in a reduced triclinic cell, a rhombic dodecahedron of 3,224
+# TIP3P waters (Inputs/water_template_dodecahedron.py), PME, NPT with
+# C-RESCALE, 2 fs, against the independent all-pairs, all-near-images check
+# of every evaluated frame (MDIR_TEMPLATE_CHECK_COVERAGE): no site pair
+# within the cutoff without an inner entry, and no entry twice. At 1.5
+# cutoffs, beyond every inner reach, the check must find pairs without one.
+# RUN: rm -rf %t && mkdir -p %t/run %t/wide
+# RUN: %python %S/Inputs/water_template_dodecahedron.py %S/Inputs/triclinic %t/run 50 | FileCheck %s --check-prefix=CELL
+# RUN: cd %t/run && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# RUN: %python %S/Inputs/water_template_dodecahedron.py %S/Inputs/triclinic %t/wide 10
+# RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
+# CELL: dodecahedron: 3224 waters, a = 5.20 nm, c_z = 3.6770 nm
+# CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries
+# WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
