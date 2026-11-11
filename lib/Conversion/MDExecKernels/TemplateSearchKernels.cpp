@@ -1,5 +1,6 @@
 // Periodic covering search [AllenTildesley2017], with the image retained
-// for the scalar window and the covering bound of D242.
+// for the scalar window and the covering bound of D242. Candidates are read
+// in full warp batches over column spans, as in the measured prototype.
 #include "mdir/Conversion/TemplateSearchKernels.h"
 #include "mdir/Conversion/TemplateStageKernels.h"
 #include "mdir/Conversion/TemplateSearchPreparation.h"
@@ -357,11 +358,6 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                 auto box = emitSpatialWarpBox(search, loc, firstFrame.wrapped, member);
                 Value minimum = box.minimum, maximum = box.maximum;
                 auto cartesianBox = cartesianWarpBox(search, loc, firstCartesian, member);
-                Value cellNorm = real(search, 0);
-                for (int64_t axis = 0; axis != (isTriclinic(v.cell) ? 6 : 3); ++axis)
-                  cellNorm = arith::AddFOp::create(search, loc, cellNorm,
-                      math::AbsFOp::create(search, loc,
-                          vector::ExtractOp::create(search, loc, v.cell, axis)));
 
                 Value reach;
                 if (v.reaches) {
@@ -658,16 +654,16 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                         });
                                         return TemplateStageState{selected.getResult(1), selected.getResult(2)};
                 };
-                // Direct candidate scan, as in the prototype: each partner
-                // group of the class once per frame subset, in full 32-lane
-                // batches, with no column or image loops. The f32 fractional
-                // interval of each partner, widened past its own rounding,
-                // holds every image at which a pair can be within the radius,
-                // that is every image the general iterator keeps an entry
-                // for. The images of that interval inside the query domain
-                // take the same certified box test, survivor loop and exact
-                // predicate, so the entries are the same; only their order
-                // within the row differs.
+                // Candidate scan in the prototype's shape: each partner group
+                // of the visited columns once per frame subset, in full
+                // 32-lane batches, with no loop over images per column. The
+                // f32 fractional interval of each partner, widened past its
+                // own rounding, holds every image at which a pair can be
+                // within the radius. Its images inside the query domain (the
+                // column/image ranges that also bound the certificate) take
+                // the certified box test, the survivor loop and the literal
+                // f64 predicate, so the entries are those of the former
+                // column/image iterator; only their order within a row differs.
                 auto directScan = [&](OpBuilder &d, TemplateStageState initial) -> TemplateStageState {
                   auto f32 = [&](OpBuilder &at, double x) -> Value {
                     return createReal(at, loc, at.getF32Type(), x);
@@ -678,9 +674,6 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                   auto absolute = [&](OpBuilder &at, Value x) -> Value {
                     return math::AbsFOp::create(at, loc, x);
                   };
-                  Value groupBegin = searchClass == 1 ? ix(d, 0) : firstGroup;
-                  Value groupEnd = searchClass == 1 ? waterRows
-                      : Value(arith::AddIOp::create(d, loc, v.spatial.waters, atomRows));
                   // Each operand below is at most |row low|+|row high|+radius+1
                   // (plus the partner's own terms, added per candidate), and
                   // the six f32 roundings of an endpoint stay below 2^-22 of
@@ -701,12 +694,117 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                     frameInteger[axis] = arith::FPToSIOp::create(d, loc, d.getI64Type(),
                         vector::ExtractOp::create(d, loc, frame, axis));
                   }
-                  return forState(d, loc, groupBegin, groupEnd, ix(d, 32), initial,
-                      [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
-                    Value position = arith::AddIOp::create(batch, loc, cursor, laneIndex);
-                    Value has = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ult,
-                                                       position, groupEnd);
-                    Value partnerGroup = arith::SelectOp::create(batch, loc, has, position, cursor);
+                  // The candidate groups are those of the distinct columns the
+                  // general iterator visits: each distinct x column of
+                  // [lower, upper) once, and in it one or two descriptor spans
+                  // of its distinct y columns (the serpentine order keeps a
+                  // run of y columns contiguous). Lanes form 32 spans at a
+                  // time; their concatenation is read in full 32-lane batches.
+                  Value wordNx = arith::TruncIOp::create(d, loc, d.getI32Type(), wideDimensions[0]);
+                  Value wordNy = arith::TruncIOp::create(d, loc, d.getI32Type(), wideDimensions[1]);
+                  auto positive = [&](OpBuilder &at, Value x, Value n) -> Value {
+                    return arith::RemSIOp::create(at, loc,
+                        arith::AddIOp::create(at, loc, arith::RemSIOp::create(at, loc, x, n), n), n);
+                  };
+                  auto runs = [&](unsigned axis, Value &start, Value &count) {
+                    Value width = arith::SubIOp::create(d, loc, upper[axis], lower[axis]);
+                    Value full = arith::CmpIOp::create(d, loc, arith::CmpIPredicate::sge,
+                        width, wideDimensions[axis]);
+                    start = arith::SelectOp::create(d, loc, full, integer(d, loc, 0),
+                        positive(d, lower[axis], wideDimensions[axis]));
+                    count = arith::TruncIOp::create(d, loc, d.getI32Type(),
+                        arith::SelectOp::create(d, loc, full, wideDimensions[axis], width));
+                    start = arith::TruncIOp::create(d, loc, d.getI32Type(), start);
+                  };
+                  Value xStart, xCount, yStart, yCount;
+                  runs(0, xStart, xCount);
+                  runs(1, yStart, yCount);
+                  // The second y run is the part past the last column, if any.
+                  Value yEnd = arith::AddIOp::create(d, loc, yStart, yCount);
+                  Value firstRunEnd = arith::MinSIOp::create(d, loc, yEnd, wordNy);
+                  Value secondRunEnd = arith::MaxSIOp::create(d, loc, word(d, loc, 0),
+                      arith::SubIOp::create(d, loc, yEnd, wordNy));
+                  Value spanCount = arith::MulIOp::create(d, loc, xCount, word(d, loc, 2));
+                  Value columnBase = searchClass == 2
+                      ? arith::IndexCastOp::create(d, loc, d.getI32Type(), allColumns).getResult()
+                      : word(d, loc, 0);
+                  Value descriptorOffset = searchClass == 2
+                      ? arith::IndexCastOp::create(d, loc, d.getI32Type(),
+                            arith::SubIOp::create(d, loc, v.spatial.waters, waterRows)).getResult()
+                      : word(d, loc, 0);
+                  Value forwardFirst = arith::IndexCastOp::create(d, loc, d.getI32Type(), firstGroup);
+                  auto chunks = scf::ForOp::create(d, loc, ix(d, 0),
+                      asIndex(d, loc, spanCount), ix(d, 32), ValueRange{initial.count, initial.chunk},
+                      [&](OpBuilder &c, Location, Value chunk, ValueRange chunkState) {
+                    Value j = arith::AddIOp::create(c, loc,
+                        arith::IndexCastOp::create(c, loc, c.getI32Type(), chunk), lane);
+                    Value inside = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::slt, j, spanCount);
+                    Value cx = arith::RemUIOp::create(c, loc, arith::AddIOp::create(c, loc, xStart,
+                        arith::DivUIOp::create(c, loc, j, word(c, loc, 2))), wordNx);
+                    Value second = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::ne,
+                        arith::AndIOp::create(c, loc, j, word(c, loc, 1)), word(c, loc, 0));
+                    Value a = arith::SelectOp::create(c, loc, second, word(c, loc, 0), yStart);
+                    Value e = arith::SelectOp::create(c, loc, second, secondRunEnd, firstRunEnd);
+                    Value odd = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::ne,
+                        arith::AndIOp::create(c, loc, cx, word(c, loc, 1)), word(c, loc, 0));
+                    Value slab = arith::AddIOp::create(c, loc, columnBase,
+                        arith::MulIOp::create(c, loc, cx, wordNy));
+                    Value lastY = arith::SubIOp::create(c, loc, wordNy, word(c, loc, 1));
+                    Value low = arith::AddIOp::create(c, loc, slab, arith::SelectOp::create(c, loc, odd,
+                        arith::SubIOp::create(c, loc, wordNy, e), a));
+                    Value high = arith::AddIOp::create(c, loc, slab, arith::SelectOp::create(c, loc, odd,
+                        arith::SubIOp::create(c, loc, lastY, a),
+                        arith::SubIOp::create(c, loc, e, word(c, loc, 1))));
+                    Value nonempty = arith::AndIOp::create(c, loc, inside,
+                        arith::CmpIOp::create(c, loc, arith::CmpIPredicate::slt, a, e));
+                    Value safeLow = asIndex(c, loc, arith::SelectOp::create(c, loc, nonempty, low, columnBase));
+                    Value safeHigh = asIndex(c, loc, arith::SelectOp::create(c, loc, nonempty, high, columnBase));
+                    Value begin = arith::AddIOp::create(c, loc, descriptorOffset,
+                        load(c, loc, v.spatial.starts, safeLow));
+                    Value end = arith::AddIOp::create(c, loc, descriptorOffset,
+                        arith::AddIOp::create(c, loc, load(c, loc, v.spatial.starts, safeHigh),
+                            load(c, loc, v.spatial.counts, safeHigh)));
+                    if (searchClass != 1)
+                      begin = arith::MaxSIOp::create(c, loc, begin, forwardFirst);
+                    Value length = arith::SelectOp::create(c, loc, nonempty,
+                        arith::MaxSIOp::create(c, loc, word(c, loc, 0),
+                            arith::SubIOp::create(c, loc, end, begin)), word(c, loc, 0));
+                    // Inclusive warp scan of the span lengths.
+                    Value prefix = length;
+                    for (int64_t step = 1; step != 32; step *= 2) {
+                      Value from = shuffle(c, loc, prefix,
+                          arith::MaxSIOp::create(c, loc, word(c, loc, 0),
+                              arith::SubIOp::create(c, loc, lane, word(c, loc, step))));
+                      Value add = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::sge, lane, word(c, loc, step));
+                      prefix = arith::AddIOp::create(c, loc, prefix,
+                          arith::SelectOp::create(c, loc, add, from, word(c, loc, 0)));
+                    }
+                    Value spanFirst = arith::SubIOp::create(c, loc, begin,
+                        arith::SubIOp::create(c, loc, prefix, length));
+                    Value spanTotal = shuffle(c, loc, prefix, word(c, loc, 31));
+                    auto batches = forState(c, loc, ix(c, 0), asIndex(c, loc, spanTotal), ix(c, 32),
+                        TemplateStageState{chunkState[0], chunkState[1]},
+                        [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
+                    Value virtualIndex = arith::AddIOp::create(batch, loc,
+                        arith::IndexCastOp::create(batch, loc, batch.getI32Type(), cursor), lane);
+                    Value has = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::slt, virtualIndex, spanTotal);
+                    // The span holding the virtual index: the count of spans
+                    // whose inclusive prefix does not exceed it.
+                    Value span = word(batch, loc, 0);
+                    for (int64_t step = 16; step != 0; step /= 2) {
+                      Value probe = arith::AddIOp::create(batch, loc, span, word(batch, loc, step - 1));
+                      Value below = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::sle,
+                          shuffle(batch, loc, prefix, probe), virtualIndex);
+                      span = arith::SelectOp::create(batch, loc, below,
+                          arith::AddIOp::create(batch, loc, span, word(batch, loc, step)), span);
+                    }
+                    span = arith::MinSIOp::create(batch, loc, span, word(batch, loc, 31));
+                    Value group = arith::AddIOp::create(batch, loc,
+                        shuffle(batch, loc, spanFirst, span), virtualIndex);
+                    // Lane 0 always holds a candidate of a running batch.
+                    group = arith::SelectOp::create(batch, loc, has, group,
+                        shuffle(batch, loc, group, word(batch, loc, 0)));
+                    Value partnerGroup = asIndex(batch, loc, group);
                     SmallVector<Value, 3> boxSides[2], fractionSides[2];
                     for (int64_t side = 0; side != 2; ++side) {
                       Value row = arith::AddIOp::create(batch, loc,
@@ -818,158 +916,11 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                     });
                     return TemplateStageState{imageLoop.getResult(1), imageLoop.getResult(2)};
                   });
+                    scf::YieldOp::create(c, loc, ValueRange{batches.count, batches.chunk});
+                  });
+                  return TemplateStageState{chunks.getResult(0), chunks.getResult(1)};
                 };
-                TemplateStageState result;
-                if (searchClass != 0) {
-                  result = directScan(search, frameState);
-                } else {
-                result = forState(search, loc, lower[0], upper[0], integer(search, loc, 1), frameState,
-                    [&](OpBuilder &xloop, Value x, TemplateStageState stateX) {
-                      Value sx = floorDivide(xloop, loc, x, wideDimensions[0]);
-                      Value cx = asIndex(xloop, loc, arith::SubIOp::create(xloop, loc, x,
-                          arith::MulIOp::create(xloop, loc, sx, wideDimensions[0])));
-                      return forState(xloop, loc, lower[1], upper[1], integer(xloop, loc, 1), stateX,
-                          [&](OpBuilder &yloop, Value y, TemplateStageState stateY) {
-                            Value sy = floorDivide(yloop, loc, y, wideDimensions[1]);
-                            Value cy = asIndex(yloop, loc, arith::SubIOp::create(yloop, loc, y,
-                                arith::MulIOp::create(yloop, loc, sy, wideDimensions[1])));
-                            Value odd = arith::CmpIOp::create(yloop, loc, arith::CmpIPredicate::ne,
-                                arith::AndIOp::create(yloop, loc, cx, ix(yloop, 1)), ix(yloop, 0));
-                            Value column = arith::AddIOp::create(yloop, loc,
-                                arith::MulIOp::create(yloop, loc, cx, v.spatial.columnsY),
-                                arith::SelectOp::create(yloop, loc, odd,
-                                    arith::SubIOp::create(yloop, loc,
-                                        arith::SubIOp::create(yloop, loc, v.spatial.columnsY, ix(yloop, 1)), cy), cy));
-                            column = arith::AddIOp::create(yloop, loc, column,
-                                arith::SelectOp::create(yloop, loc, ss, allColumns, ix(yloop, 0)));
-                            // Prefix sums count compact descriptors; the SS partition
-                            // still begins at the reserved water-unit capacity.
-                            Value offset = arith::SelectOp::create(yloop, loc, ss,
-                                arith::SubIOp::create(yloop, loc,
-                                    v.spatial.waters, waterRows), ix(yloop, 0));
-                            Value begin = arith::AddIOp::create(yloop, loc, offset,
-                                asIndex(yloop, loc, load(yloop, loc, v.spatial.starts, column)));
-                            Value end = arith::AddIOp::create(yloop, loc, begin,
-                                asIndex(yloop, loc, load(yloop, loc, v.spatial.counts, column)));
-                            return forState(yloop, loc, zBegin, zEnd, integer(yloop, loc, 1), stateY,
-                                [&](OpBuilder &zloop, Value sz, TemplateStageState stateZ) {
-                                  Value forwardBegin = begin;
-                                  if (searchClass != 1)
-                                    forwardBegin = arith::MinUIOp::create(zloop, loc, end,
-                                        arith::MaxUIOp::create(zloop, loc, begin, firstGroup));
-                                  // Scan direct column endpoints, as in the prototype.
-                                  // The Cartesian group test rejects z nonreach before
-                                  // units; no dependent group/order/z binary searches.
-                                  Value firstCandidate = forwardBegin;
-                                  Value lastCandidate = end;
-                                  Value queryImages[] = {sx, sy, sz};
-                                  SmallVector<Value, 3> queryComponents;
-                                  Value magnitude = real(zloop, 4);
-                                  for (int64_t axis = 0; axis != 3; ++axis) {
-                                    Value query = arith::SIToFPOp::create(zloop, loc,
-                                        zloop.getF64Type(), queryImages[axis]);
-                                    queryComponents.push_back(query);
-                                    magnitude = arith::AddFOp::create(zloop, loc, magnitude,
-                                        arith::AddFOp::create(zloop, loc,
-                                            math::AbsFOp::create(zloop, loc, query),
-                                            math::AbsFOp::create(zloop, loc,
-                                                vector::ExtractOp::create(zloop, loc, frame, axis))));
-                                  }
-                                  Value queryVector = vector::FromElementsOp::create(zloop, loc, pointType, queryComponents);
-                                  Value fastQueryShift = emitLatticeShift(zloop, loc,
-                                      arith::TruncFOp::create(zloop, loc, fastType, queryVector), fastCell);
-                                  // 64 eps times the cell 1-norm and frame/image scale
-                                  // covers the <32 rounded operations in box conversion,
-                                  // image addition and the original displacement. Only
-                                  // the prefilter widens; the exact pair test below does not.
-                                  Value boxRoundoff = arith::MulFOp::create(zloop, loc,
-                                      arith::MulFOp::create(zloop, loc, cellNorm, magnitude), real(zloop, 0x1p-46));
-
-                                  SmallVector<Value, 3> imageComponents, imageIntegers;
-                                  for (int64_t axis = 0; axis != 3; ++axis) {
-                                    Value absolute = arith::AddIOp::create(zloop, loc, queryImages[axis],
-                                        arith::FPToSIOp::create(zloop, loc, zloop.getI64Type(),
-                                            vector::ExtractOp::create(zloop, loc, frame, axis)));
-                                    imageIntegers.push_back(absolute);
-                                    imageComponents.push_back(arith::SIToFPOp::create(
-                                        zloop, loc, zloop.getF64Type(), absolute));
-                                  }
-                                  Value image = vector::FromElementsOp::create(zloop, loc, pointType, imageComponents);
-                                  return forState(zloop, loc, firstCandidate, lastCandidate, ix(zloop, 32), stateZ,
-                                      [&](OpBuilder &batch, Value cursor, TemplateStageState state) {
-                                        Value position = arith::AddIOp::create(batch, loc, cursor, laneIndex);
-                                        Value has = arith::CmpIOp::create(batch, loc, arith::CmpIPredicate::ult,
-                                                                           position, lastCandidate);
-                                        Value safe = arith::SelectOp::create(batch, loc, has, position, cursor);
-                                        Value partnerGroup = safe;
-                                        SmallVector<Value, 3> boxSides[2], fractionSides[2];
-                                        for (int64_t side = 0; side != 2; ++side) {
-                                          Value row = arith::AddIOp::create(batch, loc,
-                                              arith::MulIOp::create(batch, loc, partnerGroup, ix(batch, 2)), ix(batch, side));
-                                          for (int64_t axis = 0; axis != 3; ++axis) {
-                                            boxSides[side].push_back(memref::LoadOp::create(batch, loc,
-                                                v.groupBoxes, ValueRange{row, ix(batch, axis)}));
-                                            fractionSides[side].push_back(memref::LoadOp::create(batch, loc,
-                                                v.fractionalBoxes, ValueRange{row, ix(batch, axis)}));
-                                          }
-                                        }
-                                        SpatialBoundingBox partnerBox{
-                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[0]),
-                                            vector::FromElementsOp::create(batch, loc, fastType, boxSides[1])};
-                                        Value lowGap = arith::SubFOp::create(batch, loc, cartesianBox.minimum,
-                                            arith::AddFOp::create(batch, loc, partnerBox.maximum, fastQueryShift));
-                                        Value highGap = arith::SubFOp::create(batch, loc,
-                                            arith::AddFOp::create(batch, loc, partnerBox.minimum, fastQueryShift), cartesianBox.maximum);
-                                        Value gap = arith::MaximumFOp::create(batch, loc,
-                                            arith::MaximumFOp::create(batch, loc, lowGap, highGap),
-                                            vector::BroadcastOp::create(batch, loc, fastType,
-                                                createReal(batch, loc, batch.getF32Type(), 0)));
-                                        Value boxSquare = arith::MulFOp::create(batch, loc, gap, gap);
-                                        Value boxDistance = vector::ReductionOp::create(batch, loc,
-                                            vector::CombiningKind::ADD, boxSquare);
-                                        Value finiteBox = arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OLT,
-                                            math::AbsFOp::create(batch, loc, boxDistance),
-                                            createReal(batch, loc, batch.getF32Type(), std::numeric_limits<float>::infinity()));
-                                        Value boxReject = arith::AndIOp::create(batch, loc,
-                                            arith::AndIOp::create(batch, loc, certificate.enabled, finiteBox),
-                                            arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OGT,
-                                                boxDistance, certificate.boxUpper));
-                                        Value boxMayReach = arith::XOrIOp::create(batch, loc,
-                                            boxReject, boolean(batch, true));
-                                        SpatialBoundingBox partnerFraction{
-                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[0]),
-                                            vector::FromElementsOp::create(batch, loc, pointType, fractionSides[1])};
-                                        Value fractionRoundoff = arith::DivFOp::create(batch, loc,
-                                            vector::BroadcastOp::create(batch, loc, pointType,
-                                                arith::MulFOp::create(batch, loc, boxRoundoff, real(batch, 4))), widths);
-                                        auto single = emitSpatialSingleImage(batch, loc,
-                                            box, partnerFraction, radius, fractionRoundoff);
-                                        Value sameImage = boolean(batch, true);
-                                        for (int64_t axis = 0; axis != 3; ++axis)
-                                          sameImage = arith::AndIOp::create(batch, loc, sameImage,
-                                              arith::CmpFOp::create(batch, loc, arith::CmpFPredicate::OEQ,
-                                                  vector::ExtractOp::create(batch, loc, single.image, axis),
-                                                  queryComponents[axis]));
-                                        Value imageMayReach = arith::OrIOp::create(batch, loc, sameImage,
-                                            arith::XOrIOp::create(batch, loc, single.proved, boolean(batch, true)));
-                                        has = arith::AndIOp::create(batch, loc, has,
-                                            arith::AndIOp::create(batch, loc, boxMayReach, imageMayReach));
-                                        // Reject entire groups before any unit loads or broadcasts.
-                                        // The ballot and survivor loop are uniform across the warp.
-                                        Value survivors = emitWarpBallot(batch, loc, has);
-                                        auto uniformImage = [&](OpBuilder &, Value) {
-                                          return PartnerImage{{imageIntegers[0], imageIntegers[1], imageIntegers[2]},
-                                                              image, fastQueryShift};
-                                        };
-                                        Value laneStart = load(batch, loc, v.build.groups.starts, partnerGroup);
-                                        Value laneLength = load(batch, loc, v.build.groups.lengths, partnerGroup);
-                                        return processSurvivors(batch, survivors, partnerGroup,
-                                                                laneStart, laneLength, uniformImage, state);
-                                      });
-                                });
-                          });
-                    });
-                }
+                TemplateStageState result = directScan(search, frameState);
                 scf::YieldOp::create(search, loc, ValueRange{result.count, result.chunk});
                 }, [&](OpBuilder &skip, Location) {
                   scf::YieldOp::create(skip, loc, ValueRange{frameState.count, frameState.chunk});

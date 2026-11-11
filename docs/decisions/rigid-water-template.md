@@ -1493,6 +1493,26 @@ entries and their order are unchanged. Same profile: SW 243 to 193 us, SS
 (maintenance 35.8 to 31.8 us/step), and WW 436 to 404 us on the large OPC
 box (maintenance 14.0 to 13.3 us/step, against 19bbf459).
 
+The water-water class keeps its columns, which matter in large boxes, but
+no longer loops over images per column or reads a column alone. Lanes form
+the descriptor spans of the distinct columns of the query range, 32 at a
+time: each distinct x column of $[\mathrm{lower},\mathrm{upper})$ once, and
+in it one or two spans of its distinct y columns, which the serpentine
+column order keeps contiguous. A warp scan of the span lengths and a
+five-step search over it map the concatenation onto full 32-lane batches.
+Each candidate then takes the image interval, box test and predicate above.
+Every group of the visited columns is read once, so the entries are again
+those of the former iterator, in another order. The SW and SS classes take
+the same spans (SS from its own descriptor columns, with the forward clip),
+which for ubiquitin's 7 x 8 columns cover nearly the whole class, and the
+former column/image iterator is removed. Same profile: WW goes from 428 to
+172 us per active launch on ubiquitin OPC, 404 to 175 on the large OPC box
+and 412 to 164 on the small TIP3P box (against 19bbf459), with SW (193 to
+199 us) and SS (219 to 220 us) about as before. Maintenance kernels, 19bbf459 against now:
+59.2 to 27.0 us/step on ubiquitin OPC, 14.0 to 8.8 on the large OPC box,
+11.9 to 7.2 on the small TIP3P box. The starting outer entry counts of all
+three systems are unchanged.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
