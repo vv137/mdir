@@ -31,6 +31,11 @@
 # checks (water-template-reach-gpu.test stops at 10 Å).
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch --pairlist=9.9 | FileCheck %s --check-prefix=STRETCH
 # RUN: cd %t/stretch && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# The log shows the widening: the first build held the measured 1.308 Å,
+# and every later build the nominal radius again; the log of the OPC run
+# above (its input unstretched) holds the nominal radius throughout.
+# RUN: FileCheck %s --check-prefix=WIDENED < %t/stretch/run.log
+# RUN: FileCheck %s --check-prefix=HELD < %t/opc/run.log
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
 # RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/twice OPC NVE 4
@@ -38,6 +43,8 @@
 # CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries
 # SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
 # STRETCH: stretched input: the HH31-CH3 bond from 1.0900 to 1.3080 Å
+# WIDENED: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Å, at the first build 1.3080 Å, at most [[NOMINAL]] Å at {{[1-9][0-9]*}} later builds
+# HELD: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Å, at the first build [[NOMINAL]] Å, at most [[NOMINAL]] Å at {{[1-9][0-9]*}} later builds
 # WIDE: mdrt: template coverage: units
 # WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
 # TWICE: mdrt: template coverage: entry {{[0-9a-f]+}} appears twice
