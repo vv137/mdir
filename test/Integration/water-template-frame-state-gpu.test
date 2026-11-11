@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# RUN: mdir-opt %S/template-frame-state.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# RUN: mdir-opt %S/Inputs/template-frame-state.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
 # 180 exact f64 bit comparisons, seven views and a stable-address check
 # across pair capacity growth. No output rounding or tolerance is involved.
 # CHECK: 1
