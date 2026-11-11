@@ -245,8 +245,10 @@ lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
 list in nm, `0.0` without one; `Program.plan["pairlist_distance_source"]`
 and `["pruned_distance_source"]` where each came from (`"given"`,
 `"default"`, or `"cached"`), and `["skin_reason"]` why (D281), and
-`["skin_cache_key"]` the key of the cache of the skins (`None` where no
-reach is `mdir.Auto`). The key names the build (D[skin-budget-record]): a
+`["skin_cache_key"]` the key of the cache of the skins where a run reads
+that cache (`mdir.Auto` reaches, the groups on a GPU outside the
+deterministic mode), else `None` with the reason in
+`["skin_cache_key_reason"]`. The key names the build (D[skin-budget-record]): a
 clean build by its commit, LLVM, and the LLVM options of the command line,
 so the extension takes the choice that `mdir run` of the same clean build
 cached; a dirty build (or one whose state is unknown) by the build ID of
