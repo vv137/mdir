@@ -1686,10 +1686,10 @@ whose floors change at $\mathbf p=0$ as well as at the faces: two planes per
 axis, one through the middle of the cell. Ubiquitin sits at the middle of
 its cell (fractions 0.19 to 0.80 on every axis), so that plane cut the
 protein on all three axes, into up to eight frames, and the rows of the
-solute had up to four subsets; a quarter to a half of the water groups
-were cut as well.
+solute had up to four subsets; the water groups that the middle plane cut
+had two.
 
-The ruling of this step asked to merge a row's subsets per partner and
+The plan of this step was to merge a row's subsets per partner and
 absolute image. The measurement showed the cause instead, so the packing
 was changed: with $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$, a unit's
 packing cell is $\mathbf c-\mathbf t$ with $\mathbf c$ the central-image
@@ -1707,7 +1707,13 @@ and frame fixtures keep $\mathbf t=0$.
 Gates: the 105 template fixtures pass (3 unsupported, as before), and the
 coverage and physical gates of S1 pass with the new points (no site pair
 without an entry; the template within the mixed criterion at all twenty
-frames).
+frames). The triclinic path, which takes the sequential central image of
+$\mathbf x-H\mathbf t$, was run once by hand: the 403 waters of the
+dodecahedron fixture (`test/Driver/Inputs/triclinic`), PME, NPT, 50 steps
+with the coverage check, 89 checks and 1,636,909 unit pairs within the
+cutoff, none without an entry (at 1.5 cutoffs, 1,006,426 without); its
+energies agree with the general path's to 0.006 kJ/mol at every row. It is
+not yet a fixture.
 
 3,000-step captures, RTX 5090, one round against main (us/step):
 
