@@ -8,8 +8,17 @@ import pathlib
 import sys
 
 mode = sys.argv[2] if len(sys.argv) == 3 else ''
-assert mode in ('', '--append', '--append-overflow', '--append-index-overflow')
-append = bool(mode)
+assert mode in ('', '--append', '--append-overflow', '--append-index-overflow',
+                '--gated', '--gated-flag', '--gated-entries')
+# The gated modes (--test-md-template-compaction=gated=true) seed the
+# controls that a search leaves: clear and fitting (the compaction is
+# exact), a capacity flag, or more entries than the capacity. In the last
+# two the compaction runs before the host reads the controls, as a build
+# does, and must publish nothing: rows, units, entries and the header's
+# ranges keep the sentinel.
+gated = mode.startswith('--gated')
+refused = mode in ('--gated-flag', '--gated-entries')
+append = bool(mode) and not gated
 overflow = mode == '--append-overflow'
 index_overflow = mode == '--append-index-overflow'
 
@@ -51,6 +60,7 @@ signed_low = (total & 0xffffffff) - (1 << 32) if total & (1 << 31) else total
 expected['controls'] = [5, 0, 2 if overflow else 1 if index_overflow else 0, 0,
                         signed_low, total >> 32, 0, 0]
 expected['sentinel'] = [-777]
+expected['unpublished_ranges'] = [-777] * 36
 for name, data in expected.items():
     lines.append(f'memref.global "private" constant @{name} : memref<{len(data)}xi32> = dense<{data}>')
 lines.extend(['func.func private @compact_seed(!list)',
@@ -164,6 +174,12 @@ if append:
         store('%c0', control, (1 << 31) - 1 if index_overflow and control == 44 else 0)
 else:
     store('%c0', 40, len(chunks))
+    if gated:
+        # The high word of the chunks, then the flags and the entries (i64).
+        total_entries = (1 << 30) if mode == '--gated-entries' else sum(counts)
+        flags = 2 if mode == '--gated-flag' else 0
+        for control, value in [(41, 0), (42, flags), (43, 0), (44, total_entries), (45, 0)]:
+            store('%c0', control, value)
     for chunk, (row, ordinal, count) in enumerate(chunks):
         for column, value in enumerate([row, count, ordinal, 0]):
             store(stage_units, 4 * chunk + column, value)
@@ -205,6 +221,9 @@ if overflow or index_overflow:
     checks = [(13, 'counts', False, 0), (None, 'controls', False, 40)]
 if overflow:
     checks += [(11, 'sentinel', True, 8), (12, 'sentinel', True, 512)]
+if refused:
+    checks = [(slot, 'sentinel', True, 0) for slot in (5, 6, 7, 8, 9, 10)]
+    checks.append((None, 'unpublished_ranges', False, 4))
 for slot, name, padding, start in checks:
     if slot is None:
         view = '%arena'

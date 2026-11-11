@@ -301,6 +301,11 @@ struct TestTemplateScheduler
 struct TestTemplateCompaction
     : PassWrapper<TestTemplateCompaction, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateCompaction)
+  TestTemplateCompaction() = default;
+  TestTemplateCompaction(const TestTemplateCompaction &pass) : PassWrapper(pass) {}
+  Option<bool> gated{*this, "gated",
+      llvm::cl::desc("Gate the compaction on the list's controls and entry capacity, as a build does"),
+      llvm::cl::init(false)};
   StringRef getArgument() const final { return "test-md-template-compaction"; }
   StringRef getDescription() const final { return "Outlines the physical template chunk compactor"; }
   void getDependentDialects(DialectRegistry &r) const override {
@@ -371,6 +376,11 @@ struct TestTemplateCompaction
         arith::DivUIOp::create(b, loc,
             arith::AddIOp::create(b, loc, buffers.rows, createIndex(b, loc, 1023)),
             createIndex(b, loc, 1024)), createIndex(b, loc, 1));
+    if (gated) {
+      auto controls = MemRefType::get({4}, wide, MemRefLayoutAttrInterface(), b.getI64IntegerAttr(1));
+      buffers.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
+      buffers.entryCapacity = call("mdrtTemplatePairsCapacity", ValueRange{handle}, wide, false);
+    }
     emitCompactTemplatePairs(b, loc, buffers);
     func::ReturnOp::create(b, loc);
   }

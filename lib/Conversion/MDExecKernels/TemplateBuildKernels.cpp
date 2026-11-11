@@ -35,6 +35,19 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
                           unsigned column, Value value) {
     store(at, buffer, add(at, mul(at, record, 4), ix(at, column)), value);
   };
+  // The search fits when its flags are clear and its entries are within
+  // the capacity: only then are the staged chunks and the scanned offsets
+  // within the arena. An overflowed search publishes nothing here; the
+  // caller grows the arena and searches again.
+  auto fits = [&](OpBuilder &at) -> Value {
+    if (!v.counters) return arith::ConstantOp::create(at, loc, at.getBoolAttr(true));
+    Value flags = load(at, v.counters, ix(at, TEMPLATE_COUNTER_FLAGS));
+    Value entries = load(at, v.counters, ix(at, TEMPLATE_COUNTER_ENTRIES));
+    Value zero = arith::ConstantIntOp::create(at, loc, 0, 64);
+    return arith::AndIOp::create(at, loc,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, flags, zero),
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ule, entries, v.entryCapacity));
+  };
   Value one = ix(b, 1), block = ix(b, 256);
   auto launch = [&](Value n, auto body) {
     Value grid = arith::DivUIOp::create(b, loc, add(b, n, ix(b, 255)), block);
@@ -76,7 +89,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
     return index(at, load(at, v.groups.starts, group));
   };
   Value rowsOrClasses = arith::MaxUIOp::create(b, loc, v.rows, ix(b, 3));
-  launch(rowsOrClasses, [&](OpBuilder &at, Value row) {
+  launch(rowsOrClasses, [&](OpBuilder &gated, Value row) {
+    scf::IfOp::create(gated, loc, fits(gated), [&](OpBuilder &at, Location) {
     Value exists = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, row, v.rows);
     scf::IfOp::create(at, loc, exists, [&](OpBuilder &in, Location) {
       Value fields[] = {word(in, classify(in, row)), word(in, firstPlace(in, row)),
@@ -106,6 +120,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
           store(in, v.arena, add(in, ix(in, partition + column), mul(in, row, 6)), fields[column]);
       scf::YieldOp::create(in, loc);
     });
+    scf::YieldOp::create(at, loc);
+    });
   });
   // A warp per staging chunk: lane l copies records l and l+32, so each
   // store of a column is coalesced. The search already compacted the
@@ -114,7 +130,8 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
     Value chunk = arith::DivUIOp::create(at, loc, item, ix(at, 32));
     Value lane = arith::RemUIOp::create(at, loc, item, ix(at, 32));
     Value used = index(at, load(at, v.arena, ix(at, TEMPLATE_PAIR_STAGE_COUNT)));
-    Value exists = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, chunk, used);
+    Value exists = arith::AndIOp::create(at, loc,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, chunk, used), fits(at));
     scf::IfOp::create(at, loc, exists, [&](OpBuilder &in, Location) {
       Value base = mul(in, chunk, 4);
       Value row = index(in, load(in, v.stageUnits, base));

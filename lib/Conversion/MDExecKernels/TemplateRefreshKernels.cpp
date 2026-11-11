@@ -119,6 +119,14 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       s.excludedNeighbors = call(in, "mdrtTemplatePairsMetadata",
           ValueRange{v.handle, wide(in, TEMPLATE_SS_NEIGHBORS)}, device, true);
       emitSearchTemplatePairs(in, loc, s);
+      // The compaction runs before the host reads the search's controls,
+      // and publishes nothing if they report an overflow: one readback a
+      // build, after its last kernel, decides whether to grow and search
+      // again.
+      Value capacity = call(in, "mdrtTemplatePairsCapacity", ValueRange{v.handle}, in.getI64Type(), false);
+      a.counters = s.counters;
+      a.entryCapacity = capacity;
+      emitCompactTemplatePairs(in, loc, a);
       Type token = gpu::AsyncTokenType::get(in.getContext());
       Value ready = gpu::WaitOp::create(in, loc, token, ValueRange()).getAsyncToken();
       Value copied = gpu::MemcpyOp::create(in, loc, token, ValueRange{ready},
@@ -126,7 +134,6 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
       gpu::WaitOp::create(in, loc, Type(), ValueRange{copied});
       Value flags = memref::LoadOp::create(in, loc, host, ValueRange{ix(in, TEMPLATE_COUNTER_FLAGS)});
       Value entries = memref::LoadOp::create(in, loc, host, ValueRange{ix(in, TEMPLATE_COUNTER_ENTRIES)});
-      Value capacity = call(in, "mdrtTemplatePairsCapacity", ValueRange{v.handle}, in.getI64Type(), false);
       Value noIndexError = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
           arith::AndIOp::create(in, loc, flags, wide(in, ~int64_t(TEMPLATE_BUILD_CAPACITY_OVERFLOW))),
           wide(in, 0));
@@ -146,9 +153,8 @@ std::array<Value, 2> mdir::kernels::emitRefreshTemplatePairArena(
         call(grow, "mdrtTemplatePairsGrow", ValueRange{v.handle, entries}, grow.getI64Type(), false);
         scf::YieldOp::create(grow, loc,
             ValueRange{boolean(grow, false), boolean(grow, true), boolean(grow, true)});
-      }, [&](OpBuilder &compact, Location) {
-        emitCompactTemplatePairs(compact, loc, a);
-        scf::YieldOp::create(compact, loc, ValueRange{boolean(compact, true), state[1], state[2]});
+      }, [&](OpBuilder &done, Location) {
+        scf::YieldOp::create(done, loc, ValueRange{boolean(done, true), state[1], state[2]});
       });
       scf::YieldOp::create(in, loc, result.getResults());
     }, [&](OpBuilder &skip, Location) {
