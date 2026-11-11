@@ -9,9 +9,10 @@
 # in the file are those before the failure, and rows of the log past the
 # failing frame, up to the frame that stops the run, are printed. Here the
 # frame of step 100 fails; the frames of steps 110 and 120 are queued
-# behind it and that of 130 waits for a slot; they are dropped, and the call
-# of the frame of step 140 stops the run, at its step, not at the end of
-# the run.
+# behind it and that of 130 waits for a slot; they are dropped (the thread
+# reads none of their copies: MDIR_CHECKPOINT_TIMES reports no write of
+# them), and the call of the frame of step 140 stops the run, at its step,
+# not at the end of the run.
 #
 # REQUIRES: hdf5, h5py
 #
@@ -19,8 +20,9 @@
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 600|' \
 # RUN:     -e 's|energy_interval = 50|energy_interval = 10\ntrajectory = "run.h5md"\ntrajectory_interval = 10|' \
 # RUN:     %S/mixture.toml > %t/run.toml
-# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_WRITE_FAIL=100 %python %S/Inputs/exit_status.py mdir run run.toml > out 2>&1
-# RUN: FileCheck %s --check-prefix=WRITE < %t/out
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_WRITE_FAIL=100 MDIR_CHECKPOINT_TIMES=1 %python %S/Inputs/exit_status.py mdir run run.toml > out 2>&1
+# RUN: grep -v '^MDIR: times' %t/out | FileCheck %s --check-prefix=WRITE
+# RUN: FileCheck %s --check-prefix=DROPPED < %t/out
 # RUN: %h5md_python -c "import h5py, sys; print('steps', *h5py.File(sys.argv[1], 'r')['particles/all/position/step'][()])" %t/run.h5md | FileCheck %s --check-prefix=FRAMES
 #
 # Without a periodic cell (D142) the call of a frame waits for its copies
@@ -52,6 +54,9 @@
 # WRITE-NEXT: mdir: the frame of step 100 could not be written to the trajectory in H5MD (a full disk?)
 # WRITE-NEXT: exit status 1
 # WRITE-NOT:  INFO:
+# DROPPED:     MDIR: times of the write of the frame at step 100:
+# DROPPED-NOT: MDIR: times of the write of the frame at step
+# DROPPED:     exit status 1
 # FRAMES: steps 10 20 30 40 50 60 70 80 90{{$}}
 
 # SPREAD: mdir: at step 25 the particles spread {{.*}} (D142)

@@ -2,14 +2,17 @@
 # #113). Once a kernel has failed, the driver returns the error for every
 # event, also for those whose copies had arrived before, so the runtime
 # marks a slot's copies as arrived with a function of the host that the
-# stream of copies runs after them. Here MDRT_FAULT_AFTER_FRAMES=5 makes a
-# kernel trap after the copies of the 5th frame (step 50) have arrived,
-# while the thread of the frames holds each write back by 100 ms: the
-# 5 frames are still queued when the run meets the failure. They are
-# written, as a run whose frames had no thread wrote them before the
-# failure, the frames of the reference to the byte, and the run ends with
-# the runtime's report of the failure, once, not with a failure of the
-# copy of a frame.
+# stream of copies runs after them; and since the runtime ends the process
+# with abort at a failure of the driver, it first has the thread of the
+# frames write those whose copies had arrived. Here
+# MDRT_FAULT_AFTER_FRAMES=2 makes a kernel trap after the copies of the
+# 2nd frame (step 20) have arrived, while the thread of the frames holds
+# each write back by 100 ms: both frames are still queued when the run meets
+# the failure, and the ring of 3 slots is not full, so nothing else waits
+# for them. They are written, as a run whose frames had no thread wrote them
+# before the failure, the frames of the reference to the byte, and the run
+# ends with the runtime's report of the failure, once, not with a failure
+# of the copy of a frame.
 #
 # REQUIRES: cuda
 #
@@ -20,7 +23,7 @@
 # RUN: printf '[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/run.toml
 # RUN: sed -e 's|run.dcd|plain.dcd|' %t/run.toml > %t/plain.toml
 # RUN: cd %t && mdir run plain.toml > /dev/null
-# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDRT_FAULT_AFTER_FRAMES=5 not --crash mdir run run.toml > out 2> err
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDRT_FAULT_AFTER_FRAMES=2 not --crash mdir run run.toml > out 2> err
 # RUN: FileCheck %s < %t/err
 # RUN: grep -c 'failed with CUDA_ERROR' %t/err | FileCheck %s --check-prefix=ONCE
 # RUN: %python %S/Inputs/dcd_prefix.py %t/run.dcd %t/plain.dcd | FileCheck %s --check-prefix=FRAMES
@@ -29,4 +32,4 @@
 # CHECK: mdrt: {{.*}} failed with CUDA_ERROR_LAUNCH_FAILED
 # CHECK-NOT: the copy of the frame
 # ONCE: {{^1$}}
-# FRAMES: 5 frames, 5 in the header, the first of the reference
+# FRAMES: 2 frames, 2 in the header, the first of the reference
