@@ -48,6 +48,213 @@ the forces of the sites and the restraints; the half kick; and the
 projection, waters first. A particle without mass is a virtual site:
 `dyn.kick` leaves it alone.
 
+**The constraints in one frame.** The step is RATTLE
+[[Andersen1983]](references.md#andersen1983). Its first half is the kick,
+the drift, the solver $\mathcal C$ of the positions, and the correction
+$(\mathbf x_{n+1} - \mathbf x')/\Delta t$ of the velocities; its second
+half is the kick and the projection $\mathcal P_{\mathbf x_{n+1}}$. The
+two parts are solved by different methods:
+
+| Part | Method | Precision |
+|---|---|---|
+| $\mathcal C$, groups of SHAKE (bonds of hydrogen) | M-SHAKE [[Krautler2001]](references.md#krautler2001): Newton's method on the bonds of a group, six iterations, elimination of at most 3 × 3 (Section 6.2) | every mode |
+| $\mathcal C$, a group of one bond, `analytic_bonds = true` | the near root of the quadratic, M-SHAKE where it is not accepted (D128) | every mode |
+| $\mathcal C$, rigid waters | SETTLE [[Miyamoto1992]](references.md#miyamoto1992) in closed form; M-SHAKE on O–H₁, O–H₂, H₁–H₂ below double precision (D112) | SETTLE in double, M-SHAKE in mixed and single |
+| $\mathcal P$, every group | one direct linear solve per group: elimination for a group of SHAKE, Cramer's rule for a water's 3 × 3 (Section 6.2, "Velocities") | the kernel's type |
+| The test of the constraints (D278) | the lengths that $\mathcal C$ gives, in its kernel (Section 6.2) | as $\mathcal C$ |
+
+Not used: SHAKE by sweeps over the bonds
+[[Ryckaert1977]](references.md#ryckaert1977), unstable at 4 fs with
+repartitioned hydrogens (Section 12); the iteration over the bonds by which
+RATTLE solves its velocities [[Andersen1983]](references.md#andersen1983),
+whose fixed point is the direct solve below; a closed form of SETTLE for
+the velocities; and LINCS [[Hess1997]](references.md#hess1997), which MDIR
+does not implement. The same $\mathcal P$, in `buildShakeVelocities` and
+`buildSettleVelocities` of `lib/Driver/ConstraintIR.cpp`, is applied by
+
+| Where | What is projected |
+|---|---|
+| velocity Verlet, at the end of a step | $\mathbf v_{n+\frac12} + h\mathbf a_{n+1}$ at $\mathbf x_{n+1}$ |
+| leapfrog (D76, below) | $\mathbf v_{n-\frac12} + h\mathbf a_n$ at $\mathbf x_n$ in the drift $\mathbf u'$: in every step under Langevin dynamics or a scaled cell, otherwise for the virial alone |
+| leapfrog after barostat coupling (D393, below) | $\mathbf v_\mathrm{coupled} - h\mathbf a_n$ at $\mathbf x_n$ |
+| Langevin dynamics, g-BAOAB (D265, Section 6.3) | the velocities after B, A, and O |
+| minimization (D73, Section 6.7); the virial of the constraints at the start (Section 6.2) | $\mathbf F/m$ at $\mathbf x$ |
+
+and drawn velocities are projected at $\mathbf x_0$ by the same equations
+on the host, in f64 (`constrainVelocities` of `lib/Driver/System.cpp`).
+
+**The projection $\mathcal P_{\mathbf x}$.** Let the $N'$ particles with
+mass carry the velocities $\mathbf v \in \mathbb R^{3N'}$, with the mass
+matrix $\mathsf M = \mathrm{diag}(m_1\mathsf 1_3, \dots, m_{N'}\mathsf
+1_3)$, the inner product $\langle\mathbf u, \mathbf w\rangle_{\mathsf M} =
+\mathbf u^\mathsf T\mathsf M\mathbf w$, and its norm, so that $K =
+\tfrac12\lVert\mathbf v\rVert_{\mathsf M}^2$. A virtual site is a function
+of the positions, not a degree of freedom, and has no velocity; the
+members of every group have positive masses, which `validateTopology`
+(`lib/Driver/Validation.cpp`) requires of every group of SETTLE and SHAKE.
+The constraints are $\chi_k(\mathbf x) = \lVert\mathbf r_k\rVert^2 -
+d_k^2 = 0$ for the bonds $k = (a, b)$, $\mathbf r_k = \mathbf x_b -
+\mathbf x_a$ taken in the image of the group, and $\mathsf G =
+\partial\boldsymbol\chi/\partial\mathbf x$ is their Jacobian, whose row
+$k$, $\nabla\chi_k^\mathsf T$, is $2\mathbf r_k^\mathsf T$ at $b$,
+$-2\mathbf r_k^\mathsf T$ at $a$, and zero elsewhere. Along a motion
+$\dot\chi_k = \nabla\chi_k\cdot\mathbf v = 2\mathbf r_k\cdot(\mathbf v_b
+- \mathbf v_a)$, so the velocities that keep every constraint are the
+tangent space $\ker\mathsf G$. The projection takes the velocity
+$\mathbf v'$ of $\ker\mathsf G$ nearest to $\mathbf v$ in the metric of
+the masses:
+
+$$
+\min_{\mathbf v'}\ \tfrac12\lVert\mathbf v' - \mathbf v\rVert_{\mathsf M}^2
+\quad\text{subject to}\quad \mathsf G\mathbf v' = 0 .
+$$
+
+The objective is strictly convex and the set is linear, so the minimizer
+is unique and is the stationary point of $\tfrac12\lVert\mathbf v' -
+\mathbf v\rVert_{\mathsf M}^2 - \boldsymbol\tau^\mathsf T\mathsf
+G\mathbf v'$ [[NocedalWright2006]](references.md#nocedalwright2006):
+$\mathsf M(\mathbf v' - \mathbf v) = \mathsf G^\mathsf T\boldsymbol\tau$.
+The change of the momenta is a sum of impulses $\tau_k\nabla\chi_k$ along
+the gradients of the constraints. Putting $\mathbf v' = \mathbf v +
+\mathsf M^{-1}\mathsf G^\mathsf T\boldsymbol\tau$ into $\mathsf
+G\mathbf v' = 0$ gives $\boldsymbol\tau = -(\mathsf G\mathsf
+M^{-1}\mathsf G^\mathsf T)^{-1}\mathsf G\mathbf v$, so
+
+$$
+\mathcal P_{\mathbf x} = \mathsf 1 - \mathsf M^{-1}\mathsf G^\mathsf T\big(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T\big)^{-1}\mathsf G,
+\qquad \mathsf G = \mathsf G(\mathbf x).
+$$
+
+Its properties, with $\mathcal P = \mathcal P_{\mathbf x}$:
+
+- (a) *Tangency.* $\mathsf G\mathcal P\mathbf v = \mathsf G\mathbf v -
+  \mathsf G\mathbf v = 0$: every constrained distance has zero rate of
+  change, $\mathbf e_k\cdot(\mathbf v'_b - \mathbf v'_a) = 0$ with
+  $\mathbf e_k = \mathbf r_k/\lVert\mathbf r_k\rVert$.
+- (b) *An $\mathsf M$-orthogonal projection.* If $\mathsf G\mathbf w = 0$
+  then $\mathcal P\mathbf w = \mathbf w$; with (a), $\mathcal P^2 =
+  \mathcal P$. $\mathsf M\mathcal P = \mathsf M - \mathsf G^\mathsf
+  T(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T)^{-1}\mathsf G$ is
+  symmetric, so $\langle\mathbf u, \mathcal P\mathbf w\rangle_{\mathsf M} =
+  \langle\mathcal P\mathbf u, \mathbf w\rangle_{\mathsf M}$: the range
+  $\ker\mathsf G$ and the removed part, in the range of $\mathsf
+  M^{-1}\mathsf G^\mathsf T$, are orthogonal in $\langle\cdot,
+  \cdot\rangle_{\mathsf M}$, since $\langle\mathbf u, \mathsf
+  M^{-1}\mathsf G^\mathsf T\boldsymbol\tau\rangle_{\mathsf M} = (\mathsf
+  G\mathbf u)^\mathsf T\boldsymbol\tau = 0$ for $\mathbf u \in
+  \ker\mathsf G$. $\mathcal P^\mathsf T = \mathsf 1 - \mathsf G^\mathsf
+  T(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T)^{-1}\mathsf G\mathsf
+  M^{-1}$ differs from $\mathcal P$ unless the members of each group have
+  equal masses: the projection is not orthogonal in the Euclidean sense.
+- (c) *The kinetic energy does not grow.* By (b), $\mathbf v = \mathcal
+  P\mathbf v + (\mathsf 1 - \mathcal P)\mathbf v$ is a sum of two
+  $\mathsf M$-orthogonal parts, so $\tfrac12\lVert\mathbf
+  v\rVert_{\mathsf M}^2 = \tfrac12\lVert\mathcal P\mathbf
+  v\rVert_{\mathsf M}^2 + \tfrac12\lVert(\mathsf 1 - \mathcal P)\mathbf
+  v\rVert_{\mathsf M}^2 \ge \tfrac12\lVert\mathcal P\mathbf
+  v\rVert_{\mathsf M}^2$. Equality holds if and only if $(\mathsf 1 -
+  \mathcal P)\mathbf v = 0$, that is, since $\mathsf G^\mathsf T$ is
+  injective under (e), if and only if $\mathsf G\mathbf v = 0$: the
+  projection removes exactly the kinetic energy of the motion along the
+  constraints, which $N_f$ (Section 6.2) does not count.
+- (d) *Momentum.* The change of the momenta, $\mathsf G^\mathsf
+  T\boldsymbol\tau = \sum_k\tau_k\nabla\chi_k$, gives each bond
+  $+2\tau_k\mathbf r_k$ at $b$ and $-2\tau_k\mathbf r_k$ at $a$: the total
+  momentum does not change, nor does the angular momentum about any
+  origin, $\sum_i\mathbf x_i\times\Delta\mathbf p_i = \sum_k 2\tau_k\,
+  \mathbf r_k\times\mathbf r_k = 0$, the members being taken in one image.
+- (e) *A well-posed solve.* $\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T =
+  (\mathsf G\mathsf M^{-1/2})(\mathsf G\mathsf M^{-1/2})^\mathsf T$ is a
+  Gram matrix, symmetric, with $\boldsymbol\tau^\mathsf T\mathsf G\mathsf
+  M^{-1}\mathsf G^\mathsf T\boldsymbol\tau = \lVert\mathsf
+  M^{-1/2}\mathsf G^\mathsf T\boldsymbol\tau\rVert^2$, which is zero only
+  if $\mathsf G^\mathsf T\boldsymbol\tau = 0$: it is positive definite if
+  and only if the gradients $\nabla\chi_k$ are linearly independent. In a
+  group of SHAKE the row of hydrogen $k$ is the only one nonzero at that
+  hydrogen, so the rows are independent at any geometry with bonds of
+  nonzero length. In a water, with the bonds O→H₁, O→H₂, H₁→H₂, the
+  combination $\mathsf G^\mathsf T\boldsymbol\tau$ is
+  $-2(\tau_0\mathbf r_0 + \tau_1\mathbf r_1)$ at O, which forces
+  $\tau_0 = \tau_1 = 0$ unless $\mathbf r_0 \parallel \mathbf r_1$, and
+  then $-2\tau_2\mathbf r_2$ at H₁, which forces $\tau_2 = 0$. If the
+  three atoms are collinear, each row is a multiple of one unit vector at
+  the three atoms with coefficients that add to zero, a space of dimension
+  2, and the rows are dependent. The rows are thus dependent if and only
+  if the atoms are collinear, where the determinant of Cramer's rule is
+  zero. The lengths of a water satisfy $d_\text{HH} <
+  2d_\text{OH}$ (`validateTopology`), so a water whose lengths pass the
+  test of D278 is a triangle away from collinear, and the solve that
+  follows is well posed; the same test keeps the lengths by which the
+  kernel divides away from zero. A set that fails the test stops the run
+  at that step (Section 6.2), whatever its projection gave.
+- (f) *Per group, direct.* $(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf
+  T)_{kl} = \nabla\chi_k^\mathsf T\mathsf M^{-1}\nabla\chi_l$ is zero
+  unless bonds $k$ and $l$ share a particle. The groups are disjoint
+  (Section 6.2), so the matrix is block diagonal, $\mathcal P$ is the
+  product of the projections of the groups, which act on disjoint
+  velocities and commute, and the order of the sets in the step does not
+  change it. $\mathcal P$ depends only on the row space of $\mathsf G$: for
+  an invertible diagonal $\mathsf D$, $\mathsf D\mathsf G$ gives
+  $\mathsf G^\mathsf T\mathsf D(\mathsf D\mathsf G\mathsf M^{-1}\mathsf
+  G^\mathsf T\mathsf D)^{-1}\mathsf D\mathsf G = \mathsf G^\mathsf
+  T(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T)^{-1}\mathsf G$. With
+  $\mathsf D = \mathrm{diag}\big(1/(2\lVert\mathbf r_k\rVert)\big)$ the rows are
+  $\pm\mathbf e_k$, and $A_{kl} = \sum_i(\pm\mathbf e_k)\cdot(\pm\mathbf
+  e_l)/m_i$ over the particles $i$ the bonds share, the sign $+$ where $i$
+  is the same end of both. For a group of SHAKE the bonds share only atom
+  0, the same end of each: $A_{ij} = \delta_{ij}/m_j + \mathbf
+  e_i\cdot\mathbf e_j/m_0$, the right side $-\mathbf e_i\cdot(\mathbf v_i -
+  \mathbf v_0)$, and the change $\mathsf M^{-1}(\mathsf D\mathsf G)^\mathsf
+  T\boldsymbol\tau$ is $\tau_j\mathbf e_j/m_j$ at hydrogen $j$ and
+  $-\sum_j\tau_j\mathbf e_j/m_0$ at atom 0, the system of Section 6.2. For
+  a water, O is the first end of O→H₁ and O→H₂, H₁ the second end of O→H₁
+  and the first of H₁→H₂, and H₂ the second end of O→H₂ and H₁→H₂: the
+  diagonal $1/m_\text{O} + 1/m_\text{H}$ (twice) and $2/m_\text{H}$ and the
+  off-diagonal $\mathbf e_0\cdot\mathbf e_1/m_\text{O}$, $-\mathbf
+  e_0\cdot\mathbf e_2/m_\text{H}$, $\mathbf e_1\cdot\mathbf e_2/m_\text{H}$
+  of Section 6.2. Each block is at most 3 × 3 and positive definite by
+  (e), so elimination without pivoting, whose pivots are ratios of leading
+  principal minors, and Cramer's rule are defined; both are a fixed,
+  finite sequence of operations, with no iteration and no test of
+  convergence, and give $\mathcal P$ to the rounding of the kernel.
+
+**Proposition.** Every use of $\mathcal P$ in the table above computes
+$\mathcal P_{\mathbf x}$ of the formula, at the stated $\mathbf x$, group
+by group, by the direct solves of (f); it is linear in the velocities and
+depends on $\mathbf x$ only through the unit vectors $\mathbf e_k$ and the
+masses. The kernels compute in the type of the kernels of the mode, f64 in
+double and f32 in mixed and single precision, on displacements taken in
+f64 (D75, D110) and velocities and masses converted at the entry of the
+kernel; they yield the change $\Delta\mathbf v$, which is added to the
+velocities in their stored type (f64 in mixed precision, Section 7.1), as
+the solvers of the positions carry their changes (Section 7.3).
+Below double precision (a) therefore holds to the rounding of f32
+relative to the velocities within a group, not to that of the stored
+velocities.
+
+The solver $\mathcal C$ is a different map. It moves the positions along
+the gradients of the old configuration, $\mathbf x_{n+1} = \mathbf x' +
+\tfrac12\mathsf M^{-1}\mathsf G(\mathbf x_n)^\mathsf T\boldsymbol\lambda$,
+the moves $\pm\lambda_l\mathbf s_l/m$ of Section 6.2, with
+$\boldsymbol\lambda$ the root of the nonlinear equations
+$\chi_k(\mathbf x_{n+1}) = 0$ (M-SHAKE iterates to it, SETTLE gives it in
+closed form [[Miyamoto1992]](references.md#miyamoto1992)): it is not linear in $\mathbf x'$, and not
+the $\mathsf M$-orthogonal projection onto the surface, whose
+corrections would be along the gradients at the new point. Linearized,
+for $\mathbf x' = \mathbf x_n + \boldsymbol\delta$ with $\mathbf x_n$ on
+the surface, $\mathsf G(\mathbf x_n)(\boldsymbol\delta + \mathsf
+M^{-1}\mathsf G(\mathbf x_n)^\mathsf T\boldsymbol\lambda/2) = O(\lVert
+\boldsymbol\delta\rVert^2)$ gives $\mathbf x_{n+1} - \mathbf x_n =
+\mathcal P_{\mathbf x_n}\boldsymbol\delta + O(\lVert\boldsymbol
+\delta\rVert^2)$: to first order $\mathcal C$ is the projection of the
+displacement at the old positions, which is why a tangent step of the
+minimization is moved only to second order (Section 6.7). The correction
+$(\mathbf x_{n+1} - \mathbf x')/\Delta t$ lies along $\mathsf
+M^{-1}\mathsf G(\mathbf x_n)^\mathsf T$, so $\mathbf v_{n+\frac12}$ is
+the velocity that takes $\mathbf x_n$ onto the surface in one drift, the
+first half of RATTLE; the second half is the linear map $\mathcal
+P_{\mathbf x_{n+1}}$.
+
 A site is placed from an owner $o$ and two atoms $j$ and $k$,
 $\mathbf x_s = \mathbf x_o + \mathbf p(\mathbf d_j, \mathbf d_k)$ with
 $\mathbf d_j = \mathbf x_j - \mathbf x_o$: a linear combination, or
@@ -309,7 +516,7 @@ $N_c = 3N_\text{water} + \sum_\text{groups} n_\text{H}$; the three of the
 center of mass are always subtracted.
 
 **A failure of the constraints** (D278). The
-constrained dynamics samples the surface $g_k(\mathbf x) = 0$ and the
+constrained dynamics samples the surface $\chi_k(\mathbf x) = 0$ and the
 velocities tangent to it: the count $N_f$ above, the virial
 $\mathsf W_c$, and the temperature and the pressure of the log all assume
 that every constraint holds after every step. Neither solver can always
@@ -424,11 +631,11 @@ momenta live on the cotangent space of the constraint surface, and the
 step is g-BAOAB, that of the Appendix of
 [[Leimkuhler2016]](references.md#leimkuhler2016) with one drift in each A
 (D265): B is the half kick followed by the projection
-$\Pi_{\mathbf x}$ of the velocities on the constraints at $\mathbf x$
+$\mathcal P_{\mathbf x}$ of the velocities on the constraints at $\mathbf x$
 (RATTLE, SETTLE); A a drift of $\Delta t/2$, the constraints of the
 positions along those before the drift (SHAKE, SETTLE), the velocities of
 the displacement, and their projection at the new positions; O the
-friction and the noise followed by $\Pi$; then A, the evaluation, and B.
+friction and the noise followed by $\mathcal P$; then A, the evaluation, and B.
 Each part then preserves the constraint surface and its cotangent space,
 as the splitting of [[Leimkuhler2016]](references.md#leimkuhler2016)
 requires, and O draws the noise on that space. The middle scheme it
@@ -1091,8 +1298,8 @@ of the center of mass removed, and scaled to $\tfrac12N_fk_BT$.
 `[minimize]` in place of `[dynamics]` lowers the potential energy by
 steepest descent in the metric of the masses, on the surface of the
 constraints (D73). The direction is the acceleration with its parts along
-the constraints taken off, $\mathbf g = P(\mathbf F/m)$, where $P$ is the
-projection that RATTLE applies to velocities at the current positions and
+the constraints taken off, $\mathbf g = \mathcal P_{\mathbf x}(\mathbf F/m)$, where $\mathcal P_{\mathbf x}$ is the
+projection that RATTLE applies to velocities at the current positions (Section 6.1) and
 $\mathbf g_i = 0$ for a virtual site. Weighting by the masses is what keeps
 the step downhill once SETTLE and SHAKE, which weigh the particles by
 their masses, take the groups back to their shapes: without it the steps
@@ -1100,12 +1307,12 @@ went uphill after 50 steps on the target of D65, and the step size fell
 to 0. A trial of step length $\ell$ is
 
 $$
-\mathbf x' = C\!\left(\mathbf x + \ell\,\frac{\mathbf g}{\lVert\mathbf g\rVert_{16}}\right),
+\mathbf x' = \mathcal C\!\left(\mathbf x + \ell\,\frac{\mathbf g}{\lVert\mathbf g\rVert_{16}}\right),
 \qquad
 \lVert\mathbf g\rVert_{16} = r\Big(\sum_i \big(\lVert\mathbf g_i\rVert/r\big)^{16}\Big)^{1/16},
 $$
 
-with $r$ the root mean square of the $\lVert\mathbf g_i\rVert$, $C$ the
+with $r$ the root mean square of the $\lVert\mathbf g_i\rVert$, $\mathcal C$ the
 constraints applied from $\mathbf x$, and the sites placed again. Since
 $\lVert\mathbf g\rVert_{16} \ge \max_i\lVert\mathbf g_i\rVert$, no particle
 moves farther than $\ell$, and no reduction to a maximum is needed. A trial
@@ -1116,7 +1323,7 @@ A step is one `dyn.step @descend`, which evaluates the energy and the
 forces once.
 
 **A trial that the constraints do not take back** (D259).
-The direction is tangent to the surface of the constraints, so $C$ moves
+The direction is tangent to the surface of the constraints, so $\mathcal C$ moves
 a trial by a change of second order in $\ell$; but with $\ell$ near 1 Å,
 the cap before D260, or a long first step, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of
 degrees, beyond what SETTLE and M-SHAKE solve. For one bond of length
@@ -1184,7 +1391,7 @@ along the surface. With the constraints $\chi_k(\mathbf x) = 0$ and their
 Lagrange multipliers $\Lambda_k$, the first-order condition of a minimum
 under equality constraints is $\mathbf F + \sum_k \Lambda_k\nabla\chi_k = 0$
 for some $\Lambda_k$ [[NocedalWright2006]](references.md#nocedalwright2006), that is, the force has no part
-that the constraints do not take up, $P(\mathbf F/m) = \mathbf g = 0$.
+that the constraints do not take up, $\mathcal P_{\mathbf x}(\mathbf F/m) = \mathbf g = 0$.
 Steepest descent approaches such a point only asymptotically, so a
 minimization with `force_tolerance` $F_\text{tol}$ stops at the first row
 of the log at which

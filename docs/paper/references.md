@@ -235,6 +235,13 @@ Workshops*, Lecture Notes in Computer Science (Springer, Cham, 2024),
 pp. 207–218.
 [doi:10.1007/978-3-031-50684-0_16](https://doi.org/10.1007/978-3-031-50684-0_16)
 
+### Hess1997
+
+B. Hess, H. Bekker, H. J. C. Berendsen, J. G. E. M. Fraaije, "LINCS: A
+linear constraint solver for molecular simulations," *J. Comput. Chem.*
+**18**(12), 1463–1472 (1997).
+[doi:10.1002/(SICI)1096-987X(199709)18:12<1463::AID-JCC4>3.0.CO;2-H](https://doi.org/10.1002/(SICI)1096-987X(199709)18:12%3C1463::AID-JCC4%3E3.0.CO;2-H)
+
 ### Higham2002
 
 N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.

@@ -655,6 +655,16 @@ pp. 207–218.
 Used for: related work, FFTc, a language for FFTs on dialects of MLIR;
 MDIR calls cuFFT and pocketfft for the transforms of PME.
 
+### Hess1997
+
+B. Hess, H. Bekker, H. J. C. Berendsen, J. G. E. M. Fraaije, "LINCS: A
+linear constraint solver for molecular simulations," *J. Comput. Chem.*
+**18**(12), 1463–1472 (1997).
+[doi:10.1002/(SICI)1096-987X(199709)18:12<1463::AID-JCC4>3.0.CO;2-H](https://doi.org/10.1002/(SICI)1096-987X(199709)18:12%3C1463::AID-JCC4%3E3.0.CO;2-H)
+
+Used for: the white paper, Section 6.1, which names the constraint
+solvers that MDIR does not implement; MDIR has no LINCS.
+
 ### Hess2008
 
 B. Hess, C. Kutzner, D. van der Spoel, E. Lindahl, "GROMACS 4:
