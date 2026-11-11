@@ -1,0 +1,25 @@
+# The staging functions of the runtime incomplete (D[async-output], #113),
+# which is a defect of mdir: MDIR_STAGING_INCOMPLETE leaves the wait out
+# of the set that the driver looks up. `mdir run` stops at the first frame
+# with the message and the status 1. A Python simulation, which embeds the
+# run (D196), raises the message and goes on: the call of each frame gives
+# its slot of the ring back, so a part of 40 steps, whose 4 frames are one
+# more than the ring has slots, ends, and so does that of a second
+# simulation while the first is kept.
+#
+# REQUIRES: cuda, python-api
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|energy_interval = 50|energy_interval = 10\ntrajectory = "run.dcd"\ntrajectory_interval = 10|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: printf '[execution]\ntarget = "GPU"\n' >> %t/run.toml
+# RUN: cd %t && env MDIR_STAGING_INCOMPLETE=1 %python %S/Inputs/exit_status.py mdir run run.toml > out 2>&1
+# RUN: FileCheck %s --check-prefix=CLI < %t/out
+# RUN: env MDIR_STAGING_INCOMPLETE=1 timeout 300 %mdir_python %S/Inputs/python_frame_failures.py %S/Inputs/triclinic %t/python incomplete GPU | FileCheck %s --check-prefix=PYTHON
+
+# CLI:      mdir: the runtime of the device has no copies of the frames; this is a defect of mdir
+# CLI-NEXT: exit status 1
+
+# PYTHON-COUNT-2: simulation {{[12]}}, 40 steps raised SimulationError: {{.*}}the runtime of the device has no copies of the frames; this is a defect of mdir
+# PYTHON:         alive
