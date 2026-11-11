@@ -142,9 +142,14 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
       if (values.empty()) return;
       Value destination = captures.lookupOrDefault(loop.getOuts()[0]);
       Type stored = cast<MemRefType>(destination.getType()).getElementType();
-      for (auto [site, value] : llvm::enumerate(values))
-        emitAtomicAdd(body, loc, convertReal(body, loc, value, stored),
-                       destination, memberOf(body, unit, site));
+      // Every site's row is read before the first atomic: the map loads
+      // then overlap instead of each waiting behind the previous site's
+      // atomics, which the compiler may not reorder across.
+      SmallVector<Value, 4> rows;
+      for (unsigned site = 0; site != values.size(); ++site)
+        rows.push_back(memberOf(body, unit, site));
+      for (auto [value, row] : llvm::zip(values, rows))
+        emitAtomicAdd(body, loc, convertReal(body, loc, value, stored), destination, row);
     };
     return emitTemplateClassUnit(at, loc, unit,
         [&](OpBuilder &body, Value entry) {
@@ -153,6 +158,9 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
           partner.frame = loadFrame(body, other, secondSize);
           partner.parameters = loadParameters(body, other, secondSize);
           partner.mask = record(body, buffers.entryOffset, entry, 2);
+          // The partner's unit is kept from here to its force write rather
+          // than read again from the entry after the sixteen turns.
+          partner.id = other;
           Value image = record(body, buffers.entryOffset, entry, 1);
           SmallVector<Value, 3> cells;
           for (unsigned axis = 0; axis != 3; ++axis) {
@@ -184,9 +192,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
           mapTemplateSiteOffsets(loop, kind, sites, mapping);
           return emitTemplateWindowContributions(body, loc, loop, kind, mapping, forces);
         }, [&](OpBuilder &body, ValueRange values) { write(body, safeFirst, values); },
-        [&](OpBuilder &body, Value entry, ValueRange values) {
-          write(body, record(body, buffers.entryOffset, entry, 0), values);
-        });
+        [&](OpBuilder &body, Value other, ValueRange values) { write(body, other, values); });
   };
   Value water = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, tag, word(b, 0));
   auto chosen = scf::IfOp::create(b, loc, water,
