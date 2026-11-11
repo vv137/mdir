@@ -27,7 +27,9 @@
 
 #include "llvm/ADT/Twine.h"
 
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 
 #if MDIR_HAS_HDF5
@@ -732,7 +734,14 @@ bool H5MDWriter::writeState(const double *positions, const double *velocities,
   }
   File &h = *h5;
   hsize_t row = numFrames;
-  bool ok = true;
+  // MDIR_FRAME_WRITE_FAIL=<step>, for the tests: the frame of that step
+  // fails as a write that the library refuses (docs/environment.md).
+  static const int64_t failing = [] {
+    const char *value = std::getenv("MDIR_FRAME_WRITE_FAIL");
+    return value && *value ? std::strtoll(value, nullptr, 10)
+                           : std::numeric_limits<int64_t>::min();
+  }();
+  bool ok = step != failing;
   // The values of the frame first and its step last, then everything to
   // the operating system: a reader counts the frames by the steps.
   std::vector<float> narrow;
