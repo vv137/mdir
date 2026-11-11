@@ -66,25 +66,10 @@ struct TemplateContribution {
   llvm::SmallVector<mlir::Value, 3> firstForces, secondForces;
   llvm::SmallVector<mlir::Value, 2> sums;
 };
-/// Whether one class's source body may run on every lane and have its
-/// results selected, instead of running under a divergent guard. It holds
-/// when every operation of the body is (a) pure, trap-free arithmetic of
-/// bounded cost: arith (not remf), vector value operations, and math
-/// fma/sqrt/rsqrt/absf/copysign/fpowi with a constant exponent, never a
-/// transcendental function or an operation with a region or a call; (b) a
-/// table lookup whose indices do not depend on the coordinates, so the
-/// guard could not change them; or (c) a load of a constant global whose
-/// every index is proved in bounds by its constant/min/max interval (the
-/// radial tables clamp their bin, md-exec-expand-radial). A non-finite
-/// value of a lane outside the cutoff is then discarded by the select,
-/// never multiplied by zero. Any other body keeps the guard.
-bool isTemplateBodySpeculatable(mdir::md_exec::TemplateForOp, unsigned tag);
-/// Emit one class's actual scalar/derived body with an independent cutoff
-/// predicate for every yielded site displacement: a select of the computed
-/// value or +0 when isTemplateBodySpeculatable holds, otherwise a guard.
-/// Arguments and captures are mapped by the caller. At most one force
-/// destination remains after accumulation; energy and strain reductions
-/// retain their declared types.
+/// Emit one class's actual scalar/derived body with an independent guard
+/// for every yielded site displacement. Arguments and captures are mapped
+/// by the caller. At most one force destination remains after accumulation;
+/// energy and strain reductions retain their declared types.
 TemplateContribution emitTemplateWindowContributions(
     mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
     unsigned tag, mlir::IRMapping &);
@@ -106,9 +91,6 @@ struct TemplateUnit {
   double alpha = 0.0;
   /// Retain O/H1/H2/E forces until the write boundary, then apply rule A.
   bool siteForces = false;
-  /// Evaluate every turn on all lanes and select +0 for unpaired lanes
-  /// (isTemplateBodySpeculatable), instead of a divergent guard.
-  bool speculate = false;
 };
 /// Borrowed views of the one pair arena and the fixed-size unit state.
 /// `work` indexes four-word work records at `workOffset`; entries are
@@ -136,9 +118,8 @@ llvm::SmallVector<mlir::Value, 2> emitTemplateWorkUnit(
 /// are combined before the single I write. Each valid J entry is written
 /// once, after the rotation. Callbacks supply the actual scalar body and
 /// atomic destinations; no pair expression is embedded in this scheduler.
-/// The evaluation callback may run divergently (or, with `speculate`, on
-/// every lane, its results selected) and must not use warp collectives;
-/// the scheduler owns all warp communication.
+/// The evaluation callback may run divergently and must not use warp
+/// collectives; the scheduler owns all warp communication.
 /// The fourth evaluation range holds cached formed-site offsets: first
 /// then second for WW, second for SW, none for SS or three-site models.
 llvm::SmallVector<mlir::Value, 2> emitTemplateClassUnit(

@@ -23,8 +23,8 @@ int runWaterTemplateUnitIRTest() {
   builder.setInsertionPointToEnd(module.getBody());
   auto vec = VectorType::get({3}, builder.getF32Type());
   auto tensor = VectorType::get({9}, builder.getF64Type());
-  const char *names[] = {"ww", "sw", "ss", "energy", "three", "select"};
-  for (unsigned k = 0; k != 6; ++k) {
+  const char *names[] = {"ww", "sw", "ss", "energy", "three"};
+  for (unsigned k = 0; k != 5; ++k) {
     auto kind = static_cast<TemplatePairClass>(k < 3 ? k : 0);
     unsigned ni = kind == TemplatePairClass::WaterWater ? 3 : 1;
     unsigned nj = kind == TemplatePairClass::SoluteSolute ? 1 : 3;
@@ -55,8 +55,6 @@ int runWaterTemplateUnitIRTest() {
     unit.sumTypes = {builder.getF64Type(), tensor};
     unit.hasSite = k != 2 && k != 4;
     unit.alpha = 0.75;
-    // A speculatable body runs on every lane; unpaired lanes select +0.
-    unit.speculate = k == 5;
     auto result = emitTemplateClassUnit(builder, loc, unit,
         [&](OpBuilder &, Value) {
           TemplatePartner partner;

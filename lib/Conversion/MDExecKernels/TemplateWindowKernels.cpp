@@ -1,20 +1,14 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
-#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
-#include "mlir/IR/SymbolTable.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "llvm/ADT/DenseSet.h"
-#include <limits>
 #include <optional>
 
 using namespace mlir;
@@ -189,106 +183,6 @@ unsigned mdir::kernels::mapTemplateSiteOffsets(
   return bound;
 }
 
-namespace {
-// A signed interval of an integer or index value, from its constants and
-// the min/max/cast operations that bound it; anything else is unbounded.
-struct Interval { int64_t low, high; };
-static Interval intervalOf(Value value) {
-  constexpr int64_t lowest = std::numeric_limits<int64_t>::min();
-  constexpr int64_t highest = std::numeric_limits<int64_t>::max();
-  APInt literal;
-  if (matchPattern(value, m_ConstantInt(&literal))) {
-    int64_t v = literal.getSExtValue();
-    return {v, v};
-  }
-  Operation *op = value.getDefiningOp();
-  if (!op) return {lowest, highest};
-  if (isa<arith::IndexCastOp>(op)) return intervalOf(op->getOperand(0));
-  if (isa<arith::IndexCastUIOp>(op)) {
-    Interval inner = intervalOf(op->getOperand(0));
-    return inner.low >= 0 ? inner : Interval{lowest, highest};
-  }
-  if (isa<arith::MinSIOp, arith::MaxSIOp>(op)) {
-    Interval a = intervalOf(op->getOperand(0)), b = intervalOf(op->getOperand(1));
-    if (isa<arith::MinSIOp>(op))
-      return {std::min(a.low, b.low), std::min(a.high, b.high)};
-    return {std::max(a.low, b.low), std::max(a.high, b.high)};
-  }
-  return {lowest, highest};
-}
-// A load of a constant global whose every index is proved in bounds.
-static bool isBoundedTableLoad(Operation *op) {
-  Value base;
-  ValueRange indices;
-  int64_t width = 1;
-  if (auto load = dyn_cast<vector::LoadOp>(op)) {
-    base = load.getBase();
-    indices = load.getIndices();
-    VectorType type = load.getVectorType();
-    if (type.getRank() != 1 || type.isScalable()) return false;
-    width = type.getNumElements();
-  } else if (auto load = dyn_cast<memref::LoadOp>(op)) {
-    base = load.getMemRef();
-    indices = load.getIndices();
-  } else {
-    return false;
-  }
-  auto global = base.getDefiningOp<memref::GetGlobalOp>();
-  if (!global) return false;
-  auto symbol = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
-      op, global.getNameAttr());
-  auto type = cast<MemRefType>(base.getType());
-  if (!symbol || !symbol.getConstant() || !type.hasStaticShape() ||
-      type.getRank() != static_cast<int64_t>(indices.size()))
-    return false;
-  for (auto [dimension, index] : llvm::enumerate(indices)) {
-    int64_t extent = type.getDimSize(dimension);
-    if (dimension + 1 == indices.size()) extent -= width - 1;
-    Interval range = intervalOf(index);
-    if (range.low < 0 || range.high >= extent) return false;
-  }
-  return true;
-}
-} // namespace
-
-bool mdir::kernels::isTemplateBodySpeculatable(
-    mdir::md_exec::TemplateForOp loop, unsigned tag) {
-  assert(tag < 3);
-  Block &source = loop->getRegion(tag).front();
-  constexpr unsigned coordinateCounts[] = {5, 3, 1};
-  llvm::DenseSet<Value> geometric;
-  for (Value argument : source.getArguments().take_front(coordinateCounts[tag]))
-    geometric.insert(argument);
-  for (Operation &op : source.without_terminator()) {
-    if (op.getNumRegions()) return false;
-    bool dependent = llvm::any_of(op.getOperands(),
-        [&](Value operand) { return geometric.contains(operand); });
-    if (dependent) geometric.insert(op.result_begin(), op.result_end());
-    if (isa<memref::GetGlobalOp>(op)) continue;
-    if (isa<vector::LoadOp, memref::LoadOp>(op)) {
-      if (!isBoundedTableLoad(&op)) return false;
-      continue;
-    }
-    // The types index a table that every lane's real units already name.
-    if (isa<mdir::md::LookupOp>(op)) {
-      if (dependent) return false;
-      continue;
-    }
-    if (auto power = dyn_cast<math::FPowIOp>(op)) {
-      if (!matchPattern(power.getRhs(), m_Constant())) return false;
-      continue;
-    }
-    if (isa<math::FmaOp, math::SqrtOp, math::RsqrtOp, math::AbsFOp,
-            math::CopySignOp>(op))
-      continue;
-    if ((isa<arith::ArithDialect, vector::VectorDialect>(op.getDialect())) &&
-        !isa<arith::RemFOp>(op) && isPure(&op))
-      continue;
-    return false;
-  }
-  return true;
-}
-
 TemplateContribution mdir::kernels::emitTemplateWindowContributions(
     OpBuilder &builder, Location loc, mdir::md_exec::TemplateForOp loop,
     unsigned tag, IRMapping &mapping) {
@@ -306,8 +200,6 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
   auto zero = [&](Type type) -> Value {
     return arith::ConstantOp::create(builder, loc, builder.getZeroAttr(type));
   };
-  // Every lane evaluates a speculatable body; the cutoff selects +0.
-  bool speculate = isTemplateBodySpeculatable(loop, tag);
   TemplateContribution result;
   if (outs) {
     Type force = mdir::md_exec::getKernelValueType(loop.getOuts()[0].getType());
@@ -330,22 +222,6 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
           FloatAttr::get(r2.getType(), cutoff * cutoff));
       Value inside = arith::CmpFOp::create(builder, loc,
           arith::CmpFPredicate::OLT, r2, cutoff2);
-      auto accumulate = [&](unsigned member, Value value) {
-        Value *destination = !scatter ? &result.sums[column - outs]
-            : member < firstSlots ? &result.firstForces[member]
-                                 : &result.secondForces[member - firstSlots];
-        *destination = arith::AddFOp::create(builder, loc, *destination, value);
-      };
-      if (speculate) {
-        for (unsigned member = 0; member != stride; ++member) {
-          Value value = materializeWindowValue(builder,
-              yield->getOperand(offset + pair * stride + member), source, mapping);
-          accumulate(member, arith::SelectOp::create(builder, loc, inside, value,
-              arith::ConstantOp::create(builder, loc,
-                  builder.getZeroAttr(value.getType()))));
-        }
-        continue;
-      }
       auto guarded = scf::IfOp::create(builder, loc, inside,
           [&](OpBuilder &body, Location) {
             IRMapping local = mapping;
@@ -362,8 +238,13 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
             }
             scf::YieldOp::create(body, loc, values);
           });
-      for (unsigned member = 0; member != stride; ++member)
-        accumulate(member, guarded.getResult(member));
+      for (unsigned member = 0; member != stride; ++member) {
+        Value *destination = !scatter ? &result.sums[column - outs]
+            : member < firstSlots ? &result.firstForces[member]
+                                 : &result.secondForces[member - firstSlots];
+        *destination = arith::AddFOp::create(builder, loc, *destination,
+                                             guarded.getResult(member));
+      }
     }
     offset += pairs * (stride + 1);
   }
@@ -478,7 +359,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
               Value paired = arith::CmpIOp::create(turn, loc, arith::CmpIPredicate::ne,
                                                    bit, word(turn, loc, 0));
               paired = arith::AndIOp::create(turn, loc, paired, unit.firstValid);
-              auto evaluateTurn = [&](OpBuilder &body) {
+              auto contribution = scf::IfOp::create(turn, loc, paired,
+                  [&](OpBuilder &body, Location) {
                     SmallVector<Value> coordinates{arith::SubFOp::create(
                         body, loc, firstFrame[0], state[0])};
                     SmallVector<Value> sites;
@@ -498,26 +380,13 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                     SmallVector<Value> values(result.firstForces.begin(), result.firstForces.end());
                     llvm::append_range(values, result.secondForces);
                     llvm::append_range(values, result.sums);
-                    return values;
-              };
-              SmallVector<Value> values;
-              if (unit.speculate) {
-                // Unpaired and padding lanes evaluate real loaded units and
-                // contribute an exact +0; any non-finite value is discarded.
-                for (Value value : evaluateTurn(turn))
-                  values.push_back(arith::SelectOp::create(turn, loc, paired, value,
-                      createZero(turn, loc, value.getType())));
-              } else {
-                auto contribution = scf::IfOp::create(turn, loc, paired,
-                    [&](OpBuilder &body, Location) {
-                      scf::YieldOp::create(body, loc, evaluateTurn(body));
-                    }, [&](OpBuilder &body, Location) {
-                      SmallVector<Value> zeros;
-                      for (Type type : resultTypes) zeros.push_back(createZero(body, loc, type));
-                      scf::YieldOp::create(body, loc, zeros);
-                    });
-                llvm::append_range(values, contribution.getResults());
-              }
+                    scf::YieldOp::create(body, loc, values);
+                  }, [&](OpBuilder &body, Location) {
+                    SmallVector<Value> zeros;
+                    for (Type type : resultTypes) zeros.push_back(createZero(body, loc, type));
+                    scf::YieldOp::create(body, loc, zeros);
+                  });
+              ValueRange values(contribution.getResults());
               SmallVector<Value> next;
               for (Value value : state.take_front(maskAt + 1))
                 next.push_back(shuffle(turn, loc, value, source, gpu::ShuffleMode::IDX));
