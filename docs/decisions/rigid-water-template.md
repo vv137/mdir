@@ -1477,6 +1477,22 @@ too. Same profile, D1 with SS against D1: the SS search goes from 432 to
 goes from 625 to 241 us, SS from 464 to 262, and maintenance from 61.7 to
 37.7 us/step.
 
+A survivor step then cost about as much as a batch: three dependent loads
+(the group's span, the unit at the place, then its anchor and f64
+reference) and a dozen f64 operations to floor the partner's reference for
+its image code and to form its wrapped f64 image. The search cache now
+holds, per group place, the unit's f32 anchor and its lattice frame packed
+in three ten-bit fields biased by 512, and the candidate lane loads its
+group's span together with its box. A step reads the place's record and
+unit in one dependent load and forms the image code in integers. The f64
+reference is read only by the exact shell, which still forms the wrapped
+f64 image exactly as before, and by a frame outside $[-511,511]$, which
+stores a negative word and takes the original floor. The decisions, the
+entries and their order are unchanged. Same profile: SW 243 to 193 us, SS
+246 to 219 us and WW 458 to 428 us per active launch on ubiquitin OPC
+(maintenance 35.8 to 31.8 us/step), and WW 436 to 404 us on the large OPC
+box (maintenance 14.0 to 13.3 us/step, against 19bbf459).
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
