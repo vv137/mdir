@@ -1521,6 +1521,18 @@ lane 0 writes the work record. The records and their places are unchanged.
 Same profile: 4.4 to 0.5 us/step on ubiquitin OPC; maintenance 27.0 to 24.6
 us/step there and 8.8 to 6.9 on the large OPC box.
 
+A survivor step then decided its sixteen pairs one at a time, each behind
+its eligibility branch and the f32/f64 decision branch, so no shared load
+or test of one pair overlapped the next. The step now forms the certified
+f32 decision of all sixteen pairs without a branch, as accept and undecided
+masks over the eligible pairs. Only a lane with an undecided pair forms the
+f64 image of its partner and runs the literal predicate on those pairs, and
+the SS exclusion test walks the accepted bits one at a time. Each pair is
+decided as before. Same profile, against the previous step: SW 201 to 171
+us, SS 226 to 210 us and WW 173 to 154 us per active launch on ubiquitin
+OPC; WW 174 to 149 us on the large OPC box and 162 to 134 us on the small
+TIP3P box.
+
 Kernel-busy time at 494854ae, 10,000-step captures on the RTX 5090, two
 rounds in alternated order (round 1 / round 2, us/step). Maintenance is
 every `mdir_run_kernel` of the template and main's neighbor build and

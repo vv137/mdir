@@ -537,104 +537,122 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                                                   integer(units, loc, MDRT_TEMPLATE_IMAGE_BITS * axis)));
                                         }
                                         Value imageCode = arith::TruncIOp::create(units, loc, units.getI32Type(), code);
-                                        Value mask = word(units, loc, 0);
+                                        // The certified f32 decision of all sixteen pairs first, without a branch.
+                                        // Only the pairs it leaves undecided (rare) take the literal f64 predicate,
+                                        // and only accepted SS pairs the exclusion test, so every pair is decided
+                                        // as before.
+                                        auto bit = [&](OpBuilder &at, Value i) -> Value {
+                                          return arith::ShLIOp::create(at, loc, word(at, loc, 1),
+                                              arith::IndexCastOp::create(at, loc, at.getI32Type(), i));
+                                        };
+                                        Value accept = word(units, loc, 0), uncertain = word(units, loc, 0);
                                         for (unsigned i = 0; i != 16; ++i) {
-                                          Value slot = arith::AddIOp::create(units, loc,
-                                              cacheBase, ix(units, i));
-                                          SmallVector<Value, 3> coordinates, fastCoordinates;
-                                          for (int64_t axis = 0; axis != 3; ++axis) {
-                                            coordinates.push_back(memref::LoadOp::create(units, loc,
-                                                pointCache, ValueRange{slot, ix(units, axis)}));
+                                          Value slot = arith::AddIOp::create(units, loc, cacheBase, ix(units, i));
+                                          SmallVector<Value, 3> fastCoordinates;
+                                          for (int64_t axis = 0; axis != 3; ++axis)
                                             fastCoordinates.push_back(memref::LoadOp::create(units, loc,
                                                 cartesianCache, ValueRange{slot, ix(units, axis)}));
-                                          }
-                                          Value cartesianI = vector::FromElementsOp::create(units, loc,
-                                              fastType, fastCoordinates);
-                                          Value pointI = vector::FromElementsOp::create(units, loc,
-                                              pointType, coordinates);
-                                          Value unitI = load(units, loc, idCache, slot);
-                                          Value validI = arith::CmpIOp::create(units, loc,
-                                              arith::CmpIPredicate::ne,
-                                              arith::AndIOp::create(units, loc, members,
-                                                  word(units, loc, int64_t(1) << i)), word(units, loc, 0));
+                                          Value cartesianI = vector::FromElementsOp::create(units, loc, fastType, fastCoordinates);
+                                          Value validI = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
+                                              arith::AndIOp::create(units, loc, members, word(units, loc, int64_t(1) << i)), word(units, loc, 0));
                                           Value owns = arith::OrIOp::create(units, loc, sw,
                                               arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ult,
                                                   arith::AddIOp::create(units, loc, first, ix(units, i)), partnerPlace));
                                           Value eligible = arith::AndIOp::create(units, loc, has,
                                               arith::AndIOp::create(units, loc, validI, owns));
-                                          auto accepted = scf::IfOp::create(units, loc, eligible,
-                                              [&](OpBuilder &pair, Location) {
-                                                Value fastDisplacement = arith::SubFOp::create(pair, loc, cartesianI, shiftedCartesian);
-                                                Value fastSquare = arith::MulFOp::create(pair, loc, fastDisplacement, fastDisplacement);
-                                                Value fastDistance = vector::ReductionOp::create(pair, loc,
-                                                    vector::CombiningKind::ADD, fastSquare);
-                                                Value finiteDistance = arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLT,
-                                                    math::AbsFOp::create(pair, loc, fastDistance),
-                                                    createReal(pair, loc, pair.getF32Type(), std::numeric_limits<float>::infinity()));
-                                                Value fastEnabled = arith::AndIOp::create(pair, loc,
-                                                    certificate.enabled, finiteDistance);
-                                                Value fastAccept = arith::AndIOp::create(pair, loc,
-                                                    arith::AndIOp::create(pair, loc, fastEnabled, certificate.acceptEnabled),
-                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLE,
-                                                        fastDistance, certificate.lower));
-                                                Value fastReject = arith::AndIOp::create(pair, loc, fastEnabled,
-                                                    arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OGT,
-                                                        fastDistance, certificate.upper));
-                                                Value classified = arith::OrIOp::create(pair, loc, fastAccept, fastReject);
-                                                auto decision = scf::IfOp::create(pair, loc, classified,
-                                                    [&](OpBuilder &quick, Location) {
-                                                      scf::YieldOp::create(quick, loc, ValueRange{fastAccept});
-                                                    }, [&](OpBuilder &exact, Location) {
-                                                SmallVector<Value, 3> frames;
-                                                Value shifted = arith::AddFOp::create(exact, loc,
-                                                    wrapPartner(exact, frames), partnerImage.image);
-                                                Value raw = arith::SubFOp::create(exact, loc, pointI, shifted);
-                                                Value displacement = emitLatticeShift(exact, loc, raw, v.cell);
-                                                Value square = arith::MulFOp::create(exact, loc, displacement, displacement);
-                                                Value distance = vector::ReductionOp::create(exact, loc,
-                                                    vector::CombiningKind::ADD, square);
-                                                Value inside = arith::CmpFOp::create(exact, loc,
-                                                    arith::CmpFPredicate::OLE, distance, reach2);
-                                                scf::YieldOp::create(exact, loc, ValueRange{inside});
-                                                    });
-                                                Value inside = decision.getResult(0);
-                                                auto kept = scf::IfOp::create(pair, loc, inside,
-                                                    [&](OpBuilder &near, Location) {
-                                                      auto allowed = scf::IfOp::create(near, loc, ss,
-                                                          [&](OpBuilder &atom, Location) {
-                                                            Value w = arith::IndexCastOp::create(atom, loc, atom.getI32Type(), v.spatial.waters);
-                                                            Value a = asIndex(atom, loc, arith::SubIOp::create(atom, loc, unitI, w));
-                                                            Value other = arith::SubIOp::create(atom, loc, partner, w);
-                                                            Value start = asIndex(atom, loc, load(atom, loc, v.excludedRows, a));
-                                                            Value stop = asIndex(atom, loc, load(atom, loc, v.excludedRows,
-                                                                arith::AddIOp::create(atom, loc, a, ix(atom, 1))));
-                                                            Value found = bound(atom, loc, start, stop, other, false,
-                                                                [&](OpBuilder &in, Value j) { return load(in, loc, v.excludedNeighbors, j); });
-                                                            Value exists = arith::CmpIOp::create(atom, loc, arith::CmpIPredicate::ult, found, stop);
-                                                            auto excluded = scf::IfOp::create(atom, loc, exists,
-                                                                [&](OpBuilder &in, Location) {
-                                                                  Value same = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
-                                                                      load(in, loc, v.excludedNeighbors, found), other);
-                                                                  scf::YieldOp::create(in, loc, ValueRange{same});
-                                                                }, [&](OpBuilder &in, Location) {
-                                                                  scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
-                                                                });
-                                                            Value notExcluded = arith::XOrIOp::create(atom, loc, excluded.getResult(0), boolean(atom, true));
-                                                            scf::YieldOp::create(atom, loc, ValueRange{notExcluded});
-                                                          }, [&](OpBuilder &in, Location) {
-                                                            scf::YieldOp::create(in, loc, ValueRange{boolean(in, true)});
-                                                          });
-                                                      scf::YieldOp::create(near, loc, allowed.getResults());
-                                                    }, [&](OpBuilder &in, Location) {
-                                                      scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
-                                                    });
-                                                scf::YieldOp::create(pair, loc, kept.getResults());
-                                              }, [&](OpBuilder &in, Location) {
-                                                scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
+                                          Value fastDisplacement = arith::SubFOp::create(units, loc, cartesianI, shiftedCartesian);
+                                          Value fastSquare = arith::MulFOp::create(units, loc, fastDisplacement, fastDisplacement);
+                                          Value fastDistance = vector::ReductionOp::create(units, loc, vector::CombiningKind::ADD, fastSquare);
+                                          Value finiteDistance = arith::CmpFOp::create(units, loc, arith::CmpFPredicate::OLT,
+                                              math::AbsFOp::create(units, loc, fastDistance),
+                                              createReal(units, loc, units.getF32Type(), std::numeric_limits<float>::infinity()));
+                                          Value fastEnabled = arith::AndIOp::create(units, loc, certificate.enabled, finiteDistance);
+                                          Value fastAccept = arith::AndIOp::create(units, loc,
+                                              arith::AndIOp::create(units, loc, fastEnabled, certificate.acceptEnabled),
+                                              arith::CmpFOp::create(units, loc, arith::CmpFPredicate::OLE, fastDistance, certificate.lower));
+                                          Value fastReject = arith::AndIOp::create(units, loc, fastEnabled,
+                                              arith::CmpFOp::create(units, loc, arith::CmpFPredicate::OGT, fastDistance, certificate.upper));
+                                          Value undecided = arith::XOrIOp::create(units, loc,
+                                              arith::OrIOp::create(units, loc, fastAccept, fastReject), boolean(units, true));
+                                          Value set = word(units, loc, int64_t(1) << i), none = word(units, loc, 0);
+                                          accept = arith::OrIOp::create(units, loc, accept, arith::SelectOp::create(units, loc,
+                                              arith::AndIOp::create(units, loc, eligible, fastAccept), set, none));
+                                          uncertain = arith::OrIOp::create(units, loc, uncertain, arith::SelectOp::create(units, loc,
+                                              arith::AndIOp::create(units, loc, eligible, undecided), set, none));
+                                        }
+                                        Value anyUncertain = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
+                                            uncertain, word(units, loc, 0));
+                                        auto exactShell = scf::IfOp::create(units, loc, anyUncertain,
+                                            [&](OpBuilder &exact, Location) {
+                                              SmallVector<Value, 3> frames;
+                                              Value shifted = arith::AddFOp::create(exact, loc, wrapPartner(exact, frames), partnerImage.image);
+                                              auto loop = scf::ForOp::create(exact, loc, ix(exact, 0), ix(exact, 16), ix(exact, 1),
+                                                  ValueRange{accept}, [&](OpBuilder &each, Location, Value i, ValueRange carried) {
+                                                Value which = bit(each, i);
+                                                Value open = arith::CmpIOp::create(each, loc, arith::CmpIPredicate::ne,
+                                                    arith::AndIOp::create(each, loc, uncertain, which), word(each, loc, 0));
+                                                auto tested = scf::IfOp::create(each, loc, open, [&](OpBuilder &pair, Location) {
+                                                  Value slot = arith::AddIOp::create(pair, loc, cacheBase, i);
+                                                  SmallVector<Value, 3> coordinates;
+                                                  for (int64_t axis = 0; axis != 3; ++axis)
+                                                    coordinates.push_back(memref::LoadOp::create(pair, loc,
+                                                        pointCache, ValueRange{slot, ix(pair, axis)}));
+                                                  Value pointI = vector::FromElementsOp::create(pair, loc, pointType, coordinates);
+                                                  Value raw = arith::SubFOp::create(pair, loc, pointI, shifted);
+                                                  Value displacement = emitLatticeShift(pair, loc, raw, v.cell);
+                                                  Value square = arith::MulFOp::create(pair, loc, displacement, displacement);
+                                                  Value distance = vector::ReductionOp::create(pair, loc, vector::CombiningKind::ADD, square);
+                                                  Value inside = arith::CmpFOp::create(pair, loc, arith::CmpFPredicate::OLE, distance, reach2);
+                                                  scf::YieldOp::create(pair, loc, ValueRange{arith::OrIOp::create(pair, loc, carried[0],
+                                                      arith::SelectOp::create(pair, loc, inside, which, word(pair, loc, 0)))});
+                                                }, [&](OpBuilder &in, Location) {
+                                                  scf::YieldOp::create(in, loc, ValueRange{carried[0]});
+                                                });
+                                                scf::YieldOp::create(each, loc, tested.getResults());
                                               });
-                                          mask = arith::OrIOp::create(units, loc, mask,
-                                              arith::SelectOp::create(units, loc, accepted.getResult(0),
-                                                  word(units, loc, int64_t(1) << i), word(units, loc, 0)));
+                                              scf::YieldOp::create(exact, loc, loop.getResults());
+                                            }, [&](OpBuilder &in, Location) {
+                                              scf::YieldOp::create(in, loc, ValueRange{accept});
+                                            });
+                                        Value mask = exactShell.getResult(0);
+                                        if (searchClass == 2) {
+                                          // Clear the excluded pairs among the accepted ones, one set bit at a time.
+                                          Value w = arith::IndexCastOp::create(units, loc, units.getI32Type(), v.spatial.waters);
+                                          Value other = arith::SubIOp::create(units, loc, partner, w);
+                                          auto filtered = scf::WhileOp::create(units, loc,
+                                              TypeRange{units.getI32Type(), units.getI32Type()}, ValueRange{mask, mask},
+                                              [&](OpBuilder &test, Location, ValueRange carried) {
+                                                Value more = arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ne,
+                                                    carried[0], word(test, loc, 0));
+                                                scf::ConditionOp::create(test, loc, more, carried);
+                                              }, [&](OpBuilder &atom, Location, ValueRange carried) {
+                                            Value bitIndex = math::CountTrailingZerosOp::create(atom, loc, carried[0]);
+                                            Value which = arith::ShLIOp::create(atom, loc, word(atom, loc, 1), bitIndex);
+                                            Value rest = arith::AndIOp::create(atom, loc, carried[0],
+                                                arith::SubIOp::create(atom, loc, carried[0], word(atom, loc, 1)));
+                                            Value unitI = load(atom, loc, idCache, arith::AddIOp::create(atom, loc, cacheBase,
+                                                asIndex(atom, loc, bitIndex)));
+                                            Value a = asIndex(atom, loc, arith::SubIOp::create(atom, loc, unitI, w));
+                                            Value start = asIndex(atom, loc, load(atom, loc, v.excludedRows, a));
+                                            Value stop = asIndex(atom, loc, load(atom, loc, v.excludedRows,
+                                                arith::AddIOp::create(atom, loc, a, ix(atom, 1))));
+                                            Value found = bound(atom, loc, start, stop, other, false,
+                                                [&](OpBuilder &in, Value j) { return load(in, loc, v.excludedNeighbors, j); });
+                                            Value exists = arith::CmpIOp::create(atom, loc, arith::CmpIPredicate::ult, found, stop);
+                                            auto excluded = scf::IfOp::create(atom, loc, exists,
+                                                [&](OpBuilder &in, Location) {
+                                                  Value same = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                                      load(in, loc, v.excludedNeighbors, found), other);
+                                                  scf::YieldOp::create(in, loc, ValueRange{same});
+                                                }, [&](OpBuilder &in, Location) {
+                                                  scf::YieldOp::create(in, loc, ValueRange{boolean(in, false)});
+                                                });
+                                            Value cleared = arith::AndIOp::create(atom, loc, carried[1],
+                                                arith::XOrIOp::create(atom, loc, which, word(atom, loc, -1)));
+                                            scf::YieldOp::create(atom, loc, ValueRange{rest, arith::SelectOp::create(atom, loc,
+                                                excluded.getResult(0), cleared, carried[1])});
+                                          });
+                                          mask = filtered.getResult(1);
                                         }
                                         Value keep = arith::CmpIOp::create(units, loc, arith::CmpIPredicate::ne,
                                                                              mask, word(units, loc, 0));
