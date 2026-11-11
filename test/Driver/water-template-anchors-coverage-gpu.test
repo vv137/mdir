@@ -9,7 +9,7 @@
 # orders. A check at 1.5 times the cutoff, beyond every inner reach, must
 # find pairs without one, so the check can fail; one that counts an entry
 # twice must find a duplicate.
-# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/twice %t/split-opc %t/split-tip3p
+# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/twice %t/split-opc %t/split-tip3p %t/stretch
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/opc OPC NPT 200
 # RUN: cd %t/opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/tip3p TIP3P NVT 200
@@ -22,12 +22,19 @@
 # RUN: cd %t/split-opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/split-tip3p TIP3P NVT 100 --split | FileCheck %s --check-prefix=SPLIT
 # RUN: cd %t/split-tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# A member beyond the radius at the input (HH31 a fifth away from CH3, as
+# a minimization with free X-H bonds leaves it before dynamics with
+# constrained ones): the first build, before any constraint, widens the
+# radius by the measured distance; constrained builds hold it again.
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch | FileCheck %s --check-prefix=STRETCH
+# RUN: cd %t/stretch && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
 # RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/twice OPC NVE 4
 # RUN: cd %t/twice && env MDIR_TEMPLATE_CHECK_COVERAGE=duplicate mdir run control.toml 2>&1 | FileCheck %s --check-prefix=TWICE
 # CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries
 # SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
+# STRETCH: stretched input: the HH31-CH3 bond from 1.0900 to 1.3080 Å
 # WIDE: mdrt: template coverage: units
 # WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
 # TWICE: mdrt: template coverage: entry {{[0-9a-f]+}} appears twice
