@@ -557,7 +557,7 @@ int main(int argc, char **argv) {
   // build is named by its commit, LLVM, and its options, whatever the
   // image; a dirty build, or one of unknown state, by its image as well.
   {
-    SkinSaltParts clean{"build-id aaaa", "0.2.1", "c0ffee", "no",
+    SkinSaltParts clean{"build-id aaaa", "9.8.7", "c0ffee", "no",
                         "23.1.2 r1", "cl-opt nvptx-prec-divf32 x1: "
                                      "-nvptx-prec-divf32=0\n"};
     auto with = [&](auto change) {
