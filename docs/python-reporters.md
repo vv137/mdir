@@ -115,7 +115,8 @@ thread writes them while the steps go on ([driver.md](driver.md),
 Section 2.8). The end of each part (`mdrtPartBoundary`) waits for the frames
 of the part, so a part returns to Python with its frames in the file, as
 before; so do the changes of the reporters, the cell set from Python, a
-frame of the state, a checkpoint, and the end of the simulation.
+checkpoint, and the end of the simulation. A trajectory whose frames are
+written from the state (with velocities or forces) has no staged frames.
 
 ## Determinism
 

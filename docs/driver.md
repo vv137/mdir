@@ -839,9 +839,14 @@ of each part of a Python simulation, and the exit of the process: the
 files are those that a run writing each frame in its call writes, byte for
 byte. Without a periodic cell the call waits for its copies and checks the
 spread of the particles itself (D142), so a run stops at the same step. A
-write that fails on the thread (H5MD) stops the run at the next frame,
-checkpoint, or end, with its error and the status 1; rows of the log of
-the steps between may precede the stop. The rows of the log are written
+write that fails on the thread (H5MD) drops the frames queued after it and
+stops the run at the next frame, checkpoint, stop, failure, or end, with
+its error and the status 1; rows of the log of the steps between may
+precede the stop, and a failure met while the thread holds that write
+reports the write's error, which came first. A kernel that fails while
+frames are queued ends the run with the runtime's report of the failure,
+after the frames whose copies had reached the host are written
+([runtime.md](runtime.md), Section 5.3). The rows of the log are written
 in their calls.
 
 **Run manifest (D168).** Optional `manifest = "run.jsonl"` in `[output]`

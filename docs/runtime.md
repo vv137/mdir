@@ -316,8 +316,10 @@ the loaded library (`lib/Driver/Output.cpp`):
 |---|---|
 | `mdrtStagingCreate()` | A slot: two events, and, at its first copy of each part, a buffer of the device and pinned memory of the host as large. The stream of copies is created once. |
 | `mdrtStagingCopy(slot, part, source, size)` | Copies `size` bytes of the device at `source` into the slot's buffer of the device, on the stream of the kernels: after the work that produced them and before any later work overwrites them. Returns the pinned memory where they will be. |
-| `mdrtStagingEnd(slot)` | Records an event on the stream of the kernels; the stream of copies waits for it and copies the parts to the host, then records the slot's second event. The host does not wait. |
-| `mdrtStagingWait(slot)` | Waits for that event, from any thread (the thread of the frames makes the context current for itself); returns the error of the driver instead of ending the process. |
+| `mdrtStagingEnd(slot)` | Records an event on the stream of the kernels; the stream of copies waits for it and copies the parts to the host, records the slot's second event, and runs a function of the host that marks the slot's copies as arrived. The host does not wait. |
+| `mdrtStagingWait(slot)` | Returns at once for a slot marked as arrived, and otherwise waits for its second event, from any thread (the thread of the frames makes the context current for itself); returns the error of the driver instead of ending the process. |
+| `mdrtStagingFail(error)` | Reports an error that `mdrtStagingWait` returned as any failure of the driver is reported, and ends the process; the thread of the steps calls it. |
+| `mdrtSetFailureHook(hook)` | A function of the host that the runtime calls once before a failure of the driver ends the process: the driver writes there the frames whose copies had arrived. |
 | `mdrtStagingDestroy(slot)` | Gives back the slot's memory, unless the driver has shut down. |
 
 The events of the readiness contract above map as follows: the copy within
@@ -329,6 +331,18 @@ after which `mdrtStagingCopy` may write it again. On JAC on an RTX 4090
 positions (565 KB) and the numbers (94 KB) of a frame, on the stream of the
 kernels; the copies over PCIe, 22 and 4.5 µs, run on a copy engine beside
 the kernels.
+
+The mark is what tells a frame copied before a kernel failed from one that
+was not. Once a kernel has failed, the error belongs to the context, and the
+driver returns it for every event, those that had completed before as well:
+on an RTX 4090 with CUDA 13.2, `cuEventQuery` and `cuEventSynchronize` both
+returned `CUDA_ERROR_LAUNCH_FAILED` for an event of a stream that had been
+synchronized before the failing launch, while a function of the host
+enqueued after the copies had run. A failure of the driver ends the process
+with `abort` (no handler of the exit runs), so the runtime calls the hook
+first; the frames queued then are written if their copies had arrived and
+dropped otherwise, and the run ends with the runtime's report of the
+failure, once (`test/Driver/frame-writer-fault-gpu.test`).
 
 ## 6. Reference interpreter
 

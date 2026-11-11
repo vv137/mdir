@@ -402,23 +402,24 @@ on the two nodes measured, was then still written between the steps.
 A frame copied the positions and the numbers of the particles from the
 device into memory of the host, waiting for the stream after each copy, and
 the host put them into the order of the input, converted them, and wrote the
-file while the device waited. On JAC on one RTX 4090 (mixed precision, NVE
-velocity Verlet of 2 fs, groups, energies every 10 steps, two jobs of two
-runs of each program, alternated, 10,000 steps, means of windows of 1000
-steps after the first quarter), a DCD frame every 10 steps took the run from
-0.1580 to 0.1953 ms/step (+23.6%), and an XTC frame, whose compression the
-host did between the steps, to 0.2427 (+53.6%). The call of a frame now
-copies the two buffers within the device on the stream of the kernels and
-from there to pinned memory on a stream of copies, and a thread writes the
-frames from a ring of three slots (Section 3.6). The same runs take
-0.1591 ms/step with DCD (+0.8%) and 0.1594 with XTC (+0.9%), against 0.1579
-with the energies alone; on a box of 12,600 atoms of TIP3P water, 0.1168
-and 0.1164 against 0.1151 (+1.5% and +1.1%), where the frames took 0.1371
-and 0.1605 before (+19.1% and +39.4%). On Cellulose (408,609 atoms), a DCD
-frame every 100 steps took 5.3 ms of the run and an XTC frame 13.8 ms
-(1.2238 and 1.3082 ms/step against 1.1704 with the energies alone); now
-1.1698 and 1.1715 ms/step. The four runs of each program and
-setting lie within 0.002 ms/step of one another. The files are those of
+file while the device waited. On JAC on RTX 4090s (mixed precision, NVE
+velocity Verlet of 2 fs, groups, energies every 10 steps; runs of 100,000
+steps, two jobs on two cards, each running both programs alternated twice,
+the mean of the windows of 1000 steps after the first 10), a DCD frame every
+10 steps took the run from 0.1615 to 0.1951 ms/step (+20.8%), and an XTC
+frame, whose compression the host did between the steps, to 0.2388
+(+47.9%). The call of a frame now copies the two buffers within the device
+on the stream of the kernels and from there to pinned memory on a stream of
+copies, and a thread writes the frames from a ring of three slots
+(Section 3.6). The same runs take 0.1633 ms/step with DCD (+1.1%) and 0.1631
+with XTC (+1.0%); the ratios of the two jobs, 0.835 and 0.839 for DCD and
+0.681 and 0.685 for XTC, differ by less than 0.004, while the cards differ by
+3% in the rate of both programs. On a box of 12,600 atoms of TIP3P water,
+0.1187 and 0.1186 against 0.1171 (+1.4% and +1.3%), where the frames took
+0.1369 and 0.1592 before (+17.0% and +36.1%). On Cellulose (408,609 atoms),
+a DCD frame every 100 steps took 5.9 ms of the run and an XTC frame 18.6 ms
+(1.2722 and 1.3994 ms/step against 1.2131 with the energies alone); now
+1.2120 and 1.2134 ms/step. The files are those of
 before, byte for byte (the contents
 of the H5MD files, whose library writes other bytes from run to run), in
 the deterministic mode on the GPU and on the CPU, in mixed and double
