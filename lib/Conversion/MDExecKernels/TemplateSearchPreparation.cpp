@@ -6,6 +6,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -74,14 +75,33 @@ void mdir::kernels::emitPrepareTemplateSearch(OpBuilder &b, Location loc,
         lane, ix(in, 16));
     scf::IfOp::create(in, loc, arith::AndIOp::create(in, loc, valid, lower),
         [&](OpBuilder &store, Location) {
-      Value base = arith::MulIOp::create(store, loc, asIndex(store, loc, unit), ix(store, 4));
+      // By place, so that a search reads a partner's record and its ID in
+      // one dependent step. The frame packs three ten-bit fields biased by
+      // 512; a frame outside [-511, 511] stores a negative word, and the
+      // search then floors the f64 reference instead.
+      Value base = arith::MulIOp::create(store, loc, place, ix(store, 4));
       for (int64_t axis = 0; axis != 3; ++axis) {
         Value bits = arith::BitcastOp::create(store, loc, store.getI32Type(),
             vector::ExtractOp::create(store, loc, cartesian, axis));
         memref::StoreOp::create(store, loc, bits, v.spatial.sortScratch,
             ValueRange{arith::AddIOp::create(store, loc, base, ix(store, axis))});
       }
-      memref::StoreOp::create(store, loc, unit, v.spatial.sortScratch,
+      Value packed = word(store, loc, 0);
+      Value fits = arith::ConstantOp::create(store, loc, store.getBoolAttr(true));
+      for (int64_t axis = 0; axis != 3; ++axis) {
+        Value lattice = vector::ExtractOp::create(store, loc, frame.lattice, axis);
+        fits = arith::AndIOp::create(store, loc, fits, arith::CmpFOp::create(store, loc,
+            arith::CmpFPredicate::OLE, math::AbsFOp::create(store, loc, lattice),
+            createReal(store, loc, store.getF64Type(), 511)));
+        Value safe = arith::SelectOp::create(store, loc, fits, lattice,
+            createReal(store, loc, store.getF64Type(), 0));
+        Value field = arith::AddIOp::create(store, loc,
+            arith::FPToSIOp::create(store, loc, store.getI32Type(), safe), word(store, loc, 512));
+        packed = arith::OrIOp::create(store, loc, packed,
+            arith::ShLIOp::create(store, loc, field, word(store, loc, 10 * axis)));
+      }
+      packed = arith::SelectOp::create(store, loc, fits, packed, word(store, loc, -1));
+      memref::StoreOp::create(store, loc, packed, v.spatial.sortScratch,
           ValueRange{arith::AddIOp::create(store, loc, base, ix(store, 3))});
       scf::YieldOp::create(store, loc);
     });
