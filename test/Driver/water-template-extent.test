@@ -3,7 +3,7 @@
 # 1/64 for alpha=.5; 9/256 (aligned) and 9/512 (perpendicular) for alpha=.75.
 # These exact f64 assertions are declared before the first execution.
 # RUN: mdir-water-template-test --window-ir | FileCheck %s
-# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_extent_main --entry-point-result=void
+# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_extent_main --entry-point-result=void
 # CHECK-LABEL: func.func @extent_half
 # CHECK-COUNT-2: vector.reduction
 # CHECK-NOT: vector.reduction

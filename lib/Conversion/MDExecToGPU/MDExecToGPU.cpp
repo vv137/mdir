@@ -368,7 +368,17 @@ private:
   /// it sets the five validity flags. No extra point is read.
   void launchTemplatePublication(OpBuilder &, Location,
       const TemplatePairState &, const kernels::TemplateWriterBuffers &,
-      Value positions, ArrayRef<Flag> validityFlags);
+      Value positions, const Flag &validity);
+  /// Sets the writer's validity booleans in one flag word: a byte each for
+  /// the outer test, the inner test and the extent, by plain byte stores.
+  void emitSetTemplateValidity(OpBuilder &, Location,
+      const kernels::TemplateWriterFlags &, const Flag &validity);
+  /// Appends the writer's validity word as five events of `replaceWithFlags`,
+  /// each a placeholder stored into the list's host state.
+  void appendTemplateValidity(OpBuilder &, Location, Operation *writer,
+      const TemplatePairState &, const Flag &validity, SmallVectorImpl<Flag> &,
+      SmallVectorImpl<Value> &starts, SmallVectorImpl<Value> &results,
+      SmallVectorImpl<uint32_t> &masks);
   LogicalResult planTemplateWriters(func::FuncOp function);
   void recordTemplateConstraintEpoch(OpBuilder &, Location,
                                      ArrayRef<Operation *> operations);
@@ -741,8 +751,11 @@ private:
   /// kernel sets: one event after the kernel, waited for before the first
   /// op of the block that uses one of them, after which the others are read
   /// as they are (`mdrtFlagTake`, D278).
+  /// With `masks`, a nonzero mask tests those bits of its flag's word, and
+  /// entries of one word read it once (the runtime clears it as it reads).
   void replaceWithFlags(OpBuilder &builder, Location loc, ArrayRef<Flag> flags,
-                        ArrayRef<Value> starts, ArrayRef<Value> results);
+                        ArrayRef<Value> starts, ArrayRef<Value> results,
+                        ArrayRef<uint32_t> masks = {});
 
   /// Copies what `source` holds to `destination`.
   void createTransfer(OpBuilder &builder, Location loc, Value destination,
@@ -1066,7 +1079,8 @@ void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
 
 void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
                                 ArrayRef<Flag> flags, ArrayRef<Value> starts,
-                                ArrayRef<Value> results) {
+                                ArrayRef<Value> results,
+                                ArrayRef<uint32_t> masks) {
   Type i64 = builder.getI64Type();
   Type i32 = builder.getI32Type();
   auto pointerType = LLVM::LLVMPointerType::get(context);
@@ -1100,11 +1114,13 @@ void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
                            builder.getInsertionPoint());
   Value zero =
       arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0));
+  llvm::DenseMap<Value, Value> words;
   for (auto [index, flag] : llvm::enumerate(flags)) {
     // The first flag waits for the event after the kernel; the others,
     // which the same kernel sets (D278), are read
     // after that wait, without an event of their own.
-    Value value =
+    Value &read = words[flag.device];
+    if (!read) read =
         index == 0
             ? func::CallOp::create(
                   wait, loc,
@@ -1118,6 +1134,11 @@ void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
                                wait.getFunctionType({pointerType}, {i32})),
                   ValueRange{getPointer(wait, flag)})
                   .getResult(0);
+    Value value = read;
+    if (!masks.empty() && masks[index] != 0)
+      value = arith::AndIOp::create(wait, loc, value,
+          arith::ConstantOp::create(wait, loc, i32,
+                                    wait.getI32IntegerAttr(int32_t(masks[index]))));
     Value isSet = arith::CmpIOp::create(wait, loc, arith::CmpIPredicate::ne,
                                         value, zero);
     // The runtime clears the flag as it reads it (D118); a copy of a zero
@@ -2519,10 +2540,8 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   if (publishesTemplate && failed(prepareTemplateWriter(builder, loc, after,
           templateState, writer, /*constrainedHere=*/true)))
     return failure();
-  SmallVector<Flag> validityFlags;
-  if (publishesTemplate)
-    for (unsigned i = 0; i != 5; ++i)
-      validityFlags.push_back(getFlag(flags.size(), loc));
+  Flag validity;
+  if (publishesTemplate) validity = getFlag(flags.size(), loc);
 
   // The flag of each loop that tests its tuples (D278),
   // one of its own (D118).
@@ -2589,15 +2608,7 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
     auto publish = [&](OpBuilder &at, Value unit,
         ArrayRef<kernels::TemplateParticleResult> results) {
       auto changed = emitUpdateTemplateFrame(at, loc, writer, unit, results);
-      Value flags[] = {changed.waterOuter, changed.atomOuter,
-          changed.waterInner, changed.atomInner, changed.extent};
-      for (auto [flag, set] : llvm::zip(validityFlags, flags))
-        scf::IfOp::create(at, loc, set, [&](OpBuilder &in, Location) {
-          memref::StoreOp::create(in, loc,
-              arith::ConstantIntOp::create(in, loc, 1, 32), flag.device,
-              ValueRange{createIndex(in, loc, 0)});
-          scf::YieldOp::create(in, loc);
-        });
+      emitSetTemplateValidity(at, loc, changed, validity);
     };
     auto publishSingles = [&](OpBuilder &b) {
       // Unmatched constrained groups and ordinary singleton units retain
@@ -2736,7 +2747,7 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   }
   if (separate)
     launchTemplatePublication(builder, loc, templateState, writer,
-        after.getOuts()[writer.positionOutput], validityFlags);
+        after.getOuts()[writer.positionOutput], validity);
 
   SmallVector<Value> contributions, partials;
   for (unsigned i = 0; i != numSums; ++i) {
@@ -2749,6 +2760,7 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   if (publishesTemplate) {
     SmallVector<Flag> events;
     SmallVector<Value> starts, results;
+    SmallVector<uint32_t> masks;
     for (auto [index, start] : llvm::enumerate(after.getReduce())) {
       int place = places[index];
       if (place < 0) {
@@ -2773,15 +2785,10 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
       }
       templateDeferredFlags.erase(pending);
     }
-    Value no = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
-    OpBuilder stores = templateFlagStores(builder, after);
-    for (int64_t i = 0; i != 5; ++i) {
-      Value placeholder = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
-      memref::StoreOp::create(stores, loc, placeholder,
-          templateState.invalid, ValueRange{createIndex(stores, loc, i)});
-      events.push_back(validityFlags[i]); starts.push_back(no); results.push_back(placeholder);
-    }
-    replaceWithFlags(builder, loc, events, starts, results);
+    masks.assign(events.size(), 0);
+    appendTemplateValidity(builder, loc, after, templateState, validity,
+                           events, starts, results, masks);
+    replaceWithFlags(builder, loc, events, starts, results, masks);
     return success();
   }
   for (auto [index, start] : llvm::enumerate(after.getReduce())) {
@@ -6568,10 +6575,11 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
     // One mobility group (#799): its one test takes the least margin of
     // all three classes, for the water and the solute anchors alike.
     Value least = arith::MinimumFOp::create(b, loc, incident[0], incident[1]);
-    return std::array<Value, 2>{least, least};
+    Value squared = emitTemplateMotionLimitSquared(b, loc, least, cell);
+    return std::array<Value, 2>{squared, squared};
   };
   v.frames = state.frames; v.packingCells = state.packingCells;
-  v.currentPoints = state.currentPoints; v.outerReference = state.outerReference;
+  v.outerReference = state.outerReference;
   v.innerReference = state.innerReference; v.waters = state.waters;
   v.cell = cell; v.inverse = createInverse(b, loc, cell);
   v.outerLimits = limits(0, refresh.getSkin().convertToDouble());
@@ -6581,20 +6589,18 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
   if (constrainedHere)
     v.constrained = arith::OrIOp::create(b, loc, v.constrained,
         arith::ConstantOp::create(b, loc, b.getBoolAttr(true)));
-  if (state.radius > 0.0) {
-    v.atomAnchors = state.atomAnchors;
-    v.atomDependents = state.atomDependents;
-  }
+  if (state.radius > 0.0) v.atomAnchors = state.atomAnchors;
   v.pointOffset = kTemplatePointOffset;
   v.positionOutput = plan.positionOutput;
   v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
+  prepareTemplateWriterConstants(b, loc, v);
   return success();
 }
 
 void Lowering::launchTemplatePublication(OpBuilder &b, Location loc,
     const TemplatePairState &state, const TemplateWriterBuffers &given,
-    Value positions, ArrayRef<Flag> validityFlags) {
+    Value positions, const Flag &validity) {
   TemplateWriterBuffers v = given;
   v.positionOutput = 0;
   std::string saved = purpose;
@@ -6610,15 +6616,8 @@ void Lowering::launchTemplatePublication(OpBuilder &b, Location loc,
     };
     auto publish = [&](OpBuilder &in, ArrayRef<TemplateParticleResult> results) {
       Value word = arith::IndexCastOp::create(in, loc, in.getI32Type(), unit);
-      auto changed = emitUpdateTemplateFrame(in, loc, v, word, results);
-      Value values[] = {changed.waterOuter, changed.atomOuter,
-          changed.waterInner, changed.atomInner, changed.extent};
-      for (auto [flag, value] : llvm::zip(validityFlags, values))
-        scf::IfOp::create(in, loc, value, [&](OpBuilder &set, Location) {
-          memref::StoreOp::create(set, loc, arith::ConstantIntOp::create(set, loc, 1, 32),
-              flag.device, ValueRange{createIndex(set, loc, 0)});
-          scf::YieldOp::create(set, loc);
-        });
+      emitSetTemplateValidity(in, loc, emitUpdateTemplateFrame(in, loc, v, word, results),
+                              validity);
     };
     Value water = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, unit, state.waters);
     scf::IfOp::create(at, loc, water, [&](OpBuilder &in, Location) {
@@ -6639,79 +6638,76 @@ void Lowering::launchTemplatePublication(OpBuilder &b, Location loc,
   purpose = saved;
 }
 
-LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
-  OpBuilder b(op);
-  Location loc = op.getLoc();
-  auto ix = [&](OpBuilder &at, int64_t n) { return createIndex(at, loc, n); };
-  TemplatePairState state;
-  TemplateWriterBuffers v;
-  if (failed(prepareTemplateWriter(b, loc, op, state, v))) return failure();
-  SmallVector<int> places;
-  unsigned numSums = 0, numOriginalFlags = 0;
-  for (Value value : op.getReduce())
-    places.push_back(value.getType().isInteger(1) ? -int(++numOriginalFlags) : int(numSums++));
-  if (failed(checkScratch(op, numSums, op.getScratch().size()))) return failure();
-  SmallVector<Flag> originalFlags, validityFlags;
-  for (unsigned i = 0; i != numOriginalFlags; ++i) originalFlags.push_back(getFlag(flags.size(), loc));
-  for (unsigned i = 0; i != 5; ++i) validityFlags.push_back(getFlag(flags.size(), loc));
-  auto setFlag = [&](OpBuilder &at, Value condition, const Flag &flag) {
-    scf::IfOp::create(at, loc, condition, [&](OpBuilder &in, Location) {
-      Value one = arith::ConstantIntOp::create(in, loc, 1, 32);
-      memref::StoreOp::create(in, loc, one, flag.device, ValueRange{ix(in, 0)});
+void Lowering::emitSetTemplateValidity(OpBuilder &b, Location loc,
+    const TemplateWriterFlags &changed, const Flag &validity) {
+  // One mobility group (#799): the water and atom tests of an epoch
+  // refresh the same lists, so they share a byte. The outer, inner and
+  // extent tests set bytes 0, 1 and 2 of the flag's word with plain
+  // stores of 1: the word is mapped host memory, where a kernel may not
+  // take atomics, and stores of one value to a byte cannot lose another's.
+  Value values[] = {
+      arith::OrIOp::create(b, loc, changed.waterOuter, changed.atomOuter),
+      arith::OrIOp::create(b, loc, changed.waterInner, changed.atomInner),
+      changed.extent};
+  auto pointer = LLVM::LLVMPointerType::get(context);
+  Value address = arith::IndexCastOp::create(b, loc, b.getI64Type(),
+      memref::ExtractAlignedPointerAsIndexOp::create(b, loc, validity.device));
+  Value word = LLVM::IntToPtrOp::create(b, loc, pointer, address);
+  for (auto [i, value] : llvm::enumerate(values))
+    scf::IfOp::create(b, loc, value, [&](OpBuilder &in, Location) {
+      Value byte = LLVM::GEPOp::create(in, loc, pointer, in.getI8Type(), word,
+                                       ArrayRef<LLVM::GEPArg>{int32_t(i)});
+      LLVM::StoreOp::create(in, loc, arith::ConstantIntOp::create(in, loc, 1, 8), byte);
       scf::YieldOp::create(in, loc);
     });
-  };
-  Value size = createSize(b, loc, op.getOuts()[v.positionOutput]);
-  launchOver(b, loc, size, [&](OpBuilder &at, Value particle) {
-    IRMapping captures;
-    emitTemplateParticleKernel(at, loc, op, particle, state.slots, state.realMembers,
-        state.waters, captures,
-        [&](OpBuilder &in, Value unit, ArrayRef<TemplateParticleResult> results) {
-      for (const auto &result : results)
-        for (auto [i, contribution] : llvm::enumerate(result.reductions)) {
-          int place = places[i];
-          if (place >= 0)
-            storeElement(in, loc, contribution, op.getScratch()[2 * place], result.particle);
-          else
-            setFlag(in, contribution, originalFlags[-place - 1]);
-        }
-      auto changed = emitUpdateTemplateFrame(in, loc, v, unit, results);
-      Value values[] = {changed.waterOuter, changed.atomOuter,
-          changed.waterInner, changed.atomInner, changed.extent};
-      for (auto [flag, value] : llvm::zip(validityFlags, values)) setFlag(in, value, flag);
-    });
-  });
-  SmallVector<Value> contributions, partials;
-  for (unsigned i = 0; i != numSums; ++i) {
-    contributions.push_back(op.getScratch()[2 * i]); partials.push_back(op.getScratch()[2 * i + 1]);
-  }
-  auto sums = emitReductions(b, loc, contributions, partials, size, kernels::Combiner::Add);
-  SmallVector<Flag> eventFlags;
-  SmallVector<Value> starts, eventResults;
-  if (auto pending = templateDeferredFlags.find(op); pending != templateDeferredFlags.end()) {
-    for (const auto &flag : pending->second) {
-      eventFlags.push_back(flag.flag); starts.push_back(flag.start); eventResults.push_back(flag.result);
-    }
-    templateDeferredFlags.erase(pending);
-  }
-  for (auto [i, start] : llvm::enumerate(op.getReduce())) {
-    int place = places[i];
-    if (place >= 0) {
-      op.getResult(i).replaceAllUsesWith(arith::AddFOp::create(b, loc, start, sums[place]));
-    } else {
-      eventFlags.push_back(originalFlags[-place - 1]); starts.push_back(start); eventResults.push_back(op.getResult(i));
-    }
-  }
+}
+
+void Lowering::appendTemplateValidity(OpBuilder &b, Location loc, Operation *writer,
+    const TemplatePairState &state, const Flag &validity, SmallVectorImpl<Flag> &events,
+    SmallVectorImpl<Value> &starts, SmallVectorImpl<Value> &results,
+    SmallVectorImpl<uint32_t> &masks) {
   Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-  OpBuilder stores = templateFlagStores(b, op);
-  for (int64_t flag = 0; flag != 5; ++flag) {
+  OpBuilder stores = templateFlagStores(b, writer);
+  for (int64_t i = 0; i != 5; ++i) {
     // Distinct placeholders have only their own store as a user. Replace
     // them together with deferred constraint results through one event.
     Value placeholder = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-    memref::StoreOp::create(stores, loc, placeholder, state.invalid, ValueRange{ix(stores, flag)});
-    eventFlags.push_back(validityFlags[flag]); starts.push_back(no); eventResults.push_back(placeholder);
+    memref::StoreOp::create(stores, loc, placeholder, state.invalid,
+                            ValueRange{createIndex(stores, loc, i)});
+    events.push_back(validity); starts.push_back(no); results.push_back(placeholder);
+    // Water and atom booleans of an epoch share its byte (emitSetTemplateValidity).
+    masks.push_back(0xffu << (8 * (i < 4 ? i / 2 : 2)));
   }
-  replaceWithFlags(b, loc, eventFlags, starts, eventResults);
+}
+
+LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
+  Location loc = op.getLoc();
+  TemplatePairState state;
+  TemplateWriterBuffers v;
+  {
+    OpBuilder b(op);
+    if (failed(prepareTemplateWriter(b, loc, op, state, v))) return failure();
+  }
+  Value positions = op.getOuts()[v.positionOutput];
+  // The loop itself lowers as any other; a kernel of its own then packs
+  // the frames from the stored positions, one thread per unit.
+  if (failed(appliesBatchedStage(op) ? lowerStagedParticleFor(op) : lowerParticleFor(op)))
+    return failure();
+  OpBuilder b(op);
+  Flag validity = getFlag(flags.size(), loc);
+  launchTemplatePublication(b, loc, state, v, positions, validity);
+  SmallVector<Flag> events;
+  SmallVector<Value> starts, results;
+  SmallVector<uint32_t> masks;
+  if (auto pending = templateDeferredFlags.find(op); pending != templateDeferredFlags.end()) {
+    for (const auto &flag : pending->second) {
+      events.push_back(flag.flag); starts.push_back(flag.start);
+      results.push_back(flag.result); masks.push_back(0);
+    }
+    templateDeferredFlags.erase(pending);
+  }
+  appendTemplateValidity(b, loc, op, state, validity, events, starts, results, masks);
+  replaceWithFlags(b, loc, events, starts, results, masks);
   return success();
 }
 
@@ -6781,6 +6777,24 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
             state.specification.getCutoff().convertToDouble()),
         createReal(b, loc, b.getF64Type(), state.specification.getPruneSkin().convertToDouble()));
     pruning.reaches = innerReaches;
+    // The per-step writer stores no reference point. Where a group prunes,
+    // a kernel before the prune takes every unit's current point from the
+    // positions and the packing cells, as the writer once did.
+    Value pruneAny = arith::OrIOp::create(b, loc, pruning.waterActive, pruning.atomActive);
+    // The launch is built in the attached region of a finished scf.if.
+    auto pointsFirst = scf::IfOp::create(b, loc, pruneAny, /*withElseRegion=*/false);
+    {
+      OpBuilder in = pointsFirst.getThenBodyBuilder();
+      TemplatePointBuffers points;
+      points.positions = op.getPositions(); points.members = state.realMembers;
+      points.packingCells = state.packingCells; points.currentPoints = state.currentPoints;
+      if (state.radius > 0.0) points.atomAnchors = state.atomAnchors;
+      points.waters = state.waters; points.cell = pruning.cell;
+      points.inverse = createInverse(in, loc, pruning.cell);
+      points.pointOffset = kTemplatePointOffset;
+      launchOver(in, loc, arith::AddIOp::create(in, loc, state.waters, state.atoms),
+          [&](OpBuilder &at, Value unit) { emitTemplateCurrentPoint(at, loc, points, unit); });
+    }
     auto epochType = getDeviceType({ShapedType::kDynamic, 3}, b.getF64Type());
     deviceInnerCells = templateRuntimeView(b, loc, handle, "mdrtTemplatePairsFrameState",
         epochType, TEMPLATE_FRAME_INNER_CELLS);

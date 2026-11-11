@@ -155,28 +155,29 @@ for serial, match in reversed(list(enumerate(writers))):
         event += '  func.call @check_unmatched_publication(%r0) : (!list) -> ()\n'
     s = s[:match.start()] + predictor + event + s[match.end():]
 if a.across:
-    # Member7 is an unmatched constrained atom, fixed unit7. Its first
-    # predictor moves by1/64 in a cell of4; packing cells remain−2, giving
-    # the exact current fraction(10+1/64−8)/4 =129/256. Check before refresh
-    # can repair stale metadata. This fails the old blanket-water branch.
-    check = '''
+    # Member7 is an unmatched constrained atom, fixed unit7 (atom 3, packed
+    # row 4*3+3 = 15). Its first predictor moves by 1/64 in a cell of 4;
+    # its packing cells are -5/2 (the central cell of x - 2, less the point
+    # offset 1/2), so its framed position is 10+1/64-10 = 1/64, exact in
+    # f32, and its point (1/64)/4+1/2 = 129/256. Check before refresh can repair
+    # stale metadata. This fails the old blanket-water branch.
+    check = ('' if a.snapshot else
+             'func.func private @mdrtTemplatePairsFrames(!list) -> memref<?x3xf32, 1> attributes {llvm.emit_c_interface}\n') + '''
 func.func @check_unmatched_publication(%list: !list) {
-  %slot = arith.constant 3 : i64
-  %device = func.call @mdrtTemplatePairsFrameState(%list, %slot)
-      : (!list, i64) -> memref<?x3xf64, 1>
+  %device = func.call @mdrtTemplatePairsFrames(%list) : (!list) -> memref<?x3xf32, 1>
   %zero = arith.constant 0 : index
-  %seven = arith.constant 7 : index
-  %n = memref.dim %device, %zero : memref<?x3xf64, 1>
-  %host = memref.alloc(%n) : memref<?x3xf64>
+  %row = arith.constant 15 : index
+  %n = memref.dim %device, %zero : memref<?x3xf32, 1>
+  %host = memref.alloc(%n) : memref<?x3xf32>
   %ready = gpu.wait async
   %done = gpu.memcpy async [%ready] %host, %device
-      : memref<?x3xf64>, memref<?x3xf64, 1>
+      : memref<?x3xf32>, memref<?x3xf32, 1>
   gpu.wait [%done]
-  %actual = memref.load %host[%seven, %zero] : memref<?x3xf64>
-  %expected = arith.constant 0.50390625 : f64
-  %same = arith.cmpf oeq, %actual, %expected : f64
+  %actual = memref.load %host[%row, %zero] : memref<?x3xf32>
+  %expected = arith.constant 0.015625 : f32
+  %same = arith.cmpf oeq, %actual, %expected : f32
   cf.assert %same, "unmatched constrained atom lost final SSA publication"
-  memref.dealloc %host : memref<?x3xf64>
+  memref.dealloc %host : memref<?x3xf32>
   return
 }
 '''

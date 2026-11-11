@@ -91,6 +91,42 @@ Value mdir::kernels::emitTemplatePackingCells(OpBuilder &b, Location loc,
                                         ValueRange{shift[0], shift[1], shift[2]});
 }
 
+std::array<Value, 2> mdir::kernels::emitTemplateLocalGeometry(
+    OpBuilder &b, Location loc, ArrayRef<Value> positions, Value cell,
+    Value inverse, Value narrowCell, Value narrowInverse) {
+  assert(positions.size() == 3);
+  auto narrowType = [&](Value v) {
+    return VectorType::get(cast<VectorType>(v.getType()).getShape(), b.getF32Type());
+  };
+  if (!narrowCell) {
+    narrowCell = arith::TruncFOp::create(b, loc, narrowType(cell), cell);
+    narrowInverse = arith::TruncFOp::create(b, loc, narrowType(inverse), inverse);
+  }
+  std::array<Value, 2> local;
+  for (unsigned site = 1; site != 3; ++site) {
+    // The difference is taken in the state's precision, then narrowed:
+    // an O-H bond is a few tenths of a nanometer, so the f32 value has a
+    // relative error of 2^-24 whatever the magnitude of the positions.
+    Value wide = arith::SubFOp::create(b, loc, positions[site], positions[0]);
+    Value raw = arith::TruncFOp::create(b, loc, narrowType(wide), wide);
+    // A water split by a face of the cell is the rare case: its
+    // displacement is a lattice vector away, and its minimum image is
+    // found in the state's precision before narrowing.
+    Value imaged = emitMinimumImage(b, loc, raw, narrowCell, narrowInverse);
+    Value same = vector::ReductionOp::create(b, loc, vector::CombiningKind::AND,
+        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OEQ, imaged, raw));
+    auto chosen = scf::IfOp::create(b, loc, same, [&](OpBuilder &in, Location) {
+      scf::YieldOp::create(in, loc, ValueRange{raw});
+    }, [&](OpBuilder &in, Location) {
+      Value image = emitMinimumImage(in, loc, wide, cell, inverse);
+      scf::YieldOp::create(in, loc, ValueRange{
+          arith::TruncFOp::create(in, loc, narrowType(image), image)});
+    });
+    local[site - 1] = chosen.getResult(0);
+  }
+  return local;
+}
+
 PreparedTemplateFrame mdir::kernels::emitRetainedTemplateFrame(
     OpBuilder &b, Location loc, ArrayRef<Value> positions, Value cell,
     Value inverse, Value packingCells, Type packedReal) {
@@ -103,7 +139,18 @@ PreparedTemplateFrame mdir::kernels::emitRetainedTemplateFrame(
         emitMinimumImage(b, loc, displacement, cell, inverse));
   }
   result.latticeShift = emitLatticeShift(b, loc, packingCells, cell);
-  result.packed = emitPackTemplateFrame(b, loc, result.whole, result.latticeShift, packedReal);
+  if (!packedReal.isF32()) {
+    result.packed = emitPackTemplateFrame(b, loc, result.whole, result.latticeShift, packedReal);
+    return result;
+  }
+  // The anchor is shifted in the state's precision and narrowed; the
+  // hydrogens are its narrowed image plus their f32 displacements, as the
+  // per-step writer packs them (emitTemplateLocalGeometry).
+  auto local = emitTemplateLocalGeometry(b, loc, positions, cell, inverse);
+  Value anchor = arith::AddFOp::create(b, loc, positions[0], result.latticeShift);
+  result.packed[0] = convertReal(b, loc, anchor, packedReal);
+  for (unsigned site = 1; site != 3; ++site)
+    result.packed[site] = arith::AddFOp::create(b, loc, result.packed[0], local[site - 1]);
   return result;
 }
 

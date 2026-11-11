@@ -2,4 +2,4 @@
 # hydrogen images before narrowing, in both admitted cell representations.
 # Four dyadic cases include an O-H bond crossing a face and 2^30 winding;
 # all 48 packed-coordinate/shift components must be exactly equal.
-# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_prepare_main --entry-point-result=void
+# RUN: mdir-water-template-test --window-ir | mdir-opt --test-md-template-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e water_prepare_main --entry-point-result=void

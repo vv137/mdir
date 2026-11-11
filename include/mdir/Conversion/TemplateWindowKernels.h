@@ -41,8 +41,19 @@ mlir::Value emitTemplateFractional(mlir::OpBuilder &, mlir::Location,
 /// apply it to the current cell, never reuse its old Cartesian value.
 mlir::Value emitTemplatePackingCells(mlir::OpBuilder &, mlir::Location,
     mlir::Value anchor, mlir::Value cell, mlir::Value inverse);
+/// The two O-H displacements of a water in f32: the difference in the
+/// state's precision, narrowed, and its minimum image in f32 unless that
+/// moves it (a water split by a face), when the image is found in the
+/// state's precision and narrowed. Without `narrowCell` and
+/// `narrowInverse` they are narrowed here.
+std::array<mlir::Value, 2> emitTemplateLocalGeometry(
+    mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
+    mlir::Value cell, mlir::Value inverse, mlir::Value narrowCell = {},
+    mlir::Value narrowInverse = {});
 /// Reconstruct whole O/H/H but retain the outer build's packing cells.
 /// In particular a face crossing does not change an existing entry image.
+/// Packed in f32, the anchor is narrowed after its shift and each hydrogen
+/// is the narrowed anchor plus its f32 displacement, as the writer packs.
 PreparedTemplateFrame emitRetainedTemplateFrame(
     mlir::OpBuilder &, mlir::Location, llvm::ArrayRef<mlir::Value> positions,
     mlir::Value cell, mlir::Value inverse, mlir::Value packingCells,

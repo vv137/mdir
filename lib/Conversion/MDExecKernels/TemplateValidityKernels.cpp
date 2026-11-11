@@ -2,6 +2,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include <array>
 using namespace mlir;
@@ -135,4 +136,44 @@ Value mdir::kernels::emitTemplateMotionExceeded(OpBuilder &b, Location loc,
   return arith::OrIOp::create(b, loc,
       arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, budget, zero),
       arith::CmpFOp::create(b, loc, arith::CmpFPredicate::UGT, distance2, limit2));
+}
+
+Value mdir::kernels::emitTemplateMotionLimitSquared(OpBuilder &b, Location loc,
+    Value halfMargin, Value cell) {
+  auto real = [&](double v) { return createReal(b, loc, b.getF64Type(), v); };
+  // h = |H|_1, the sum of the magnitudes of the cell's components, bounds
+  // every row sum of |H|. With |r|_inf <= 2 (tested per unit) and t = 1/2,
+  // delta = 2^-18 (h + m) bounds the f32 error of the displacement of a
+  // unit that passes (docs/decisions/rigid-water-template.md, U5).
+  Value h = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
+      math::AbsFOp::create(b, loc, cell));
+  Value delta = arith::MulFOp::create(b, loc, real(0x1p-18),
+      arith::AddFOp::create(b, loc, h, math::AbsFOp::create(b, loc, halfMargin)));
+  Value budget = arith::SubFOp::create(b, loc, halfMargin, delta);
+  Value squared = arith::MulFOp::create(b, loc,
+      arith::MulFOp::create(b, loc, budget, budget), real(1 - 0x1p-20));
+  Value narrow = arith::TruncFOp::create(b, loc, b.getF32Type(), squared);
+  // A negative (or NaN) budget means stale: every unit fails the test.
+  Value usable = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGE, budget, real(0));
+  return arith::SelectOp::create(b, loc, usable, narrow,
+      createReal(b, loc, b.getF32Type(), -1));
+}
+
+Value mdir::kernels::emitTemplateMotionExceededNarrow(OpBuilder &b, Location loc,
+    Value anchor, Value referenceFraction, Value narrowCell, Value narrowOffset,
+    Value limitSquared) {
+  auto type = cast<VectorType>(anchor.getType());
+  Value reference = arith::TruncFOp::create(b, loc, type, referenceFraction);
+  // The error bound assumes |r|_inf <= 2; a point beyond it (or NaN) fails.
+  Value two = vector::BroadcastOp::create(b, loc, type, createReal(b, loc, b.getF32Type(), 2));
+  Value far = vector::ReductionOp::create(b, loc, vector::CombiningKind::OR,
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::UGT,
+          math::AbsFOp::create(b, loc, reference), two));
+  Value projected = emitLatticeShift(b, loc, reference, narrowCell);
+  Value difference = arith::SubFOp::create(b, loc,
+      arith::AddFOp::create(b, loc, anchor, narrowOffset), projected);
+  Value squares = arith::MulFOp::create(b, loc, difference, difference);
+  Value distance2 = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD, squares);
+  return arith::OrIOp::create(b, loc, far,
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::UGT, distance2, limitSquared));
 }

@@ -31,5 +31,18 @@ std::array<mlir::Value, 2> emitTemplateGroupMotionLimits(
 mlir::Value emitTemplateMotionExceeded(mlir::OpBuilder &, mlir::Location,
     mlir::Value anchor, mlir::Value referenceFraction, mlir::Value currentCell,
     mlir::Value halfMargin);
+/// The f32 square of the limit of the narrow test below, for one launch:
+/// ((m - delta)^2 (1 - 2^-20)) narrowed, with delta = 2^-18 (|H|_1 + |m|),
+/// or -1 where m - delta is negative or NaN, so that every unit fails.
+mlir::Value emitTemplateMotionLimitSquared(mlir::OpBuilder &, mlir::Location,
+    mlir::Value halfMargin, mlir::Value cell);
+/// The motion test in f32: the narrowed framed anchor p, plus the narrowed
+/// H t, less H r with both narrowed, squared and summed in f32, against
+/// emitTemplateMotionLimitSquared. True when |r|_inf > 2 or the limit is
+/// passed; whenever the true |p + H t - H r| exceeds the half margin m,
+/// the test is true (docs/decisions/rigid-water-template.md, U5).
+mlir::Value emitTemplateMotionExceededNarrow(mlir::OpBuilder &, mlir::Location,
+    mlir::Value anchor, mlir::Value referenceFraction, mlir::Value narrowCell,
+    mlir::Value narrowOffset, mlir::Value limitSquared);
 }
 #endif

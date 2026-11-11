@@ -8,6 +8,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -31,7 +32,7 @@ int runWaterTemplateIRTest() {
   MLIRContext context(registry);
   context.loadDialect<arith::ArithDialect, func::FuncDialect,
                       vector::VectorDialect, cf::ControlFlowDialect, math::MathDialect,
-                      mdir::md::MDDialect>();
+                      scf::SCFDialect, mdir::md::MDDialect>();
   OpBuilder builder(&context);
   auto loc = builder.getUnknownLoc();
   auto module = ModuleOp::create(loc);
