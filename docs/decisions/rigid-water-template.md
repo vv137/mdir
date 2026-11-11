@@ -1513,6 +1513,14 @@ and 412 to 164 on the small TIP3P box (against 19bbf459), with SW (193 to
 11.9 to 7.2 on the small TIP3P box. The starting outer entry counts of all
 three systems are unchanged.
 
+The chunk copy of `emitCompactTemplatePairs` took a thread per 64-entry
+staging chunk, so each thread wrote up to 64 records alone (about 106 us
+per refresh on ubiquitin OPC). It now takes a warp per chunk; lane $l$
+copies records $l$ and $l+32$, so each column's stores are coalesced, and
+lane 0 writes the work record. The records and their places are unchanged.
+Same profile: 4.4 to 0.5 us/step on ubiquitin OPC; maintenance 27.0 to 24.6
+us/step there and 8.8 to 6.9 on the large OPC box.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,

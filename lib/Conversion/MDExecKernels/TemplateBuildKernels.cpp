@@ -107,9 +107,12 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
       scf::YieldOp::create(in, loc);
     });
   });
-  // A thread per staging chunk: copying at most 64 records is bounded.
-  // The search already compacted the members of each chunk with a ballot.
-  launch(v.unitCapacity, [&](OpBuilder &at, Value chunk) {
+  // A warp per staging chunk: lane l copies records l and l+32, so each
+  // store of a column is coalesced. The search already compacted the
+  // members of each chunk with a ballot; lane 0 writes the work record.
+  launch(mul(b, v.unitCapacity, 32), [&](OpBuilder &at, Value item) {
+    Value chunk = arith::DivUIOp::create(at, loc, item, ix(at, 32));
+    Value lane = arith::RemUIOp::create(at, loc, item, ix(at, 32));
     Value used = index(at, load(at, v.arena, ix(at, TEMPLATE_PAIR_STAGE_COUNT)));
     Value exists = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, chunk, used);
     scf::IfOp::create(at, loc, exists, [&](OpBuilder &in, Location) {
@@ -118,24 +121,31 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
       Value count = index(in, load(in, v.stageUnits, add(in, base, ix(in, 1))));
       Value ordinal = index(in, load(in, v.stageUnits, add(in, base, ix(in, 2))));
       Value destination = add(in, index(in, load(in, v.entryOffsets, row)), mul(in, ordinal, 64));
-      Value work = add(in, index(in, load(in, v.workOffsets, row)), ordinal);
-      Value fields[] = {word(in, classify(in, row)), word(in, firstPlace(in, row)),
-                       word(in, destination), word(in, add(in, destination, count))};
-      for (unsigned column = 0; column != 4; ++column) {
-        recordStore(in, v.outerUnits, work, column, fields[column]);
-        recordStore(in, v.innerUnits, work, column, fields[column]);
+      Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, lane, ix(in, 0));
+      scf::IfOp::create(in, loc, leader, [&](OpBuilder &first, Location) {
+        Value work = add(first, index(first, load(first, v.workOffsets, row)), ordinal);
+        Value fields[] = {word(first, classify(first, row)), word(first, firstPlace(first, row)),
+                         word(first, destination), word(first, add(first, destination, count))};
+        for (unsigned column = 0; column != 4; ++column) {
+          recordStore(first, v.outerUnits, work, column, fields[column]);
+          recordStore(first, v.innerUnits, work, column, fields[column]);
+        }
+        scf::YieldOp::create(first, loc);
+      });
+      for (int64_t half = 0; half != 2; ++half) {
+        Value i = add(in, lane, ix(in, 32 * half));
+        Value copies = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, i, count);
+        scf::IfOp::create(in, loc, copies, [&](OpBuilder &copy, Location) {
+          Value source = mul(copy, add(copy, mul(copy, chunk, 64), i), 4);
+          Value target = mul(copy, add(copy, destination, i), 4);
+          for (unsigned column = 0; column != 4; ++column) {
+            Value value = load(copy, v.stageEntries, add(copy, source, ix(copy, column)));
+            store(copy, v.outerEntries, add(copy, target, ix(copy, column)), value);
+            store(copy, v.innerEntries, add(copy, target, ix(copy, column)), value);
+          }
+          scf::YieldOp::create(copy, loc);
+        });
       }
-      scf::ForOp::create(in, loc, ix(in, 0), count, ix(in, 1), ValueRange(),
-          [&](OpBuilder &copy, Location, Value i, ValueRange) {
-            Value source = mul(copy, add(copy, mul(copy, chunk, 64), i), 4);
-            Value target = mul(copy, add(copy, destination, i), 4);
-            for (unsigned column = 0; column != 4; ++column) {
-              Value value = load(copy, v.stageEntries, add(copy, source, ix(copy, column)));
-              store(copy, v.outerEntries, add(copy, target, ix(copy, column)), value);
-              store(copy, v.innerEntries, add(copy, target, ix(copy, column)), value);
-            }
-            scf::YieldOp::create(copy, loc);
-          });
       scf::YieldOp::create(in, loc);
     });
   });
