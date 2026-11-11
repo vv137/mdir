@@ -35,7 +35,7 @@
 # RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cc MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always MDIR_CHECK_PRUNING=1 mdir run auto.toml > first.log 2> first.err
 # RUN: FileCheck %s --check-prefix=FIRST < %t/first.log
 # RUN: FileCheck %s --check-prefix=CHECKED < %t/first.err
-# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']), s['searched'], s['budget'], s['budget_basis']['policy'])" | FileCheck %s --check-prefix=MANIFEST
+# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']), s['searched'], s['budget'], s['budget_basis']['policy'], sorted(s['budget_basis']))" | FileCheck %s --check-prefix=MANIFEST
 # RUN: cp %t/run.json %t/first.json
 # RUN: %python -c "import glob, json; e = json.load(open(glob.glob('%t/cache/*.json')[0])); print(e['format'], e['key'].splitlines()[:2], e['search']['budget'], len(e['search']['candidates']))" | FileCheck %s --check-prefix=ENTRY
 # An entry written before D396, whose reason spells the
@@ -48,6 +48,9 @@
 # each candidate's time: a search again would have timed them anew. Its
 # recorded reason is the one written into the entry above.
 # RUN: %python -c "import json; a, b = (json.loads(open(f, encoding='utf-8').readline())['effective'] for f in ('%t/first.json', '%t/run.json')); s, t = a['skin_search'], b['skin_search']; print(t['source'], t['searched'], t['seconds'], t['budget'] == s['budget'], t['candidates'] == s['candidates'], t['budget_basis'] == s['budget_basis'], t['recorded_reason'] == '1.0% faster than 12 / 9.6 \u00c5, beyond the noise of 0.6%', (a['pairlist_distance_angstrom'], a['pruned_distance_angstrom']) == (b['pairlist_distance_angstrom'], b['pruned_distance_angstrom']))" | FileCheck %s --check-prefix=REUSED
+# The manifests of the search and of the reuse hold what the schema
+# requires of the record (docs/run-manifest.schema.json).
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/first.json %t/run.json | FileCheck %s --check-prefix=SCHEMA
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run --continue longer.toml > continued.log 2>&1
 # RUN: FileCheck %s --check-prefix=CONTINUED < %t/continued.log
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
@@ -84,6 +87,7 @@
 # RUN: FileCheck %s --check-prefix=BUDGET < %t/budget.log
 # RUN: ls %t/cache-budget | wc -l | FileCheck %s --check-prefix=NONE
 # RUN: %python -c "import json; s = json.loads(open('%t/budget.json').readline())['effective']['skin_search']; print(s['source'], s['searched'], s['budget'], s['budget_basis']['policy'], len(s['candidates']), s['cache']); print(s['not_cached']); print(s['reason'])" | FileCheck %s --check-prefix=BUDGET-MANIFEST
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/budget.json | FileCheck %s --check-prefix=SCHEMA-BUDGET
 # Whether the loop over pairs prunes (D284) is part of the key.
 # RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run auto.toml > fused.log 2>&1
 # RUN: FileCheck %s --check-prefix=FUSEDKEY < %t/fused.log
@@ -108,10 +112,13 @@
 # FIRST: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (measured: {{.*}}; searched now: a budget of 7, {{[3-7]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
 # FIRST: MDIR: the inner lists were pruned
 # CHECKED: mdrt: the inner lists were checked at {{[0-9]+}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
-# MANIFEST: measured measured measured True True True 7 always
+# MANIFEST: measured measured measured True True True 7 always ['candidate_seconds', 'compile_seconds', 'most', 'policy', 'run_seconds', 'share']
 # ENTRY: 2 ['mdir skins 2', 'mdir-skin-salt 1'] 7 {{[3-7]}}
 # CACHED: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (cached: the choice of an earlier run of the same key; reused, not searched: the search of a budget of 7 recorded {{[3-7]}} candidates in {{[0-9.]+}} s; from '{{.*}}cache/{{[0-9a-f]+}}.json')
 # REUSED: cached False 0 True True True True True
+# SCHEMA: valid first.json
+# SCHEMA-NEXT: valid run.json
+# SCHEMA-BUDGET: valid budget.json
 # CONTINUED: MDIR: continues the run after step 100
 # CONTINUED: MDIR: skins: {{.*}} (cached:
 # MISSED: MDIR: skins: the reach 10.5 Ang (default: MDIR_SKIN_SEARCH=never)

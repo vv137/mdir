@@ -15,6 +15,8 @@
 # CHECK: ok: two images of one clean build share the skin salt
 # CHECK: ok: another commit changes the skin salt
 # CHECK: ok: another LLVM option changes the skin salt
+# CHECK: ok: an LLVM option left out changes the skin salt
+# CHECK: ok: another LLVM changes the skin salt
 # CHECK: ok: two images of a build of state 'yes' differ in the skin salt
 # CHECK: ok: two images of a build of state 'unknown' differ in the skin salt
 # CHECK: compile cache checks passed
