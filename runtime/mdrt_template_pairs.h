@@ -738,13 +738,17 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
   /* A value above one scales the checked cutoff: beyond the lists' reach
    * the check must find pairs without an entry (its own negative test). */
   /* "duplicate" counts the first inner entry twice: the check of
-   * duplicate entries must then fail (its own negative test). */
+   * duplicate entries must then fail (its own negative test). "frame"
+   * moves, in the host's copy of the references, one member of the first
+   * row group of two or more members into the next lattice frame: the
+   * count of row groups in more than one frame must then not be 0. */
   static double scale = -1;
-  static int injectDuplicate;
+  static int injectDuplicate, injectFrame;
   if (scale < 0) {
     const char *flag = getenv("MDIR_TEMPLATE_CHECK_COVERAGE");
     scale = flag && strtod(flag, NULL) > 1 ? strtod(flag, NULL) : 1;
     injectDuplicate = flag && strcmp(flag, "duplicate") == 0;
+    injectFrame = flag && strcmp(flag, "frame") == 0;
   }
   cutoff *= scale;
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
@@ -817,6 +821,7 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
   uint64_t *keys = malloc((size_t)keyRoom * sizeof(uint64_t));
   uint64_t *rowKeys = malloc((size_t)(recordCount + 1) * sizeof(uint64_t));
   if (!keys || !rowKeys) abort();
+  int injectedFrame = 0;
   for (int tag = 0; tag != 3; ++tag) {
     const int32_t *range = header + TEMPLATE_PAIR_INNER_RANGES + 6 * tag;
     for (int64_t r = range[4]; r < range[5]; ++r) {
@@ -827,7 +832,11 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
       for (int64_t lane = 0; lane < length && lane < 16; ++lane) {
         int64_t unit = order[first + lane];
         if (unit < 0) continue;
-        const double *point = references + 3 * unit;
+        double *point = references + 3 * unit;
+        if (injectFrame && !injectedFrame && members == 1) {
+          point[0] += 1;
+          injectedFrame = 1;
+        }
         for (int axis = 0; axis != 3; ++axis) {
           /* The floor of a finite point of a few cells, without libm. */
           double whole = (double)(int64_t)point[axis];

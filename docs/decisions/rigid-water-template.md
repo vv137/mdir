@@ -2271,7 +2271,9 @@ first-step potential energy of the dodecahedron in OPC moves by 4e-4
 kcal/mol (−65880.3972 to −65880.3976; `main` −65880.4064). The coverage
 check now counts the row groups of the inner list whose members lie in
 more than one lattice frame of their reference points, and the
-dodecahedron fixture and the solute fixtures require none. At the old packing, 952,840 of the 6,285,360
+dodecahedron fixture and the solute fixtures require none
+(`MDIR_TEMPLATE_CHECK_COVERAGE=frame` moves one member into the next
+frame and must find one). At the old packing, 952,840 of the 6,285,360
 inner entries of the dodecahedron fixture's 89 checks were second entries
 of a row group for one partner unit; that count cannot separate a split
 from a partner's second image within the reach, which a smaller cell
