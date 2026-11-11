@@ -1,0 +1,114 @@
+"""The flush points of a Python simulation with the frames on their own
+thread (D[async-output], #113).
+
+Usage: python_frame_writer.py ROOT WORK
+
+ROOT holds water.top and dodecahedron.gro of Inputs/triclinic: waters in a
+rhombic dodecahedron at constant pressure, on the CPU, in the deterministic
+mode, whose barostat changes the cell and its tilts. The script runs one
+simulation through every point at which the frames that the thread still
+holds must be in the trajectory first: the end of a part (the file is read
+there, with its reporter open), a checkpoint, a change of the reporters, a
+frame of the state with its velocities, a commit of a cell, the close of
+the reporters, and the end of the simulation. Run once with
+MDIR_FRAME_WRITE_DELAY in the environment and once without, its files are
+compared by the test."""
+import gc
+import pathlib
+import sys
+
+import numpy as np
+import mdir
+
+root, work = sys.argv[1], pathlib.Path(sys.argv[2])
+work.mkdir(parents=True, exist_ok=True)
+PERIOD = 10
+
+
+def model():
+    loaded = mdir.load_gromacs(root + "/water.top", root + "/dodecahedron.gro")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 0.8, 0.9
+    system.truncation = mdir.Truncation.None_
+    system.electrostatics = mdir.Electrostatics.PME
+    system.pme_grid = [28] * 3
+    system.periodic = True
+    system.rigid_water = True
+    state = state.draw_velocities(system, 300.0, 2024)
+    integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    integrator.method = mdir.IntegratorMethod.VelocityVerlet
+    integrator.timestep = 0.002
+    ensemble.seed = 2024
+    ensemble.kind = mdir.EnsembleKind.NPT
+    ensemble.temperature = 300.0
+    ensemble.com_period = ensemble.coupling_period = PERIOD
+    execution.target = mdir.Target.CPU
+    execution.deterministic = True
+    return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
+
+
+def dcd_frames(path):
+    """The number of frames of a DCD file, from its records."""
+    data, i, records = path.read_bytes(), 0, 0
+    while i < len(data):
+        i += int.from_bytes(data[i:i + 4], "little") + 8
+        records += 1
+    # The header, the title, and the number of particles; then the cell
+    # and the three components of each frame.
+    return (records - 3) // 4
+
+
+def commit_cell(sim, scale):
+    """Commits the cell scaled by `scale`, each water moved rigidly with
+    its oxygen."""
+    at = sim.state()
+    x = at.positions.reshape(-1, 3, 3).copy()
+    x += (x[:, 0, :] * (scale - 1.0))[:, None, :]
+    x = x.reshape(-1, 3)
+    with sim.borrow() as borrow:
+        ids = np.from_dlpack(borrow.ids).copy()
+        positions = np.from_dlpack(borrow.positions)
+        positions[...] = x[ids]
+        cell = np.from_dlpack(borrow.cell)
+        cell[...] = at.cell.diagonal * scale
+        tilt = np.from_dlpack(borrow.tilt)
+        tilt[...] = at.cell.tilt * scale
+        del positions, cell, tilt
+        gc.collect()
+        borrow.commit()
+    now = sim.state().cell
+    assert np.array_equal(now.diagonal, at.cell.diagonal * scale), (now.diagonal, at.cell.diagonal)
+    assert np.array_equal(now.tilt, at.cell.tilt * scale), (now.tilt, at.cell.tilt)
+    print(f"committed a cell {scale} times the one of step {sim.step}")
+
+
+program = model()
+sim = mdir.Simulation(program)
+sim.reporters = [mdir.EnergyReporter(str(work / "run.dat"), PERIOD),
+                 mdir.TrajectoryReporter(str(work / "run.dcd"), PERIOD)]
+# Parts that end between frames and at a frame: after each, the file holds
+# every frame of its steps, with the reporter open.
+for steps in (35, 25, 40):
+    sim.run(steps)
+    print("frames after step", sim.step, dcd_frames(work / "run.dcd"))
+sim.save_checkpoint(str(work / "first.h5"))
+sim.run(20)
+# A change of the reporters closes the trajectory.
+sim.reporters = [mdir.EnergyReporter(str(work / "run.dat"), PERIOD),
+                 mdir.H5MDReporter(str(work / "state.h5md"), PERIOD, velocities=True)]
+sim.run(30)
+sim.reporters = [mdir.EnergyReporter(str(work / "run.dat"), PERIOD),
+                 mdir.TrajectoryReporter(str(work / "moved.dcd"), PERIOD)]
+sim.run(25)
+commit_cell(sim, 1.001)
+sim.run(25)
+sim.save_checkpoint(str(work / "second.h5"))
+sim.run(20)
+sim.close_reporters()
+# The end of a simulation closes its files.
+last = mdir.Simulation(program)
+last.reporters = [mdir.H5MDReporter(str(work / "last.h5md"), PERIOD)]
+last.run(40)
+del last
+gc.collect()
+print("done at step", sim.step)
