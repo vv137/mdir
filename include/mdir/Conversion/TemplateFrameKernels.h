@@ -15,6 +15,8 @@ struct TemplateFrameBuffers {
   /// frame. Counter TEMPLATE_COUNTER_ANCHOR_EXTENT receives the largest
   /// squared member-anchor distance (unsigned max of f64 bits).
   mlir::Value atomAnchors;
+  /// As TemplateWriterBuffers::pointOffset.
+  double pointOffset = 0.0;
 };
 /// Prepare only the requested mobility groups at an outer build. Choose
 /// their new retained shifts, recover whole waters before f32 packing,

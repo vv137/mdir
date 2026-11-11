@@ -7,6 +7,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -60,6 +61,13 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
       unsigned group = water ? 0 : 1;
       auto publish = [&](OpBuilder &at) -> std::array<Value, 2> {
         Value fraction = emitTemplateFractional(at, loc, framed, v.cell, v.inverse);
+        Value tested = framed;
+        if (v.pointOffset != 0.0) {
+          Value offset = vector::BroadcastOp::create(at, loc, fraction.getType(),
+              createReal(at, loc, at.getF64Type(), v.pointOffset));
+          fraction = arith::AddFOp::create(at, loc, fraction, offset);
+          tested = arith::AddFOp::create(at, loc, framed, emitLatticeShift(at, loc, offset, v.cell));
+        }
         storeElement(at, loc, fraction, v.currentPoints, index);
         if (!water && v.atomDependents) {
           // A member's point is its anchor's, in the member's own packing
@@ -82,9 +90,9 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
             });
           }
         }
-        Value outer = emitTemplateMotionExceeded(at, loc, framed,
+        Value outer = emitTemplateMotionExceeded(at, loc, tested,
             loadElement(at, loc, v.outerReference, index), v.cell, v.outerLimits[group]);
-        Value inner = emitTemplateMotionExceeded(at, loc, framed,
+        Value inner = emitTemplateMotionExceeded(at, loc, tested,
             loadElement(at, loc, v.innerReference, index), v.cell, v.innerLimits[group]);
         return {outer, inner};
       };

@@ -66,6 +66,19 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
           count, v.counters, ValueRange{ix(in, TEMPLATE_COUNTER_FLAGS)});
       return valid;
     };
+    // With a point offset t, the packed frame is the central image of
+    // x - H t, shifted back by H t: the frames keep the magnitude of a
+    // central image, and the points (fractions of the frame, plus t) lie
+    // in [0,1) on the cell's own lattice frame.
+    auto packing = [&](OpBuilder &in, Value position) -> Value {
+      if (v.pointOffset == 0.0)
+        return emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
+      Value offset = vector::BroadcastOp::create(in, loc, position.getType(),
+          createReal(in, loc, in.getF64Type(), v.pointOffset));
+      Value moved = arith::SubFOp::create(in, loc, position, emitLatticeShift(in, loc, offset, v.cell));
+      return arith::SubFOp::create(in, loc,
+          emitTemplatePackingCells(in, loc, moved, v.cell, v.inverse), offset);
+    };
     auto member = [&](OpBuilder &in, Value row) -> Value {
       Value id = memref::LoadOp::create(in, loc, v.members, ValueRange{row});
       return arith::IndexCastOp::create(in, loc, in.getIndexType(), id);
@@ -74,6 +87,10 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
       Value framed = arith::AddFOp::create(in, loc, anchor,
           emitLatticeShift(in, loc, cells, v.cell));
       Value fractional = emitTemplateFractional(in, loc, framed, v.cell, v.inverse);
+      if (v.pointOffset != 0.0)
+        fractional = arith::AddFOp::create(in, loc, fractional,
+            vector::BroadcastOp::create(in, loc, fractional.getType(),
+                createReal(in, loc, in.getF64Type(), v.pointOffset)));
       storeElement(in, loc, cells, v.packingCells, unit);
       storeElement(in, loc, fractional, v.outerReference, unit);
       storeElement(in, loc, fractional, v.currentPoints, unit);
@@ -85,7 +102,7 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
         positions.push_back(loadElement(in, loc, v.positions,
             member(in, arith::AddIOp::create(in, loc, row, ix(in, site)))));
       scf::IfOp::create(in, loc, validPositions(in, positions), [&](OpBuilder &in, Location) {
-        Value cells = emitTemplatePackingCells(in, loc, positions[0], v.cell, v.inverse);
+        Value cells = packing(in, positions[0]);
         auto frame = emitRetainedTemplateFrame(in, loc, positions, v.cell, v.inverse,
                                                 cells, in.getF32Type());
         for (int site = 0; site != 3; ++site)
@@ -108,7 +125,7 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
       Value valid = validPositions(in, ValueRange{position});
       if (!v.atomAnchors) {
         scf::IfOp::create(in, loc, valid, [&](OpBuilder &in, Location) {
-          Value cells = emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
+          Value cells = packing(in, position);
           Value framed = arith::AddFOp::create(in, loc, position,
               emitLatticeShift(in, loc, cells, v.cell));
           storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
@@ -133,7 +150,7 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
               math::AbsFOp::create(in, loc, anchor)), huge);
       scf::IfOp::create(in, loc, arith::AndIOp::create(in, loc, valid, anchorValid),
           [&](OpBuilder &in, Location) {
-        Value anchorCells = emitTemplatePackingCells(in, loc, anchor, v.cell, v.inverse);
+        Value anchorCells = packing(in, anchor);
         Value bond = arith::SubFOp::create(in, loc, position, anchor);
         Value near = emitMinimumImage(in, loc, bond, v.cell, v.inverse);
         // near - bond is a lattice vector: shift the member by it as well.

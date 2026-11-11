@@ -1676,6 +1676,71 @@ maintenance (21 to 13 and 22 to 14 us/step). It is still above `main`, by
 the rarer pruning saves); the per-step writer grows from 9.8 to 11.1
 us/step with the members' points.
 
+### S2: one lattice frame per build
+
+The search queries each row once per *frame subset*, the units of its
+group that share a lattice frame $\lfloor\mathbf p\rfloor$ of their
+reference points $\mathbf p$, and writes one entry per subset, partner and
+image. The packing took the central image, $\mathbf p\in[-\tfrac12,\tfrac12)$,
+whose floors change at $\mathbf p=0$ as well as at the faces: two planes per
+axis, one through the middle of the cell. Ubiquitin sits at the middle of
+its cell (fractions 0.19 to 0.80 on every axis), so that plane cut the
+protein on all three axes, into up to eight frames, and the rows of the
+solute had up to four subsets; a quarter to a half of the water groups
+were cut as well.
+
+The ruling of this step asked to merge a row's subsets per partner and
+absolute image. The measurement showed the cause instead, so the packing
+was changed: with $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$, a unit's
+packing cell is $\mathbf c-\mathbf t$ with $\mathbf c$ the central-image
+cell of $\mathbf x-H\mathbf t$, and its reference point is the fraction of
+the framed position plus $\mathbf t$. The packed f32 frame is the central
+image of $\mathbf x - H\mathbf t$, of the same magnitude as before, and the
+points of a build lie in $[0,1)$: one lattice frame for every unit, until a
+unit crosses a face of the cell. The search, the pruning and the
+evaluation read the same differences of points and of frames, with the
+same image codes. The displacement tests compare the framed position
+shifted by $H\mathbf t$ with the reference point. A member of a solute unit
+keeps its anchor's cell plus a whole lattice vector. The isolated writer
+and frame fixtures keep $\mathbf t=0$.
+
+Gates: the 105 template fixtures pass (3 unsupported, as before), and the
+coverage and physical gates of S1 pass with the new points (no site pair
+without an entry; the template within the mixed criterion at all twenty
+frames).
+
+3,000-step captures, RTX 5090, one round against main (us/step):
+
+Evaluation is the template kernel, or main's pair kernel.
+
+| System | Build | All kernels | Evaluation | Maintenance | Outer entries at the start |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5 | 32.9 | 22.8 | |
+| | S1 (units) | 122.2 | 42.1 | 13.3 | 278,230 |
+| | S2 | 112.8 | 36.8 | 9.1 | 236,129 |
+| Ubiquitin TIP3P | main | 91.2 | 24.0 | 20.0 | |
+| | S1 | 115.4 | 40.3 | 13.9 | 278,794 |
+| | S2 | 106.6 | 35.4 | 10.0 | 235,557 |
+| Large OPC box | main | 175.1 | 68.5 | 27.3 | |
+| | 6e6dcca4 | 163.5 | 72.3 | 6.2 | |
+| | S2 | 157.6 | 66.7 | 5.5 | 403,589 |
+
+Per search launch on ubiquitin OPC, S1 against S2: WW 152 to 86 us, SW 225
+to 195, SS 174 to 66. The kernels of ubiquitin OPC are now below main's
+(112.8 against 114.5); TIP3P remains 15.4 above (the writer and the
+standalone constraint kernel, items 1 and 3 of the accounting). The wall
+time is not yet below main: the host waits for the writer's flags before
+it launches the reciprocal sum (16.7 against 8.4 us/step idle on
+ubiquitin OPC), S3 below.
+
+An experiment that placed the protein at the edges of the wrapped frame
+(points $[0,1)$ around the cell's origin rather than its middle) had the
+same entries but took the SW search from 225 to 273 us per launch: the
+search favours a solute away from the faces of the frame. The packing
+above puts the faces at those of the input cell, where solvated inputs
+leave water; a solute that spans more than half a cell still has subsets,
+and the merge of the ruling remains open for that case.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
@@ -2293,8 +2358,8 @@ with zero missing pairs, extras or duplicates. The native refresh consumes
 the fused writer's group flags and prepares only stale outer epochs;
 this is not a per-step rebuild policy.
 
-Packing-cell coordinates are integer-valued f64 values chosen at the
-outer build. The retained-frame emitter reconstructs O/H/H and applies
+Packing-cell coordinates are f64 values chosen at the outer build,
+integers less one half on each axis since S2 below. The retained-frame emitter reconstructs O/H/H and applies
 those coordinates to the current cell before narrowing. A central-image
 face crossing therefore keeps the frame of existing entry images, and a
 cell change scales the shift rather than reusing its old Cartesian value.

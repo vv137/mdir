@@ -14,6 +14,11 @@ struct TemplateWriterBuffers {
   /// anchor publishes the reference point of the whole unit, in each
   /// member's packing frame, and alone takes the displacement tests.
   mlir::Value atomAnchors, atomDependents;
+  /// Added to every fractional reference point, on each axis: 1/2 makes a
+  /// build's points lie in [0,1), one lattice frame for all units, while
+  /// the packed frames keep their central image. Displacement tests
+  /// compare the framed position shifted by the same lattice fraction.
+  double pointOffset = 0.0;
   unsigned positionOutput = 0;
   bool hasSite = false;
   double alpha = 0, extent = 0;
