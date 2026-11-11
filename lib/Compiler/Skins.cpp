@@ -357,8 +357,9 @@ struct CacheEntry {
 
 /// Reads the entry of the cache at `path` for `key`. An entry is taken
 /// whole or not at all: one that does not parse, is of another format,
-/// holds another key, or lacks the budget, the candidates, or the chosen
-/// pair among them is refused, and the key searches as if there were none.
+/// holds another key, or lacks or has damaged reaches, budget, candidates,
+/// reason, or seconds, or the chosen pair among its candidates, is refused,
+/// and the key searches as if there were none.
 CacheEntry readCache(StringRef path, StringRef key) {
   CacheEntry entry;
   auto buffer = llvm::MemoryBuffer::getFile(path);
@@ -387,8 +388,10 @@ CacheEntry readCache(StringRef path, StringRef key) {
     return refuse("it holds another key");
   auto outer = object->getNumber("pairlist_distance_angstrom");
   auto inner = object->getNumber("pruned_distance_angstrom");
-  if (!outer || !inner || !(*outer > 0.0) || *inner < 0.0)
+  if (!outer || !inner)
     return refuse("it lacks the chosen reaches");
+  if (!(*outer > 0.0) || *inner < 0.0)
+    return refuse("its chosen reaches are not positive");
   const llvm::json::Object *search = object->getObject("search");
   if (!search)
     return refuse("it lacks the search");
@@ -396,11 +399,16 @@ CacheEntry readCache(StringRef path, StringRef key) {
   if (!budget || *budget < 3)
     return refuse("its search lacks a budget of at least 3");
   const llvm::json::Array *candidates = search->getArray("candidates");
-  if (!candidates || candidates->empty() ||
-      candidates->size() > static_cast<size_t>(*budget))
-    return refuse("its search lacks the candidates of its budget");
-  if (!search->getString("reason") || !search->getNumber("seconds"))
-    return refuse("its search lacks its reason or its seconds");
+  if (!candidates)
+    return refuse("its search lacks its candidates");
+  if (candidates->empty())
+    return refuse("its search has no candidates");
+  if (candidates->size() > static_cast<size_t>(*budget))
+    return refuse("its search has more candidates than its budget");
+  if (!search->getString("reason"))
+    return refuse("its search lacks its reason");
+  if (!search->getNumber("seconds"))
+    return refuse("its search lacks its seconds");
   bool chosen = false;
   for (const llvm::json::Value &value : *candidates) {
     const llvm::json::Object *candidate = value.getAsObject();

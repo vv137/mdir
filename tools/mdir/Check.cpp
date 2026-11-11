@@ -607,6 +607,10 @@ static void describeRun(const Control &control, const System &system,
 
 static llvm::json::Object makeJSON(const Control &control, const System &system,
                                   const Preflight &report) {
+  std::string skinKeyReason;
+  std::optional<std::string> skinKey;
+  if (mdir::compiler::canSearchSkins(control, skinKeyReason))
+    skinKey = mdir::compiler::getSkinCacheKey(control, system);
   using llvm::json::Array;
   using llvm::json::Object;
   using llvm::json::Value;
@@ -702,12 +706,12 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
               {"pruned_distance_source",
                control.getSkinSource(/*outer=*/false)},
               {"reason", control.skinReason},
-              // The key of the cache of the skins, for "AUTO" reaches
-              // (D[skin-budget-record]).
-              {"cache_key", control.isSkinAuto()
-                                ? Value(mdir::compiler::getSkinCacheKey(control,
-                                                                  system))
-                                : Value(nullptr)}}},
+              // The key of the cache of the skins where a run reads that
+              // cache, else null and why: the key names the device, which
+              // only such a run asks the driver for (D[skin-budget-record]).
+              {"cache_key", skinKey ? Value(*skinKey) : Value(nullptr)},
+              {"cache_key_reason",
+               skinKey ? Value(nullptr) : Value(skinKeyReason)}}},
       {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
                                                        : Value(control.restartInput)}};
   if (control.pme) {

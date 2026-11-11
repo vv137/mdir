@@ -87,7 +87,9 @@ SkinChoice chooseSkins(driver::Control &control, const driver::System &system,
 
 /// The key of the cache of a choice for `control` and `system`: the text
 /// that names everything the choice depends on, the build of MDIR included
-/// (the salt of the compile cache, D397).
+/// (getSkinSalt, D[skin-budget-record]: the commit, LLVM, and the LLVM
+/// options of the command line, and the image's build ID only for a build
+/// that is not clean).
 std::string getSkinCacheKey(const driver::Control &control,
                             const driver::System &system);
 
