@@ -16,7 +16,9 @@
 # The route that selection takes for a system (no device): alanine
 # dipeptide in OPC with its X-H bonds free goes to the general path under
 # AUTO, for the 12 free hydrogens; double precision goes to the general
-# path under AUTO and is refused under ON.
+# path under AUTO and is refused under ON; a pairlist distance whose
+# covering reach exceeds half the least face width of the cell (25.16 Å)
+# is refused under ON and takes the general path under AUTO.
 # RUN: mkdir -p %t/loose %t/held
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/loose OPC NVE 2 --loose
 # RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/loose/control.toml > %t/loose/auto.toml
@@ -27,7 +29,13 @@
 # RUN: not mdir-water-template-test --select %t/held/double-on.toml 2>&1 | FileCheck %s --check-prefix=DOUBLE-ON
 # RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/double-on.toml > %t/held/double-auto.toml
 # RUN: mdir-water-template-test --select %t/held/double-auto.toml | FileCheck %s --check-prefix=DOUBLE-AUTO
+# RUN: sed 's/pairlist_distance = 10.0/pairlist_distance = 11.0/' %t/held/control.toml > %t/held/far-on.toml
+# RUN: not mdir-water-template-test --select %t/held/far-on.toml 2>&1 | FileCheck %s --check-prefix=FAR-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/far-on.toml > %t/held/far-auto.toml
+# RUN: mdir-water-template-test --select %t/held/far-auto.toml | FileCheck %s --check-prefix=FAR-AUTO
 # LOOSE: water.template route: general (12 solute hydrogens have no constrained bond to a heavy atom (the solute's units need [constraints] hydrogen_bonds))
 # HELD: water.template route: template (ON was given)
 # DOUBLE-ON: 'water.template = "ON"' cannot apply: MIXED precision is required
 # DOUBLE-AUTO: water.template route: general (MIXED precision is required)
+# FAR-ON: 'water.template = "ON"' cannot apply: its covering reach, {{[0-9.]+}} Å ('pairlist_distance' plus twice {{[0-9.]+}} Å, the larger of the water's extent and the solute units' radius), exceeds half the least face width of the cell, 12.58 Å
+# FAR-AUTO: water.template route: general (its covering reach, {{[0-9.]+}} Å

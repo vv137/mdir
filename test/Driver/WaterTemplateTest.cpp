@@ -40,6 +40,7 @@ static System input(unsigned four = 2, unsigned three = 1) {
   t.atomicNumbers.push_back(19); t.atomNames.push_back("K");
   t.masses.push_back(39.0); t.charges.push_back(1.0); t.types.push_back(3);
   s.types = t.types; s.masses = t.masses;
+  s.box[0] = s.box[1] = s.box[2] = 4.0;
   return s;
 }
 /// A methyl-like solute fragment: a carbon and three hydrogens, with or
@@ -272,6 +273,54 @@ int main(int argc, char **argv) {
     require(!general.enabled && general.reason.find("hydrogen_bonds") != std::string::npos,
             "AUTO takes the general path without constrained hydrogens"); ++policies;
     c.waterTemplate = WaterTemplateChoice::On;
+  }
+  {
+    // The covering reach, 1.35 nm + 2 x 0.1001 nm, against half the least
+    // face width: a cell of 3.2 nm takes it, one of 3.0 nm does not.
+    auto small = input(); small.box[0] = 3.2;
+    require(selection(small, 0).enabled, "ON within half the face width"); ++policies;
+    small.box[0] = 3.0;
+    auto result = selectWaterTemplate(c, small, 0);
+    require(!result, "ON accepted a reach beyond half the face width");
+    require(llvm::toString(result.takeError()).find("exceeds half the least face width") !=
+            std::string::npos, "covering-reach ON refusal"); ++policies;
+    c.waterTemplate = WaterTemplateChoice::Auto;
+    auto general = selection(small, 0);
+    require(!general.enabled && general.reason.find("half the least face width") != std::string::npos,
+            "AUTO takes the general path beyond half the face width"); ++policies;
+    c.waterTemplate = WaterTemplateChoice::On;
+    // A rhombic dodecahedron, a = (d, 0, 0), b = (0, d, 0),
+    // c = (d/2, d/2, d/sqrt 2): its least face width is c_z, d/sqrt 2.
+    double d = 3.6, box[3] = {d, d, d / std::sqrt(2.0)}, tilt[3] = {0.0, d / 2, d / 2};
+    require(std::abs(getLeastFaceWidth(box, tilt) - d / std::sqrt(2.0)) < 1e-15,
+            "least face width of a dodecahedron"); ++policies;
+    {
+      // An oblique cell against volume over face area from cross products.
+      double a[3] = {3.0, 0, 0}, b[3] = {0.7, 2.9, 0}, e[3] = {-0.9, 1.1, 2.6};
+      auto cross = [](const double *u, const double *v, double *w) {
+        w[0] = u[1] * v[2] - u[2] * v[1]; w[1] = u[2] * v[0] - u[0] * v[2];
+        w[2] = u[0] * v[1] - u[1] * v[0];
+      };
+      double ab[3], bc[3], ca[3];
+      cross(a, b, ab); cross(b, e, bc); cross(e, a, ca);
+      double volume = std::abs(bc[0] * a[0] + bc[1] * a[1] + bc[2] * a[2]);
+      auto norm = [](const double *w) { return std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]); };
+      double least = std::min({volume / norm(ab), volume / norm(bc), volume / norm(ca)});
+      double oblique[3] = {a[0], b[1], e[2]}, lean[3] = {b[0], e[0], e[1]};
+      require(std::abs(getLeastFaceWidth(oblique, lean) - least) < 1e-14,
+              "least face width of an oblique cell"); ++policies;
+    }
+    auto dodecahedron = input();
+    std::copy(box, box + 3, dodecahedron.box); std::copy(tilt, tilt + 3, dodecahedron.tilt);
+    {
+      auto beyond = selectWaterTemplate(c, dodecahedron, 0);
+      require(!beyond, "ON accepted a dodecahedron beyond its reach");
+      require(llvm::toString(beyond.takeError()).find("half the least face width") != std::string::npos,
+              "dodecahedron covering-reach refusal"); ++policies;
+    }
+    d = 4.6; box[0] = box[1] = d; box[2] = d / std::sqrt(2.0); tilt[1] = tilt[2] = d / 2;
+    std::copy(box, box + 3, dodecahedron.box); std::copy(tilt, tilt + 3, dodecahedron.tilt);
+    require(selection(dodecahedron, 0).enabled, "ON within a dodecahedron's reach"); ++policies;
   }
   c.waterTemplate = WaterTemplateChoice::Off; c.target = Target::CPU;
   require(!selection(input(), 0).enabled, "OFF ordinary path"); ++policies;

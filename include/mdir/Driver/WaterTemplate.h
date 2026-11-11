@@ -69,6 +69,10 @@ struct WaterTemplateSelection {
   std::string reason;
 };
 
+/// The least of the three face widths (the distances between opposite
+/// faces) of the cell with the diagonal `box` and the tilts `tilt`.
+double getLeastFaceWidth(const double box[3], const double tilt[3]);
+
 /// The AUTO floor is supplied by the end-to-end measurement record; ON
 /// bypasses that floor and the initial four-site-only AUTO policy.
 llvm::Expected<WaterTemplateSelection>
