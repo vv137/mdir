@@ -1,8 +1,11 @@
 #include "mdir/Conversion/TemplatePruneKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -40,8 +43,29 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
     Value beginWord = read(at, v.outerUnits, work, 2);
     Value begin = index(at, beginWord);
     Value end = index(at, read(at, v.outerUnits, work, 3));
-    Value reach = vector::ExtractOp::create(at, loc, v.reaches, index(at, tag));
-    Value reach2 = arith::MulFOp::create(at, loc, reach, reach);
+    auto f32 = at.getF32Type();
+    auto vec3 = VectorType::get({3}, f32);
+    auto real = [&](OpBuilder &in, double x) -> Value {
+      return arith::ConstantOp::create(in, loc, FloatAttr::get(f32, x));
+    };
+    auto narrow = [&](OpBuilder &in, Value x) -> Value {
+      return arith::TruncFOp::create(in, loc,
+          VectorType::get(cast<VectorType>(x.getType()).getShape(), f32), x);
+    };
+    auto largest = [&](OpBuilder &in, Value x) -> Value {
+      return vector::ReductionOp::create(in, loc, vector::CombiningKind::MAXNUMF,
+          math::AbsFOp::create(in, loc, x));
+    };
+    // Select the class reach rather than index the vector dynamically.
+    Value reach = vector::ExtractOp::create(at, loc, v.reaches, 2);
+    for (int64_t t = 1; t >= 0; --t)
+      reach = arith::SelectOp::create(at, loc,
+          arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, tag, word(at, t)),
+          vector::ExtractOp::create(at, loc, v.reaches, t), reach);
+    Value reach32 = arith::TruncFOp::create(at, loc, f32, reach);
+    Value cell = narrow(at, v.cell);
+    Value cellMagnitude = vector::ReductionOp::create(at, loc, vector::CombiningKind::ADD,
+        math::AbsFOp::create(at, loc, cell));
     auto reference = [&](OpBuilder &in, Value unit) -> Value {
       Value water = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult,
           index(in, unit), v.waters);
@@ -56,64 +80,79 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
       });
       return selected.getResult(0);
     };
-    // Batches are warp uniform. Inactive lanes never load a tail entry;
-    // every lane still participates in the ballot and final barrier.
+    // The 16 first units are read once per record, by the lane of their
+    // place in either half warp, and broadcast to every entry by shuffles.
+    Value own = arith::AndIOp::create(at, loc, lane, word(at, 15));
+    Value limit = arith::SubIOp::create(at, loc,
+        arith::MaxUIOp::create(at, loc, firstLength, ix(at, 1)), ix(at, 1));
+    Value place = arith::AddIOp::create(at, loc, index(at, firstBegin),
+        arith::MinUIOp::create(at, loc, index(at, own), limit));
+    Value ownUnit = memref::LoadOp::create(at, loc, v.order, ValueRange{place});
+    Value ownValid = arith::AndIOp::create(at, loc,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, index(at, own), firstLength),
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::sge, ownUnit, word(at, 0)));
+    auto ownPoint = scf::IfOp::create(at, loc, ownValid,
+        [&](OpBuilder &take, Location) {
+      scf::YieldOp::create(take, loc, ValueRange{narrow(take, reference(take, ownUnit))});
+    }, [&](OpBuilder &take, Location) {
+      scf::YieldOp::create(take, loc, ValueRange{createZero(take, loc, vec3)});
+    });
+    Value firstPoint = ownPoint.getResult(0);
+    Value firstValid = emitWarpBallot(at, loc, ownValid);
+    Value firstMagnitude = emitWarpReduce(at, loc, largest(at, firstPoint), Combiner::Max);
+    // Batches are warp uniform. A lane past the end tests the first entry
+    // of the record and discards it, so that every lane reaches the shuffles.
     auto batches = scf::ForOp::create(at, loc, begin, end, ix(at, 32),
         ValueRange{ix(at, 0)},
         [&](OpBuilder &in, Location, Value batch, ValueRange keptBefore) {
       Value entry = arith::AddIOp::create(in, loc, batch, index(in, lane));
       Value present = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, entry, end);
-      auto candidate = scf::IfOp::create(in, loc, present,
-          [&](OpBuilder &test, Location) {
-        SmallVector<Value, 4> fields;
-        for (int col = 0; col != 4; ++col) fields.push_back(read(test, v.outerEntries, entry, col));
-        Value partner = reference(test, fields[0]);
-        SmallVector<Value, 3> image;
-        for (unsigned axis = 0; axis != 3; ++axis) {
-          Value component = arith::AndIOp::create(test, loc,
-              arith::ShRUIOp::create(test, loc, fields[1], word(test, MDRT_TEMPLATE_IMAGE_BITS * axis)),
-              word(test, MDRT_TEMPLATE_IMAGE_MASK));
-          component = arith::SubIOp::create(test, loc, component, word(test, MDRT_TEMPLATE_IMAGE_OFFSET));
-          image.push_back(arith::SIToFPOp::create(test, loc, test.getF64Type(), component));
-        }
-        Value lattice = vector::FromElementsOp::create(test, loc,
-            VectorType::get({3}, test.getF64Type()), image);
-        Value mask = word(test, 0);
-        for (int bit = 0; bit != 16; ++bit) {
-          Value inSpan = arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ult,
-              ix(test, bit), firstLength);
-          Value limit = arith::SubIOp::create(test, loc,
-              arith::MaxUIOp::create(test, loc, firstLength, ix(test, 1)), ix(test, 1));
-          Value place = arith::AddIOp::create(test, loc, index(test, firstBegin),
-              arith::MinUIOp::create(test, loc, ix(test, bit), limit));
-          Value unit = memref::LoadOp::create(test, loc, v.order, ValueRange{place});
-          Value valid = arith::AndIOp::create(test, loc, inSpan, arith::AndIOp::create(test, loc,
-              arith::CmpIOp::create(test, loc, arith::CmpIPredicate::sge, unit, word(test, 0)),
-              arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ne,
-                  arith::AndIOp::create(test, loc, fields[2], word(test, 1 << bit)), word(test, 0))));
-          auto vote = scf::IfOp::create(test, loc, valid,
-              [&](OpBuilder &check, Location) {
-            Value delta = arith::SubFOp::create(check, loc,
-                arith::SubFOp::create(check, loc, reference(check, unit), partner), lattice);
-            Value cartesian = emitLatticeShift(check, loc, delta, v.cell);
-            Value squared = vector::ReductionOp::create(check, loc, vector::CombiningKind::ADD,
-                arith::MulFOp::create(check, loc, cartesian, cartesian));
-            Value within = arith::CmpFOp::create(check, loc, arith::CmpFPredicate::OLE, squared, reach2);
-            scf::YieldOp::create(check, loc,
-                ValueRange{arith::SelectOp::create(check, loc, within, word(check, 1 << bit), word(check, 0))});
-          }, [&](OpBuilder &check, Location) {
-            scf::YieldOp::create(check, loc, ValueRange{word(check, 0)});
-          });
-          mask = arith::OrIOp::create(test, loc, mask, vote.getResult(0));
-        }
-        fields[2] = mask;
-        scf::YieldOp::create(test, loc, fields);
-      }, [&](OpBuilder &test, Location) {
-        Value zero = word(test, 0);
-        scf::YieldOp::create(test, loc, ValueRange{zero, zero, zero, zero});
-      });
+      Value safe = arith::SelectOp::create(in, loc, present, entry, begin);
+      SmallVector<Value, 4> fields;
+      for (int col = 0; col != 4; ++col) fields.push_back(read(in, v.outerEntries, safe, col));
+      Value partner = narrow(in, reference(in, fields[0]));
+      SmallVector<Value, 3> image;
+      for (unsigned axis = 0; axis != 3; ++axis) {
+        Value component = arith::AndIOp::create(in, loc,
+            arith::ShRUIOp::create(in, loc, fields[1], word(in, MDRT_TEMPLATE_IMAGE_BITS * axis)),
+            word(in, MDRT_TEMPLATE_IMAGE_MASK));
+        component = arith::SubIOp::create(in, loc, component, word(in, MDRT_TEMPLATE_IMAGE_OFFSET));
+        image.push_back(arith::SIToFPOp::create(in, loc, f32, component));
+      }
+      Value lattice = vector::FromElementsOp::create(in, loc, vec3, image);
+      // The test runs in f32 on fractional points of magnitude at most E,
+      // E = max|s_i| + |s_j| + |n|. Each Cartesian component then errs by
+      // at most 7 u (sum |H|) E, u = 2^-24, and the reach is widened by
+      // 32 u ((sum |H|) E + R): every pair the exact test keeps is kept.
+      Value magnitude = arith::AddFOp::create(in, loc, firstMagnitude,
+          arith::AddFOp::create(in, loc, largest(in, partner), largest(in, lattice)));
+      Value widened = arith::AddFOp::create(in, loc, reach32,
+          arith::MulFOp::create(in, loc, real(in, 0x1p-19),
+              arith::AddFOp::create(in, loc,
+                  arith::MulFOp::create(in, loc, cellMagnitude, magnitude), reach32)));
+      Value reach2 = arith::MulFOp::create(in, loc, widened, widened);
+      Value candidates = arith::AndIOp::create(in, loc, fields[2], firstValid);
+      Value mask = word(in, 0);
+      for (int bit = 0; bit != 16; ++bit) {
+        SmallVector<Value, 3> components;
+        for (int64_t axis = 0; axis != 3; ++axis)
+          components.push_back(gpu::ShuffleOp::create(in, loc,
+              vector::ExtractOp::create(in, loc, firstPoint, axis), word(in, bit),
+              word(in, 32), gpu::ShuffleMode::IDX).getResult(0));
+        Value point = vector::FromElementsOp::create(in, loc, vec3, components);
+        Value delta = arith::SubFOp::create(in, loc,
+            arith::SubFOp::create(in, loc, point, partner), lattice);
+        Value cartesian = emitLatticeShift(in, loc, delta, cell);
+        Value squared = vector::ReductionOp::create(in, loc, vector::CombiningKind::ADD,
+            arith::MulFOp::create(in, loc, cartesian, cartesian));
+        Value within = arith::CmpFOp::create(in, loc, arith::CmpFPredicate::OLE, squared, reach2);
+        mask = arith::OrIOp::create(in, loc, mask,
+            arith::SelectOp::create(in, loc, within, word(in, 1 << bit), word(in, 0)));
+      }
+      mask = arith::AndIOp::create(in, loc, mask, candidates);
+      fields[2] = arith::SelectOp::create(in, loc, present, mask, word(in, 0));
       Value keep = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ne,
-          candidate.getResult(2), word(in, 0));
+          fields[2], word(in, 0));
       Value ballot = emitWarpBallot(in, loc, keep);
       Value rank = index(in, emitWarpRank(in, loc, ballot, emitLanesBelow(in, loc, lane)));
       Value count = index(in, emitWarpCount(in, loc, ballot));
@@ -121,7 +160,7 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
         Value destination = arith::AddIOp::create(write, loc, begin,
             arith::AddIOp::create(write, loc, keptBefore[0], rank));
         for (int col = 0; col != 4; ++col)
-          memref::StoreOp::create(write, loc, candidate.getResult(col), v.innerEntries,
+          memref::StoreOp::create(write, loc, fields[col], v.innerEntries,
               ValueRange{address(write, destination, col)});
         scf::YieldOp::create(write, loc);
       });
