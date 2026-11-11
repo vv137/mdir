@@ -18,6 +18,9 @@ struct TemplatePairs {
   int64_t metadataOffsets[TEMPLATE_METADATA_SLOTS];
   int64_t metadataSizes[TEMPLATE_METADATA_SLOTS];
   int diagnosticBuilt;
+  /* The refinement passes of the last group plan: the next plan runs as
+   * many before it first reads its controls (D[rigid-water-template]). */
+  int64_t planPasses;
 };
 
 /* Diagnostic counters belong to this route, independently of the general
@@ -200,7 +203,7 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
   pairs->groups = mgpuMemAlloc((uint64_t)(units ? 4 * units : 1) * sizeof(int32_t),
                                NULL, false);
   allocationTag = "template pairs: shared sort and group-plan scratch";
-  pairs->planning = mgpuMemAlloc((uint64_t)(6 * plan + 6 + planBlocks) * sizeof(int32_t),
+  pairs->planning = mgpuMemAlloc((uint64_t)(6 * plan + 10 + planBlocks) * sizeof(int32_t),
                                  NULL, false);
   allocationTag = "template pairs: packed real-site frames";
   int64_t rows = 3 * waters + atoms;
@@ -424,8 +427,8 @@ void _mlir_ciface_mdrtTemplatePairsPlanningView(struct Buffer1 *result,
   case TEMPLATE_PLAN_LENGTHS: offset = 3 * m + 1; size = m; break;
   case TEMPLATE_PLAN_COUNTS: offset = 4 * m + 1; size = m; break;
   case TEMPLATE_PLAN_OFFSETS: offset = 5 * m + 1; size = m + 1; break;
-  case TEMPLATE_PLAN_CONTROL: offset = 6 * m + 2; size = 4; break;
-  case TEMPLATE_PLAN_SCAN: offset = 6 * m + 6; size = blocks; break;
+  case TEMPLATE_PLAN_CONTROL: offset = 6 * m + 2; size = 8; break;
+  case TEMPLATE_PLAN_SCAN: offset = 6 * m + 10; size = blocks; break;
   case TEMPLATE_PLAN_SORT: size = 4 * m; break;
   default:
     fprintf(stderr, "mdrt: invalid template planning view\n");
@@ -651,6 +654,17 @@ static void growTemplateRows(struct TemplatePairs *pairs, int64_t required) {
   check(cuCtxSynchronize(), "template row-growth completion");
   releaseReplaced(previous);
   ++templateRowGrowths;
+}
+
+/* The passes that the group plan of the last build needed (one before the
+ * first build): the next plan runs that many before its first readback.
+ * Host state of this list only, no device access. */
+int64_t mdrtTemplatePairsPlanPasses(int64_t handle) {
+  int64_t passes = ((struct TemplatePairs *)(intptr_t)handle)->planPasses;
+  return passes > 0 ? passes : 1;
+}
+void mdrtTemplatePairsNotePlanPasses(int64_t handle, int64_t passes) {
+  ((struct TemplatePairs *)(intptr_t)handle)->planPasses = passes;
 }
 
 int64_t mdrtTemplatePairsCommitGroups(int64_t handle, int64_t waterGroups,

@@ -5,4 +5,8 @@
 # Exact flags, stable segment IDs, lengths, group offsets and scalar totals;
 # empty input, forced class boundary, equal-gap strictness/rightmost ties,
 # cascading refinements and multiple scan blocks. No physical evaluation.
+# Each case runs with 1, P-1, P and P+3 passes before the first readback
+# (P the passes it needs): a plan that stops at the unread passes without
+# reading on, or that reports the passes it ran instead of those it needed,
+# differs from the reference.
 # CHECK: 1
