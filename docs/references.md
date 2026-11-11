@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-11-05.
+Last updated: 2026-11-11.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -1248,9 +1248,10 @@ on SIMD architectures," *Comput. Phys. Commun.* **184**, 2641–2650
 
 Used for: cluster pair lists (clusters of a fixed number of particles,
 lists of cluster pairs searched by bounding boxes, masks of interactions
-and exclusions, the 8 × 4 layout of the CUDA kernels), discussed in
-[prior-art.md](prior-art.md); the tile structure of MDIR (D82) follows
-them, see [neighbor-tiles.md](neighbor-tiles.md).
+and exclusions), discussed in [prior-art.md](prior-art.md); the tile
+structure of MDIR (D82) follows them, see
+[neighbor-tiles.md](neighbor-tiles.md), and the groups of 16 (D89) share
+their aim, see [neighbor-groups.md](neighbor-groups.md).
 
 ### Pall2020
 
@@ -1263,10 +1264,9 @@ Used for: the dual pair list with dynamic (rolling) pruning, the pruning
 of cluster pairs on the GPU, and the fixed lifetime of the pair list with
 a buffer estimated from a tolerance of the energy drift, which the tile
 structure of MDIR (D82) follows or departs from; see
-[neighbor-tiles.md](neighbor-tiles.md). Also for the first pruning of a list in a special version
-of the kernel of forces, beside which the pruning of the inner list in the
-loop over pairs of MDIR (D284) is set in the white paper,
-Section 4.5.
+[neighbor-tiles.md](neighbor-tiles.md). The dual list of the groups (D114)
+has the purpose of the dynamic pruning, with an exact test in place of the
+estimate (white paper, Section 4.5).
 
 ### Park2024
 
@@ -1410,13 +1410,12 @@ R. Salomon-Ferrer, A. W. Götz, D. Poole, S. Le Grand, R. C. Walker,
 3878–3888 (2013).
 [doi:10.1021/ct400314y](https://doi.org/10.1021/ct400314y)
 
-Used for: how pmemd.cuda, the reference of the goal of performance, builds
-its neighbor list (Section 3.3): particles sorted into boxes of the
-cutoff plus the skin and along a Hilbert curve of 4 × 4 × 4 within each,
-then taken in groups of 16 or 32 that share the particles within the
-extended cutoff of any of them, from the box and its 13 neighbors on the
-leading edge (a half shell); the direct sum iterates over that list a warp
-at a time, with the exclusions masked. Measured against in
+Used for: the layout of a neighbor list on a GPU published in Section
+3.3: groups of particles that share the list of the particles within the
+extended cutoff of any of them, each pair once, walked a warp at a time
+with the exclusions masked. The groups of 16 of MDIR (D89) take this
+layout, with an order, a search, and a test of validity of their own
+([neighbor-groups.md](neighbor-groups.md)); compared with in
 `scripts/experiments/neighbor-structures` (2026-10-01).
 
 ### Saunders2018
@@ -1627,8 +1626,8 @@ space-filling-curve data layout," arXiv:2602.19873 (2026).
 [doi:10.48550/arXiv.2602.19873](https://doi.org/10.48550/arXiv.2602.19873)
 
 Used for: lists of clusters along a Hilbert curve whose indices are
-stored as deltas in nibbles, 3.6 bytes a particle against 12 for GROMACS;
-weighed against the lists of groups in the roadmap (Section 2).
+stored as deltas in nibbles, 3.6 bytes a particle; weighed against the
+lists of groups in [neighbor-groups.md](neighbor-groups.md#next).
 
 ### ThalerZavadlav2021
 
