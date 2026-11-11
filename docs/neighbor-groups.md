@@ -851,7 +851,12 @@ $$
 $$
 
 of the exact one, about a seventh of $\delta_R$. The box test has errors of
-the same order and the same margin. So a pair within $R$ in f64 is always
+the same order and the same margin. The image that is tested,
+$\mathrm{round}(d_a/L_a)$ in f32, can differ from the nearest one only
+where $\lvert d_a\rvert$ is within a few $\mathsf uL_a$ of $\tfrac12 L_a$;
+for a pair within $R$ of a member that needs $w_{g,a} + R \ge \tfrac12 L_a
+- 2\mathsf uL_a$, so $2w_{g,a} + 2R' > L_a$, and the images kernel takes
+the other image (Section 5). So a pair within $R$ in f64 is always
 kept, and a pair kept may be a little more than $\delta_R$ beyond $R$,
 which the cutoff test of the loop removes (I1);
 `test/Runtime/neighbors-groups-gpu.mlir` checks this against every pair in
@@ -1143,7 +1148,8 @@ times what the lists took; for Cellulose that pool was 280,929 blocks, 144
 MB for the entries and the masks, against 510 MB for the fixed lists.
 Cellulose takes at most 153,517 of those blocks (the reach of that run is
 not recorded with it; at 9 Å a build takes 152,619, white paper, Section
-4.5). Sized by D331 from 153,517 blocks, the pool holds 191,896, 98 MB. A
+4.5). A pool sized by D331 from 153,517 blocks would hold 191,896, 98 MB
+(computed, not measured). A
 run of `test/Driver/groups-gpu.test` that starts with almost no room grows
 its buffers and gives the energies of the matrix to every digit.
 

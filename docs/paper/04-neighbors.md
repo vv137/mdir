@@ -602,7 +602,12 @@ $$
 $$
 
 The box test has errors of the same order, within the same margin, and the
-same bound holds for the pruning of Section 4.5. The rounding can therefore
+same bound holds for the pruning of Section 4.5. The image that is tested,
+$\mathrm{round}(d_a/L_a)$ in f32, can differ from the nearest one only
+where $\lvert d_a\rvert$ is within a few $\mathsf uL_a$ of $\tfrac12 L_a$;
+an image within $R$ of a member there has $w_{g,a} + R \ge \tfrac12 L_a -
+2\mathsf uL_a$, so $2w_{g,a} + 2R' > L_a$, and the second kernel of Section
+4.4.4 takes the other image. The rounding can therefore
 keep a pair a little beyond $R$ but never drop one within it;
 `test/Runtime/neighbors-groups-gpu.mlir` checks the lists against every
 pair computed in f64. Of the bound, the rounding of the positions alone is
