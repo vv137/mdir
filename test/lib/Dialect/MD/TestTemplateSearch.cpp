@@ -152,9 +152,9 @@ struct TestSpatialGroupPlan
   }
   void runOnOperation() final {
     auto function = getOperation().lookupSymbol<func::FuncOp>("group_plan_probe");
-    if (!function || !function.isExternal() || function.getNumArguments() != 17 ||
+    if (!function || !function.isExternal() || function.getNumArguments() != 18 ||
         function.getNumResults() != 3) {
-      getOperation().emitError("group-plan fixture expects seventeen arguments and three index results");
+      getOperation().emitError("group-plan fixture expects eighteen arguments and three index results");
       return signalPassFailure();
     }
     Block *entry = function.addEntryBlock();
@@ -163,7 +163,8 @@ struct TestSpatialGroupPlan
     SpatialGroupPlanBuffers v;
     Value *fields[] = {&v.order, &v.columns, &v.zKeys, &v.flags, &v.segments,
         &v.starts, &v.lengths, &v.counts, &v.offsets, &v.control, &v.scanScratch,
-        &v.size, &v.firstClassSize, &v.gap[0], &v.gap[1], &v.span[0], &v.span[1]};
+        &v.size, &v.firstClassSize, &v.gap[0], &v.gap[1], &v.span[0], &v.span[1],
+        &v.unreadPasses};
     for (auto [i, value] : llvm::enumerate(fields)) *value = entry->getArgument(i);
     v.scanBlocks = arith::MaxUIOp::create(b, loc, createIndex(b, loc, 1),
         arith::DivUIOp::create(b, loc,

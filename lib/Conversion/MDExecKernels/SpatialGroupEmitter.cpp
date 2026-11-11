@@ -51,6 +51,15 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
   };
 
   launch(b, scanSize, [&](OpBuilder &out, Value item) {
+    // Word 4 of the controls records the last pass that split a group (one
+    // based), so that the passes are known whatever number ran unread;
+    // words 5 to 7 are unused and read back with it.
+    Value head = arith::CmpIOp::create(out, loc, arith::CmpIPredicate::eq, item, ix(out, 0));
+    scf::IfOp::create(out, loc, head, [&](OpBuilder &at, Location) {
+      for (int64_t slot = 4; slot != 8; ++slot)
+        memref::StoreOp::create(at, loc, word(at, 0), v.control, ValueRange{ix(at, slot)});
+      scf::YieldOp::create(at, loc);
+    });
     Value valid = arith::CmpIOp::create(out, loc, arith::CmpIPredicate::ult, item, v.size);
     auto flag = scf::IfOp::create(out, loc, valid, [&](OpBuilder &at, Location) {
     Value first = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, item, ix(at, 0));
@@ -74,16 +83,11 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
     memref::StoreOp::create(out, loc, flag.getResult(0), v.flags, ValueRange{item});
   });
 
-  Value host = memref::AllocaOp::create(b, loc, MemRefType::get({4}, b.getI32Type()));
   Value yes = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
-  Value limit = arith::AddIOp::create(b, loc, v.size, one);
-  auto refined = scf::WhileOp::create(b, loc,
-      TypeRange{b.getI1Type(), b.getIndexType()}, ValueRange{yes, ix(b, 0)},
-      [&](OpBuilder &at, Location, ValueRange state) {
-        Value bounded = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, state[1], limit);
-        scf::ConditionOp::create(at, loc,
-            arith::AndIOp::create(at, loc, state[0], bounded), state);
-      }, [&](OpBuilder &at, Location, ValueRange state) {
+  // One refinement pass. A pass after convergence changes nothing: the
+  // flags only accumulate, and words 0 to 3 and the segment fields are
+  // cleared and recounted.
+  auto pass = [&](OpBuilder &at, Value ordinal) {
     launch(at, ix(at, 4), [&](OpBuilder &in, Value i) {
       memref::StoreOp::create(in, loc, word(in, 0), v.control, ValueRange{i});
     });
@@ -174,19 +178,49 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
           memref::StoreOp::create(split, loc, word(split, 1), v.flags,
               ValueRange{best.getResult(1)});
           emitDeviceAtomicAdd(split, loc, v.control, ix(split, 3), word(split, 1));
+          memref::AtomicRMWOp::create(split, loc, arith::AtomicRMWKind::maxu,
+              toWord(split, arith::AddIOp::create(split, loc, ordinal, one)), v.control,
+              ValueRange{ix(split, 4)});
           scf::YieldOp::create(split, loc);
         });
         scf::YieldOp::create(group, loc);
       });
     });
+  };
+  Value host = memref::AllocaOp::create(b, loc, MemRefType::get({8}, b.getI32Type()));
+  auto readControls = [&](OpBuilder &at) -> Value {
     Type token = gpu::AsyncTokenType::get(at.getContext());
     Value ready = gpu::WaitOp::create(at, loc, token, ValueRange()).getAsyncToken();
     Value copied = gpu::MemcpyOp::create(at, loc, token, ValueRange{ready},
         host, v.control).getAsyncToken();
     gpu::WaitOp::create(at, loc, Type(), ValueRange{copied});
     Value changed = memref::LoadOp::create(at, loc, host, ValueRange{ix(at, 3)});
-    scf::YieldOp::create(at, loc, ValueRange{
-        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, changed, word(at, 0)),
+    return arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ne, changed, word(at, 0));
+  };
+  // The first `unread` passes run without a readback (at least one, at
+  // most the bound of N+1); the controls are then read once, and passes
+  // continue one readback each only while the last one split a group. A
+  // caller that knows the passes of a similar plan (the previous build)
+  // thus usually reads the controls once.
+  Value limit = arith::AddIOp::create(b, loc, v.size, one);
+  Value unread = arith::MinUIOp::create(b, loc, limit,
+      arith::MaxUIOp::create(b, loc, one, v.unreadPasses ? v.unreadPasses : one));
+  scf::ForOp::create(b, loc, ix(b, 0), unread, one, ValueRange{},
+      [&](OpBuilder &at, Location, Value ordinal, ValueRange) {
+    pass(at, ordinal);
+    scf::YieldOp::create(at, loc);
+  });
+  Value initial = readControls(b);
+  auto refined = scf::WhileOp::create(b, loc,
+      TypeRange{b.getI1Type(), b.getIndexType()}, ValueRange{initial, unread},
+      [&](OpBuilder &at, Location, ValueRange state) {
+        Value bounded = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, state[1], limit);
+        scf::ConditionOp::create(at, loc,
+            arith::AndIOp::create(at, loc, state[0], bounded), state);
+      }, [&](OpBuilder &at, Location, ValueRange state) {
+    pass(at, state[1]);
+    Value changed = readControls(at);
+    scf::YieldOp::create(at, loc, ValueRange{changed,
         arith::AddIOp::create(at, loc, state[1], one)});
   });
   Value done = arith::XOrIOp::create(b, loc, refined.getResult(0), yes);
@@ -196,5 +230,6 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
   std::array<Value, 2> groups;
   for (int64_t kind = 0; kind != 2; ++kind)
     groups[kind] = index(b, memref::LoadOp::create(b, loc, host, ValueRange{ix(b, kind + 1)}));
-  return {groups, refined.getResult(1)};
+  Value productive = index(b, memref::LoadOp::create(b, loc, host, ValueRange{ix(b, 4)}));
+  return {groups, arith::AddIOp::create(b, loc, productive, one)};
 }

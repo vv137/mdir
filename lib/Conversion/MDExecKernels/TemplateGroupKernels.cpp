@@ -53,6 +53,9 @@ TemplateGroupBuffers mdir::kernels::emitPrepareTemplateGroups(OpBuilder &b,
     return index(b, call("mdrtTemplatePairsLayoutValue",
         ValueRange{handle, integer(slot)}, b.getI64Type(), false));
   };
+  auto hostIndex = [&](StringRef name) -> Value {
+    return index(b, call(name, ValueRange{handle}, b.getI64Type(), false));
+  };
   auto view = [&](StringRef name, int64_t slot) -> Value {
     return call(name, ValueRange{handle, integer(slot)}, device, true);
   };
@@ -98,7 +101,11 @@ TemplateGroupBuffers mdir::kernels::emitPrepareTemplateGroups(OpBuilder &b,
   // The prototype's water/solute gap and span defaults, in native nm.
   plan.gap = {quantized(0.4), quantized(0.3)};
   plan.span = {quantized(0.9), quantized(0.6)};
+  // The previous build's passes run before the first readback; this
+  // plan's passes are kept for the next build.
+  plan.unreadPasses = hostIndex("mdrtTemplatePairsPlanPasses");
   auto result = emitSpatialGroupPlan(b, loc, plan);
+  call("mdrtTemplatePairsNotePlanPasses", ValueRange{handle, wide(result.passes)}, Type{}, false);
 
   TemplateGroupBuffers groups;
   groups.starts = view("mdrtTemplatePairsGroupView", TEMPLATE_GROUP_STARTS);
