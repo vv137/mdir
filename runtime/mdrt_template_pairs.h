@@ -788,6 +788,15 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
         for (int n1 = m1 - 1; n1 <= m1 + 1; ++n1)
           for (int n0 = m0 - 1; n0 <= m0 + 1; ++n0) {
             double shift[3] = {n0 * ax + n1 * bx + n2 * cx, n1 * by + n2 * cy, n2 * cz};
+            /* Every site is within 0.5 nm of its unit's first site (the
+             * extents are about 0.1 nm): farther first sites cannot have a
+             * site pair within the reach. */
+            double a2 = 0;
+            for (int c = 0; c != 3; ++c) {
+              double x = d[c] - shift[c];
+              a2 += x * x;
+            }
+            if (a2 > (reach + 1.0) * (reach + 1.0)) continue;
             int near = 0;
             for (int64_t i = firstSite[u]; i < firstSite[u + 1] && !near; ++i)
               for (int64_t j = firstSite[v]; j < firstSite[v + 1] && !near; ++j) {

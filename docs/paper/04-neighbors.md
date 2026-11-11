@@ -1009,7 +1009,19 @@ read the anchor's point for each member. One mobility group, the anchors
 of the waters and of the units, then refreshes all three segments: on
 ubiquitin the pruning interval goes from 2.6 to 8.5 steps and the
 interval of builds from 25 to 56, while the entries of the inner list grow
-by about 8%. The inner lists of the dual list (Section 4.5)
+by about 8%.
+
+**One lattice frame.** The search treats the units of a group that share
+the lattice frame $\lfloor\mathbf p\rfloor$ of their reference points
+together, and a group that a frame boundary cuts takes one query and one
+entry per partner for each part. The central image puts the points in
+$[-\tfrac12,\tfrac12)$, whose floors change in the middle of the cell, where
+a solvated solute usually sits. The packing therefore takes the central
+image of $\mathbf x - H\mathbf t$, $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$,
+and adds $\mathbf t$ to the points: the frames keep the magnitude of a
+central image, and a build's points lie in $[0,1)$, one frame for all. On
+ubiquitin in OPC the entries of the list fall by 15%, and the evaluation
+from 42.1 to 36.8 µs a step. The inner lists of the dual list (Section 4.5)
 take $R_\text{in}$ for $R$ in each. In the cell of the build every
 condition is the half-skin test $d \le s/2$; under a scaling the margin is
 $(1 - \min(\mathbf m))(R + 2r_\mathrm m)$ instead of $(1 -

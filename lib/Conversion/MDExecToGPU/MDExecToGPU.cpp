@@ -83,6 +83,11 @@ static const char *const cellWidthName = "mdrt_gpu_cell_width";
 static const char *const buildNeighborsName =
     "mdrt_gpu_build_neighbors_matrix";
 static const char *const countBuildName = "mdrtCountBuild";
+/// The reference points of the template's units take their packed frame
+/// plus half a lattice vector on each axis: a build puts every unit in one
+/// lattice frame, [0,1), so a group of the search has one frame subset
+/// unless a unit has crossed a face since (D[rigid-water-template]).
+static constexpr double kTemplatePointOffset = 0.5;
 static const char *const flagStartName = "mdrtFlagStart";
 static const char *const flagFinishName = "mdrtFlagFinish";
 static const char *const flagTakeName = "mdrtFlagTake";
@@ -6387,7 +6392,8 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
         state.outerReference, state.packingCells, state.currentPoints, counters,
         state.waters, state.atoms, cell, inverse,
         cast<MemRefType>(state.members.getType()).getDimSize(1) == 4,
-        op.getAlpha().convertToDouble(), state.radius > 0.0 ? state.atomAnchors : Value()};
+        op.getAlpha().convertToDouble(), state.radius > 0.0 ? state.atomAnchors : Value(),
+        kTemplatePointOffset};
     emitSnapshotTemplateFrames(cold, loc, frames, water, atom);
     Value host = memref::AllocaOp::create(cold, loc,
         MemRefType::get({4}, cold.getI64Type()));
@@ -6552,6 +6558,7 @@ LogicalResult Lowering::prepareTemplateWriter(OpBuilder &b, Location loc,
     v.atomAnchors = state.atomAnchors;
     v.atomDependents = state.atomDependents;
   }
+  v.pointOffset = kTemplatePointOffset;
   v.positionOutput = plan.positionOutput;
   v.hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   v.alpha = refresh.getAlpha().convertToDouble(); v.extent = refresh.getExtent().convertToDouble();
