@@ -1,0 +1,15 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.fits.mlir %t.flag.mlir %t.entries.mlir
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.fits.mlir --gated
+# RUN: mdir-opt %t.fits.mlir --test-md-template-compaction=gated=true --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.flag.mlir --gated-flag
+# RUN: mdir-opt %t.flag.mlir --test-md-template-compaction=gated=true --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.entries.mlir --gated-entries
+# RUN: mdir-opt %t.entries.mlir --test-md-template-compaction=gated=true --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# A build compacts before it reads the search's controls (one readback a
+# build, after its last kernel). With clear controls whose entries fit, the
+# gated compaction is the exact one of water-template-compact-layout-gpu;
+# with a capacity flag, or with more entries than the capacity, it must
+# publish nothing: every row, unit and entry word and the header's ranges
+# keep the sentinel, so the arena the build then grows holds no partial list.
+# CHECK: 1
