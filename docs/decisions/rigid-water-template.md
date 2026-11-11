@@ -2000,6 +2000,93 @@ Gates at 74ea3f31: the 107 template fixtures in one run (3 unsupported;
 the list lost the two fixtures of the per-particle helper) and the
 sanitizer tier (3 fixtures, 35 s) pass.
 
+### U6 measurement: the evaluation by segment
+
+Step 4 of the order: why the template's evaluation takes 35.4 µs/step on
+ubiquitin in TIP3P against main's 26.2. Every number below is from
+measurement builds of 2917e5a5 on the RTX 5090, none of which is
+committed; nothing in this step measured faster, so the evaluation is
+unchanged.
+
+**By segment.** A measurement build skipped the evaluation of chosen
+classes (the record still loads, prunes and returns zeros). The table
+gives the evaluation kernel's median call over steps 9 to 50, before the
+first refresh, so that the lists are those of one build (µs a call):
+
+| System | All three | WW alone | SW alone | SS alone | None |
+|---|---|---|---|---|---|
+| Ubiquitin TIP3P | 35.7 | 34.4 | 18.6 | 11.8 | 1.3 |
+| Ubiquitin OPC | 35.8 | 34.9 | 18.8 | 11.5 | 1.3 |
+| Large OPC box | 63.8 | 72.9 | — | — | 1.9 |
+
+The segments run concurrently: alone they take 65 µs, together 35.7, so
+SW and SS add 1.3 µs to the WW segment, which sets the kernel's time. The
+base of a record (setup, the reach selection, the prune's test, the
+epilogue) is at most the 1.3 µs of the kernel with no class evaluated.
+The large box has no SW or SS records, so its WW-alone build differs from
+the full one only in the dead branches removed: the same 96 registers,
+2561 against 1836 SASS instructions, and 14 % slower. The scheduling of
+the WW loop by ptxas moves its time by that much on the shape of the code
+alone, which is why a change is accepted only on all three systems in
+both rounds.
+
+**The shape of the lists.** From the inner lists of ubiquitin in TIP3P at
+the first build and after pruning at the end of a run (the OPC lists
+agree within 4 %). A batch is 32 entries of one record, rotated through
+16 turns; a lane-turn computes when the partner's mask has the lane's bit:
+
+| Segment | Records | Entries | Batch fill | Pairs an entry (of 16) | Lanes active a turn |
+|---|---|---|---|---|---|
+| WW, at a build | 2698 | 157,164 | 0.95 | 6.9 | 0.41 |
+| WW, pruned | 2698 | 100,869 | 0.70 | 6.1 | 0.27 |
+| SW, at a build | 790 | 46,614 | 0.96 | 6.1 | 0.37 |
+| SW, pruned | 790 | 25,719 | 0.67 | 5.5 | 0.23 |
+| SS, at a build | 563 | 31,779 | 0.94 | 10.5 | 0.62 |
+| SS, pruned | 563 | 23,418 | 0.77 | 9.6 | 0.46 |
+
+The pruned WW segment computes in 27 % of its lane-turns: a mask density
+of 0.38 (a water within the pruned reach of 6 of the 16 molecules of a
+cluster) times a batch fill of 0.70. The SASS of the WW turn has 265
+instructions (107 FFMA, 42 FADD, 19 shuffles, 9 table loads with their 18
+clamps and 9 cutoff tests), close to the arithmetic of its 9 Coulomb and
+1 Lennard-Jones terms; main's pair loop loads one table entry an atom
+pair. Ubiquitin's WW records nearly all take one or two batches and fit
+in one wave of the 3400 warps resident at 96 registers.
+
+**Probes that measured slower** (median call, µs; 3000 steps):
+
+| Probe | Ubiquitin TIP3P | Ubiquitin OPC | Large OPC box |
+|---|---|---|---|
+| 2917e5a5, 96 registers | 35.0 | 36.1 | 65.4 |
+| `.maxnreg 80` (24 B spilled) | 37.7 | 40.0 | 72.4 |
+| `.maxnreg 72` (48 B) | 38.7 | 42.9 | 80.6 |
+| `.maxnreg 64` (112 B) | 43.0 | 57.2 | 127.4 |
+| 2 warps a record, batches strided | 38.9 | 40.0 | 70.8 |
+| 4 warps a record | 39.2 | 40.3 | 72.1 |
+
+More resident warps, by fewer registers or by sharing a record's batches
+among warps (each slice writing its cluster's forces), make the kernel
+slower on every system: it is not limited by a wave's tail or by its
+occupancy. Packing the half-warps with records of their own, in batches of
+16, would turn 71,952 warp-turns of the pruned WW segment into 61,632 at
+best (−14 %) if every pair of half-records were matched in length, and
+into 75,152 (+4 %) for consecutive records, the only pairing without a
+sort; it was not built.
+
+**Dropped, with the reason:** the per-record base cost (at most 1.3 µs);
+the SW and SS segments for TIP3P (1.3 µs while WW sets the kernel's
+time); 2-word entries (a load a batch, not a turn); the f64 of the search
+(maintenance, 9.7 against main's 19.7). What remains open is where the WW
+turn stalls, the table loads on its chain or the shuffles or issue, and
+main's issue efficiency on the same system: counters requested.
+
+**The extra idle.** All of the 1.9 µs/step more idle than main is in the
+refresh: a build makes 107 launches and 6 blocking readbacks of 16 to 32
+bytes and spans 687 µs, of which 500 are kernels; its 187 µs of gaps are
+3.9 µs/step at the refresh interval of 53 steps, against main's 1.8 in its
+build and refresh. A launch costs the host 1.9 µs, longer than most of
+those kernels.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
