@@ -1468,6 +1468,15 @@ have no SW rows. The 18 exact search, refresh and native fixtures (CPU and GPU,
 orthorhombic and triclinic, with the multi-image small cells of the oracle)
 pass.
 
+The solute-solute class takes the same scan over the solute groups from
+its own row's group on (the general iterator's forward clipping), with its
+ownership and exclusion tests unchanged. Its starting entries are unchanged
+too. Same profile, D1 with SS against D1: the SS search goes from 432 to
+246 us per active launch, 11.9 to 6.7 us/step, and maintenance from 41.4 to
+35.8 us/step on ubiquitin OPC; on ubiquitin TIP3P, against 19bbf459, SW
+goes from 625 to 241 us, SS from 464 to 262, and maintenance from 61.7 to
+37.7 us/step.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,

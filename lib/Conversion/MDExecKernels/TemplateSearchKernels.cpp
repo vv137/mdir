@@ -782,7 +782,7 @@ void mdir::kernels::emitSearchTemplatePairs(OpBuilder &b, Location loc,
                   });
                 };
                 TemplateStageState result;
-                if (searchClass == 1) {
+                if (searchClass != 0) {
                   result = directScan(search, frameState);
                 } else {
                 result = forState(search, loc, lower[0], upper[0], integer(search, loc, 1), frameState,
