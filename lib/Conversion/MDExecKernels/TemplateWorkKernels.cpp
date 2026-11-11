@@ -99,6 +99,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
     unit.alpha = loop.getAlpha().convertToDouble();
     unit.siteForces = unit.forces && mdir::md::getTemplateForceArity(
         loop, arity, 0, loop.getOuts().size()) != arity;
+    unit.speculate = isTemplateBodySpeculatable(loop, kind);
     llvm::append_range(unit.sumTypes, sumTypes);
     auto write = [&](OpBuilder &body, Value unit, ValueRange values) {
       if (values.empty()) return;

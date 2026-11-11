@@ -1,6 +1,9 @@
 // RUN: mdir-opt %s --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-assign-precision=mode=mixed --test-md-exec-template-windows --verify-each | FileCheck %s --implicit-check-not=arith.select
 // A captured scalar remains available inside the site guard. Expensive
-// arithmetic in the admitted straight-line source body stays under it.
+// arithmetic in the admitted straight-line source body stays under it:
+// a transcendental function is outside the select form's precondition
+// (isTemplateBodySpeculatable), which template-execution-speculate.mlir
+// pins with its other negative cases.
 md.particle_set @atoms
 md.tuple_set @water on(@atoms) arity(3) orientation(ordered) disjoint
 md.tuple_set @ww on(@atoms) arity(6) orientation(ordered)
