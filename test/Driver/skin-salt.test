@@ -1,6 +1,7 @@
 # The build in the key of the cache of the skins (D[skin-budget-record]),
 # as `mdir check --json` reports it (`run.skins.cache_key`): its lines name
-# the commit, which getSkinSalt fills, and LLVM; a clean build has no line
+# the commit, which getSkinSalt fills (`unknown` in a tree without git,
+# cmake/BuildInfo.cmake), and LLVM; a clean build has no line
 # of the image, a dirty one has it; an LLVM option of the command line
 # changes the key. MDIR_SKIN_SALT_DIRTY_OVERRIDE stands for the state of the
 # build, which is that of the tree the suite was built from. Python against
@@ -23,10 +24,10 @@
 
 # CLEAN: {{^}}mdir skins 2{{$}}
 # CLEAN-NEXT: {{^}}mdir-skin-salt 1{{$}}
-# CLEAN-NEXT: {{^}}mdir {{[0-9.]+}} commit {{[0-9a-f]+}} dirty no{{$}}
+# CLEAN-NEXT: {{^}}mdir {{[0-9.]+}} commit {{([0-9a-f]+|unknown)}} dirty no{{$}}
 # CLEAN-NEXT: {{^}}llvm {{[0-9.]+}} {{[0-9a-z]+}}{{$}}
 # OPTION-NEXT: {{^}}cl-opt nvptx-prec-divf32 x1: -nvptx-prec-divf32=0{{$}}
 # DIRTY: {{^}}mdir-skin-salt 1{{$}}
 # DIRTY-NEXT: {{^}}image {{(build-id|file) [0-9a-f]+}}{{$}}
-# DIRTY-NEXT: {{^}}mdir {{[0-9.]+}} commit {{[0-9a-f]+}} dirty yes{{$}}
+# DIRTY-NEXT: {{^}}mdir {{[0-9.]+}} commit {{([0-9a-f]+|unknown)}} dirty yes{{$}}
 # OPTION-KEY: mdir -> mdir different

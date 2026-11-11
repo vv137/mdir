@@ -43,8 +43,10 @@ DEFECTS = {
     "no-format": lambda: entry.pop("format"),
     "format-1": lambda: entry.update(format=1),
     "other-key": lambda: entry.update(key=key + "another line\n"),
+    "no-outer": lambda: entry.pop("pairlist_distance_angstrom"),
     "no-reaches": lambda: entry.pop("pruned_distance_angstrom"),
     "reach-zero": lambda: entry.update(pairlist_distance_angstrom=0.0),
+    "inner-negative": lambda: entry.update(pruned_distance_angstrom=-1.0),
     "no-search": lambda: entry.pop("search"),
     "no-budget": lambda: search.pop("budget"),
     "budget-2": lambda: search.update(budget=2),
@@ -56,6 +58,18 @@ DEFECTS = {
     "candidate-not-object": lambda: search["candidates"].__setitem__(1, 13.5),
     "candidate-no-reach": lambda: search["candidates"][1].pop("pairlist_distance_angstrom"),
     "not-chosen": lambda: entry.update(pruned_distance_angstrom=9.7),
+    "no-basis": lambda: search.pop("budget_basis"),
+    "basis-no-policy": lambda: search["budget_basis"].pop("policy"),
+    "basis-no-share": lambda: search["budget_basis"].pop("share"),
+    "candidate-no-pruned": lambda: search["candidates"][1].pop("pruned_distance_angstrom"),
+    "candidate-pruned-text": lambda: search["candidates"][1].update(pruned_distance_angstrom="9.5"),
+    "candidate-no-predicted": lambda: search["candidates"][1].pop("predicted_relative"),
+    "candidate-no-compile": lambda: search["candidates"][1].pop("compile_seconds"),
+    "candidate-no-run": lambda: search["candidates"][1].pop("run_seconds"),
+    # One list: a candidate's pruned reach of null is 0, which the chosen
+    # pruned reach of 0 matches.
+    "one-list": lambda: (entry.update(pruned_distance_angstrom=0.0),
+                         search["candidates"][0].update(pruned_distance_angstrom=None)),
 }
 DEFECTS[case]()
 text = json.dumps(entry, indent=2)

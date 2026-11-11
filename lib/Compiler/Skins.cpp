@@ -356,10 +356,15 @@ struct CacheEntry {
 };
 
 /// Reads the entry of the cache at `path` for `key`. An entry is taken
-/// whole or not at all: one that does not parse, is of another format,
-/// holds another key, or lacks or has damaged reaches, budget, candidates,
-/// reason, or seconds, or the chosen pair among its candidates, is refused,
-/// and the key searches as if there were none.
+/// whole or not at all, and every field that a run reads or copies into its
+/// manifest is checked: one that does not parse, is of another format,
+/// holds another key, or lacks or has invalid reaches, budget, basis of the
+/// budget (its six fields), candidates (each with its two reaches, the
+/// pruned one a number or null, its prediction, and its seconds of
+/// compilation and of steps), reason, or seconds, or the chosen pair among
+/// its candidates, is refused, and the key searches as if there were none.
+/// A candidate's time, error, intervals, or failure, which the manifest's
+/// schema does not require, are copied as they are.
 CacheEntry readCache(StringRef path, StringRef key) {
   CacheEntry entry;
   auto buffer = llvm::MemoryBuffer::getFile(path);
@@ -388,10 +393,15 @@ CacheEntry readCache(StringRef path, StringRef key) {
     return refuse("it holds another key");
   auto outer = object->getNumber("pairlist_distance_angstrom");
   auto inner = object->getNumber("pruned_distance_angstrom");
-  if (!outer || !inner)
-    return refuse("it lacks the chosen reaches");
-  if (!(*outer > 0.0) || *inner < 0.0)
-    return refuse("its chosen reaches are not positive");
+  if (!outer)
+    return refuse("it lacks the chosen reach of the lists");
+  if (!inner)
+    return refuse("it lacks the chosen pruned reach");
+  // The outer reach is positive; the pruned one is 0 for one list.
+  if (!(*outer > 0.0))
+    return refuse("its chosen reach of the lists is not positive");
+  if (*inner < 0.0)
+    return refuse("its chosen pruned reach is negative");
   const llvm::json::Object *search = object->getObject("search");
   if (!search)
     return refuse("it lacks the search");
@@ -409,6 +419,17 @@ CacheEntry readCache(StringRef path, StringRef key) {
     return refuse("its search lacks its reason");
   if (!search->getNumber("seconds"))
     return refuse("its search lacks its seconds");
+  // The basis of the budget, which a run that reuses the entry copies into
+  // its manifest (docs/run-manifest.schema.json).
+  const llvm::json::Object *basis = search->getObject("budget_basis");
+  if (!basis)
+    return refuse("its search lacks the basis of its budget");
+  if (!basis->getString("policy"))
+    return refuse("the basis of its budget lacks its policy");
+  for (const char *field :
+       {"share", "most", "run_seconds", "candidate_seconds", "compile_seconds"})
+    if (!basis->getNumber(field))
+      return refuse(llvm::Twine("the basis of its budget lacks its ") + field);
   bool chosen = false;
   for (const llvm::json::Value &value : *candidates) {
     const llvm::json::Object *candidate = value.getAsObject();
@@ -417,9 +438,16 @@ CacheEntry readCache(StringRef path, StringRef key) {
     auto o = candidate->getNumber("pairlist_distance_angstrom");
     if (!o)
       return refuse("a candidate lacks its reach");
-    auto i = candidate->getNumber("pruned_distance_angstrom");
-    chosen |= std::fabs(*o - *outer) < 1e-9 &&
-              std::fabs(i.value_or(0.0) - *inner) < 1e-9;
+    // The pruned reach is a number, or null for one list, which is 0.
+    const llvm::json::Value *pruned = candidate->get("pruned_distance_angstrom");
+    if (!pruned || (!pruned->getAsNumber() && !pruned->getAsNull()))
+      return refuse("a candidate lacks its pruned reach");
+    double i = pruned->getAsNumber().value_or(0.0);
+    for (const char *field :
+         {"predicted_relative", "compile_seconds", "run_seconds"})
+      if (!candidate->getNumber(field))
+        return refuse(llvm::Twine("a candidate lacks its ") + field);
+    chosen |= std::fabs(*o - *outer) < 1e-9 && std::fabs(i - *inner) < 1e-9;
   }
   if (!chosen)
     return refuse("the chosen reaches are not among its candidates");
