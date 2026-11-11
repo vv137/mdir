@@ -15,6 +15,7 @@ p.add_argument('mode', choices=['generate', 'check'])
 p.add_argument('program', type=pathlib.Path)
 p.add_argument('reference', type=pathlib.Path)
 p.add_argument('--triclinic', action='store_true')
+p.add_argument('--point-offset', type=float, default=0.0)
 a = p.parse_args()
 if a.mode == 'check':
     got = [int(v) for v in a.program.read_text().split()]
@@ -100,10 +101,15 @@ for case, (built, constrained) in enumerate([(True, False), (True, True),
                 positions.append([world[k] + (d if k == 0 else 0.) + image_shift[k]
                                   for k in range(3)])
         whole.extend(local)
-    fractions = [solve(x) for x in anchors]
-    outer = [solve([x[0] - (0. if u % 2 == 0 else .5), x[1], x[2]])
+    # With the point offset t, every point and reference is the fraction
+    # plus t, and the displacement tests compare the same differences.
+    t = a.point_offset
+    def point(x):
+        return [f + t for f in solve(x)]
+    fractions = [point(x) for x in anchors]
+    outer = [point([x[0] - (0. if u % 2 == 0 else .5), x[1], x[2]])
              for u, x in enumerate(anchors)]
-    inner = [solve([x[0] - (0. if u % 2 else .5), x[1], x[2]])
+    inner = [point([x[0] - (0. if u % 2 else .5), x[1], x[2]])
              for u, x in enumerate(anchors)]
     packed = whole if built else [[-7.] * 3 for _ in range(8)]
     current = fractions if built else [[-9.] * 3 for _ in range(4)]

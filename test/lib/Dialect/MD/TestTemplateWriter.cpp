@@ -14,6 +14,10 @@ using namespace mdir::kernels;
 namespace {
 struct TestTemplateWriter : PassWrapper<TestTemplateWriter, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestTemplateWriter)
+  TestTemplateWriter() = default;
+  TestTemplateWriter(const TestTemplateWriter &pass) : PassWrapper(pass) {}
+  Option<double> pointOffset{*this, "point-offset",
+      llvm::cl::desc("The point offset of the production writer (1/2)"), llvm::cl::init(0.0)};
   StringRef getArgument() const final { return "test-md-template-writer"; }
   StringRef getDescription() const final { return "Outlines final-SSA template packing and validity"; }
   void getDependentDialects(DialectRegistry &r) const override {
@@ -35,7 +39,7 @@ struct TestTemplateWriter : PassWrapper<TestTemplateWriter, OperationPass<Module
     v.innerReference = f.getArgument(5); v.waters = f.getArgument(7);
     v.cell = f.getArgument(8); v.inverse = createInverse(b, loc, v.cell);
     v.built = f.getArgument(9); v.constrained = f.getArgument(10);
-    v.hasSite = true; v.alpha = .75; v.extent = .25;
+    v.hasSite = true; v.alpha = .75; v.extent = .25; v.pointOffset = pointOffset;
     for (int64_t g = 0; g != 2; ++g) {
       v.outerLimits[g] = vector::ExtractOp::create(b, loc, f.getArgument(11), g);
       v.innerLimits[g] = vector::ExtractOp::create(b, loc, f.getArgument(11), g + 2);
