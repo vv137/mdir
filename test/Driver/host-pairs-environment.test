@@ -5,7 +5,8 @@
 #    unknown name, or `native`, is an error of the input, which names it.
 # 2. The width of a named CPU counts every feature that its own imply:
 #    x86-64 is SSE2 (128 bits), x86-64-v3 AVX2 (256), x86-64-v4 AVX-512 (512),
-#    as haswell and skylake-avx512 are.
+#    as haswell and skylake-avx512 are; sandybridge and corei7-avx have AVX
+#    itself, which no other feature of theirs implies (256).
 # 3. The machine that compiles the host code is that CPU's: `mdir doctor`
 #    reports the CPU and the AVX features of compiler::createHostMachine, so
 #    x86-64 reaches the code generator without AVX.
@@ -13,7 +14,13 @@
 #    from 1 to 64. Anything else, including a value that would splice text
 #    into the pipeline, is an error of the input from `mdir emit`, `mdir
 #    run`, and Python, not a failure of a pass.
-# 5. The GPU target runs no chooser of the host's lanes.
+# 5. The GPU target runs no chooser of the host's lanes, and a program for a
+#    GPU does not read MDIR_HOST_PAIRS: a bad value refuses programs for the
+#    CPU alone. `mdir doctor` reports the host code whatever MDIR_HOST_PAIRS
+#    says, and its check of the CPU, which runs a program for the CPU, fails
+#    with the error. MDIR_HOST_CPU, which the host code of every program
+#    reads, refuses a GPU program too.
+# The Python front end: host-pairs-environment-python.test.
 #
 # REQUIRES: host-x86
 #
@@ -30,10 +37,12 @@
 # RUN: env MDIR_HOST_CPU=x86-64-v4 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=V4
 # RUN: env MDIR_HOST_CPU=haswell mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=HASWELL
 # RUN: env MDIR_HOST_CPU=skylake-avx512 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SKYLAKE
+# RUN: env MDIR_HOST_CPU=sandybridge mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SANDY
+# RUN: env MDIR_HOST_CPU=corei7-avx mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=COREI7
 #
-# RUN: env MDIR_HOST_CPU=x86-64 mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-SSE2
-# RUN: env MDIR_HOST_CPU=x86-64-v3 mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-V3
-# RUN: not env MDIR_HOST_CPU=bogus mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-BAD
+# RUN: env TMPDIR=%t MDIR_HOST_CPU=x86-64 mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-SSE2
+# RUN: env TMPDIR=%t MDIR_HOST_CPU=x86-64-v3 mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-V3
+# RUN: not env TMPDIR=%t MDIR_HOST_CPU=bogus mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-BAD
 #
 # RUN: not env MDIR_HOST_PAIRS=fast mdir emit run.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=PAIRS -DVALUE=fast
 # RUN: not env MDIR_HOST_PAIRS=lanes:3 mdir emit run.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=PAIRS -DVALUE=lanes:3
@@ -47,6 +56,9 @@
 # RUN: not ls %t/*reproducer*
 #
 # RUN: mdir emit gpu.toml --stage=pipeline | FileCheck %s --check-prefix=GPU
+# RUN: env MDIR_HOST_PAIRS=fast mdir emit gpu.toml --stage=pipeline | FileCheck %s --check-prefix=GPU
+# RUN: not env MDIR_HOST_CPU=bogus mdir emit gpu.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=BADCPU
+# RUN: not env TMPDIR=%t MDIR_HOST_PAIRS=fast mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-PAIRS
 
 # BADCPU: MDIR_HOST_CPU='bogus' is not a 64-bit CPU that LLVM's X86 back end knows, such as x86-64, x86-64-v3, or znver3
 # NATIVE: MDIR_HOST_CPU='native' is not a 64-bit CPU
@@ -55,12 +67,16 @@
 # V4: md-exec-choose-host-pairs{mode=scalar cpu=x86-64-v4 vector-bits=512}
 # HASWELL: md-exec-choose-host-pairs{mode=scalar cpu=haswell vector-bits=256}
 # SKYLAKE: md-exec-choose-host-pairs{mode=scalar cpu=skylake-avx512 vector-bits=512}
+# SANDY: md-exec-choose-host-pairs{mode=scalar cpu=sandybridge vector-bits=256}
+# COREI7: md-exec-choose-host-pairs{mode=scalar cpu=corei7-avx vector-bits=256}
 # DOCTOR-SSE2: host code: cpu x86-64, avx no, avx512f no
 # DOCTOR-V3: host code: cpu x86-64-v3, avx yes, avx512f no
 # DOCTOR-BAD: FAIL host code: MDIR_HOST_CPU='bogus' is not a 64-bit CPU
 # PAIRS: MDIR_HOST_PAIRS='[[VALUE]]' is not scalar, lanes, or lanes:W with W a power of two from 1 to 64
 # PAIRS-NOT: defect
 # SIXTEEN: md-exec-choose-host-pairs{mode=lanes width=16 cpu=
+# DOCTOR-PAIRS: host code: cpu
+# DOCTOR-PAIRS: FAIL cpu: run exited with status 1
 # GPU-NOT: choose-host-pairs
 # GPU: convert-md-exec-to-gpu
 

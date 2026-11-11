@@ -1,23 +1,31 @@
 # The lanes of the host's pair rows against the scalar row on a dense
 # system, at the bound of the order of a sum (D[host-pair-vector];
 # Inputs/host_pair_lanes_bound.py says how the bound is made). The dipeptide
-# in water with PME: ten types, the exclusions of its topology, rows of 83 to
-# 275 candidates, most of them not a multiple of the width, so that the
-# padding of a tail repeats a candidate that contributes. lanes(8) and
+# in water with PME: ten types, the exclusions of its topology, rows of the
+# list of 118 to 371 candidates, 1,017 of 1,168 not a multiple of 8, so that
+# the padding of a tail repeats a candidate. The loops over pairs take
+# host(lanes(W)), checked from the remarks of the chooser. lanes(8) and
 # lanes(4) at step 0 in double and mixed precision: every force component
-# and the potential within the bound. A tail whose padding is not masked
-# gives ratios of 1e10; a skipped or a doubled candidate, a gather of the
-# wrong lane, or a wrong reduction would do as much.
+# and the potential within the bound, from the terms of the rows alone. A
+# tail whose padding is not masked gives ratios of 1e10; a skipped, a
+# doubled, or a misgathered candidate is a term outside the order of the
+# sum, which the bound leaves out. The order of the lanes' combination is
+# pinned by host-pair-lanes-w8.mlir, not here: any order of the same terms
+# is within the bound.
 #
 # REQUIRES: python-api, parmed
 #
-# RUN: %mdir_python %S/Inputs/host_pair_lanes_bound.py %S/Inputs/dipeptide Double 8 4 | FileCheck %s --check-prefix=DOUBLE
-# RUN: %mdir_python %S/Inputs/host_pair_lanes_bound.py %S/Inputs/dipeptide Mixed 8 4 | FileCheck %s --check-prefix=MIXED
+# RUN: %mdir_python %S/Inputs/host_pair_lanes_bound.py %S/Inputs/dipeptide mdir-opt Double 8 4 | FileCheck %s --check-prefix=DOUBLE
+# RUN: %mdir_python %S/Inputs/host_pair_lanes_bound.py %S/Inputs/dipeptide mdir-opt Mixed 8 4 | FileCheck %s --check-prefix=MIXED
 
-# DOUBLE: rows: 83 to 275 candidates within the cutoff
+# DOUBLE: rows of the list (within the reach): 118 to 371 candidates; 1017 of 1168 not a multiple of 8
+# DOUBLE: lanes(8): 3 loops over pairs take host(lanes(8)), none keeps the scalar row
 # DOUBLE: Double lanes(8): {{.*}}: within the bound
+# DOUBLE: lanes(4): 3 loops over pairs take host(lanes(4)), none keeps the scalar row
 # DOUBLE: Double lanes(4): {{.*}}: within the bound
 # DOUBLE: all within the bound
+# MIXED: lanes(8): 3 loops over pairs take host(lanes(8)), none keeps the scalar row
 # MIXED: Mixed lanes(8): {{.*}}: within the bound
+# MIXED: lanes(4): 3 loops over pairs take host(lanes(4)), none keeps the scalar row
 # MIXED: Mixed lanes(4): {{.*}}: within the bound
 # MIXED: all within the bound

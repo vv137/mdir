@@ -70,8 +70,9 @@ void mdir::compiler::useCudaToolkit() {
 llvm::Expected<std::string>
 mdir::compiler::getGpuOptions(const Control &control, int64_t device,
                               bool cache) {
-  // The host's variables, which every program reads (D[host-pair-vector]).
-  if (auto error = checkHostEnvironment())
+  // The host's variables (D[host-pair-vector]): every program's host code
+  // reads MDIR_HOST_CPU, a program for the CPU MDIR_HOST_PAIRS as well.
+  if (auto error = checkHostEnvironment(control.target == Target::CPU))
     return std::move(error);
   if (control.target != Target::GPU)
     return std::string();
@@ -162,16 +163,18 @@ struct HostTarget {
 };
 } // namespace
 
-/// Reads and checks `MDIR_HOST_CPU` and `MDIR_HOST_PAIRS`. The CPU and its
+/// Reads and checks `MDIR_HOST_CPU`, and with `readPairs` `MDIR_HOST_PAIRS`,
+/// which only a program for the CPU reads. The CPU and its
 /// features are read as `JITTargetMachineBuilder::detectHost` reads them,
 /// without a machine: the pipeline of a Python program is built before its
 /// simulation initializes the target. A CPU that `MDIR_HOST_CPU` names has
 /// the features of its name and every feature they imply (`x86-64-v3` has
-/// AVX2, and so AVX).
-static llvm::Expected<HostTarget> getHostTarget() {
+/// AVX2, and so AVX; `sandybridge` has AVX itself).
+static llvm::Expected<HostTarget> getHostTarget(bool readPairs) {
   HostTarget host;
-  StringRef chosen =
-      std::getenv("MDIR_HOST_PAIRS") ? std::getenv("MDIR_HOST_PAIRS") : "";
+  StringRef chosen = readPairs && std::getenv("MDIR_HOST_PAIRS")
+                         ? std::getenv("MDIR_HOST_PAIRS")
+                         : "";
   if (chosen == "scalar" || chosen == "lanes") {
     host.pairs = ("mode=" + chosen + " ").str();
   } else if (!chosen.empty()) {
@@ -200,8 +203,10 @@ static llvm::Expected<HostTarget> getHostTarget() {
       llvm::SmallVector<llvm::StringRef> own;
       llvm::X86::getFeaturesForCPU(host.cpu, own);
       llvm::StringMap<bool> features;
-      for (llvm::StringRef feature : own)
+      for (llvm::StringRef feature : own) {
+        features[feature] = true;
         llvm::X86::updateImpliedFeatures(feature, true, features);
+      }
       avx = features.lookup("avx");
       avx512 = features.lookup("avx512f");
     }
@@ -214,8 +219,8 @@ static llvm::Expected<HostTarget> getHostTarget() {
   return host;
 }
 
-llvm::Error compiler::checkHostEnvironment() {
-  auto host = getHostTarget();
+llvm::Error compiler::checkHostEnvironment(bool cpuProgram) {
+  auto host = getHostTarget(/*readPairs=*/cpuProgram);
   return host ? llvm::Error::success() : host.takeError();
 }
 
@@ -225,7 +230,7 @@ llvm::Error compiler::checkHostEnvironment() {
 /// for a narrower host than this one (D[host-pair-vector]). The compile
 /// cache keys a host object by this machine's CPU and features.
 static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
-  auto host = getHostTarget();
+  auto host = getHostTarget(/*readPairs=*/false);
   if (!host)
     return host.takeError();
   auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
@@ -246,7 +251,7 @@ static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
 /// the variables first (`checkHostEnvironment`); here a value that it
 /// refused leaves the options empty.
 static std::string getHostPairsOptions() {
-  auto host = getHostTarget();
+  auto host = getHostTarget(/*readPairs=*/true);
   if (!host) {
     llvm::consumeError(host.takeError());
     return "";

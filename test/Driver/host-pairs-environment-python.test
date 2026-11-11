@@ -1,0 +1,36 @@
+# The host's variables in the Python front end (D[host-pair-vector]): a bad
+# MDIR_HOST_PAIRS or MDIR_HOST_CPU is a CompileError of mdir.compile, as of
+# `mdir run` (host-pairs-environment.test), and a good one reaches the
+# pipeline of the program.
+#
+# REQUIRES: python-api, host-x86
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: env MDIR_HOST_PAIRS=fast %mdir_python %t/compile.py %S/Inputs/dipeptide | FileCheck %s --check-prefix=PAIRS
+# RUN: env MDIR_HOST_PAIRS=lanes:3 %mdir_python %t/compile.py %S/Inputs/dipeptide | FileCheck %s --check-prefix=PAIRS3
+# RUN: env MDIR_HOST_CPU=bogus %mdir_python %t/compile.py %S/Inputs/dipeptide | FileCheck %s --check-prefix=CPU
+# RUN: env MDIR_HOST_PAIRS=lanes:8 MDIR_HOST_CPU=x86-64 %mdir_python %t/compile.py %S/Inputs/dipeptide | FileCheck %s --check-prefix=GOOD
+
+# PAIRS: CompileError: MDIR_HOST_PAIRS='fast' is not scalar, lanes, or lanes:W with W a power of two from 1 to 64
+# PAIRS3: CompileError: MDIR_HOST_PAIRS='lanes:3' is not scalar, lanes, or lanes:W
+# CPU: CompileError: MDIR_HOST_CPU='bogus' is not a 64-bit CPU that LLVM's X86 back end knows
+# GOOD: md-exec-choose-host-pairs{mode=lanes width=8 cpu=x86-64 vector-bits=128}
+
+#--- compile.py
+import os
+import re
+import sys
+
+import mdir
+
+root = sys.argv[1]
+loaded = mdir.load_amber(os.path.join(root, "dipeptide.prmtop"), os.path.join(root, "dipeptide.inpcrd"))
+execution = mdir.Execution()
+execution.target = mdir.Target.CPU
+try:
+    program = mdir.compile(loaded.make_system(), loaded.make_state(), mdir.Integrator(),
+                           mdir.Ensemble(), execution, mdir.Schedule())
+except Exception as error:
+    print(f"{type(error).__name__}: {error}")
+else:
+    print(re.search(r"md-exec-choose-host-pairs\{[^}]*\}", program.pipeline).group(0))
