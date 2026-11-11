@@ -15,7 +15,7 @@
 # manifest hold the budget and the candidates; the second run, with the
 # compile cache that the first one filled, reuses the choice and says so,
 # with the first one's candidates, rather than searching again. The key
-# holds the salt of the compile cache (another build misses), and an entry
+# names the build (MDIR_COMPILE_CACHE_SALT_OVERRIDE, another build, misses), and an entry
 # of format 1, one that is cut short, one without its budget, or one whose
 # choice is not among its candidates is refused (`mdir check` notes it).
 # A run that affords fewer than 3 candidates (MDIR_SKIN_SEARCH=budget, 100
@@ -108,7 +108,7 @@
 # FIRST: MDIR: the inner lists were pruned
 # CHECKED: mdrt: the inner lists were checked at {{[0-9]+}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
 # MANIFEST: measured measured measured True True True 7 always
-# ENTRY: 2 ['mdir skins 2', 'mdir-salt 1'] 7 {{[3-7]}}
+# ENTRY: 2 ['mdir skins 2', 'mdir-skin-salt 1'] 7 {{[3-7]}}
 # CACHED: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (cached: the choice of an earlier run of the same key; reused, not searched: the search of a budget of 7 recorded {{[3-7]}} candidates in {{[0-9.]+}} s; from '{{.*}}cache/{{[0-9a-f]+}}.json')
 # REUSED: cached False 0 True True True True True
 # CONTINUED: MDIR: continues the run after step 100
