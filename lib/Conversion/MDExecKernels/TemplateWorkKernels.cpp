@@ -2,13 +2,18 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Runtime/TemplatePairsABI.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/DenseSet.h"
 
 using namespace mlir;
 using namespace mdir::kernels;
@@ -91,6 +96,39 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
                                         memberOf(body, unit, site)));
       return result;
     };
+    // A table lookup at constant types (a water-water LJ coefficient, for
+    // example) and the pure arithmetic that only it, constants, and captures
+    // feed are the same for every pair of the class: take them once per
+    // unit, before the rotation, instead of under every turn's guard. A
+    // lookup indexed by loaded parameters or by the geometry stays in the
+    // pair body, and so does anything with a region or a memory effect.
+    IRMapping invariant = captures;
+    {
+      llvm::DenseSet<Value> hoisted;
+      Region *body = source.getParent();
+      auto available = [&](Value value) {
+        return hoisted.contains(value) || !body->isAncestor(value.getParentRegion());
+      };
+      for (Operation &op : source.without_terminator()) {
+        if (op.getNumRegions() || !llvm::all_of(op.getOperands(), available)) continue;
+        if (op.getNumOperands() == 0 && matchPattern(&op, m_Constant())) {
+          at.clone(op, invariant);
+          hoisted.insert(op.result_begin(), op.result_end());
+          continue;
+        }
+        bool lookup = false;
+        if (auto table = dyn_cast<mdir::md::LookupOp>(op))
+          lookup = llvm::all_of(table.getIndices(),
+              [](Value index) { return matchPattern(index, m_Constant()); });
+        bool arithmetic = isa<arith::ArithDialect, math::MathDialect>(op.getDialect()) &&
+                          isPure(&op) && !matchPattern(&op, m_Constant());
+        bool fed = llvm::any_of(op.getOperands(),
+            [&](Value value) { return hoisted.contains(value); });
+        if (!lookup && !(arithmetic && fed)) continue;
+        at.clone(op, invariant);
+        hoisted.insert(op.result_begin(), op.result_end());
+      }
+    }
     TemplateUnit unit{static_cast<TemplatePairClass>(kind), lane, begin, end, valid};
     unit.first = loadFrame(at, safeFirst, firstSize);
     unit.parameters = loadParameters(at, safeFirst, firstSize);
@@ -133,7 +171,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
           return partner;
         }, [&](OpBuilder &body, ValueRange coordinates, ValueRange firstParameters,
                 ValueRange secondParameters, ValueRange sites) {
-          IRMapping mapping = captures;
+          IRMapping mapping = invariant;
           unsigned coordinateCount = kind == 0 ? 5 : kind == 1 ? 3 : 1;
           mapping.map(source.getArguments().take_front(coordinateCount), coordinates);
           for (unsigned input = 0; input != loop.getIns().size(); ++input) {
