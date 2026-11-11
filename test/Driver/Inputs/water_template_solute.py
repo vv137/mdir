@@ -9,9 +9,14 @@ across a face of the cell, and wraps every atom into the cell on its own, as
 a GROMACS .gro file wrapped per atom is: that bond and the waters on the
 faces are split across the cell. --stretch lengthens that bond by a fifth,
 beyond the solute units' radius, as a minimization with free X-H bonds
-can leave it before dynamics with constrained ones.
+can leave it before dynamics with constrained ones. --pairlist=D sets
+'pairlist_distance' (Å, 10 by default) and --pressure=P the pressure of NPT
+(bar, 1 by default) with the barostat's time constant 0.1 ps instead of 2:
+the run-time check of the covering reach against the current cell takes
+them to cross half its least face width.
 
     water_template_solute.py INPUTS WORK MODEL ENSEMBLE STEPS [--loose | --split | --stretch]
+        [--pairlist=D] [--pressure=P]
 """
 from pathlib import Path
 import math
@@ -19,11 +24,17 @@ import sys
 
 inputs, work = (Path(a).resolve() for a in sys.argv[1:3])
 model, ensemble, steps = sys.argv[3], sys.argv[4], int(sys.argv[5])
-loose = sys.argv[6:] == ['--loose']
-split = sys.argv[6:] == ['--split']
-stretch = sys.argv[6:] == ['--stretch']
+options = dict(a[2:].split('=', 1) for a in sys.argv[6:] if '=' in a)
+flags = [a for a in sys.argv[6:] if '=' not in a]
+assert set(options) <= {'pairlist', 'pressure'}, options
+pairlist = float(options.get('pairlist', 10.0))
+pressure = options.get('pressure')
+loose = flags == ['--loose']
+split = flags == ['--split']
+stretch = flags == ['--stretch']
 assert model in ('OPC', 'TIP3P') and ensemble in ('NVE', 'NVT', 'NPT')
-assert len(sys.argv) in (6, 7) and (len(sys.argv) == 6 or loose or split or stretch)
+assert len(flags) <= 1 and (not flags or loose or split or stretch)
+assert pressure is None or ensemble == 'NPT'
 files = (inputs / 'opc' / 'opc', ) if model == 'OPC' else (inputs / 'dipeptide' / 'dipeptide', )
 coordinates = f'{files[0]}.inpcrd'
 if split or stretch:
@@ -66,10 +77,10 @@ time_constant = 1.0
 interval = 10
 '''
 if ensemble == 'NPT':
-    coupling += '''
+    coupling += f'''
 [barostat]
 method = "C-RESCALE"
-time_constant = 2.0
+time_constant = {0.1 if pressure else 2.0}
 interval = 10
 '''
 (work / 'control.toml').write_text(f'''
@@ -80,7 +91,7 @@ coordinates = "{coordinates}"
 energy_interval = {max(1, steps // 10)}
 [energy]
 cutoff = 8.0
-pairlist_distance = 10.0
+pairlist_distance = {pairlist}
 pruned_distance = 8.6
 electrostatics = "PME"
 [dynamics]
@@ -90,7 +101,7 @@ steps = {steps}
 [ensemble]
 ensemble = "{ensemble}"
 temperature = 300.0
-{'pressure = 1.0' if ensemble == 'NPT' else ''}
+{f'pressure = {pressure or 1.0}' if ensemble == 'NPT' else ''}
 [constraints]
 rigid_water = true
 hydrogen_bonds = {'false' if loose else 'true'}

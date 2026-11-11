@@ -4,11 +4,11 @@
 # RUN: rm -f %t.input.mlir %t.reference %t.fused-gpu.mlir %t.fused-snapshot.mlir %t.mlir %t.standalone-gpu.mlir %t.standalone-snapshot.mlir %t.standalone.mlir %t.standalone.records %t.records %t.memcheck %t.initcheck %t.racecheck %t.synccheck
 # RUN: %python %S/../Integration/Inputs/template_integration_publication.py %t.input.mlir %t.reference --across --snapshot
 # The SAME marked module is lowered once standalone and once fused.
-# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=fuse-integration=false > %t.standalone-gpu.mlir
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra '--convert-md-exec-to-gpu=fuse-integration=false check-template-reach=false' > %t.standalone-gpu.mlir
 # RUN: %python %S/../Integration/Inputs/template_publication_snapshot.py instrument %t.standalone-gpu.mlir %t.standalone-snapshot.mlir --expect-publications unfused
 # RUN: mlir-opt %t.standalone-snapshot.mlir %lower_gpu_to_llvm > %t.standalone.mlir
 # RUN: mlir-runner %t.standalone.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.standalone.records
-# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu > %t.fused-gpu.mlir
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false > %t.fused-gpu.mlir
 # RUN: %python %S/../Integration/Inputs/template_publication_snapshot.py instrument %t.fused-gpu.mlir %t.fused-snapshot.mlir --expect-publications fused
 # RUN: mlir-opt %t.fused-snapshot.mlir %lower_gpu_to_llvm > %t.mlir
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 --log-file %t.memcheck mlir-runner %t.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records

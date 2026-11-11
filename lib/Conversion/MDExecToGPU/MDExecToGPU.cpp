@@ -282,6 +282,9 @@ public:
   /// Whether each template evaluation calls the runtime's coverage check
   /// (`check-template-coverage`, D[rigid-water-template]).
   bool checkTemplateCoverage = false;
+  /// Whether a build of a template list checks its covering reach against
+  /// the current cell (check-template-reach).
+  bool checkTemplateReach = true;
   /// Whether the first loop over pairs after a refresh of a dual list, at
   /// the same positions and in the same cell, prunes the inner list in its
   /// own kernel, a warp a group, where the refresh prunes, from
@@ -6476,6 +6479,41 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
           arith::SelectOp::create(cold, loc, constrained, radius, grown),
           state.anchorExtent, ValueRange{});
     }
+    // The covering reach against the current cell, with the extent and the
+    // radius this build holds: the cutoff plus the skin plus twice the
+    // larger of the two, the reach of the selection, must be at most half
+    // the least face width. A listed image within the reach R of a pair
+    // then leaves every other image at least L - R >= R away; between
+    // builds the validity test keeps sigma_min R_built - 2d above the
+    // cutoff, so no second image comes within it before the next build,
+    // which checks again. A barostat's cell and a widened input are thus
+    // checked where the cell is read anyway, once per build. The bound
+    // keeps the route's pairs those of the general path (one image a
+    // pair); the kernels themselves take every image, which the IR
+    // fixtures beyond it test with check-template-reach=false.
+    if (checkTemplateReach) {
+      Value widest = arith::MaximumFOp::create(cold, loc,
+          memref::LoadOp::create(cold, loc, state.extent, ValueRange{}),
+          memref::LoadOp::create(cold, loc, state.anchorExtent, ValueRange{}));
+      Value reach = arith::AddFOp::create(cold, loc,
+          real(cold, op.getCutoff().convertToDouble() + op.getSkin().convertToDouble()),
+          arith::MulFOp::create(cold, loc, real(cold, 2), widest));
+      Value widths = isTriclinic(cell) ? emitFaceWidths(cold, loc, cell) : cell;
+      Value least = vector::ExtractOp::create(cold, loc, widths, 0);
+      for (int64_t axis = 1; axis != 3; ++axis)
+        least = arith::MinimumFOp::create(cold, loc, least,
+            vector::ExtractOp::create(cold, loc, widths, axis));
+      Value half = arith::MulFOp::create(cold, loc, real(cold, 0.5), least);
+      Value exceeds = arith::CmpFOp::create(cold, loc, arith::CmpFPredicate::UGT, reach, half);
+      scf::IfOp::create(cold, loc, exceeds, [&](OpBuilder &stop, Location) {
+        func::CallOp::create(stop, loc,
+            getOrDeclare("mdrtTemplatePairsStopReach",
+                stop.getFunctionType({stop.getF64Type(), stop.getF64Type(),
+                                      stop.getF64Type()}, {})),
+            ValueRange{reach, widest, half});
+        scf::YieldOp::create(stop, loc);
+      });
+    }
     // Candidate-only padding covers f32 frame geometry, as in the legacy
     // mixed route. Neither the source site cutoff nor its arithmetic is
     // widened. The validity margins use these same actual class reaches.
@@ -10218,6 +10256,7 @@ public:
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
     lowering.checkTemplateCoverage = checkTemplateCoverage;
+    lowering.checkTemplateReach = checkTemplateReach;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;

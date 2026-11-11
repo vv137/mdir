@@ -115,7 +115,9 @@ programs retain the general path, with a named refusal for `ON`, and so
 does a system whose solute hydrogens are not all held by constraints, or
 whose covering reach (the pairlist distance plus twice the larger of the
 water's covering extent and the solute units' radius) exceeds half the
-least face width of the input cell.
+least face width of the input cell. Every build of the lists checks the
+bound again with the current cell (a barostat's) and the extent and radius
+that build holds; beyond it the run stops, naming both lengths.
 Its [glossary](decisions/rigid-water-template.md#glossary) defines the
 class-segmented pair list, its WW/SW/SS segments, units, anchors, mobility
 groups and refreshes. The template kernel uses rule (A) for dynamics;

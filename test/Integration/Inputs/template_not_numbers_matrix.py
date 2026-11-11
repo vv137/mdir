@@ -24,7 +24,7 @@ for phase, member, value in cases:
     source, gpu, llvm = [str(stem) + suffix for suffix in ['.mlir', '.gpu.mlir', '.llvm.mlir']]
     subprocess.run([sys.executable, str(Path(__file__).with_name('template_not_numbers.py')),
                     source, phase, member, value], check=True)
-    subprocess.run([a.printer, source, '--convert-md-exec-to-gpu', '-o', gpu], check=True)
+    subprocess.run([a.printer, source, '--convert-md-exec-to-gpu=check-template-reach=false', '-o', gpu], check=True)
     subprocess.run([a.mlir_opt, gpu, *shlex.split(a.lower), '-o', llvm], check=True)
     if not a.lower_only:
         run = subprocess.run([a.runner, llvm, '-e', 'main', '--entry-point-result=void',

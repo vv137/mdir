@@ -25,8 +25,11 @@
 # A member beyond the radius at the input (HH31 a fifth away from CH3, as
 # a minimization with free X-H bonds leaves it before dynamics with
 # constrained ones): the first build, before any constraint, widens the
-# radius by the measured distance; constrained builds hold it again.
-# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch | FileCheck %s --check-prefix=STRETCH
+# radius by the measured distance; constrained builds hold it again. Its
+# 'pairlist_distance', 9.9 Å, keeps the widened reach, 9.9 + 2 x 1.308 =
+# 12.52 Å, within half the least face width, 12.58 Å, which every build
+# checks (water-template-reach-gpu.test stops at 10 Å).
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch --pairlist=9.9 | FileCheck %s --check-prefix=STRETCH
 # RUN: cd %t/stretch && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
 # RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE

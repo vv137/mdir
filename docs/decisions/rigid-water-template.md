@@ -1849,9 +1849,29 @@ distance plus twice the larger of $r_\mathrm m$ and $\rho$ (the largest of
 the WW, SW and SS reaches), with half the least face width of the input
 cell (volume over face area, $c_z$ for a reduced dodecahedron): beyond
 it a pair can have two images within the reach, `ON` is refused with both
-lengths, and `AUTO` takes the general path. A barostat that later narrows
-the cell below the bound is not checked again; the runtime's validity
-tests are unchanged.
+lengths, and `AUTO` takes the general path. Every build checks it again
+with the current cell and the extent and radius that build holds (widened
+by an unconstrained input): beyond it the run stops, naming both lengths
+(`mdrtTemplatePairsStopReach`). The bound keeps the route's pairs those
+of the general path, one image a pair; the kernels take every image, and
+the IR fixtures that test them beyond the bound against an all-images
+oracle lower with `check-template-reach=false`, which the driver never
+sets. One check a build suffices: at the build
+every other image of a listed pair is at least $L - R \ge R$ away ($L$
+the least face width, no longer than any lattice vector), and
+between builds the validity test keeps $\sigma_\mathrm{min} R - 2d$ (the least
+singular value of the deformation of the cell since the build times the
+reach, less twice the largest displacement of an anchor) above
+the cutoff, so no second image comes within it before the next build.
+`AUTO` does not select the template yet (its particle-count floor is not
+published), so only `ON` reaches this stop; once `AUTO` selects it, its
+selection keeps a margin below the bound, and the stop stays its backstop
+(the route cannot fall back to the general path within a run). Gates: a
+barostat run at 2000 bar whose cell shrinks from 12.58 to 12.33 Å of half
+width against a reach of 12.38 Å, and the stretched input at a pairlist
+distance of 10 Å, whose first build widens $\rho$ to 1.308 Å and the
+reach to 12.62 Å, stop with the message (`water-template-reach-gpu.test`);
+the stretched coverage input runs at 9.9 Å (12.52 Å).
 
 **Gates added.** The selection fixture prints the route of a control
 file's system: free X–H bonds under `AUTO` (the `hydrogen_bonds` reason),
