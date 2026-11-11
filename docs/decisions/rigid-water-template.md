@@ -1741,6 +1741,38 @@ above puts the faces at those of the input cell, where solvated inputs
 leave water; a solute that spans more than half a cell still has subsets,
 and the merge of the ruling remains open for that case.
 
+### S3: the writer's flags read after the reciprocal sum is launched
+
+The per-step writer reduces its five validity flags (outer and inner
+displacement tests of the two partitions of the one mobility group, and
+the water extent) through the events of D113, and stored them into the
+list's host state right after its launch. That store was the first use of
+the flags, so the host waited for the writer's event there, before it
+launched the reciprocal sum: the device idled 5.7 us before the PME
+weights on every step of ubiquitin OPC, and the rest of the step was paced
+by host launches. The stores now go just before the refresh that reads
+them, when it follows the writer in the same block (every step loop);
+the wait then follows the launches of the reciprocal sum, as on `main`'s
+path, where the refresh of the list is the first reader. The flags, their
+values and the refresh decisions are unchanged.
+
+3,000-step captures, RTX 5090, one round in the order main, template
+(us/step; wall and idle as in S1):
+
+| System | Build | All kernels | Wall | Idle |
+|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5 | 124.6 | 8.3 |
+| | S2 | 112.8 | 131.7 | 16.7 |
+| | S3 | 112.5 | 125.0 | 10.0 |
+| Ubiquitin TIP3P | main | 90.9 | 100.3 | 7.7 |
+| | S2 | 106.6 | 125.6 | 16.9 |
+| | S3 | 106.7 | 118.6 | 9.7 |
+| Large OPC box | main | 175.0 | 185.4 | 8.6 |
+| | S2 | 157.6 | 175.4 | 15.8 |
+| | S3 | 157.3 | 168.6 | 9.2 |
+
+The gap from the writer to the PME weights falls from 5.7 to 0.2 us.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
