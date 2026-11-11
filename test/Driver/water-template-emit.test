@@ -2,3 +2,4 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/water_template_emit.py mdir mdir-opt %S/Inputs/opc %t | FileCheck %s
 # CHECK: native water-template ON constructed and differentiated; ordinary OFF/AUTO programs identical
+# CHECK: double precision: AUTO takes the general path, ON is refused
