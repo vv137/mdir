@@ -7,7 +7,7 @@ import re
 p = argparse.ArgumentParser()
 p.add_argument('mode', choices=['instrument', 'compare'])
 p.add_argument('files', nargs='+', type=Path)
-p.add_argument('--expect-publications', choices=['fused', 'unfused'])
+p.add_argument('--expect-publications', choices=['fused', 'unfused', 'separate'])
 a = p.parse_args()
 if a.mode == 'instrument':
     src, dst = a.files
@@ -24,6 +24,12 @@ if a.mode == 'instrument':
     # work launches for each of the six marked predictor/constraint/writer
     # runs. Count actual launch attributes, not filenames or helper calls.
     expected = 18 if a.expect_publications == 'fused' else 0
+    # Mixed families fuse the update without publication; a kernel of its
+    # own follows each of the six runs and publishes the stored positions.
+    writers = re.findall(
+        r'gpu\.launch[^\n]*function\(@(evaluate_particle_for_integration2_template_writer_[0-9]+)\)', body)
+    assert len(writers) == (6 if a.expect_publications == 'separate' else 0), (
+        f'unexpected separate writer launches: {writers}')
     assert len(publication_launches) == expected, (
         f'expected {expected} actual publication integration launches, got {len(publication_launches)}')
     all_publication_launches = re.findall(
