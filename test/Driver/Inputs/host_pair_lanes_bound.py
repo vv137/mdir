@@ -30,16 +30,20 @@ ratio, and whether every ratio is at most 1.
 import math
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import parmed
 
 import mdir
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import COULOMB_NATIVE, KJ_PER_KCAL  # noqa: E402
+
 root, precision, widths = sys.argv[1], sys.argv[2], [int(w) for w in sys.argv[3:]]
 prmtop, inpcrd = os.path.join(root, "dipeptide.prmtop"), os.path.join(root, "dipeptide.inpcrd")
 CUTOFF, TOLERANCE = 0.9, 1e-5  # nm; erfc(beta r_c)
-KE = 138.935458  # kJ mol^-1 nm e^-2, as MDIR's Coulomb constant (to 1e-7)
+KE = COULOMB_NATIVE  # kJ mol^-1 nm e^-2
 
 
 erfc = np.vectorize(math.erfc)
@@ -85,8 +89,8 @@ def reference():
     ntypes = p.parm_data["POINTERS"][1]
     types = np.array(p.parm_data["ATOM_TYPE_INDEX"]) - 1
     index = np.array(p.parm_data["NONBONDED_PARM_INDEX"]).reshape(ntypes, ntypes) - 1
-    acoef = np.array(p.parm_data["LENNARD_JONES_ACOEF"]) * 4.184 * 1e-12  # kJ nm^12
-    bcoef = np.array(p.parm_data["LENNARD_JONES_BCOEF"]) * 4.184 * 1e-6  # kJ nm^6
+    acoef = np.array(p.parm_data["LENNARD_JONES_ACOEF"]) * KJ_PER_KCAL * 1e-12  # kJ nm^12
+    bcoef = np.array(p.parm_data["LENNARD_JONES_BCOEF"]) * KJ_PER_KCAL * 1e-6  # kJ nm^6
     beta = erfcinv(TOLERANCE) / CUTOFF
     n = len(x)
     count = np.zeros(n)
