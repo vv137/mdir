@@ -258,6 +258,14 @@ static Value word(OpBuilder &builder, Location loc, int64_t value) {
 // Keep one anchor and reusable local geometry per unit. This has exactly
 // the source window's subtraction/addition/multiplication order. The image
 // shift affects the anchor displacement only, never these local offsets.
+static Value formSiteOffset(OpBuilder &builder, Location loc, Value first,
+                            Value second, double alpha) {
+  auto type = cast<VectorType>(first.getType());
+  Value weight = arith::ConstantOp::create(builder, loc,
+      DenseElementsAttr::get(type, FloatAttr::get(type.getElementType(), alpha)));
+  return arith::MulFOp::create(builder, loc, weight,
+      arith::AddFOp::create(builder, loc, first, second));
+}
 static SmallVector<Value, 4> prepareTemplateFrame(
     OpBuilder &builder, Location loc, ValueRange frame, bool hasSite, double alpha) {
   if (frame.size() == 1) return {frame.front()};
@@ -265,13 +273,8 @@ static SmallVector<Value, 4> prepareTemplateFrame(
   SmallVector<Value, 4> prepared{frame[0],
       arith::SubFOp::create(builder, loc, frame[1], frame[0]),
       arith::SubFOp::create(builder, loc, frame[2], frame[0])};
-  if (hasSite) {
-    auto type = cast<VectorType>(frame[0].getType());
-    Value weight = arith::ConstantOp::create(builder, loc,
-        DenseElementsAttr::get(type, FloatAttr::get(type.getElementType(), alpha)));
-    prepared.push_back(arith::MulFOp::create(builder, loc, weight,
-        arith::AddFOp::create(builder, loc, prepared[1], prepared[2])));
-  }
+  if (hasSite)
+    prepared.push_back(formSiteOffset(builder, loc, prepared[1], prepared[2], alpha));
   return prepared;
 }
 static Value shuffle(OpBuilder &builder, Location loc, Value value,
@@ -330,16 +333,22 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         Value safe = arith::SelectOp::create(batch, loc, has, entry, unit.begin);
         TemplatePartner partner = loadPartner(batch, safe);
         assert(partner.frame.size() == nj);
+        // The rotated state is the smallest set that generates the partner
+        // frame: the image shift is the same for all sixteen turns, so it is
+        // added to the anchor once (the same addition the turn made), and the
+        // formed site is recomputed from the two offsets each turn rather
+        // than rotated. Both keep the source window's rounding exactly.
         auto secondFrame = prepareTemplateFrame(batch, loc, partner.frame,
-                                                unit.hasSite, unit.alpha);
+                                                /*hasSite=*/false, unit.alpha);
+        secondFrame[0] = arith::AddFOp::create(batch, loc, secondFrame[0], partner.shift);
         unsigned frameSize = secondFrame.size();
         Value mask = arith::SelectOp::create(batch, loc, has, partner.mask, word(batch, loc, 0));
-        unsigned shiftAt = frameSize + partner.parameters.size();
-        unsigned maskAt = shiftAt + 1, fjAt = maskAt + 1, fiAt = fjAt + fj;
+        unsigned maskAt = frameSize + partner.parameters.size();
+        unsigned fjAt = maskAt + 1, fiAt = fjAt + fj;
         unsigned sumsAt = fiAt + fi;
         SmallVector<Value> carried(secondFrame.begin(), secondFrame.end());
         llvm::append_range(carried, partner.parameters);
-        carried.append({partner.shift, mask});
+        carried.push_back(mask);
         for (unsigned i = 0; i != fj; ++i) carried.push_back(createZero(batch, loc, forceType));
         llvm::append_range(carried, own);
         auto turns = scf::ForOp::create(batch, loc, word(batch, loc, 0),
@@ -352,10 +361,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
               paired = arith::AndIOp::create(turn, loc, paired, unit.firstValid);
               auto contribution = scf::IfOp::create(turn, loc, paired,
                   [&](OpBuilder &body, Location) {
-                    Value shiftedAnchor = arith::AddFOp::create(body, loc,
-                        state[0], state[shiftAt]);
                     SmallVector<Value> coordinates{arith::SubFOp::create(
-                        body, loc, firstFrame[0], shiftedAnchor)};
+                        body, loc, firstFrame[0], state[0])};
                     SmallVector<Value> sites;
                     if (ni == 3) {
                       coordinates.append({firstFrame[1], firstFrame[2]});
@@ -363,7 +370,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                     }
                     if (nj == 3) {
                       coordinates.append({state[1], state[2]});
-                      if (unit.hasSite) sites.push_back(state[3]);
+                      if (unit.hasSite)
+                        sites.push_back(formSiteOffset(body, loc, state[1], state[2], unit.alpha));
                     }
                     auto result = evaluate(body, coordinates, unit.parameters,
                         state.slice(frameSize, partner.parameters.size()), sites);
