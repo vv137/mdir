@@ -1773,6 +1773,41 @@ values and the refresh decisions are unchanged.
 
 The gap from the writer to the PME weights falls from 5.7 to 0.2 us.
 
+### Status after S1 to S3
+
+10,000-step captures, RTX 5090, main b7d801d9 against b78aa15b, two rounds
+in alternated order (round 1 / round 2, us/step; wall and idle as in S1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.6/114.2 | 22.7/22.5 | 123.3/122.9 | 8.1/8.1 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 149.4/148.8 | 21.0 |
+| | b78aa15b | 111.8/112.0 | 8.6/8.6 | 122.3/122.7 | 9.8/10.0 |
+| Ubiquitin TIP3P | main | 91.4/91.4 | 19.6/19.7 | 99.3/99.3 | 7.4/7.4 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 142.8/143.2 | 20.7 |
+| | b78aa15b | 106.5/106.2 | 9.7/9.6 | 116.6/116.2 | 9.4/9.4 |
+| Large OPC box | main | 176.8/176.8 | 27.2/27.2 | 185.9/185.9 | 8.6/8.6 |
+| | 6e6dcca4 | 163.4/163.6 | 6.2/6.2 | | |
+| | b78aa15b | 156.9/157.0 | 5.2/5.3 | 166.5/166.7 | 9.0/9.0 |
+
+Ubiquitin in OPC now runs at main's rate (kernels 2.5 us/step below,
+wall 0.6 below), the large OPC box 19 us/step below. Ubiquitin in TIP3P is
+15 us/step of kernels and 17 of wall above main: the template's
+evaluation is 35.7 against main's pair kernel of 24.5 (OPC: 36.5 against
+33.3), and its constraint and writer kernels 12.4 + 10.6 + 1.7 against
+main's fused 9.6 (item 1 of the accounting: the writer rule refuses the
+fusion when TIP3P's four constraint families directly precede it). The
+per-step writer is 11.1 us/step on ubiquitin OPC against main's 2.0
+(item 3), larger by 1.3 than before S1 with the members' points. The
+refresh interval is 53 to 57 steps, the pruning interval 8.2 to 8.6, on
+the three systems. The conserved energy's drift over these runs, fitted to
+the rows of the log, is within the spread of the runs (+0.5 to +3.3 kJ/mol
+per 10,000 steps for the template, -1.0 to +1.5 for main, +0.3 to +2.8
+for 6e6dcca4, with a standard error of about 1.5 per fit).
+
+Gates at b78aa15b: the 105 template fixtures in one run (3 unsupported)
+and the sanitizer tier (3 fixtures) pass.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
