@@ -99,10 +99,15 @@ int runWaterTemplateUnitIRTest() {
                 literal.getSplatValue<APFloat>().convertToDouble() == 0.75;
       }
       if (!site) return;
+      // The partner's site is formed from its two rotated offsets once per
+      // turn (step 1, inside the batch loop of step 32), not rotated itself.
       if (auto parent = product->getParentOfType<scf::ForOp>()) {
-        APInt step;
+        APInt step, outer;
+        auto batch = parent->getParentOfType<scf::ForOp>();
         repeatedSite |= !matchPattern(parent.getStep(), m_ConstantInt(&step)) ||
-                        step.getSExtValue() != 32;
+                        step.getSExtValue() != 1 || !batch ||
+                        !matchPattern(batch.getStep(), m_ConstantInt(&outer)) ||
+                        outer.getSExtValue() != 32;
         ++partnerSites;
       } else {
         ++firstSites;
