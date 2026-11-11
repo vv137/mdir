@@ -2313,8 +2313,10 @@ The orthorhombic systems are unchanged by the packing (8.6/8.5 below
 
 - The dodecahedron's evaluation takes 37.9 µs/step against 36.5 for the
   orthorhombic OPC system although it has 18 % fewer batches of 32
-  entries (WW 3,563 against 4,468; SW 1,159 against 1,198; SS 935
-  against 974): about 25 % more a batch in OPC and 16 % in TIP3P. The
+  entries weighted 10/4/1 by class (WW 3,563 against 4,468; SW 1,159
+  against 1,198; SS 935 against 974; unweighted 5,657 against 6,640,
+  14.8 % fewer): about 25 % more a weighted batch in OPC and 16 % in
+  TIP3P. The
   compiled turn is the same (the triclinic kernel adds 6 floating-point
   operations an entry, the lattice shift), the kernel overlaps nothing,
   repeated partners in a batch are about 0.01, and loads take about 0.97
