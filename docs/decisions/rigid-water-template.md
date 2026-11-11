@@ -1414,6 +1414,60 @@ program properties with checked preconditions and shared emitters; no
 handwritten kernel for a named water model is admitted. Any template-only
 mechanism requires a stated reason and a general-form issue.
 
+### D1: direct solute-water candidate scan
+
+On ubiquitin OPC at 19bbf459 the SW search was the largest maintenance
+kernel: 24.6 us/step, about 610 us per launch. Its grid is one warp per
+solute row (64–68 blocks of 64 threads), and the D0 diagnostic already
+showed that the kernel lasts as long as its longest row. The 7 x 8 columns
+of that cell are 0.8 nm wide, and the SW radius is 0.23 of a cell edge, so
+each frame subset of a row visited nearly every column, often under two
+images. A column holds about eight water groups, so a 32-lane batch was
+three quarters idle; the worst row ran 189 column/image batches for 777
+candidates.
+
+D1 replaces the column and image loops of the SW class with the
+prototype's direct scan: for each frame subset, the warp reads every water
+group once, 32 per batch. The rest of the search is unchanged. The frame
+subsets, the f32 certificate, the certified Cartesian box test, the survivor
+loop (two partners per step), the literal f64 pair predicate, the entry
+records and masks, ownership, overflow flags and the copy of inactive rows
+stay as they were.
+
+What replaces the column/image enumeration is one fractional interval per
+partner. With $\mathbf b^-,\mathbf b^+$ the wrapped fractional box of the
+subset, $\mathbf p^-,\mathbf p^+$ that of the partner group and
+$\mathbf r$ the fractional radius of the general iterator (the class reach
+over the face widths), a pair can be within the reach at the image
+$\mathbf s$ only if, on every axis $a$,
+$b^-_a-p^+_a-r_a\le s_a\le b^+_a-p^-_a+r_a$. The kernel forms both bounds
+in f32 and widens each by $2^{-18}$ times the sum of the magnitudes of its
+operands plus one. The six f32 roundings of a bound stay below $2^{-22}$ of
+that sum, so the f32 interval contains the exact one. The integer images of
+that interval are then clipped to the query domain of the general iterator
+(the same image ranges that bound the certificate). A NaN bound takes the
+whole domain. Each image left takes the general iterator's box test and
+survivor loop. Almost every partner has one image or none, so the image
+loop runs once per batch unless some lane of the batch has more.
+
+The entries are the same as the general iterator's. An entry is a
+(subset, partner unit, absolute image) with a nonzero mask under the
+literal predicate. Any such image lies in the interval above and in the
+query domain, and the box test and predicate are computed the same way.
+Images the general iterator would also have rejected give a zero mask, and
+no partner and image is visited twice. Only the order of the entries within
+a row changes (subset, partner group, image instead of subset, column,
+image, partner), which no consumer depends on. The class's starting outer
+entry count on ubiquitin OPC is unchanged (264,865).
+
+Development profile, ubiquitin OPC, 3,000 steps, RTX 5090, 19bbf459 against
+D1: the SW search goes from 623 to 244 us per launch, or from 27.4 to 10.6
+us/step. Maintenance kernels go from 59.2 to 41.4 us/step, all kernels from
+166.8 to 149.0. The WW and SS searches are unchanged within 3%. Water boxes
+have no SW rows. The 18 exact search, refresh and native fixtures (CPU and GPU,
+orthorhombic and triclinic, with the multi-image small cells of the oracle)
+pass.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
