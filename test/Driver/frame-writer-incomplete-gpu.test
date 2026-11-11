@@ -1,7 +1,7 @@
 # The staging functions of the runtime incomplete (D[async-output], #113),
 # which is a defect of mdir: MDIR_STAGING_INCOMPLETE leaves the wait out
-# of the set that the driver looks up. `mdir run` stops at the first frame
-# with the message and the status 1. A Python simulation, which embeds the
+# of the set that the driver looks up (not when it is 0 or empty).
+# `mdir run` stops at the first frame with the message and the status 1. A Python simulation, which embeds the
 # run (D196), raises the message and goes on: the call of each frame gives
 # its slot of the ring back, so a part of 40 steps, whose 4 frames are one
 # more than the ring has slots, ends, and so does that of a second
@@ -16,10 +16,16 @@
 # RUN: printf '[execution]\ntarget = "GPU"\n' >> %t/run.toml
 # RUN: cd %t && env MDIR_STAGING_INCOMPLETE=1 %python %S/Inputs/exit_status.py mdir run run.toml > out 2>&1
 # RUN: FileCheck %s --check-prefix=CLI < %t/out
+# RUN: cd %t && env MDIR_STAGING_INCOMPLETE=0 %python %S/Inputs/exit_status.py mdir run run.toml | FileCheck %s --check-prefix=SET
+# RUN: cd %t && env MDIR_STAGING_INCOMPLETE= %python %S/Inputs/exit_status.py mdir run run.toml | FileCheck %s --check-prefix=SET
 # RUN: env MDIR_STAGING_INCOMPLETE=1 timeout 300 %mdir_python %S/Inputs/python_frame_failures.py %S/Inputs/triclinic %t/python incomplete GPU | FileCheck %s --check-prefix=PYTHON
 
 # CLI:      mdir: the runtime of the device has no copies of the frames; this is a defect of mdir
 # CLI-NEXT: exit status 1
+
+# With the variable 0 or empty the set is complete and the run ends.
+# SET-NOT: no copies of the frames
+# SET:     exit status 0
 
 # PYTHON-COUNT-2: simulation {{[12]}}, 40 steps raised SimulationError: {{.*}}the runtime of the device has no copies of the frames; this is a defect of mdir
 # PYTHON:         alive
