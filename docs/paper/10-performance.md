@@ -646,8 +646,8 @@ while pmemd generates its velocities from 300 K.
 The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
 16-thread TIP3P NPT step before this NVE baseline. For #554 the share was
 measured again in this NVE protocol, on its three systems, on `main`
-17704a2d. The runs used an EPYC 7543 with 16 cores of a Slurm job, two
-jobs per system, and the sampler's share of the main thread's wall clock.
+17704a2d. The runs used an EPYC 7543 at 1 and 16 threads, two jobs per
+system, and the sampler's share of the main thread's wall clock.
 At 16 threads in mixed precision the loop over pairs takes 56.5 to 56.6%
 of the step on JAC, 63.9 to 65.5% on TIP3P 103k, and 55.7 to 56.1% on
 Cellulose (the range of the two jobs). Removing its cost completely would

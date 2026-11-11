@@ -76,16 +76,18 @@ did not prevent it.
 
 A row of a loop over pairs on the CPU is summed in the order of its list,
 or, with the lanes of D[host-pair-vector], $n_\text{lane}$ candidates at a
-time. Lane $j$ adds the candidates whose place in the row is $j$ modulo
-$n_\text{lane}$, in the order of their places, and the lanes are then
-combined by halving. The result depends on the list, $n_\text{lane}$, and
-the kernel alone. A sum of $n$ terms $t_k$ taken in another order differs
-by at most $2(n-1)\mathsf u\sum_k \lvert t_k\rvert$ to first order in the
-unit roundoff $\mathsf u$ [[Higham2002]](references.md#higham2002), which
-bounds the difference from the scalar row. The deterministic mode takes the lanes on every host, with
-$n_\text{lane}$ 8 in f32 and 4 in f64. A host with narrower
-registers holds the eight lanes in several of them, in the same order, so
-the bits do not depend on the host's vector width.
+time. Each lane adds the candidates whose place in the row is its own
+number modulo $n_\text{lane}$, in the order of their places, and the lanes
+are then combined by halving. The result depends on the list,
+$n_\text{lane}$, and the kernel alone. The terms are the same numbers as
+in the scalar row, so the two differ by the order of the sum alone: a sum
+of $n_\text{t}$ terms $t_k$ taken in two orders differs by at most
+$2(n_\text{t}-1)\mathsf u\sum_k \lvert t_k\rvert$ to first order in the unit
+roundoff $\mathsf u$ [[Higham2002]](references.md#higham2002). The
+deterministic mode takes the lanes on every host, with $n_\text{lane}$ 8 in
+f32 and 4 in f64. A host with narrower registers holds the eight lanes in
+several of them, in the same order, so the bits do not depend on the host's
+vector width.
 
 **What a step of energy may not change.** A step that writes energies
 computes more than a plain step, and in the deterministic mode none of it

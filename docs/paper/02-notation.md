@@ -70,6 +70,7 @@ element.
 | $E_A$ | In Section 5.6, the estimate of the aliasing error of the spreading, eq. 10 of [[Liang2026]](references.md#liang2026) relative to the sum it perturbs |
 | $v_k,\ i_k;\ \mathcal B_b;\ \oplus,\ \mathsf u$ | In Section 8.5 ($\mathsf u$ also in Sections 4.4.6, 7.1, and 7.2), the value that item $k$ of a scatter-accumulate adds and the index it adds it at; the items of block $b$ of a device; floating-point addition, and the unit roundoff of a type, $2^{-24}$ in f32 and $2^{-53}$ in f64 |
 | $n_\text{lane};\ t_k$ | In Section 7.1, the lanes of a row of a loop over pairs on the host (D[host-pair-vector]), and the terms of a sum |
+| $n_\text{lane};\ t_k,\ n_\text{t}$ | In Section 7.1, the lanes of a row of a loop over pairs on the host (D[host-pair-vector]); the terms of a sum and their number |
 | $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
 | $\boldsymbol\varepsilon$ | In Section 3.6, a strain as a matrix, under which $\mathbf x_i \to (\mathsf 1 + \boldsymbol\varepsilon)\mathbf x_i$ and each cell vector, a row of $H$, alike, so that $\varepsilon_{aa}$ is a change of $\varepsilon_a$ and $\partial U/\partial\varepsilon_{ab} = -\mathsf W_{ba}$; $\mathbf K$ there is the force on the second end of a displacement $\mathbf d$ |
 | $T,\ k_B$ | Temperature and Boltzmann's constant |

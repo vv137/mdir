@@ -1316,8 +1316,8 @@ refuses (docs/principles.md, principle 2):
 1. the policy `(directed, owner_only)`, without `centers`, `center_set`,
    `ghost_free`, or `images(explicit)`;
 2. a kernel each of whose ops has a lane mapping (`getLaneMapping`: the
-   elementwise ops of `arith` and `math`; `math.fpowi` with a constant
-   exponent; `vector.extract`, `broadcast`, and `from_elements` of one
+   elementwise ops of `arith` and `math`; `math.fpowi` with a scalar
+   constant exponent; `vector.extract`, `broadcast`, and `from_elements` of one
    dimension; the reads `md.lookup`, `vector.load`, and `memref.load`;
    constants and globals), without regions;
 3. a kernel in f32 or f64 whose values are numbers or vectors of one
@@ -1349,6 +1349,13 @@ tests ([environment.md](environment.md)), and `MDIR_HOST_CPU` compiles the
 host code for another CPU, such as `x86-64` (SSE2 alone). The lit suite
 pins `scalar`, so that `mdir emit` of a CPU program does not depend on the
 host; the tests of the lanes state $W$.
+The driver checks both variables before it lowers anything
+(`compiler::checkHostEnvironment`): `MDIR_HOST_PAIRS` is `scalar`, `lanes`,
+or `lanes:W` with $W$ a power of two from 1 to 64, and `MDIR_HOST_CPU` a
+64-bit CPU that LLVM's X86 back end knows, whose width counts every
+feature its own imply. Every refusal of the precondition is a remark of
+`explain`. The op's verifier refuses `host(lanes(W))` on a loop whose
+buffers are on a device, so a GPU program cannot carry it.
 
 ### 7.3 The emitter
 
@@ -1396,12 +1403,27 @@ CPU row emit the same code as before.
 
 ### 7.4 Tests
 
-`test/Dialect/MDExec/Transforms/choose-host-pairs.mlir` (the widths, the
-policy, every refusal under `explain`, the attribute through
-`md-exec-assign-storage`),
-`test/Conversion/MDExecToLoops/host-pair-lanes.mlir` (the groups, the tail
-and its padding, the gathers, `powi`, the widening, the halving) and
-`host-pair-lanes-invalid.mlir` (the lowering refuses an attribute that
-fails the precondition), and `test/Driver/host-pair-lanes.test` (runs; see
-the decision for the numbers).
-
+- `test/Dialect/MDExec/Transforms/choose-host-pairs.mlir`: the widths, the
+  policy, every refusal under `explain` (the two-ended form, a domain,
+  `images(explicit)`, a power by a field or by a vector, a region, a value
+  of two dimensions), the attribute through `md-exec-assign-storage`, and
+  the options' bounds.
+- `test/Dialect/MDExec/host-pairs-invalid.mlir`: the verifier's widths, the
+  lanes on a device, and the kernel types that the lanes would refuse.
+- `test/Conversion/MDExecToLoops/host-pair-lanes.mlir`: the groups, the
+  tail, its padding and its mask in every sum, the gathers, `powi`, the
+  widening, and the halving; `host-pair-lanes-invalid.mlir`: the lowering
+  refuses an attribute that fails the precondition.
+- `test/Driver/host-pair-lanes-bound.test`: on the dipeptide in water, a
+  dense system of ten types with exclusions, `lanes(8)` and `lanes(4)`
+  against the scalar row at step 0, in double and mixed precision, every
+  force component and the potential within the bound of the order of a sum
+  (Section 5.1), from a NumPy reference of the terms.
+- `test/Driver/host-pair-lanes.test`: `lanes(1)` and the dilute `lanes(8)`
+  to the bit, and the deterministic mode across threads, runs, and a host
+  of SSE2 alone; `host-pairs-environment.test`: the host's variables, the
+  machine of the host code, and the GPU pipeline without the chooser.
+- `test/Driver/host-pair-lanes-output-independence.test`,
+  `-deterministic-run.test`, `-thermostats.test`: the deterministic
+  properties of output independence, of Python against `mdir run` in
+  segments, and of checkpoints in both directions, with the lanes.
