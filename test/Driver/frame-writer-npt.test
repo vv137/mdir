@@ -6,9 +6,7 @@
 # (MDIR_FRAME_WRITE_DELAY), the trajectories in DCD and H5MD, with the cell
 # of each frame, are those of a run whose frames are not held back, byte
 # for byte (H5MD by content, every dataset): the mixture of barostat.test
-# under isotropic stochastic cell rescaling, and the waters of
-# python-triclinic-npt-cli-mixed.test in a rhombic dodecahedron, whose
-# tilts the barostat changes.
+# under isotropic stochastic cell rescaling. frame-writer-cell-gpu.test
 #
 # REQUIRES: hdf5, h5py
 #
@@ -17,65 +15,18 @@
 # RUN:     -e 's|energy_interval = 1000|energy_interval = 10\nenergy = "iso.txt"\ntrajectory = "iso.dcd"\ntrajectory_interval = 10|' \
 # RUN:     %t/split/run.toml > %t/plain/iso.toml
 # RUN: sed -e 's|iso.dcd|iso.h5md|' -e 's|iso.txt|iso-h5.txt|' %t/plain/iso.toml > %t/plain/iso-h5.toml
-# RUN: sed -n '/^#--- triclinic.toml/,/^#--- end/p' %s | sed -e '1d;$d' -e 's|Inputs/|%S/Inputs/|' > %t/plain/tric.toml
-# RUN: sed -e 's|tric.dcd|tric.h5md|' -e 's|tric.txt|tric-h5.txt|' %t/plain/tric.toml > %t/plain/tric-h5.toml
 # RUN: cp %t/plain/*.toml %t/held/
-# RUN: cd %t/plain && mdir run iso.toml > /dev/null && mdir run iso-h5.toml > /dev/null && mdir run tric.toml > /dev/null && mdir run tric-h5.toml > /dev/null
+# RUN: cd %t/plain && mdir run iso.toml > /dev/null && mdir run iso-h5.toml > /dev/null
 # RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso.toml > /dev/null
 # RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso-h5.toml > /dev/null
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run tric.toml > /dev/null
-# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run tric-h5.toml > /dev/null
 # RUN: cmp %t/plain/iso.dcd %t/held/iso.dcd
-# RUN: cmp %t/plain/tric.dcd %t/held/tric.dcd
 # RUN: cmp %t/plain/iso.txt %t/held/iso.txt
-# RUN: cmp %t/plain/tric.txt %t/held/tric.txt
 # RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/iso.h5md %t/held/iso.h5md | FileCheck %s --check-prefix=SAME
-# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/tric.h5md %t/held/tric.h5md | FileCheck %s --check-prefix=SAME
 #
 # The cells of the frames differ from frame to frame, so that a frame
 # written with the cell of a later step would differ.
 #
 # RUN: %h5md_python -c "import h5py, numpy, sys; e = h5py.File(sys.argv[1], 'r')['particles/all/box/edges/value'][()]; print('frames', len(e), 'cells', len(numpy.unique(e.reshape(len(e), -1), axis=0)))" %t/plain/iso.h5md | FileCheck %s --check-prefix=ISO
-# RUN: %h5md_python -c "import h5py, numpy, sys; e = h5py.File(sys.argv[1], 'r')['particles/all/box/edges/value'][()]; print('frames', len(e), 'cells', len(numpy.unique(e.reshape(len(e), -1), axis=0)), 'tilted', bool(numpy.any(e[:, 1:, 0] != 0)))" %t/plain/tric.h5md | FileCheck %s --check-prefix=TRIC
 
 # SAME: identical contents
 # ISO: frames 40 cells 40
-# TRIC: frames 20 cells 20 tilted True
-
-#--- triclinic.toml
-[input]
-topology = "Inputs/triclinic/water.top"
-coordinates = "Inputs/triclinic/dodecahedron.gro"
-format = "GROMACS"
-[energy]
-cutoff = 8.0
-pairlist_distance = 9.0
-electrostatics = "PME"
-[pme]
-grid = [28, 28, 28]
-[constraints]
-rigid_water = true
-[dynamics]
-integrator = "VELOCITY_VERLET"
-time_step = 0.002
-steps = 200
-seed = 2024
-center_of_mass_interval = 10
-[output]
-energy_interval = 10
-energy = "tric.txt"
-trajectory = "tric.dcd"
-trajectory_interval = 10
-[ensemble]
-ensemble = "NPT"
-temperature = 300.0
-[thermostat]
-method = "V-RESCALE"
-interval = 10
-[barostat]
-method = "C-RESCALE"
-[boundary]
-type = "PERIODIC"
-[execution]
-deterministic = true
-#--- end
