@@ -69,10 +69,14 @@ struct TemplateContribution {
 /// Emit one class's actual scalar/derived body with an independent guard
 /// for every yielded site displacement. Arguments and captures are mapped
 /// by the caller. At most one force destination remains after accumulation;
-/// energy and strain reductions retain their declared types.
+/// energy and strain reductions retain their declared types. `forces`, when
+/// given, holds the running site forces, first then second; each pair adds
+/// its terms to them inside its guard, and the returned forces are the
+/// updated totals. Without it the totals start from zero. The returned
+/// sums are this window's alone.
 TemplateContribution emitTemplateWindowContributions(
     mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
-    unsigned tag, mlir::IRMapping &);
+    unsigned tag, mlir::IRMapping &, mlir::ValueRange forces = {});
 /// Bind only exact typed alpha*(H1+H2) expressions to the prepared site
 /// offsets. This is common-expression reuse, not another placement rule.
 unsigned mapTemplateSiteOffsets(mdir::md_exec::TemplateForOp, unsigned tag,
@@ -122,12 +126,14 @@ llvm::SmallVector<mlir::Value, 2> emitTemplateWorkUnit(
 /// collectives; the scheduler owns all warp communication.
 /// The fourth evaluation range holds cached formed-site offsets: first
 /// then second for WW, second for SW, none for SS or three-site models.
+/// The fifth holds the carried site forces, first then second; the
+/// callback returns them with its terms added, and its sums alone.
 llvm::SmallVector<mlir::Value, 2> emitTemplateClassUnit(
     mlir::OpBuilder &, mlir::Location, const TemplateUnit &,
     llvm::function_ref<TemplatePartner(mlir::OpBuilder &, mlir::Value)> loadPartner,
     llvm::function_ref<TemplateContribution(mlir::OpBuilder &,
         mlir::ValueRange, mlir::ValueRange, mlir::ValueRange,
-        mlir::ValueRange)> evaluate,
+        mlir::ValueRange, mlir::ValueRange)> evaluate,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::ValueRange)> writeFirst,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
                             mlir::ValueRange)> writeSecond);

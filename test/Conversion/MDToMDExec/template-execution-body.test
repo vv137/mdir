@@ -16,16 +16,28 @@
 # MIXED: arith.extf {{.*}} : f32 to f64
 # MIXED: scf.yield {{.*}} : f64
 # MIXED: arith.addf {{.*}} : f64
+# A force member that is zero in the source is not carried through a guard;
+# the taken branch adds the pair's terms to the running forces and the other
+# keeps them.
 # MIXED-LABEL: func.func @window_forces
+# MIXED: %[[F:.*]] = arith.constant dense<0.000000e+00> : vector<3xf32>
 # MIXED: scf.if
-# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>)
+# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>) {
+# MIXED: arith.addf %[[F]], {{.*}} : vector<3xf32>
+# MIXED: } else {
+# MIXED-NEXT: scf.yield %[[F]],
 # MIXED-LABEL: func.func @window_virial
 # MIXED: scf.if
 # MIXED: arith.extf {{.*}} : vector<9xf32> to vector<9xf64>
 # CHECK-LABEL: func.func @window_forces
-# CHECK: scf.if
-# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>)
-# CHECK: return
+# CHECK: %[[F:.*]] = arith.constant dense<0.000000e+00> : vector<3xf64>
+# CHECK: %[[G:.*]]:2 = scf.if
+# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>) {
+# CHECK: arith.addf %[[F]], {{.*}} : vector<3xf64>
+# CHECK: scf.yield
+# CHECK: } else {
+# CHECK-NEXT: scf.yield %[[F]],
+# CHECK: return {{.*}}%[[G]]#0, {{.*}}%[[G]]#1,
 # CHECK-LABEL: func.func @window_virial
 # CHECK: scf.if
 # CHECK: return
