@@ -9,6 +9,12 @@ struct TemplateFrameBuffers {
   mlir::Value waters, atoms, cell, inverse;
   bool hasSite = false;
   double alpha = 0;
+  /// Optional TEMPLATE_ATOM_ANCHORS: a member of a solute unit takes its
+  /// anchor's packing cell, corrected by whole lattice vectors so that the
+  /// member lies in the anchor's image, and the anchor's point in its own
+  /// frame. Counter TEMPLATE_COUNTER_ANCHOR_EXTENT receives the largest
+  /// squared member-anchor distance (unsigned max of f64 bits).
+  mlir::Value atomAnchors;
 };
 /// Prepare only the requested mobility groups at an outer build. Choose
 /// their new retained shifts, recover whole waters before f32 packing,

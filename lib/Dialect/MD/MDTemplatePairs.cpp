@@ -1,6 +1,7 @@
 // Structural domains for the template window's explicit tuple arithmetic.
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include <cmath>
 
 using namespace mlir;
 using namespace mdir::md;
@@ -36,6 +37,17 @@ LogicalResult TemplatePairsOp::verify() {
     if (type.getTupleSet() &&
         type.getTupleSet() == cast<RelationType>(getSoluteSolute().getType()).getTupleSet())
       return emitOpError("the SS domain cannot alias the excluded-pair domain");
+  }
+  if (bool(getAnchored()) != bool(getRadius()))
+    return emitOpError("expected solute anchors together with their radius");
+  if (Value anchored = getAnchored()) {
+    auto type = cast<RelationType>(anchored.getType());
+    if (type.getParticleSet() != universe.getParticleSet() || type.getArity() != 2 ||
+        type.getOrientation() != Orientation::Ordered)
+      return emitOpError("expected ordered (member, anchor) pairs of the universe");
+    double radius = getRadius()->convertToDouble();
+    if (!(radius > 0.0) || !std::isfinite(radius))
+      return emitOpError("expected a positive finite anchor radius");
   }
   return success();
 }

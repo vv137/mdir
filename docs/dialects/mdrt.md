@@ -525,7 +525,7 @@ Syntax:
 
 ### SegmentedPairsType
 
-_One class-segmented pair list with two mobility groups_
+_One class-segmented pair list with one mobility group_
 
 Syntax:
 
@@ -538,8 +538,8 @@ Syntax:
 One allocation holds the WW, SW and SS class-pair ranges and the outer
 and inner partitions. Offsets and counts describe its ranges; it is
 not three independently allocated or independently sorted lists.
-Water anchors and atoms supply two mobility tests. A segment refreshes
-when either participating mobility group requires it.
+The anchors of the waters and of the solute units form one mobility
+group: one displacement test refreshes every segment.
 
 #### Parameters:
 

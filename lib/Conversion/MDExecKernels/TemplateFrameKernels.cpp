@@ -105,12 +105,50 @@ void mdir::kernels::emitSnapshotTemplateFrames(OpBuilder &b, Location loc,
       Value row = arith::AddIOp::create(in, loc, unit,
           arith::MulIOp::create(in, loc, v.waters, ix(in, 2)));
       Value position = loadElement(in, loc, v.positions, member(in, row));
-      scf::IfOp::create(in, loc, validPositions(in, ValueRange{position}), [&](OpBuilder &in, Location) {
-        Value cells = emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
+      Value valid = validPositions(in, ValueRange{position});
+      if (!v.atomAnchors) {
+        scf::IfOp::create(in, loc, valid, [&](OpBuilder &in, Location) {
+          Value cells = emitTemplatePackingCells(in, loc, position, v.cell, v.inverse);
+          Value framed = arith::AddFOp::create(in, loc, position,
+              emitLatticeShift(in, loc, cells, v.cell));
+          storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
+          publish(in, position, cells);
+          scf::YieldOp::create(in, loc);
+        });
+        scf::YieldOp::create(in, loc);
+        return;
+      }
+      // The anchor's position is final here (no thread of this launch
+      // writes positions); its packing cell is the same pure function of
+      // it that the anchor's own thread evaluates.
+      Value anchorUnit = arith::IndexCastOp::create(in, loc, in.getIndexType(),
+          memref::LoadOp::create(in, loc, v.atomAnchors,
+              ValueRange{arith::SubIOp::create(in, loc, unit, v.waters)}));
+      Value anchorRow = arith::AddIOp::create(in, loc, anchorUnit,
+          arith::MulIOp::create(in, loc, v.waters, ix(in, 2)));
+      Value anchor = loadElement(in, loc, v.positions, member(in, anchorRow));
+      Value huge = createReal(in, loc, in.getF64Type(), 1.e100);
+      Value anchorValid = arith::CmpFOp::create(in, loc, arith::CmpFPredicate::OLE,
+          vector::ReductionOp::create(in, loc, vector::CombiningKind::MAXNUMF,
+              math::AbsFOp::create(in, loc, anchor)), huge);
+      scf::IfOp::create(in, loc, arith::AndIOp::create(in, loc, valid, anchorValid),
+          [&](OpBuilder &in, Location) {
+        Value anchorCells = emitTemplatePackingCells(in, loc, anchor, v.cell, v.inverse);
+        Value bond = arith::SubFOp::create(in, loc, position, anchor);
+        Value near = emitMinimumImage(in, loc, bond, v.cell, v.inverse);
+        // near - bond is a lattice vector: shift the member by it as well.
+        Value cells = arith::AddFOp::create(in, loc, anchorCells,
+            math::RoundEvenOp::create(in, loc, emitTemplateFractional(in, loc,
+                arith::SubFOp::create(in, loc, near, bond), v.cell, v.inverse)));
         Value framed = arith::AddFOp::create(in, loc, position,
             emitLatticeShift(in, loc, cells, v.cell));
         storeElement(in, loc, convertReal(in, loc, framed, in.getF32Type()), v.frames, row);
-        publish(in, position, cells);
+        publish(in, anchor, cells);
+        Value extent = vector::ReductionOp::create(in, loc, vector::CombiningKind::ADD,
+            arith::MulFOp::create(in, loc, near, near));
+        memref::AtomicRMWOp::create(in, loc, arith::AtomicRMWKind::maxu,
+            arith::BitcastOp::create(in, loc, in.getI64Type(), extent), v.counters,
+            ValueRange{ix(in, TEMPLATE_COUNTER_ANCHOR_EXTENT)});
         scf::YieldOp::create(in, loc);
       });
       scf::YieldOp::create(in, loc);

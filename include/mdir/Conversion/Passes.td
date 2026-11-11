@@ -454,6 +454,12 @@ def ConvertMDExecToGPU
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
            "(MDIR_CHECK_PRUNING, D268)">,
+    Option<"checkTemplateCoverage", "check-template-coverage", "bool",
+           /*default=*/"false",
+           "Whether each evaluation of a class-segmented template list is "
+           "followed by the runtime's all-pairs check that every site pair "
+           "within the cutoff has an inner entry (MDIR_TEMPLATE_CHECK_COVERAGE, "
+           "D[rigid-water-template])">,
     Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
            "Whether the first loop over pairs after a refresh of a dual "
            "list of groups, at the same positions and in the same cell, "

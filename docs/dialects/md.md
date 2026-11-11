@@ -1954,7 +1954,8 @@ _Partitions pair work into water, mixed and atom classes_
 Syntax:
 
 ```
-operation ::= `md.template_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `)`)? attr-dict
+operation ::= `md.template_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `)`)?
+              (`anchor` `(` $anchored^ `)` `radius` `(` $radius `)`)? attr-dict
               `:` functional-type(operands, results)
 ```
 
@@ -1980,14 +1981,28 @@ in the relation. Other consumers retain the stored site.
 These relations have no implicit spatial cutoff. The structured site
 kernels state their own cutoffs. A physical finite list is selected
 only after proving that support and its molecular covering bound.
-Execution keeps the three class-pair segments in one buffer and two
-mobility-group tests; a segment is not a separate kernel or list.
+Execution keeps the three class-pair segments in one buffer and one
+mobility group; a segment is not a separate kernel or list.
 
-Traits: `AlwaysSpeculatableImplTrait`
+`anchored` holds ordered (member, anchor) solute pairs: a member that
+a constrained bond keeps within `radius` of its heavy-atom anchor.
+Each solute unit is an anchor and its members; every other solute
+particle is its own anchor. The radius is proved by the compiler from
+the constraint lengths and their tolerance. Units select candidates
+only: exclusions and 1-4 pairs keep their per-atom meaning.
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `SymbolUserOpInterface`
 
 Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
 
 #### Operands:
 
@@ -1996,6 +2011,7 @@ Effects: `MemoryEffects::Effect{}`
 | `universe` | field at the reference precision, with elements of type f64, i32, or i64 |
 | `molecules` | A set of tuples of distinct particles |
 | `excluded` | A set of tuples of distinct particles |
+| `anchored` | A set of tuples of distinct particles |
 
 #### Results:
 

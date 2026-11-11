@@ -11,6 +11,13 @@ namespace mlir {
 class OpBuilder;
 }
 namespace mdir::driver::builder {
+/// The relative tolerance |r^2/d^2 - 1| of the position constraints'
+/// failure test, which stops a run (D225). A constrained length r is then
+/// at most d sqrt(1 + tol) < d (1 + tol): the solute units of
+/// D[rigid-water-template] take this bound as their radius.
+inline double getConstraintPositionTolerance(bool doublePrecision) {
+  return doublePrecision ? 1.0e-8 : 1.0e-4;
+}
 void buildConstraintStops(mlir::OpBuilder &, mlir::Value step,
                             mlir::ValueRange failures,
                             llvm::ArrayRef<int> groups);

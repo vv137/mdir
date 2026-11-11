@@ -254,7 +254,7 @@ llvm::Error Builder::emitEntry() {
     std::vector<EntryConstraintIR> groups;
     configureConstraints(groups);
     ConstraintPositionConfig position{false, control.analyticBonds,
-        control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+        getConstraintPositionTolerance(control.precision == Precision::Double),
         control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
     for (const auto &group : groups) {
       DescentConstraintGroupIR geometry{group.relation, group.arity,

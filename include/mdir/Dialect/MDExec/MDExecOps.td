@@ -82,26 +82,34 @@ def MDExec_EmptyOp : MDExec_Op<"empty", [Pure]> {
 // Spatial structures
 //===----------------------------------------------------------------------===//
 
-def MDExec_BuildSegmentedPairsOp : MDExec_Op<"build_segmented_pairs", [Pure]> {
+def MDExec_BuildSegmentedPairsOp : MDExec_Op<"build_segmented_pairs", [
+    Pure, AttrSizedOperandSegments]> {
   let summary = "Builds one class-segmented list from proved template membership";
   let description = [{
     The molecule members are disjoint O-H-H[-site] tuples. The complement
     of those members in `universe` is the atom class. Only SS uses
     `excluded`. The physical representation has one pair allocation,
-    compacted WW/SW/SS ranges, one spatial search/sort and two mobility
-    groups. The water covering reaches add twice `extent` for WW and
-    once for SW; SS keeps the ordinary reach. `extent` includes the formed
-    site, with initial widening and subsequent enforcement as specified
-    by the template contract. Lowering must preserve all covering images.
+    compacted WW/SW/SS ranges, one spatial search/sort and one mobility
+    group. The water covering reaches add twice `extent` for WW and
+    once for SW; `anchored` solute units, with `radius`, add it once to
+    SW and twice to SS, and their tests and references are those of their
+    heavy-atom anchors. Without anchors SS keeps the ordinary reach.
+    `extent` includes the formed site, with initial widening and
+    subsequent enforcement as specified by the template contract; so
+    does `radius` for the members of the solute units. Lowering must
+    preserve all covering images.
   }];
   let arguments = (ins MDExec_FieldOrBuffer:$universe,
       MDExec_RelationOrMembers:$molecules,
       Optional<MDExec_RelationOrMembers>:$excluded,
+      Optional<MDExec_RelationOrMembers>:$anchored,
       MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
-      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha);
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha,
+      OptionalAttr<F64Attr>:$radius);
   let results = (outs MDRT_SegmentedPairsType:$result);
   let assemblyFormat = [{
     $universe `,` $molecules (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
     `at` `(` $positions `,` $cell `)`
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
@@ -112,24 +120,27 @@ def MDExec_BuildSegmentedPairsOp : MDExec_Op<"build_segmented_pairs", [Pure]> {
 }
 
 def MDExec_EmptySegmentedPairsOp : MDExec_Op<"empty_segmented_pairs", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+    AttrSizedOperandSegments, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "An unbuilt class-segmented list with fixed membership";
   let description = [{
     Owns one persistent allocation with WW/SW/SS outer and inner ranges.
     No configuration is valid until the first refresh. Membership and
     covering bounds are invariant for this allocation; refreshes change
-    its two mobility-group references, ranges and packing in place.
+    its mobility group's references, ranges and packing in place.
     Moving this initialization out of a step loop does not move a build:
     the first refresh still builds at the first evaluated configuration.
   }];
   let arguments = (ins MDExec_FieldOrBuffer:$universe,
       MDExec_RelationOrMembers:$molecules,
       Optional<MDExec_RelationOrMembers>:$excluded,
-      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha);
+      Optional<MDExec_RelationOrMembers>:$anchored,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$extent, F64Attr:$alpha,
+      OptionalAttr<F64Attr>:$radius);
   let results = (outs MDRT_SegmentedPairsType:$result);
   let assemblyFormat = [{
     $universe `,` $molecules
     (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
     `:` qualified(type($universe)) `,` qualified(type($molecules))
@@ -141,13 +152,13 @@ def MDExec_EmptySegmentedPairsOp : MDExec_Op<"empty_segmented_pairs", [
 def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
     AllTypesMatch<["list", "result"]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
-  let summary = "Refreshes the two mobility groups of one segmented list";
+  let summary = "Refreshes the one mobility group of a segmented list";
   let description = [{
-    Tests the anchor and atom groups once each. A water-group rebuild
-    refreshes WW and SW; an atom-group rebuild refreshes SW and SS. The
+    Tests the anchors of the waters and of the solute units, one mobility
+    group: any failed test rebuilds or prunes WW, SW and SS together. The
     combined spatial sort/search retains the class ranges in one pair
-    allocation. The inner ranges are pruned from the outer ranges with
-    the same group dependencies. `prune_skin` is smaller than `skin`,
+    allocation. The inner ranges are pruned from the outer ranges on the
+    same schedule. `prune_skin` is smaller than `skin`,
     or equal to it when no separate inner margin is requested.
 
     The result continues the input list's storage and references. In

@@ -26,13 +26,13 @@ they implement.
 | segment | The WW, SW or SS part of that buffer, with its outer and inner ranges. | WW/SW/SS ranges |
 | class | Water template or solute; selects the computation for a unit. | class, class row |
 | class pair | WW, SW or SS. | three-class |
-| unit | A matched water with anchor O and radius $r_\mathrm m$, or a solute particle with radius zero in this version. | real unit, padded unit |
+| unit | A matched water with anchor O and radius $r_\mathrm m$, or a solute unit: a heavy atom and the hydrogens whose bonds the constraints hold, anchored at the heavy atom, with radius $\rho$ (#799). A solute particle without such hydrogens is its own unit. | real unit, padded unit; atom unit, dependent |
 | anchor | A unit's reference point for sorting and displacement tests. | anchor |
-| mobility group | Units sharing a displacement test and refresh schedule: anchors of matched waters; atoms. | group, stale group |
+| mobility group | Units sharing a displacement test and refresh schedule: one group, the anchors of the matched waters and of the solute units (#799). | group, stale group |
 | refresh | Rebuild or prune of the segments invalidated by a mobility group's test. | stale-group refresh, cold refresh |
 | template kernel | The fused launch evaluating all three class pairs. | three-class loop, fused window |
 | extent | Largest distance of a unit's sites from its anchor, checked against $r_\mathrm m$. | extent, initial extent widening |
-| covering bound | The anchor-distance conditions $R+2r_\mathrm m$ for WW and $R+r_\mathrm m$ for SW. | covering predicate |
+| covering bound | The anchor-distance conditions $R+2r_\mathrm m$ for WW, $R+r_\mathrm m+\rho$ for SW and $R+2\rho$ for SS. | covering predicate |
 | rule (A) | The extra point's constant transpose used by template dynamics. | constant site transpose |
 | rule (B) | The true bisector transpose used for written-frame forces. | general frame evaluator |
 
@@ -135,6 +135,38 @@ condition is the half-skin test $d \le s/2$. The proof needs the extents
 at the current positions, not only at the build: the extent check of
 Section 6 below provides it.
 
+**Solute units (#799).** Where the constraints hold the bonds of the
+hydrogens, a solute unit is a heavy atom $X$ and its constrained
+hydrogens, anchored at $X$; an unmatched rigid water is a unit of its
+oxygen; every other solute particle, an ion or a stored extra point, is its
+own anchor. The units partition the solute. The constraints' failure test,
+which stops a run (D225), keeps $\lvert r^2/d^2-1\rvert\le\tau$ after
+every position constraint, so a member is within
+$d\sqrt{1+\tau}<d(1+\tau)$ of its anchor; the compiler takes
+
+$$
+\rho = d_{XH}^{\max}(1+\tau),
+$$
+
+the longest constrained member–anchor length with the tolerance of the
+positions ($\tau = 10^{-4}$ in mixed precision). The same triangle
+inequality as above gives, for members $a$ of $A$ and $b$ of $B$,
+$\lVert\mathbf x_a-\mathbf x_b\rVert_\mathrm{mi}\ge\lVert\mathbf x_{X(A)}-\mathbf x_{X(B)}\rVert_\mathrm{mi}-\rho_A-\rho_B$,
+so anchors within $R+\rho_A+\rho_B$ cover every site pair within $R$:
+the SW list takes the reach $R+r_\mathrm m+\rho$ and the SS list
+$R+2\rho$ (one $\rho$ for all units, zero without anchored members).
+Each member keeps its own entries, masks, exclusions and 1–4 scaling: a
+unit only selects candidates, so the search and the prune read the
+anchor's reference point for every member (in the member's own packing
+frame, which differs from the anchor's by whole lattice vectors), and the
+displacement test of D80 runs on the anchors alone. Before the first
+constraint the input's measured member–anchor distances widen $\rho$ for
+that build, as the water extents widen $r_\mathrm m$; afterwards a build
+that measures more than $\rho$ stops the run. Without constrained
+hydrogens (any solute hydrogen not held to an anchor) the template does
+not apply: `ON` refuses, naming the count, and `AUTO` takes the general
+path from the start (the up-front constraints ruled on #795).
+
 A molecule is read whole: the packing takes each site in the image of its
 oxygen, which is exact because $r_\mathrm m$ is far below half an edge.
 The lists hold every image of every anchor pair within their reach when
@@ -220,17 +252,19 @@ The class-segmented pair list is one buffer of cluster pairs. Its three
 class-pair segments are ranges of that buffer, compacted by tag,
 with one offset per segment. The spatial search and sort run once. A warp
 stays within one segment in the fused launch, so its tag branch is uniform.
-Two mobility groups set the displacement-test cadences: water anchors,
-and atoms. WW follows the anchors; SW and SS follow the faster participating
-group. Each cadence keeps the outer and pruned references of D114.
+One mobility group, the anchors of the waters and of the solute units,
+sets one displacement-test cadence for all three segments (#799; it
+replaced two groups, water anchors and atoms, whose atom test the
+protein's hydrogens tripped every 2.6 steps on ubiquitin). The cadence
+keeps the outer and pruned references of D114.
 The pruning of the solute segments is folded into the pruning in the loop
 (D284), rather than the separate launch of the prototype.
 
 For $P$ particle classes there are $P(P+1)/2$ unordered class-pair segments,
 including self-pairs, but only $C\le P$ displacement tests, one per mobility
 group, and one storage buffer. Four classes (water, solute, ions and
-perturbed atoms) give ten segments and still two tests when only water
-uses anchors. Segment $(a,b)$ refreshes at the faster participating cadence.
+perturbed atoms) give ten segments and one test while all of them are
+anchored. Segment $(a,b)$ refreshes at the faster participating cadence.
 Segments without a measured specialization gain retain the general path
 inside the same launch; a segment is not a separate kernel.
 
@@ -275,10 +309,11 @@ waters in a layout by molecule is #794.
 
 As for the general structures (D80, `md-exec-expose-validity`), the tests
 are reductions of booleans fused into the loop that writes the positions
-that the forces will see, with no kernel and no wait of their own: the
-anchors' test for the water list, the solute particles' and the anchors'
-for the solute lists. The prototype read its test back to the host every
-step; the implementation does not.
+that the forces will see, with no kernel and no wait of their own: one
+test of the anchors, those of the waters and of the solute units, for all
+three segments (#799). The prototype read its test back to the host every
+step; the implementation does not. A member of a solute unit is not
+tested; the thread of its anchor publishes the unit's reference point.
 
 The covering bound also needs $\varrho_A \le r_\mathrm m$ at the current
 positions. The proposal is to test it in the same fused loop, by the
@@ -1565,6 +1600,81 @@ systems the SW and SS searches remain the largest maintenance kernels
 subsets, each scanned and stepped separately. Without its survivor steps
 the SW search takes 38 us per launch (a development build with no
 entries), so the steps, not the scan, are the remaining cost.
+
+### S1: heavy-atom solute units and one mobility group
+
+Ruled on #799 (2026-11-11) and taken into this decision: the solute's
+hydrogens set the atom group's pace (the pruning interval of 2.6 steps on
+ubiquitin), so where the X–H bonds are constrained a solute unit is a heavy
+atom and its hydrogens, with the radius $\rho$ of Section 2, and the
+anchors of the waters and of the solute units form one mobility group.
+
+Implementation. The driver derives the units from the constraint groups
+(SHAKE groups, and the SETTLE of an unmatched water) and refuses `ON`, or
+leaves `AUTO` on the general path, when a solute hydrogen has none.
+`md.template_pairs` and the segmented-pair ops take the (member, anchor)
+pairs as a tuple relation and $\rho$ as `radius`; the runtime keeps, per
+atom unit, its anchor and up to four members. At a snapshot a member takes
+its anchor's packing cell, corrected by the lattice vector between its raw
+and minimum-image bond, so that it lies in its anchor's image, and the
+anchor's reference point in that frame; it reports the largest
+member–anchor distance, which widens $\rho$ at an unconstrained build and
+stops a constrained one beyond $\rho$. In the per-step writer a member
+publishes its frame only; its anchor publishes the reference point for
+itself and its members and alone takes the displacement tests, with the
+least half-margin of the three classes. Search, pruning and evaluation are
+unchanged: they read the units' points. The SW reach adds $\rho$, the SS
+reach $2\rho$, in one addition order shared by the build, the pruning and
+the validity theorem. A program without anchored members is unchanged.
+
+Gates. `water-template-anchors-coverage-gpu.test` checks every evaluated
+frame of alanine dipeptide in OPC (NPT) and in TIP3P (NVT), PME, 2 fs,
+200 steps, with an independent host check (`MDIR_TEMPLATE_CHECK_COVERAGE`):
+over all unit pairs and their near images, each site pair within the
+cutoff of the packed frames, in f64 widened by $2^{-20}$ of the cutoff
+(which contains the f32 predicate of the kernel and the pairs of the f64
+state), must have an inner entry. The first evaluation is at the
+unconstrained input. OPC: 309 checks, 3,899,165 unit pairs within the
+cutoff, none without an entry; TIP3P: 249 checks, 3,179,894 pairs, none.
+The same check at 1.5 cutoffs, beyond every inner reach, reports pairs
+without an entry, so it can fail. `water-template-anchors-physical-gpu.test`
+evaluates the template, general mixed and general double routes at ten
+frames of each trajectory: the template's projected forces and the
+solute's unprojected atom forces stay within 1.5 times general mixed's
+error against double (largest 0.078 kJ/mol/nm against 0.117, with mixed's
+own 0.078), and the energy within 1.5 times mixed's or $10^{-6}$ relative.
+`water-template-anchors-refusal.test` refuses `ON` without
+`hydrogen_bonds` (12 free hydrogens of the dipeptide), and the topology
+fixture covers units, unmatched-water units, the radius in both precisions
+and the `AUTO` reason. The 105 template fixtures of the gate list pass.
+
+Cadence, RTX 5090, ubiquitin (refresh and pruning intervals in steps,
+initial event excluded): OPC 24.8 and 2.57 at 6e6dcca4, 55.6 and 8.48 with
+the units; TIP3P 23.7 and 2.56, then 52.6 and 8.48. The outer list's
+starting entries grow from 264,865 to 278,230 (OPC) and from 267,364 to
+278,794 (TIP3P), the inner list's final entries by 8%.
+
+Kernel and wall time, us/step: 6e6dcca4 and main from the 10,000-step
+captures above; the units and main again in 3,000-step captures, two rounds
+in alternated order (round 1 / round 2). Wall is the span of the middle 80%
+of the captured kernels, idle the part of it without a kernel.
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main b7d801d9 | 114.1/114.4 | 22.5/22.7 | 124.2/124.4 | 8.4/8.3 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 149.4/148.8 | 21.0 |
+| | units | 122.2/122.0 | 13.3/13.0 | 142.2/140.8 | 17.6/16.6 |
+| Ubiquitin TIP3P | main b7d801d9 | 90.9/91.0 | 19.9/19.8 | 100.2/100.3 | 7.6/7.7 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 142.8/143.2 | 20.7 |
+| | units | 115.4/115.6 | 13.9/14.0 | 134.1/134.5 | 16.9/16.8 |
+
+The criterion of S1 holds against 6e6dcca4: the step falls by 6.4 us of
+kernels and 7.6 of wall on OPC, 7.1 and 8.7 on TIP3P, mostly in
+maintenance (21 to 13 and 22 to 14 us/step). It is still above `main`, by
+7.9 us of kernels on OPC and 24.6 on TIP3P. The evaluation is unchanged
+(42.2 to 42.1 us/step on OPC: the larger SS and SW reaches cost about what
+the rarer pruning saves); the per-step writer grows from 9.8 to 11.1
+us/step with the members' points.
 
 ### Precision contract for the whole search port and future pruning
 

@@ -88,7 +88,18 @@ void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
   if (water || atom) ++templatePrunes;
 }
 
+/* Coverage of the evaluated lists, a test-only diagnostic: compiled with
+ * MDIR_TEMPLATE_CHECK_COVERAGE set, every evaluation is followed by an
+ * independent all-pairs, all-near-images check on the host that each site
+ * pair within the cutoff of the packed frames it evaluated has an inner
+ * entry (a superset of the general path's pairs). */
+static int64_t templateCoverageChecks, templateCoverageMisses;
+static int64_t templateCoveragePairs;
+
 int64_t mdrtGetTemplatePairStatistic(int64_t slot) {
+  if (slot == 12) return templateCoverageChecks;
+  if (slot == 13) return templateCoverageMisses;
+  if (slot == 14) return templateCoveragePairs;
   const int64_t values[] = {templateRefreshes, templatePrunes, templateGrowths,
       templateStartEntries, templateEndEntries, templateStartWork,
       templateEndWork, templateStartCapacity, templateEndCapacity};
@@ -164,7 +175,7 @@ static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entrie
  * Upload once at initialization, never at a step's refresh. */
 int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
     struct Buffer2 *members, int64_t particles, int64_t entries,
-    struct Buffer2 *excluded) {
+    struct Buffer2 *excluded, struct Buffer2 *anchored) {
   int64_t waters = members->sizes[0], sites = members->sizes[1];
   if (particles < 0 || particles > INT32_MAX || waters < 0 ||
       (sites != 3 && sites != 4) || waters > particles / sites) {
@@ -189,9 +200,59 @@ int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
     fprintf(stderr, "mdrt: invalid template solute exclusion graph\n");
     abort();
   }
+  /* Solute units: (member, anchor) pairs name each member that its
+   * constrained bond keeps near a heavy atom. Every other atom anchors
+   * itself. Units are fixed IDs [W, W+A). The compiler proves the radius
+   * from the constraints; here only the shape of the partition is checked. */
+  int64_t anchorCount = anchored->sizes[0];
+  int32_t *anchors = malloc((size_t)(atoms ? atoms : 1) * sizeof(int32_t));
+  int32_t *dependents = malloc((size_t)(atoms ? atoms : 1) *
+      MDRT_TEMPLATE_ANCHOR_DEPENDENTS * sizeof(int32_t));
+  if (!anchors || !dependents || anchorCount < 0 ||
+      (anchorCount && anchored->sizes[1] != 2)) {
+    fprintf(stderr, "mdrt: invalid template anchor table\n");
+    abort();
+  }
+  for (int64_t a = 0; a < atoms; ++a) {
+    anchors[a] = (int32_t)(waters + a);
+    for (int d = 0; d != MDRT_TEMPLATE_ANCHOR_DEPENDENTS; ++d)
+      dependents[a * MDRT_TEMPLATE_ANCHOR_DEPENDENTS + d] = -1;
+  }
+  {
+    int32_t *slotOf = malloc((size_t)(particles ? particles : 1) * sizeof(int32_t));
+    if (!slotOf) abort();
+    for (int64_t p = 0; p < particles; ++p) slotOf[p] = -1;
+    for (int64_t row = 0; row < count; ++row) slotOf[host[row]] = (int32_t)row;
+    const int32_t *pairs = anchorCount ? (const int32_t *)anchored->aligned + anchored->offset : NULL;
+    for (int64_t k = 0; k < anchorCount; ++k) {
+      int32_t member = pairs[k * anchored->strides[0]];
+      int32_t anchor = pairs[k * anchored->strides[0] + anchored->strides[1]];
+      int ok = member >= 0 && member < particles && anchor >= 0 && anchor < particles &&
+               member != anchor && slotOf[member] >= 3 * waters && slotOf[anchor] >= 3 * waters;
+      int64_t m = ok ? slotOf[member] - 3 * waters : 0, x = ok ? slotOf[anchor] - 3 * waters : 0;
+      ok = ok && anchors[m] == (int32_t)(waters + m);
+      int d = 0;
+      while (ok && d != MDRT_TEMPLATE_ANCHOR_DEPENDENTS &&
+             dependents[x * MDRT_TEMPLATE_ANCHOR_DEPENDENTS + d] >= 0) ++d;
+      if (!ok || d == MDRT_TEMPLATE_ANCHOR_DEPENDENTS) {
+        fprintf(stderr, "mdrt: invalid or overlapping template solute units\n");
+        abort();
+      }
+      anchors[m] = (int32_t)(waters + x);
+      dependents[x * MDRT_TEMPLATE_ANCHOR_DEPENDENTS + d] = (int32_t)(waters + m);
+    }
+    /* No chains: an anchor is anchored to itself. */
+    for (int64_t a = 0; a < atoms; ++a)
+      if (anchors[anchors[a] - waters] != anchors[a]) {
+        fprintf(stderr, "mdrt: a template solute anchor is itself anchored\n");
+        abort();
+      }
+    free(slotOf);
+  }
   int64_t handle = createTemplatePairs(waters, atoms, entries);
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
-  int64_t sizes[TEMPLATE_METADATA_SLOTS] = {count, particles, atoms + 1, graph.count};
+  int64_t sizes[TEMPLATE_METADATA_SLOTS] = {count, particles, atoms + 1, graph.count,
+      atoms, MDRT_TEMPLATE_ANCHOR_DEPENDENTS * atoms};
   int64_t words = 0;
   for (int slot = 0; slot != TEMPLATE_METADATA_SLOTS; ++slot) {
     pairs->metadataOffsets[slot] = words;
@@ -212,6 +273,14 @@ int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
   if (graph.count)
     memcpy(metadata + pairs->metadataOffsets[TEMPLATE_SS_NEIGHBORS], graph.neighbors,
             (size_t)graph.count * sizeof(int32_t));
+  if (atoms) {
+    memcpy(metadata + pairs->metadataOffsets[TEMPLATE_ATOM_ANCHORS], anchors,
+           (size_t)atoms * sizeof(int32_t));
+    memcpy(metadata + pairs->metadataOffsets[TEMPLATE_ATOM_DEPENDENTS], dependents,
+           (size_t)atoms * MDRT_TEMPLATE_ANCHOR_DEPENDENTS * sizeof(int32_t));
+  }
+  free(anchors);
+  free(dependents);
   allocationTag = "template pairs: fixed topology metadata";
   pairs->metadata = mgpuMemAlloc((uint64_t)words * sizeof(int32_t), NULL, false);
   allocationTag = NULL;
@@ -573,4 +642,182 @@ int64_t mdrtTemplatePairsGrow(int64_t handle, int64_t required) {
   pairs->layout = next;
   allocateTemplatePairs(pairs);
   return 1;
+}
+
+/* Covered (first unit, partner unit, image) keys, sorted for search. */
+static uint64_t templateCoverageKey(int64_t first, int64_t partner, int code) {
+  return ((uint64_t)first << 47) | ((uint64_t)partner << 30) | (uint64_t)code;
+}
+static int templateImageCode(int n0, int n1, int n2) {
+  return ((n0 + MDRT_TEMPLATE_IMAGE_OFFSET) & MDRT_TEMPLATE_IMAGE_MASK) |
+         (((n1 + MDRT_TEMPLATE_IMAGE_OFFSET) & MDRT_TEMPLATE_IMAGE_MASK) << MDRT_TEMPLATE_IMAGE_BITS) |
+         (((n2 + MDRT_TEMPLATE_IMAGE_OFFSET) & MDRT_TEMPLATE_IMAGE_MASK) << (2 * MDRT_TEMPLATE_IMAGE_BITS));
+}
+static int templateHasKey(const uint64_t *keys, int64_t count, uint64_t key) {
+  int64_t lo = 0, hi = count;
+  while (lo < hi) {
+    int64_t mid = lo + (hi - lo) / 2;
+    if (keys[mid] < key) lo = mid + 1; else hi = mid;
+  }
+  return lo < count && keys[lo] == key;
+}
+
+/* The cell is (ax, by, cz, bx, cx, cy), the lattice vectors as columns of
+ * a lower-triangular H; `cutoff` and `alpha` are the template's. */
+void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
+    int64_t hasSite, double ax, double by, double cz, double bx, double cx,
+    double cy) {
+  /* A value above one scales the checked cutoff: beyond the lists' reach
+   * the check must find pairs without an entry (its own negative test). */
+  static double scale = -1;
+  if (scale < 0) {
+    const char *flag = getenv("MDIR_TEMPLATE_CHECK_COVERAGE");
+    scale = flag && strtod(flag, NULL) > 1 ? strtod(flag, NULL) : 1;
+  }
+  cutoff *= scale;
+  struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
+  struct MdrtTemplatePairLayout *L = &pairs->layout;
+  int64_t W = L->waters, A = L->atoms, units = W + A, rows = 3 * W + A;
+  if (units >= ((int64_t)1 << 17)) {
+    fprintf(stderr, "mdrt: the template coverage check takes fewer than 2^17 units\n");
+    abort();
+  }
+  enter();
+  check(cuCtxSynchronize(), "template coverage readiness");
+  int32_t header[MDRT_TEMPLATE_PAIR_HEADER_WORDS];
+  check(cuMemcpyDtoH(header, (CUdeviceptr)pairs->pairs, sizeof(header)), "coverage header");
+  int64_t work = 0;
+  for (int tag = 0; tag != 3; ++tag) {
+    int64_t end = header[TEMPLATE_PAIR_INNER_RANGES + 6 * tag + 5];
+    if (end > work) work = end;
+  }
+  int32_t *records = malloc((size_t)(work ? work : 1) * 4 * sizeof(int32_t));
+  int32_t *order = malloc((size_t)(units ? units : 1) * sizeof(int32_t));
+  int32_t *lengths = malloc((size_t)(units ? units : 1) * sizeof(int32_t));
+  float *frames = malloc((size_t)(rows ? rows : 1) * 3 * sizeof(float));
+  int32_t *exRows = malloc((size_t)(A + 1) * sizeof(int32_t));
+  int64_t exCount = pairs->metadataSizes[TEMPLATE_SS_NEIGHBORS];
+  int32_t *exNeighbors = malloc((size_t)(exCount ? exCount : 1) * sizeof(int32_t));
+  if (!records || !order || !lengths || !frames || !exRows || !exNeighbors) abort();
+  if (work)
+    check(cuMemcpyDtoH(records, (CUdeviceptr)pairs->pairs + (uint64_t)L->innerUnits * 4,
+                       (size_t)work * 4 * sizeof(int32_t)), "coverage work");
+  int64_t entries = 0;
+  for (int64_t r = 0; r != work; ++r)
+    if (records[4 * r + 3] > entries) entries = records[4 * r + 3];
+  int32_t *inner = malloc((size_t)(entries ? entries : 1) * 4 * sizeof(int32_t));
+  if (!inner) abort();
+  if (entries)
+    check(cuMemcpyDtoH(inner, (CUdeviceptr)pairs->pairs + (uint64_t)L->innerEntries * 4,
+                       (size_t)entries * 4 * sizeof(int32_t)), "coverage entries");
+  if (units) {
+    check(cuMemcpyDtoH(order, (CUdeviceptr)pairs->order, (size_t)units * sizeof(int32_t)), "coverage order");
+    check(cuMemcpyDtoH(lengths, (CUdeviceptr)pairs->groups +
+        (uint64_t)(TEMPLATE_GROUP_AT_START * units) * sizeof(int32_t),
+        (size_t)units * sizeof(int32_t)), "coverage lengths");
+  }
+  if (rows)
+    check(cuMemcpyDtoH(frames, (CUdeviceptr)pairs->frames, (size_t)rows * 3 * sizeof(float)), "coverage frames");
+  check(cuMemcpyDtoH(exRows, (CUdeviceptr)pairs->metadata +
+      (uint64_t)pairs->metadataOffsets[TEMPLATE_SS_ROWS] * 4, (size_t)(A + 1) * 4), "coverage exclusions");
+  if (exCount)
+    check(cuMemcpyDtoH(exNeighbors, (CUdeviceptr)pairs->metadata +
+        (uint64_t)pairs->metadataOffsets[TEMPLATE_SS_NEIGHBORS] * 4, (size_t)exCount * 4), "coverage exclusions");
+  /* Covered keys from the evaluated (inner) records. */
+  int64_t keyCount = 0, keyRoom = 16 * entries + 1;
+  uint64_t *keys = malloc((size_t)keyRoom * sizeof(uint64_t));
+  if (!keys) abort();
+  for (int tag = 0; tag != 3; ++tag) {
+    const int32_t *range = header + TEMPLATE_PAIR_INNER_RANGES + 6 * tag;
+    for (int64_t r = range[4]; r < range[5]; ++r) {
+      const int32_t *record = records + 4 * r;
+      int64_t first = record[1], length = lengths[first];
+      for (int64_t e = record[2]; e < record[3]; ++e) {
+        const int32_t *entry = inner + 4 * e;
+        for (int64_t lane = 0; lane < length && lane < 16; ++lane)
+          if ((entry[2] & (1 << lane)) && order[first + lane] >= 0)
+            keys[keyCount++] = templateCoverageKey(order[first + lane], entry[0], entry[1]);
+      }
+    }
+  }
+  qsort(keys, (size_t)keyCount, sizeof(uint64_t), mdrtCompareTemplatePairKeys);
+  /* Sites of each unit, from the frames that were evaluated. */
+  int64_t siteRoom = 4 * units + 1;
+  double (*site)[3] = malloc((size_t)siteRoom * sizeof(*site));
+  int64_t *firstSite = malloc((size_t)(units + 1) * sizeof(int64_t));
+  if (!site || !firstSite) abort();
+  int64_t sites = 0;
+  for (int64_t u = 0; u != units; ++u) {
+    firstSite[u] = sites;
+    if (u < W) {
+      const float *o = frames + 9 * u;
+      for (int k = 0; k != 3; ++k)
+        for (int c = 0; c != 3; ++c) site[sites + k][c] = o[3 * k + c];
+      sites += 3;
+      if (hasSite) {
+        for (int c = 0; c != 3; ++c)
+          site[sites][c] = (double)o[c] + alpha * (((double)o[3 + c] - o[c]) + ((double)o[6 + c] - o[c]));
+        ++sites;
+      }
+    } else {
+      const float *x = frames + 3 * (3 * W + (u - W));
+      for (int c = 0; c != 3; ++c) site[sites][c] = x[c];
+      ++sites;
+    }
+  }
+  firstSite[units] = sites;
+  /* f64 predicate widened by 2^-20 of the cutoff: it contains the f32
+   * evaluator's predicate and the pairs of the f64 state positions. */
+  double reach = cutoff * (1.0 + 0x1p-20), reach2 = reach * reach;
+  int64_t misses = 0, required = 0;
+  for (int64_t u = 0; u != units; ++u)
+    for (int64_t v = u + 1; v != units; ++v) {
+      if (u >= W && v >= W) {
+        int64_t a = u - W, b = v - W, found = 0;
+        for (int64_t k = exRows[a]; k < exRows[a + 1]; ++k) found |= exNeighbors[k] == b;
+        if (found) continue;
+      }
+      /* The near images of the two anchors' displacement. */
+      double d[3];
+      for (int c = 0; c != 3; ++c) d[c] = site[firstSite[u]][c] - site[firstSite[v]][c];
+      double fz = d[2] / cz, fy = (d[1] - cy * fz) / by, fx = (d[0] - cx * fz - bx * fy) / ax;
+#define TEMPLATE_NEAREST(x) ((int)((x) < 0 ? (x) - .5 : (x) + .5))
+      int m0 = TEMPLATE_NEAREST(fx), m1 = TEMPLATE_NEAREST(fy), m2 = TEMPLATE_NEAREST(fz);
+#undef TEMPLATE_NEAREST
+      for (int n2 = m2 - 1; n2 <= m2 + 1; ++n2)
+        for (int n1 = m1 - 1; n1 <= m1 + 1; ++n1)
+          for (int n0 = m0 - 1; n0 <= m0 + 1; ++n0) {
+            double shift[3] = {n0 * ax + n1 * bx + n2 * cx, n1 * by + n2 * cy, n2 * cz};
+            int near = 0;
+            for (int64_t i = firstSite[u]; i < firstSite[u + 1] && !near; ++i)
+              for (int64_t j = firstSite[v]; j < firstSite[v + 1] && !near; ++j) {
+                double r2 = 0;
+                for (int c = 0; c != 3; ++c) {
+                  double x = site[i][c] - (site[j][c] + shift[c]);
+                  r2 += x * x;
+                }
+                near = r2 < reach2;
+              }
+            if (!near) continue;
+            ++required;
+            /* x_u - (x_v + n L): u first with image n, or v first with -n.
+             * A solute-water pair has the solute first. */
+            uint64_t forward = templateCoverageKey(u, v, templateImageCode(n0, n1, n2));
+            uint64_t backward = templateCoverageKey(v, u, templateImageCode(-n0, -n1, -n2));
+            int ok = (u >= W && v < W) ? templateHasKey(keys, keyCount, forward)
+                   : (u < W && v >= W) ? templateHasKey(keys, keyCount, backward)
+                   : templateHasKey(keys, keyCount, forward) || templateHasKey(keys, keyCount, backward);
+            if (!ok) {
+              if (misses < 8)
+                fprintf(stderr, "mdrt: template coverage: units %lld and %lld, image %d %d %d, have no entry\n",
+                        (long long)u, (long long)v, n0, n1, n2);
+              ++misses;
+            }
+          }
+    }
+  ++templateCoverageChecks;
+  templateCoverageMisses += misses;
+  templateCoveragePairs += required;
+  free(records); free(order); free(lengths); free(frames); free(exRows);
+  free(exNeighbors); free(inner); free(keys); free(site); free(firstSite);
 }

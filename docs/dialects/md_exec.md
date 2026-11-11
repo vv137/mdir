@@ -319,6 +319,7 @@ Syntax:
 
 ```
 operation ::= `md_exec.build_segmented_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
               `at` `(` $positions `,` $cell `)`
               `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
               `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
@@ -329,13 +330,17 @@ operation ::= `md_exec.build_segmented_pairs` $universe `,` $molecules (`exclude
 The molecule members are disjoint O-H-H[-site] tuples. The complement
 of those members in `universe` is the atom class. Only SS uses
 `excluded`. The physical representation has one pair allocation,
-compacted WW/SW/SS ranges, one spatial search/sort and two mobility
-groups. The water covering reaches add twice `extent` for WW and
-once for SW; SS keeps the ordinary reach. `extent` includes the formed
-site, with initial widening and subsequent enforcement as specified
-by the template contract. Lowering must preserve all covering images.
+compacted WW/SW/SS ranges, one spatial search/sort and one mobility
+group. The water covering reaches add twice `extent` for WW and
+once for SW; `anchored` solute units, with `radius`, add it once to
+SW and twice to SS, and their tests and references are those of their
+heavy-atom anchors. Without anchors SS keeps the ordinary reach.
+`extent` includes the formed site, with initial widening and
+subsequent enforcement as specified by the template contract; so
+does `radius` for the members of the solute units. Lowering must
+preserve all covering images.
 
-Traits: `AlwaysSpeculatableImplTrait`
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
@@ -349,6 +354,7 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 </table>
 
 #### Operands:
@@ -358,6 +364,7 @@ Effects: `MemoryEffects::Effect{}`
 | `universe` | A per-particle field or buffer of a field |
 | `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
 | `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
 
@@ -365,7 +372,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | One class-segmented pair list with two mobility groups |
+| `result` | One class-segmented pair list with one mobility group |
 
 
 
@@ -605,6 +612,7 @@ Syntax:
 ```
 operation ::= `md_exec.empty_segmented_pairs` $universe `,` $molecules
               (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
               `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
               `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
               `:` qualified(type($universe)) `,` qualified(type($molecules))
@@ -614,9 +622,11 @@ operation ::= `md_exec.empty_segmented_pairs` $universe `,` $molecules
 Owns one persistent allocation with WW/SW/SS outer and inner ranges.
 No configuration is valid until the first refresh. Membership and
 covering bounds are invariant for this allocation; refreshes change
-its two mobility-group references, ranges and packing in place.
+its mobility group's references, ranges and packing in place.
 Moving this initialization out of a step loop does not move a build:
 the first refresh still builds at the first evaluated configuration.
+
+Traits: `AttrSizedOperandSegments`
 
 Interfaces: `MemoryEffectOpInterface`
 
@@ -628,6 +638,7 @@ Interfaces: `MemoryEffectOpInterface`
 <tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 <tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
 </table>
 
 #### Operands:
@@ -637,12 +648,13 @@ Interfaces: `MemoryEffectOpInterface`
 | `universe` | A per-particle field or buffer of a field |
 | `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
 | `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
 
 #### Results:
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | One class-segmented pair list with two mobility groups |
+| `result` | One class-segmented pair list with one mobility group |
 
 
 
@@ -1585,7 +1597,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 ### `md_exec.refresh_segmented_pairs` (::mdir::md_exec::RefreshSegmentedPairsOp)
 
-_Refreshes the two mobility groups of one segmented list_
+_Refreshes the one mobility group of a segmented list_
 
 Syntax:
 
@@ -1597,11 +1609,11 @@ operation ::= `md_exec.refresh_segmented_pairs` $list `at` `(` $positions `,` $c
               `:` qualified(type($list)) `,` qualified(type($positions))
 ```
 
-Tests the anchor and atom groups once each. A water-group rebuild
-refreshes WW and SW; an atom-group rebuild refreshes SW and SS. The
+Tests the anchors of the waters and of the solute units, one mobility
+group: any failed test rebuilds or prunes WW, SW and SS together. The
 combined spatial sort/search retains the class ranges in one pair
-allocation. The inner ranges are pruned from the outer ranges with
-the same group dependencies. `prune_skin` is smaller than `skin`,
+allocation. The inner ranges are pruned from the outer ranges on the
+same schedule. `prune_skin` is smaller than `skin`,
 or equal to it when no separate inner margin is requested.
 
 The result continues the input list's storage and references. In
@@ -1625,7 +1637,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `list` | One class-segmented pair list with two mobility groups |
+| `list` | One class-segmented pair list with one mobility group |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
 
@@ -1633,7 +1645,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | One class-segmented pair list with two mobility groups |
+| `result` | One class-segmented pair list with one mobility group |
 
 
 
@@ -1967,7 +1979,7 @@ Interfaces: `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `list` | One class-segmented pair list with two mobility groups |
+| `list` | One class-segmented pair list with one mobility group |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
 | `ins` | variadic of A per-particle field or buffer of a field |

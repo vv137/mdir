@@ -9,6 +9,11 @@ struct TemplateWriterBuffers {
   mlir::Value waters, cell, inverse;
   std::array<mlir::Value, 2> outerLimits, innerLimits;
   mlir::Value built, constrained;
+  /// Optional fixed solute-unit tables (TEMPLATE_ATOM_ANCHORS/DEPENDENTS).
+  /// With them, a member of a solute unit publishes its frame alone; its
+  /// anchor publishes the reference point of the whole unit, in each
+  /// member's packing frame, and alone takes the displacement tests.
+  mlir::Value atomAnchors, atomDependents;
   unsigned positionOutput = 0;
   bool hasSite = false;
   double alpha = 0, extent = 0;

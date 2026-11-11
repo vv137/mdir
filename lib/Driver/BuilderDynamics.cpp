@@ -150,7 +150,7 @@ llvm::Error Builder::emitPrograms() {
       };
       std::vector<DescentConstraintGroupIR> constraintGroups;
       ConstraintPositionConfig config{false, control.analyticBonds,
-          control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+          getConstraintPositionTolerance(control.precision == Precision::Double),
           control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
       if (settles) {
         const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });
@@ -246,7 +246,7 @@ void Builder::emitDescend() {
     };
     std::vector<DescentConstraintGroupIR> groups;
     ConstraintPositionConfig config{false, control.analyticBonds,
-        control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+        getConstraintPositionTolerance(control.precision == Precision::Double),
         control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
     if (settles) {
       const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });

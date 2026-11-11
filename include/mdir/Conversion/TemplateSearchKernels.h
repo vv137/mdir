@@ -1,4 +1,4 @@
-// Class-specialized periodic search over the two mobility groups.
+// Class-specialized periodic search over the water and atom units.
 #ifndef MDIR_CONVERSION_TEMPLATESEARCHKERNELS_H
 #define MDIR_CONVERSION_TEMPLATESEARCHKERNELS_H
 #include "mdir/Conversion/TemplateBuildKernels.h"

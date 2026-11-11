@@ -144,7 +144,7 @@ int runWaterTemplateIRTest() {
       auto *block = builder.createBlock(&potential.getBody(), {}, arguments, locations);
       auto domains = md::TemplatePairsOp::create(builder, loc, domain("ww", 6),
           domain("sw", 4), domain("ss", 2), block->getArgument(2),
-          block->getArgument(4), Value());
+          block->getArgument(4), Value(), Value(), FloatAttr());
       Value total = arith::ConstantOp::create(builder, loc, builder.getF64FloatAttr(0.0));
       for (auto [index, relation] : llvm::enumerate(domains.getResults())) {
         WaterTemplateReductionInputs input{relation, block->getArgument(0),

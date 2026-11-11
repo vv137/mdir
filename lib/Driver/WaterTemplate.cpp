@@ -1,6 +1,7 @@
 // Recognizes constant-parameter rigid water without relying on residue names.
 #include "mdir/Driver/WaterTemplate.h"
 #include "mdir/Driver/Selection.h"
+#include "ConstraintIR.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 #include <cmath>
@@ -198,7 +199,36 @@ mdir::driver::matchWaterTemplate(const Control &control, const System &system) {
   }
   for (unsigned i = 0; i != n; ++i)
     if (!matched[i]) plan.solute.push_back(i);
+  // Heavy-atom anchors of the solute (#799): a hydrogen whose bond the
+  // constraints keep belongs to the unit of its heavy atom. Unmatched
+  // rigid waters are units of their oxygen. Every other solute particle,
+  // a stored extra point included, is its own anchor with radius zero.
+  std::vector<int> anchorOf(n, -1), dependents(n, 0);
+  auto anchor = [&](unsigned member, unsigned center, double length) {
+    if (matched[member] || matched[center] || anchorOf[member] >= 0 ||
+        anchorOf[center] >= 0 || dependents[member] || dependents[center] == 4)
+      return;
+    anchorOf[member] = int(center);
+    ++dependents[center];
+    plan.anchored.push_back({member, center});
+    plan.anchorLength = std::max(plan.anchorLength, length);
+  };
+  for (const auto &s : t.shakes)
+    for (size_t k = 0; k != s.hydrogens.size(); ++k)
+      anchor(s.hydrogens[k], s.center, s.lengths[k]);
+  for (const auto &s : t.settles) {
+    anchor(s.oxygen + 1, s.oxygen, s.distanceOH);
+    anchor(s.oxygen + 2, s.oxygen, s.distanceOH);
+  }
+  for (unsigned i : plan.solute)
+    if (t.atomicNumbers[i] == 1 && t.masses[i] != 0 && anchorOf[i] < 0)
+      ++plan.unconstrainedHydrogens;
   return plan;
+}
+
+double mdir::driver::getAnchorRadius(const WaterTemplatePlan &plan, bool doublePrecision) {
+  return plan.anchored.empty() ? 0.0 : plan.anchorLength *
+      (1.0 + builder::getConstraintPositionTolerance(doublePrecision));
 }
 
 std::string mdir::driver::getWaterTemplateModeReason(const Control &control) {
@@ -235,6 +265,10 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
   result.plan = std::move(*matched);
   if (result.reason.empty() && result.plan.instances.empty())
     result.reason = "no rigid water matches the template";
+  if (result.reason.empty() && result.plan.unconstrainedHydrogens)
+    result.reason = std::to_string(result.plan.unconstrainedHydrogens) +
+        " solute hydrogens have no constrained bond to a heavy atom (the "
+        "solute's units need [constraints] hydrogen_bonds)";
   if (!result.reason.empty()) {
     if (control.waterTemplate == WaterTemplateChoice::On)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
