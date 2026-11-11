@@ -70,8 +70,9 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
         }
         storeElement(at, loc, fraction, v.currentPoints, index);
         if (!water && v.atomDependents) {
-          // A member's point is its anchor's, in the member's own packing
-          // frame: the two frames differ by whole lattice vectors.
+          // A member's point is its anchor's, in the anchor's frame: the
+          // member's frame lies at the minimum image of its bond from the
+          // anchor's, whatever lattice vector separates their packing cells.
           Value atom = arith::SubIOp::create(at, loc, index, v.waters);
           for (int64_t d = 0; d != MDRT_TEMPLATE_ANCHOR_DEPENDENTS; ++d) {
             Value slot = arith::AddIOp::create(at, loc,
@@ -82,10 +83,7 @@ TemplateWriterFlags mdir::kernels::emitUpdateTemplateFrame(OpBuilder &b,
                 arith::ConstantIntOp::create(at, loc, 0, 32));
             scf::IfOp::create(at, loc, present, [&](OpBuilder &member, Location) {
               Value place = arith::IndexCastOp::create(member, loc, member.getIndexType(), dependent);
-              Value offset = arith::SubFOp::create(member, loc,
-                  loadElement(member, loc, v.packingCells, place), cells);
-              storeElement(member, loc, arith::AddFOp::create(member, loc, fraction, offset),
-                           v.currentPoints, place);
+              storeElement(member, loc, fraction, v.currentPoints, place);
               scf::YieldOp::create(member, loc);
             });
           }
