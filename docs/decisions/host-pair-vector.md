@@ -99,36 +99,40 @@ No control-file key or file format changes.
 
 ## Validation
 
-**Identity.** `scripts/builder-equivalence/check.py compare` of `main` and the branch over the whole corpus, with `MDIR_HOST_PAIRS=scalar`, at the stages `module` and `lowered`, printed and raw, for the CPU and GPU targets: all 1,066 cases (267 control files, the runs and the segments) are identical against `main` e3bf1399, of which 470 stop with the same error in both builds.
+**Identity.** `scripts/builder-equivalence/check.py compare` of `main` b7d801d9 and the branch at its head over the whole corpus, with `MDIR_HOST_PAIRS=scalar`, at the stages `module` and `lowered`, printed and raw, for the CPU and GPU targets: all 1,070 cases (the runs and the segments) are identical, of which 474 stop with the same error in both builds. The identity is of the scalar row: it shows that the lanes leave every program without them as it was.
 
 **Lane arithmetic, to the bit** (`test/Driver/host-pair-lanes.test`):
 
-- `lanes(1)` gives the scalar row's state after 20 steps on the dipeptide in OPC with PME, in the mixed and double modes. The same holds on JAC after 2 steps.
+- `lanes(1)` gives the scalar row's state after 20 steps on the dipeptide in OPC with PME, in the mixed and double modes.
 - `lanes(8)` gives the scalar row's state on dimers of argon whose rows hold some twenty candidates with one within the cutoff, in both modes.
+
+These two cannot see a wrong tail or reduction: `lanes(1)` has no tail and nothing to combine, and a row with one contributing term gives the same bits in any order. The bound below can.
+
+**Lanes against the scalar row at the bound of a sum's order.** The lanes add the same terms as the scalar row in another order; the terms are the same numbers, since each op of the kernel is evaluated as the scalar row evaluates it. Two orders of a sum of $n$ terms $t_k$ differ by at most $2\gamma_{n-1}\sum_k \lvert t_k\rvert$, with $\gamma_m = m u/(1 - m u)$ and $u$ the unit roundoff of the row's sum ($2^{-24}$ in mixed precision, $2^{-53}$ in double) [[Higham2002]](../references.md#higham2002). The bound of each atom and component takes $n$ as its candidates within the cutoff and $\sum_k \lvert t_k\rvert$ over every pair within the cutoff, excluded or not, from a reference of the direct terms of the kernel (Lennard-Jones and $\mathrm{erfc}(\beta r)/r$), times 1.01 for the reference's own rounding; counting the excluded pairs only raises the bound. $W$ is pinned: `lanes:8` in mixed precision and `lanes:4` in double (and also `lanes:4` in mixed and `lanes:8` in double on the dipeptide).
+
+- *In the suite* (`test/Driver/host-pair-lanes-bound.test`): the dipeptide in water with PME, ten types, the exclusions of its topology, rows of 83 to 275 candidates, 1,018 of 1,168 not a multiple of 8, so that the tail's padding repeats a candidate that contributes. With the tail's mask removed from the emitter (temporarily, not committed) the largest ratio is 5.7e10.
+- *On the three systems of the timing* (16 threads; the 1-thread runs give the same bits):
+
+| System | Mode, $W$ | Rows (candidates within the cutoff) | max $\lvert\Delta F\rvert$ / bound | median $\lvert\Delta F\rvert$ / bound | max $\lvert\Delta F\rvert$, kJ/mol/nm | $\lvert\Delta U\rvert$ / bound |
+|---|---|---|---|---|---|---|
+| Dipeptide | mixed, 8 / 4 | 83 to 275 | 0.0058 / 0.0074 | — | 1.2e-3 / 2.0e-3 | 2.6e-6 / 4.4e-6 |
+| Dipeptide | double, 8 / 4 | 83 to 275 | 0.0059 / 0.0068 | — | 2.7e-12 / 3.2e-12 | 0 / 0 |
+| JAC | mixed, 8 | 171 to 251 | 0.0065 | 4.4e-4 | 1.5e-3 | 1.6e-7 |
+| JAC | double, 4 | 171 to 251 | 0.0098 | 4.7e-4 | 3.9e-12 | 0 |
+| TIP3P 103k | mixed, 8 | 64 to 327 | 0.011 | 4.1e-4 | 1.7e-3 | 8.4e-6 |
+| TIP3P 103k | double, 4 | 64 to 327 | 0.0082 | 4.5e-4 | 4.6e-12 | 0 |
+| Cellulose | mixed, 8 | 117 to 287 | 0.010 | 3.7e-4 | 2.2e-3 | 4.2e-8 |
+| Cellulose | double, 4 | 117 to 287 | 0.0091 | 4.0e-4 | 4.1e-12 | 0 |
+
+Every force component of every system is within its bound, by a factor of at least 90. The potentials' bounds are loose, since the excluded pairs' Coulomb terms enter them; in double precision the potentials agree to the bit, the rows' differences lying below the total's last place.
 
 **Determinism.** In the deterministic mode with the lanes ($W$ = 8 in f32 and 4 in f64), the states after 20 steps are identical:
 
 - at 1, 2, 4, and 7 threads;
 - from run to run;
-- with the host code compiled for SSE2 alone (`MDIR_HOST_CPU=x86-64`), where 8 lanes of f32 take two registers.
+- with the host code compiled for SSE2 alone (`MDIR_HOST_CPU=x86-64`), where 8 lanes of f32 take two registers; the pipeline then states `cpu=x86-64 vector-bits=128`, and `mdir doctor` reports the machine of the host code as `x86-64` without AVX.
 
-At step 0, the lanes give the same bits at 1 and 16 threads on all three systems in both modes, as the scalar row does.
-
-**Step 0 against the scalar row.** Python API, `lanes(8)` in f32 and `lanes(4)` in f64, 16 threads. The 1-thread results are the same bits.
-
-| System | Mode | $\lvert\Delta U\rvert$, kJ/mol (relative) | virial, relative difference | RMS $\lvert\Delta \mathbf F\rvert$ / RMS $\lvert\mathbf F\rvert$ | max $\lvert\Delta \mathbf F\rvert$, kJ/mol/nm |
-|---|---|---|---|---|---|
-| JAC | mixed | 9.8e-4 (3.2e-9) | 2.0e-8 | 2.6e-7 | 1.5e-3 |
-| TIP3P 103k | mixed | 4.4e-2 (1.1e-8) | 5.1e-8 | 3.5e-7 | 1.7e-3 |
-| Cellulose | mixed | 6.1e-3 (2.1e-9) | 3.0e-8 | 2.4e-7 | 2.2e-3 |
-| JAC | double | 0 | 3.6e-16 | 5.2e-16 | 3.9e-12 |
-| TIP3P 103k | double | 0 | 1.7e-16 | 7.3e-16 | 4.5e-12 |
-| Cellulose | double | 0 | 3.7e-16 | 4.8e-16 | 4.1e-12 |
-
-*The tolerances.* Reordering a sum of $n$ terms changes it by at most $2\gamma_{n-1}\sum_k \lvert t_k\rvert$, with $\gamma_m = m u/(1 - m u)$ [[Higham2002]](../references.md#higham2002). The terms of a row are not recorded, so the bound is applied through the scalar row's own rounding error, which the same sums carry.
-
-- *Mixed mode.* The difference between the lanes and the scalar row must be smaller than the scalar row's own difference from the double result. It is 1.4% of it on JAC, 3.6% on TIP3P, and 0.3% on Cellulose (RMS forces). The energies differ by 9.8e-4 against 4.9e-2 kJ/mol, by 4.4e-2 against 3.4e-1, and by 6.1e-3 against 2.2e-2. The RMS force error against double is the same for both: 1.9570e-2 and 1.9570e-2 kJ/mol/nm on JAC, 9.1603e-3 and 9.1609e-3 on TIP3P, and 7.4986e-2 and 7.4986e-2 on Cellulose.
-- *Double mode.* With rows of at most some 500 candidates, $2\gamma_{n}$ is 1.1e-13 relative to $\sum_k \lvert t_k\rvert$. The force differences are under 1e-15 of the RMS force. The double potentials agree to the bit, since the rows' differences lie below the total's last place.
+The deterministic properties of the suite run with the lanes as well, with `MDIR_HOST_PAIRS` unset (the shipped default): output independence (`host-pair-lanes-output-independence.test`), Python against `mdir run` in one part and in segments (`-deterministic-run.test`), and the thermostats across checkpoints in both directions (`-thermostats.test`), in mixed and double precision.
 
 **Against an independent oracle.** OpenMM 8.6.1, Reference platform, in double precision on JAC: the same Amber model, PME with MDIR's $\beta$ and the $64^3$ grid, and the dispersion correction. OpenMM's PME order is 5 and MDIR's is 4.
 
