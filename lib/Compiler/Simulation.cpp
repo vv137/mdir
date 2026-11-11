@@ -435,7 +435,7 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
   compiler::Activation *a = runningActivation;
   // The frames of the part, and the changes of the cell of the trajectory
   // queued with them, are in the trajectory when it returns to the host
-  // (D[async-output]). The entry gives the host control only here, so this
+  // (D400). The entry gives the host control only here, so this
   // is the one wait of a simulation for its frames: the changes of the
   // reporters, a cell set from Python, a checkpoint, a frame of the state,
   // and the end of the simulation all come after it, with nothing queued.

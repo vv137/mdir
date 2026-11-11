@@ -1,5 +1,5 @@
 # The cell of the frames at constant pressure with the frames on their own
-# thread (D[async-output], #113): the barostat changes the cell of the
+# thread (D400, #113): the barostat changes the cell of the
 # trajectory through the queue of the thread (mdrtSetBox, mdrtSetTilt), so
 # that every frame keeps the cell of its step while the thread holds frames
 # of earlier steps. With each write held back by 100 ms

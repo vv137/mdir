@@ -1,5 +1,5 @@
 # frame-writer-npt.test and the spread of frame-writer-failure.test on a
-# GPU (D[async-output], #113), with each write held back by 100 ms: the
+# GPU (D400, #113), with each write held back by 100 ms: the
 # changes of the cell by the barostat go through the queue of the thread
 # of the frames, so the frames keep the cell of their steps, byte for byte
 # against a run whose frames are not held back, for the isotropic run of

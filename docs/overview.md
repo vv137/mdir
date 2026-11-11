@@ -272,7 +272,7 @@ flowchart TD
     INT --> CPL["Couplings<br/>thermostat, barostat,<br/>center-of-mass motion"]
     CPL --> DUE{"Output due?"}
     DUE -->|"no"| S1["State at step n + 1"]
-    DUE -->|"energies, frames"| HC["mdrt.host_call<br/>energy row; frame staged,<br/>written on a thread, D[async-output]"]
+    DUE -->|"energies, frames"| HC["mdrt.host_call<br/>energy row; frame staged,<br/>written on a thread, D400"]
     DUE -->|"checkpoint"| CK["Checkpoint, D336<br/>1. copy from the program<br/>2. writer releases the staging buffers<br/>3. file committed by rename"]
     HC --> S1
     CK --> SEG["The segment ends: the next one<br/>orders the particles and rebuilds, D335"]
@@ -318,7 +318,7 @@ is made of.
   frame of dynamics is staged by its call (on a GPU, copies on a stream of
   their own into pinned memory) and written by a thread of its own while
   the steps go on; checkpoints, stops, and the end wait for the frames
-  queued before them (D[async-output]). A checkpoint of `mdir run` is written on a
+  queued before them (D400). A checkpoint of `mdir run` is written on a
   thread of its own while the steps go on; the copy from the program, the
   writer's release of its staging buffers, and the commit of the file are
   three separate events, and the next checkpoint, a stop, and the end of

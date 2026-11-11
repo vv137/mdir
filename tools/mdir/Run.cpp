@@ -1535,7 +1535,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // lib/Driver/Output.cpp), the last its commit to stable storage.
   waitForCheckpoint();
   // And for the frames that the thread of the frames still holds
-  // (D[async-output]).
+  // (D400).
   finishFrames(output);
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)

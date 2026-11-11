@@ -1,5 +1,5 @@
 # The frames of a run of dynamics are staged by the call of each frame and
-# written by a thread of their own while the steps go on (D[async-output],
+# written by a thread of their own while the steps go on (D400,
 # #113). Here the thread holds each frame back by 100 ms
 # (MDIR_FRAME_WRITE_DELAY), much longer than the 10 steps between two
 # frames: its ring of 3 slots fills, and the call of a later frame waits for

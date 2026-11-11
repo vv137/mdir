@@ -307,7 +307,7 @@ queue at host boundaries. Existing `mgpuMemcpy` callers retain their waits;
 the new path must establish host visibility and release before reuse instead
 of relying on the runtime-wide `finish()`.
 
-**Staged copies of the frames (D[async-output], #113).** The frames of a
+**Staged copies of the frames (D400, #113).** The frames of a
 run of dynamics leave the device without a wait of the host, by the
 staging slots of `runtime/mdrt_cuda.c`, which the driver finds by name in
 the loaded library (`lib/Driver/Output.cpp`):

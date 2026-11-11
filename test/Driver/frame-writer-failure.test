@@ -1,4 +1,4 @@
-# Failures with the frames on their own thread (D[async-output], #113),
+# Failures with the frames on their own thread (D400, #113),
 # with each write held back by 100 ms (MDIR_FRAME_WRITE_DELAY), so that the
 # steps go on past the frame that fails. MDIR_FRAME_WRITE_FAIL makes the
 # write of the frame of one step to the trajectory in H5MD fail, as a write

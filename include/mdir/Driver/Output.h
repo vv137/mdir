@@ -240,7 +240,7 @@ struct Output {
   Element state = Element::F64;
   Element force = Element::F64;
   /// The program runs on a device: the buffers that it gives the host in
-  /// place are memory of the device (mdrtStageFrame, D[async-output]).
+  /// place are memory of the device (mdrtStageFrame, D400).
   bool onDevice = false;
 
   /// The step and the time that the run begins with.
@@ -492,7 +492,7 @@ void writeLogHeader(Output &output);
 /// 1.
 void waitForCheckpoint();
 
-/// Waits until the thread of the frames (D[async-output]) has written every
+/// Waits until the thread of the frames (D400) has written every
 /// frame queued so far, and the changes of the cell of the trajectory
 /// queued with them. A write that failed ends the run of `output` with its
 /// error, as the call of the frame did before the frames had a thread
@@ -562,7 +562,7 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// The frame of the step `step` of a run of dynamics, with the buffers in
 /// place (on a device, memory of the device): it stages copies of them,
 /// which the thread of the frames writes while the steps go on
-/// (D[async-output]). The file is that of mdrtWriteFrame.
+/// (D400). The file is that of mdrtWriteFrame.
 void _mlir_ciface_mdrtStageFrame(int64_t step, void *positions, void *ids);
 /// Without a periodic cell (D142), stops the run if the positions at the
 /// step `step` have spread so far that images interact.

@@ -1,4 +1,4 @@
-# The staging functions of the runtime incomplete (D[async-output], #113),
+# The staging functions of the runtime incomplete (D400, #113),
 # which is a defect of mdir: MDIR_STAGING_INCOMPLETE leaves the wait out
 # of the set that the driver looks up (not when it is 0 or empty).
 # `mdir run` stops at the first frame with the message and the status 1. A Python simulation, which embeds the

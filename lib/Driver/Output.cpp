@@ -442,7 +442,7 @@ void startCheckpointThread(const std::string &path, int64_t step,
 }
 
 /// The functions of the runtime of a device that stage the copies of a
-/// frame (D[async-output], runtime/mdrt_cuda.c), from the library that the
+/// frame (D400, runtime/mdrt_cuda.c), from the library that the
 /// run has loaded.
 struct StagingFunctions {
   void *(*create)() = nullptr;
@@ -524,7 +524,7 @@ struct FrameFailure {
   bool empty() const { return message.empty() && device == 0; }
 };
 
-/// The thread of the frames (D[async-output], #113): one thread, which
+/// The thread of the frames (D400, #113): one thread, which
 /// runs the writes of the frames and the changes of the cell of the
 /// trajectory in the order in which the steps queue them. A frame holds a
 /// slot of a ring of at most `MaxSlots`; the call of a frame that finds
@@ -679,7 +679,7 @@ static void stopOnFailure(const Output &output, const std::string &message) {
   }
   // The frames queued before the failure are written first, as a run
   // wrote them before it failed; one whose write failed reports its own
-  // error, which came first (D[async-output]).
+  // error, which came first (D400).
   FrameFailure earlier = getFrameThread().wait();
   if (earlier.device)
     getStagingFunctions().fail(earlier.device, earlier.call);
@@ -1226,7 +1226,7 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   double edges[3] = {lx / units::length, ly / units::length,
                      lz / units::length};
   // The thread of the frames changes the cell of the trajectory between
-  // the frames queued before and after (D[async-output]).
+  // the frames queued before and after (D400).
   if (output.trajectory) {
     std::array<double, 3> scaled = {edges[0], edges[1], edges[2]};
     std::array<double, 3> exact = {output.box[0], output.box[1],
@@ -1636,7 +1636,7 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   if (!output.hasTrajectory)
     return;
   // After the frames and the changes of the cell that the thread of the
-  // frames still holds (D[async-output]).
+  // frames still holds (D400).
   waitForFrames(output);
   ReturnMark returns;
   // With MDIR_CHECKPOINT_TIMES, the time of the frame when it returns.
@@ -1907,7 +1907,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
   OutputTimes &times = getTimes();
   Clock::time_point entered = Clock::now();
   // The frames queued before the checkpoint are in the trajectory before
-  // it counts them (D130, D[async-output]).
+  // it counts them (D130, D400).
   waitForFrames(output);
   // The wait of a checkpoint: for events 2 and 3 of the one before (the
   // release of its staging buffers and its commit), before this one stages

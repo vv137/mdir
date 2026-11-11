@@ -398,7 +398,7 @@ segment, does not have. The peak resident memory rose by 63 MB on STMV
 staging buffers and ordered state. The frame of DCD, 23 to 48 ms on STMV
 on the two nodes measured, was then still written between the steps.
 
-**The cost of a frame (D[async-output]).**
+**The cost of a frame (D400).**
 A frame copied the positions and the numbers of the particles from the
 device into memory of the host, waiting for the stream after each copy, and
 the host put them into the order of the input, converted them, and wrote the

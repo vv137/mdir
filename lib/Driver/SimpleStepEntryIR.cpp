@@ -707,7 +707,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
         auto write = buildEntryLoop(body, "part frame", zero, trips, one, {},
             [&](OpBuilder &at, Value, ValueRange) -> llvm::Expected<SmallVector<Value>> {
           // In place: the call stages its own copies while the steps go on
-          // (D[async-output]).
+          // (D400).
           mdir::mdrt::HostCallOp::create(at, loc, TypeRange{},
               FlatSymbolRefAttr::get(at.getContext(), "mdrtStageFrame"),
               ValueRange{completed, point.positions, point.identities}, ValueRange{}, at.getUnitAttr());
@@ -893,7 +893,7 @@ llvm::Expected<func::FuncOp> mdir::driver::builder::buildSimpleStepEntry(
     };
     auto writeFrame = [&](OpBuilder &body, Value completed, const EntryFieldsIR &point) {
       // In place: the call stages its own copies while the steps go on
-      // (D[async-output]).
+      // (D400).
       mdir::mdrt::HostCallOp::create(body, loc, TypeRange{},
           FlatSymbolRefAttr::get(body.getContext(), "mdrtStageFrame"),
           ValueRange{completed, point.positions, point.identities}, ValueRange{}, body.getUnitAttr());

@@ -1,4 +1,4 @@
-"""Failures of the frames of a Python simulation (D[async-output], #113).
+"""Failures of the frames of a Python simulation (D400, #113).
 
 Usage: python_frame_failures.py ROOT WORK MODE TARGET
 

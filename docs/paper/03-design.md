@@ -970,7 +970,7 @@ their calls, on a GPU by copies on a stream of their own into pinned
 memory of the host, and one thread writes them in the order of the steps;
 a checkpoint, which counts the frames of the trajectory, a stop, a
 failure, and the end wait for those queued before them, so the files are
-those of a run that writes each frame in its call (D[async-output]).
+those of a run that writes each frame in its call (D400).
 
 A run is a realization of a Markov chain on the state $\mathbf z_n$, each
 step drawn from the kernel $\mathcal K_{U,\mathcal C}$: the integrator and

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # A failed write of a frame on the thread of the frames in a Python
-# simulation (D[async-output], #113), Inputs/python_frame_failures.py:
+# simulation (D400, #113), Inputs/python_frame_failures.py:
 # MDIR_FRAME_WRITE_FAIL makes the write of the frame of step 50 to the
 # trajectory in H5MD fail, with each write held back by 100 ms. The part
 # raises the frame's error and keeps the state from before it (D196), the

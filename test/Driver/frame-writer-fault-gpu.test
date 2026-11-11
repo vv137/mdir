@@ -1,4 +1,4 @@
-# A kernel that fails while frames are staged (D[async-output], #113).
+# A kernel that fails while frames are staged (D400, #113).
 # Once a kernel has failed, the driver returns the error of the context for
 # every event, also for those whose copies had arrived before, and still
 # runs a function of the host enqueued behind copies that never ran; so the

@@ -1,4 +1,4 @@
-# The test of frame-writer.test on a GPU (D[async-output], #113): the
+# The test of frame-writer.test on a GPU (D400, #113): the
 # call of each frame copies the positions and the numbers of the particles
 # within the device, on the stream of the kernels, and from there to pinned
 # memory of the host on a stream of copies, which the thread of the frames

@@ -566,7 +566,7 @@ loops that compute the energy and the forces.
 | Builder | The description of the run to a module (`Builder.cpp`) | |
 | Energy expressions | The syntax of D22 to a kernel (`Expression.cpp`) | A parser of expressions |
 | Compile and run | Passes in the process, the execution engine (`tools/mdir/Run.cpp`) | MLIR libraries, linked into the tool |
-| Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtStageFrame` (the frames of dynamics, which a thread of their own writes, D[async-output]) and `mdrtWriteFrame` (those of a minimization), `mdrtWriteCheckpoint`, `mdrtWriteMinimization`, and those of the files of columns, `mdrtWritePull`, `mdrtWriteFreeEnergy`, `mdrtWriteObservables` (`Output.cpp`) | |
+| Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtStageFrame` (the frames of dynamics, which a thread of their own writes, D400) and `mdrtWriteFrame` (those of a minimization), `mdrtWriteCheckpoint`, `mdrtWriteMinimization`, and those of the files of columns, `mdrtWritePull`, `mdrtWriteFreeEnergy`, `mdrtWriteObservables` (`Output.cpp`) | |
 | Writers | Trajectories in DCD and XTC (`Trajectory.cpp`, D141) and in H5MD (`H5MD.cpp`, D239); checkpoints in H5MD (`Checkpoint.cpp`) | HDF5 for H5MD |
 | Initial velocities | From `temperature` and `seed`: normal numbers from xoshiro256** seeded by splitmix64, without the components along the constraints and with the center of mass at rest, scaled to the temperature (`System.cpp`) | |
 
@@ -822,7 +822,7 @@ of columns take the interval of the rows of the log, at whose steps the
 energies are computed, and the frames and the checkpoints come at
 multiples of it.
 
-**Frames while the steps go on (D[async-output], #113).** The call of a
+**Frames while the steps go on (D400, #113).** The call of a
 frame of a run of dynamics takes the positions and the numbers of the
 particles where the program holds them and stages copies of them: on a
 GPU, a copy within the device on the stream of the kernels, then a copy to

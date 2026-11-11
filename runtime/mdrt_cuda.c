@@ -39,7 +39,7 @@ static const char *getKernelName(CUfunction function);
    way to continue without its device. */
 /* What the host runs once before a failure of the driver ends the process
    (mdrtSetFailureHook): the writer of the frames writes those whose copies
-   had arrived (D[async-output]). */
+   had arrived (D400). */
 static void (*failureHook)(void) = NULL;
 
 static void check(CUresult result, const char *what) {
@@ -2038,7 +2038,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 }
 
 /*===----------------------------------------------------------------------===
- * Copies of the outputs while the steps go on (D[async-output], #113)
+ * Copies of the outputs while the steps go on (D400, #113)
  *===----------------------------------------------------------------------===
 
   A staging slot holds the copy of a few buffers of the device (a frame: the

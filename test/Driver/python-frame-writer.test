@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, h5py
 # The one wait of a Python simulation for the frames on their own
-# thread (D[async-output], #113), Inputs/python_frame_writer.py: waters in
+# thread (D400, #113), Inputs/python_frame_writer.py: waters in
 # a rhombic dodecahedron at constant pressure on the CPU, whose barostat
 # changes the cell and its tilts, through parts that end between frames and
 # at frames, checkpoints, changes of the reporters, frames of the state

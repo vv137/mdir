@@ -106,7 +106,7 @@ Reports must not cut parts:
    cost is that of a part boundary plus the copy plus the function, measured
    below.
 
-### Asynchronous writers (#113, D[async-output])
+### Asynchronous writers (#113, D400)
 
 The frames of the reporters are written as those of `mdir run`: the call of
 each frame stages copies of the positions and the numbers of the particles
