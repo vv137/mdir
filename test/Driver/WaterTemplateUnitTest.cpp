@@ -63,18 +63,19 @@ int runWaterTemplateUnitIRTest() {
           partner.shift = args[8 + ni + nj]; partner.mask = args[9 + ni + nj];
           return partner;
         }, [&](OpBuilder &body, ValueRange coordinates, ValueRange, ValueRange,
-               ValueRange sites) {
+               ValueRange sites, ValueRange forces) {
           assert(sites.size() == (k == 2 || k == 4 ? 0u : k == 1 ? 1u : 2u));
           // A synthetic typed contribution tests scheduling, not a second
           // physical expression. Production supplies the differentiated body.
           Value d = coordinates.front();
-          Value zero = arith::ConstantOp::create(body, loc, DenseElementsAttr::get(vec, 0.0f));
           TemplateContribution contribution;
           if (unit.forces) {
-            contribution.firstForces.assign(ni, zero);
-            contribution.secondForces.assign(nj, zero);
-            contribution.firstForces[0] = arith::NegFOp::create(body, loc, d);
-            contribution.secondForces[0] = d;
+            assert(forces.size() == ni + nj);
+            contribution.firstForces.assign(forces.begin(), forces.begin() + ni);
+            contribution.secondForces.assign(forces.begin() + ni, forces.end());
+            contribution.firstForces[0] = arith::AddFOp::create(body, loc,
+                forces[0], arith::NegFOp::create(body, loc, d));
+            contribution.secondForces[0] = arith::AddFOp::create(body, loc, forces[ni], d);
           }
           Value square = arith::MulFOp::create(body, loc, d, d);
           Value sum = vector::ReductionOp::create(body, loc, vector::CombiningKind::ADD, square);

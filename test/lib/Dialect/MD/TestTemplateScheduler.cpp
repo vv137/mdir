@@ -253,11 +253,12 @@ struct TestTemplateScheduler
           loaded.mask = arith::SelectOp::create(body, loc, a, word(body, masks[0]),
               arith::SelectOp::create(body, loc, c, word(body, masks[1]), word(body, masks[2])));
           return loaded;
-        }, [&](OpBuilder &body, ValueRange coords, ValueRange, ValueRange, ValueRange sites) {
+        }, [&](OpBuilder &body, ValueRange coords, ValueRange, ValueRange, ValueRange sites,
+               ValueRange forces) {
           IRMapping mapping = captures;
           mapping.map(source.getArguments(), coords);
           mapTemplateSiteOffsets(loop, 0, sites, mapping);
-          return emitTemplateWindowContributions(body, loc, loop, 0, mapping);
+          return emitTemplateWindowContributions(body, loc, loop, 0, mapping, forces);
         }, [&](OpBuilder &body, ValueRange values) {
           Value base = arith::MulIOp::create(body, loc, first, word(body, 3));
           for (auto [site, force] : llvm::enumerate(values))

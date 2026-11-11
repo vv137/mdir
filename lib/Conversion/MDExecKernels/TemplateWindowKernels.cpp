@@ -185,7 +185,7 @@ unsigned mdir::kernels::mapTemplateSiteOffsets(
 
 TemplateContribution mdir::kernels::emitTemplateWindowContributions(
     OpBuilder &builder, Location loc, mdir::md_exec::TemplateForOp loop,
-    unsigned tag, IRMapping &mapping) {
+    unsigned tag, IRMapping &mapping, ValueRange forces) {
   assert(tag < 3 && loop.getOuts().size() <= 1);
   constexpr unsigned first[] = {3, 1, 1};
   constexpr unsigned second[] = {3, 3, 1};
@@ -201,7 +201,11 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
     return arith::ConstantOp::create(builder, loc, builder.getZeroAttr(type));
   };
   TemplateContribution result;
-  if (outs) {
+  if (outs && !forces.empty()) {
+    assert(forces.size() == firstSlots + secondSlots);
+    result.firstForces.assign(forces.begin(), forces.begin() + firstSlots);
+    result.secondForces.assign(forces.begin() + firstSlots, forces.end());
+  } else if (outs) {
     Type force = mdir::md_exec::getKernelValueType(loop.getOuts()[0].getType());
     result.firstForces.assign(firstSlots, zero(force));
     result.secondForces.assign(secondSlots, zero(force));
@@ -222,29 +226,44 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
           FloatAttr::get(r2.getType(), cutoff * cutoff));
       Value inside = arith::CmpFOp::create(builder, loc,
           arith::CmpFPredicate::OLT, r2, cutoff2);
+      auto destination = [&](unsigned member) -> Value & {
+        return !scatter ? result.sums[column - outs]
+            : member < firstSlots ? result.firstForces[member]
+                                 : result.secondForces[member - firstSlots];
+      };
+      // A force member accumulates into its destination inside the guard:
+      // the taken branch adds the pair's term, the other keeps the sum. A
+      // member that is constant zero in the source adds nothing and is not
+      // carried. Reductions keep their zero-started per-pair terms.
+      SmallVector<unsigned> members;
+      for (unsigned member = 0; member != stride; ++member)
+        if (!scatter || !matchPattern(
+                yield->getOperand(offset + pair * stride + member), m_AnyZeroFloat()))
+          members.push_back(member);
+      if (members.empty()) continue;
       auto guarded = scf::IfOp::create(builder, loc, inside,
           [&](OpBuilder &body, Location) {
             IRMapping local = mapping;
             SmallVector<Value> values;
-            for (unsigned member = 0; member != stride; ++member)
-              values.push_back(materializeWindowValue(body,
-                  yield->getOperand(offset + pair * stride + member), source, local));
+            for (unsigned member : members) {
+              Value term = materializeWindowValue(body,
+                  yield->getOperand(offset + pair * stride + member), source, local);
+              values.push_back(scatter
+                  ? arith::AddFOp::create(body, loc, destination(member), term) : term);
+            }
             scf::YieldOp::create(body, loc, values);
           }, [&](OpBuilder &body, Location) {
             SmallVector<Value> values;
-            for (unsigned member = 0; member != stride; ++member) {
+            for (unsigned member : members) {
               Type type = yield->getOperand(offset + pair * stride + member).getType();
-              values.push_back(arith::ConstantOp::create(body, loc, body.getZeroAttr(type)));
+              values.push_back(scatter ? destination(member)
+                  : arith::ConstantOp::create(body, loc, body.getZeroAttr(type)));
             }
             scf::YieldOp::create(body, loc, values);
           });
-      for (unsigned member = 0; member != stride; ++member) {
-        Value *destination = !scatter ? &result.sums[column - outs]
-            : member < firstSlots ? &result.firstForces[member]
-                                 : &result.secondForces[member - firstSlots];
-        *destination = arith::AddFOp::create(builder, loc, *destination,
-                                             guarded.getResult(member));
-      }
+      for (auto [value, member] : llvm::zip(guarded.getResults(), members))
+        destination(member) = scatter ? Value(value)
+            : arith::AddFOp::create(builder, loc, destination(member), value);
     }
     offset += pairs * (stride + 1);
   }
@@ -298,7 +317,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
     OpBuilder &builder, Location loc, const TemplateUnit &unit,
     llvm::function_ref<TemplatePartner(OpBuilder &, Value)> loadPartner,
     llvm::function_ref<TemplateContribution(OpBuilder &, ValueRange,
-                                            ValueRange, ValueRange, ValueRange)> evaluate,
+        ValueRange, ValueRange, ValueRange, ValueRange)> evaluate,
     llvm::function_ref<void(OpBuilder &, ValueRange)> writeFirst,
     llvm::function_ref<void(OpBuilder &, Value, ValueRange)> writeSecond) {
   unsigned ni = unit.kind == TemplatePairClass::WaterWater ? 3 : 1;
@@ -313,8 +332,6 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   auto realForces = [&](OpBuilder &at, ValueRange values) {
     return mdir::md::emitTemplateForceTranspose(at, loc, values, unit.alpha);
   };
-  SmallVector<Type> resultTypes(fi + fj, forceType);
-  llvm::append_range(resultTypes, unit.sumTypes);
   Value u = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 15));
   Value half = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 16));
   Value previous = arith::AndIOp::create(builder, loc,
@@ -373,8 +390,10 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                       if (unit.hasSite)
                         sites.push_back(formSiteOffset(body, loc, state[1], state[2], unit.alpha));
                     }
+                    SmallVector<Value> forces(state.slice(fiAt, fi));
+                    llvm::append_range(forces, state.slice(fjAt, fj));
                     auto result = evaluate(body, coordinates, unit.parameters,
-                        state.slice(frameSize, partner.parameters.size()), sites);
+                        state.slice(frameSize, partner.parameters.size()), sites, forces);
                     assert(result.firstForces.size() == fi && result.secondForces.size() == fj &&
                            result.sums.size() == unit.sumTypes.size());
                     SmallVector<Value> values(result.firstForces.begin(), result.firstForces.end());
@@ -382,20 +401,19 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                     llvm::append_range(values, result.sums);
                     scf::YieldOp::create(body, loc, values);
                   }, [&](OpBuilder &body, Location) {
-                    SmallVector<Value> zeros;
-                    for (Type type : resultTypes) zeros.push_back(createZero(body, loc, type));
-                    scf::YieldOp::create(body, loc, zeros);
+                    // An unpaired turn keeps the carried forces as they are.
+                    SmallVector<Value> values(state.slice(fiAt, fi));
+                    llvm::append_range(values, state.slice(fjAt, fj));
+                    for (Type type : unit.sumTypes) values.push_back(createZero(body, loc, type));
+                    scf::YieldOp::create(body, loc, values);
                   });
               ValueRange values(contribution.getResults());
               SmallVector<Value> next;
               for (Value value : state.take_front(maskAt + 1))
                 next.push_back(shuffle(turn, loc, value, source, gpu::ShuffleMode::IDX));
-              for (unsigned i = 0; i != fj; ++i) {
-                Value accumulated = arith::AddFOp::create(turn, loc, state[fjAt + i], values[fi + i]);
-                next.push_back(shuffle(turn, loc, accumulated, source, gpu::ShuffleMode::IDX));
-              }
-              for (unsigned i = 0; i != fi; ++i)
-                next.push_back(arith::AddFOp::create(turn, loc, state[fiAt + i], values[i]));
+              for (unsigned i = 0; i != fj; ++i)
+                next.push_back(shuffle(turn, loc, values[fi + i], source, gpu::ShuffleMode::IDX));
+              for (unsigned i = 0; i != fi; ++i) next.push_back(values[i]);
               for (unsigned i = 0; i != unit.sumTypes.size(); ++i)
                 next.push_back(arith::AddFOp::create(turn, loc, state[sumsAt + i], values[fi + fj + i]));
               scf::YieldOp::create(turn, loc, next);

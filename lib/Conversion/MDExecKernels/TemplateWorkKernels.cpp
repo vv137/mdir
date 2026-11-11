@@ -170,7 +170,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
               convertReal(body, loc, buffers.cell, body.getF32Type()));
           return partner;
         }, [&](OpBuilder &body, ValueRange coordinates, ValueRange firstParameters,
-                ValueRange secondParameters, ValueRange sites) {
+                ValueRange secondParameters, ValueRange sites, ValueRange forces) {
           IRMapping mapping = invariant;
           unsigned coordinateCount = kind == 0 ? 5 : kind == 1 ? 3 : 1;
           mapping.map(source.getArguments().take_front(coordinateCount), coordinates);
@@ -182,7 +182,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
                         secondParameters.slice(input * secondSize, secondSize));
           }
           mapTemplateSiteOffsets(loop, kind, sites, mapping);
-          return emitTemplateWindowContributions(body, loc, loop, kind, mapping);
+          return emitTemplateWindowContributions(body, loc, loop, kind, mapping, forces);
         }, [&](OpBuilder &body, ValueRange values) { write(body, safeFirst, values); },
         [&](OpBuilder &body, Value entry, ValueRange values) {
           write(body, record(body, buffers.entryOffset, entry, 0), values);
