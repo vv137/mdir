@@ -5,12 +5,14 @@ Usage: python_frame_writer.py ROOT WORK
 
 ROOT holds water.top and dodecahedron.gro of Inputs/triclinic: waters in a
 rhombic dodecahedron at constant pressure, on the CPU, in the deterministic
-mode, whose barostat changes the cell and its tilts. The script runs one
-simulation through every point at which the frames that the thread still
-holds must be in the trajectory first: the end of a part (the file is read
-there, with its reporter open), a checkpoint, a change of the reporters, a
-frame of the state with its velocities, a commit of a cell, the close of
-the reporters, and the end of the simulation. Run once with
+mode, whose barostat changes the cell and its tilts. The end of each part
+waits for the frames that the thread holds, and the entry gives the host
+control only there, so the file holds every frame of a part when the part
+returns (it is read there, with its reporter open), and the calls between
+parts find nothing queued: a checkpoint, which counts the frames, a change
+of the reporters, a frame of the state with its velocities, a commit of a
+cell, the close of the reporters, and the end of a simulation. The script
+runs one simulation through each of them. Run once with
 MDIR_FRAME_WRITE_DELAY in the environment and once without, its files are
 compared by the test."""
 import gc
@@ -60,9 +62,7 @@ def dcd_frames(path):
 
 def commit_cell(sim, scale):
     """Commits the cell scaled by `scale`, a small strain, with the
-    positions as they are: the borrow reads and writes the cell alone, so
-    that the commit comes while the thread still holds the frames of the
-    part before it."""
+    positions as they are: the borrow reads and writes the cell alone."""
     with sim.borrow() as borrow:
         cell, tilt = np.from_dlpack(borrow.cell), np.from_dlpack(borrow.tilt)
         before = cell.copy(), tilt.copy()

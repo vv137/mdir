@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, h5py
-# The flush points of a Python simulation with the frames on their own
+# The one wait of a Python simulation for the frames on their own
 # thread (D[async-output], #113), Inputs/python_frame_writer.py: waters in
 # a rhombic dodecahedron at constant pressure on the CPU, whose barostat
 # changes the cell and its tilts, through parts that end between frames and
@@ -10,7 +10,8 @@
 # the CPU, the file holds every frame of a part when the part returns, and
 # the energies, the trajectories, and the checkpoints with the frames they
 # count are those of the same script without the hold, byte for byte (HDF5
-# by content).
+# by content). The end of a part is the one point that waits: the calls
+# between parts come after it.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_frame_writer.py %S/Inputs/triclinic %t/plain | FileCheck %s

@@ -114,9 +114,11 @@ each frame stages copies of the positions and the numbers of the particles
 thread writes them while the steps go on ([driver.md](driver.md),
 Section 2.8). The end of each part (`mdrtPartBoundary`) waits for the frames
 of the part, so a part returns to Python with its frames in the file, as
-before; so do the changes of the reporters, the cell set from Python, a
-checkpoint, and the end of the simulation. A trajectory whose frames are
-written from the state (with velocities or forces) has no staged frames.
+before. That is the one wait: the simulation gets control back only at the
+end of a part, so the changes of the reporters, the cell set from Python, a
+checkpoint, a frame written from the state, and the end of the simulation
+find nothing queued. A failed write of a frame raises its error from the
+part, which keeps the state of before it.
 
 ## Determinism
 

@@ -405,7 +405,7 @@ the host put them into the order of the input, converted them, and wrote the
 file while the device waited. On JAC on RTX 4090s (mixed precision, NVE
 velocity Verlet of 2 fs, groups, energies every 10 steps; runs of 100,000
 steps, two jobs on two cards, each running both programs alternated twice,
-the mean of the windows of 1000 steps after the first 10), a DCD frame every
+the mean of the last 90 of the 100 windows of 1000 steps), a DCD frame every
 10 steps took the run from 0.1615 to 0.1951 ms/step (+20.8%), and an XTC
 frame, whose compression the host did between the steps, to 0.2388
 (+47.9%). The call of a frame now copies the two buffers within the device
