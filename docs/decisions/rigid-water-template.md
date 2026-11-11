@@ -1533,23 +1533,38 @@ us, SS 226 to 210 us and WW 173 to 154 us per active launch on ubiquitin
 OPC; WW 174 to 149 us on the large OPC box and 162 to 134 us on the small
 TIP3P box.
 
-Kernel-busy time at 494854ae, 10,000-step captures on the RTX 5090, two
-rounds in alternated order (round 1 / round 2, us/step). Maintenance is
-every `mdir_run_kernel` of the template and main's neighbor build and
-refresh kernels; search is the three candidate kernels.
+Kernel-busy time, 10,000-step captures on the RTX 5090, two rounds in
+alternated order (round 1 / round 2, us/step). Maintenance is every
+`mdir_run_kernel` of the template and main's neighbor build and refresh
+kernels; search is the three candidate kernels. Main and 19bbf459 were
+captured with 494854ae (the step before the branch-free pair decisions);
+6e6dcca4 was captured with main again.
 
-| System | Main b7d801d9: all, maintenance | 19bbf459: all, maintenance, search | 494854ae: all, maintenance, search |
-|---|---|---|---|
-| Ubiquitin OPC | 114.6/114.4, 22.7/22.6 | 161.5/160.8, 53.9/53.2, 44.6/43.9 | 130.3/130.1, 22.8/22.6, 17.2/17.0 |
-| Ubiquitin TIP3P | 91.2/91.4, 19.7/19.7 | 158.7/156.4, 58.7/56.2, 48.6/46.5 | 124.8/124.4, 24.6/24.3, 18.7/18.3 |
-| Large OPC box | 177.4/177.0, 27.3/27.3 | 170.8/170.9, 13.4/13.3, 8.3/8.3 | 164.0/164.1, 6.8/6.7, 3.4/3.3 |
+| System | Build | All kernels | Maintenance | Search |
+|---|---|---|---|---|
+| Ubiquitin OPC | main b7d801d9 | 114.6/114.4; 114.3/114.0 | 22.7/22.6; 22.5/22.3 | |
+| | 19bbf459 | 161.5/160.8 | 53.9/53.2 | 44.6/43.9 |
+| | 494854ae | 130.3/130.1 | 22.8/22.6 | 17.2/17.0 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 15.6/15.2 |
+| Ubiquitin TIP3P | main b7d801d9 | 91.2/91.4; 91.3/91.1 | 19.7/19.7; 19.7/19.6 | |
+| | 19bbf459 | 158.7/156.4 | 58.7/56.2 | 48.6/46.5 |
+| | 494854ae | 124.8/124.4 | 24.6/24.3 | 18.7/18.3 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 16.4/16.7 |
+| Large OPC box | main b7d801d9 | 177.4/177.0; 176.7/177.2 | 27.3/27.3; 27.2/27.5 | |
+| | 19bbf459 | 170.8/170.9 | 13.4/13.3 | 8.3/8.3 |
+| | 494854ae | 164.0/164.1 | 6.8/6.7 | 3.4/3.3 |
+| | 6e6dcca4 | 163.4/163.6 | 6.2/6.2 | 2.8/2.8 |
 
-Template maintenance on ubiquitin OPC is now level with main's neighbor
-build and refresh; the whole step is still 15.7 us/step above main there,
-mostly in evaluation and the per-step writer. In the ubiquitin systems the
-SW and SS searches remain the largest maintenance kernels (about 200 us per
-launch each): their longest rows have four frame subsets, each scanned and
-stepped separately.
+Template maintenance on ubiquitin OPC is now below main's neighbor build
+and refresh (21.1 against 22.4 us/step), and 2.9 above it on ubiquitin
+TIP3P. The whole step is still 14.3 us/step above main on ubiquitin OPC
+and 31.4 on ubiquitin TIP3P, in evaluation, the per-step writer and the
+rest; the large OPC box is 13.5 us/step below main. In the ubiquitin
+systems the SW and SS searches remain the largest maintenance kernels
+(about 170 and 210 us per launch): their longest rows have four frame
+subsets, each scanned and stepped separately. Without its survivor steps
+the SW search takes 38 us per launch (a development build with no
+entries), so the steps, not the scan, are the remaining cost.
 
 ### Precision contract for the whole search port and future pruning
 
