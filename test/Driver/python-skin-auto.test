@@ -8,5 +8,6 @@
 # CHECK-NEXT: pairlist 0.95 default
 # CHECK-NEXT: pruned 0.0 default
 # CHECK-NEXT: reason the CPU
+# CHECK-NEXT: key None the CPU
 # CHECK-NEXT: given given default
 # CHECK-NEXT: done
