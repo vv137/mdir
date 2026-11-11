@@ -204,8 +204,13 @@
               "required": [
                 "source",
                 "reason",
+                "searched",
                 "cache",
+                "cache_refused",
+                "not_cached",
                 "seconds",
+                "budget",
+                "budget_basis",
                 "candidates"
               ],
               "properties": {
@@ -226,9 +231,48 @@
                     "null"
                   ]
                 },
+                "searched": {
+                  "type": "boolean"
+                },
+                "cache_refused": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "not_cached": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "seconds": {
                   "type": "number",
                   "minimum": 0
+                },
+                "budget": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "budget_basis": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "recorded_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "recorded_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "candidates": {
                   "type": "array",
