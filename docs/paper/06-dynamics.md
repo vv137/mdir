@@ -138,13 +138,14 @@ derivatives, and water that is not rigid keep the bisector.
 
 The template's position publication may observe final integration outputs
 inside the existing fused kernel, provided its ownership and ordering proofs
-hold. It consumes final SSA coordinates, including the completed constraints;
-it does not read positions concurrently with their publication. Extra-point
-placement or overlapping integration runs that break those preconditions
-retain a separate writer. Admission currently requires one marked constraint
-family: the measured mixed-family kernel regressed. The retained writer
-arithmetic, independently aged reference epochs and validity bounds are
-unchanged.
+hold and its constraint run has one marked family. It consumes final SSA
+coordinates, including the completed constraints; it does not read
+positions concurrently with their publication. Otherwise (mixed families,
+such as the waters with the solute's bond clusters, or an extra point placed
+after the update) the update fuses as without the template, and a kernel of
+its own, one thread per unit, publishes the frames from the stored final
+positions after it. Its tests are in f32 with bounds of their own
+(Section 4.7); the reference epochs are unchanged.
 
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
