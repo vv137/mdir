@@ -2223,6 +2223,124 @@ its key, and a runtime whose launch, accounting and growth paths can be
 captured. It was not built. Each digit's scan over at most 256 buckets
 still takes the general scan's three kernels.
 
+### U8: one lattice frame in a triclinic cell
+
+Two systems were added to the measurements: ubiquitin in a rhombic
+dodecahedron (a reduced triclinic cell; 4,943 OPC or 4,852 TIP3P waters;
+cutoff 9 Å, pair list 12 Å, pruned 9.6 Å), and ubiquitin in TIP3P with
+the settings of the CHARMM force fields (cutoff 12 Å, `POWER_FORCE_SWITCH`
+from 10 Å, pair list 15 Å, pruned 12.6 Å). At a03416b0 the dodecahedron
+ran 6.3 (OPC) and 9.2 (TIP3P) µs/step of wall above `main` c158870b,
+although the orthorhombic OPC system ran 8.4 below, and its template had
+229,781 outer entries against the orthorhombic system's 236,129 with 20 %
+fewer waters (46.5 against 38.3 entries a water).
+
+**The pairs are exact; the entries were split.** Against an exact
+minimum image over the 27 neighboring images of the reduced cell (NumPy,
+from the build's reference points), the set bits of the masks equal the
+pairs within the WW, SW and SS reaches in every class (WW 856,675; SW
+290,477; SS 329,201 on the dodecahedron in OPC): no pair is missing, none
+is twice, none is an extra image. The search is not looser than in the
+orthorhombic cell either (the grid and the fractional search radius are
+sized by face widths; 0 or 1 image a candidate; 48.8 of 49 columns a
+query against 48.8 of 56). But 20.8 % of the units had a nonzero lattice
+frame, a WW row had 1.32 frames on average (up to 4), and 21,411 of its
+146,693 WW entries (14.6 %), 3,283 SW and 2,168 SS entries were second
+entries of a row group for a partner already listed, with the subset of
+the group in another frame: the WW density was 0.365 instead of 0.427.
+
+**The cause** was the packing cells of a triclinic cell: they rounded
+the Cartesian components along $\mathbf c$, then $\mathbf b$, then
+$\mathbf a$, the Cartesian central image, which leaves the fractions of
+$\mathbf a$ and $\mathbf b$ in about $(-0.24, 1.23)$; the search groups
+units by their wrapped fractions, so one group of 16 mixed frames, and it
+queried the columns once for each frame of a row. The WW search, one warp
+a row, takes the time of its slowest row: 4 frames, 1,348 candidate
+groups and 1,745 entries against 1, 407 and 753 orthorhombic, 212 µs a
+refresh against 85.
+
+**The change (658d426b).** The packing cells are now
+$-\mathrm{round}(H^{-1}\mathbf x)$ (ties to even) in either cell, the
+nearest lattice point of the fractions, so every reference point of a
+build lies in $[0,1)$ on the lattice frame, as U2 intended. The entry set
+is unchanged as a set of pairs (the exact count above), the reaches and
+the validity test are the same, and the f32 bounds, written in
+$h=\lvert H\rvert_1$ and in the magnitudes of the fractions, hold as
+before (the framed fractions now lie in $[-\tfrac12,\tfrac12]$). The
+first-step potential energy of the dodecahedron in OPC moves by 4e-4
+kcal/mol (−65880.3972 to −65880.3976; `main` −65880.4064). The coverage
+check now counts the inner entries and those split by lattice frame; the
+dodecahedron fixture requires none (at the old packing: 952,840 of
+6,285,360 in its 89 checks). The frames oracle takes the new cells, and
+the retained-packing fixture checks two tilted anchors whose cells
+differ between the two conventions.
+
+10,000-step captures, RTX 5090, `main` c158870b against 658d426b in one
+job, two rounds, the second in the reverse order (round 1 / round 2,
+µs/step; evaluation is the template kernel or `main`'s pair kernel, wall
+and idle as in U1; entries are the outer entries at the start, a water):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Entries a water |
+|---|---|---|---|---|---|---|---|
+| Dodecahedron OPC | main | 104.7/104.7 | 27.8/27.9 | 20.8/20.6 | 113.5/113.5 | 8.3/8.3 | |
+| | 658d426b | 104.7/104.8 | 37.8/38.0 | 8.7/8.7 | 114.3/114.4 | 9.0/9.0 | 41.1 |
+| Dodecahedron TIP3P | main | 86.8/86.9 | 21.4/21.5 | 19.6/19.5 | 94.9/95.0 | 7.6/7.6 | |
+| | 658d426b | 90.0/89.9 | 33.2/33.1 | 9.2/9.1 | 98.8/98.5 | 8.1/8.1 | 41.6 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 123.8/123.9 | 42.5/42.4 | 33.2/33.5 | 131.6/131.7 | 7.4/7.3 | |
+| | 658d426b | 124.4/124.3 | 62.7/62.7 | 11.7/11.6 | 133.1/132.9 | 8.0/8.0 | 62.8 |
+| Ubiquitin OPC | main | 114.7/114.7 | 33.4/33.3 | 22.7/22.7 | 123.3/123.3 | 8.1/8.1 | |
+| | 658d426b | 105.0/105.0 | 36.5/36.6 | 8.8/8.7 | 114.7/114.8 | 9.1/9.1 | 38.3 |
+| Ubiquitin TIP3P | main | 90.8/91.3 | 24.2/24.5 | 19.6/19.7 | 98.8/99.2 | 7.4/7.4 | |
+| | 658d426b | 94.2/94.6 | 35.6/35.9 | 9.5/9.6 | 103.0/103.4 | 8.1/8.2 | 38.9 |
+
+The outer entries of the dodecahedron fall from 229,781 to 202,919 in
+OPC and from 229,027 to 201,725 in TIP3P, the counts without the split
+entries; in OPC its maintenance is 8.7 µs/step and its evaluation 37.9
+(11.6 and 40.7 at a03416b0, measured in another job). Against `main` its
+wall is now 0.8/0.9 µs/step above in OPC (6.3 before) and 3.8/3.5 in
+TIP3P (9.2 before), the 12 Å switched case 1.4/1.1 above (1.6 before).
+The orthorhombic systems are unchanged by the packing (8.6/8.5 below
+`main` in OPC, 4.2/4.2 above in TIP3P).
+
+**Open, in the evaluation body (not changed here).**
+
+- The dodecahedron's evaluation takes 37.9 µs/step against 36.5 for the
+  orthorhombic OPC system although it has 18 % fewer batches of 32
+  entries (WW 3,563 against 4,468; SW 1,159 against 1,198; SS 935
+  against 974): about 25 % more a batch in OPC and 16 % in TIP3P. The
+  compiled turn is the same (the triclinic kernel adds 6 floating-point
+  operations an entry, the lattice shift), the kernel overlaps nothing,
+  repeated partners in a batch are about 0.01, and loads take about 0.97
+  cache lines an entry in both cells. The hypothesis is a kernel bound by
+  latency or by the load of its busiest multiprocessor (about 5,200 warps
+  for 3,400 records of at most 2 batches); it needs counters (achieved
+  occupancy, stall reasons).
+- The 12 Å switched case: the evaluation is about 1.5 times `main`'s pair
+  kernel at every cutoff (35.5 against 24.2 µs/step at 9 Å without a
+  switch, 42.1 against 29.2 at 10 Å, 54.4 against 34.6 at 11 Å, 63.0
+  against 41.9 at 12 Å; 3,000-step captures). The switch costs little (47
+  instructions of 2,476 and an 8-byte spill; 0.71 to 0.78 ns a weighted
+  batch at 10 to 12 Å against 0.69 at 9 Å). The cause is the lanes: a
+  lane of a turn computes only where its mask bit is set, so the lane use
+  is the mask density, 0.37 at 9 Å to 0.44 at 12 Å (inner WW entries
+  101.9k to 173.7k), and the other lane-turns pay for the 9 Coulomb
+  terms, the Lennard-Jones term and about 20 shuffles. The template body
+  is the same for OPC and TIP3P (36.0 against 35.4 µs/step), while
+  `main` evaluates 16 site pairs a water pair for OPC and 9 for TIP3P
+  (33.3 against 24.2): with TIP3P the template's saving on site pairs is
+  gone and its mask overhead remains. Water groups of 8 instead of 16,
+  emulated on the dumped groups at the inner reach, would raise the
+  density to 0.56 at 12 Å (0.50 at 9 Å) with 1.56 (1.51) times the
+  entries and 0.78 (0.76) times the turns, and 1.5 times the loads and
+  partner-force atomics an entry; it changes the group kernels and the
+  16-lane halves of the evaluation loop, was not built, and waits for the
+  counters of the first item.
+- The SS search of the dodecahedron stays at 219 µs a refresh against
+  203 orthorhombic.
+
+Gates at 658d426b: the 110 template fixtures in one run (107 passed, 3
+unsupported) and the sanitizer tier (3 fixtures, 33 s) pass.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
