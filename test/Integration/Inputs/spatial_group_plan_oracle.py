@@ -86,6 +86,10 @@ for case, (name, first_class, columns, zkeys, gaps, spans) in enumerate(cases):
     metadata.append(dict(name=name, units=n, groups=groups, segments=len(segments), passes=passes))
 
 buffer_type = 'memref<?xi32, 1>'
+stale_sizes = sorted({size for n, m, *_ in references
+                      for size in [m, m + 1, 8, max((n + 1023) // 1024, 1)]})
+for size in stale_sizes:
+    lines.append(f'memref.global "private" constant @stale_{size} : memref<{size}xi32> = dense<-777>')
 probe_types = [buffer_type] * 11 + ['index', 'index'] + ['i32'] * 4 + ['index']
 lines += ['func.func private @group_plan_probe(' + ', '.join(probe_types) + ') -> (index, index, index)',
           'func.func private @mdrtDeviceActivationOpen() -> !llvm.ptr',
@@ -125,6 +129,13 @@ for case, (n, m, first, gaps, spans, groups, passes, expected) in enumerate(refe
         for size in sizes:
             value = emit(f'gpu.alloc() : memref<{size}xi32, 1>')
             buffers.append(emit(f'memref.cast {value} : memref<{size}xi32, 1> to {buffer_type}'))
+        # The scratch holds a sentinel, as the planning view holds the
+        # previous build's plan: the plan must clear what it reads.
+        for buffer, size in zip(buffers[3:], sizes[3:]):
+            host = emit(f'memref.get_global @stale_{size} : memref<{size}xi32>')
+            ready = emit('gpu.wait async')
+            copied = emit(f'gpu.memcpy async [{ready}] {buffer}, {host} : {buffer_type}, memref<{size}xi32>')
+            lines.append(f'  gpu.wait [{copied}]')
         for i in range(3):
             host = emit(f'memref.get_global @input_{case}_{i} : memref<{m}xi32>')
             ready = emit('gpu.wait async')
