@@ -92,16 +92,15 @@ int64_t getLanes(int64_t vectorBits, mlir::Type element);
 int64_t getDeterministicLanes(mlir::Type element);
 
 /// The measured policy of a host (#433's host column), keyed by the CPU
-/// that LLVM names for it (`znver3`): whether the lanes are its default,
-/// and the measurement behind it.
+/// that LLVM names for it (`znver3`): a host whose measurement made the
+/// lanes its default, and that measurement.
 struct Policy {
   llvm::StringRef cpu;
-  bool lanes;
   llvm::StringRef measured;
 };
 
-/// The policy of `cpu`, or nothing for a host that was not measured, which
-/// keeps the scalar row (the conservative default).
+/// The policy of `cpu`, or nothing for a host whose default is the scalar
+/// row (not measured, or measured without a gain).
 std::optional<Policy> findPolicy(llvm::StringRef cpu);
 
 } // namespace hostpairs

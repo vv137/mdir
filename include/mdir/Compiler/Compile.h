@@ -112,6 +112,10 @@ lowerModule(mlir::MLIRContext &context, const driver::Control &,
 /// The machine that compiles the host code of a program for the JIT, at the
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();
+/// Checks `MDIR_HOST_CPU` (a 64-bit CPU that LLVM's X86 back end knows) and
+/// `MDIR_HOST_PAIRS` (scalar, lanes, or lanes:W with W a power of two from 1
+/// to 64), D[host-pair-vector]; a CompileError names the value.
+llvm::Error checkHostEnvironment();
 /// The level of LLVM's module pipeline that the host code of a program
 /// takes before the code generator, in both front ends (D269): "O2"
 /// or "O3". It is part of the key of the compile cache.

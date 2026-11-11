@@ -25,8 +25,10 @@ LaneMapping hostpairs::getLaneMapping(Operation *op) {
     return LaneMapping::Yield;
   if (isa<arith::ConstantOp, memref::GetGlobalOp>(op))
     return LaneMapping::Uniform;
+  // `llvm.intr.powi` takes one scalar exponent for the vector of the lanes.
   if (auto power = dyn_cast<math::FPowIOp>(op))
-    return power.getRhs().getDefiningOp<arith::ConstantOp>()
+    return power.getRhs().getDefiningOp<arith::ConstantOp>() &&
+                   !isa<VectorType>(power.getRhs().getType())
                ? LaneMapping::PowI
                : LaneMapping::None;
   if (isa<arith::ArithDialect, math::MathDialect>(op->getDialect()))
@@ -100,8 +102,9 @@ hostpairs::Refusal hostpairs::checkLanes(PairForOp op, int64_t lanes) {
   for (Operation &nested : op.getKernel().front()) {
     LaneMapping mapping = getLaneMapping(&nested);
     if (mapping == LaneMapping::None) {
-      if (auto power = dyn_cast<math::FPowIOp>(&nested))
-        return std::string("the exponent of 'math.fpowi' is not a constant");
+      if (isa<math::FPowIOp>(&nested))
+        return std::string(
+            "the exponent of 'math.fpowi' is not a scalar constant");
       return "the kernel holds '" + nested.getName().getStringRef().str() +
              "', which has no lane mapping";
     }
@@ -127,13 +130,14 @@ int64_t hostpairs::getDeterministicLanes(Type element) {
 }
 
 std::optional<hostpairs::Policy> hostpairs::findPolicy(StringRef cpu) {
-  // The hosts measured (D[host-pair-vector]); every other host keeps the
+  // The hosts whose measurement made the lanes their default
+  // (D[host-pair-vector]); every other host, measured or not, keeps the
   // scalar row outside the deterministic mode.
   static const Policy policies[] = {
       // EPYC 7543 (Zen 3, AVX2): the NVE step of JAC, TIP3P 103k, and
-      // Cellulose against main, 1 and 16 threads, mixed and double; the
-      // lanes took 1.3 to 1.7 times less time a step, beyond the spread.
-      {"znver3", true, "lanes measured faster on an EPYC 7543"},
+      // Cellulose against main took 1.3 to 1.7 times less time with the
+      // lanes, beyond the spread of the runs.
+      {"znver3", "lanes measured faster on an EPYC 7543"},
   };
   for (const Policy &policy : policies)
     if (policy.cpu == cpu)

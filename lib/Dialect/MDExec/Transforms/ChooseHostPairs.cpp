@@ -85,12 +85,8 @@ private:
       if (!policy)
         return explainRefused(
             op, "the host '" + static_cast<std::string>(cpu) +
-                    "' is not measured, which keeps the scalar row "
-                    "(mode=auto)");
-      if (!policy->lanes)
-        return explainRefused(op, "the scalar row is the policy of '" +
-                                      policy->cpu.str() + "' (" +
-                                      policy->measured.str() + ")");
+                    "' has no measured policy of lanes, which keeps the "
+                    "scalar row (mode=auto)");
     }
     op.setHostLanes(lanes);
     if (explain)

@@ -70,6 +70,9 @@ void mdir::compiler::useCudaToolkit() {
 llvm::Expected<std::string>
 mdir::compiler::getGpuOptions(const Control &control, int64_t device,
                               bool cache) {
+  // The host's variables, which every program reads (D[host-pair-vector]).
+  if (auto error = checkHostEnvironment())
+    return std::move(error);
   if (control.target != Target::GPU)
     return std::string();
   auto options = mdir::getGpuPipelineOptions(device);
@@ -147,64 +150,115 @@ llvm::StringRef mdir::compiler::getFusedPruningSetting() {
   return "default";
 }
 
-/// The options of the pruning in the loop over pairs (D284): on
-/// from the groups of `getFusedPruningGroups` for the architecture of
-/// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
-/// number of groups.
-/// The machine of the host code before its code-generation level: the
-/// host that LLVM detects, or, with `MDIR_HOST_CPU`, the CPU it names with
-/// that CPU's own features (`x86-64` for a host of SSE2 alone), to compile
-/// for a narrower host than this one (D[host-pair-vector]). The compile
-/// cache keys a host object by this machine's CPU and features.
-static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
-  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
-  if (!builder)
-    return builder.takeError();
-  if (const char *cpu = std::getenv("MDIR_HOST_CPU"); cpu && *cpu) {
-    builder->setCPU(cpu);
-    builder->setFeatures("");
-  }
-  return builder;
-}
+namespace {
+/// The host that the host code is compiled for (D[host-pair-vector]): the
+/// CPU that LLVM detects, or the one that `MDIR_HOST_CPU` names, the width
+/// of its vector registers, and the options of md-exec-choose-host-pairs
+/// that `MDIR_HOST_PAIRS` gives.
+struct HostTarget {
+  std::string cpu;
+  int64_t vectorBits = 128;
+  std::string pairs;
+};
+} // namespace
 
-/// The options of md-exec-choose-host-pairs (D[host-pair-vector]): the CPU
-/// of the host and the width of its vector registers, from the machine that
-/// compiles the host code, and `MDIR_HOST_PAIRS`, which overrides the
-/// host's policy for comparisons and tests: `scalar` (no loop takes the
-/// lanes), `lanes` (every loop that can, at the width of the mode and the
-/// host), or `lanes:W` (at `W` lanes).
-static std::string getHostPairsOptions() {
-  std::string options;
-  llvm::raw_string_ostream os(options);
+/// Reads and checks `MDIR_HOST_CPU` and `MDIR_HOST_PAIRS`. The CPU and its
+/// features are read as `JITTargetMachineBuilder::detectHost` reads them,
+/// without a machine: the pipeline of a Python program is built before its
+/// simulation initializes the target. A CPU that `MDIR_HOST_CPU` names has
+/// the features of its name and every feature they imply (`x86-64-v3` has
+/// AVX2, and so AVX).
+static llvm::Expected<HostTarget> getHostTarget() {
+  HostTarget host;
   StringRef chosen =
       std::getenv("MDIR_HOST_PAIRS") ? std::getenv("MDIR_HOST_PAIRS") : "";
-  if (chosen.consume_front("lanes:"))
-    os << "mode=lanes width=" << chosen << " ";
-  else if (!chosen.empty())
-    os << "mode=" << chosen << " ";
-  // The CPU and its features as getHostBuilder gives them to the machine
-  // of the host code, read without a machine: the pipeline of a Python
-  // program is built before its simulation initializes the target.
+  if (chosen == "scalar" || chosen == "lanes") {
+    host.pairs = ("mode=" + chosen + " ").str();
+  } else if (!chosen.empty()) {
+    StringRef width = chosen;
+    int64_t lanes = 0;
+    if (!width.consume_front("lanes:") || width.getAsInteger(10, lanes) ||
+        lanes < 1 || lanes > 64 || !llvm::isPowerOf2_64(lanes))
+      return llvm::make_error<compiler::CompileError>(
+          "MDIR_HOST_PAIRS='" + chosen.str() +
+          "' is not scalar, lanes, or lanes:W with W a power of two from 1 "
+          "to 64");
+    host.pairs = "mode=lanes width=" + std::to_string(lanes) + " ";
+  }
   llvm::Triple triple(llvm::sys::getProcessTriple());
-  llvm::StringRef cpu = llvm::sys::getHostCPUName();
+  host.cpu = llvm::sys::getHostCPUName().str();
   bool avx = false, avx512 = false;
   if (const char *named = std::getenv("MDIR_HOST_CPU"); named && *named) {
-    cpu = named;
+    host.cpu = named;
     if (triple.isX86()) {
-      llvm::SmallVector<llvm::StringRef> features;
-      llvm::X86::getFeaturesForCPU(cpu, features);
-      avx = llvm::is_contained(features, "avx");
-      avx512 = llvm::is_contained(features, "avx512f");
+      if (llvm::X86::parseArchX86(host.cpu, /*Only64Bit=*/true) ==
+          llvm::X86::CK_None)
+        return llvm::make_error<compiler::CompileError>(
+            "MDIR_HOST_CPU='" + host.cpu +
+            "' is not a 64-bit CPU that LLVM's X86 back end knows, such as "
+            "x86-64, x86-64-v3, or znver3");
+      llvm::SmallVector<llvm::StringRef> own;
+      llvm::X86::getFeaturesForCPU(host.cpu, own);
+      llvm::StringMap<bool> features;
+      for (llvm::StringRef feature : own)
+        llvm::X86::updateImpliedFeatures(feature, true, features);
+      avx = features.lookup("avx");
+      avx512 = features.lookup("avx512f");
     }
   } else if (triple.isX86()) {
     llvm::StringMap<bool> features = llvm::sys::getHostCPUFeatures();
     avx = features.lookup("avx");
     avx512 = features.lookup("avx512f");
   }
-  os << "cpu=" << cpu << " vector-bits=" << (avx512 ? 512 : avx ? 256 : 128);
-  return options;
+  host.vectorBits = avx512 ? 512 : avx ? 256 : 128;
+  return host;
 }
 
+llvm::Error compiler::checkHostEnvironment() {
+  auto host = getHostTarget();
+  return host ? llvm::Error::success() : host.takeError();
+}
+
+/// The machine of the host code before its code-generation level: the
+/// host that LLVM detects, or, with `MDIR_HOST_CPU`, the CPU it names with
+/// that CPU's own features (`x86-64` for a host of SSE2 alone), to compile
+/// for a narrower host than this one (D[host-pair-vector]). The compile
+/// cache keys a host object by this machine's CPU and features.
+static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
+  auto host = getHostTarget();
+  if (!host)
+    return host.takeError();
+  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!builder)
+    return builder.takeError();
+  if (const char *cpu = std::getenv("MDIR_HOST_CPU"); cpu && *cpu) {
+    builder->setCPU(host->cpu);
+    builder->setFeatures("");
+  }
+  return builder;
+}
+
+/// The options of md-exec-choose-host-pairs (D[host-pair-vector]): the CPU
+/// of the host and the width of its vector registers, and `MDIR_HOST_PAIRS`,
+/// which overrides the host's policy for comparisons and tests: `scalar`
+/// (no loop takes the lanes), `lanes` (every loop that can, at the width of
+/// the mode and the host), or `lanes:W` (at `W` lanes). The driver checks
+/// the variables first (`checkHostEnvironment`); here a value that it
+/// refused leaves the options empty.
+static std::string getHostPairsOptions() {
+  auto host = getHostTarget();
+  if (!host) {
+    llvm::consumeError(host.takeError());
+    return "";
+  }
+  return host->pairs + "cpu=" + host->cpu +
+         " vector-bits=" + std::to_string(host->vectorBits);
+}
+
+/// The options of the pruning in the loop over pairs (D284): on
+/// from the groups of `getFusedPruningGroups` for the architecture of
+/// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
+/// number of groups.
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   // The groups from which the pruning in the loop took no more time a step
   // than the pruning of the refresh. On an RTX 4090 (sm_89), water boxes of
