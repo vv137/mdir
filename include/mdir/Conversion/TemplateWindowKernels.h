@@ -73,6 +73,9 @@ struct TemplatePartner {
   llvm::SmallVector<mlir::Value, 3> frame;
   llvm::SmallVector<mlir::Value, 3> parameters;
   mlir::Value shift, mask;
+  /// The value given to writeSecond for this partner, loaded once at the
+  /// batch head (for example the partner's unit); the entry when unset.
+  mlir::Value id;
 };
 struct TemplateContribution {
   llvm::SmallVector<mlir::Value, 3> firstForces, secondForces;

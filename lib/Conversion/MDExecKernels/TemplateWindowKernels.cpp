@@ -609,7 +609,8 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         if (unit.forces)
           scf::IfOp::create(batch, loc, has, [&](OpBuilder &body, Location) {
             // Sixteen rotations restore the original partner and its force.
-            writeSecond(body, entry, realForces(body, final.slice(fjAt, fj)));
+            writeSecond(body, partner.id ? partner.id : entry,
+                        realForces(body, final.slice(fjAt, fj)));
             scf::YieldOp::create(body, loc);
           });
         scf::YieldOp::create(batch, loc, final.drop_front(fiAt));
