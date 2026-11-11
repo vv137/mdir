@@ -609,6 +609,8 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     // are not the run's.
     if (auto *reset = findRuntime<void()>("mdrtResetCounts"))
       reset();
+    if (auto *reset = findRuntime<void()>("mdrtTemplatePairsResetRadius"))
+      reset();
     if (auto *set = findRuntime<void(void (*)(const char *))>(
             "mdrtSetStopHandler"))
       set(nullptr);
