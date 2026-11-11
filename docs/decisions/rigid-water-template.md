@@ -1886,7 +1886,19 @@ barostat run at 2000 bar whose cell shrinks from 12.58 to 12.33 Å of half
 width against a reach of 12.38 Å, and the stretched input at a pairlist
 distance of 10 Å, whose first build widens $\rho$ to 1.308 Å and the
 reach to 12.62 Å, stop with the message (`water-template-reach-gpu.test`);
-the stretched coverage input runs at 9.9 Å (12.52 Å).
+the stretched coverage input runs at 9.9 Å (12.52 Å). In a triclinic cell,
+the rhombic dodecahedron of the triclinic fixture (403 TIP3P waters, every
+edge 2.6 nm, face widths 2.123, 2.123 and 1.838 nm) under NVT with a cutoff
+of 6 Å and a pairlist distance of 7.1 Å, the input runs 20 steps (its
+first build widens $r_\mathrm m$ to the input's 1.009 Å, a reach of 9.118
+Å against half the least face width, 9.192 Å), and the same input with the
+first water's O–HW1 bond 30 % long stops at its first build with a reach
+of 9.6 Å: between half the least face width and half the next one (10.61
+Å), so a check of the wrong widths would let it run. The log's radius
+statistics belong to the run, whose programs (the terms at the start, then
+the steps) share them, so its first build is the start's; the trial runs
+of a search of the skins (D281) clear them when they end, with the counts
+of `mdrtResetCounts`.
 
 **Gates added.** The selection fixture prints the route of a control
 file's system: free X–H bonds under `AUTO` (the `hydrogen_bonds` reason),

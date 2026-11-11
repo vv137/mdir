@@ -106,9 +106,17 @@ void mdrtTemplatePairsStopReach(double reach, double widest, double half) {
 
 /* The solute units' radius that each build held (nm): the first build's,
  * which an unconstrained input may widen beyond the nominal radius, and the
- * largest and the count of the later ones, which constraints hold to it. */
+ * largest and the count of the later ones, which constraints hold to it.
+ * They belong to the run, whose programs (the terms at the start, then the
+ * steps) share them: the first build is the start's. The trial runs of a
+ * search of the skins (D281) are not the run's, and clear them when they
+ * end, with the counts of mdrtResetCounts. */
 static double templateRadiusNominal, templateRadiusFirst, templateRadiusLater;
 static int64_t templateRadiusBuilds;
+void mdrtTemplatePairsResetRadius(void) {
+  templateRadiusNominal = templateRadiusFirst = templateRadiusLater = 0.0;
+  templateRadiusBuilds = 0;
+}
 void mdrtTemplatePairsNoteRadius(double radius, double nominal) {
   templateRadiusNominal = nominal;
   if (templateRadiusBuilds++ == 0) templateRadiusFirst = radius;

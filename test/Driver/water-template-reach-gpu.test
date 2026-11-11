@@ -24,3 +24,23 @@
 # RUN: FileCheck %s --check-prefix=STRETCH < %t/stretch/run.log
 # STRETCH-NOT: INFO: 0 0.0000
 # STRETCH: mdir: the template's covering reach, 12.62 Å ('pairlist_distance' plus twice 1.308 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.58 Å; the run has failed
+# A triclinic cell: the rhombic dodecahedron of Inputs/triclinic (403 TIP3P
+# waters, every edge 2.6 nm, face widths 2.123, 2.123 and 1.838 nm), NVT,
+# a cutoff of 6 Å. The bound is half the least face width, c_z/2 = 9.192
+# Å, not half an edge (13 Å) nor of the other faces (10.61 Å). At 7.1 Å the
+# reach passes the selection (9.016 Å, 7.1 + 2 x 0.958) and every build:
+# the first one widens the extent to the input's 1.009 Å, 9.118 Å. With the
+# first water's O-HW1 bond 30 % long, the first build widens the extent to
+# 1.25 Å and stops the run at 9.6 Å, between 9.192 and 10.61 Å, which a
+# check of the wrong widths would let run.
+# RUN: mkdir -p %t/cell %t/oblique
+# RUN: %python %S/Inputs/water_template_dodecahedron.py %S/Inputs/triclinic %t/cell 20 --cell --pairlist=7.1
+# RUN: cd %t/cell && mdir run control.toml > run.log 2>&1
+# RUN: FileCheck %s --check-prefix=CELL < %t/cell/run.log
+# CELL: INFO: 20
+# CELL-NOT: covering reach
+# RUN: %python %S/Inputs/water_template_dodecahedron.py %S/Inputs/triclinic %t/oblique 20 --cell --pairlist=7.1 --stretch
+# RUN: cd %t/oblique && not mdir run control.toml > run.log 2>&1
+# RUN: FileCheck %s --check-prefix=OBLIQUE < %t/oblique/run.log
+# OBLIQUE-NOT: INFO: 0 0.0000
+# OBLIQUE: mdir: the template's covering reach, 9.6 Å ('pairlist_distance' plus twice 1.25 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 9.192 Å; the run has failed
