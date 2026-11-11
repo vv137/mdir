@@ -241,229 +241,260 @@ below twice the reach (Section 9).
 ## 4.4 Groups of 16 particles
 
 On a device, a loop over pairs whose kernel has an exchange contract runs
-over the second kind of structure, `groups` (D89; layout after
-[[SalomonFerrer2013]](references.md#salomonferrer2013)).
+over the second kind of structure, `groups` (D89): sixteen particles that
+share one list of neighbors, over which the loop computes each unordered
+pair once. The layout, groups of 16 that share the list of the particles
+within the reach of any of them, a half list, and a warp that walks a
+group's list with a mask of interactions for each entry, is the one
+published by [[SalomonFerrer2013]](references.md#salomonferrer2013),
+Section 3.3; the cluster pair lists of
+[[Pall2013]](references.md#pall2013) have the same aim. MDIR's order of
+the particles, its search, its frames, its images, its pool, and its exact
+test are its own, and are derived below; `docs/neighbor-groups.md` gives
+the kernels, and its Section 11 the measurements.
+
+### 4.4.1 The structure
+
+A build sorts the particles into an order of *places* $p$ (Section 4.2;
+$\pi(p)$ is the particle at place $p$, or none for an empty place). Group
+$g$ is the places $16g, \dots, 16g+15$; member $u$ of it is at place
+$16g+u$. The list of group $g$ holds *entries* $(q, \mathsf b, \mathbf
+e)$: the place $q$ of a candidate, a mask $\mathsf b$ of 16 bits, and the
+shift $\mathbf e$ of the candidate's image (Section 4.4.4). Bit $u$ is set
+when the pair of member $u$ and the particle at $q$ is within the reach at
+the build, is not excluded, and, for $q$ in group $g$ itself, $q > 16g+u$.
+Only candidates at places $q \ge 16g$ are taken. The build establishes:
+
+- **I1.** Every unordered pair of distinct particles that is not excluded
+  has exactly one bit for each of its images within $R$ at the build, in
+  the list of the group of the earlier of its two places, as long as $R <
+  \min_a L_a$ (Section 4.4.4). An excluded pair (a bond, an angle, a 1–4
+  pair taken elsewhere) and an empty place have no bit, so the loop needs
+  no test of exclusion.
+- **I2.** The entries of a group and their order do not depend on the
+  threads.
+- **I3.** An empty place has no entry that names it and zero shifts.
+- **I4.** Every entry is in the frame of its list's group, so the loop
+  takes no minimum image.
+
+A dual list (Section 4.5) adds two more: the inner mask of an entry is a
+subset of its outer mask, computed from it (I5), and the units that the
+loop takes are blocks of the structure that hold entries (I6).
 
 **Why not tiles** (D82). The first design for the device took the cluster
-pair list of GROMACS [[Pall2013]](references.md#pall2013), tiles of 8
-particles with a mask of 64 bits for each pair of tiles, under MDIR's
-exact test. A standalone prototype on the loop over the pairs of JAC
-(Lennard–Jones and the direct sum in f32, 1000 launches, RTX 3090) found
-the tiles slower than the matrix at every reach: at 8.05 Å the matrix
-took 60.6 µs, tiles of 8 × 8 with a full list 142.1, and tiles of 8 × 4
-111.0, or 106.7 with a half list added in fixed point. Only 38 to 47% of
-the slots of the 8 × 4 tiles held a pair of the list, against 98% of the
-entries of the matrix at that reach, and the kernel was bound by the
-arithmetic of the pairs, so contiguous loads did not pay for the empty
-slots (`docs/neighbor-tiles.md`, Section 11). Groups of 16 that share a list of
-*particles* waste no slot on the side of the list, need a sixteenth of
-the entries of the matrix, and keep the bounding box of a group for the
-build: on Cellulose at a reach of 9 Å the loop took 1013 to 1034 µs
-against 1245 to 1267 for the matrix, and the tests of candidates that
-the boxes of groups avoid had taken 5.0 of the 8.0 ms of a build of the
-matrix.
+pair lists of [[Pall2013]](references.md#pall2013), tiles of 8 particles
+with a mask of 64 bits for each pair of tiles, under MDIR's exact test. A
+standalone prototype on the loop over the pairs of JAC (Lennard–Jones and
+the direct sum in f32, 1000 launches, RTX 3090) found the tiles slower
+than the matrix at every reach: at 8.05 Å the matrix took 60.6 µs, tiles
+of 8 × 8 with a full list 142.1, and tiles of 8 × 4 111.0, or 106.7 with a
+half list added in fixed point. Only 38 to 47% of the slots of the 8 × 4
+tiles held a pair of the list, against 98% of the entries of the matrix at
+that reach, and the kernel was bound by the arithmetic of the pairs, so
+contiguous loads did not pay for the empty slots
+(`docs/neighbor-tiles.md`, Section 11). Groups of 16 that share a list of
+*particles* waste no slot on the side of the list, need a sixteenth of the
+entries of the matrix, and keep the bounding box of a group for the build:
+on Cellulose at a reach of 9 Å the loop took 1013 to 1034 µs against 1245
+to 1267 for the matrix, and the tests of candidates that the boxes of
+groups avoid had taken 5.0 of the 8.0 ms of a build of the matrix.
 
-**Places and groups.** A build sorts the particles into a *compact
-order*: the columns of a grid in $x$–$y$, each about 64 particles wide,
-sorted by $z$; each column cut into chunks of 64, each chunk sorted by $x$
-and halved, each half sorted by $y$ and halved again. The result is four
-groups of up to 16 particles that fill a near-cube. Group $g$ is the
-places $16g, \dots, 16g+15$; a short group is padded with empty places,
-and a chunk of fewer than four particles leaves whole groups empty.
+### 4.4.2 The order and the shape of a group
+
+The cost of a list grows with the volume within $R$ of its group (Section
+4.4.3), so every group must fill a small box whatever the positions. The
+build sorts the particles into a *compact order*:
+
+1. Columns of a grid in $x$–$y$ of side $d_\text{col} = (64/\rho)^{1/3}$,
+   the edge of a cube that holds 64 particles on average:
+   $N_\text{col} = \lfloor L_x/d_\text{col}\rfloor\lfloor
+   L_y/d_\text{col}\rfloor$ columns, each count clamped to $[1, 256]$.
+2. Bins along $z$, $\max(1, \lfloor 2N/N_\text{col}\rfloor)$ a column, and a
+   counting sort by column and bin; the particles of a bin are sorted by
+   their number.
+3. Each column cut into chunks of 64 consecutive particles, chunk $t$ at
+   the places $64t$ to $64t+63$.
+4. Each chunk of $n$ particles sorted by $x$ with a bitonic network and cut
+   into its first $\lceil n/2\rceil$ and the rest; each half sorted by $y$
+   and cut the same way. The four quarters are groups $4t$ to $4t+3$; the
+   places a quarter leaves are empty.
+
 Every sort breaks ties by the number of the particle, so the order does
-not depend on the threads.
+not depend on the threads. A column has at most 63 empty places, in its
+last chunk, and a chunk of fewer than four particles leaves whole groups
+empty; the places are at most $N + 63N_\text{col}$. A chunk of 64
+particles of a column of cross section $d_\text{col}^2$ is about
+$d_\text{col}$ tall, so a group occupies a prism of about
+$\tfrac12 d_\text{col} \times \tfrac12 d_\text{col} \times d_\text{col}$,
+half-widths $\mathbf w \approx (\tfrac14, \tfrac14, \tfrac12)d_\text{col}$:
+in water ($\rho = 0.1$ Å$^{-3}$), $4.3 \times 4.3 \times 8.6$ Å. The order
+of the cells of the matrix gave boxes 12 Å long, and the loop over groups
+was then slower than the matrix (`docs/neighbor-groups.md`, Section 11.1).
 
-**Entries.** The list of group $g$ holds entries $(q, m)$: a place $q$ and
-a mask $m$ whose bit $u$ is set when the pair of the particle at place
-$16g+u$ and the particle at $q$ is within the reach. Each pair within the
-reach is in exactly one list: a pair with $q$ in a later group is in the
-list of the earlier group, and a pair within a group is in the list of
-the group with the bits of the places before $q$. An excluded pair (a
-bond, an angle, a 1–4 pair taken elsewhere) has its bit cleared at the
-build, so the loop needs no test of exclusion. The lists are held in
-*blocks* of 64 entries, which a group takes from one pool as it fills them
-with an atomic addition; block $b$ is block `ordinals[b]` of the list of
-group `units[b]`. A block is the unit of work of the loop. A build counts
-the blocks it takes even where they do not fit; when they do not, the
-runtime grows the pool to a quarter more than needed and the build is made
-again, so no pair is left out. On Cellulose the lists take at most 152,619
-of 280,929 blocks (144 MB for entries and masks, against 510 MB that fixed
-lists of twice the width of a row would need).
+### 4.4.3 The search and the length of a list
 
-**The size of the pool** (D331). The list of a group holds
-the particles at later places within $R$ of any of its 16 members, so its
-length follows the mean number of neighbors of a particle within the
-reach. In a fluid of number density $\rho$ and pair distribution $g(r)$
-that number is $\bar n = 4\pi\rho\int_0^R g(r)\,r^2\,dr$, which is
-$\tfrac43\pi\rho R^3$ once $R$ is beyond the range of the correlations.
-The pool holds $B = \sum_g \lceil E_g/64\rceil$ blocks for the lengths
-$E_g$ of the lists. A sum over many groups follows the density of the
-whole cell. At constant $N$ and pressure the volume fluctuates by
-$\delta V/V = \sqrt{k_BT\kappa_T/V}$, with $\kappa_T$ the isothermal
-compressibility; for water at 300 K ($\kappa_T = 4.5\times
-10^{-10}$ Pa$^{-1}$) that is $4\times10^{-4}$ at STMV and $3\times10^{-3}$
-at JAC. $B$ scales with the density, as $V^{-1}$, so the blocks that one
-build takes fix the pool's need for every build of an equilibrated state,
-and a margin of a quarter covers these fluctuations many times over, and a
-compression to 0.8 of the volume. The structure therefore starts with one
-block a group, and its first build sizes the pool: $B_0 + \lfloor
-B_0/4\rfloor$ for the $B_0$ blocks that the configuration at the start
-takes. Counting $B_0$ is exact, where an estimate from $\bar n$ would need
-the ratio of $E_g$ to $\bar n$, which depends on the shape of the groups:
-about 1.2 at STMV ($R$ = 9.5 Å) and 0.77 at JAC ($R$ = 11 Å). STMV takes
-at most 433,376 of 541,603 blocks, where the pool sized from the particle
-with the most neighbors held 800,328. An argon and krypton mixture
-compressed from 18,991 to 10,260 Å$^3$ grows its lists once after the
-first build, and gives the matrix's energies to every printed digit.
-
-**Frames without a minimum image** (D95). The loop takes no minimum
-image. The build moves every place, and every entry, by whole cells into
-the *frame* of its group: the first particle of the group where it is
-wrapped into the cell, and the other members at their places relative to
-it. For each place $p$ the build stores the integer shift $\mathbf P_p
-\in \{-512, \dots, 511\}^3$, ten bits an axis, that moves the particle as
-it is kept (unwrapped) into the frame of its group; for each entry it
-stores in bits 16 to 27 of the mask the shift $\mathbf e \in \{-4, \dots,
-4\}^3$, four bits an axis, between the frame of the entry's own group and
-that of the list's group, including the image of the candidate that the
-entry takes. The loop then computes
+**The box test, then the point tests.** The build computes the bounding
+box of each group in f32, its members taken in the minimum image of the
+first: center $\mathbf y_g$, half-widths $\mathbf w_g$, $w_{g,a} \le
+\tfrac12 L_a$. The candidates come from a grid of $N_{\text{cell},a} =
+\min(256, \max(3, \lfloor 2L_a/R\rfloor))$ cells along each axis, visited
+over the window
 
 $$
-\mathbf r_{uq} = \big(\mathbf x_{16g+u} + \mathbf P_{16g+u}\odot\mathbf L\big)
-- \big(\mathbf x_q + \mathbf P_q\odot\mathbf L + \mathbf e\odot\mathbf L\big),
+\Big\lfloor \tfrac{(y_{g,a} - w_{g,a} - R')N_{\text{cell},a}}{L_a}\Big\rfloor
+\le k_a \le
+\Big\lfloor \tfrac{(y_{g,a} + w_{g,a} + R')N_{\text{cell},a}}{L_a}\Big\rfloor
 $$
 
-where the additions of $\mathbf P\odot\mathbf L$ are made in f64 on the
-positions as stored and the sums converted to f32 once, by the kernel that
-gathers the positions into the order of the places (D101): a position in
-its frame is then as exact as one in the cell, however far the particle
-has gone. A frame anchored on the first particle as it is kept, unwrapped,
-would let $\mathbf e$ grow with the drift of two groups apart and overflow
-its bits; anchoring on the wrapped position bounds it. The template
-test places particles three cells out of the cell on either side to
-check it.
+modulo $N_{\text{cell},a}$ (the whole axis when it is wider), in a fixed
+order, with $R' = R + \delta_R$ (Section 4.4.6). A candidate before the
+group, $q < 16g$, is dropped. A lane tests a candidate against the box,
+$\lVert\max(\lvert\mathbf r_q\rvert - \mathbf w_g, \mathbf 0)\rVert \le R'$
+with $\mathbf r_q$ its displacement from $\mathbf y_g$ in the image nearest
+to it; those that pass go to a queue of the warp in shared memory, in the
+order of the lanes, and when it holds 32 each lane tests one against the
+16 members (D99): a candidate beyond $R'$ of the box is beyond $R'$ of
+every member, and the queue keeps every lane busy where testing in place
+left two thirds of them idle. The excluded partners of a group are sorted
+as keys $(\text{place} \ll 4) \mid u$ with the bitonic network of the
+fewest values that hold them (64, 128, or 256; D105); a candidate outside
+the range of their places skips the search (D100), and the others find the
+first key at their place by a binary search and clear the bits of the keys
+there. A group whose partners do not fit in the 256 places of a warp's
+memory reads the rows of the excluded pairs instead (D106): exact, slower,
+and rare (Cellulose, the only system of the suite where it happens, has 1
+such group in 255 builds under NVE and 7 in 253 under NPT). A warp writes
+its entries in the order of its cells and of its lanes (I2), into blocks of
+64 entries that it takes from one pool, at most two a round with one
+atomic addition; block $b$ is block `ordinals[b]` of the list of group
+`units[b]`, and a block is the unit of work of the loop.
 
-**One entry for each image within the reach** (D115). One shift serves
-the 16 members of an entry, so an entry takes one image of its
-candidate. The build takes, for each candidate, the image nearest to the
-center $\mathbf c$ of the box of the group, of half-widths $\mathbf h$. A
-member $i$ is at most $h_a$ from $\mathbf c$ along axis $a$, and an image
-of $q$ within $R$ of $i$ is then within $R + h_a$ of $c_a$; it is the
-image nearest to $\mathbf c$ if $R + h_a \le L_a/2$. In a narrower cell
-the image of a pair can be the one on the other side of the boundary:
-on the argon–krypton mixture of `barostat.test` (23.2 Å, a reach of 10 Å,
-groups about 9 Å wide) a list held only the nearest image, and the
-potential energy at the start was $-497.7291$ kcal/mol against
-$-497.7298$ of the matrix, the virial $-1117.6307$ against $-1117.7782$.
-An image on the other side of the boundary can be within $R$ of the box
-only where $h_a + R \ge L_a/2$ along some axis. A second kernel takes
-just those groups, scans their candidates again, and adds to each list,
-from the block where the first kernel left it, an entry for each image a
-cell away or none along each axis, $\mathbf r - \mathbf o \odot \mathbf
-L$ with $o_a \in \{-1, 0, 1\}$ and $\mathbf r$ that of the nearest
-image, whose distance from the box is within $R$; it queues the candidate
-with the code of $\mathbf o$ in bits 26 to 30, and each image becomes an
-entry with its own mask and shift. Where the edges exceed $2R$, a pair
-has at most one image within the reach, so the masks of the entries of a
-candidate are disjoint and each pair within the reach is in one list
-once; in a narrower cell a pair has a bit for each of its images within
-the reach, of which the loop finds at most one within the cutoff, the
-edges being at least $2 r_c$.
-
-These 27 are every image with $\lvert r_a\rvert \le \tfrac32 L_a$ along
-each axis, the nearest having $\lvert r_a\rvert \le \tfrac12 L_a$. An
-image within $R$ of the box has $\lvert r_a\rvert \le h_a + R$, and $h_a
-\le \tfrac12 L_a$, since the particles of a group are taken in the
-minimum image of its first. The lists therefore hold every image of every
-pair within the reach for
+**The length of a list.** Let $\Omega_g$ be the points within $R$ of some
+member of group $g$. A candidate is in the list when it is in $\Omega_g$
+and after the group; in a uniform fluid half of the candidates are, so
+$E_g \approx \tfrac12\rho\lvert\Omega_g\rvert$. $\Omega_g$ lies within the
+points within $R$ of the box, whose volume is that of the box, of its six
+faces moved out by $R$, of its twelve edges rounded by quarter cylinders,
+and of its eight corners rounded by eighths of a ball:
 
 $$
-R < \min_a L_a ,
+V_R(\mathbf w) = 8w_xw_yw_z + 8(w_xw_y + w_yw_z + w_zw_x)R +
+2\pi(w_x + w_y + w_z)R^2 + \tfrac43\pi R^3 .
 $$
 
-whatever the positions, and the run asks it: the builder refuses a longer
-reach for the groups and the runtime stops a run whose barostat takes the
-cell below it (D242). Before, the kernel took the nearest image
-or the one on the other side of the boundary along each axis, which is
-every image only while $h_a + R \le L_a$, a condition nothing asked: with
-a reach of 0.77 to 0.89 of the edge of a cube under a barostat, 23 of 79
-frames lacked pairs. In the cells of the Amber suite no group needs
-it, and the second kernel is a launch of warps that return. A first
-version handled both cases in the list kernel, which then needed 128
-registers a thread instead of 64 and took 2259 µs a build on Cellulose
+The pairs within $R$ are $\tfrac12 N\bar n$, with $\bar n =
+\tfrac43\pi\rho R^3$, and the loop evaluates 16 slots for each entry, so the
+share of the slots that hold a pair within $R$ is
+
+$$
+\zeta_R = \frac{\tfrac12 N\bar n}{16\sum_g E_g} \approx
+\frac{\tfrac43\pi R^3}{\lvert\Omega_g\rvert} \ge
+\frac{\tfrac43\pi R^3}{V_R(\mathbf w_g)} ,
+$$
+
+using $N = 16 \times$ the groups, and the share within the cutoff is
+$\zeta_c \approx \zeta_R (r_c/R)^3$. For the prism of Section 4.4.2 the
+bound is 0.34 at STMV ($R$ = 9.5 Å) and 0.39 at JAC ($R$ = 11 Å); the
+blocks that the lists took, $\sum_g E_g \le 64B$, give $\zeta_R \ge
+N\bar n/(2048B)$, at least 0.42 at STMV and 0.65 at JAC (Section 4.4.7). The union of 16
+balls is well inside the box widened by $R$, so the bound is loose, but its
+terms show what sets the length: at these reaches the quarter cylinders,
+which grow with $\sum_a w_a$, are about half of $V_R$, and a cube of the
+volume of the prism would make $V_R$ about 3% smaller. Without the box test
+each group would test every candidate of its window, about
+$\rho\prod_a(2w_{g,a} + 2R + L_a/N_{\text{cell},a})$ particles, half of
+them after the group, against the 16 members; on JAC that is about 1,800
+candidates against about $\tfrac12\rho V_R \approx 700$ that pass the
+box test (estimates for a uniform density and the prism).
+
+### 4.4.4 Frames and images
+
+**Frames** (D95). The loop takes no minimum image. The build moves every
+place, and every entry, by whole cells into the *frame* of its group: the
+first member where it is wrapped into the cell, and the other members at
+their places relative to it. For each place $p$ it stores the integer
+shift $\mathbf S_p \in \{-512, \dots, 511\}^3$, ten bits an axis, that moves
+the particle as it is kept (unwrapped) into the frame of its group, and
+the cells $\mathbf W_p \in \{-1, 0, 1\}^3$ from its wrapped position to
+that frame. An entry's shift is
+
+$$
+\mathbf e = \mathbf W_{16g} - \mathbf W_q - \mathbf n_q, \qquad
+\mathbf n_q = \mathrm{round}\big((\tilde{\mathbf x}_q - \mathbf y_g)\oslash\mathbf L\big),
+$$
+
+with $\tilde{\mathbf x}_q$ the wrapped position, the cells from the frame
+of $q$'s group to that of the list's group for the image of $q$ nearest to
+the center of the box. The loop computes, for member $u$ and an entry,
+
+$$
+\mathbf r_{uq} = \big(\mathbf x_{\pi(16g+u)} + \mathbf S_{16g+u}H\big)
+- \big(\mathbf x_{\pi(q)} + \mathbf S_q H + \mathbf e H\big),
+$$
+
+with $H = \mathrm{diag}(\mathbf L)$ in an orthorhombic cell, where the
+additions of $\mathbf S_pH$ are made in f64 on the positions as stored and
+the sums converted to f32 once, by the kernel that gathers the positions
+into the order of the places (D101): a position in its frame is then as
+exact as one in the cell, however far the particle has gone. A frame
+anchored on the first particle as it is kept, unwrapped, would let
+$\mathbf e$ grow with the drift of two groups apart and overflow its bits;
+anchoring on the wrapped position bounds $\mathbf e$ to $\{-4, \dots,
+4\}^3$, four bits an axis in bits 16 to 27 of the mask. The template test
+places particles three cells out of the cell on either side to check it.
+
+**One entry for each image within the reach** (D115). One shift serves the
+16 members of an entry, so an entry takes one image of its candidate, the
+one nearest to $\mathbf y_g$. A member is within $w_{g,a}$ of $y_{g,a}$
+along axis $a$, so an image of $q$ within $R$ of it is within $w_{g,a} + R$
+of $y_{g,a}$, and is the nearest image if $w_{g,a} + R \le \tfrac12 L_a$.
+In a narrower cell the image of a pair can be the one on the other side of
+the boundary: on the argon–krypton mixture of `barostat.test` (23.2 Å, a
+reach of 10 Å, groups about 9 Å wide) a list that held only the nearest
+image gave the potential energy at the start as $-497.7291$ kcal/mol
+against $-497.7298$ of the matrix, the virial $-1117.6307$ against
+$-1117.7782$. A second kernel therefore takes the groups with $2w_{g,a} +
+2R' \ge L_a$ along some axis, scans their candidates again, and adds to
+each list, from the block where the first kernel left it, an entry for
+each other image a cell away or none along each axis, $\mathbf r_q -
+\Delta\mathbf n\odot\mathbf L$ with $\Delta\mathbf n \in \{-1, 0, 1\}^3$,
+whose distance from the box is within $R'$; it queues the candidate with
+the code $9(\Delta n_z + 1) + 3(\Delta n_y + 1) + (\Delta n_x + 1)$ in bits
+26 to 30, and each image becomes an entry with its own mask and shift.
+
+**Theorem (completeness of the images, D242).** The lists hold a bit for
+every image of every pair within $R$ if $R < \min_a L_a$.
+
+*Proof.* (1) The members are taken in the minimum image of the first, so
+$w_{g,a} \le \tfrac12 L_a$. (2) An image within $R$ of a member is within
+$R$ of the box, so its displacement $\mathbf r$ from $\mathbf y_g$ has
+$\lvert r_a\rvert \le w_{g,a} + R$. (3) The nearest image has $\lvert
+r_a\rvert \le \tfrac12 L_a$, and the 27 images $\Delta\mathbf n \in \{-1,
+0, 1\}^3$ from it are every image with $\lvert r_a\rvert \le \tfrac32 L_a$
+along each axis; the next is at least $\tfrac32 L_a$ away along some axis.
+(4) Where $2(w_{g,a} + R) < L_a$ on every axis only the nearest image is
+within $R$ by (2), and the first kernel takes it; elsewhere the second
+kernel takes the 27. So the lists are complete where $w_{g,a} + R <
+\tfrac32 L_a$ on every axis, which (1) gives for $R < \min_a L_a$.
+$\blacksquare$
+
+The bound holds for every group whatever the positions (a sparse column
+makes a box as wide as the cell), and the run asks it: the builder refuses
+a longer reach for the groups and the runtime stops a run whose barostat
+takes the cell below it, with the factor 0.999 for $\delta_R$ (D242). Where
+the edges exceed $2R'$, about $2R$, a pair has at most one image within the reach, so
+the masks of the entries of a candidate are disjoint and I1 holds with one
+bit for each pair; in a narrower cell a pair has a bit for each of its
+images within the reach, of which the loop finds at most one within the
+cutoff, the edges being at least $2 r_c$. Before D242, the kernel took the
+nearest image or the one on the other side of the boundary along each
+axis, which is every image only while $w_{g,a} + R \le L_a$, a condition
+nothing asked: with a reach of 0.77 to 0.89 of the edge of a cube under a
+barostat, 23 of 79 frames lacked pairs. In the cells of the Amber suite no
+group needs the second kernel, which is then a launch of warps that return.
+A first version handled both cases in the list kernel, which then needed
+128 registers a thread instead of 64 and took 2259 µs a build on Cellulose
 instead of 1735.
-
-**The loop** (`emitGroupPairKernel`, `lib/Conversion/MDExecKernels/`).
-A warp takes a block. Lanes $u$ and $u+16$ hold the particle at place
-$16g+u$; each lane loads one entry, 32 entries at a time, and the entries
-turn within each half-warp, one lane a step, for 16 steps, so that each
-of the 16 particles meets each of the 32 entries once. The value that the
-kernel computes for the entry travels with it and is added to the
-entry's particle with one atomic addition when it is back at its lane;
-the values of the group's particles are added once per block. The mask
-does not turn with the entry (D97): at each round a ballot for each of
-the 16 particles gives the bits of that particle with every entry of the
-warp; lane $u$ keeps word $u$, restricted to its half-warp and rotated
-left by $15-u$, so that at step $k$ its bit 15 is the pair with the entry
-it then holds, and each step shifts the word by one. The kernel is
-evaluated for every slot, and a slot whose bit is clear is given a squared
-distance beyond the cutoff, so that a single comparison masks it: the loop
-has no divergent branch. Two coefficients of Lennard–Jones read at the
-same entry of a type table are one load of 8 bytes (D96). With these, the
-loop is bound by the pipe of loads and shuffles (Nsight Compute, 92% of
-its peak on Cellulose), at 8 shuffles a pair.
-
-Each pair once requires the kernel's values to have an exchange contract:
-the value for $j$ from the pair $(i,j)$ is $+$ or $-$ the value for $i$.
-Forces derived by differentiation are antisymmetric, energies and virials
-symmetric; `md-differentiate` attaches the contract and `md-check-exchange`
-verifies it (Section 3.3). A loop with a destination without a contract
-keeps the matrix.
-
-**The build.** The candidates of a group come from a grid of cells of
-half the reach, visited in a fixed order. A lane takes a candidate and
-tests it against the bounding box of the group; those near it go to a
-queue of the warp in shared memory, in the order of the lanes, and when it
-holds 32 the warp tests them against the 16 particles of the group at once
-(D99). The excluded pairs of a group are gathered a particle a lane and
-sorted with the bitonic network of the fewest values that hold them (64,
-128, or 256; D105); a candidate outside the range of places of these
-partners skips the search among them (D100). A group whose partners do not
-fit in the 256 places of a warp's memory reads the rows of the excluded
-pairs instead (D106): exact, slower, and rare (Cellulose, the only system
-of the suite where it happens, has 1 such group in 255 builds under NVE
-and 7 in 253 under NPT). A position that is not a number gets no place
-and is counted, and the run then stops with a message instead of sorting
-every particle into one bin (D107). So does a finite position whose wrap
-into the cell does not land in it, a fraction outside
-$[-10^{-6}, 1 + 10^{-6}]$, which a run that has failed reaches on its
-way to NaN: beyond about $10^{16}$ cells the wrap errs by more than a cell,
-and its cell would index outside the tables of the build
-(D176). The stop says that a position is not a number or is far outside
-the cell. A Python simulation takes the stop as a failure of its part and
-runs the part to its end (D196), so everything after a build must stay
-inside its buffers whatever the positions and the cell are
-(D225): the loops over the rows of a matrix skip a place
-that the build left empty, and every build takes at least one and at most
-256 cells along an axis, computed with a maximum and a minimum that take
-the other operand of one that is not a number. A wider cell costs only
-time, since the range of the search follows from the number of cells; the
-largest system of the Amber suite takes at most 77. A barostat whose
-coupling scales an edge of the cell by a factor outside $[1/2, 2]$, or
-makes it not finite, fails the run: a pressure that had blown up once took
-the cell from 1.7 nm to $10^{11}$ nm, within the bound of twice the cutoff,
-and the builds asked for $10^{11}$ cells along each axis.
-
-The positions of the build are wrapped into the cell and tested in f32
-against the reach widened by $\varepsilon = 3\times 10^{-6}\,(L_x + L_y +
-L_z)$; in a triclinic cell the sum also takes the magnitudes of the three
-tilts. A coordinate of magnitude at most $L$ rounds to f32 with an error
-of at most $2^{-24}L$; a distance computed from two rounded positions
-differs from the exact one by at most $2\sqrt3\,2^{-24}L \approx 2\times
-10^{-7}L$, plus the rounding of the arithmetic, well within
-$\varepsilon$. The rounding can therefore keep a pair a little beyond $R$
-but never drop one within it; `test/Runtime/neighbors-groups-gpu.mlir`
-checks the lists against every pair computed in f64.
 
 **Triclinic cells** (D126). The build of a triclinic cell wraps the
 positions into the brick $[0,a_x)\times[0,b_y)\times[0,c_z)$ of the
@@ -473,38 +504,183 @@ candidates in it. The grid is periodic along x alone: a row of the grid
 $t_z$ cells beyond a face of z holds the particles of $t_z\mathbf c$ away,
 x and y with them, and one $t_y$ beyond a face of y those of $t_y\mathbf
 b$, so the window of y moves by $-t_z c_y$ in each row of z and that of x
-by $-t_z c_x - t_y b_x$ in each row of y. The minimum image is taken in
-one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, which gives the
-image in the brick (the nearest one within half of the least of $a_x$,
-$b_y$, $c_z$, Section 4.3); the shifts of the frames and of the
-entries become lattice vectors $\mathbf n$, applied as $\mathbf n H$, five
-multiply-adds once per entry and nothing per pair. The images of D115 are
-those a lattice vector away, $-1$, $0$, or $1$ along each of $\mathbf c$,
-$\mathbf b$ (rounded again), and $\mathbf a$ (rounded again), 27 in all:
-every image within three halves of $c_z$, $b_y$, and $a_x$ of the center
-of a box along $z$, $y$, and $x$, so that the argument above holds with
+by $-t_z c_x - t_y b_x$ in each row of y. The minimum image is taken in one
+pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, which gives the image
+in the brick (the nearest one within half of the least of $a_x$, $b_y$,
+$c_z$, Section 4.3); $\mathbf S_p$, $\mathbf W_p$, and $\mathbf e$ become
+lattice vectors, applied as $\mathbf S_pH$ and $\mathbf eH$ as in the
+formula above, five multiply-adds once per entry and nothing per pair;
+$\mathbf e + 16$ takes five bits a vector, bits 16 to 30. The images of
+D115 are those a lattice vector away, $-1$, $0$, or $1$ along each of
+$\mathbf c$, $\mathbf b$ (rounded again), and $\mathbf a$ (rounded again),
+27 in all: every image within three halves of $c_z$, $b_y$, and $a_x$ of
+the center of a box along $z$, $y$, and $x$, so that the theorem holds with
 $L_a$ the diagonal of $H$, and the lists are complete for a reach below
 $\min(a_x, b_y, c_z)$.
 
+### 4.4.5 The loop
+
+**Each pair once.** Each pair once requires the kernel's values to have an
+exchange contract: the value for $j$ from the pair $(i,j)$ is $+$ or $-$
+the value for $i$. Forces derived by differentiation are antisymmetric,
+energies and virials symmetric; `md-differentiate` attaches the contract
+and `md-check-exchange` verifies it (Section 3.3). A loop with a
+destination without a contract keeps the matrix. For a kernel $k$ with
+the sign $s$ of its contract, $k(j, i) = s\,k(i, j)$, so the value that the
+matrix accumulates at $i$ over both orders splits by the order of the
+places,
+
+$$
+a_i = \sum_{j \ne i} k(i, j) = \sum_{j > i} k(i, j) + \sum_{j < i} s\,k(j, i),
+$$
+
+and each unordered pair $\{i, j\}$, $i < j$, adds $k(i, j)$ to $a_i$ and
+$s\,k(i, j)$ to $a_j$: the loop over the bits of I1 computes $k(i, j)$
+once for both. A sum $S = \tfrac12\sum_i\sum_{j\ne i}k_S(i, j)$ with a
+symmetric $k_S$ is $\sum_{i<j}k_S(i, j)$, twice the weight $\tfrac12$ that
+the matrix gives each order.
+
+**The schedule** (`emitGroupPairKernel`, `lib/Conversion/MDExecKernels/`).
+A warp takes a block. Lanes $\ell = u$ and $\ell = u + 16$ hold member
+$u$; each lane loads one entry, 32 entries at a time, and the entries turn
+within each half-warp, one lane a step, for 16 steps: at step $k$ lane $u$
+holds the entry loaded by lane $(u - k) \bmod 16$ of its half, so each
+member meets each of the 32 entries once. The value that the kernel
+computes for the entry travels with it and is added to the entry's
+particle with one atomic addition when it is back at its lane; the values
+of the group's members are added across the two halves by one shuffle and
+once per block. The mask does not turn with the entry (D97): at each round
+a ballot for each of the 16 members gives the bits of that member with
+every entry of the warp; lane $u$ keeps word $u$, restricted to its
+half-warp and rotated left by $15-u$, so that at step $k$ its bit 15 is bit
+$(u - k) \bmod 16$ of the word, the pair with the entry it then holds, and
+each step shifts the word by one. The kernel is evaluated for every slot,
+and a slot whose bit is clear is given the squared distance $4r_c^2$,
+beyond the cutoff, so that a single comparison, $r^2 < r_c^2$, masks it:
+the loop has no divergent branch. Two coefficients of Lennard–Jones read at
+the same entry of a type table are one load of 8 bytes (D96).
+
+**Its cost.** With these, the loop is bound by the pipe of loads and
+shuffles (Nsight Compute, 92% of its peak on Cellulose). A step shuffles
+each component of the entry's position, of its fields, and of the values
+it has received: 8 shuffles a pair on the nonbonded kernel. Its time is
+then that of the slots, $16\sum_g E_g$, of which the share $\zeta_c$ holds
+a pair within the cutoff (Section 4.4.3); the compact order raised that
+share on Cellulose at 9 Å from 23.8% to 29.7%.
+
+### 4.4.6 Tests in f32
+
+The positions of the build are wrapped into the cell and tested in f32
+against the reach widened by $\delta_R = 3\times 10^{-6}\,(L_x + L_y +
+L_z)$; in a triclinic cell the sum also takes the magnitudes of the three
+tilts.
+
+**Lemma.** A pair within $R$ in exact arithmetic passes the test of the
+build: its computed squared distance is at most $(R + \delta_R)^2$ as
+rounded to f32.
+
+*Proof.* Let $\mathsf u = 2^{-24}$. A wrapped coordinate, at most $L_a$ in
+magnitude, rounds to f32 with an error of at most $\mathsf uL_a$, two
+positions $2\mathsf uL_a$. The test subtracts the center $y_{g,a}$, which
+lies within $\tfrac32 L_a$ of a wrapped position, from each (an error of
+at most $\tfrac32\mathsf uL_a$ each), takes the minimum image of each
+(the result at most about $\tfrac12 L_a$, $\tfrac12\mathsf uL_a$ each),
+and subtracts the two ($\mathsf u$ of the result). The image subtracts an
+integer of magnitude at most 1 times the edge rounded to f32; the product
+is exact, but that edge is within $\mathsf uL_a$ of $L_a$, which adds
+$\mathsf uL_a$ for each displacement, and the shift $\Delta n_a$ of the
+second kernel of Section 4.4.4 times the same edge adds $\mathsf uL_a$
+more. The center's own rounding cancels, since both displacements are
+taken from the same value. So each component of the computed difference
+is within $9\mathsf uL_a + \mathsf u\lvert d_a\rvert$ of the exact one,
+the vector within $9\mathsf u\lVert\mathbf L\rVert + \mathsf uR$ near
+the reach, and the sum of the squares, the rounding of $R +
+\delta_R$, and that of its square add about $3\mathsf uR$ on the distance.
+With $R < \min_a L_a \le \tfrac13\sum_a L_a$, the distance is computed
+within
+
+$$
+9\mathsf u\lVert\mathbf L\rVert + 4\mathsf uR \le 10.4\,\mathsf u\sum_a L_a
+\approx 6.2\times10^{-7}\sum_a L_a < \delta_R .
+\qquad\blacksquare
+$$
+
+The box test has errors of the same order, within the same margin, and the
+same bound holds for the pruning of Section 4.5. The image that is tested,
+$\mathrm{round}(d_a/L_a)$ in f32, can differ from the nearest one only
+where $\lvert d_a\rvert$ is within a few $\mathsf uL_a$ of $\tfrac12 L_a$;
+an image within $R$ of a member there has $w_{g,a} + R \ge \tfrac12 L_a -
+2\mathsf uL_a$, so $2w_{g,a} + 2R' > L_a$, and the second kernel of Section
+4.4.4 takes the other image. The rounding can therefore
+keep a pair a little beyond $R$ but never drop one within it;
+`test/Runtime/neighbors-groups-gpu.mlir` checks the lists against every
+pair computed in f64. Of the bound, the rounding of the positions alone is
+at most $2\sqrt3\,\mathsf u\max_aL_a \approx 2\times10^{-7}\max_aL_a$;
+$\delta_R$ is about five times the whole.
+
+### 4.4.7 The pool, the sizes, and failures
+
+**The size of the pool** (D331). The list of a group holds the particles
+at later places within $R$ of any of its 16 members, so its length follows
+the mean number of neighbors of a particle within the reach. In a fluid of
+number density $\rho$ and pair distribution $g(r)$ that number is $\bar n
+= 4\pi\rho\int_0^R g(r)\,r^2\,dr$, which is $\tfrac43\pi\rho R^3$ once $R$
+is beyond the range of the correlations. The pool holds $B = \sum_g \lceil
+E_g/64\rceil$ blocks for the lengths $E_g$ of the lists. A sum over many
+groups follows the density of the whole cell. At constant $N$ and pressure
+the volume fluctuates by $\delta V/V = \sqrt{k_BT\kappa_T/V}$, with
+$\kappa_T$ the isothermal compressibility; for water at 300 K ($\kappa_T =
+4.5\times 10^{-10}$ Pa$^{-1}$) that is $4\times10^{-4}$ at STMV and
+$3\times10^{-3}$ at JAC. $B$ scales with the density, as $V^{-1}$, so the
+blocks that one build takes fix the pool's need for every build of an
+equilibrated state, and a margin of a quarter covers these fluctuations
+many times over, and a compression to 0.8 of the volume. The structure
+therefore starts with one block a group, and its first build sizes the
+pool: $B_0 + \lfloor B_0/4\rfloor$ for the $B_0$ blocks that the
+configuration at the start takes. Counting $B_0$ is exact, where an
+estimate from $\bar n$ would need the ratio of the mean of $E_g$ to $\bar
+n$, $1/(2\zeta_R)$ by Section 4.4.3, which depends on the shape of the
+groups and the reach: at most 1.2 at STMV ($R$ = 9.5 Å) and 0.77 at JAC
+($R$ = 11 Å), from 64 entries a block over $N/16$. STMV takes at most
+433,376 of 541,603 blocks, where the pool sized from the particle with the
+most neighbors held 800,328. A build of Cellulose at 9 Å takes 152,619
+blocks; the pool sized from the width of a row before D331 held 280,929
+(144 MB for entries and masks, against 510 MB that fixed lists of twice the
+width of a row would need). An argon and krypton mixture compressed from
+18,991 to 10,260 Å$^3$ grows its lists once after the first build, and
+gives the matrix's energies to every printed digit. A build counts the
+places and the blocks it takes even where they do not fit; when they do
+not, the runtime grows its buffers to a quarter more than needed and the
+build is made again, so no pair is left out.
+
+**Failures.** A position that is not a number gets no place and is
+counted, and the run then stops with a message instead of sorting every
+particle into one bin (D107). So does a finite position whose wrap into
+the cell does not land in it, a fraction outside $[-10^{-6}, 1 +
+10^{-6}]$, which a run that has failed reaches on its way to NaN: beyond
+about $10^{16}$ cells the wrap errs by more than a cell, and its cell would
+index outside the tables of the build (D176). The stop says that a
+position is not a number or is far outside the cell. A Python simulation
+takes the stop as a failure of its part and runs the part to its end
+(D196), so everything after a build must stay inside its buffers whatever
+the positions and the cell are (D225): the loops over the rows of a matrix
+skip a place that the build left empty, and every build takes at least one
+and at most 256 cells along an axis, computed with a maximum and a minimum
+that take the other operand of one that is not a number. A wider cell
+costs only time, since the range of the search follows from the number of
+cells; the largest system of the Amber suite takes at most 77. A barostat
+whose coupling scales an edge of the cell by a factor outside $[1/2, 2]$,
+or makes it not finite, fails the run: a pressure that had blown up once
+took the cell from 1.7 nm to $10^{11}$ nm, within the bound of twice the
+cutoff, and the builds asked for $10^{11}$ cells along each axis.
+
 ## 4.5 The dual list
 
-**Why.** A single list trades the build against the loop over pairs.
-Table 4.1 measures Cellulose (408,609 atoms, NVE, 2 fs, $r_c = 8$ Å) with
-one list of groups at four reaches.
-
-*Table 4.1. Cellulose NVE with one list of groups (µs per step, RTX 3090,
-2000 steps, nsys).*
-
-| Reach $R$ | Loop over pairs | Builds | Steps between builds | Device total |
-|---|---|---|---|---|
-| 8.6 Å | 935 | 610 | 2.3 | 2923 |
-| 9.0 Å | 1041 | 405 | 4.0 | 2833 |
-| 10.0 Å | 1318 | 235 | 7.9 | 2931 |
-| 11.0 Å | 1643 | 157 | 13.7 | 3188 |
-
-The loop grows with the cube of the reach and the builds fall with the
-skin; their sum is flat near 9 Å. A dual list takes the build of the long
-reach and the loop of the short one.
+**Why.** A single list trades the build against the loop over pairs: the
+loop grows with the cube of the reach and the builds fall with the skin.
+On Cellulose (Table 4.1, at the end of this section) their sum is flat
+near 9 Å. A dual list takes the build of the long reach and the loop of
+the short one.
 
 **Structure** (D114). With `pruned_distance` the refresh keeps two lists:
 the *outer* list, built with $R = r_c + s$ exactly as above, and an
@@ -546,38 +722,14 @@ energy in mixed precision on one RTX 3090: 0.205 ms a step from
 `mdir run` and 0.206 from a Python simulation with the dual list, 0.258
 and 0.259 with the matrix).
 
-**Which structure by default** (D261). The time per step of
-either structure is roughly a fixed cost plus a cost per particle.
-
-- The groups have the larger fixed cost: more kernels a step, the
-  prunings, and the boxes of the build.
-- They have the smaller cost per particle: a sixteenth of the entries,
-  each pair once.
-
-The groups therefore win above some $N$ and lose below it. Measured
-against the matrix at its default reach, the groups at 3 Å and 0.6 Å
-beyond the cutoff lose on the dipeptide (1,168 atoms) by 17% on an RTX
-4090. They lose by 1.5% on a TIP3P box of 20,931 sites, and win from JAC
-(23,558 atoms, 1.3%) up to 42% less time on 103,158 sites. On an RTX PRO
-6000 Blackwell they win from 13,899 sites. The default,
-`neighbor_structure = "AUTO"`, takes the groups with these reaches on a
-GPU outside the deterministic mode from 23,000 particles, the crossover
-of the device where it comes later. Below that, and wherever a loop
-cannot take each pair once, it takes the matrix (`docs/neighbor-groups.md`,
-Section 6.3). The inner skin grows in proportion to the time step: the
-displacement over a fixed number of steps roughly does, so the interval between
-prunings stays the same. On STMV at 4 fs an inner reach of 9.2 Å is
-pruned every 2.1 steps and takes 2% less time than 8.6 Å, pruned every
-step.
-
 Two consequences shape the implementation. First, the inner list is
-always pruned from the outer list, never from the previous inner list: a
-pair dropped by one pruning may come within $R_\text{in}$ again and must be
-able to return. The outer entries and masks are kept as the build left
-them, and the inner list is written to buffers of its own:
+always pruned from the outer list, never from the previous inner list
+(I5): a pair dropped by one pruning may come within $R_\text{in}$ again and
+must be able to return. The outer entries and masks are kept as the build
+left them, and the inner list is written to buffers of its own:
 
 $$
-m^\text{in} = m^\text{out} \wedge \big[\, r^2 \le (R_\text{in}+\varepsilon)^2 \,\big]
+\mathsf b^\text{in}_u = \mathsf b^\text{out}_u \wedge \big[\, r_{uq}^2 \le (R_\text{in}+\delta_R)^2 \,\big]
 $$
 
 bit by bit, at the current positions. Second, the two references are
@@ -597,16 +749,8 @@ reads the outer list and the positions and searches nothing. Before the
 first pruning the pruned cell is not a number, so the second test fails
 and the first step prunes.
 
-**The pruning as a streaming repack.** A first version pruned every block
-of the outer list into the same block of the inner list. The inner list
-then kept the outer layout: 238,135 blocks on Cellulose with an outer
-reach of 11 Å, many of them nearly empty, against 152,619 for a list built
-with 9 Å. The loop over the inner list took 1320 µs, against 1041 for a
-list built with the inner reach, and a pruning that gathered the positions
-in f64 for every entry took 933 µs.
-
-The pruning now runs a warp per group (`emitGroupsPrune`,
-`lib/Conversion/MDExecToGPU/MDExecToGPU.cpp`):
+**The pruning as a streaming compaction.** The pruning runs a warp per
+group (`emitGroupsPrune`, `lib/Conversion/MDExecToGPU/MDExecToGPU.cpp`):
 
 1. A kernel gathers the positions of all places into their frames, in f32
    (the same arithmetic as the loop), and copies the positions, as they
@@ -625,56 +769,112 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
 
    for lane $\ell$, writing the entry to position $k + \text{rank}_\ell$ of
    the group's stream, where $k$ is the number kept so far (uniform over
-   the warp).
+   the warp); at the end $k = k_g$.
 4. The stream fills the group's blocks in order, across their boundaries:
    if three outer blocks keep 37, 19, and 42 entries, the inner list fills
    one block with 64 and the next with 34. Each block records how many
    entries it holds.
-5. The blocks that hold entries, the *active units*, are listed in the
-   order of the blocks with their number, which stays on the device: the
-   pruning counts them in runs of 32 and 1024 blocks, and a warp for each
-   run of 32 places its active blocks after those counted before it and
-   ranks them within the run by a ballot. The loop over pairs takes only
-   the active units (D268). After a pruning about 40% of the
-   outer blocks are empty; before, the loop launched a warp for each, which
-   loaded its group before it found nothing to do.
+5. The blocks that hold entries, the *active units*, the first $\lceil
+   k_g/64\rceil$ of each group (I6), are listed in the order of the blocks
+   with their number, which stays on the device: the pruning counts them in
+   runs of 32 and 1024 blocks, and a warp for each run of 32 places its
+   active blocks after those counted before it and ranks them within the
+   run by a ballot. The loop over pairs takes only the active units (D268).
+   After a pruning about 40% of the outer blocks are empty; before, the
+   loop launched a warp for each, which loaded its group before it found
+   nothing to do.
 
 The ranks come from a ballot and a population count, so the order of the
 inner list is the order of the outer list: the pruning adds no order of
-its own. This warp compaction, the scans, and the counting sorts of the
-builds are one emitter each, which the lowering and the templates of the
-builds share (D296; [device-primitives.md](../device-primitives.md),
+its own, and the inner list fills its blocks as a list built with
+$R_\text{in}$ would. This warp compaction, the scans, and the counting
+sorts of the builds are one emitter each, which the lowering and the
+templates of the builds share (D296; [device-primitives.md](../device-primitives.md),
 Section 4). (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
 before; the deterministic mode does not use groups.) A loop over pairs
 that follows the refresh at the same positions, in f32, takes the frames
 of step 1 as they are when the refresh pruned: they are its own, to the
-bit. With the active units and the shared frames a step of 103,292 TIP3P
-waters takes 1118 µs against 1130 on an RTX 4090, and one of STMV 4737
-against 4784 (`docs/neighbor-groups.md`, Section 6.2). Positions in f32 can
-only keep a pair beyond $R_\text{in}$, never drop one within it, for the
-reason given for the build: the reach is widened by the same $\varepsilon$.
+bit. Positions in f32 can only keep a pair beyond $R_\text{in}$, never drop
+one within it, by the lemma of Section 4.4.6: the reach is widened by the
+same $\delta_R$. A first version pruned every block of the outer list into
+the same block of the inner list, which then kept the outer layout, many
+of its blocks nearly empty; the measurements are at the end of this
+section.
 
-With this, a pruning of Cellulose (11/9 Å) takes 347 µs in its main kernel
-(72 registers a thread) and 35 µs to gather the positions and index the
-blocks, every 3.5 steps, and the loop over the inner list takes 1060 µs,
-within 2% of a list built with 9 Å.
+**The pruning in the loop** (D284). A pruning reads every entry of the
+outer list, gathers its position, tests its 16 bits, and stores the inner
+list; the loop over pairs then reads the inner list back and does the
+arithmetic of each pair. Any exact pruning does the first four, so a kernel
+that prunes and computes at once can remove only the read back, a launch,
+and what it hides. Where the refresh prunes, the first loop over pairs that
+takes its result at the same positions and in the same cell prunes
+instead, in one kernel with a warp for each group: the warp prunes its
+group with the code of the pruning above, waits for the stores of its
+other lanes, and computes the pairs of the entries it kept, read back as
+one stream of the group in rounds of 32. The inner list is the pruning's
+to the bit. On the step itself the warp computes, of the entries it kept,
+the pairs within $r_c$. Since $r_c < R_\text{in}$, an entry of the outer
+list with a pair within $r_c$ at $\mathbf x^p$, the configuration of the
+step, keeps the bit of that pair, so these are the pairs of the loop over
+the fresh inner list, and the theorem above holds for the steps that
+follow. The sums differ from those of the separate pruning by the order of
+their additions only.
 
-*Table 4.2. One list (9 Å) against the dual list (ns/day, RTX 3090 at
-300 W, mixed precision, one run each; outer/inner reach in Å).*
+With $t_\text{loop}$, $t_\text{prune}$, and $t_\text{fused}$ the times of
+a call of the loop, of a pruning, and of the loop that prunes, a step
+saves $t_\text{loop} + t_\text{prune} - t_\text{fused}$ divided by the
+steps between prunings. Counting only the work removed, $t_\text{fused}
+\approx t_\text{loop} + t_\text{prune}$ less the read back. On an RTX 4090
+the measured $t_\text{fused}$ is instead $t_\text{loop}$ and 0 to 7% more:
+on Cellulose 584.9 µs against $t_\text{loop} = 550.6$ and a main kernel
+of the pruning of 228.6; on STMV 1638.4 against 1654.2 and 575.0. The
+reading that fits, which no counter has measured: a warp's pruning is
+bound by memory and its computation by the shuffles and the arithmetic of
+the loop, and warps of the two parts share a multiprocessor, so the
+pruning hides under the loop. A step takes 4 to 6% less from about 6,400
+groups (Cellulose 1465 → 1376 µs, STMV at 4 fs 4710 → 4458;
+`docs/neighbor-groups.md`, Section 11.7). Two costs bound the gain. The
+warps are as many as the groups, where the loop has one for each active
+unit, several a group: on JAC, with 1,476 to 1,664 groups (the places
+over 16), they leave the
+device partly idle and a step takes 1.2% more. And the kernel holds 94 to
+96 registers a thread, against 72 for each of the two it replaces. The
+loop therefore prunes from 4096 groups by default, which the host decides
+at each pruning from the groups of the last build, the places over 16,
+empty places included. On an RTX PRO 6000 Blackwell Max-Q, which ran at
+its cap of 300 W, $t_\text{fused} \approx t_\text{loop} + t_\text{prune}$
+(Cellulose 591.2 against 415.0 and 167.5), and the step changes by −1.1 to
++1.0% from 6,400 groups, equal from about 19,000; on such a device
+(`sm_12x`) the loop prunes from 20,480 groups.
 
-| System | Atoms | One list | Dual list | Outer/inner | Builds every | Prunings every |
-|---|---|---|---|---|---|---|
-| JAC | 23,558 | 734 | 779 | 11/8.6 | 16.4 steps | 2.8 steps |
-| JAC, 4 fs | 23,558 | 1352 | 1467 | 11/9.0 | 10.7 | 2.8 |
-| FactorIX | 90,906 | 273 | 286 | 11/8.6 | 14.9 | 2.7 |
-| Cellulose | 408,609 | 59.7 | 62.4 | 12/8.6 | 22.5 | 2.2 |
-| STMV, 4 fs | 1,067,095 | 37.8 | 39.9 | 11/9.0 | 6.6 | 1.8 |
+**Which structure by default** (D261). The time per step of
+either structure is roughly a fixed cost plus a cost per particle.
 
-The default of D261, which a run takes where it does not choose (below),
-is an outer skin of 3 Å and an inner skin of 0.6 Å at 2 fs, in proportion
-to the step; the measurements of Section 10 take both the skins that the
-choice below made for each system and these defaults.
+- The groups have the larger fixed cost: more kernels a step, the
+  prunings, and the boxes of the build.
+- They have the smaller cost per particle: a sixteenth of the entries,
+  each pair once.
+
+The groups therefore take less time above some $N$ and more below it.
+Measured against the matrix at its default reach, the groups at 3 Å and
+0.6 Å beyond the cutoff take 17% more time on the dipeptide (1,168 atoms)
+on an RTX 4090. They take 1.5% more on a TIP3P box of 20,931 sites, and
+less from JAC (23,558 atoms, 1.3%) up to 42% less time on 103,158 sites.
+On an RTX PRO 6000 Blackwell they take less from 13,899 sites. The
+default, `neighbor_structure = "AUTO"`, takes the groups with these
+reaches on a GPU outside the deterministic mode from 23,000 particles, the
+crossover of the device where it comes later. Below that, and wherever a
+loop cannot take each pair once, it takes the matrix
+(`docs/neighbor-groups.md`, Sections 6.3 and 11.8). The inner skin grows
+in proportion to the time step: the displacement over a fixed number of
+steps roughly does, so the interval between prunings stays the same. On
+STMV at 4 fs an inner reach of 9.2 Å is pruned every 2.1 steps and takes
+2% less time than 8.6 Å, pruned every step. The default of D261, which a
+run takes where it does not choose (below), is an outer skin of 3 Å and an
+inner skin of 0.6 Å at 2 fs, in proportion to the step; the measurements
+of Section 10 take both the skins that the choice below made for each
+system and these defaults.
 
 **The choice of the skins** (D281). Because the test of validity
 is exact, every pair of skins $(s, s_\text{in})$ gives the same pairs
@@ -716,6 +916,60 @@ repeat to the bit only with the same skins. Table 4.3 compares the choice
 with the best point of a grid; [neighbors.md](../neighbors.md),
 Section 6, has the details.
 
+**Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
+box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and
+the matrix, and the two give the energies of the log to every printed
+digit. Under the barostat of `test/Driver/barostat.test`, which compresses
+an argon–krypton mixture from $-1800$ toward $200$ atm, the dual list gives
+the energies of one list to every printed digit over 1000 steps; the two
+part only beyond 1400 steps, where the order of the atomic additions has
+been amplified by the chaos of the dynamics.
+
+**Related.** The dual list has the purpose of the dynamic pruning of
+[[Pall2020]](references.md#pall2020): a long list built rarely and a short
+one renewed often. It differs in its test: there the buffers are sized from
+an estimate of the drift of the energy and the list is pruned on a
+schedule, while MDIR prunes when an exact condition fails and keeps no pair
+out that could be within the cutoff, and on a large system it prunes in
+the loop over pairs.
+
+**Measurements.** Table 4.1 measures Cellulose (408,609 atoms, NVE, 2 fs,
+$r_c = 8$ Å) with one list of groups at four reaches.
+
+*Table 4.1. Cellulose NVE with one list of groups (µs per step, RTX 3090,
+2000 steps, nsys).*
+
+| Reach $R$ | Loop over pairs | Builds | Steps between builds | Device total |
+|---|---|---|---|---|
+| 8.6 Å | 935 | 610 | 2.3 | 2923 |
+| 9.0 Å | 1041 | 405 | 4.0 | 2833 |
+| 10.0 Å | 1318 | 235 | 7.9 | 2931 |
+| 11.0 Å | 1643 | 157 | 13.7 | 3188 |
+
+The first pruning, which pruned every block of the outer list into the
+same block of the inner list, kept 238,135 blocks on Cellulose with an
+outer reach of 11 Å, against 152,619 for a list built with 9 Å; the loop
+over that inner list took 1320 µs, against 1041 for a list built with the
+inner reach, and a pruning that gathered the positions in f64 for every
+entry took 933 µs. With the streaming compaction, a pruning of Cellulose
+(11/9 Å) takes 347 µs in its main kernel (72 registers a thread) and 35 µs
+to gather the positions and index the blocks, every 3.5 steps, and the
+loop over the inner list takes 1060 µs, within 2% of a list built with
+9 Å. With the active units and the shared frames a step of 103,292 TIP3P
+waters takes 1118 µs against 1130 on an RTX 4090, and one of STMV 4737
+against 4784 (`docs/neighbor-groups.md`, Section 11.6).
+
+*Table 4.2. One list (9 Å) against the dual list (ns/day, RTX 3090 at
+300 W, mixed precision, one run each; outer/inner reach in Å).*
+
+| System | Atoms | One list | Dual list | Outer/inner | Builds every | Prunings every |
+|---|---|---|---|---|---|---|
+| JAC | 23,558 | 734 | 779 | 11/8.6 | 16.4 steps | 2.8 steps |
+| JAC, 4 fs | 23,558 | 1352 | 1467 | 11/9.0 | 10.7 | 2.8 |
+| FactorIX | 90,906 | 273 | 286 | 11/8.6 | 14.9 | 2.7 |
+| Cellulose | 408,609 | 59.7 | 62.4 | 12/8.6 | 22.5 | 2.2 |
+| STMV, 4 fs | 1,067,095 | 37.8 | 39.9 | 11/9.0 | 6.6 | 1.8 |
+
 *Table 4.3. The skins of `"AUTO"` against the default of D261 and the
 best point of the grid of #406 (µs per step, RTX 4090, mixed precision,
 the groups, twice the suite's steps, the mean of two rounds in one job;
@@ -735,70 +989,6 @@ of the best.*
 | Cellulose NVE | 408,609 | 1458.8 | 1448.4 (11.5 / 8.45) | 11.5 / 8.65 | 1435.8 | 0.991 | 0.984 | 229 s |
 | Cellulose NPT | 408,609 | 1519.1 | | 11.5 / 8.65 | 1498.7 | | 0.987 | 286 s |
 | STMV NPT, 4 fs | 1,067,095 | 4731.0 | 4565.4 (12.5 / 8.9) | 12 / 8.7 | 4535.5 | 0.993 | 0.959 | 848 s |
-**The pruning in the loop** (D284). A pruning reads every
-entry of the outer list, gathers its position, tests its 16 bits, and
-stores the inner list; the loop over pairs then reads the inner list back
-and does the arithmetic of each pair. Any exact pruning does the first
-four, so a kernel that prunes and computes at once can remove only the
-read back, a launch, and what it hides. Where the refresh prunes, the
-first loop over pairs that takes its result at the same positions and in
-the same cell prunes instead, in one kernel with a warp for each group:
-the warp prunes its group with the code of the pruning above, waits for
-the stores of its other lanes, and computes the pairs of the entries it
-kept, read back as one stream of the group in rounds of 32. The inner list
-is the pruning's to the bit. On the step itself the warp computes, of the
-entries it kept, the pairs within $r_c$. Since $r_c < R_\text{in}$, an
-entry of the outer list with a pair within $r_c$ at $\mathbf x^p$, the
-configuration of the step, keeps the bit of that pair, so these are the
-pairs of the loop over the fresh inner list, and the theorem above holds
-for the steps that follow. The sums differ from those of the separate
-pruning by the order of their additions only.
-
-With $t_\text{loop}$, $t_\text{prune}$, and $t_\text{fused}$ the times of
-a call of the loop, of a pruning, and of the loop that prunes, a step
-saves $t_\text{loop} + t_\text{prune} - t_\text{fused}$ divided by the
-steps between prunings. Counting only the work removed, $t_\text{fused}
-\approx t_\text{loop} + t_\text{prune}$ less the read back. On an RTX 4090
-the measured $t_\text{fused}$ is instead $t_\text{loop}$ and 0 to 7% more:
-on Cellulose 584.9 µs against $t_\text{loop} = 550.6$ and a main kernel
-of the pruning of 228.6; on STMV 1638.4 against 1654.2 and 575.0. The
-reading that fits, which no counter has measured: a warp's pruning is
-bound by memory and its computation by the shuffles and the arithmetic of
-the loop, and warps of the two parts share a multiprocessor, so the
-pruning hides under the loop. A step takes 4 to 6%
-less from about 6,400 groups (Cellulose 1465 → 1376 µs, STMV at 4 fs
-4710 → 4458; `docs/neighbor-groups.md`, Section 6.2). Two costs bound the gain.
-The warps are as many as the groups, where the loop has one for each
-active unit, several a group: with 1,472 groups on JAC they leave the
-device partly idle and a step takes 1.2% more. And the kernel holds 94 to
-96 registers a thread, against 72 for each of the two it replaces. The
-loop therefore prunes from 4096 groups by default, which the host decides
-at each pruning from the groups of the last build. On an RTX PRO 6000
-Blackwell Max-Q, which ran at its cap of 300 W, $t_\text{fused} \approx
-t_\text{loop} + t_\text{prune}$ (Cellulose 591.2 against 415.0 and
-167.5), and the step changes by −1.1 to +1.0% from 6,400 groups, equal
-from about 19,000; on such a device (`sm_12x`) the loop prunes from 20,480
-groups.
-
-**Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
-box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and
-the matrix, and the two give the energies of the log to every printed
-digit. Under the barostat of `test/Driver/barostat.test`, which compresses
-an argon–krypton mixture from $-1800$ toward $200$ atm, the dual list gives
-the energies of one list to every printed digit over 1000 steps; the two
-part only beyond 1400 steps, where the order of the atomic additions has
-been amplified by the chaos of the dynamics.
-
-**Related.** The dual list follows the dynamic pruning of GROMACS
-[[Pall2020]](references.md#pall2020) in purpose, but differs in its test: GROMACS prunes on a
-schedule and sizes its buffers from an estimate of the drift of the
-energy, while MDIR prunes when an exact condition fails, and keeps no pair
-out that could be within the cutoff. GROMACS prunes its list at the outer
-cutoff once, the first time a special version of its kernel of forces
-processes it, and prunes to the inner cutoff in a separate kernel, in
-chunks between the steps [[Pall2020]](references.md#pall2020); MDIR prunes
-to the inner reach in the loop over pairs at every pruning of a large
-system.
 
 ## 4.6 The pairs of images of a learned potential
 
