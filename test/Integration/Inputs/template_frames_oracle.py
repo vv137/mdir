@@ -18,6 +18,7 @@ generate.add_argument('program', type=pathlib.Path)
 generate.add_argument('reference', type=pathlib.Path)
 generate.add_argument('--triclinic', action='store_true')
 generate.add_argument('--three-site', action='store_true')
+generate.add_argument('--point-offset', type=float, default=0.0)
 check = sub.add_parser('check')
 check.add_argument('records', type=pathlib.Path)
 check.add_argument('reference', type=pathlib.Path)
@@ -69,6 +70,29 @@ def solve(point):
 
 
 reference = []
+point_offset = args.point_offset
+
+
+def central_cells(point):
+    """The sequential central-image lattice cells of `point` (c, then b,
+    then a), with ties to even, as the packing takes them."""
+    raw, cells = list(point), [0.0] * 3
+    for axis in (2, 1, 0):
+        count = round(raw[axis] / matrix[axis][axis])
+        cells[axis] = -float(count)
+        for row in range(axis):
+            raw[row] -= count * matrix[row][axis]
+    return cells
+
+
+def packing(anchor):
+    """With the point offset t, the packing cell is c - t with c the
+    central-image cell of x - H t; the frame is x + H(c - t) and the point
+    its fraction plus t."""
+    moved = [a - s for a, s in zip(anchor, translate([point_offset] * 3))]
+    cells = [c - point_offset for c in central_cells(moved)]
+    framed = [a + s for a, s in zip(anchor, translate(cells))]
+    return cells, framed, [f + point_offset for f in solve(framed)]
 
 
 def record(kind, label, value):
@@ -100,6 +124,12 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
             cached_cells[unit] = [-float(winding[0] + crossing), -float(winding[1]), -float(winding[2])]
             framed = [local[0] - 4 * crossing, local[1], local[2]]
             cached_fraction[unit] = solve(framed)
+            general = packing(anchor)
+            if point_offset == 0.0:
+                # The general packing agrees with the windings at t = 0.
+                assert general == (cached_cells[unit], framed, cached_fraction[unit]), general
+            else:
+                cached_cells[unit], framed, cached_fraction[unit] = general
             row = 3 * unit if unit < waters else 2 * waters + unit
             packed[row] = framed
             if unit < waters:
@@ -209,4 +239,4 @@ lines.extend(['  func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr)
 args.program.write_text('\n'.join(lines) + '\n')
 args.reference.write_text(json.dumps(reference) + '\n')
 print('snapshot reference:', sites, 'sites;', 'triclinic' if args.triclinic else 'orthorhombic',
-      ';', len(reference), 'exact values; bound 0')
+      '; point offset', point_offset, ';', len(reference), 'exact values; bound 0')

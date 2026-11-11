@@ -18,6 +18,8 @@ struct TestTemplateFrames : PassWrapper<TestTemplateFrames, OperationPass<Module
   TestTemplateFrames() = default;
   TestTemplateFrames(const TestTemplateFrames &pass) : PassWrapper(pass) {}
   Option<bool> threeSite{*this, "three-site", llvm::cl::desc("Use three-site water"), llvm::cl::init(false)};
+  Option<double> pointOffset{*this, "point-offset",
+      llvm::cl::desc("The point offset of the production snapshot (1/2)"), llvm::cl::init(0.0)};
   StringRef getArgument() const final { return "test-md-template-frames"; }
   StringRef getDescription() const final { return "Outlines template reference-epoch snapshots"; }
   void getDependentDialects(DialectRegistry &r) const override {
@@ -73,7 +75,7 @@ struct TestTemplateFrames : PassWrapper<TestTemplateFrames, OperationPass<Module
     v.currentPoints = view(TEMPLATE_FRAME_CURRENT_POINTS);
     v.counters = call("mdrtTemplatePairsCounters", ValueRange{handle}, controls, true);
     v.waters = size(TEMPLATE_LAYOUT_WATERS); v.atoms = size(TEMPLATE_LAYOUT_ATOMS);
-    v.hasSite = !threeSite; v.alpha = .75;
+    v.hasSite = !threeSite; v.alpha = .75; v.pointOffset = pointOffset;
     emitSnapshotTemplateFrames(b, loc, v, entry->getArgument(3), entry->getArgument(4));
     func::ReturnOp::create(b, loc);
   }
