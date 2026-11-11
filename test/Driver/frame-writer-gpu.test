@@ -8,7 +8,11 @@
 # of a run whose frames are not held back, byte for byte (H5MD by content:
 # every dataset and attribute, the fields that the call takes at its step
 # among them), and so are those of a run stopped at its first checkpoint
-# and continued.
+# and continued. The mark that a slot's copies have arrived is a count of
+# the functions of the host that the stream of copies has run for the slot,
+# against its stagings: with each of those functions held back by 20 ms
+# (MDRT_STAGING_MARK_DELAY), so that the function of a frame runs after the
+# slot has been staged again for a later one, the frames are the same.
 #
 # REQUIRES: hdf5, cuda, h5py
 #
@@ -24,6 +28,10 @@
 # RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 MDIR_CHECKPOINT_TIMES=1 mdir run run.toml > out 2> err
 # RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run exact.toml > /dev/null
 # RUN: FileCheck %s < %t/held/err
+# RUN: mkdir -p %t/late && cp %t/run.toml %t/plain/exact.toml %t/late/
+# RUN: cd %t/late && env MDRT_STAGING_MARK_DELAY=20 mdir run run.toml > /dev/null && env MDRT_STAGING_MARK_DELAY=20 mdir run exact.toml > /dev/null
+# RUN: cmp %t/plain/run.dcd %t/late/run.dcd
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/run.h5md %t/late/run.h5md | FileCheck %s --check-prefix=EXACT
 # RUN: cmp %t/plain/run.dcd %t/held/run.dcd
 # RUN: cmp %t/plain/energies.txt %t/held/energies.txt
 # RUN: cmp %t/plain/exact.txt %t/held/exact.txt

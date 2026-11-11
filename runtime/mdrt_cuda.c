@@ -2050,7 +2050,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
   mdrtStagingEnd then copies those buffers into pinned memory of the host on
   a stream of copies of its own, which runs beside the kernels of the next
   steps, records an event, and has the stream run a function of the host
-  that marks the slot's copies as arrived. mdrtStagingWait, from any
+  that counts the slot's copies as arrived. mdrtStagingWait, from any
   thread, returns at once for a slot so marked and otherwise waits for the
   event; until it returns, and until the writer is done with the memory of
   the host, the slot is not given to another frame (the caller keeps a ring
@@ -2067,11 +2067,14 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 
 struct Staging {
   CUevent produced, copied;
-  /* Set by a function of the host that the stream of copies runs after the
-     copies of the last end (markArrived): unlike the event, whose query
-     returns the error of the context once a later kernel has failed, it
-     tells that the copies had arrived before. */
-  int arrived;
+  /* The ends of the slot, and the functions of the host that the stream
+     of copies has run after the copies of each (markArrived): the copies of
+     the last end have arrived when the two are equal. Unlike the event,
+     whose query returns the error of the context once a later kernel has
+     failed, this tells that they had arrived before. A count, not a flag:
+     the function of an end may run after a wait for its event has returned
+     and the slot has been staged again. */
+  int64_t ends, arrived;
   struct {
     CUdeviceptr device;
     void *host;
@@ -2131,9 +2134,22 @@ void *mdrtStagingCopy(void *opaque, int32_t part, const void *source,
   return slot->parts[part].host;
 }
 
+/* MDRT_STAGING_MARK_DELAY=<ms>, for the tests: the function that counts a
+   slot's copies as arrived waits that long first, so that it runs after
+   the wait for the slot's event has returned and the slot has been staged
+   again. */
 static void CUDA_CB markArrived(void *opaque) {
   struct Staging *slot = opaque;
-  __atomic_store_n(&slot->arrived, 1, __ATOMIC_RELEASE);
+  static long delay = -1;
+  if (delay < 0) {
+    const char *value = getenv("MDRT_STAGING_MARK_DELAY");
+    delay = value && *value ? strtol(value, NULL, 10) : 0;
+  }
+  if (delay > 0) {
+    struct timespec pause = {delay / 1000, (delay % 1000) * 1000000L};
+    nanosleep(&pause, NULL);
+  }
+  __atomic_add_fetch(&slot->arrived, 1, __ATOMIC_RELEASE);
 }
 
 /* MDRT_FAULT_AFTER_FRAMES=N, for the tests: after the N-th end of a slot,
@@ -2169,7 +2185,7 @@ static void injectFault(void) {
 void mdrtStagingEnd(void *opaque) {
   struct Staging *slot = opaque;
   CUstream stream = mgpuStreamCreate();
-  __atomic_store_n(&slot->arrived, 0, __ATOMIC_RELEASE);
+  ++slot->ends;
   check(cuEventRecord(slot->produced, stream), "cuEventRecord");
   check(cuStreamWaitEvent(copyStream, slot->produced, 0),
         "cuStreamWaitEvent");
@@ -2197,14 +2213,14 @@ void mdrtStagingEnd(void *opaque) {
    not end the process itself. */
 int32_t mdrtStagingWait(void *opaque) {
   struct Staging *slot = opaque;
-  if (__atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE))
+  if (__atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE) == slot->ends)
     return 0;
   CUresult result = cuCtxSetCurrent(context);
   if (result == CUDA_SUCCESS)
     result = cuEventSynchronize(slot->copied);
   /* The mark may have been set while the event was waited for. */
   if (result != CUDA_SUCCESS &&
-      __atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE))
+      __atomic_load_n(&slot->arrived, __ATOMIC_ACQUIRE) == slot->ends)
     return 0;
   return (int32_t)result;
 }
