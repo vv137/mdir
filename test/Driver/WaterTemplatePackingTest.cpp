@@ -196,6 +196,25 @@ void appendWaterTemplatePackingTests(OpBuilder &builder) {
       cf::AssertOp::create(builder, loc, same, "retained template fractional frame mismatch");
     }
   };
+  // In the tilted cell the packing cells are minus the nearest integers of
+  // the fractions, not the sequential Cartesian central image (c, then b,
+  // then a): at fractions (1/4, 15/32, 1/4), Cartesian (1.59375, 2.125, 1),
+  // the latter rounds y/b_y = 0.53 and takes (0, -1, 0); at fractions
+  // (-39/64, 15/32, 1/16) it keeps (0, 0, 0) and leaves x at -0.61.
+  {
+    Value tiltedCell = arith::ConstantOp::create(builder, loc,
+        DenseElementsAttr::get(VectorType::get({6}, builder.getF64Type()),
+                               ArrayRef<double>{4, 4, 4, 1, .5, 1}));
+    for (auto [point, expected] : {
+             std::pair{std::array<double, 3>{1.59375, 2.125, 1},
+                       std::array<double, 3>{0, 0, 0}},
+             std::pair{std::array<double, 3>{-1.9375, 1.9375, .25},
+                       std::array<double, 3>{1, 0, 0}}}) {
+      Value cells = func::CallOp::create(builder, loc, "choose_template_cells_tilted",
+          TypeRange{wide}, ValueRange{vector(point), tiltedCell}).getResult(0);
+      checkWide(cells, expected);
+    }
+  }
   for (bool tilted : {false, true}) {
     auto makeCell = [&](double scale) -> Value {
       SmallVector<double> edges{4 * scale, 4 * scale, 4 * scale};

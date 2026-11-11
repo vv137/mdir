@@ -148,12 +148,15 @@ void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
  * entry (a superset of the general path's pairs). */
 static int64_t templateCoverageChecks, templateCoverageMisses;
 static int64_t templateCoveragePairs, templateCoverageDuplicates;
+static int64_t templateCoverageEntries, templateCoverageSplits;
 
 int64_t mdrtGetTemplatePairStatistic(int64_t slot) {
   if (slot == 12) return templateCoverageChecks;
   if (slot == 13) return templateCoverageMisses;
   if (slot == 14) return templateCoveragePairs;
   if (slot == 15) return templateCoverageDuplicates;
+  if (slot == 16) return templateCoverageEntries;
+  if (slot == 17) return templateCoverageSplits;
   const int64_t values[] = {templateRefreshes, templatePrunes, templateGrowths,
       templateStartEntries, templateEndEntries, templateStartWork,
       templateEndWork, templateStartCapacity, templateEndCapacity};
@@ -792,10 +795,14 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
   if (exCount)
     check(cuMemcpyDtoH(exNeighbors, (CUdeviceptr)pairs->metadata +
         (uint64_t)pairs->metadataOffsets[TEMPLATE_SS_NEIGHBORS] * 4, (size_t)exCount * 4), "coverage exclusions");
-  /* Covered keys from the evaluated (inner) records. */
-  int64_t keyCount = 0, keyRoom = 16 * entries + 1;
+  /* Covered keys from the evaluated (inner) records. A row group with
+   * more than one entry for the same partner unit has had its members
+   * split by lattice frame: each extra entry is an excess over the one
+   * entry per (row group, partner) that the exact pairs need. */
+  int64_t keyCount = 0, keyRoom = 16 * entries + 1, rowCount = 0;
   uint64_t *keys = malloc((size_t)keyRoom * sizeof(uint64_t));
-  if (!keys) abort();
+  uint64_t *rowKeys = malloc((size_t)(entries + 1) * sizeof(uint64_t));
+  if (!keys || !rowKeys) abort();
   for (int tag = 0; tag != 3; ++tag) {
     const int32_t *range = header + TEMPLATE_PAIR_INNER_RANGES + 6 * tag;
     for (int64_t r = range[4]; r < range[5]; ++r) {
@@ -803,6 +810,7 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
       int64_t first = record[1], length = lengths[first];
       for (int64_t e = record[2]; e < record[3]; ++e) {
         const int32_t *entry = inner + 4 * e;
+        rowKeys[rowCount++] = templateCoverageKey(first, entry[0], tag);
         for (int64_t lane = 0; lane < length && lane < 16; ++lane)
           if ((entry[2] & (1 << lane)) && order[first + lane] >= 0)
             keys[keyCount++] = templateCoverageKey(order[first + lane], entry[0], entry[1]);
@@ -814,6 +822,12 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
     ++keyCount;
   }
   qsort(keys, (size_t)keyCount, sizeof(uint64_t), mdrtCompareTemplatePairKeys);
+  qsort(rowKeys, (size_t)rowCount, sizeof(uint64_t), mdrtCompareTemplatePairKeys);
+  int64_t splits = 0;
+  for (int64_t k = 1; k < rowCount; ++k) splits += rowKeys[k] == rowKeys[k - 1];
+  templateCoverageEntries += rowCount;
+  templateCoverageSplits += splits;
+  free(rowKeys);
   /* Each site pair must be evaluated once: no (unit, partner, image) twice,
    * and no pair both as (u, v, n) and as (v, u, -n). */
   int64_t duplicates = 0;

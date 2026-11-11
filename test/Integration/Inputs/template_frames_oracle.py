@@ -73,24 +73,18 @@ reference = []
 point_offset = args.point_offset
 
 
-def central_cells(point):
-    """The sequential central-image lattice cells of `point` (c, then b,
-    then a), with ties to even, as the packing takes them."""
-    raw, cells = list(point), [0.0] * 3
-    for axis in (2, 1, 0):
-        count = round(raw[axis] / matrix[axis][axis])
-        cells[axis] = -float(count)
-        for row in range(axis):
-            raw[row] -= count * matrix[row][axis]
-    return cells
+def nearest_cells(point):
+    """Minus the nearest integers (ties to even) of the fractional
+    coordinates of `point`, as the packing takes them."""
+    return [-float(round(f)) for f in solve(point)]
 
 
 def packing(anchor):
     """With the point offset t, the packing cell is c - t with c the
-    central-image cell of x - H t; the frame is x + H(c - t) and the point
+    nearest-lattice-point cell of x - H t; the frame is x + H(c - t) and the point
     its fraction plus t."""
     moved = [a - s for a, s in zip(anchor, translate([point_offset] * 3))]
-    cells = [c - point_offset for c in central_cells(moved)]
+    cells = [c - point_offset for c in nearest_cells(moved)]
     framed = [a + s for a, s in zip(anchor, translate(cells))]
     return cells, framed, [f + point_offset for f in solve(framed)]
 
@@ -120,7 +114,11 @@ for phase, active in enumerate([(True, True), (False, True), (True, False), (Fal
                 positions[group[site]] = [anchor[k] + shift[k] + (.125 if k == site - 1 else 0)
                                           for k in range(3)]
         if active[0 if unit < waters else 1]:
-            crossing = int(phase == 2)
+            # Phase 2 moves the anchor across the face of a: in the
+            # triclinic cell only the units whose fraction of a then
+            # exceeds 1/2 cross it.
+            crossing = round(solve(local)[0])
+            assert crossing == (0 if phase != 2 or (args.triclinic and unit == 0) else 1)
             cached_cells[unit] = [-float(winding[0] + crossing), -float(winding[1]), -float(winding[2])]
             framed = [local[0] - 4 * crossing, local[1], local[2]]
             cached_fraction[unit] = solve(framed)

@@ -1669,9 +1669,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           static_cast<long long>(get(9)), static_cast<long long>(get(10)));
       if (int64_t checks = get(12))
         output.log.print("MDIR: template coverage checks %lld: %lld unit pairs within "
-                         "the cutoff, %lld without an entry, %lld duplicate entries\n",
+                         "the cutoff, %lld without an entry, %lld duplicate entries; "
+                         "%lld inner entries, %lld split by lattice frame\n",
             static_cast<long long>(checks), static_cast<long long>(get(14)),
-            static_cast<long long>(get(13)), static_cast<long long>(get(15)));
+            static_cast<long long>(get(13)), static_cast<long long>(get(15)),
+            static_cast<long long>(get(16)), static_cast<long long>(get(17)));
       if (auto radius = (*engine)->lookup("mdrtGetTemplateRadius")) {
         auto at = reinterpret_cast<double (*)(int64_t)>(*radius);
         if (at(0) > 0.0)

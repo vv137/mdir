@@ -1712,8 +1712,9 @@ since U4, with the production $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$.
 Gates: the 105 template fixtures pass (3 unsupported, as before), and the
 coverage and physical gates of U1 pass with the new points (no site pair
 without an entry; the template within the mixed criterion at all twenty
-frames). The triclinic path, which takes the sequential central image of
-$\mathbf x-H\mathbf t$, was run once by hand: the 403 waters of the
+frames). The triclinic path, which took the sequential central image of
+$\mathbf x-H\mathbf t$ (U8 takes the nearest lattice point in fractions
+instead), was run once by hand: the 403 waters of the
 dodecahedron fixture (`test/Driver/Inputs/triclinic`), PME, NPT, 50 steps
 with the coverage check, 89 checks and 1,636,909 unit pairs within the
 cutoff, none without an entry (at 1.5 cutoffs, 1,006,426 without); its
@@ -1920,8 +1921,9 @@ $a = 5.2$ nm), PME, NPT, 50 steps: 89 checks, 13,096,424 pairs, none
 without an entry or twice. The refusal of `ON` without constrained
 hydrogens runs with every device hidden. The writer and snapshot fixtures
 also run at the production $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$,
-whose oracle forms the packing cell from the sequential central image of
-$\mathbf x - H\mathbf t$.
+whose oracle formed the packing cell from the sequential central image of
+$\mathbf x - H\mathbf t$ (since U8, from the nearest lattice point of its
+fractions).
 
 Gates at the head of these corrections: the 106 template fixtures in one
 run (3 unsupported) and the sanitizer tier (3 fixtures) pass. The

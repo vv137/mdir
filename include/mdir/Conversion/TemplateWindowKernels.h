@@ -35,8 +35,9 @@ PreparedTemplateFrame emitPrepareTemplateFrame(
 /// does not wrap: reference epochs and covering images retain their frame.
 mlir::Value emitTemplateFractional(mlir::OpBuilder &, mlir::Location,
     mlir::Value position, mlir::Value cell, mlir::Value inverse);
-/// Integer-valued fractional shift chosen at an outer-group build. It
-/// reproduces the sequential c/b/a central-image convention in D95, and
+/// Integer-valued fractional shift chosen at an outer-group build: minus
+/// the nearest integers (ties to even) of the anchor's fractional
+/// coordinates, in an orthorhombic and a triclinic cell alike. It
 /// remains fixed until that group's next outer build. Under a barostat,
 /// apply it to the current cell, never reuse its old Cartesian value.
 mlir::Value emitTemplatePackingCells(mlir::OpBuilder &, mlir::Location,
