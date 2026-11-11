@@ -1005,7 +1005,14 @@ a water take $R + r_\mathrm m + r_\mathrm u$, those of two units
 $R + 2r_\mathrm u$, and the theorem of Section 4.1 takes $d$ over the
 anchors alone. The units select candidates only; each member keeps its
 own entries, exclusions and 1–4 scaling, and the search and the pruning
-read the anchor's point for each member. One mobility group, the anchors
+read the anchor's point for each member. That point is the anchor's in the
+anchor's own frame, and the member's frame is placed at the minimum image
+of its bond from it, so a member's frame lies within $r_\mathrm u$ of its
+point whatever image of the member the input holds (a file wrapped atom by
+atom splits a bond across a face). The template is taken only where the
+largest reach, $R + 2\max(r_\mathrm m, r_\mathrm u)$, is at most half the
+least distance between opposite faces of the input cell, so that a pair
+has at most one image within it; otherwise the general path is taken. One mobility group, the anchors
 of the waters and of the units, then refreshes all three segments: on
 ubiquitin the pruning interval goes from 2.6 to 8.5 steps and the
 interval of builds from 25 to 56, while the entries of the inner list grow
