@@ -198,13 +198,13 @@ Its properties, with $\mathcal P = \mathcal P_{\mathbf x}$:
   $\mathsf G^\mathsf T\mathsf D(\mathsf D\mathsf G\mathsf M^{-1}\mathsf
   G^\mathsf T\mathsf D)^{-1}\mathsf D\mathsf G = \mathsf G^\mathsf
   T(\mathsf G\mathsf M^{-1}\mathsf G^\mathsf T)^{-1}\mathsf G$. With
-  $\mathsf D = \mathrm{diag}(1/2\lVert\mathbf r_k\rVert)$ the rows are
+  $\mathsf D = \mathrm{diag}\big(1/(2\lVert\mathbf r_k\rVert)\big)$ the rows are
   $\pm\mathbf e_k$, and $A_{kl} = \sum_i(\pm\mathbf e_k)\cdot(\pm\mathbf
   e_l)/m_i$ over the particles $i$ the bonds share, the sign $+$ where $i$
   is the same end of both. For a group of SHAKE the bonds share only atom
   0, the same end of each: $A_{ij} = \delta_{ij}/m_j + \mathbf
   e_i\cdot\mathbf e_j/m_0$, the right side $-\mathbf e_i\cdot(\mathbf v_i -
-  \mathbf v_0)$, and the change $\mathsf M^{-1}\mathsf D\mathsf G^\mathsf
+  \mathbf v_0)$, and the change $\mathsf M^{-1}(\mathsf D\mathsf G)^\mathsf
   T\boldsymbol\tau$ is $\tau_j\mathbf e_j/m_j$ at hydrogen $j$ and
   $-\sum_j\tau_j\mathbf e_j/m_0$ at atom 0, the system of Section 6.2. For
   a water, O is the first end of O→H₁ and O→H₂, H₁ the second end of O→H₁
