@@ -134,10 +134,13 @@ std::optional<hostpairs::Policy> hostpairs::findPolicy(StringRef cpu) {
   // (D[host-pair-vector]); every other host, measured or not, keeps the
   // scalar row outside the deterministic mode.
   static const Policy policies[] = {
-      // EPYC 7543 (Zen 3, AVX2): the NVE step of JAC, TIP3P 103k, and
-      // Cellulose against main took 1.3 to 1.7 times less time with the
-      // lanes, beyond the spread of the runs.
+      // The NVE step of JAC, TIP3P 103k, and Cellulose against main, at
+      // least two jobs a system, took 1.30 to 1.68 times less time with the
+      // lanes on an EPYC 7543 (Zen 3, AVX2: 8 lanes in f32, 4 in f64) and
+      // 1.39 to 1.65 times less on an EPYC 9354 (Zen 4, AVX-512: 16 and 8),
+      // beyond the spread of the runs.
       {"znver3", "lanes measured faster on an EPYC 7543"},
+      {"znver4", "lanes measured faster on an EPYC 9354"},
   };
   for (const Policy &policy : policies)
     if (policy.cpu == cpu)

@@ -1,10 +1,12 @@
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="cpu=znver4 vector-bits=512 explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="cpu=icelake-server vector-bits=512 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=AUTO
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="mode=lanes vector-bits=256" \
 // RUN: | FileCheck %s --check-prefix=AVX
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="cpu=znver3 vector-bits=256" \
 // RUN: | FileCheck %s --check-prefix=AVX
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="cpu=znver4 vector-bits=512" \
+// RUN: | FileCheck %s --check-prefix=WIDE
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="mode=lanes vector-bits=256" \
 // RUN: | mdir-opt | FileCheck %s --check-prefix=AVX
 // RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-host-pairs="mode=lanes vector-bits=512" \
@@ -43,7 +45,7 @@
 // mode selects it. W is the host's register over the bits of the kernel's
 // type (8 in f32 and 4 in f64 for 256 bits, 16 and 8 for 512), or, in the
 // deterministic mode, 8 and 4 whatever the host. `mode=auto` takes the
-// lanes where the host's policy does (`znver3`, measured) and keeps the
+// lanes where the host's policy does (`znver3`, `znver4`, measured) and keeps the
 // scalar row on a host that was not measured, except in the deterministic
 // mode, which takes the lanes on every host; `mode=scalar` takes none.
 
@@ -55,7 +57,7 @@
 md.particle_set @atoms
 
 // OFF-NOT: host(
-// AUTO: remark: host pairs: scalar: the host 'znver4' has no measured policy of lanes, which keeps the scalar row (mode=auto)
+// AUTO: remark: host pairs: scalar: the host 'icelake-server' has no measured policy of lanes, which keeps the scalar row (mode=auto)
 // SCALAR: remark: host pairs: scalar: mode=scalar
 // MODE: error: expected 'auto', 'lanes', or 'scalar' for 'mode', got 'fast'
 // WIDTH: error: expected a width of 0 or of lanes: the lanes are a power of two from 1 to 64, not 3

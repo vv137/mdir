@@ -88,7 +88,7 @@ With `explain`, the pass remarks the choice, or the first condition that fails, 
 
 **The deterministic mode takes the lanes on every host,** measured or not (the maintainer's ruling on PR #823, option 2): one order on every host comes first there, and the rule that an unmeasured host keeps the scalar row is a performance default of the ordinary modes. Its bits are then the same on every host, and they differ from those of the scalar row of before. `MDIR_HOST_PAIRS=scalar` still selects the scalar row.
 
-**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names; it lists the hosts whose measurement made the lanes their default. Outside the deterministic mode, every other host keeps the scalar row, and the remark of `explain` says so. The entry for `znver3` (EPYC 7543) takes the lanes, from the timing below.
+**Policy.** `hostpairs::findPolicy` is the host column of #433's table, keyed by the CPU that LLVM names; it lists the hosts whose measurement made the lanes their default. Outside the deterministic mode, every other host keeps the scalar row, and the remark of `explain` says so. The entries for `znver3` (EPYC 7543) and `znver4` (EPYC 9354) take the lanes, from the timing below.
 
 **Switches.**
 
@@ -143,59 +143,70 @@ The tolerance is that the lanes leave the agreement with the oracle unchanged: t
 
 ## Timing
 
-The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and grids of the measurement above. `main` 69d7cafd ran against the branch with the lanes (`MDIR_HOST_PAIRS=lanes`: $W$ = 8 in f32 and 4 in f64 on AVX2, and 16 and 8 on AVX-512), interleaved in each job. On JAC the branch's scalar row also ran. The jobs used 16 cores each, with alternating orders by round and round 0 dropped. Jobs a and b were submitted together, and c afterwards. The scheduler placed them on two CPU models, reported apart.
+The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and grids of the measurement above, at the head of the branch: `main` b7d801d9 against the branch's code at 7a66d525 (the code of this head but for the second policy entry below, which only makes the measured program the default on the EPYC 9354), with `MDIR_HOST_PAIRS=lanes` ($W$ = 8 in f32 and 4 in f64 on AVX2, 16 and 8 on AVX-512); on JAC also the branch's scalar row (`MDIR_HOST_PAIRS=scalar`). Each job ran 4 rounds of every variant, `main` and the branch alternating, in an order that reverses from round to round; round 0 is dropped and the tables give the mean and sample standard deviation of the 3 kept rounds. The rate of a run is that of the second half of its steps, over which the neighbor structure is rebuilt every 6 to 7 steps:
 
-- *The whole step* takes 1.48 to 1.70 times less time in mixed precision and 1.31 to 1.45 times less in double, on both CPU models. On the EPYC 7543 the two jobs of each system agree within 0.05 of the ratio.
-- *The branch's scalar row* runs at `main`'s rate: within 0.5% on JAC `m16` and 0.2% on `d16`. Its lowered program is the same text (Identity, above).
-- *The pair loop's share* (the sampler of D267 on the fixed tools of #833, the sampled runs of JAC). On the EPYC 7543, `m16` goes from 57.0% to 33.5%. On the EPYC 9354, over two jobs:
-  - `m16`: 54.6% to 32.9%;
-  - `d16`: 79.3% and 82.4% to 75.2% and 75.6%;
-  - the one-thread proxy (`OMP_THREAD_LIMIT=1`, whose step is 1.5 to 6.0% longer than the true one-thread step): 65.2% and 65.4% to 44.2% in mixed precision, and 88.3% to 83.1% in double.
-- *Why double gains less.* In double the loop stays most of the step because `erfc` is called once a lane from libm (no vector library is linked). That is the next measurable step for the f64 loops.
+- JAC at 16 threads: 4,000 steps (2,000 timed, some 300 rebuilds);
+- JAC at 1 thread, and TIP3P 103k and Cellulose at 16 threads: 1,400 steps (700 timed, some 100 rebuilds).
+
+That is the equivalent here of a run of 100 intervals of the rate: 100,000 steps a run would take 2 to 4 hours at 1 thread on JAC, and 4 to 14 hours at 16 threads on the two large systems. The two large systems were timed at 16 threads only; their earlier 1-thread rates (the first timing of this PR, 100 steps a run) gave ratios of 1.6 to 1.7 in mixed precision and 1.3 to 1.4 in double, as JAC's do, and are not repeated. The jobs ran at the same time as one another, so the spread includes their contention for memory (the 1-thread runs of JAC on the EPYC 7543 vary by 3%).
 
 **AMD EPYC 7543** (ms/step, mean ± sample standard deviation of the kept rounds; ratio = main / lanes)
 
-| System | Job | Variant | `main` | lanes | Ratio | branch scalar |
-|---|---|---|---|---|---|---|
-| JAC | a | `m16` | 10.13 ± 0.06 | 6.521 ± 0.037 | 1.554 | 10.18 ± 0.0047 |
-| JAC | a | `m1` | 129.9 ± 1.2 | 76.27 ± 0.13 | 1.703 | — |
-| JAC | a | `d16` | 26.29 ± 0.038 | 19.92 ± 0.29 | 1.319 | 26.34 ± 0.082 |
-| JAC | a | `d1` | 358.4 ± 0.42 | 269 ± 1.2 | 1.332 | — |
-| JAC | c | `m16` | 10.13 ± 0.027 | 6.545 ± 0.043 | 1.549 | 10.15 ± 0.03 |
-| JAC | c | `m1` | 128.3 ± 0.27 | 76.08 ± 0.0074 | 1.687 | — |
-| JAC | c | `d16` | 26.25 ± 0.079 | 19.79 ± 0.092 | 1.326 | 26.22 ± 0.005 |
-| JAC | c | `d1` | 357 ± 0.66 | 268.5 ± 0.78 | 1.329 | — |
-| TIP3P 103k | a | `m16` | 148.1 ± 1.3 | 92.77 ± 0.59 | 1.596 | — |
-| TIP3P 103k | a | `m1` | 2004 ± 3.4 | 1185 ± 1.6 | 1.692 | — |
-| TIP3P 103k | a | `d16` | 427.4 ± 0.74 | 315.5 ± 0.68 | 1.354 | — |
-| TIP3P 103k | a | `d1` | 5951 ± 49 | 4392 ± 2.5 | 1.355 | — |
-| TIP3P 103k | c | `m16` | 147.8 ± 0.021 | 90.5 ± 0.13 | 1.634 | — |
-| TIP3P 103k | c | `m1` | 2009 ± 4.3 | 1187 ± 3.1 | 1.692 | — |
-| TIP3P 103k | c | `d16` | 425.9 ± 1.3 | 325.7 ± 16 | 1.308 | — |
-| TIP3P 103k | c | `d1` | 5877 ± 21 | 4368 ± 9 | 1.346 | — |
-| Cellulose | a | `m16` | 198.7 ± 0.055 | 133.9 ± 0.61 | 1.483 | — |
-| Cellulose | a | `m1` | 2488 ± 0.8 | 1542 ± 0.65 | 1.613 | — |
-| Cellulose | a | `d16` | 510 ± 0.35 | 387 ± 0.38 | 1.318 | — |
-| Cellulose | a | `d1` | 6706 ± 17 | 5073 ± 44 | 1.322 | — |
-| Cellulose | b | `m16` | 199.5 ± 0.39 | 134.7 ± 0.66 | 1.481 | — |
-| Cellulose | b | `m1` | 2476 ± 0.018 | 1542 ± 6.4 | 1.605 | — |
-| Cellulose | b | `d16` | 521.9 ± 17 | 387.1 ± 0.4 | 1.348 | — |
-| Cellulose | b | `d1` | 6669 ± 0.59 | 5037 ± 3.5 | 1.324 | — |
+| System | Job | Variant | Steps | `main` | lanes | Ratio | branch scalar |
+|---|---|---|---|---|---|---|---|
+| JAC | a | `m16` | 4000 | 10.23 ± 0.066 | 6.634 ± 0.033 | 1.542 | 10.24 ± 0.065 |
+| JAC | a | `m1` | 1400 | 133.3 ± 4.2 | 79.33 ± 2.6 | 1.680 | — |
+| JAC | a | `d16` | 4000 | 26.65 ± 0.12 | 20.08 ± 0.18 | 1.327 | 26.99 ± 0.53 |
+| JAC | a | `d1` | 1400 | 371.3 ± 11 | 278.4 ± 8.1 | 1.334 | — |
+| JAC | e | `m16` | 4000 | 10.3 ± 0.11 | 6.685 ± 0.1 | 1.541 | 10.29 ± 0.12 |
+| JAC | e | `m1` | 1400 | 130.4 ± 4.8 | 77.42 ± 1.5 | 1.684 | — |
+| JAC | e | `d16` | 4000 | 26.7 ± 0.23 | 20.14 ± 0.14 | 1.326 | 26.72 ± 0.13 |
+| JAC | e | `d1` | 1400 | 363.4 ± 9.2 | 267.6 ± 0.51 | 1.358 | — |
+| TIP3P 103k | a | `m16` | 1400 | 150.6 ± 0.24 | 95.71 ± 0.6 | 1.574 | — |
+| TIP3P 103k | a | `d16` | 1400 | 429.1 ± 1.1 | 317.9 ± 0.2 | 1.350 | — |
+| TIP3P 103k | b | `m16` | 1400 | 146.1 ± 0.085 | 90.55 ± 0.24 | 1.613 | — |
+| TIP3P 103k | b | `d16` | 1400 | 422.1 ± 0.56 | 313.3 ± 1.3 | 1.347 | — |
+| TIP3P 103k | d | `m16` | 1400 | 157.1 ± 0.95 | 99.78 ± 0.41 | 1.574 | — |
+| TIP3P 103k | d | `d16` | 1400 | 437.4 ± 1.3 | 327 ± 1.8 | 1.338 | — |
+| Cellulose | c | `m16` | 1400 | 204.9 ± 2.9 | 140.8 ± 3.3 | 1.455 | — |
+| Cellulose | c | `d16` | 1400 | 515.5 ± 5 | 395.5 ± 1.7 | 1.303 | — |
+| Cellulose | h1 | `m16` | 1400 | 203.3 ± 2.1 | 138.8 ± 1.1 | 1.465 | — |
+| Cellulose | h1 | `d16` | 1400 | 511.7 ± 1.6 | 389.4 ± 2.2 | 1.314 | — |
 
 **AMD EPYC 9354** (ms/step, mean ± sample standard deviation of the kept rounds; ratio = main / lanes)
 
-| System | Job | Variant | `main` | lanes | Ratio | branch scalar |
-|---|---|---|---|---|---|---|
-| JAC | b | `m16` | 9.396 ± 0.049 | 6.338 ± 0.043 | 1.482 | 9.349 ± 0.033 |
-| JAC | b | `m1` | 123.5 ± 0.096 | 75.34 ± 0.069 | 1.639 | — |
-| JAC | b | `d16` | 23.55 ± 0.043 | 16.85 ± 0.093 | 1.398 | 24.16 ± 1.1 |
-| JAC | b | `d1` | 339.9 ± 0.38 | 239.2 ± 0.29 | 1.421 | — |
-| TIP3P 103k | b | `m16` | 130.6 ± 0.65 | 83.85 ± 0.52 | 1.558 | — |
-| TIP3P 103k | b | `m1` | 1905 ± 4 | 1142 ± 3.6 | 1.668 | — |
-| TIP3P 103k | b | `d16` | 375.8 ± 1 | 259 ± 1.3 | 1.451 | — |
-| TIP3P 103k | b | `d1` | 5582 ± 8.3 | 3876 ± 2.7 | 1.440 | — |
+| System | Job | Variant | Steps | `main` | lanes | Ratio | branch scalar |
+|---|---|---|---|---|---|---|---|
+| JAC | b | `m16` | 4000 | 9.374 ± 0.013 | 6.35 ± 0.039 | 1.476 | 9.408 ± 0.013 |
+| JAC | b | `m1` | 1400 | 123.6 ± 0.35 | 75.26 ± 0.29 | 1.642 | — |
+| JAC | b | `d16` | 4000 | 23.7 ± 0.054 | 16.89 ± 0.08 | 1.404 | 23.78 ± 0.091 |
+| JAC | b | `d1` | 1400 | 340.1 ± 0.26 | 239.1 ± 0.58 | 1.422 | — |
+| JAC | c | `m16` | 4000 | 9.471 ± 0.096 | 6.514 ± 0.11 | 1.454 | 9.541 ± 0.14 |
+| JAC | c | `m1` | 1400 | 123.9 ± 0.32 | 75.37 ± 0.29 | 1.644 | — |
+| JAC | c | `d16` | 4000 | 24.01 ± 0.086 | 17.25 ± 0.046 | 1.392 | 24.1 ± 0.04 |
+| JAC | c | `d1` | 1400 | 340.3 ± 0.36 | 239.9 ± 0.12 | 1.418 | — |
+| JAC | d | `m16` | 4000 | 9.528 ± 0.12 | 6.448 ± 0.074 | 1.478 | 9.507 ± 0.095 |
+| JAC | d | `m1` | 1400 | 123.3 ± 0.32 | 74.98 ± 0.28 | 1.645 | — |
+| JAC | d | `d16` | 4000 | 23.97 ± 0.2 | 17.25 ± 0.18 | 1.390 | 23.87 ± 0.16 |
+| JAC | d | `d1` | 1400 | 339.9 ± 0.27 | 239.6 ± 0.44 | 1.419 | — |
+| TIP3P 103k | c | `m16` | 1400 | 134.8 ± 0.87 | 87.26 ± 0.37 | 1.544 | — |
+| TIP3P 103k | c | `d16` | 1400 | 379.6 ± 1.1 | 272.1 ± 0.56 | 1.395 | — |
+| TIP3P 103k | g2 | `m16` | 1400 | 132.3 ± 1.6 | 86.67 ± 3.9 | 1.527 | — |
+| TIP3P 103k | g2 | `d16` | 1400 | 379 ± 1.9 | 264.5 ± 4.3 | 1.432 | — |
+| Cellulose | a | `m16` | 1400 | 184.4 ± 0.8 | 127.3 ± 1.2 | 1.448 | — |
+| Cellulose | a | `d16` | 1400 | 456.5 ± 2.2 | 325.7 ± 0.24 | 1.402 | — |
+| Cellulose | b | `m16` | 1400 | 184 ± 0.47 | 126.8 ± 1.2 | 1.450 | — |
+| Cellulose | b | `d16` | 1400 | 454.9 ± 0.32 | 325.6 ± 0.12 | 1.397 | — |
+| Cellulose | d | `m16` | 1400 | 185.9 ± 2.6 | 129.8 ± 2.8 | 1.432 | — |
+| Cellulose | d | `d16` | 1400 | 458.4 ± 4 | 330.7 ± 8.5 | 1.386 | — |
 
-**Policy.** On the EPYC 7543 (`znver3`) the lanes win in every variant of every system, by 31 to 70%, far beyond the spread of the runs (under 1% of a rate, except single slow rounds of up to 5%: `d16` of the lanes in TIP3P job c and of `main` in Cellulose job b). So `findPolicy` makes them the default there. The EPYC 9354 (`znver4`) has one timing job per system so far. It stays unmeasured, so it keeps the scalar row outside the deterministic mode, until a second job confirms it.
+- *Per job.* Every job gives a ratio within 0.04 of the other jobs of the same system, CPU model, and variant; the widest are TIP3P `m16` on the EPYC 7543 (1.574 to 1.613) and TIP3P `d16` on the EPYC 9354 (1.395 and 1.432).
+- *Ranges.* On the EPYC 7543 the step takes 1.46 to 1.68 times less time in mixed precision and 1.30 to 1.36 times less in double; on the EPYC 9354, 1.43 to 1.65 and 1.39 to 1.43.
+- *The branch's scalar row* runs at `main`'s rate: within 0.8% of `main` in each job and variant of JAC, except one `d16` job on the EPYC 7543 at +1.3%, with a standard deviation of 2% over its kept rounds. Its lowered program is the same text as `main`'s (Identity, above).
+- *The pair loop's share* (the sampler of D267 on the tools of #836; the sampled runs of the first timing of this PR, JAC). On the EPYC 7543, `m16` goes from 57.0% to 33.5%. On the EPYC 9354, over two jobs: `m16` 54.6% to 32.9%; `d16` 79.3% and 82.4% to 75.2% and 75.6%; the one-thread proxy (`OMP_THREAD_LIMIT=1`, whose step is 1.5 to 6.0% longer than the true one-thread step) 65.2% and 65.4% to 44.2% in mixed precision and 88.3% to 83.1% in double.
+- *Why double gains less.* In double the loop stays most of the step because `erfc` is called once a lane from libm (no vector library is linked). That is the next measurable step for the f64 loops.
+
+**Policy.** On both CPU models the lanes win in every variant of every system, by 30 to 68%, beyond the spread of the runs, in at least two jobs a system. So `findPolicy` makes them the default on `znver3` (EPYC 7543) and `znver4` (EPYC 9354).
 
 **Peak memory.** The lanes allocate nothing. Their registers and the stack of a row are the only storage they add, and every buffer of the program is the same as before.
 
