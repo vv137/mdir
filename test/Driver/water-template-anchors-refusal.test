@@ -1,7 +1,9 @@
 # Heavy-atom solute units need constrained X-H bonds (#799): without
 # hydrogen_bonds, ON refuses the template before any device work, naming
-# the count of free solute hydrogens (12 in alanine dipeptide).
+# the count of free solute hydrogens (12 in alanine dipeptide). The control
+# targets the GPU; the run hides every device, so the refusal is shown to
+# come before any device start-up.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t OPC NVE 2 --loose
-# RUN: not mdir run %t/control.toml 2>&1 | FileCheck %s
+# RUN: env CUDA_VISIBLE_DEVICES= not mdir run %t/control.toml 2>&1 | FileCheck %s
 # CHECK: 'water.template = "ON"' cannot apply: 12 solute hydrogens have no constrained bond to a heavy atom (the solute's units need [constraints] hydrogen_bonds)
