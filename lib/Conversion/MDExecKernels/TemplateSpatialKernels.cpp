@@ -81,7 +81,7 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
     Value grid = arith::DivUIOp::create(b, loc, add(b, n, ix(b, 255)), block);
     return arith::MaxUIOp::create(b, loc, grid, one);
   };
-  Value itemGrid = gridFor(size), binGrid = gridFor(bins);
+  Value itemGrid = gridFor(size);
   auto launch = [&](Value n, Value grid, auto body) {
     auto kernel = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
     OpBuilder at = OpBuilder::atBlockEnd(&kernel.getBody().front());
@@ -129,9 +129,6 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
   };
   Value input = scratch(0), output = scratch(1);
   Value digitKeys = scratch(2), ranked = scratch(3);
-  launch(size, itemGrid, [&](OpBuilder &at, Value unit) {
-    memref::StoreOp::create(at, loc, word(at, unit), input, ValueRange{unit});
-  });
   // Use at most 256 buckets, bounded by the existing class-column storage.
   // Balance the significant joint-key bits over digits so that a final
   // one-bit digit does not put half of a large population in one rank bin.
@@ -147,6 +144,30 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
       radixBits = arith::SelectOp::create(b, loc, fits, ix(b, bit), radixBits);
     }
   }
+  // No digit has more buckets than this. Each digit's histogram is cleared
+  // by the last kernel before it (the scan has consumed the previous one),
+  // not by a launch of its own.
+  Value digitBuckets = arith::ShLIOp::create(b, loc, one, radixBits);
+  auto clearDigits = [&](OpBuilder &at, Value item) {
+    Value bucket = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, item, digitBuckets);
+    scf::IfOp::create(at, loc, bucket, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, word(in, ix(in, 0)), v.counts, ValueRange{item});
+      scf::YieldOp::create(in, loc);
+    });
+  };
+  auto unitOrBucket = [&](Value buckets) -> std::pair<Value, Value> {
+    Value n = arith::MaxUIOp::create(b, loc, size, buckets);
+    return {n, gridFor(n)};
+  };
+  auto [identityItems, identityGrid] = unitOrBucket(digitBuckets);
+  launch(identityItems, identityGrid, [&](OpBuilder &at, Value unit) {
+    clearDigits(at, unit);
+    Value listed = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, unit, size);
+    scf::IfOp::create(at, loc, listed, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, word(in, unit), input, ValueRange{unit});
+      scf::YieldOp::create(in, loc);
+    });
+  });
   Value bits = add(b, columnBits, ix(b, 21));
   Value passes = arith::DivUIOp::create(b, loc,
       add(b, bits, sub(b, radixBits, one)), radixBits);
@@ -163,9 +184,6 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
     // The launch helper must insert each digit's kernels in this loop.
     OpBuilder::InsertionGuard guard(b);
     b.setInsertionPointToEnd(at.getInsertionBlock());
-    launch(buckets, gridFor(buckets), [&](OpBuilder &in, Value bucket) {
-      memref::StoreOp::create(in, loc, word(in, ix(in, 0)), v.counts, ValueRange{bucket});
-    });
     launch(size, itemGrid, [&](OpBuilder &in, Value position) {
       Value unit = index(in, memref::LoadOp::create(in, loc, state[0], ValueRange{position}));
       Value column = index(in, memref::LoadOp::create(in, loc, v.keys, ValueRange{unit}));
@@ -183,23 +201,36 @@ void mdir::kernels::emitTemplateSpatialOrder(OpBuilder &b, Location loc,
         itemGrid, block, one, /*everyKey=*/true);
     emitRankInBins(b, loc, v.items, digitKeys, v.starts, ranked,
         buckets, itemGrid, block, one);
-    launch(size, itemGrid, [&](OpBuilder &in, Value rank) {
-      Value position = index(in,
-          memref::LoadOp::create(in, loc, ranked, ValueRange{rank}));
-      Value unit = memref::LoadOp::create(in, loc, state[0], ValueRange{position});
-      memref::StoreOp::create(in, loc, unit, state[1], ValueRange{rank});
+    launch(identityItems, identityGrid, [&](OpBuilder &all, Value rank) {
+      clearDigits(all, rank);
+      Value listed = arith::CmpIOp::create(all, loc, arith::CmpIPredicate::ult, rank, size);
+      scf::IfOp::create(all, loc, listed, [&](OpBuilder &in, Location) {
+        Value position = index(in,
+            memref::LoadOp::create(in, loc, ranked, ValueRange{rank}));
+        Value unit = memref::LoadOp::create(in, loc, state[0], ValueRange{position});
+        memref::StoreOp::create(in, loc, unit, state[1], ValueRange{rank});
+        scf::YieldOp::create(in, loc);
+      });
     });
     at.setInsertionPointToEnd(at.getInsertionBlock());
     scf::YieldOp::create(at, loc, ValueRange{state[1], state[0], add(at, state[2], width)});
   });
-  launch(size, itemGrid, [&](OpBuilder &at, Value rank) {
-    Value unit = memref::LoadOp::create(at, loc, sorted.getResult(0), ValueRange{rank});
-    memref::StoreOp::create(at, loc, unit, v.items, ValueRange{rank});
-  });
   // Publish the original class-column offsets required by the unchanged
-  // covering search; the digit histograms above are only temporary.
-  launch(bins, binGrid, [&](OpBuilder &at, Value bin) {
-    memref::StoreOp::create(at, loc, word(at, ix(at, 0)), v.counts, ValueRange{bin});
+  // covering search; the digit histograms above are only temporary, and
+  // the copy of the order clears the class-column counts.
+  auto [copyItems, copyGrid] = unitOrBucket(bins);
+  launch(copyItems, copyGrid, [&](OpBuilder &all, Value rank) {
+    Value bin = arith::CmpIOp::create(all, loc, arith::CmpIPredicate::ult, rank, bins);
+    scf::IfOp::create(all, loc, bin, [&](OpBuilder &in, Location) {
+      memref::StoreOp::create(in, loc, word(in, ix(in, 0)), v.counts, ValueRange{rank});
+      scf::YieldOp::create(in, loc);
+    });
+    Value listed = arith::CmpIOp::create(all, loc, arith::CmpIPredicate::ult, rank, size);
+    scf::IfOp::create(all, loc, listed, [&](OpBuilder &in, Location) {
+      Value unit = memref::LoadOp::create(in, loc, sorted.getResult(0), ValueRange{rank});
+      memref::StoreOp::create(in, loc, unit, v.items, ValueRange{rank});
+      scf::YieldOp::create(in, loc);
+    });
   });
   launch(size, itemGrid, [&](OpBuilder &at, Value unit) {
     Value key = index(at, memref::LoadOp::create(at, loc, v.keys, ValueRange{unit}));

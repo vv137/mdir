@@ -53,13 +53,20 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
   launch(b, scanSize, [&](OpBuilder &out, Value item) {
     // Word 4 of the controls records the last pass that split a group (one
     // based), so that the passes are known whatever number ran unread;
-    // words 5 to 7 are unused and read back with it.
+    // words 5 to 7 are unused and read back with it. Words 0 to 3 start
+    // at zero for an empty input, which no later kernel of a pass visits.
     Value head = arith::CmpIOp::create(out, loc, arith::CmpIPredicate::eq, item, ix(out, 0));
     scf::IfOp::create(out, loc, head, [&](OpBuilder &at, Location) {
-      for (int64_t slot = 4; slot != 8; ++slot)
+      for (int64_t slot = 0; slot != 8; ++slot)
         memref::StoreOp::create(at, loc, word(at, 0), v.control, ValueRange{ix(at, slot)});
       scf::YieldOp::create(at, loc);
     });
+    // Cleared once a plan: the segments only grow from pass to pass, so
+    // each pass rewrites every start, length and count an earlier one
+    // wrote, and the tail beyond the segments stays zero for the scan of
+    // the counts.
+    for (Value field : {v.starts, v.lengths, v.counts})
+      memref::StoreOp::create(out, loc, word(out, 0), field, ValueRange{item});
     Value valid = arith::CmpIOp::create(out, loc, arith::CmpIPredicate::ult, item, v.size);
     auto flag = scf::IfOp::create(out, loc, valid, [&](OpBuilder &at, Location) {
     Value first = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, item, ix(at, 0));
@@ -85,17 +92,8 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
 
   Value yes = arith::ConstantOp::create(b, loc, b.getBoolAttr(true));
   // One refinement pass. A pass after convergence changes nothing: the
-  // flags only accumulate, and words 0 to 3 and the segment fields are
-  // cleared and recounted.
+  // flags only accumulate, and words 0 to 3 are recounted.
   auto pass = [&](OpBuilder &at, Value ordinal) {
-    launch(at, ix(at, 4), [&](OpBuilder &in, Value i) {
-      memref::StoreOp::create(in, loc, word(in, 0), v.control, ValueRange{i});
-    });
-    launch(at, scanSize, [&](OpBuilder &in, Value i) {
-      memref::StoreOp::create(in, loc, word(in, 0), v.starts, ValueRange{i});
-      memref::StoreOp::create(in, loc, word(in, 0), v.lengths, ValueRange{i});
-      memref::StoreOp::create(in, loc, word(in, 0), v.counts, ValueRange{i});
-    });
     emitDeviceScan(at, loc, v.flags, v.segments, Value{}, scanSize,
         v.scanScratch, v.scanBlocks, block, one);
     launch(at, v.size, [&](OpBuilder &in, Value i) {
@@ -113,10 +111,14 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
             ValueRange{index(start, segment)});
         scf::YieldOp::create(start, loc);
       });
+      // Word 0 is this pass's segment count; words 1 to 3 are cleared here
+      // for the later kernels of the pass, which add to them.
       Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, i, ix(in, 0));
       scf::IfOp::create(in, loc, leader, [&](OpBuilder &total, Location) {
         Value count = memref::LoadOp::create(total, loc, v.segments, ValueRange{v.size});
         memref::StoreOp::create(total, loc, count, v.control, ValueRange{ix(total, 0)});
+        for (int64_t slot = 1; slot != 4; ++slot)
+          memref::StoreOp::create(total, loc, word(total, 0), v.control, ValueRange{ix(total, slot)});
         scf::YieldOp::create(total, loc);
       });
     });
