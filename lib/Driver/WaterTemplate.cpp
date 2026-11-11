@@ -5,6 +5,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numeric>
 #include <set>
 #include <tuple>
@@ -231,6 +232,17 @@ double mdir::driver::getAnchorRadius(const WaterTemplatePlan &plan, bool doubleP
       (1.0 + builder::getConstraintPositionTolerance(doublePrecision));
 }
 
+double mdir::driver::getLeastFaceWidth(const double box[3], const double tilt[3]) {
+  // The rows a = (a_x, 0, 0), b = (b_x, b_y, 0), c = (c_x, c_y, c_z): each
+  // width is the volume over the area of the opposite face.
+  double ax = box[0], by = box[1], cz = box[2], bx = tilt[0], cx = tilt[1], cy = tilt[2];
+  double volume = ax * by * cz;
+  double bc = std::sqrt(by * cz * by * cz + bx * cz * bx * cz +
+                        (bx * cy - by * cx) * (bx * cy - by * cx));
+  double ca = ax * std::sqrt(cy * cy + cz * cz);
+  return std::min({volume / bc, volume / ca, cz});
+}
+
 std::string mdir::driver::getWaterTemplateModeReason(const Control &control) {
   if (control.target != Target::GPU) return "the target is the CPU";
   if (control.precision != Precision::Mixed) return "MIXED precision is required";
@@ -269,6 +281,27 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
     result.reason = std::to_string(result.plan.unconstrainedHydrogens) +
         " solute hydrogens have no constrained bond to a heavy atom (the "
         "solute's units need [constraints] hydrogen_bonds)";
+  if (result.reason.empty() && control.periodic) {
+    // The covering reach of the lists, the pairlist distance plus twice the
+    // larger of the water's covering extent and the solute units' radius
+    // (the largest of the WW, SW and SS reaches), must be at most half the
+    // least face width of the cell: every pair then has at most one image
+    // within it, in an orthorhombic and in a reduced triclinic cell alike.
+    double extent = std::max(result.plan.model.extent,
+        getAnchorRadius(result.plan, control.precision == Precision::Double));
+    double reach = control.pairlistDistance * units::length + 2.0 * extent;
+    double half = 0.5 * getLeastFaceWidth(system.box, system.tilt);
+    if (!(reach <= half)) {
+      char text[256];
+      std::snprintf(text, sizeof text,
+          "its covering reach, %.4g Å ('pairlist_distance' plus twice "
+          "%.4g Å, the larger of the water's extent and the solute "
+          "units' radius), exceeds half the least face width of the cell, "
+          "%.4g Å", reach / units::length, extent / units::length,
+          half / units::length);
+      result.reason = text;
+    }
+  }
   if (!result.reason.empty()) {
     if (control.waterTemplate == WaterTemplateChoice::On)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),

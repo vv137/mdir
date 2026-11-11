@@ -108,8 +108,12 @@ one marked family. Mixed families retain the separate writer. This changes
 no key, validity threshold or reference epoch.
 The quoted dotted name is one key, not a nested TOML table. It is part of
 the execution fingerprint. The numerical model and topology site definition
-are preserved; deterministic, double, CPU and derivative programs retain
-the general path, with a named refusal for `ON`.
+are preserved; deterministic, double, CPU, minimization and derivative
+programs retain the general path, with a named refusal for `ON`, and so
+does a system whose solute hydrogens are not all held by constraints, or
+whose covering reach (the pairlist distance plus twice the larger of the
+water's covering extent and the solute units' radius) exceeds half the
+least face width of the input cell.
 Its [glossary](decisions/rigid-water-template.md#glossary) defines the
 class-segmented pair list, its WW/SW/SS segments, units, anchors, mobility
 groups and refreshes. The template kernel uses rule (A) for dynamics;
