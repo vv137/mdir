@@ -143,13 +143,44 @@ static Value materializeWindowValue(OpBuilder &builder, Value value,
   builder.clone(*definition, mapping);
   return mapping.lookup(value);
 }
+// The unsigned bounds [lo, hi] of minui(maxui(x, lo), hi), constants.
+static std::optional<std::pair<uint64_t, uint64_t>> unsignedClamp(Value value) {
+  auto upper = value.getDefiningOp<arith::MinUIOp>();
+  if (!upper) return std::nullopt;
+  for (unsigned side = 0; side != 2; ++side) {
+    APInt hi, lo;
+    auto lower = upper->getOperand(1 - side).getDefiningOp<arith::MaxUIOp>();
+    if (!lower || !matchPattern(upper->getOperand(side), m_ConstantInt(&hi))) continue;
+    for (unsigned inner = 0; inner != 2; ++inner)
+      if (matchPattern(lower->getOperand(inner), m_ConstantInt(&lo)))
+        return std::make_pair(std::min(lo.getZExtValue(), hi.getZExtValue()),
+                              hi.getZExtValue());
+  }
+  return std::nullopt;
+}
 // An index of a read that a clamp keeps in [0, extent - width]: a
-// constant, or min(max(x, lo), hi) with 0 <= lo and hi <= extent - width.
+// constant, min(max(x, lo), hi) with 0 <= lo and hi <= extent - width, or
+// (minui(maxui(x, lo), hi) >> s) - b, the form of a radial table's index,
+// with b <= lo >> s and (hi >> s) - b <= extent - width.
 static bool clampedInto(Value index, int64_t extent, int64_t width) {
   if (auto cast = index.getDefiningOp<arith::IndexCastOp>()) index = cast.getIn();
   APInt value;
   if (matchPattern(index, m_ConstantInt(&value)))
     return value.getSExtValue() >= 0 && value.getSExtValue() + width <= extent;
+  if (auto offset = index.getDefiningOp<arith::SubIOp>()) {
+    APInt base, shift;
+    auto key = offset.getLhs().getDefiningOp<arith::ShRUIOp>();
+    if (!key || !matchPattern(offset.getRhs(), m_ConstantInt(&base)) ||
+        !matchPattern(key.getRhs(), m_ConstantInt(&shift)) ||
+        shift.getZExtValue() >= key.getType().getIntOrFloatBitWidth())
+      return false;
+    auto bounds = unsignedClamp(key.getLhs());
+    if (!bounds || base.isNegative()) return false;
+    uint64_t lo = bounds->first >> shift.getZExtValue();
+    uint64_t hi = bounds->second >> shift.getZExtValue();
+    uint64_t b = base.getZExtValue();
+    return b <= lo && int64_t(hi - b) + width <= extent;
+  }
   auto upper = index.getDefiningOp<arith::MinSIOp>();
   if (!upper) return false;
   for (unsigned side = 0; side != 2; ++side) {
