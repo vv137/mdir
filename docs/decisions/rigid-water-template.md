@@ -2038,22 +2038,24 @@ unchanged.
 
 **By segment.** A measurement build skipped the evaluation of chosen
 classes (the record still loads, prunes and returns zeros). The table
-gives the evaluation kernel's median call over steps 9 to 50, before the
-first refresh, so that the lists are those of one build (µs a call):
+gives the median of the evaluation kernel's own calls from the tenth to
+the last one before the first rebuild of the loop (the 43rd to the 61st
+call, by build), so that the lists are those of one build; it is not the
+median over the whole run of the probes below (µs a call):
 
 | System | All three | WW alone | SW alone | SS alone | None |
 |---|---|---|---|---|---|
-| Ubiquitin TIP3P | 35.7 | 34.4 | 18.6 | 11.8 | 1.3 |
-| Ubiquitin OPC | 35.8 | 34.9 | 18.8 | 11.5 | 1.3 |
-| Large OPC box | 63.8 | 72.9 | — | — | 1.9 |
+| Ubiquitin TIP3P | 35.9 | 34.5 | 18.6 | 11.8 | 1.3 |
+| Ubiquitin OPC | 35.9 | 35.1 | 18.8 | 11.6 | 1.3 |
+| Large OPC box | 65.0 | 74.3 | — | — | 1.9 |
 
-The segments run concurrently: alone they take 65 µs, together 35.7, so
-SW and SS add 1.3 µs to the WW segment, which sets the kernel's time. The
+The segments run concurrently: alone they take 65 µs, together 35.9, so
+SW and SS add 1.4 µs to the WW segment, which sets the kernel's time. The
 base of a record (setup, the reach selection, the prune's test, the
 epilogue) is at most the 1.3 µs of the kernel with no class evaluated.
 The large box has no SW or SS records, so its WW-alone build differs from
 the full one only in the dead branches removed: the same 96 registers,
-2561 against 1836 SASS instructions, and 14 % slower. The scheduling of
+1836 SASS instructions against the full build's 2561, and 14 % slower. The scheduling of
 the WW loop by ptxas moves its time by that much on the shape of the code
 alone, which is why a change is accepted only on all three systems in
 both rounds.
@@ -2081,7 +2083,8 @@ clamps and 9 cutoff tests), close to the arithmetic of its 9 Coulomb and
 pair. Ubiquitin's WW records nearly all take one or two batches and fit
 in one wave of the 3400 warps resident at 96 registers.
 
-**Probes that measured slower** (median call, µs; 3000 steps):
+**Probes that measured slower** (the median of all 2997 calls of the
+evaluation kernel in 3000 steps, every one above 5 µs; µs a call):
 
 | Probe | Ubiquitin TIP3P | Ubiquitin OPC | Large OPC box |
 |---|---|---|---|
@@ -2102,17 +2105,19 @@ into 75,152 (+4 %) for consecutive records, the only pairing without a
 sort; it was not built.
 
 **Dropped, with the reason:** the per-record base cost (at most 1.3 µs);
-the SW and SS segments for TIP3P (1.3 µs while WW sets the kernel's
+the SW and SS segments for TIP3P (1.4 µs while WW sets the kernel's
 time); 2-word entries (a load a batch, not a turn); the f64 of the search
 (maintenance, 9.7 against main's 19.7). What remains open is where the WW
 turn stalls, the table loads on its chain or the shuffles or issue, and
 main's issue efficiency on the same system: counters requested.
 
 **The extra idle.** All of the 1.9 µs/step more idle than main is in the
-refresh: a build makes 107 launches and 6 blocking readbacks of 16 to 32
-bytes and spans 687 µs, of which 500 are kernels; its 187 µs of gaps are
-3.9 µs/step at the refresh interval of 53 steps, against main's 1.8 in its
-build and refresh. A launch costs the host 1.9 µs, longer than most of
+refresh. Against the stretch between two evaluations without one, a build
+adds 108 launches and 6 blocking readbacks of 16 to 32 bytes and 707 µs of
+span, of which 500 are kernels; its 196 µs of gaps are 3.7 µs/step at the
+19 builds of 999 steps (52.6 steps a build) on ubiquitin in TIP3P (3.3
+µs/step on ubiquitin in OPC, 17 builds), against main's 1.8 in its build
+and refresh. A launch costs the host 1.9 µs, longer than most of
 those kernels.
 
 ### Precision contract for the whole search port and future pruning
