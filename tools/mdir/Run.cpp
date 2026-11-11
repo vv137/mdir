@@ -1469,9 +1469,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   // The reaches that "AUTO" took, and how (D281): given ones and
   // the defaults of keys not given are not repeated.
+  // Whether the choice was searched now or reused from the cache, and the
+  // budget of the search (D[skin-budget-record]).
   bool skinsShown = control->skinSource == "cached" ||
                     control->skinSource == "measured" ||
-                    control->skinsRequested;
+                    control->skinsRequested || !skinChoice.refused.empty();
   if (control->isSkinAuto() && skinsShown) {
     output.log.print("%s", skinLines.c_str());
     output.log.print("MDIR: skins: the reach %g Ang",
@@ -1480,12 +1482,32 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       output.log.print(", pruned to %g Ang", control->prunedDistance);
     output.log.print(" (%s: %s", control->skinSource.c_str(),
                      control->skinReason.c_str());
-    if (!skinChoice.trials.empty())
-      output.log.print("; %zu candidates in %.1f s",
+    if (skinChoice.recorded) {
+      const llvm::json::Array *candidates =
+          skinChoice.recorded->getArray("candidates");
+      output.log.print("; reused, not searched: the search of a budget of "
+                       "%lld recorded %zu candidates in %.1f s",
+                       static_cast<long long>(
+                           skinChoice.recorded->getInteger("budget")
+                               .value_or(0)),
+                       candidates ? candidates->size() : size_t(0),
+                       skinChoice.recorded->getNumber("seconds").value_or(0.0));
+    } else if (skinChoice.searched) {
+      output.log.print("; searched now: a budget of %lld, %zu candidates in "
+                       "%.1f s",
+                       static_cast<long long>(skinChoice.budget.value_or(0)),
                        skinChoice.trials.size(), skinChoice.seconds);
+    } else if (!skinChoice.trials.empty()) {
+      output.log.print("; not searched: the reference alone measured, in "
+                       "%.1f s", skinChoice.seconds);
+      if (skinChoice.budget)
+        output.log.print(", a budget of %lld",
+                         static_cast<long long>(*skinChoice.budget));
+    }
+    if (!skinChoice.notCached.empty())
+      output.log.print("; not cached: %s", skinChoice.notCached.c_str());
     if (!skinChoice.cachePath.empty())
-      output.log.print("; %s '%s'",
-                       control->skinSource == "cached" ? "from" : "stored in",
+      output.log.print("; %s '%s'", skinChoice.recorded ? "from" : "stored in",
                        skinChoice.cachePath.c_str());
     output.log.print(")\n");
   }

@@ -750,7 +750,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(system.takeError(), json);
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
-  compiler::chooseSkins(*control, *system, /*search=*/false);
+  compiler::SkinChoice skins =
+      compiler::chooseSkins(*control, *system, /*search=*/false);
   if (llvm::Error error = checkManifestPath(control->manifestFile,
           getManifestInputs(controlFile, *control, *system),
           {control->logFile, control->energyFile, control->pullFile,
@@ -760,6 +761,14 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
                getPreviousCheckpointPath(control->restartOutput)}))
     return fail(std::move(error), json);
   Preflight report = inspect(*control);
+  // An entry of the cache of the skins that is refused is replaced by the
+  // next search of its key (D[skin-budget-record]).
+  if (!skins.refused.empty())
+    report.notes.push_back(
+        {"skin_cache_refused",
+         "the entry '" + skins.refusedPath + "' of the cache of the skins is "
+             "refused: " + skins.refused + "; mdir run takes the reaches as "
+             "if there were none, and a search replaces it"});
   for (const auto &[code, message] : system->warnings)
     report.warnings.push_back({code, message});
   checkCutoffJump(*control, *system, report.warnings);

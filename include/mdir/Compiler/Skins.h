@@ -10,6 +10,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,20 @@ struct SkinChoice {
   std::string cachePath;
   /// The seconds the search took, compilations included.
   double seconds = 0.0;
+  /// Whether this run searched (measured candidates and chose among them).
+  bool searched = false;
+  /// The candidates the run afforded (D[skin-budget-record]), once the
+  /// reference was measured; and what it was computed from, as JSON.
+  std::optional<int64_t> budget;
+  llvm::json::Value budgetBasis = nullptr;
+  /// Why nothing was cached although the reference was measured, or empty.
+  std::string notCached;
+  /// Why the entry of the cache for the key was refused, or empty, and its
+  /// file.
+  std::string refused, refusedPath;
+  /// The search that an entry of the cache records, where the choice was
+  /// reused from it: its budget, candidates, reason, and seconds.
+  std::optional<llvm::json::Object> recorded;
   /// The candidates and the result, for the manifest.
   llvm::json::Value toJSON(const driver::Control &control) const;
 };
@@ -71,7 +86,8 @@ SkinChoice chooseSkins(driver::Control &control, const driver::System &system,
                        llvm::raw_ostream *log = nullptr);
 
 /// The key of the cache of a choice for `control` and `system`: the text
-/// that names everything the choice depends on.
+/// that names everything the choice depends on, the build of MDIR included
+/// (the salt of the compile cache, D397).
 std::string getSkinCacheKey(const driver::Control &control,
                             const driver::System &system);
 
