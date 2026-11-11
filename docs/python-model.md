@@ -244,10 +244,14 @@ the log of `mdir run`), `Program.plan["pairlist_distance"]` the reach of the
 lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
 list in nm, `0.0` without one; `Program.plan["pairlist_distance_source"]`
 and `["pruned_distance_source"]` where each came from (`"given"`,
-`"default"`, or `"cached"`), and `["skin_reason"]` why (D281). The key
-of the cache of the skins holds the build ID of the image (D[skin-budget-record]),
-and the extension is an image of its own, which measures no candidates, so
-it does not take a choice that `mdir run` cached. `Program.pipeline` has
+`"default"`, or `"cached"`), and `["skin_reason"]` why (D281), and
+`["skin_cache_key"]` the key of the cache of the skins (`None` where no
+reach is `mdir.Auto`). The key names the build (D[skin-budget-record]): a
+clean build by its commit, LLVM, and the LLVM options of the command line,
+so the extension takes the choice that `mdir run` of the same clean build
+cached; a dirty build (or one whose state is unknown) by the build ID of
+its image as well, and the extension is an image of its own, so it does
+not take the choice of the `mdir` of a dirty build. `Program.pipeline` has
 `md-exec-choose-neighbors{kind=groups}` and the `prune-skin` of
 `md-exec-reuse-neighbors`, so the key of the code that a `Program` keeps
 (D236), which holds the pipeline and the module, tells the structures

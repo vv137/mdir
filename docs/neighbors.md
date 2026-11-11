@@ -607,12 +607,14 @@ reset before the run (`mdrtResetCounts`), so its log counts its own.
 The choice is stored as one JSON file a key, under `MDIR_SKIN_CACHE_DIR`,
 by default `$XDG_CACHE_HOME/mdir/skins` (else `~/.cache/mdir/skins`);
 `MDIR_SKIN_CACHE=off` neither reads nor writes it. The key is the text of
-what the choice depends on: its format (`mdir skins 2`), the salt of the
-compile cache (D397: the build ID of the image, the commit, LLVM, and the
-LLVM options of the command line), so that another build, whose kernels
-may differ, searches anew (D[skin-budget-record]; the Python extension is
-an image of its own, so `mdir.compile` does not take a choice of `mdir
-run`), the version of MDIR, the particle count, a
+what the choice depends on: its format (`mdir skins 2`), the build
+(D[skin-budget-record]): the commit and the dirty flag of MDIR, LLVM's
+version and revision, and the LLVM options of the command line, as in the
+salt of the compile cache (D397), and for a build that is not clean (dirty
+`yes` or `unknown`) the build ID of its image as well, so that another
+build, whose kernels may differ, searches anew, while `mdir` and the Python
+extension of one clean build, two images, share a choice; then the
+version of MDIR, the particle count, a
 hash of the composition (the types, masses, and charges), the cutoff, the
 structure, each reach given as a number or `AUTO`, the name of the device,
 the precision, the time step, the ensemble, its temperature, and whether
