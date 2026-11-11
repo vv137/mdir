@@ -1,6 +1,6 @@
 // The rows of a loop over pairs in lanes on the host (D[host-pair-vector]):
 // full groups of the row read by vector.load, one masked tail whose padding
-// repeats the row's last candidate, a read a lane of the positions and the
+// repeats the row's last candidate and whose mask enters every sum, a read a lane of the positions and the
 // fields, the kernel on vectors of the lanes (llvm.intr.powi for a constant
 // power), the energy summed in f32 in each lane and widened there, and the
 // lanes combined by halving.
@@ -37,6 +37,17 @@ func.func @lj(%x: !vec, %q: !real, %cell: !md.cell) -> (!vec, f64) {
   // CHECK:          %[[PAD:[0-9]+]] = vector.broadcast %[[LAST]] : i32 to vector<4xi32>
   // CHECK:          %[[MASK:[0-9]+]] = vector.create_mask %[[REST]] : vector<4xi1>
   // CHECK:          vector.maskedload %[[ENTRIES]][%[[I]], %[[FULL]]], %[[MASK]], %[[PAD]]
+  // The lanes past the row (the padding, which repeats the last candidate)
+  // are masked out of every sum.
+  // CHECK:          %[[WITHIN:[0-9]+]] = arith.cmpf olt, %{{[0-9]+}}, %{{[0-9]+}} : vector<4xf32>
+  // CHECK:          %[[DISTINCT:[0-9]+]] = arith.cmpi ne, %{{[0-9]+}}, %{{[0-9]+}} : vector<4xindex>
+  // CHECK:          %[[PAIR:[0-9]+]] = arith.andi %[[WITHIN]], %[[DISTINCT]] : vector<4xi1>
+  // CHECK:          %[[KEEP:[0-9]+]] = arith.andi %[[PAIR]], %[[MASK]] : vector<4xi1>
+  // CHECK:          arith.select %[[KEEP]],
+  // CHECK:          arith.select %[[KEEP]],
+  // CHECK:          arith.select %[[KEEP]],
+  // CHECK:          arith.select %[[KEEP]],
+  // CHECK-NOT:      arith.select
   // CHECK:        } else {
   // CHECK:          scf.yield %[[GROUPS]]#0, %[[GROUPS]]#1, %[[GROUPS]]#2, %[[GROUPS]]#3
   // CHECK:        vector.extract_strided_slice %[[TAIL]]#0 {offsets = [0], sizes = [2], strides = [1]}
