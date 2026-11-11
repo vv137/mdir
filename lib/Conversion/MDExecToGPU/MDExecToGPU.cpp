@@ -353,6 +353,12 @@ private:
   llvm::DenseMap<Operation *, Operation *> templateFlagOwners;
   llvm::DenseMap<Operation *, SmallVector<TemplateDeferredFlag>> templateDeferredFlags;
   bool deferTemplateFlag(Operation *, const Flag &, Value start, Value result);
+  /// Where a template writer stores its validity flags into the list's
+  /// host state: just before the refresh that reads them, when it follows
+  /// the writer in its block, so that the wait for the writer's event
+  /// comes after the launches between them (the reciprocal sum); else at
+  /// `builder`'s point.
+  OpBuilder templateFlagStores(OpBuilder &builder, Operation *writer);
   LogicalResult prepareTemplateWriter(OpBuilder &, Location,
       md_exec::ParticleForOp, TemplatePairState &, kernels::TemplateWriterBuffers &,
       bool constrainedHere = false);
@@ -2756,15 +2762,13 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
       templateDeferredFlags.erase(pending);
     }
     Value no = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
-    Operation *first = nullptr;
+    OpBuilder stores = templateFlagStores(builder, after);
     for (int64_t i = 0; i != 5; ++i) {
       Value placeholder = arith::ConstantOp::create(builder, loc, builder.getBoolAttr(false));
-      auto store = memref::StoreOp::create(builder, loc, placeholder,
-          templateState.invalid, ValueRange{createIndex(builder, loc, i)});
-      if (!first) first = store;
+      memref::StoreOp::create(stores, loc, placeholder,
+          templateState.invalid, ValueRange{createIndex(stores, loc, i)});
       events.push_back(validityFlags[i]); starts.push_back(no); results.push_back(placeholder);
     }
-    builder.setInsertionPoint(first);
     replaceWithFlags(builder, loc, events, starts, results);
     return success();
   }
@@ -6155,6 +6159,17 @@ LogicalResult Lowering::planTemplateWriters(func::FuncOp function) {
   return failure(walk.wasInterrupted());
 }
 
+OpBuilder Lowering::templateFlagStores(OpBuilder &builder, Operation *writer) {
+  OpBuilder stores(builder.getContext());
+  stores.setInsertionPoint(builder.getInsertionBlock(), builder.getInsertionPoint());
+  auto plan = templateWriters.find(writer);
+  if (plan == templateWriters.end()) return stores;
+  Operation *refresh = plan->second.refresh;
+  if (refresh->getBlock() == builder.getInsertionBlock() && writer->isBeforeInBlock(refresh))
+    stores.setInsertionPoint(refresh);
+  return stores;
+}
+
 bool Lowering::deferTemplateFlag(Operation *op, const Flag &flag, Value start, Value result) {
   auto owner = templateFlagOwners.find(op);
   if (owner == templateFlagOwners.end()) return false;
@@ -6629,16 +6644,14 @@ LogicalResult Lowering::lowerTemplateParticleFor(md_exec::ParticleForOp op) {
     }
   }
   Value no = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-  Operation *firstStore = nullptr;
+  OpBuilder stores = templateFlagStores(b, op);
   for (int64_t flag = 0; flag != 5; ++flag) {
     // Distinct placeholders have only their own store as a user. Replace
     // them together with deferred constraint results through one event.
     Value placeholder = arith::ConstantOp::create(b, loc, b.getBoolAttr(false));
-    auto store = memref::StoreOp::create(b, loc, placeholder, state.invalid, ValueRange{ix(b, flag)});
-    if (!firstStore) firstStore = store;
+    memref::StoreOp::create(stores, loc, placeholder, state.invalid, ValueRange{ix(stores, flag)});
     eventFlags.push_back(validityFlags[flag]); starts.push_back(no); eventResults.push_back(placeholder);
   }
-  b.setInsertionPoint(firstStore);
   replaceWithFlags(b, loc, eventFlags, starts, eventResults);
   return success();
 }
