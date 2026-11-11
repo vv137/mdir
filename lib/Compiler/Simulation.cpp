@@ -2151,7 +2151,9 @@ llvm::Error Simulation::writeStateFrame() {
     ~Release() { flag = false; }
   } release{busy};
   std::lock_guard<std::mutex> lock(getRunMutex());
-  driver::waitForFrames(*output);
+  // No frame is queued here: the frames of a trajectory written from the
+  // state are not staged (Reports::getProgramFramePeriod), and a change of
+  // the reporters waits for those of the trajectory before.
   downloadState();
   size_t count = system.getNumParticles();
   auto &writer = static_cast<driver::H5MDWriter &>(*output->trajectory);
