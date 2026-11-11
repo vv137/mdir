@@ -630,20 +630,29 @@ An entry (format 2) holds `format`, the `key`, the chosen
 the budget, what it was computed from (`budget_basis`: the policy, the
 share 0.02, the most 7, the estimated seconds of the run, and the seconds
 of a candidate and of its compilation), the reason, the seconds, and the
-candidates. It is taken whole or not at all: an entry that does not parse,
-of another format (format 1 named none), of another key, without the
-reaches, a budget of at least 3, its candidates (at most the budget), its
-reason, or its seconds, or whose chosen reaches are not among its
-candidates, is refused; the run then goes on as without an entry, its log
-says so (`MDIR: skins: the entry '...' of the cache is refused: ...`), a
-search replaces it, and `mdir check` notes it (`skin_cache_refused`).
+candidates. It is taken whole or not at all: an entry that does not parse
+or is not an object, of another format (format 1 named none), of another
+key, without the reaches or with one not positive, without the search, a
+budget of at least 3, its candidates, any candidate, its reason, or its
+seconds, with more candidates than its budget, with a candidate that is
+not an object or lacks its reach, or whose chosen reaches are not among
+its candidates, is refused; the run then goes on as without an entry, its
+log says so (`MDIR: skins: the entry '...' of the cache is refused: ...`),
+a search replaces it, and `mdir check` notes it (`skin_cache_refused`).
+`mdir check --json` gives the key (`run.skins.cache_key`), and
+`Program.plan["skin_cache_key"]` in Python, where a run reads the cache;
+elsewhere it is null, with the reason (`cache_key_reason`), and the driver
+is not asked for the device.
 
 The log names the reaches and where they came from when a key was given
 as `"AUTO"` or the reaches were cached or measured (`MDIR: skins: the
 reach 14 Å, pruned to 8.8 Å (measured: ...; searched now: a budget of 7,
 6 candidates in 95.0 s; stored in '...')`, or `(cached: ...; reused, not
 searched: the search of a budget of 7 recorded 6 candidates in 95.0 s;
-from '...')`), with a line for each candidate. The manifest's `effective`
+from '...')`, or where the budget fell below 3 `(default: ...; not
+searched: the reference alone measured, in 13.2 s, a budget of 0; not
+cached: the budget of 0 is below 3, ...)`), with a line for each
+candidate. The manifest's `effective`
 has `pairlist_distance_source` and `pruned_distance_source` (`given`,
 `default`, `cached`, or `measured`) and `skin_search`: the source, the
 reason, `searched` (whether this run searched), the file of the cache,

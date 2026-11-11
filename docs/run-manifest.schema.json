@@ -260,7 +260,40 @@
                   "type": [
                     "object",
                     "null"
-                  ]
+                  ],
+                  "required": [
+                    "policy",
+                    "share",
+                    "most",
+                    "run_seconds",
+                    "candidate_seconds",
+                    "compile_seconds"
+                  ],
+                  "properties": {
+                    "policy": {
+                      "enum": [
+                        "auto",
+                        "always",
+                        "budget"
+                      ]
+                    },
+                    "share": {
+                      "type": "number"
+                    },
+                    "most": {
+                      "type": "integer"
+                    },
+                    "run_seconds": {
+                      "type": "number"
+                    },
+                    "candidate_seconds": {
+                      "type": "number"
+                    },
+                    "compile_seconds": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
                 },
                 "recorded_reason": {
                   "type": [
