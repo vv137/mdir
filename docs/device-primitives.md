@@ -1015,11 +1015,21 @@ The caller supplies nonnegative integer gap/span thresholds and separate
 scratch buffers. Their physical extent is based on $M=\max(N,1)$, with
 the dummy flag/count initialized to zero for an empty input, so the
 shared scan never receives empty storage. Control readback occurs only
-during a cold plan. The two classes' counts and the number of passes are
-host results; the stable IDs and offsets remain on the device. The
-standalone integer oracle covers empty input, class boundaries even when
-column keys coincide, strict gap equality, rightmost ties, an eleven-pass
-cascade and more than one scan block.
+during a cold plan. A pass after convergence changes nothing, so the
+caller may name a number of passes to run before the controls are first
+read; later passes are read one by one while the last one split a group.
+The template's build passes the passes of the list's previous plan, which
+usually leaves one readback a plan. The device records the last pass that
+split a group, so the passes reported are those the plan needed, however
+many ran unread. The plan clears its starts, lengths and counts once,
+since its segments only grow from pass to pass, and each pass's
+normalizing kernel clears the totals its later kernels add to. The two
+classes' counts and the number of passes are host results; the stable IDs
+and offsets remain on the device. The standalone integer oracle covers
+empty input, class boundaries even when column keys coincide, strict gap
+equality, rightmost ties, an eleven-pass cascade and more than one scan
+block, each with one, one fewer than needed, exactly as many and three
+more unread passes, from scratch that holds a sentinel.
 
 The template adapter quantizes water/solute gap defaults of 0.4/0.3 nm
 and span defaults of 0.9/0.6 nm against the z face width, rounding down
