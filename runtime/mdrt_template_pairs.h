@@ -112,8 +112,11 @@ static void allocateTemplatePairs(struct TemplatePairs *pairs) {
   header[TEMPLATE_PAIR_ROWS] = (int32_t)(pairs->waterGroups + 2 * pairs->atomGroups);
   header[TEMPLATE_PAIR_CAPACITY] = (int32_t)pairs->layout.entries;
   enter();
+  /* A pageable copy may return before its DMA lands, and the shared
+   * stream is non-blocking: wait here so no kernel reads the old words. */
   check(cuMemcpyHtoD((CUdeviceptr)pairs->pairs, header, sizeof(header)),
         "template empty header");
+  check(cuCtxSynchronize(), "template empty header");
 }
 
 static int64_t createTemplatePairs(int64_t waters, int64_t atoms, int64_t entries) {
@@ -213,9 +216,13 @@ int64_t _mlir_ciface_mdrtTemplatePairsCreateMembers(
   pairs->metadata = mgpuMemAlloc((uint64_t)words * sizeof(int32_t), NULL, false);
   allocationTag = NULL;
   /* Synchronous only at initialization: the temporary host memory can be
-   * released immediately, with no outstanding borrowed source. */
+   * released immediately, with no outstanding borrowed source. From
+   * pageable memory the copy may return before its DMA lands, and the
+   * shared stream is non-blocking, so the context is synchronized before
+   * any kernel or copy on that stream reads the metadata. */
   check(cuMemcpyHtoD((CUdeviceptr)pairs->metadata, metadata,
                      (size_t)words * sizeof(int32_t)), "cuMemcpyHtoD");
+  check(cuCtxSynchronize(), "template metadata upload");
   free(metadata);
   mdrtFreeTemplateExclusions(&graph);
   free(host);

@@ -137,6 +137,14 @@ func.func @main() {
   %true = arith.constant true
   func.call @exercise(%false) : (i1) -> ()
   func.call @exercise(%true) : (i1) -> ()
+  // Each exercise uploads fresh metadata and reads it back at once on the
+  // shared stream; repeats expose an upload that has not landed yet.
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %repeats = arith.constant 16 : index
+  scf.for %i = %c0 to %repeats step %c1 {
+    func.call @exercise(%true) : (i1) -> ()
+  }
   func.call @mdrtDeviceTuplesClose(%store) : (!llvm.ptr) -> ()
   func.call @mdrtDeviceActivationClose(%activation) : (!llvm.ptr) -> ()
   return
