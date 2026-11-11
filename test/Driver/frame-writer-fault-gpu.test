@@ -27,8 +27,10 @@
 # MDIR_FRAME_COPY_FAIL=30 takes the wait of the thread for the copies of the
 # frame of step 30 as failed, with the device well: the frames of steps 10
 # and 20 are written, that of 30 and those queued after it are not, and the
-# call of the next frame hands the error to the runtime, which reports it
-# once and ends the process. Without a cell, the same error of the frame of
+# call of a later frame hands the error to the runtime, which reports it
+# once and ends the process: the last row of the log is after step 30 and
+# at most that of step 70, the frames of the ring behind the failing one
+# and the call that waits for a slot. Without a cell, the same error of the frame of
 # step 10 is reported rather than the spread that the frame of step 25
 # meets while the thread still holds it.
 #
@@ -63,14 +65,14 @@
 # RUN: grep -c 'failed with CUDA_ERROR' %t/spread.err | FileCheck %s --check-prefix=ONCE
 # RUN: %python %S/Inputs/dcd_prefix.py %t/two.dcd %t/reference.dcd | FileCheck %s --check-prefix=TWO
 #
-# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_COPY_FAIL=30 not --crash mdir run copy.toml > copy.out 2> copy.err
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDIR_FRAME_COPY_FAIL=30 not --crash mdir run copy.toml > copy.out 2> copy.err
 # RUN: FileCheck %s --check-prefix=COPY < %t/copy.err
 # RUN: grep -c 'failed with CUDA_ERROR' %t/copy.err | FileCheck %s --check-prefix=ONCE
 # RUN: %python %S/Inputs/dcd_prefix.py %t/copy.dcd %t/plain.dcd | FileCheck %s --check-prefix=TWO
 # RUN: grep 'INFO: ' %t/copy.out | tail -n 1 | FileCheck %s --check-prefix=STOP
 #
 # RUN: sed -e 's/two.dcd/held.dcd/' %t/spread.toml > %t/held.toml
-# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 MDIR_FRAME_COPY_FAIL=10 not --crash mdir run held.toml > held.out 2> held.err
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=2000 MDIR_FRAME_COPY_FAIL=10 not --crash mdir run held.toml > held.out 2> held.err
 # RUN: FileCheck %s --check-prefix=EARLIER < %t/held.err
 
 # RUNTIME-NOT: staged frame
@@ -81,6 +83,6 @@
 # TWO: 2 frames, 2 in the header, the first of the reference
 # WAIT: mdrt: cuEventSynchronize of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED
 # COPY: mdrt: cuEventSynchronize (MDIR_FRAME_COPY_FAIL) of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED
-# STOP: INFO: 70 
+# STOP: INFO: {{[4-7]}}0 
 # EARLIER-NOT: the particles spread {{[0-9]}}
 # EARLIER: mdrt: cuEventSynchronize (MDIR_FRAME_COPY_FAIL) of a staged frame failed with CUDA_ERROR_LAUNCH_FAILED

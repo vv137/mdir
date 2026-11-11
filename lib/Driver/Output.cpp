@@ -473,7 +473,10 @@ const StagingFunctions &getStagingFunctions() {
     functions.end = reinterpret_cast<void (*)(void *)>(find("mdrtStagingEnd"));
     // MDIR_STAGING_INCOMPLETE=1, for the tests: the wait is not looked
     // up, as if the runtime lacked it (docs/environment.md).
-    static const bool incomplete = std::getenv("MDIR_STAGING_INCOMPLETE");
+    static const bool incomplete = [] {
+      const char *value = std::getenv("MDIR_STAGING_INCOMPLETE");
+      return value && *value && std::strcmp(value, "0") != 0;
+    }();
     functions.wait = incomplete
                          ? nullptr
                          : reinterpret_cast<int32_t (*)(void *, const char **)>(

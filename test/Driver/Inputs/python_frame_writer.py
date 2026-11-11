@@ -1,5 +1,5 @@
-"""The flush points of a Python simulation with the frames on their own
-thread (D[async-output], #113).
+"""The one wait of a Python simulation for the frames on their own thread
+(D[async-output], #113), at the end of each part.
 
 Usage: python_frame_writer.py ROOT WORK
 

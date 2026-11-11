@@ -8,11 +8,11 @@
 # of a run whose frames are not held back, byte for byte (H5MD by content:
 # every dataset and attribute, the fields that the call takes at its step
 # among them), and so are those of a run stopped at its first checkpoint
-# and continued. The mark that a slot's copies have arrived is a count of
-# the functions of the host that the stream of copies has run for the slot,
-# against its stagings: with each of those functions held back by 20 ms
-# (MDRT_STAGING_MARK_DELAY), so that the function of a frame runs after the
-# slot has been staged again for a later one, the frames are the same.
+# and continued. The mark that a slot's copies have arrived is the number
+# of the staging, which the device writes after the copies: with each mark
+# held back by 20 ms (MDRT_STAGING_MARK_DELAY), so that the mark of a frame
+# lands after the slot has been staged again for a later one, the frames
+# are the same.
 #
 # REQUIRES: hdf5, cuda, h5py
 #
