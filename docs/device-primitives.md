@@ -1349,11 +1349,12 @@ tests ([environment.md](environment.md)), and `MDIR_HOST_CPU` compiles the
 host code for another CPU, such as `x86-64` (SSE2 alone). The lit suite
 pins `scalar`, so that `mdir emit` of a CPU program does not depend on the
 host; the tests of the lanes state $W$.
-The driver checks both variables before it lowers anything
-(`compiler::checkHostEnvironment`): `MDIR_HOST_PAIRS` is `scalar`, `lanes`,
-or `lanes:W` with $W$ a power of two from 1 to 64, and `MDIR_HOST_CPU` a
-64-bit CPU that LLVM's X86 back end knows, whose width counts every
-feature its own imply. Every refusal of the precondition is a remark of
+The driver checks the variables before it lowers anything
+(`compiler::checkHostEnvironment`): for every program, `MDIR_HOST_CPU`, a
+64-bit CPU that LLVM's X86 back end knows, whose width counts each of its
+features and every feature they imply; for a program for the CPU,
+`MDIR_HOST_PAIRS`, `scalar`, `lanes`, or `lanes:W` with $W$ a power of two
+from 1 to 64, which a program for a GPU does not read. Every refusal of the precondition is a remark of
 `explain`. The op's verifier refuses `host(lanes(W))` on a loop whose
 buffers are on a device, so a GPU program cannot carry it.
 
@@ -1412,13 +1413,16 @@ CPU row emit the same code as before.
   lanes on a device, and the kernel types that the lanes would refuse.
 - `test/Conversion/MDExecToLoops/host-pair-lanes.mlir`: the groups, the
   tail, its padding and its mask in every sum, the gathers, `powi`, the
-  widening, and the halving; `host-pair-lanes-invalid.mlir`: the lowering
-  refuses an attribute that fails the precondition.
+  widening, and the halving at $W$ = 4; `host-pair-lanes-w8.mlir`: the
+  halving at $W$ = 8 for the force components and the energy;
+  `host-pair-lanes-invalid.mlir`: the lowering refuses an attribute that
+  fails the precondition.
 - `test/Driver/host-pair-lanes-bound.test`: on the dipeptide in water, a
-  dense system of ten types with exclusions, `lanes(8)` and `lanes(4)`
-  against the scalar row at step 0, in double and mixed precision, every
-  force component and the potential within the bound of the order of a sum
-  (Section 5.1), from a NumPy reference of the terms.
+  dense system of ten types with exclusions, `lanes(8)` and `lanes(4)`,
+  checked to be on every loop over pairs, against the scalar row at step 0,
+  in double and mixed precision, every force component and the potential
+  within the bound of the order of a sum (Section 5.1), from a NumPy
+  reference of the terms of the rows.
 - `test/Driver/host-pair-lanes.test`: `lanes(1)` and the dilute `lanes(8)`
   to the bit, and the deterministic mode across threads, runs, and a host
   of SSE2 alone; `host-pairs-environment.test`: the host's variables, the

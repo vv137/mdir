@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**On the CPU target, a loop over the pairs of the neighbor matrix with the policy `(directed, owner_only)` may run each row $W$ candidates at a time in registers of MLIR's `vector` dialect, the strategy `lanes(W)`, which `md-exec-choose-host-pairs` states on the op where one shared precondition holds and the host's measured policy selects it, and which the host lowering builds with one shared emitter; every other loop, and every loop on an unmeasured host, keeps the scalar row of today.** Issue #554, under #549 (step 4 of D267) and #444. The maintainer ruled on the design on PR #823: one constant $W$ in the deterministic mode, `MDIR_HOST_PAIRS=scalar` pinned in the corpus and the lit suite, f32 tables on the host a separate decision, the one-thread share by the proxy below, and Table 10.9 not measured again.
+**On the CPU target, a loop over the pairs of the neighbor matrix with the policy `(directed, owner_only)` may run each row $W$ candidates at a time in registers of MLIR's `vector` dialect, the strategy `lanes(W)`, which `md-exec-choose-host-pairs` states on the op where one shared precondition holds and either the deterministic mode (on every host) or the host's measured policy selects it, and which the host lowering builds with one shared emitter; every other loop, and outside the deterministic mode every loop on a host without a measured policy of lanes, keeps the scalar row of today.** Issue #554, under #549 (step 4 of D267) and #444. The maintainer ruled on the design on PR #823: one constant $W$ in the deterministic mode, `MDIR_HOST_PAIRS=scalar` pinned in the corpus and the lit suite, f32 tables on the host a separate decision, the one-thread share by the proxy below, and Table 10.9 not measured again.
 
 ## The measurement before the choice (#554, the maintainer on PR #555)
 
@@ -92,8 +92,8 @@ With `explain`, the pass remarks the choice, or the first condition that fails, 
 
 **Switches.**
 
-- `MDIR_HOST_PAIRS=scalar|lanes|lanes:W` overrides the policy for comparisons and tests. The driver parses it before anything is lowered; any other value, and a W that is not a power of two from 1 to 64, is an error of the input that names it. The lit suite sets `scalar` (`test/lit.cfg.py`), so that `mdir emit` of a CPU program does not depend on the host.
-- `MDIR_HOST_CPU=<cpu>` compiles the host code for the CPU that LLVM names, with that CPU's own features (`x86-64`: SSE2 alone). This is how a narrower host is checked here. The driver refuses a name that LLVM's X86 back end does not know as a 64-bit CPU, and `mdir doctor` reports the CPU and the AVX features of the machine that compiles the host code. The compile cache keys a host object by the CPU and its features, and the module holds $W$.
+- `MDIR_HOST_PAIRS=scalar|lanes|lanes:W` overrides the policy for comparisons and tests. The driver parses it before anything is lowered; any other value, and a W that is not a power of two from 1 to 64, is an error of the input of a program for the CPU that names it. A program for a GPU does not read it; `mdir doctor` reports the host code whatever it says, and its check of the CPU, a program for the CPU, fails with the error. The lit suite sets `scalar` (`test/lit.cfg.py`), so that `mdir emit` of a CPU program does not depend on the host.
+- `MDIR_HOST_CPU=<cpu>` compiles the host code for the CPU that LLVM names, with that CPU's own features (`x86-64`: SSE2 alone). This is how a narrower host is checked here. The host code of every program reads it, so the driver refuses, for the CPU or a GPU, a name that LLVM's X86 back end does not know as a 64-bit CPU, and `mdir doctor` reports the CPU and the AVX features of the machine that compiles the host code. The compile cache keys a host object by the CPU and its features, and the module holds $W$.
 
 No control-file key or file format changes.
 
@@ -106,25 +106,25 @@ No control-file key or file format changes.
 - `lanes(1)` gives the scalar row's state after 20 steps on the dipeptide in OPC with PME, in the mixed and double modes.
 - `lanes(8)` gives the scalar row's state on dimers of argon whose rows hold some twenty candidates with one within the cutoff, in both modes.
 
-These two cannot see a wrong tail or reduction: `lanes(1)` has no tail and nothing to combine, and a row with one contributing term gives the same bits in any order. The bound below can.
+These two cannot see a wrong tail or a wrong order of the combination: `lanes(1)` has no tail and nothing to combine, and a row with one contributing term gives the same bits in any order.
 
-**Lanes against the scalar row at the bound of a sum's order.** The lanes add the same terms as the scalar row in another order; the terms are the same numbers, since each op of the kernel is evaluated as the scalar row evaluates it. Two orders of a sum of $n$ terms $t_k$ differ by at most $2\gamma_{n-1}\sum_k \lvert t_k\rvert$, with $\gamma_m = m u/(1 - m u)$ and $u$ the unit roundoff of the row's sum ($2^{-24}$ in mixed precision, $2^{-53}$ in double) [[Higham2002]](../references.md#higham2002). The bound of each atom and component takes $n$ as its candidates within the cutoff and $\sum_k \lvert t_k\rvert$ over every pair within the cutoff, excluded or not, from a reference of the direct terms of the kernel (Lennard-Jones and $\mathrm{erfc}(\beta r)/r$), times 1.01 for the reference's own rounding; counting the excluded pairs only raises the bound. $W$ is pinned: `lanes:8` in mixed precision and `lanes:4` in double (and also `lanes:4` in mixed and `lanes:8` in double on the dipeptide).
+**The order of the combination** is pinned in the IR: lane $l$ with lane $l + W/2$, then $W/4$, down to one, at $W$ = 4 (`host-pair-lanes.mlir`, the energy) and at $W$ = 8, the deterministic width of f32, for the three force components and the energy, which is widened in each lane first (`host-pair-lanes-w8.mlir`). With the halving made to pair each lane with itself (temporarily), both fail. Neither the bound below nor the deterministic properties can see a wrong pairing, since any order of the same terms is within the bound, and the properties compare the lanes with themselves.
 
-- *In the suite* (`test/Driver/host-pair-lanes-bound.test`): the dipeptide in water with PME, ten types, the exclusions of its topology, rows of 83 to 275 candidates, 1,018 of 1,168 not a multiple of 8, so that the tail's padding repeats a candidate that contributes. With the tail's mask removed from the emitter (temporarily, not committed) the largest ratio is 5.7e10.
-- *On the three systems of the timing* (16 threads; the 1-thread runs give the same bits):
+**Lanes against the scalar row at the bound of a sum's order.** The lanes add the same terms as the scalar row in another order; the terms are the same numbers, since each op of the kernel is evaluated as the scalar row evaluates it. Two orders of a sum of $n$ terms $t_k$ differ by at most $2\gamma_{n-1}\sum_k \lvert t_k\rvert$, with $\gamma_m = m u/(1 - m u)$ and $u$ the unit roundoff of the row's sum ($2^{-24}$ in mixed precision, $2^{-53}$ in double) [[Higham2002]](../references.md#higham2002). The bound of each atom and component takes $n$ as the candidates of its row within the cutoff and $\sum_k \lvert t_k\rvert$ over them, from a reference of the direct terms of the kernel (Lennard-Jones and $\mathrm{erfc}(\beta r)/r$), without the excluded pairs of the topology, which the list leaves out, times 1.01 for the reference's own rounding. $W$ is pinned: `lanes:8` and `lanes:4`, and the test checks, from the remarks of the chooser, that every loop over pairs takes `host(lanes(W))`.
 
-| System | Mode, $W$ | Rows (candidates within the cutoff) | max $\lvert\Delta F\rvert$ / bound | median $\lvert\Delta F\rvert$ / bound | max $\lvert\Delta F\rvert$, kJ/mol/nm | $\lvert\Delta U\rvert$ / bound |
+- *In the suite* (`test/Driver/host-pair-lanes-bound.test`): the dipeptide in water with PME and a reach of 1 nm, ten types, the exclusions of its topology, rows of the list of 118 to 371 candidates (the candidates within the reach that are not excluded, by the reference), 1,017 of 1,168 not a multiple of 8 and 862 not a multiple of 4, so that the tail's padding repeats a candidate. Largest ratio to the bound: 0.016 and 0.017 in double, 0.020 and 0.023 in mixed, for `lanes(8)` and `lanes(4)`. A candidate dropped, doubled, or misgathered adds or removes a whole term, which the bound, a few units of $10^{-5}$ of $\sum\lvert t_k\rvert$ in mixed precision and of $10^{-14}$ in double, leaves out in both modes. With the tail's mask removed from the emitter (temporarily) the largest ratio is 5.7e10; with the chooser refusing every loop, the check of the lanes fails.
+- *On the three systems of the timing* (scratch, 16 threads; the 1-thread runs give the same bits):
+
+| System | Mode, $W$ | Candidates within the cutoff | max $\lvert\Delta F\rvert$ / bound | median $\lvert\Delta F\rvert$ / bound | max $\lvert\Delta F\rvert$, kJ/mol/nm | $\lvert\Delta U\rvert$ / bound |
 |---|---|---|---|---|---|---|
-| Dipeptide | mixed, 8 / 4 | 83 to 275 | 0.0058 / 0.0074 | — | 1.2e-3 / 2.0e-3 | 2.6e-6 / 4.4e-6 |
-| Dipeptide | double, 8 / 4 | 83 to 275 | 0.0059 / 0.0068 | — | 2.7e-12 / 3.2e-12 | 0 / 0 |
-| JAC | mixed, 8 | 171 to 251 | 0.0065 | 4.4e-4 | 1.5e-3 | 1.6e-7 |
-| JAC | double, 4 | 171 to 251 | 0.0098 | 4.7e-4 | 3.9e-12 | 0 |
-| TIP3P 103k | mixed, 8 | 64 to 327 | 0.011 | 4.1e-4 | 1.7e-3 | 8.4e-6 |
-| TIP3P 103k | double, 4 | 64 to 327 | 0.0082 | 4.5e-4 | 4.6e-12 | 0 |
-| Cellulose | mixed, 8 | 117 to 287 | 0.010 | 3.7e-4 | 2.2e-3 | 4.2e-8 |
-| Cellulose | double, 4 | 117 to 287 | 0.0091 | 4.0e-4 | 4.1e-12 | 0 |
+| JAC | mixed, 8 | 169 to 244 | 0.12 | 1.1e-3 | 1.5e-3 | 1.0e-5 |
+| JAC | double, 4 | 169 to 244 | 0.12 | 1.2e-3 | 3.9e-12 | 0 |
+| TIP3P 103k | mixed, 8 | 62 to 325 | 0.033 | 8.3e-4 | 1.7e-3 | 1.6e-5 |
+| TIP3P 103k | double, 4 | 62 to 325 | 0.017 | 9.4e-4 | 4.6e-12 | 0 |
+| Cellulose | mixed, 8 | 115 to 279 | 0.20 | 1.1e-3 | 2.2e-3 | 3.9e-6 |
+| Cellulose | double, 4 | 115 to 279 | 0.17 | 1.1e-3 | 4.1e-12 | 0 |
 
-Every force component of every system is within its bound, by a factor of at least 90. The potentials' bounds are loose, since the excluded pairs' Coulomb terms enter them; in double precision the potentials agree to the bit, the rows' differences lying below the total's last place.
+Every force component of every system is within its bound, by a factor of at least 4.9. In double precision the potentials agree to the bit, the rows' differences lying below the total's last place.
 
 **Determinism.** In the deterministic mode with the lanes ($W$ = 8 in f32 and 4 in f64), the states after 20 steps are identical:
 
