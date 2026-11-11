@@ -1521,6 +1521,24 @@ lane 0 writes the work record. The records and their places are unchanged.
 Same profile: 4.4 to 0.5 us/step on ubiquitin OPC; maintenance 27.0 to 24.6
 us/step there and 8.8 to 6.9 on the large OPC box.
 
+Kernel-busy time at 494854ae, 10,000-step captures on the RTX 5090, two
+rounds in alternated order (round 1 / round 2, us/step). Maintenance is
+every `mdir_run_kernel` of the template and main's neighbor build and
+refresh kernels; search is the three candidate kernels.
+
+| System | Main b7d801d9: all, maintenance | 19bbf459: all, maintenance, search | 494854ae: all, maintenance, search |
+|---|---|---|---|
+| Ubiquitin OPC | 114.6/114.4, 22.7/22.6 | 161.5/160.8, 53.9/53.2, 44.6/43.9 | 130.3/130.1, 22.8/22.6, 17.2/17.0 |
+| Ubiquitin TIP3P | 91.2/91.4, 19.7/19.7 | 158.7/156.4, 58.7/56.2, 48.6/46.5 | 124.8/124.4, 24.6/24.3, 18.7/18.3 |
+| Large OPC box | 177.4/177.0, 27.3/27.3 | 170.8/170.9, 13.4/13.3, 8.3/8.3 | 164.0/164.1, 6.8/6.7, 3.4/3.3 |
+
+Template maintenance on ubiquitin OPC is now level with main's neighbor
+build and refresh; the whole step is still 15.7 us/step above main there,
+mostly in evaluation and the per-step writer. In the ubiquitin systems the
+SW and SS searches remain the largest maintenance kernels (about 200 us per
+launch each): their longest rows have four frame subsets, each scanned and
+stepped separately.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
