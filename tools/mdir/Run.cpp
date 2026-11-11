@@ -1563,9 +1563,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           static_cast<long long>(get(9)), static_cast<long long>(get(10)));
       if (int64_t checks = get(12))
         output.log.print("MDIR: template coverage checks %lld: %lld unit pairs within "
-                         "the cutoff, %lld without an entry\n",
+                         "the cutoff, %lld without an entry, %lld duplicate entries\n",
             static_cast<long long>(checks), static_cast<long long>(get(14)),
-            static_cast<long long>(get(13)));
+            static_cast<long long>(get(13)), static_cast<long long>(get(15)));
     }
   } else {
     llvm::consumeError(statistic.takeError());
