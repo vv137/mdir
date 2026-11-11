@@ -39,3 +39,11 @@
 # DOUBLE-AUTO: water.template route: general (MIXED precision is required)
 # FAR-ON: 'water.template = "ON"' cannot apply: its covering reach, {{[0-9.]+}} Å ('pairlist_distance' plus twice {{[0-9.]+}} Å, the larger of the water's extent and the solute units' radius), exceeds half the least face width of the cell, 12.58 Å
 # FAR-AUTO: water.template route: general (its covering reach, {{[0-9.]+}} Å
+# A minimization, whose steps move the X-H bonds that the solute units
+# take as held, takes the general path under AUTO and is refused under ON.
+# RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator = /d' -e '/^time_step = /d' %t/held/control.toml > %t/held/minimize-on.toml
+# RUN: not mdir-water-template-test --select %t/held/minimize-on.toml 2>&1 | FileCheck %s --check-prefix=MINIMIZE-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/minimize-on.toml > %t/held/minimize-auto.toml
+# RUN: mdir-water-template-test --select %t/held/minimize-auto.toml | FileCheck %s --check-prefix=MINIMIZE-AUTO
+# MINIMIZE-ON: 'water.template = "ON"' cannot apply: the program minimizes instead of taking dynamics steps
+# MINIMIZE-AUTO: water.template route: general (the program minimizes instead of taking dynamics steps)
