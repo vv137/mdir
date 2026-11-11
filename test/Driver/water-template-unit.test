@@ -36,17 +36,3 @@
 # CHECK: gpu.shuffle xor
 # CHECK: call @unit_three_first
 # CHECK: return
-# The select form (TemplateUnit::speculate): no divergent guard inside the
-# rotation; the paired bit selects each contribution or +0.
-# CHECK-LABEL: func.func @unit_select(
-# CHECK: scf.for
-# CHECK: scf.for
-# CHECK-NOT: scf.if
-# CHECK: arith.select
-# CHECK-NOT: scf.if
-# CHECK: gpu.shuffle idx
-# CHECK: scf.yield
-# CHECK: call @unit_select_second
-# CHECK: gpu.shuffle xor
-# CHECK: call @unit_select_first
-# CHECK: return

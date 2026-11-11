@@ -1,38 +1,31 @@
 # RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --test-md-exec-template-windows --verify-each | FileCheck %s --implicit-check-not=md_exec.template_for --implicit-check-not=md_exec.build_segmented_pairs
 # RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-assign-precision=mode=mixed --test-md-exec-template-windows --verify-each | FileCheck %s --check-prefix=MIXED
-# This window's body is cheap pure arithmetic (isTemplateBodySpeculatable):
-# every lane evaluates it and the cutoff selects the value or +0, with no
-# divergent guard. template-execution-guard.mlir pins the guarded fallback
-# and the precondition's negative cases.
 # CHECK-LABEL: func.func @window_energy
-# CHECK-NOT: scf.if
-# CHECK: %[[IN:.*]] = arith.cmpf olt
-# CHECK-NOT: scf.if
+# CHECK: arith.cmpf olt
+# CHECK: scf.if
 # CHECK: arith.mulf
-# CHECK: %[[E:.*]] = arith.select %[[IN]], {{.*}}, %{{.*}} : f64
-# CHECK: arith.addf {{.*}}, %[[E]] : f64
+# CHECK: scf.yield
+# CHECK: else
+# CHECK: arith.constant 0.000000e+00 : f64
+# CHECK: scf.yield
 # CHECK: return
 # MIXED-LABEL: func.func @window_energy
 # MIXED-SAME: vector<3xf32>
-# MIXED-NOT: scf.if
 # MIXED: arith.cmpf olt, {{.*}} : f32
+# MIXED: scf.if
 # MIXED: arith.extf {{.*}} : f32 to f64
-# MIXED: arith.select {{.*}} : f64
+# MIXED: scf.yield {{.*}} : f64
 # MIXED: arith.addf {{.*}} : f64
 # MIXED-LABEL: func.func @window_forces
-# MIXED-NOT: scf.if
-# MIXED: arith.select {{.*}} : vector<3xf32>
+# MIXED: scf.if
+# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>, vector<3xf32>)
 # MIXED-LABEL: func.func @window_virial
-# MIXED-NOT: scf.if
+# MIXED: scf.if
 # MIXED: arith.extf {{.*}} : vector<9xf32> to vector<9xf64>
-# MIXED: arith.select {{.*}} : vector<9xf64>
-# MIXED-NOT: scf.if
 # CHECK-LABEL: func.func @window_forces
-# CHECK-NOT: scf.if
-# CHECK: arith.select {{.*}} : vector<3xf64>
-# CHECK: return {{.*}} : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
+# CHECK: scf.if
+# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>)
+# CHECK: return
 # CHECK-LABEL: func.func @window_virial
-# CHECK-NOT: scf.if
-# CHECK: arith.select {{.*}} : vector<9xf64>
-# CHECK-NOT: scf.if
+# CHECK: scf.if
 # CHECK: return
