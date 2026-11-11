@@ -404,7 +404,7 @@ volume of the prism would make $V_R$ about 3% smaller. Without the box test
 each group would test every candidate of its window, about
 $\rho\prod_a(2w_{g,a} + 2R + L_a/N_{\text{cell},a})$ particles, half of
 them after the group, against the 16 members; on JAC that is about 1,800
-candidates against fewer than $\tfrac12\rho V_R \approx 700$ that pass the
+candidates against about $\tfrac12\rho V_R \approx 700$ that pass the
 box test (estimates for a uniform density and the prism).
 
 ### 4.4.4 Frames and images
@@ -482,7 +482,7 @@ The bound holds for every group whatever the positions (a sparse column
 makes a box as wide as the cell), and the run asks it: the builder refuses
 a longer reach for the groups and the runtime stops a run whose barostat
 takes the cell below it, with the factor 0.999 for $\delta_R$ (D242). Where
-the edges exceed $2R$, a pair has at most one image within the reach, so
+the edges exceed $2R'$, about $2R$, a pair has at most one image within the reach, so
 the masks of the entries of a candidate are disjoint and I1 holds with one
 bit for each pair; in a narrower cell a pair has a bit for each of its
 images within the reach, of which the loop finds at most one within the
@@ -584,20 +584,24 @@ magnitude, rounds to f32 with an error of at most $\mathsf uL_a$, two
 positions $2\mathsf uL_a$. The test subtracts the center $y_{g,a}$, which
 lies within $\tfrac32 L_a$ of a wrapped position, from each (an error of
 at most $\tfrac32\mathsf uL_a$ each), takes the minimum image of each
-(the multiple of $L_a$ is exact and the result at most about $\tfrac12
-L_a$, $\tfrac12\mathsf uL_a$ each), and subtracts the two ($\mathsf u$ of
-the result). The center's own rounding cancels, since both displacements
-are taken from the same value. So each component of the computed
-difference is within $6\mathsf uL_a + \mathsf u\lvert d_a\rvert$ of the
-exact one, the vector within $6\mathsf u\lVert\mathbf L\rVert + \mathsf
-uR$ near the reach, and the sum of the squares, the rounding of $R +
+(the result at most about $\tfrac12 L_a$, $\tfrac12\mathsf uL_a$ each),
+and subtracts the two ($\mathsf u$ of the result). The image subtracts an
+integer of magnitude at most 1 times the edge rounded to f32; the product
+is exact, but that edge is within $\mathsf uL_a$ of $L_a$, which adds
+$\mathsf uL_a$ for each displacement, and the shift $\Delta n_a$ of the
+second kernel of Section 4.4.4 times the same edge adds $\mathsf uL_a$
+more. The center's own rounding cancels, since both displacements are
+taken from the same value. So each component of the computed difference
+is within $9\mathsf uL_a + \mathsf u\lvert d_a\rvert$ of the exact one,
+the vector within $9\mathsf u\lVert\mathbf L\rVert + \mathsf uR$ near
+the reach, and the sum of the squares, the rounding of $R +
 \delta_R$, and that of its square add about $3\mathsf uR$ on the distance.
 With $R < \min_a L_a \le \tfrac13\sum_a L_a$, the distance is computed
 within
 
 $$
-6\mathsf u\lVert\mathbf L\rVert + 4\mathsf uR \le 7.4\,\mathsf u\sum_a L_a
-\approx 4.4\times10^{-7}\sum_a L_a < \delta_R .
+9\mathsf u\lVert\mathbf L\rVert + 4\mathsf uR \le 10.4\,\mathsf u\sum_a L_a
+\approx 6.2\times10^{-7}\sum_a L_a < \delta_R .
 \qquad\blacksquare
 $$
 
@@ -612,7 +616,7 @@ keep a pair a little beyond $R$ but never drop one within it;
 `test/Runtime/neighbors-groups-gpu.mlir` checks the lists against every
 pair computed in f64. Of the bound, the rounding of the positions alone is
 at most $2\sqrt3\,\mathsf u\max_aL_a \approx 2\times10^{-7}\max_aL_a$;
-$\delta_R$ is about seven times the whole.
+$\delta_R$ is about five times the whole.
 
 ### 4.4.7 The pool, the sizes, and failures
 
@@ -832,7 +836,8 @@ pruning hides under the loop. A step takes 4 to 6% less from about 6,400
 groups (Cellulose 1465 → 1376 µs, STMV at 4 fs 4710 → 4458;
 `docs/neighbor-groups.md`, Section 11.7). Two costs bound the gain. The
 warps are as many as the groups, where the loop has one for each active
-unit, several a group: on JAC, with about 1,570 groups, they leave the
+unit, several a group: on JAC, with 1,476 to 1,664 groups (the places
+over 16), they leave the
 device partly idle and a step takes 1.2% more. And the kernel holds 94 to
 96 registers a thread, against 72 for each of the two it replaces. The
 loop therefore prunes from 4096 groups by default, which the host decides

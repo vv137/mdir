@@ -313,8 +313,10 @@ the lanes worked (Section 11.2).
 
 **Exclusions** (D100, D105, D106). Before the search the warp gathers the
 excluded partners of its 16 members as keys $(\text{place} \ll 4) \mid u$,
-a member a lane, and sorts them with the bitonic network of the fewest
-values that hold them (64, 128, or 256). A candidate outside the range of
+each member in a lane of each half-warp, the first half taking its partners
+at even positions of its row and the second those at odd ones (two lanes a
+member), and sorts them with the bitonic network of the fewest values
+that hold them (64, 128, or 256). A candidate outside the range of
 the partners' places skips the search; otherwise a binary search finds the
 first key at place $q$, and the walk over the keys of that place clears bit
 $u$ of each. A group whose partners exceed the 256 keys of a warp's memory
@@ -402,7 +404,7 @@ those within $R'$ of the box, with the place in bits 0 to 25 of the queue
 and the code $9(\Delta n_z + 1) + 3(\Delta n_y + 1) + (\Delta n_x + 1)$ in
 bits 26 to 30 (places are fewer than $2^{26}$). Each such image becomes an
 entry with its own mask and its own shift, $\mathbf e$ less $\Delta\mathbf
-n$. With edges longer than $2R$ a pair has at most one image within the
+n$. With edges longer than $2R'$, about $2R$, a pair has at most one image within the
 reach, so the masks of a candidate's entries are disjoint and each pair is
 in one list once; in a narrower cell a pair has a bit for each of its
 images within the reach, and the loop, which tests the cutoff of each,
@@ -834,23 +836,25 @@ component of the difference in the point test of Section 4 carries:
 |---|---|
 | The wrapped positions of the member and the candidate, rounded to f32 | $2\mathsf uL_a$ |
 | $\tilde x - y_a$ for each of the two, with $\lvert\tilde x - y_a\rvert < \tfrac32 L_a$ (the center may lie half a cell outside) | $3\mathsf uL_a$ |
-| The minimum image of each, whose result is at most about $\tfrac12 L_a$ ($\mathrm{round}(\cdot)L_a$ is exact) | $\mathsf uL_a$ |
-| The difference of the two displacements | $\mathsf u\lvert e_a\rvert$ |
+| The minimum image of each, whose result is at most about $\tfrac12 L_a$ | $\mathsf uL_a$ |
+| The edge in that image: the product of $\mathrm{round}(\cdot)$, at most 1 in magnitude, and the edge rounded to f32 is exact, but that edge is within $\mathsf uL_a$ of $L_a$ | $2\mathsf uL_a$ |
+| The shift $\Delta n_a$ times the edge in f32 that the images kernel subtracts (Section 5) | $\mathsf uL_a$ |
+| The difference of the two displacements | $\mathsf u\lvert d_a\rvert$ |
 
 The center $y_a$ itself cancels: both displacements are taken from the
 same rounded value. So the computed difference vector is within
-$6\mathsf u\lVert\mathbf L\rVert + \mathsf uR$ of the exact one between
+$9\mathsf u\lVert\mathbf L\rVert + \mathsf uR$ of the exact one between
 the unrounded positions, and the sum of the squares and the comparison
 with the rounded $R'^2$ add about $3\mathsf uR$ more on the distance. Near
 the reach, with $R < \min_a L_a \le \tfrac13\sum_a L_a$, the distance is
 computed within
 
 $$
-6\mathsf u\,\lVert\mathbf L\rVert + 4\mathsf uR \le 7.4\,\mathsf u
-\sum_a L_a \approx 4.4\times10^{-7}\sum_a L_a
+9\mathsf u\,\lVert\mathbf L\rVert + 4\mathsf uR \le 10.4\,\mathsf u
+\sum_a L_a \approx 6.2\times10^{-7}\sum_a L_a
 $$
 
-of the exact one, about a seventh of $\delta_R$. The box test has errors of
+of the exact one, about a fifth of $\delta_R$. The box test has errors of
 the same order and the same margin. The image that is tested,
 $\mathrm{round}(d_a/L_a)$ in f32, can differ from the nearest one only
 where $\lvert d_a\rvert$ is within a few $\mathsf uL_a$ of $\tfrac12 L_a$;
@@ -939,7 +943,7 @@ the sorts and the boxes, and for each group:
 On JAC ($R$ = 11 Å, $\rho \approx 0.098$ Å$^{-3}$, $d_\text{col} \approx
 8.7$ Å, 11 cells of 5.66 Å a side), a group of the prism of Section 2 reads
 about 3,600 places and tests about 1,800 against its box, of which about
-700 or fewer go on to the 16 point tests: the box test saves more than half
+700 go on to the 16 point tests: the box test saves more than half
 of the point tests. These are estimates for a uniform density, not
 measurements.
 
@@ -1157,7 +1161,7 @@ Sized at the first build, STMV takes at most 433,376 of 541,603 blocks
 (800,328 before) and JAC 9,664 of 12,046 (17,676 before), with no growth
 after the first build. Sixty-four entries a block over $N/16$ bound the
 mean list from above: at most 416 entries a group (6.5 blocks) against
-$\bar n \approx 346$ at STMV ($R$ = 9.5 Å), and at most 419 against 545 at
+$\bar n \approx 346$ at STMV ($R$ = 9.5 Å), and at most 420 against 545 at
 JAC ($R$ = 11 Å). The same test compresses an argon and krypton mixture
 from 18,991 to about 10,260 Å$^3$ under 5000 atm: its lists grow once after
 the first build, and the energies are again those of the matrix to every
@@ -1241,8 +1245,9 @@ suite (11 / 8.6 Å) and TIP3P boxes of four sizes (12 / 9.6 Å),
 µs a step. The column of the groups is the sites over 16; the threshold
 counts the places of a build over 16, empty places included, which is
 larger by up to $63N_\text{col}/16$ (Section 6.2). For JAC, with 49 columns
-of about 480 particles, that count lies between 1,473 and 1,665; the loop
-prototype of Section 11.3 had 1,568.
+of about 480 particles, that count, a multiple of 4 since the places are
+a multiple of 64, lies between 1,476 and 1,664; the loop prototype of
+Section 11.3 had 1,568.
 
 | System | Groups (sites / 16) | RTX 4090: refresh | loop | RTX PRO 6000: refresh | loop |
 |---|---|---|---|---|---|
