@@ -157,9 +157,12 @@ the SW list takes the reach $R+r_\mathrm m+\rho$ and the SS list
 $R+2\rho$ (one $\rho$ for all units, zero without anchored members).
 Each member keeps its own entries, masks, exclusions and 1–4 scaling: a
 unit only selects candidates, so the search and the prune read the
-anchor's reference point for every member (in the member's own packing
-frame, which differs from the anchor's by whole lattice vectors), and the
-displacement test of D80 runs on the anchors alone. Before the first
+anchor's reference point for every member, in the anchor's frame: the
+member's packing cell may differ from the anchor's by whole lattice
+vectors, so that the member's frame lies at the minimum image of its bond
+from the anchor's, and its frame minus its point is that bond, within
+$\rho$, whatever image of the member the input holds. The displacement
+test of D80 runs on the anchors alone. Before the first
 constraint the input's measured member–anchor distances widen $\rho$ for
 that build, as the water extents widen $r_\mathrm m$; afterwards a build
 that measures more than $\rho$ stops the run. Without constrained
@@ -1601,7 +1604,7 @@ subsets, each scanned and stepped separately. Without its survivor steps
 the SW search takes 38 us per launch (a development build with no
 entries), so the steps, not the scan, are the remaining cost.
 
-### S1: heavy-atom solute units and one mobility group
+### U1: heavy-atom solute units and one mobility group
 
 Ruled on #799 (2026-11-11) and taken into this decision: the solute's
 hydrogens set the atom group's pace (the pruning interval of 2.6 steps on
@@ -1617,7 +1620,8 @@ pairs as a tuple relation and $\rho$ as `radius`; the runtime keeps, per
 atom unit, its anchor and up to four members. At a snapshot a member takes
 its anchor's packing cell, corrected by the lattice vector between its raw
 and minimum-image bond, so that it lies in its anchor's image, and the
-anchor's reference point in that frame; it reports the largest
+anchor's reference point in the anchor's frame (U4 corrects an earlier
+form that shifted the point with the member's cell); it reports the largest
 member–anchor distance, which widens $\rho$ at an unconstrained build and
 stops a constrained one beyond $\rho$. In the per-step writer a member
 publishes its frame only; its anchor publishes the reference point for
@@ -1668,7 +1672,7 @@ of the captured kernels, idle the part of it without a kernel.
 | | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 142.8/143.2 | 20.7 |
 | | units | 115.4/115.6 | 13.9/14.0 | 134.1/134.5 | 16.9/16.8 |
 
-The criterion of S1 holds against 6e6dcca4: the step falls by 6.4 us of
+The criterion of U1 holds against 6e6dcca4: the step falls by 6.4 us of
 kernels and 7.6 of wall on OPC, 7.1 and 8.7 on TIP3P, mostly in
 maintenance (21 to 13 and 22 to 14 us/step). It is still above `main`, by
 7.9 us of kernels on OPC and 24.6 on TIP3P. The evaluation is unchanged
@@ -1676,7 +1680,7 @@ maintenance (21 to 13 and 22 to 14 us/step). It is still above `main`, by
 the rarer pruning saves); the per-step writer grows from 9.8 to 11.1
 us/step with the members' points.
 
-### S2: one lattice frame per build
+### U2: one lattice frame per build
 
 The search queries each row once per *frame subset*, the units of its
 group that share a lattice frame $\lfloor\mathbf p\rfloor$ of their
@@ -1701,11 +1705,12 @@ unit crosses a face of the cell. The search, the pruning and the
 evaluation read the same differences of points and of frames, with the
 same image codes. The displacement tests compare the framed position
 shifted by $H\mathbf t$ with the reference point. A member of a solute unit
-keeps its anchor's cell plus a whole lattice vector. The isolated writer
-and frame fixtures keep $\mathbf t=0$.
+keeps its anchor's cell plus a whole lattice vector, and its anchor's
+point. The isolated writer and frame fixtures run with $\mathbf t=0$ and,
+since U4, with the production $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$.
 
 Gates: the 105 template fixtures pass (3 unsupported, as before), and the
-coverage and physical gates of S1 pass with the new points (no site pair
+coverage and physical gates of U1 pass with the new points (no site pair
 without an entry; the template within the mixed criterion at all twenty
 frames). The triclinic path, which takes the sequential central image of
 $\mathbf x-H\mathbf t$, was run once by hand: the 403 waters of the
@@ -1722,22 +1727,22 @@ Evaluation is the template kernel, or main's pair kernel.
 | System | Build | All kernels | Evaluation | Maintenance | Outer entries at the start |
 |---|---|---|---|---|---|
 | Ubiquitin OPC | main | 114.5 | 32.9 | 22.8 | |
-| | S1 (units) | 122.2 | 42.1 | 13.3 | 278,230 |
-| | S2 | 112.8 | 36.8 | 9.1 | 236,129 |
+| | U1 (units) | 122.2 | 42.1 | 13.3 | 278,230 |
+| | U2 | 112.8 | 36.8 | 9.1 | 236,129 |
 | Ubiquitin TIP3P | main | 91.2 | 24.0 | 20.0 | |
-| | S1 | 115.4 | 40.3 | 13.9 | 278,794 |
-| | S2 | 106.6 | 35.4 | 10.0 | 235,557 |
+| | U1 | 115.4 | 40.3 | 13.9 | 278,794 |
+| | U2 | 106.6 | 35.4 | 10.0 | 235,557 |
 | Large OPC box | main | 175.1 | 68.5 | 27.3 | |
 | | 6e6dcca4 | 163.5 | 72.3 | 6.2 | |
-| | S2 | 157.6 | 66.7 | 5.5 | 403,589 |
+| | U2 | 157.6 | 66.7 | 5.5 | 403,589 |
 
-Per search launch on ubiquitin OPC, S1 against S2: WW 152 to 86 us, SW 225
+Per search launch on ubiquitin OPC, U1 against U2: WW 152 to 86 us, SW 225
 to 195, SS 174 to 66. The kernels of ubiquitin OPC are now below main's
 (112.8 against 114.5); TIP3P remains 15.4 above (the writer and the
 standalone constraint kernel, items 1 and 3 of the accounting). The wall
 time is not yet below main: the host waits for the writer's flags before
 it launches the reciprocal sum (16.7 against 8.4 us/step idle on
-ubiquitin OPC), S3 below.
+ubiquitin OPC), U3 below.
 
 An experiment that placed the protein at the edges of the wrapped frame
 (points $[0,1)$ around the cell's origin rather than its middle) had the
@@ -1747,7 +1752,7 @@ above puts the faces at those of the input cell, where solvated inputs
 leave water; a solute that spans more than half a cell still has subsets,
 and the merge of the ruling remains open for that case.
 
-### S3: the writer's flags read after the reciprocal sum is launched
+### U3: the writer's flags read after the reciprocal sum is launched
 
 The per-step writer reduces its five validity flags (outer and inner
 displacement tests of the two partitions of the one mobility group, and
@@ -1763,26 +1768,26 @@ path, where the refresh of the list is the first reader. The flags, their
 values and the refresh decisions are unchanged.
 
 3,000-step captures, RTX 5090, one round in the order main, template
-(us/step; wall and idle as in S1):
+(us/step; wall and idle as in U1):
 
 | System | Build | All kernels | Wall | Idle |
 |---|---|---|---|---|
 | Ubiquitin OPC | main | 114.5 | 124.6 | 8.3 |
-| | S2 | 112.8 | 131.7 | 16.7 |
-| | S3 | 112.5 | 125.0 | 10.0 |
+| | U2 | 112.8 | 131.7 | 16.7 |
+| | U3 | 112.5 | 125.0 | 10.0 |
 | Ubiquitin TIP3P | main | 90.9 | 100.3 | 7.7 |
-| | S2 | 106.6 | 125.6 | 16.9 |
-| | S3 | 106.7 | 118.6 | 9.7 |
+| | U2 | 106.6 | 125.6 | 16.9 |
+| | U3 | 106.7 | 118.6 | 9.7 |
 | Large OPC box | main | 175.0 | 185.4 | 8.6 |
-| | S2 | 157.6 | 175.4 | 15.8 |
-| | S3 | 157.3 | 168.6 | 9.2 |
+| | U2 | 157.6 | 175.4 | 15.8 |
+| | U3 | 157.3 | 168.6 | 9.2 |
 
 The gap from the writer to the PME weights falls from 5.7 to 0.2 us.
 
-### Status after S1 to S3
+### Status after U1 to U3
 
 10,000-step captures, RTX 5090, main b7d801d9 against b78aa15b, two rounds
-in alternated order (round 1 / round 2, us/step; wall and idle as in S1):
+in alternated order (round 1 / round 2, us/step; wall and idle as in U1):
 
 | System | Build | All kernels | Maintenance | Wall | Idle |
 |---|---|---|---|---|---|
@@ -1804,7 +1809,7 @@ evaluation is 35.7 against main's pair kernel of 24.5 (OPC: 36.5 against
 main's fused 9.6 (item 1 of the accounting: the writer rule refuses the
 fusion when TIP3P's four constraint families directly precede it). The
 per-step writer is 11.1 us/step on ubiquitin OPC against main's 2.0
-(item 3), larger by 1.3 than before S1 with the members' points. The
+(item 3), larger by 1.3 than before U1 with the members' points. The
 refresh interval is 53 to 57 steps, the pruning interval 8.2 to 8.6, on
 the three systems. The conserved energy's drift over these runs, fitted to
 the rows of the log, is within the spread of the runs (+0.5 to +3.3 kJ/mol
@@ -1813,6 +1818,64 @@ for 6e6dcca4, with a standard error of about 1.5 per fit).
 
 Gates at b78aa15b: the 105 template fixtures in one run (3 unsupported)
 and the sanitizer tier (3 fixtures) pass.
+
+### U4: corrections from the review of 6a9f03b7..13ba351a
+
+**A member's point.** U1 gave a member its anchor's packing cell plus the
+lattice vector $\mathbf L$ between its raw bond $\mathbf b$ and the
+minimum image $\mathbf b_\mathrm{mi}$ of it, which places its frame at
+$\mathbf x_X + \mathbf b_\mathrm{mi}$ in the anchor's frame, but published the
+anchor's point in that shifted cell: the member's frame minus its point
+was $\mathbf b$, not $\mathbf b_\mathrm{mi}$. Where the input splits an X–H
+bond across a face ($\mathbf L \ne 0$, a file wrapped atom by atom), the
+search took the anchor's image for the member's pairs and dropped them.
+The snapshot now publishes the anchor's point at the anchor's cells, and
+the writer gives each member its anchor's point with no cell offset; the
+members' frames are unchanged. Dipeptide inputs translated so that the
+HH31–CH3 bond of ACE lies across a face, and wrapped atom by atom (14 O–H
+bonds of water split as well), NPT, 100 steps, RTX 5090: before the fix
+the coverage check finds 11,965 of 2,135,966 unit pairs within the cutoff
+without an entry in OPC and 12,451 of 2,149,396 in TIP3P (every one that
+it prints, eight a check, is a pair of the split member); after it none, of 2,135,974 and 2,149,945. These inputs
+are now in the coverage gate.
+
+**Duplicates.** The coverage check also counts an inner entry present twice
+for one (unit, partner, image), and a pair present both as $(u, v,
+\mathbf n)$ and as $(v, u, -\mathbf n)$; `MDIR_TEMPLATE_CHECK_COVERAGE=duplicate`
+counts one entry twice and must make it fail. No gate run has a duplicate.
+
+**Up-front reach.** Selection compares the covering reach, the pairlist
+distance plus twice the larger of $r_\mathrm m$ and $\rho$ (the largest of
+the WW, SW and SS reaches), with half the least face width of the input
+cell (volume over face area, $c_z$ for a reduced dodecahedron): beyond
+it a pair can have two images within the reach, `ON` is refused with both
+lengths, and `AUTO` takes the general path. A barostat that later narrows
+the cell below the bound is not checked again; the runtime's validity
+tests are unchanged.
+
+**Gates added.** The selection fixture prints the route of a control
+file's system: free X–H bonds under `AUTO` (the `hydrogen_bonds` reason),
+double precision (general under `AUTO`, refused under `ON`, and its `AUTO`
+program equal to `OFF`'s in the emit fixture), the reach bound in both
+directions, and a minimization (general under `AUTO`, refused under
+`ON`). A program minimizes or takes dynamics steps, never both, so a
+minimized state reaches the template only as the input of a dynamics run;
+the coverage gate takes an input with HH31 a fifth beyond its bond length,
+whose first, unconstrained build widens $\rho$ by the measured distance,
+and whose constrained builds hold $\rho$ again (149 checks, 1,879,254
+pairs, none without an entry). A rhombic dodecahedron, the triclinic
+fixture replicated twice along each lattice vector (3,224 TIP3P waters,
+$a = 5.2$ nm), PME, NPT, 50 steps: 89 checks, 13,096,424 pairs, none
+without an entry or twice. The refusal of `ON` without constrained
+hydrogens runs with every device hidden. The writer and snapshot fixtures
+also run at the production $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$,
+whose oracle forms the packing cell from the sequential central image of
+$\mathbf x - H\mathbf t$.
+
+Gates at the head of these corrections: the 106 template fixtures in one
+run (3 unsupported) and the sanitizer tier (3 fixtures) pass. The
+dipeptide checks: OPC NPT 309 checks, 3,899,162 pairs; TIP3P NVT 249
+checks, 3,179,900 pairs; none without an entry or twice.
 
 ### Precision contract for the whole search port and future pruning
 
@@ -2432,7 +2495,7 @@ the fused writer's group flags and prepares only stale outer epochs;
 this is not a per-step rebuild policy.
 
 Packing-cell coordinates are f64 values chosen at the outer build,
-integers less one half on each axis since S2 below. The retained-frame emitter reconstructs O/H/H and applies
+integers less one half on each axis since U2 above. The retained-frame emitter reconstructs O/H/H and applies
 those coordinates to the current cell before narrowing. A central-image
 face crossing therefore keeps the frame of existing entry images, and a
 cell change scales the shift rather than reusing its old Cartesian value.
