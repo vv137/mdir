@@ -24,6 +24,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -447,9 +448,9 @@ struct StagingFunctions {
   void *(*create)() = nullptr;
   void *(*copy)(void *, int32_t, const void *, uint64_t) = nullptr;
   void (*end)(void *) = nullptr;
-  int32_t (*wait)(void *) = nullptr;
+  int32_t (*wait)(void *, const char **) = nullptr;
   void (*destroy)(void *) = nullptr;
-  void (*fail)(int32_t) = nullptr;
+  void (*fail)(int32_t, const char *) = nullptr;
   void (*setFailureHook)(void (*)()) = nullptr;
 
   bool isComplete() const {
@@ -470,12 +471,18 @@ const StagingFunctions &getStagingFunctions() {
                                                 uint64_t)>(
         find("mdrtStagingCopy"));
     functions.end = reinterpret_cast<void (*)(void *)>(find("mdrtStagingEnd"));
-    functions.wait =
-        reinterpret_cast<int32_t (*)(void *)>(find("mdrtStagingWait"));
+    // MDIR_STAGING_INCOMPLETE=1, for the tests: the wait is not looked
+    // up, as if the runtime lacked it (docs/environment.md).
+    static const bool incomplete = std::getenv("MDIR_STAGING_INCOMPLETE");
+    functions.wait = incomplete
+                         ? nullptr
+                         : reinterpret_cast<int32_t (*)(void *, const char **)>(
+                               find("mdrtStagingWait"));
     functions.destroy =
         reinterpret_cast<void (*)(void *)>(find("mdrtStagingDestroy"));
     functions.fail =
-        reinterpret_cast<void (*)(int32_t)>(find("mdrtStagingFail"));
+        reinterpret_cast<void (*)(int32_t, const char *)>(
+            find("mdrtStagingFail"));
     functions.setFailureHook = reinterpret_cast<void (*)(void (*)())>(
         find("mdrtSetFailureHook"));
     // Before a failure of the device ends the process, the frames whose
@@ -508,6 +515,8 @@ struct FrameSlot {
 struct FrameFailure {
   std::string message;
   int32_t device = 0;
+  /// The call of the driver that returned `device`.
+  const char *call = "";
 
   bool empty() const { return message.empty() && device == 0; }
 };
@@ -555,13 +564,11 @@ public:
       // registration.
       openCheckpointLibrary();
       static bool registered = [] {
-        std::atexit([] {
-          FrameFailure failure = FrameThread::getFrameThread().wait();
-          if (failure.device)
-            getStagingFunctions().fail(failure.device);
-          if (!failure.message.empty())
-            std::fprintf(stderr, "mdir: %s\n", failure.message.c_str());
-        });
+        // At the exit the frames still queued are written. A run that
+        // ends by its end or by stopRun has waited for them and reported
+        // their failures; an exit of another failure, which has been
+        // reported (waitForCheckpoint), adds none of theirs.
+        std::atexit([] { (void)FrameThread::getFrameThread().wait(); });
         return true;
       }();
       (void)registered;
@@ -672,7 +679,7 @@ static void stopOnFailure(const Output &output, const std::string &message) {
   // error, which came first (D[async-output]).
   FrameFailure earlier = getFrameThread().wait();
   if (earlier.device)
-    getStagingFunctions().fail(earlier.device);
+    getStagingFunctions().fail(earlier.device, earlier.call);
   std::fprintf(stderr, "mdir: %s\n",
                (earlier.message.empty() ? message : earlier.message).c_str());
   std::exit(1);
@@ -1733,12 +1740,26 @@ bool stageFrame(const Output &output, FrameSlot &slot, void *positions,
 }
 
 /// Waits until the copies of `slot` have arrived; the error of the device
-/// if they have not and will not (a kernel failed before they arrived), or
-/// 0.
-int32_t waitForSlot(FrameSlot &slot) {
+/// if they have not and will not (a kernel failed before they arrived),
+/// with the call that returned it in `failure`, or 0.
+int32_t waitForSlot(FrameSlot &slot, FrameFailure &failure) {
   if (!slot.staging)
     return 0;
-  return getStagingFunctions().wait(slot.staging);
+  failure.device = getStagingFunctions().wait(slot.staging, &failure.call);
+  return failure.device;
+}
+
+/// MDIR_FRAME_COPY_FAIL=<step>, for the tests: the thread of the frames
+/// takes the wait for the copies of the frame of that step as failed with
+/// CUDA_ERROR_LAUNCH_FAILED (719), with the device well
+/// (docs/environment.md).
+int64_t getFailingCopy() {
+  static const int64_t step = [] {
+    const char *value = std::getenv("MDIR_FRAME_COPY_FAIL");
+    return value && *value ? std::strtoll(value, nullptr, 10)
+                           : std::numeric_limits<int64_t>::min();
+  }();
+  return step;
 }
 
 } // namespace
@@ -1748,7 +1769,7 @@ void mdir::driver::waitForFrames(Output &output) {
   // The runtime reports an error of the device and ends the process, as at
   // a failure of the device on this thread.
   if (failure.device)
-    getStagingFunctions().fail(failure.device);
+    getStagingFunctions().fail(failure.device, failure.call);
   if (!failure.message.empty())
     stopOnFailure(output, failure.message);
 }
@@ -1783,9 +1804,10 @@ void _mlir_ciface_mdrtStageFrame(int64_t step, void *positions, void *ids) {
   // at this step (D142): the call waits for the copies and checks them
   // here, before the steps go on.
   if (!output.periodic) {
-    if (int32_t device = waitForSlot(*slot)) {
+    FrameFailure copy;
+    if (waitForSlot(*slot, copy)) {
       frames.returnSlot(slot);
-      getStagingFunctions().fail(device);
+      getStagingFunctions().fail(copy.device, copy.call);
       return;
     }
     checkSpread(output, readVectors(&slot->positionView, &slot->idView,
@@ -1811,7 +1833,12 @@ void _mlir_ciface_mdrtStageFrame(int64_t step, void *positions, void *ids) {
         FrameFailure failure;
         // A kernel failed before the copies arrived: the frame is not
         // written, and the runtime reports the failure.
-        if ((failure.device = waitForSlot(*slot)))
+        if (slot->staging && step == getFailingCopy()) {
+          failure.device = 719;
+          failure.call = "cuEventSynchronize (MDIR_FRAME_COPY_FAIL)";
+          return failure;
+        }
+        if (waitForSlot(*slot, failure))
           return failure;
         Clock::time_point arrived = Clock::now();
         if (exact) {

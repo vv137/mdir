@@ -433,8 +433,12 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
                                               double notNumbers,
                                               StridedMemRefType<int64_t, 1> *counts) {
   compiler::Activation *a = runningActivation;
-  // The frames of the part are in the trajectory when it returns to the
-  // host (D[async-output]).
+  // The frames of the part, and the changes of the cell of the trajectory
+  // queued with them, are in the trajectory when it returns to the host
+  // (D[async-output]). The entry gives the host control only here, so this
+  // is the one wait of a simulation for its frames: the changes of the
+  // reporters, a cell set from Python, a checkpoint, a frame of the state,
+  // and the end of the simulation all come after it, with nothing queued.
   if (driver::Output *output = driver::getOutput())
     driver::waitForFrames(*output);
   a->x = *x;
@@ -556,6 +560,8 @@ Simulation::~Simulation() {
   std::lock_guard<std::mutex> lock(getRunMutex());
   // The files of the reports are complete when the simulation ends.
   if (output) {
+    // Gives back the slots of the frames; nothing is queued after the end
+    // of the last part (mdrtPartBoundary).
     driver::finishFrames(*output);
     output->energies.close();
     if (output->trajectory)
@@ -2066,7 +2072,6 @@ llvm::Error Simulation::setReports(const Reports &given) {
       given.frameVelocities != reports.frameVelocities ||
       given.frameForces != reports.frameForces ||
       given.framePeriod != reports.framePeriod) {
-    driver::waitForFrames(out);
     if (out.trajectory)
       out.trajectory->close();
     out.trajectory.reset();
@@ -2151,9 +2156,10 @@ llvm::Error Simulation::writeStateFrame() {
     ~Release() { flag = false; }
   } release{busy};
   std::lock_guard<std::mutex> lock(getRunMutex());
-  // No frame is queued here: the frames of a trajectory written from the
-  // state are not staged (Reports::getProgramFramePeriod), and a change of
-  // the reporters waits for those of the trajectory before.
+  // Nothing is queued for the thread of the frames here: the frames of a
+  // trajectory written from the state are not staged
+  // (Reports::getProgramFramePeriod), and the changes of its cell that a
+  // barostat queues within a part are done at its end (mdrtPartBoundary).
   downloadState();
   size_t count = system.getNumParticles();
   auto &writer = static_cast<driver::H5MDWriter &>(*output->trajectory);
@@ -2175,6 +2181,7 @@ llvm::Error Simulation::writeStateFrame() {
 
 void Simulation::closeReports() {
   std::lock_guard<std::mutex> lock(getRunMutex());
+  // Gives back the slots of the frames, as at the end of the simulation.
   driver::finishFrames(*output);
   output->energies.close();
   output->observables.close();
@@ -2431,7 +2438,6 @@ void Simulation::setCell(const std::array<double, 6> &cell) {
   // The frames of a reporter that is open take the cell from the program
   // only when a barostat changes it.
   if (output->trajectory) {
-    driver::waitForFrames(*output);
     double edges[3], tilts[3];
     for (int k = 0; k != 3; ++k) {
       edges[k] = cell[k] / units::length;
@@ -4069,7 +4075,6 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
   checkpoint.part = runPartNumber;
   checkpoint.outputsPart = outputsPart;
   if (output->hasTrajectory && output->trajectory) {
-    driver::waitForFrames(*output);
     checkpoint.trajectory =
         llvm::sys::path::filename(getReportPath(reports.trajectoryPath)).str();
     checkpoint.frames = output->trajectory->getNumFrames();
