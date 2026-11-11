@@ -5,15 +5,16 @@
 # changes the cell and its tilts, through parts that end between frames and
 # at frames, checkpoints, changes of the reporters, frames of the state
 # with velocities in H5MD, a commit of a cell, the close of the reporters,
-# and the end of a simulation. With each write held back by 100 ms
-# (MDIR_FRAME_WRITE_DELAY), the file holds every frame of a part when the
-# part returns, and the energies, the trajectories, and the checkpoints are
-# those of the same script without the hold, byte for byte (HDF5 by
-# content).
+# and the end of a simulation. With each write held back by 500 ms
+# (MDIR_FRAME_WRITE_DELAY), longer than the 10 steps between two frames on
+# the CPU, the file holds every frame of a part when the part returns, and
+# the energies, the trajectories, and the checkpoints with the frames they
+# count are those of the same script without the hold, byte for byte (HDF5
+# by content).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_frame_writer.py %S/Inputs/triclinic %t/plain | FileCheck %s
-# RUN: env MDIR_FRAME_WRITE_DELAY=100 %mdir_python %S/Inputs/python_frame_writer.py %S/Inputs/triclinic %t/held | FileCheck %s
+# RUN: env MDIR_FRAME_WRITE_DELAY=500 %mdir_python %S/Inputs/python_frame_writer.py %S/Inputs/triclinic %t/held | FileCheck %s
 # RUN: cmp %t/plain/run.dat %t/held/run.dat
 # RUN: cmp %t/plain/run.dcd %t/held/run.dcd
 # RUN: cmp %t/plain/moved.dcd %t/held/moved.dcd
@@ -21,6 +22,8 @@
 # RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/last.h5md %t/held/last.h5md | FileCheck %s --check-prefix=SAME
 # RUN: mdir checkpoint %t/plain/first.h5 %t/held/first.h5 | FileCheck %s --check-prefix=STATES
 # RUN: mdir checkpoint %t/plain/second.h5 %t/held/second.h5 | FileCheck %s --check-prefix=STATES
+# RUN: mdir checkpoint %t/held/first.h5 | FileCheck %s --check-prefix=FIRST
+# RUN: mdir checkpoint %t/held/second.h5 | FileCheck %s --check-prefix=SECOND
 
 # CHECK: frames after step 35 3
 # CHECK: frames after step 60 6
@@ -29,3 +32,5 @@
 # CHECK: done at step 220
 # SAME: identical contents
 # STATES: the states are identical
+# FIRST: trajectory: run.dcd, 10 frames
+# SECOND: trajectory: moved.dcd, 5 frames

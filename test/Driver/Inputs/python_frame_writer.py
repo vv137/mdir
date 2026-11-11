@@ -59,26 +59,21 @@ def dcd_frames(path):
 
 
 def commit_cell(sim, scale):
-    """Commits the cell scaled by `scale`, each water moved rigidly with
-    its oxygen."""
-    at = sim.state()
-    x = at.positions.reshape(-1, 3, 3).copy()
-    x += (x[:, 0, :] * (scale - 1.0))[:, None, :]
-    x = x.reshape(-1, 3)
+    """Commits the cell scaled by `scale`, a small strain, with the
+    positions as they are: the borrow reads and writes the cell alone, so
+    that the commit comes while the thread still holds the frames of the
+    part before it."""
     with sim.borrow() as borrow:
-        ids = np.from_dlpack(borrow.ids).copy()
-        positions = np.from_dlpack(borrow.positions)
-        positions[...] = x[ids]
-        cell = np.from_dlpack(borrow.cell)
-        cell[...] = at.cell.diagonal * scale
-        tilt = np.from_dlpack(borrow.tilt)
-        tilt[...] = at.cell.tilt * scale
-        del positions, cell, tilt
+        cell, tilt = np.from_dlpack(borrow.cell), np.from_dlpack(borrow.tilt)
+        before = cell.copy(), tilt.copy()
+        cell[...] = before[0] * scale
+        tilt[...] = before[1] * scale
+        del cell, tilt
         gc.collect()
         borrow.commit()
     now = sim.state().cell
-    assert np.array_equal(now.diagonal, at.cell.diagonal * scale), (now.diagonal, at.cell.diagonal)
-    assert np.array_equal(now.tilt, at.cell.tilt * scale), (now.tilt, at.cell.tilt)
+    assert np.array_equal(now.diagonal, before[0] * scale), (now.diagonal, before[0])
+    assert np.array_equal(now.tilt, before[1] * scale), (now.tilt, before[1])
     print(f"committed a cell {scale} times the one of step {sim.step}")
 
 
