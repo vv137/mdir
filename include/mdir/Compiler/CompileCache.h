@@ -225,6 +225,24 @@ std::shared_ptr<CacheDirectory> openCacheDirectoryToClear(std::string &path);
 /// (recordCommandLineOptions); and `MDIR_COMPILE_CACHE_SALT_OVERRIDE`, for
 /// tests. The part before the override is computed once per process.
 std::string getCacheSalt();
+/// What the salt of the keys of the cache of the skins is made of
+/// (D[skin-budget-record]): the identity of the image (its build ID), the
+/// version, commit, and dirty flag ("no", "yes", or "unknown") of MDIR, the
+/// version and revision of LLVM, and the lines of the LLVM options of the
+/// command line.
+struct SkinSaltParts {
+  std::string image, version, commit, dirty, llvm, options;
+};
+/// The salt of the skins from its parts: that of getCacheSalt without the
+/// image for a clean build (dirty "no"), so that `mdir` and the Python
+/// extension of one clean build share a choice; with it otherwise, so that
+/// a changed kernel of a development build searches anew.
+std::string composeSkinSalt(const SkinSaltParts &parts);
+/// The salt of this process's keys of the cache of the skins:
+/// composeSkinSalt of its parts, with `MDIR_SKIN_SALT_DIRTY_OVERRIDE` (for
+/// tests) in place of the dirty flag of the build where it is set, and
+/// `MDIR_COMPILE_CACHE_SALT_OVERRIDE` added as getCacheSalt adds it.
+std::string getSkinSalt();
 /// The name of the instruction scheduler before register allocation
 /// (`-pre-RA-sched`) in force now: "default", "fast", or the one of the
 /// command line. A key of generated code takes it when it is taken.

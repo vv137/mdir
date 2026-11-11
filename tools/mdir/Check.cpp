@@ -701,7 +701,13 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                control.getSkinSource(/*outer=*/true)},
               {"pruned_distance_source",
                control.getSkinSource(/*outer=*/false)},
-              {"reason", control.skinReason}}},
+              {"reason", control.skinReason},
+              // The key of the cache of the skins, for "AUTO" reaches
+              // (D[skin-budget-record]).
+              {"cache_key", control.isSkinAuto()
+                                ? Value(mdir::compiler::getSkinCacheKey(control,
+                                                                  system))
+                                : Value(nullptr)}}},
       {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
                                                        : Value(control.restartInput)}};
   if (control.pme) {

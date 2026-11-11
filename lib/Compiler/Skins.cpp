@@ -499,13 +499,13 @@ std::string compiler::getSkinCacheKey(const Control &control,
   std::string composition = llvm::toHex(hash.final(), /*LowerCase=*/true);
   std::string text;
   llvm::raw_string_ostream os(text);
-  // The format of the entry, then the build: the salt of the compile cache
-  // (D397), whose lines name the image's build ID, the commit, LLVM, and
-  // the LLVM options of the command line, so that another build, whose
-  // kernels may differ, does not take this one's choice
-  // (D[skin-budget-record]).
+  // The format of the entry, then the build (getSkinSalt): the commit,
+  // LLVM, and the LLVM options of the command line, and for a build that is
+  // not clean the image's build ID, so that another build, whose kernels
+  // may differ, does not take this one's choice, and `mdir` and the Python
+  // extension of one clean build share it (D[skin-budget-record]).
   os << "mdir skins " << cacheFormat << "\n"
-     << getCacheSalt()
+     << getSkinSalt()
      << "version " << MDIR_VERSION << "\n"
      << "particles " << system.getNumParticles() << "\n"
      << "composition " << composition << "\n"

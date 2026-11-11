@@ -268,6 +268,41 @@ std::string mdir::compiler::getCacheSalt() {
   return salt;
 }
 
+std::string mdir::compiler::composeSkinSalt(const SkinSaltParts &parts) {
+  // A clean build is named by its commit; a dirty one, or one whose state
+  // is unknown, also by its image, since its sources are not the commit's.
+  std::string text = "mdir-skin-salt 1\n";
+  if (parts.dirty != "no")
+    text += "image " + parts.image + "\n";
+  text += "mdir " + parts.version + " commit " + parts.commit + " dirty " +
+          parts.dirty + "\n";
+  text += "llvm " + parts.llvm + "\n";
+  text += parts.options;
+  return text;
+}
+
+std::string mdir::compiler::getSkinSalt() {
+  static const SkinSaltParts fixed = [] {
+    SkinSaltParts parts;
+    parts.image = getImageIdentity();
+    parts.version = MDIR_CACHE_VERSION;
+    parts.commit = MDIR_GIT_COMMIT;
+    parts.dirty = MDIR_GIT_DIRTY;
+    parts.llvm = std::string(LLVM_VERSION_STRING) + " " + LLVM_REVISION;
+    parts.options = describeOptions();
+    return parts;
+  }();
+  SkinSaltParts parts = fixed;
+  if (auto dirty = sys::Process::GetEnv("MDIR_SKIN_SALT_DIRTY_OVERRIDE");
+      dirty && !dirty->empty())
+    parts.dirty = *dirty;
+  std::string salt = composeSkinSalt(parts);
+  if (auto override = sys::Process::GetEnv("MDIR_COMPILE_CACHE_SALT_OVERRIDE");
+      override && !override->empty())
+    salt += "test-salt " + *override + "\n";
+  return salt;
+}
+
 std::optional<std::string> mdir::compiler::hashFile(StringRef path) {
   static std::mutex mutex;
   static std::map<std::string, std::string> hashes;
