@@ -13,3 +13,21 @@
 # OFF: water.template = OFF
 # ON: water.template = ON
 # INVALID: expected one of AUTO, ON, OFF for 'water.template', got 'invalid'
+# The route that selection takes for a system (no device): alanine
+# dipeptide in OPC with its X-H bonds free goes to the general path under
+# AUTO, for the 12 free hydrogens; double precision goes to the general
+# path under AUTO and is refused under ON.
+# RUN: mkdir -p %t/loose %t/held
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/loose OPC NVE 2 --loose
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/loose/control.toml > %t/loose/auto.toml
+# RUN: mdir-water-template-test --select %t/loose/auto.toml | FileCheck %s --check-prefix=LOOSE
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/held OPC NVE 2
+# RUN: mdir-water-template-test --select %t/held/control.toml | FileCheck %s --check-prefix=HELD
+# RUN: sed 's/precision = "MIXED"/precision = "DOUBLE"/' %t/held/control.toml > %t/held/double-on.toml
+# RUN: not mdir-water-template-test --select %t/held/double-on.toml 2>&1 | FileCheck %s --check-prefix=DOUBLE-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/double-on.toml > %t/held/double-auto.toml
+# RUN: mdir-water-template-test --select %t/held/double-auto.toml | FileCheck %s --check-prefix=DOUBLE-AUTO
+# LOOSE: water.template route: general (12 solute hydrogens have no constrained bond to a heavy atom (the solute's units need [constraints] hydrogen_bonds))
+# HELD: water.template route: template (ON was given)
+# DOUBLE-ON: 'water.template = "ON"' cannot apply: MIXED precision is required
+# DOUBLE-AUTO: water.template route: general (MIXED precision is required)

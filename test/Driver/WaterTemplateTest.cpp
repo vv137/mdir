@@ -75,6 +75,18 @@ int main(int argc, char **argv) {
     return runWaterTemplateIRTest();
   if (argc == 2 && std::strcmp(argv[1], "--unit-ir") == 0)
     return runWaterTemplateUnitIRTest();
+  if (argc == 3 && std::strcmp(argv[1], "--select") == 0) {
+    // The route that a control file's system takes, and why.
+    auto c = readControl(argv[2]);
+    if (!c) { llvm::errs() << llvm::toString(c.takeError()) << '\n'; return 1; }
+    auto s = readSystem(*c);
+    if (!s) { llvm::errs() << llvm::toString(s.takeError()) << '\n'; return 1; }
+    auto selected = selectWaterTemplate(*c, *s, 0);
+    if (!selected) { llvm::errs() << llvm::toString(selected.takeError()) << '\n'; return 1; }
+    llvm::outs() << "water.template route: " << (selected->enabled ? "template" : "general")
+                 << " (" << selected->reason << ")\n";
+    return 0;
+  }
   if (argc == 2) {
     auto c = readControl(argv[1]);
     if (!c) { llvm::errs() << llvm::toString(c.takeError()) << '\n'; return 1; }
