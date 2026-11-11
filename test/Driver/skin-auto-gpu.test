@@ -45,8 +45,9 @@
 # RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cc MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run auto.toml > second.log 2>&1
 # RUN: FileCheck %s --check-prefix=CACHED < %t/second.log
 # The second run reused the first one's choice and search, to the bit of
-# each candidate's time: a search again would have timed them anew.
-# RUN: %python -c "import json; a, b = (json.loads(open(f).readline())['effective'] for f in ('%t/first.json', '%t/run.json')); s, t = a['skin_search'], b['skin_search']; print(t['source'], t['searched'], t['seconds'], t['budget'] == s['budget'], t['candidates'] == s['candidates'], t['budget_basis'] == s['budget_basis'], t['recorded_reason'] == s['reason'], (a['pairlist_distance_angstrom'], a['pruned_distance_angstrom']) == (b['pairlist_distance_angstrom'], b['pruned_distance_angstrom']))" | FileCheck %s --check-prefix=REUSED
+# each candidate's time: a search again would have timed them anew. Its
+# recorded reason is the one written into the entry above.
+# RUN: %python -c "import json; a, b = (json.loads(open(f, encoding='utf-8').readline())['effective'] for f in ('%t/first.json', '%t/run.json')); s, t = a['skin_search'], b['skin_search']; print(t['source'], t['searched'], t['seconds'], t['budget'] == s['budget'], t['candidates'] == s['candidates'], t['budget_basis'] == s['budget_basis'], t['recorded_reason'] == '1.0% faster than 12 / 9.6 \u00c5, beyond the noise of 0.6%', (a['pairlist_distance_angstrom'], a['pruned_distance_angstrom']) == (b['pairlist_distance_angstrom'], b['pruned_distance_angstrom']))" | FileCheck %s --check-prefix=REUSED
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run --continue longer.toml > continued.log 2>&1
 # RUN: FileCheck %s --check-prefix=CONTINUED < %t/continued.log
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
