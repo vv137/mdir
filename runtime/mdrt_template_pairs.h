@@ -4,6 +4,7 @@
 #include "mdir/Runtime/TemplateMembership.h"
 #include "mdir/Runtime/TemplateExclusions.h"
 #include <nvtx3/nvToolsExt.h>
+#include <string.h>
 
 struct TemplatePairs {
   struct MdrtTemplatePairLayout layout;
@@ -94,12 +95,13 @@ void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
  * pair within the cutoff of the packed frames it evaluated has an inner
  * entry (a superset of the general path's pairs). */
 static int64_t templateCoverageChecks, templateCoverageMisses;
-static int64_t templateCoveragePairs;
+static int64_t templateCoveragePairs, templateCoverageDuplicates;
 
 int64_t mdrtGetTemplatePairStatistic(int64_t slot) {
   if (slot == 12) return templateCoverageChecks;
   if (slot == 13) return templateCoverageMisses;
   if (slot == 14) return templateCoveragePairs;
+  if (slot == 15) return templateCoverageDuplicates;
   const int64_t values[] = {templateRefreshes, templatePrunes, templateGrowths,
       templateStartEntries, templateEndEntries, templateStartWork,
       templateEndWork, templateStartCapacity, templateEndCapacity};
@@ -669,10 +671,14 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
     double cy) {
   /* A value above one scales the checked cutoff: beyond the lists' reach
    * the check must find pairs without an entry (its own negative test). */
+  /* "duplicate" counts the first inner entry twice: the check of
+   * duplicate entries must then fail (its own negative test). */
   static double scale = -1;
+  static int injectDuplicate;
   if (scale < 0) {
     const char *flag = getenv("MDIR_TEMPLATE_CHECK_COVERAGE");
     scale = flag && strtod(flag, NULL) > 1 ? strtod(flag, NULL) : 1;
+    injectDuplicate = flag && strcmp(flag, "duplicate") == 0;
   }
   cutoff *= scale;
   struct TemplatePairs *pairs = (struct TemplatePairs *)(intptr_t)handle;
@@ -740,7 +746,39 @@ void mdrtTemplatePairsCheckCoverage(int64_t handle, double cutoff, double alpha,
       }
     }
   }
+  if (injectDuplicate && keyCount) {
+    keys[keyCount] = keys[0];
+    ++keyCount;
+  }
   qsort(keys, (size_t)keyCount, sizeof(uint64_t), mdrtCompareTemplatePairKeys);
+  /* Each site pair must be evaluated once: no (unit, partner, image) twice,
+   * and no pair both as (u, v, n) and as (v, u, -n). */
+  int64_t duplicates = 0;
+  for (int64_t k = 0; k != keyCount; ++k) {
+    if (k && keys[k] == keys[k - 1]) {
+      if (duplicates < 8)
+        fprintf(stderr, "mdrt: template coverage: entry %llx appears twice\n",
+                (unsigned long long)keys[k]);
+      ++duplicates;
+      continue;
+    }
+    int64_t first = (int64_t)(keys[k] >> 47), partner = (int64_t)((keys[k] >> 30) & 0x1ffff);
+    int code = (int)(keys[k] & 0x3fffffff), n[3];
+    for (int axis = 0; axis != 3; ++axis)
+      n[axis] = ((code >> (axis * MDRT_TEMPLATE_IMAGE_BITS)) & MDRT_TEMPLATE_IMAGE_MASK) -
+                MDRT_TEMPLATE_IMAGE_OFFSET;
+    int reverse = templateImageCode(-n[0], -n[1], -n[2]);
+    uint64_t mirror = templateCoverageKey(partner, first, reverse);
+    if (mirror != keys[k] && (first < partner || (first == partner && code < reverse)) &&
+        templateHasKey(keys, keyCount, mirror)) {
+      if (duplicates < 8)
+        fprintf(stderr, "mdrt: template coverage: units %lld and %lld, image %d %d %d, "
+                "have entries in both orders\n", (long long)first, (long long)partner,
+                n[0], n[1], n[2]);
+      ++duplicates;
+    }
+  }
+  templateCoverageDuplicates += duplicates;
   /* Sites of each unit, from the frames that were evaluated. */
   int64_t siteRoom = 4 * units + 1;
   double (*site)[3] = malloc((size_t)siteRoom * sizeof(*site));

@@ -5,9 +5,11 @@
 # bonds constrained. The first evaluation is at the unconstrained input.
 # Each site pair within the cutoff (f64, widened by 2^-20 of it, which
 # contains the f32 predicate) must have an inner entry: a superset of the
-# general path's pairs. A check at 1.5 times the cutoff, beyond every inner
-# reach, must find pairs without one, so the check can fail.
-# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/split-opc %t/split-tip3p
+# general path's pairs; and no entry may appear twice, nor a pair in both
+# orders. A check at 1.5 times the cutoff, beyond every inner reach, must
+# find pairs without one, so the check can fail; one that counts an entry
+# twice must find a duplicate.
+# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/twice %t/split-opc %t/split-tip3p
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/opc OPC NPT 200
 # RUN: cd %t/opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/tip3p TIP3P NVT 200
@@ -22,7 +24,11 @@
 # RUN: cd %t/split-tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
 # RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
 # RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
-# CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/twice OPC NVE 4
+# RUN: cd %t/twice && env MDIR_TEMPLATE_CHECK_COVERAGE=duplicate mdir run control.toml 2>&1 | FileCheck %s --check-prefix=TWICE
+# CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries
 # SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
 # WIDE: mdrt: template coverage: units
-# WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry
+# WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
+# TWICE: mdrt: template coverage: entry {{[0-9a-f]+}} appears twice
+# TWICE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, {{[1-9][0-9]*}} duplicate entries
