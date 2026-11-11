@@ -73,7 +73,10 @@ struct TemplateContribution {
 /// given, holds the running site forces, first then second; each pair adds
 /// its terms to them inside its guard, and the returned forces are the
 /// updated totals. Without it the totals start from zero. The returned
-/// sums are this window's alone.
+/// sums are this window's alone. Force pairs are added in an order where
+/// consecutive pairs reach different sites where one exists, and each
+/// pair's bounded constant-table reads are issued one guard ahead.
+/// Sums keep the source order.
 TemplateContribution emitTemplateWindowContributions(
     mlir::OpBuilder &, mlir::Location, mdir::md_exec::TemplateForOp,
     unsigned tag, mlir::IRMapping &, mlir::ValueRange forces = {});
