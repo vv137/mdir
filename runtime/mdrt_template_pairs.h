@@ -104,6 +104,28 @@ void mdrtTemplatePairsStopReach(double reach, double widest, double half) {
   stopWith(message);
 }
 
+/* The solute units' radius that each build held (nm): the first build's,
+ * which an unconstrained input may widen beyond the nominal radius, and the
+ * largest and the count of the later ones, which constraints hold to it. */
+static double templateRadiusNominal, templateRadiusFirst, templateRadiusLater;
+static int64_t templateRadiusBuilds;
+void mdrtTemplatePairsNoteRadius(double radius, double nominal) {
+  templateRadiusNominal = nominal;
+  if (templateRadiusBuilds++ == 0) templateRadiusFirst = radius;
+  else if (templateRadiusBuilds == 2 || radius > templateRadiusLater)
+    templateRadiusLater = radius;
+}
+
+/* Slot 0: the nominal radius, 1: the first build's, 2: the largest later
+ * one (Å); 3: the count of later builds. Zero without solute units. */
+double mdrtGetTemplateRadius(int64_t slot) {
+  if (slot == 0) return 10.0 * templateRadiusNominal;
+  if (slot == 1) return 10.0 * templateRadiusFirst;
+  if (slot == 2) return 10.0 * templateRadiusLater;
+  if (slot == 3) return templateRadiusBuilds ? (double)(templateRadiusBuilds - 1) : 0.0;
+  return 0.0;
+}
+
 void mdrtTemplatePairsNotePrune(int64_t water, int64_t atom) {
   if (water || atom) ++templatePrunes;
 }

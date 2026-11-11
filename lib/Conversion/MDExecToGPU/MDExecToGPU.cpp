@@ -6475,9 +6475,14 @@ LogicalResult Lowering::lowerRefreshTemplatePairs(md_exec::RefreshSegmentedPairs
       Value earlier = memref::LoadOp::create(cold, loc, state.anchorExtent, ValueRange{});
       Value grown = arith::MaximumFOp::create(cold, loc, radius,
           arith::MaximumFOp::create(cold, loc, earlier, math::SqrtOp::create(cold, loc, anchor2)));
-      memref::StoreOp::create(cold, loc,
-          arith::SelectOp::create(cold, loc, constrained, radius, grown),
-          state.anchorExtent, ValueRange{});
+      Value held = arith::SelectOp::create(cold, loc, constrained, radius, grown);
+      memref::StoreOp::create(cold, loc, held, state.anchorExtent, ValueRange{});
+      // A diagnostic of the log: the radius of the first build and of the
+      // later ones, one host call a build.
+      func::CallOp::create(cold, loc,
+          getOrDeclare("mdrtTemplatePairsNoteRadius",
+              cold.getFunctionType({cold.getF64Type(), cold.getF64Type()}, {})),
+          ValueRange{held, radius});
     }
     // The covering reach against the current cell, with the extent and the
     // radius this build holds: the cutoff plus the skin plus twice the

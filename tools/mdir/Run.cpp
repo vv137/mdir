@@ -1672,6 +1672,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                          "the cutoff, %lld without an entry, %lld duplicate entries\n",
             static_cast<long long>(checks), static_cast<long long>(get(14)),
             static_cast<long long>(get(13)), static_cast<long long>(get(15)));
+      if (auto radius = (*engine)->lookup("mdrtGetTemplateRadius")) {
+        auto at = reinterpret_cast<double (*)(int64_t)>(*radius);
+        if (at(0) > 0.0)
+          output.log.print("MDIR: template solute radius %.4f Å, at the first "
+                           "build %.4f Å, at most %.4f Å at %lld later builds\n",
+              at(0), at(1), at(2), static_cast<long long>(at(3)));
+      } else {
+        llvm::consumeError(radius.takeError());
+      }
     }
   } else {
     llvm::consumeError(statistic.takeError());

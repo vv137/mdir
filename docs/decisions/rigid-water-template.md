@@ -1882,7 +1882,10 @@ directions, and a minimization (general under `AUTO`, refused under
 minimized state reaches the template only as the input of a dynamics run;
 the coverage gate takes an input with HH31 a fifth beyond its bond length,
 whose first, unconstrained build widens $\rho$ by the measured distance,
-and whose constrained builds hold $\rho$ again (149 checks, 1,879,254
+and whose constrained builds hold $\rho$ again, as the log's line of the
+radius shows (1.0901 Å nominal, 1.3080 Å at the first build, at most
+1.0901 Å at the later ones; the unstretched inputs hold 1.0901 Å
+throughout) (149 checks, 1,879,254
 pairs, none without an entry). A rhombic dodecahedron, the triclinic
 fixture replicated twice along each lattice vector (3,224 TIP3P waters,
 $a = 5.2$ nm), PME, NPT, 50 steps: 89 checks, 13,096,424 pairs, none
