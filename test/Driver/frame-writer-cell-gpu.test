@@ -1,0 +1,38 @@
+# frame-writer-npt.test and the spread of frame-writer-failure.test on a
+# GPU (D[async-output], #113), with each write held back by 100 ms: the
+# changes of the cell by the barostat go through the queue of the thread
+# of the frames, so the frames of the isotropic run of barostat.test keep
+# the cell of their steps, byte for byte against a run whose frames are not
+# held back; and without a periodic cell the call of a frame waits for the
+# copies from the device and checks the spread before it queues the frame,
+# so the two atoms of no-cell.test stop the run at the frame of step 25.
+#
+# REQUIRES: hdf5, cuda, h5py
+#
+# RUN: rm -rf %t && mkdir -p %t/plain %t/held && split-file %S/barostat.test %t/split && split-file %S/no-cell.test %t
+# RUN: sed -e 's|mixture.pdb|%S/Inputs/mixture.pdb|' -e 's|^steps *= 2000|steps = 400|' \
+# RUN:     -e 's|energy_interval = 1000|energy_interval = 10\nenergy = "iso.txt"\ntrajectory = "iso.dcd"\ntrajectory_interval = 10|' \
+# RUN:     %t/split/run.toml > %t/plain/iso.toml
+# RUN: printf '[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/plain/iso.toml
+# RUN: sed -e 's|iso.dcd|iso.h5md|' -e 's|iso.txt|iso-h5.txt|' %t/plain/iso.toml > %t/plain/iso-h5.toml
+# RUN: cp %t/plain/*.toml %t/held/
+# RUN: cd %t/plain && mdir run iso.toml > /dev/null && mdir run iso-h5.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso.toml > /dev/null
+# RUN: cd %t/held && env MDIR_FRAME_WRITE_DELAY=100 mdir run iso-h5.toml > /dev/null
+# RUN: cmp %t/plain/iso.dcd %t/held/iso.dcd
+# RUN: cmp %t/plain/iso.txt %t/held/iso.txt
+# RUN: %h5md_python %S/Inputs/compare_h5_contents.py %t/plain/iso.h5md %t/held/iso.h5md | FileCheck %s --check-prefix=SAME
+# RUN: %h5md_python -c "import h5py, numpy, sys; e = h5py.File(sys.argv[1], 'r')['particles/all/box/edges/value'][()]; print('frames', len(e), 'cells', len(numpy.unique(e.reshape(len(e), -1), axis=0)))" %t/plain/iso.h5md | FileCheck %s --check-prefix=ISO
+#
+# RUN: sed -e '/^checkpoint/d' -e 's/^energy_interval = 25/energy_interval = 50\ntrajectory = "two.dcd"\ntrajectory_interval = 5/' %t/two.toml > %t/spread.toml
+# RUN: printf '[execution]\ntarget = "GPU"\n' >> %t/spread.toml
+# RUN: sed -e 's/two.dcd/held.dcd/' %t/spread.toml > %t/held.toml
+# RUN: cd %t && not mdir run spread.toml 2>&1 | FileCheck %s --check-prefix=SPREAD
+# RUN: cd %t && env MDIR_FRAME_WRITE_DELAY=100 not mdir run held.toml 2>&1 | FileCheck %s --check-prefix=SPREAD
+# RUN: cmp %t/two.dcd %t/held.dcd
+# RUN: %python %S/Inputs/dcd_prefix.py %t/held.dcd %t/two.dcd | FileCheck %s --check-prefix=FOUR
+
+# SAME: identical contents
+# ISO: frames 40 cells 40
+# SPREAD: mdir: at step 25 the particles spread {{.*}} (D142)
+# FOUR: 4 frames, 4 in the header, the first of the reference
