@@ -229,8 +229,11 @@ The accepted rigid-water execution choice (D[rigid-water-template],
 implementation in progress) is `[performance]` `"water.template"`, with
 values `AUTO` (default), `ON` and `OFF`. This is one quoted dotted key,
 not a nested table. `AUTO` initially selects eligible four-site models
-above an end-to-end measured size floor; `ON` also allows three-site models
-and bypasses that floor. CPU, non-mixed, deterministic and derivative
+above an end-to-end measured size floor, when their covering reach keeps
+a margin below half the least face width of the cell (twice 0.25 Å, and
+5 % of the half width under a barostat); `ON` also allows three-site
+models and bypasses that floor and that margin. CPU, non-mixed,
+deterministic and derivative
 programs remain general and refuse `ON` by name. The choice is recorded
 in the execution fingerprint and may change on continuation. Section 4.7
 and the decision file give the match, force-output and coverage contracts.

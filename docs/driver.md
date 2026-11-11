@@ -117,7 +117,10 @@ whose covering reach (the pairlist distance plus twice the larger of the
 water's covering extent and the solute units' radius) exceeds half the
 least face width of the input cell. Every build of the lists checks the
 bound again with the current cell (a barostat's) and the extent and radius
-that build holds; beyond it the run stops, naming both lengths.
+that build holds; beyond it the run stops, naming both lengths. `AUTO`
+keeps a margin below the bound, the reach plus twice 0.25 Å within half the
+least face width (95 % of it under a barostat), and takes the general path
+beyond it.
 Its [glossary](decisions/rigid-water-template.md#glossary) defines the
 class-segmented pair list, its WW/SW/SS segments, units, anchors, mobility
 groups and refreshes. The template kernel uses rule (A) for dynamics;
