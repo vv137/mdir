@@ -5,10 +5,15 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/DenseSet.h"
+#include <functional>
 #include <optional>
 
 using namespace mlir;
@@ -138,6 +143,71 @@ static Value materializeWindowValue(OpBuilder &builder, Value value,
   builder.clone(*definition, mapping);
   return mapping.lookup(value);
 }
+// An index of a read that a clamp keeps in [0, extent - width]: a
+// constant, or min(max(x, lo), hi) with 0 <= lo and hi <= extent - width.
+static bool clampedInto(Value index, int64_t extent, int64_t width) {
+  if (auto cast = index.getDefiningOp<arith::IndexCastOp>()) index = cast.getIn();
+  APInt value;
+  if (matchPattern(index, m_ConstantInt(&value)))
+    return value.getSExtValue() >= 0 && value.getSExtValue() + width <= extent;
+  auto upper = index.getDefiningOp<arith::MinSIOp>();
+  if (!upper) return false;
+  for (unsigned side = 0; side != 2; ++side) {
+    APInt hi, lo;
+    auto lower = upper->getOperand(1 - side).getDefiningOp<arith::MaxSIOp>();
+    if (!lower || !matchPattern(upper->getOperand(side), m_ConstantInt(&hi))) continue;
+    for (unsigned inner = 0; inner != 2; ++inner)
+      if (matchPattern(lower->getOperand(inner), m_ConstantInt(&lo)))
+        return lo.getSExtValue() >= 0 && hi.getSExtValue() >= 0 &&
+               hi.getSExtValue() + width <= extent;
+  }
+  return false;
+}
+// A read of a constant global table whose every index is clamped into its
+// static shape cannot fault and sees no store.
+static bool isBoundedTableRead(Operation *op) {
+  Value base;
+  ValueRange indices;
+  ArrayRef<int64_t> widths;
+  SmallVector<int64_t> ones;
+  if (auto read = dyn_cast<vector::LoadOp>(op)) {
+    base = read.getBase();
+    indices = read.getIndices();
+    auto type = read.getVectorType();
+    ones.assign(indices.size() - type.getRank(), 1);
+    llvm::append_range(ones, type.getShape());
+  } else if (auto read = dyn_cast<memref::LoadOp>(op)) {
+    base = read.getMemRef();
+    indices = read.getIndices();
+    ones.assign(indices.size(), 1);
+  } else {
+    return false;
+  }
+  widths = ones;
+  auto global = base.getDefiningOp<memref::GetGlobalOp>();
+  auto type = dyn_cast<MemRefType>(base.getType());
+  if (!global || !type || !type.hasStaticShape() || type.getRank() != (int64_t)indices.size())
+    return false;
+  auto definition = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
+      global, global.getNameAttr());
+  if (!definition || !definition.getConstant()) return false;
+  for (auto [index, extent, width] : llvm::zip(indices, type.getShape(), widths))
+    if (!clampedInto(index, extent, width)) return false;
+  return true;
+}
+// Whether `value` of the window body is computed by pure operations and
+// bounded table reads alone, so that it may be computed before a guard.
+static bool isSpeculatable(Value value, Block &source, llvm::DenseSet<Value> &known) {
+  Operation *definition = value.getDefiningOp();
+  if (!definition || definition->getBlock() != &source || known.contains(value)) return true;
+  if (definition->getNumRegions() ||
+      !(isPure(definition) || isBoundedTableRead(definition)))
+    return false;
+  for (Value operand : definition->getOperands())
+    if (!isSpeculatable(operand, source, known)) return false;
+  known.insert(value);
+  return true;
+}
 } // namespace
 
 unsigned mdir::kernels::mapTemplateSiteOffsets(
@@ -216,7 +286,64 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
     bool scatter = column < outs;
     unsigned stride = scatter ? mdir::md::getTemplateForceArity(loop, arity, column, outs) : 1;
     unsigned pairs = loop.getPairs()[tag * columns + column];
-    for (unsigned pair = 0; pair != pairs; ++pair) {
+    auto liveMembers = [&](unsigned pair) {
+      SmallVector<unsigned> members;
+      for (unsigned member = 0; member != stride; ++member)
+        if (!scatter || !matchPattern(
+                yield->getOperand(offset + pair * stride + member), m_AnyZeroFloat()))
+          members.push_back(member);
+      return members;
+    };
+    // Force pairs go in an order where consecutive pairs add to different
+    // sites where one exists, so that neighboring guards stay independent
+    // and their table loads can overlap. Sums keep the source order.
+    SmallVector<unsigned> order;
+    {
+      SmallVector<bool> done(pairs, false);
+      SmallVector<unsigned> last;
+      for (unsigned step = 0; step != pairs; ++step) {
+        unsigned next = pairs;
+        for (unsigned pair = 0; pair != pairs && scatter; ++pair) {
+          if (done[pair]) continue;
+          if (next == pairs) next = pair;
+          auto members = liveMembers(pair);
+          if (llvm::none_of(members, [&](unsigned m) { return llvm::is_contained(last, m); })) {
+            next = pair;
+            break;
+          }
+        }
+        if (!scatter) next = step;
+        done[next] = true;
+        order.push_back(next);
+        last = liveMembers(next);
+      }
+    }
+    // The guarded bodies are predicated and issue anyway. The bounded
+    // table reads of the next pair go before the guard of this one, so that
+    // a read is in flight while the previous pair is evaluated instead of
+    // waiting behind its guard; their values are those of the bodies.
+    auto hoistReads = [&](unsigned pair) {
+      if (!scatter) return;
+      SmallVector<Operation *> reads;
+      llvm::DenseSet<Operation *> seen;
+      std::function<void(Value)> collect = [&](Value value) {
+        Operation *definition = value.getDefiningOp();
+        if (!definition || definition->getBlock() != &source ||
+            !seen.insert(definition).second)
+          return;
+        for (Value operand : definition->getOperands()) collect(operand);
+        if (isBoundedTableRead(definition)) reads.push_back(definition);
+      };
+      for (unsigned member : liveMembers(pair))
+        collect(yield->getOperand(offset + pair * stride + member));
+      llvm::DenseSet<Value> known;
+      for (Operation *read : reads)
+        if (isSpeculatable(read->getResult(0), source, known))
+          materializeWindowValue(builder, read->getResult(0), source, mapping);
+    };
+    if (!order.empty()) hoistReads(order.front());
+    for (auto [position, pair] : llvm::enumerate(order)) {
+      if (position + 1 < order.size()) hoistReads(order[position + 1]);
       Value displacement = materializeWindowValue(builder,
           yield->getOperand(offset + stride * pairs + pair), source, mapping);
       Value square = arith::MulFOp::create(builder, loc, displacement, displacement);
@@ -235,11 +362,7 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
       // the taken branch adds the pair's term, the other keeps the sum. A
       // member that is constant zero in the source adds nothing and is not
       // carried. Reductions keep their zero-started per-pair terms.
-      SmallVector<unsigned> members;
-      for (unsigned member = 0; member != stride; ++member)
-        if (!scatter || !matchPattern(
-                yield->getOperand(offset + pair * stride + member), m_AnyZeroFloat()))
-          members.push_back(member);
+      SmallVector<unsigned> members = liveMembers(pair);
       if (members.empty()) continue;
       auto guarded = scf::IfOp::create(builder, loc, inside,
           [&](OpBuilder &body, Location) {
