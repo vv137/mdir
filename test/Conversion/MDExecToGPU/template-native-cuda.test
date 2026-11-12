@@ -6,6 +6,11 @@
 # RUN: %python %S/../../Integration/Inputs/template_native_oracle.py generate %t.input.mlir %t.reference --triclinic
 # RUN: mdir-opt %t.input.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
 # RUN: FileCheck %s < %t.mlir
+# In a triclinic cell the evaluation takes the cell narrowed to f32 on the
+# host, six f32 kernel parameters, not the f64 cell (U10).
+# RUN: mdir-opt %t.input.mlir --convert-md-exec-to-gpu --gpu-kernel-outlining | FileCheck %s --check-prefix=TRI
+# TRI-LABEL: gpu.func @evaluate_template_for_1(
+# TRI-SAME: %arg{{[0-9]+}}: f32, %arg{{[0-9]+}}: f32, %arg{{[0-9]+}}: f32, %arg{{[0-9]+}}: f32, %arg{{[0-9]+}}: f32, %arg{{[0-9]+}}: f32,
 # CHECK-NOT: builtin.unrealized_conversion_cast
 # CHECK: llvm.func @evaluate
 # CHECK-NOT: builtin.unrealized_conversion_cast

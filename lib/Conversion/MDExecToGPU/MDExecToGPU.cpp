@@ -6860,6 +6860,21 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   Value grid = createGroups(b, loc, threads, blockSize);
   Value launchedThreads;
   if (nativeEpochs) launchedThreads = arith::MulIOp::create(b, loc, grid, block);
+  // A triclinic cell in f32, and the prune's sum of its magnitudes,
+  // narrowed on the host: kernel parameters, which the device reads from
+  // its constant bank where it uses them instead of holding six converted
+  // values in registers across the loops of a record (U10). An
+  // orthorhombic cell stays in f64 and is narrowed in the kernel: narrowed
+  // on the host it moved ptxas's schedule, 3.5 to 3.9 µs a call slower in
+  // the large OPC box and 0.2 to 0.6 in ubiquitin in OPC.
+  Value cell32 = op.getCellMutable().get();
+  bool hostCell = cast<VectorType>(cell32.getType()).getNumElements() == 6;
+  if (hostCell) cell32 = convertReal(b, loc, cell32, b.getF32Type());
+  if (nativeEpochs && hostCell) {
+    pruning.narrowCell = cell32;
+    pruning.cellMagnitude = vector::ReductionOp::create(b, loc, vector::CombiningKind::ADD,
+        math::AbsFOp::create(b, loc, cell32));
+  }
   auto launch = gpu::LaunchOp::create(b, loc, grid, one, one, block, one, one);
   OpBuilder k = OpBuilder::atBlockEnd(&launch.getBody().front());
   Value thread = arith::AddIOp::create(k, loc,
@@ -6912,7 +6927,7 @@ LogicalResult Lowering::lowerTemplateFor(md_exec::TemplateForOp op) {
   for (Value initial : op.getReduce()) zeros.push_back(createZero(k, loc, initial.getType()));
   bool hasSite = cast<MemRefType>(state.members.getType()).getDimSize(1) == 4;
   TemplateWorkBuffers buffers{pairs, workOffset, entryOffset, order, members,
-                               frames, waters, op.getCellMutable().get(), groupLengths, hasSite};
+                               frames, waters, cell32, groupLengths, hasSite};
   auto work = scf::ForOp::create(k, loc, start, end, launched, zeros,
       [&](OpBuilder &body, Location, Value record, ValueRange previous) {
         if (nativeEpochs) emitPruneTemplateWork(body, loc, pruning, record, lane);

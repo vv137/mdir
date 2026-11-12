@@ -18,14 +18,18 @@ static model::PreparedModel route(model::PreparedModel p, unsigned choice) {
   return p;
 }
 int main(int argc,char **argv) {
-  require(argc==3,"expected a control file and a number of frames");
+  // --water: a system of water alone (no solute units, no constrained
+  // X-H bonds), in any cell, as in the reduced triclinic one.
+  require(argc==3||(argc==4&&std::string(argv[3])=="--water"),
+          "expected a control file, a number of frames and optionally --water");
+  bool waterOnly=argc==4;
   unsigned frames=unsigned(std::atoi(argv[2]));
   llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
   model::PreparedModel p;
   p.control=take(driver::readControl(argv[1]));
   p.system=take(driver::readSystem(p.control));driver::resolveNeighborStructure(p.control,p.system);
   p.execution.target=p.control.target;p.execution.precision=p.control.precision;
-  require(!p.system.topology->shakes.empty(),"expected constrained X-H bonds of a solute");
+  require(waterOnly||!p.system.topology->shakes.empty(),"expected constrained X-H bonds of a solute");
   std::array<compiler::CodeStore,3> code;
   auto trajectory=take(compiler::Simulation::create(route(p,0),true,&code[0]));
   unsigned stride=frames?unsigned(p.control.numSteps/frames):0;
@@ -62,8 +66,11 @@ int main(int argc,char **argv) {
       }
       ++solute;
     }
-    soluteBase.rms=std::sqrt(soluteBase.rms/(3*solute));
-    soluteCandidate.rms=std::sqrt(soluteCandidate.rms/(3*solute));
+    require(waterOnly==!solute,"expected solute atoms exactly when not --water");
+    if(solute) {
+      soluteBase.rms=std::sqrt(soluteBase.rms/(3*solute));
+      soluteCandidate.rms=std::sqrt(soluteCandidate.rms/(3*solute));
+    }
     double fb=std::max(1.5*baseline.maximum,1e-5*largest),rb=std::max(1.5*baseline.rms,1e-5*largest);
     double sb=std::max(1.5*soluteBase.maximum,1e-5*largest),srb=std::max(1.5*soluteBase.rms,1e-5*largest);
     double ud=std::abs(s[0].energies->potential-s[2].energies->potential);
@@ -78,5 +85,5 @@ int main(int argc,char **argv) {
     require(soluteCandidate.maximum<=sb&&soluteCandidate.rms<=srb,"template solute forces exceed the mixed criterion");
     require(std::isfinite(ud)&&ud<=ub,"template energy exceeds the mixed criterion");
   }
-  std::cout<<"solvated solute template frames passed"<<std::endl;
+  std::cout<<(waterOnly?"water":"solvated solute")<<" template frames passed"<<std::endl;
 }
