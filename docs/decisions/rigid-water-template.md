@@ -2804,6 +2804,18 @@ limit (293.8 s at cbb03931; the new fixture of item 3, 149 s, now runs
 beside it); alone it passed in 275.8 s. The sanitizer tier (3 fixtures,
 33 s) passed.
 
+After the rebase onto `main` ec32a4f8, with the fixture of item 3 at two
+frames instead of five (35 s alone, 114 s in the gate; it still fails
+when the evaluation's partner shift loses the cell's tilts, or $c_y$
+alone: the template trajectory stops before the first frame, the water
+beyond its covering extent after the position constraints): the same 112
+entries, 108 passed, 3 unsupported, and
+`water-template-anchors-physical-gpu.test` stopped at the 300 s limit
+again; alone it passed in 234.6 s. Its own sixty compilations (ten frames
+of two systems on three routes), beside seven other tests, are what
+reach the limit, not the fixture of item 3. The sanitizer tier (3
+fixtures, 33 s) passed.
+
 **Open, in the evaluation.**
 
 - The dodecahedron in OPC against `main` in TIP3P, the measure of
