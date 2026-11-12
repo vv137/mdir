@@ -1,0 +1,82 @@
+# The generator of the segments of rigid kinds (D[kind-pairs]): what it
+# writes, and what it refuses.
+#
+# RUN: rm -rf %t && mkdir -p %t/opc %t/mixture %t/incomplete %t/outside
+#
+# One kind, three waters of OPC. Its descriptor has D403's weights. Of the
+# 16 site pairs of two waters, segment (0, 0) takes 10: oxygen with oxygen
+# for Lennard-Jones, and the 9 pairs of the charged hydrogens and extra
+# points. The 6 pairs of the oxygen (no charge) with a hydrogen or an extra
+# point (no Lennard-Jones) have a zero charge product and no Lennard-Jones
+# on both sites: they are not written. The first pair is that of the
+# anchors, the next that of the first hydrogens.
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/opc
+# RUN: sed -e 's/TOPOLOGY/three.prmtop/' -e 's/COORDINATES/three.inpcrd/' %S/Inputs/kind-pairs/opc-run.toml > %t/opc/run.toml
+# RUN: mdir emit --stage=module %t/opc/run.toml > %t/opc.mlir
+# RUN: mdir-kind-pairs-test generate %t/opc/run.toml %t/opc.mlir 1 0.087343313000000005 | FileCheck %s --check-prefix=OPC
+#
+# OPC: md.tuple_set @kind_0 on(@atoms) arity(4) orientation(ordered) disjoint
+# OPC-NEXT: md.tuple_set @segment_0_0 on(@atoms) arity(6) orientation(ordered)
+# OPC-NEXT: md.tuple_set @segment_1_0 on(@atoms) arity(4) orientation(ordered)
+# OPC-NEXT: md.tuple_set @segment_1_1 on(@atoms) arity(2) orientation(unordered)
+# OPC-LABEL: md.potential @energy(
+# OPC: md.kind_pairs %{{.*}}, kinds(%{{.*}}) [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.70455878105857583, 0.14772060947071208, 0.14772060947071208], extent = 0.087343313000000005>] exclude(%{{.*}})
+# OPC: md.sum_segment_window %{{.*}}#0, %{{.*}}, %{{.*}} segment(0, 0) cutoff(9.000000e-01) {
+# OPC-NEXT: ^bb0(%[[BASE:arg[0-9]+]]: vector<3xf64>, %[[A1:arg[0-9]+]]: vector<3xf64>, %[[A2:arg[0-9]+]]: vector<3xf64>, %[[B1:arg[0-9]+]]: vector<3xf64>, %[[B2:arg[0-9]+]]: vector<3xf64>):
+# OPC: %[[OO:[0-9]+]] = arith.addf %[[BASE]], %cst : vector<3xf64>
+# OPC-NEXT: arith.subf %[[OO]], %cst_1 : vector<3xf64>
+# OPC-NOT: arith.subf
+# OPC: %[[HH:[0-9]+]] = arith.addf %[[BASE]], %[[A1]] : vector<3xf64>
+# OPC-NEXT: arith.subf %[[HH]], %[[B1]] : vector<3xf64>
+# OPC: md.yield {{.*}} : {{(f64, ){10}(vector<3xf64>, ){9}vector<3xf64>$}}
+# The rest against the kind: its charge and type are gathered, so each of
+# the four places pairs with it.
+# OPC: md.sum_segment_window %{{.*}}#1, %{{.*}}, %{{.*}} segment(1, 0) cutoff(9.000000e-01) gather(
+# OPC: md.yield {{.*}} : {{(f64, ){4}(vector<3xf64>, ){3}vector<3xf64>$}}
+# OPC: md.sum_segment_window %{{.*}}#2, %{{.*}}, %{{.*}} segment(1, 1) cutoff(9.000000e-01) gather(
+# OPC: md.yield {{.*}} : f64, vector<3xf64>
+#
+# Two kinds, TIP3P (kind 0) and four-site waters (kind 1), with the rest
+# (kind 2): six segments, s(f, g) = f (f + 1) / 2 + g. Only those of the rest
+# gather.
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/mixture
+# RUN: mdir emit --stage=module %t/mixture/run.toml > %t/mixture.mlir
+# RUN: mdir-kind-pairs-test generate %t/mixture/run.toml %t/mixture.mlir 1,2 0.1,0.1 --entry | FileCheck %s --check-prefix=TWO
+#
+# TWO: %{{.*}}:6 = md.kind_pairs %{{.*}}, kinds(%{{.*}}, %{{.*}}) [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 1.000000e-01>, #md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.70455878105857583, 0.14772060947071208, 0.14772060947071208], extent = 1.000000e-01>]
+# TWO-SAME: -> (!md.relation<@atoms, 6, ordered, @segment_0_0>, !md.relation<@atoms, 6, ordered, @segment_1_0>, !md.relation<@atoms, 6, ordered, @segment_1_1>, !md.relation<@atoms, 4, ordered, @segment_2_0>, !md.relation<@atoms, 4, ordered, @segment_2_1>, !md.relation<@atoms, 2, unordered, @segment_2_2>)
+# TWO: segment(0, 0) cutoff(9.000000e-01) {
+# TWO: md.yield {{.*}} : {{(f64, ){9}(vector<3xf64>, ){8}vector<3xf64>$}}
+# Four-site against three-site: the oxygen of the first (no charge) with the
+# hydrogens of the second (no Lennard-Jones) is not written, 10 of 12.
+# TWO: segment(1, 0) cutoff(9.000000e-01) {
+# TWO: md.yield {{.*}} : {{(f64, ){10}(vector<3xf64>, ){9}vector<3xf64>$}}
+# TWO: segment(1, 1) cutoff(9.000000e-01) {
+# TWO: md.yield {{.*}} : {{(f64, ){10}(vector<3xf64>, ){9}vector<3xf64>$}}
+# TWO: segment(2, 0) cutoff(9.000000e-01) gather(
+# TWO: md.yield {{.*}} : {{(f64, ){3}(vector<3xf64>, ){2}vector<3xf64>$}}
+# TWO: segment(2, 1) cutoff(9.000000e-01) gather(
+# TWO: md.yield {{.*}} : {{(f64, ){4}(vector<3xf64>, ){3}vector<3xf64>$}}
+# TWO: segment(2, 2) cutoff(9.000000e-01) gather(
+# TWO: md.yield {{.*}} : f64, vector<3xf64>
+# TWO-LABEL: md.function @entry(
+# TWO: md.evaluate @energy({{.*}}) request [energy, forces, virial]
+#
+# The enabling condition: at most two kinds; the ops would take three.
+# RUN: mdir-kind-pairs-test refuse %t/mixture/run.toml 1,2,3 0.1,0.1,0.1 | FileCheck %s --check-prefix=THREE
+# THREE: refused: the pair segments take at most 2 kinds of rigid groups (D[kind-pairs]), not 3
+#
+# A taken kind holds whole molecules: all their own pairs excluded, and no
+# exclusion with another particle (D403's facts).
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/incomplete incomplete
+# RUN: mdir-kind-pairs-test refuse %t/incomplete/run.toml 1,3 0.1,0.1 | FileCheck %s --check-prefix=INCOMPLETE
+# INCOMPLETE: refused: kind 1 has 2 molecules with a pair of their own that is not excluded
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/outside outside
+# RUN: mdir-kind-pairs-test refuse %t/outside/run.toml 1,4 0.1,0.1 | FileCheck %s --check-prefix=OUTSIDE
+# OUTSIDE: refused: kind 1 has 2 molecules with an excluded pair outside the molecule
+#
+# A covering radius for each kind, and a positive one.
+# RUN: mdir-kind-pairs-test refuse %t/mixture/run.toml 1,2 0.1 | FileCheck %s --check-prefix=RADII
+# RADII: refused: expected one covering radius for each kind
+# RUN: mdir-kind-pairs-test refuse %t/mixture/run.toml 1,2 0.1,0 | FileCheck %s --check-prefix=RADIUS
+# RADIUS: refused: expected a positive covering radius of kind 1

@@ -1,0 +1,31 @@
+# Two kinds, K = 2 (D[kind-pairs]): the segments that the generator writes
+# for a system of four kinds, their energies, forces and strains at the IR
+# level against an independent f64 oracle (Inputs/kind_pairs_oracle.py, which
+# states the bound of each component). Every window of each of the six
+# segments is called on every tuple of the system: the outlined bodies with
+# their per-site cutoffs (--test-md-segment-windows), the forces after the
+# constant transpose of the sites.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t
+# RUN: mdir emit --stage=module %t/run.toml > %t/module.mlir
+#
+# TIP3P and the water of four sites with the parameters of OPC (kinds 1 and
+# 2); the rest is the two molecules of three Lennard-Jones atoms and the ion.
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 1,2 0.1,0.1 --entry > %t/waters.mlir
+# RUN: mdir-opt %t/waters.mlir --md-differentiate --test-md-segment-windows > %t/waters-windows.mlir
+# RUN: %python %S/Inputs/kind_pairs_oracle.py emit %t/system.top %t/system.gro %t/waters-windows.mlir SOL,OPC %t/waters-probe.mlir
+# RUN: mlir-opt %t/waters-probe.mlir --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters.txt
+# RUN: %python %S/Inputs/kind_pairs_oracle.py check %t/system.top %t/system.gro SOL,OPC %t/waters.txt | FileCheck %s --check-prefix=WATERS
+#
+# TIP3P and the molecule of three atoms that all have Lennard-Jones (kinds 1
+# and 3); the rest is the two waters of four sites, their sites particles
+# of the rest, and the ion.
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 1,3 0.1,0.15 --entry > %t/lj.mlir
+# RUN: mdir-opt %t/lj.mlir --md-differentiate --test-md-segment-windows > %t/lj-windows.mlir
+# RUN: %python %S/Inputs/kind_pairs_oracle.py emit %t/system.top %t/system.gro %t/lj-windows.mlir SOL,LJ3 %t/lj-probe.mlir
+# RUN: mlir-opt %t/lj-probe.mlir --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/lj.txt
+# RUN: %python %S/Inputs/kind_pairs_oracle.py check %t/system.top %t/system.gro SOL,LJ3 %t/lj.txt | FileCheck %s --check-prefix=LJ
+#
+# WATERS: 6 segments, 60 tuples, 1290 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
+# LJ: 6 segments, 79 tuples, 1654 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
