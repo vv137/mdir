@@ -36,7 +36,7 @@ md.potential @window(%x: !x, %h: !md.cell, %types: !i, %kind: !kind) -> f64 {
 }
 // CHECK: md.gather_segment_window %{{.*}} segment(0, 0) cutoff(1.000000e+00) site_forces {
 // Eight slots, the site of a (place 3) and of b (place 7) among them.
-// CHECK: md.yield %[[Z0:.*]], %[[Z1:.*]], %[[Z2:.*]], %[[F:[0-9]+]], %[[Z4:.*]], %[[Z5:.*]], %[[Z6:.*]], %[[N:[0-9]+]], %{{[0-9]+}} : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
+// CHECK: md.yield %cst{{[_0-9]*}}, %cst{{[_0-9]*}}, %cst{{[_0-9]*}}, %{{[0-9]+}}, %cst{{[_0-9]*}}, %cst{{[_0-9]*}}, %cst{{[_0-9]*}}, %{{[0-9]+}}, %{{[0-9]+}} : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
 md.function @entry(%x: !x, %h: !md.cell, %types: !i, %kind: !kind) -> (f64, !x, vector<9xf64>) {
   %u, %f, %w = md.evaluate @window(%x, %h, %types, %kind) request [energy, forces, virial] : (!x, !md.cell, !i, !kind) -> (f64, !x, vector<9xf64>)
   md.return %u, %f, %w : f64, !x, vector<9xf64>
