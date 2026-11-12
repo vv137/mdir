@@ -2,7 +2,7 @@
 // RUN:     -split-input-file -verify-diagnostics
 
 // The lowering checks the precondition of host(lanes(W)) again
-// (D[host-pair-vector]) and fails on an attribute that it refuses.
+// (D402) and fails on an attribute that it refuses.
 
 !vec = !md.field<@atoms, 3 x f32>
 md.particle_set @atoms

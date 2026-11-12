@@ -1,5 +1,5 @@
 // The order of the lanes of the deterministic width in f32, 8, for the
-// forces and the energy (D[host-pair-vector]): lane l with lane l + 4, then
+// forces and the energy (D402): lane l with lane l + 4, then
 // l + 2, then l + 1, the order of lane 0 of emitWarpReduce. Each force
 // component is combined in f32; the energy is widened in each lane first
 // and combined in f64.

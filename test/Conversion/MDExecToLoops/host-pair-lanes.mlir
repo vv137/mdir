@@ -1,4 +1,4 @@
-// The rows of a loop over pairs in lanes on the host (D[host-pair-vector]):
+// The rows of a loop over pairs in lanes on the host (D402):
 // full groups of the row read by vector.load, one masked tail whose padding
 // repeats the row's last candidate and whose mask enters every sum, a read a lane of the positions and the
 // fields, the kernel on vectors of the lanes (llvm.intr.powi for a constant

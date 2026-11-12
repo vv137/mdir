@@ -39,7 +39,7 @@ if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
 config.environment["MDIR_SKIN_CACHE"] = "off"
 # The rows of the loops over pairs on the host are scalar, so that what
 # `mdir emit` prints for the CPU does not depend on the host; the tests of
-# the lanes state their width (D[host-pair-vector]).
+# the lanes state their width (D402).
 config.environment["MDIR_HOST_PAIRS"] = "scalar"
 # The tests that name CPUs of LLVM's X86 back end (MDIR_HOST_CPU).
 import platform

@@ -41,7 +41,7 @@
 // RUN: | FileCheck %s --check-prefix=BITS
 
 // The rows of the loops over pairs on the host take `host(lanes(W))`
-// (D[host-pair-vector]) where the precondition of HostPairs.h holds and the
+// (D402) where the precondition of HostPairs.h holds and the
 // mode selects it. W is the host's register over the bits of the kernel's
 // type (8 in f32 and 4 in f64 for 256 bits, 16 and 8 for 512), or, in the
 // deterministic mode, 8 and 4 whatever the host. `mode=auto` takes the

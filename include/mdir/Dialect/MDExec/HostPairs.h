@@ -1,5 +1,5 @@
 // The lanes of a row of a loop over pairs on the host and their
-// precondition (D[host-pair-vector], docs/device-primitives.md).
+// precondition (D402, docs/device-primitives.md).
 //
 // On the CPU target a loop over the pairs of the neighbor matrix may run
 // each row `W` candidates at a time in registers of the `vector` dialect,

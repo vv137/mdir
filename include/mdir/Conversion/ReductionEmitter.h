@@ -58,7 +58,7 @@ mlir::Value emitWarpReduce(mlir::OpBuilder &builder, mlir::Location loc,
                            int64_t lanes = 32);
 
 /// The combination of the lanes of `value`, a vector of one dimension
-/// whose length is a power of two, on the host (D[host-pair-vector]): by
+/// whose length is a power of two, on the host (D402): by
 /// halving, lane l with lane l + W/2, then W/4, down to one, the order in
 /// which lane 0 of emitWarpReduce combines a warp. Returns the number.
 mlir::Value emitLaneReduce(mlir::OpBuilder &builder, mlir::Location loc,

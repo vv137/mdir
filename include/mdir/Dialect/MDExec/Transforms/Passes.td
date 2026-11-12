@@ -224,7 +224,7 @@ def ChooseHostPairs
   let description = [{
     Sets `host(lanes(W))` on each `md_exec.pair_for` of a program for the
     CPU where the precondition of include/mdir/Dialect/MDExec/HostPairs.h
-    holds and the mode selects it (D[host-pair-vector]). The host lowering
+    holds and the mode selects it (D402). The host lowering
     then runs each row `W` candidates at a time in registers of the
     `vector` dialect, lane `l` summing the candidates `k = l (mod W)` and
     the lanes combined by halving. Runs after `md-exec-assign-algebra`

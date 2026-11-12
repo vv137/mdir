@@ -1,5 +1,5 @@
 """The lanes of the host's pair rows against the scalar row at a bound of
-the order of a sum (D[host-pair-vector]).
+the order of a sum (D402).
 
     host_pair_lanes_bound.py DIPEPTIDE_DIR MDIR_OPT PRECISION WIDTH...
 

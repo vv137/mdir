@@ -1,4 +1,4 @@
-// What the verifier refuses of host(lanes(W)) (D[host-pair-vector]): a
+// What the verifier refuses of host(lanes(W)) (D402): a
 // width that is not a power of two from 1 to 64, and the lanes on a loop
 // whose buffers are on a device; and the kernel types that the lanes would
 // refuse, which the verifier refuses first.

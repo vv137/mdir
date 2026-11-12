@@ -1,6 +1,6 @@
 // The lanes of the rows of the loops over pairs on the host.
 //
-// See the description of the pass in Passes.td and D[host-pair-vector].
+// See the description of the pass in Passes.td and D402.
 // The precondition is include/mdir/Dialect/MDExec/HostPairs.h, which the
 // lowering checks with the same function; what this pass adds is the
 // width and the policy: whether to take the lanes on this host.

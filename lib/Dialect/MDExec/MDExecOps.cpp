@@ -1025,14 +1025,14 @@ LogicalResult PairForOp::verify() {
                            << stringifyConflict(getConflict())
                            << "': the loop adds only at its centers, each "
                               "by its own thread";
-  // The lanes of a row on the host (D[host-pair-vector]); the rest of the
+  // The lanes of a row on the host (D402); the rest of the
   // precondition is hostpairs::checkLanes, which the lowering applies.
   if (std::optional<int64_t> lanes = getHostLanes())
     if (hostpairs::Refusal refused = hostpairs::checkWidth(*lanes))
       return emitOpError() << "cannot take host(lanes(" << *lanes
                            << ")): " << *refused;
   // The lanes are a strategy of the host: a loop whose buffers are on a
-  // device cannot take them (D[host-pair-vector]).
+  // device cannot take them (D402).
   if (getHostLanes() && isStorageForm())
     if (cast<MemRefType>(getPositions().getType()).getMemorySpace())
       return emitOpError() << "cannot take host(lanes(" << *getHostLanes()

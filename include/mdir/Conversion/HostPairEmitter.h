@@ -1,5 +1,5 @@
 // The emitter of the lanes of a row of a loop over pairs on the host
-// (D[host-pair-vector], include/mdir/Dialect/MDExec/HostPairs.h).
+// (D402, include/mdir/Dialect/MDExec/HostPairs.h).
 // Portability: docs/device-primitives.md, Section 6 (D340): the code is
 // `vector`, `arith`, `math`, and `scf`, and one LLVM intrinsic (`powi`),
 // with no intrinsic of a host written by hand.

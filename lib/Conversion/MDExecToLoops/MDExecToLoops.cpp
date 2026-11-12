@@ -342,7 +342,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   if (op.getTraversal() != md_exec::Traversal::Directed)
     return op.emitOpError()
            << "takes each pair once, which a loop on the host does not do";
-  // The lanes of a row (D[host-pair-vector]): the precondition of the
+  // The lanes of a row (D402): the precondition of the
   // chooser, checked again.
   std::optional<int64_t> hostLanes = op.getHostLanes();
   if (hostLanes)

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The deterministic properties with the lanes of the host pair rows
-# (D[host-pair-vector]): the shipped default of the deterministic mode takes
+# (D402): the shipped default of the deterministic mode takes
 # lanes(8) in f32 and lanes(4) in f64 on every host, while the suite pins
 # MDIR_HOST_PAIRS=scalar, so the tests of these properties ran the scalar
 # row. Here they run with MDIR_HOST_PAIRS unset, the default.

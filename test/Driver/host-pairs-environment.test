@@ -1,4 +1,4 @@
-# The host's variables of the lanes of the pair rows (D[host-pair-vector],
+# The host's variables of the lanes of the pair rows (D402,
 # docs/environment.md), checked by the driver before anything is lowered.
 #
 # 1. MDIR_HOST_CPU names a 64-bit CPU that LLVM's X86 back end knows. An

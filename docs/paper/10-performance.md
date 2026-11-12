@@ -675,7 +675,7 @@ parts no longer rest on rules about the functions a region calls.
 
 The first strategy of #554 runs each row of the loop over pairs eight
 candidates at a time in f32 and four in f64, in vector registers
-(D[host-pair-vector], Section 7.1). Against `main` on the same CPU, in this
+(D402, Section 7.1). Against `main` on the same CPU, in this
 NVE protocol, with 20 windows of the rate a run and their trimmed mean, the
 step takes 1.48 to 1.69 times less time in mixed precision and 1.27 to 1.34
 times less in double on an EPYC 7543, and 1.41 to 1.65 and 1.36 to 1.45

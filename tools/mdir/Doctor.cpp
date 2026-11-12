@@ -275,7 +275,7 @@ bool smokeRun(StringRef executable, StringRef directory, bool gpu,
 /// The machine that compiles the host code (`compiler::createHostMachine`,
 /// with `MDIR_HOST_CPU` where it is set): its CPU and whether it has AVX
 /// and AVX-512, the registers of the lanes of the loops over pairs
-/// (D[host-pair-vector]).
+/// (D402).
 bool describeHost() {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();

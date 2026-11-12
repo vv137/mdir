@@ -1086,7 +1086,7 @@ The reductions of a device are one emitter each,
 | `emitOrderedRegisterSum` | an ordered chain of terms in one thread, held in a register; the caller supplies each term at a constant index | a serial reduction |
 | `emitWarpReduce` | the butterfly over groups of 2 to 32 lanes: offsets `lanes/2`, ..., 1, every lane with the result | `WarpReduceShfl` [[CUB]](references.md#cub) |
 | `emitBlockReduce` | the warps' butterflies, the first lane of each writing to block memory, one barrier, every thread combining the warps in their order (D150) | `BlockReduce` with `BLOCK_REDUCE_WARP_REDUCTIONS` |
-| `emitLaneReduce` | on the host, the lanes of a `vector<W x T>` combined by halving: lane $l$ with lane $l + W/2$, then $W/4$, down to one, the order in which lane 0 of `emitWarpReduce` combines a warp (D[host-pair-vector], Section 7) | — |
+| `emitLaneReduce` | on the host, the lanes of a `vector<W x T>` combined by halving: lane $l$ with lane $l + W/2$, then $W/4$, down to one, the order in which lane 0 of `emitWarpReduce` combines a warp (D402, Section 7) | — |
 
 Every one has a fixed order (the lanes and the warps decide it, not the
 timing of the threads), and so meets each of the three algebras. Sites:
@@ -1290,7 +1290,7 @@ byte-identical PTX as its gate, rather than five new semantic primitives.
 
 The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D350). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.
 
-## 7. Lanes of the host's pair rows (D[host-pair-vector])
+## 7. Lanes of the host's pair rows (D402)
 
 On the CPU target a loop over the pairs of the neighbor matrix with the
 policy `(directed, owner_only)` may run each row $W$ candidates at a time in

@@ -75,7 +75,7 @@ up to 1.3e-15 of the positions after 200 steps, and the deterministic mode
 did not prevent it.
 
 A row of a loop over pairs on the CPU is summed in the order of its list,
-or, with the lanes of D[host-pair-vector], $n_\text{lane}$ candidates at a
+or, with the lanes of D402, $n_\text{lane}$ candidates at a
 time. Each lane adds the candidates whose place in the row is its own
 number modulo $n_\text{lane}$, in the order of their places, and the lanes
 are then combined by halving. The result depends on the list,

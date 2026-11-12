@@ -1,4 +1,4 @@
-# The host's variables in the Python front end (D[host-pair-vector]): a bad
+# The host's variables in the Python front end (D402): a bad
 # MDIR_HOST_PAIRS or MDIR_HOST_CPU is a CompileError of mdir.compile, as of
 # `mdir run` (host-pairs-environment.test), and a good one reaches the
 # pipeline of the program.

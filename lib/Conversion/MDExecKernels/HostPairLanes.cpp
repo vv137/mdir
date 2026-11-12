@@ -1,5 +1,5 @@
 // The lanes of a row of a loop over pairs on the host
-// (D[host-pair-vector]); see include/mdir/Conversion/HostPairEmitter.h.
+// (D402); see include/mdir/Conversion/HostPairEmitter.h.
 //
 // Each value of the kernel is held as its components, one
 // `vector<W x T>` a component (a number has one, a `vector<n x T>` has

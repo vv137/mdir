@@ -805,7 +805,7 @@ Without it, or with `scatter(atomic)`, by an atomic of the device for
 each value. A loop takes no other strategy.
 
 `host(lanes(W))`, which `md-exec-choose-host-pairs` sets on the CPU
-target (D[host-pair-vector], include/mdir/Dialect/MDExec/HostPairs.h),
+target (D402, include/mdir/Dialect/MDExec/HostPairs.h),
 states that the host lowering runs each row `W` candidates at a time
 in registers of the `vector` dialect: lane `l` sums the candidates
 `k = l (mod W)` of the row in increasing `k`, and the lanes are then

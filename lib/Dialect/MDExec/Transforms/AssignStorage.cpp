@@ -961,7 +961,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       // The strategy of the scatter (D291): a loop that overwrites
       // a destination clears it first and then adds to it as well.
       op.getScatterAttr(),
-      // The lanes of a row on the host (D[host-pair-vector]).
+      // The lanes of a row on the host (D402).
       op.getHostLanesAttr());
   algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());

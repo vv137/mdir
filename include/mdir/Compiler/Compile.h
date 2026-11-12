@@ -116,7 +116,7 @@ llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();
 /// which the host code of every program reads, and for a program for the
 /// CPU `MDIR_HOST_PAIRS` (scalar, lanes, or lanes:W with W a power of two
 /// from 1 to 64), which a program for a GPU does not read
-/// (D[host-pair-vector]); a CompileError names the value.
+/// (D402); a CompileError names the value.
 llvm::Error checkHostEnvironment(bool cpuProgram);
 /// The level of LLVM's module pipeline that the host code of a program
 /// takes before the code generator, in both front ends (D269): "O2"

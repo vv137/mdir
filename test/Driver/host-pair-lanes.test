@@ -1,4 +1,4 @@
-# The rows of the loops over pairs on the CPU in lanes (D[host-pair-vector]).
+# The rows of the loops over pairs on the CPU in lanes (D402).
 # The suite pins MDIR_HOST_PAIRS=scalar (lit.cfg.py); these runs state the
 # lanes with MDIR_HOST_PAIRS.
 #

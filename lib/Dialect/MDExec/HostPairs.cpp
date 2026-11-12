@@ -1,5 +1,5 @@
 // The lanes of a row of a loop over pairs on the host and their
-// precondition (D[host-pair-vector]); see
+// precondition (D402); see
 // include/mdir/Dialect/MDExec/HostPairs.h.
 
 #include "mdir/Dialect/MDExec/HostPairs.h"
@@ -131,14 +131,14 @@ int64_t hostpairs::getDeterministicLanes(Type element) {
 
 std::optional<hostpairs::Policy> hostpairs::findPolicy(StringRef cpu) {
   // The hosts whose measurement made the lanes their default
-  // (D[host-pair-vector]); every other host, measured or not, keeps the
+  // (D402); every other host, measured or not, keeps the
   // scalar row outside the deterministic mode.
   static const Policy policies[] = {
       // The NVE step of JAC, TIP3P 103k, and Cellulose against main took
       // 1.27 to 1.69 times less time with the lanes on an EPYC 7543 (Zen 3,
       // AVX2: 8 lanes in f32, 4 in f64) and 1.36 to 1.65 times less on an
       // EPYC 9354 (Zen 4, AVX-512: 16 and 8), beyond the spread of the runs
-      // (D[host-pair-vector]); the maintainer ruled to keep the entry of
+      // (D402); the maintainer ruled to keep the entry of
       // znver4 (PR #823).
       {"znver3", "lanes measured faster on an EPYC 7543"},
       {"znver4", "lanes measured faster on an EPYC 9354"},
