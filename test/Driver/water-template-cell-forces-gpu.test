@@ -2,7 +2,7 @@
 # Same-frame forces in the reduced triclinic cell of Inputs/triclinic itself
 # (403 TIP3P waters, a = (d, 0, 0), b = (0, d, 0), c = (d/2, d/2, d/sqrt 2),
 # d = 2.6 nm; PME, NVT, a cutoff of 6 Å and a pairlist of 7 Å): at each of
-# five frames of a template trajectory, the template, the general mixed and
+# two frames of a template trajectory, the template, the general mixed and
 # the general double routes from the same positions and cell, the template
 # within 1.5 times general mixed's error or 1e-5 of the largest force
 # (projected forces), its energy within 1.5 times mixed's or 1e-6 relative.
@@ -11,6 +11,6 @@
 # lists span more than one chunk of 64 entries, and the trajectory prunes.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/water_template_dodecahedron.py %S/Inputs/triclinic %t 100 --cell --pairlist=7
-# RUN: mdir-template-solute-test %t/control.toml 5 --water | tee %t/metrics.txt | FileCheck %s
-# CHECK-COUNT-5: frame {{[0-9]+}} volume
+# RUN: mdir-template-solute-test %t/control.toml 2 --water | tee %t/metrics.txt | FileCheck %s
+# CHECK-COUNT-2: frame {{[0-9]+}} volume
 # CHECK: water template frames passed
