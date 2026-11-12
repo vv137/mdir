@@ -69,6 +69,48 @@ void mdrtTemplatePairsSnapshotOccupancy(int64_t handle, int64_t first) {
   for (int64_t unit = 0; unit != work; ++unit)
     innerEntries += (int64_t)inner[4 * unit + 3] - inner[4 * unit + 2];
   free(inner);
+  /* PROTOTYPE (proto/water-group-8): the shape of the inner lists by class,
+   * printed when MDIR_TEMPLATE_GROUP_STATS is set: records, entries, the
+   * mask density over the row group's lanes (16, or the water group's for
+   * WW), 32-entry batches, and the turns of a launch (batches times the
+   * lanes of a rotation). */
+  if (getenv("MDIR_TEMPLATE_GROUP_STATS")) {
+    int64_t units = pairs->layout.units, room = pairs->layout.entries;
+    int32_t *records = malloc((size_t)(units ? units : 1) * 4 * sizeof(int32_t));
+    int32_t *list = malloc((size_t)(room ? room : 1) * 4 * sizeof(int32_t));
+    if (!records || !list) abort();
+    if (units)
+      check(cuMemcpyDtoH(records,
+          (CUdeviceptr)pairs->pairs + pairs->layout.innerUnits * sizeof(int32_t),
+          (size_t)units * 4 * sizeof(int32_t)), "template group stats units");
+    if (room)
+      check(cuMemcpyDtoH(list,
+          (CUdeviceptr)pairs->pairs + pairs->layout.innerEntries * sizeof(int32_t),
+          (size_t)room * 4 * sizeof(int32_t)), "template group stats entries");
+    static const char *names[] = {"WW", "SW", "SS"};
+    for (int tag = 0; tag != 3; ++tag) {
+      const int32_t *range = header + TEMPLATE_PAIR_INNER_RANGES + 6 * tag;
+      int64_t lanes = tag == 0 ? MDRT_TEMPLATE_WATER_GROUP : 16;
+      int64_t count = 0, entries = 0, bits = 0, batches = 0;
+      for (int64_t unit = range[4]; unit < range[5] && unit < units; ++unit) {
+        int64_t begin = records[4 * unit + 2], end = records[4 * unit + 3];
+        if (end <= begin) continue;
+        ++count;
+        entries += end - begin;
+        batches += (end - begin + 31) / 32;
+        for (int64_t e = begin; e < end && e < room; ++e)
+          bits += __builtin_popcount((uint32_t)list[4 * e + 2]);
+      }
+      fprintf(stderr, "template group stats %s %s: lanes %lld records %lld entries %lld "
+              "pairs %lld density %.4f batches %lld turns %lld\n",
+              first ? "first" : "end", names[tag], (long long)lanes, (long long)count,
+              (long long)entries, (long long)bits,
+              entries ? (double)bits / (double)(entries * lanes) : 0.0,
+              (long long)batches, (long long)(batches * lanes));
+    }
+    free(records);
+    free(list);
+  }
   if (first) {
     templateStartEntries = entries;
     templateStartWork = work;
