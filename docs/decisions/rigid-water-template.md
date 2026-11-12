@@ -1641,8 +1641,11 @@ state), must have an inner entry. The first evaluation is at the
 unconstrained input. OPC: 309 checks, 3,899,165 unit pairs within the
 cutoff, none without an entry; TIP3P: 249 checks, 3,179,894 pairs, none.
 The same check at 1.5 cutoffs, beyond every inner reach, reports pairs
-without an entry, so it can fail. `water-template-anchors-physical-gpu.test`
-evaluates the template, general mixed and general double routes at ten
+without an entry, so it can fail.
+`water-template-anchors-opc-physical-gpu.test` and
+`water-template-anchors-tip3p-physical-gpu.test` (one fixture,
+`water-template-anchors-physical-gpu.test`, until the split below)
+evaluate the template, general mixed and general double routes at ten
 frames of each trajectory: the template's projected forces and the
 solute's unprojected atom forces stay within 1.5 times general mixed's
 error against double (largest 0.078 kJ/mol/nm against 0.117, with mixed's
@@ -2815,6 +2818,14 @@ again; alone it passed in 234.6 s. Its own sixty compilations (ten frames
 of two systems on three routes), beside seven other tests, are what
 reach the limit, not the fixture of item 3. The sanitizer tier (3
 fixtures, 33 s) passed.
+
+The fixture is split by system after 918d528e, with the same frames, routes
+and tolerances and the same shared inputs:
+`water-template-anchors-opc-physical-gpu.test` (OPC, NPT) and
+`water-template-anchors-tip3p-physical-gpu.test` (TIP3P, NVT), thirty
+compilations each. The gate's list, now 113 entries, in one run: 110
+passed, 3 unsupported (the sanitizer fixtures), none at the limit; the
+two took 95 s and 146 s beside the others, and the longest entry 232 s.
 
 **Open, in the evaluation.**
 
