@@ -1,0 +1,111 @@
+# The reader of the cache of the skins (D[skin-budget-record]) takes an
+# entry whole or not at all. An entry of format 2 for the key that
+# `mdir check --json` reports (Inputs/skin_entry.py) is taken, as is one of
+# one list (a pruned reach of 0, a candidate's null). Each defect of one
+# field that a run reads or copies into its manifest, written in its
+# place, is refused with its reason (the note `skin_cache_refused`), and the
+# reaches are the defaults. `mdir check` measures nothing and needs no
+# device: the target of the control file is a GPU, so that the key applies,
+# and the key of a CPU target is null with its reason.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"\npruned_distance = "AUTO"|' > %t/auto.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/auto.toml > %t/cpu.toml
+# RUN: cd %t && mdir check --json auto.toml > key.json
+# RUN: cd %t && mdir check --json cpu.toml | %python -c "import json, sys; s = json.load(sys.stdin)['run']['skins']; print(s['cache_key'], s['cache_key_reason'])" | FileCheck %s --check-prefix=CPU
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache whole
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefix=TAKEN --implicit-check-not=refused
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache cut
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CUT
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache not-object
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NOT-OBJECT
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-format
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-FORMAT
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache format-1
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,FORMAT-1
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache other-key
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,OTHER-KEY
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-reaches
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-REACHES
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache reach-zero
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,REACH-ZERO
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-search
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-SEARCH
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-budget
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-BUDGET
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache budget-2
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,BUDGET-2
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-candidates
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-CANDIDATES
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache empty-candidates
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,EMPTY-CANDIDATES
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache over-budget
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,OVER-BUDGET
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-reason
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-REASON
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-seconds
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-SECONDS
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-not-object
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NOT-OBJECT
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-no-reach
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NO-REACH
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache not-chosen
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NOT-CHOSEN
+
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-outer
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-OUTER
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache inner-negative
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,INNER-NEGATIVE
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache no-basis
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NO-BASIS
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache basis-no-policy
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,BASIS-NO-POLICY
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache basis-no-share
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,BASIS-NO-SHARE
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-no-pruned
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NO-PRUNED
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-pruned-text
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-PRUNED-TEXT
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-no-predicted
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NO-PREDICTED
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-no-compile
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NO-COMPILE
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache candidate-no-run
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CANDIDATE-NO-RUN
+# An entry of one list (a pruned reach of 0, a candidate's null) is taken.
+# RUN: %python %S/Inputs/skin_entry.py %t/key.json %t/cache one-list
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefix=ONE-LIST --implicit-check-not=refused
+# CPU: None the CPU
+# ONE-LIST: skins: cached (the choice of an earlier run of the same key)
+# TAKEN: skins: cached (the choice of an earlier run of the same key)
+# REFUSED-DAG: skins: default (a short run:
+# CUT-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it is not JSON
+# NOT-OBJECT-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it is not a JSON object;
+# NO-FORMAT-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it names no format, as one of format 1 did;
+# FORMAT-1-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its format is 1, not 2;
+# OTHER-KEY-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it holds another key;
+# NO-REACHES-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it lacks the chosen pruned reach;
+# REACH-ZERO-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its chosen reach of the lists is not positive;
+# NO-SEARCH-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it lacks the search;
+# NO-BUDGET-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks a budget of at least 3;
+# BUDGET-2-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks a budget of at least 3;
+# NO-CANDIDATES-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks its candidates;
+# EMPTY-CANDIDATES-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search has no candidates;
+# OVER-BUDGET-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search has more candidates than its budget;
+# NO-REASON-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks its reason;
+# NO-SECONDS-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks its seconds;
+# CANDIDATE-NOT-OBJECT-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate is not an object;
+# CANDIDATE-NO-REACH-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its reach;
+# NOT-CHOSEN-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: the chosen reaches are not among its candidates;
+# NO-OUTER-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: it lacks the chosen reach of the lists;
+# INNER-NEGATIVE-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its chosen pruned reach is negative;
+# NO-BASIS-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its search lacks the basis of its budget;
+# BASIS-NO-POLICY-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: the basis of its budget lacks its policy;
+# BASIS-NO-SHARE-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: the basis of its budget lacks its share;
+# CANDIDATE-NO-PRUNED-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its pruned reach;
+# CANDIDATE-PRUNED-TEXT-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its pruned reach;
+# CANDIDATE-NO-PREDICTED-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its predicted_relative;
+# CANDIDATE-NO-COMPILE-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its compile_seconds;
+# CANDIDATE-NO-RUN-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: a candidate lacks its run_seconds;

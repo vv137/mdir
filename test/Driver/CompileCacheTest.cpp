@@ -9,7 +9,9 @@
 // is rejected. The LLVM options set on the command line
 // (D397): one whose value no recorded argument gives
 // turns the cache off; a `cl::alias` records the option it names, and a
-// response file is recorded expanded.
+// response file is recorded expanded. The salt of the skins
+// (D[skin-budget-record]) holds the image only for a build that is not
+// clean.
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Runtime/GroupsABI.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -549,6 +551,46 @@ int main(int argc, char **argv) {
     check(location.config && location.config->directory == named.str(),
           "with every option recorded the cache is on");
     ::unsetenv("MDIR_COMPILE_CACHE_MAX_MB");
+  }
+
+  // The salt of the keys of the skins (D[skin-budget-record]): a clean
+  // build is named by its commit, LLVM, and its options, whatever the
+  // image; a dirty build, or one of unknown state, by its image as well.
+  {
+    SkinSaltParts clean{"build-id aaaa", "9.8.7", "c0ffee", "no",
+                        "23.1.2 r1", "cl-opt nvptx-prec-divf32 x1: "
+                                     "-nvptx-prec-divf32=0\n"};
+    auto with = [&](auto change) {
+      SkinSaltParts parts = clean;
+      change(parts);
+      return composeSkinSalt(parts);
+    };
+    std::string base = composeSkinSalt(clean);
+    check(base.find("build-id") == std::string::npos,
+          "the skin salt of a clean build holds no image");
+    check(with([](auto &p) { p.image = "build-id bbbb"; }) == base,
+          "two images of one clean build share the skin salt");
+    check(with([](auto &p) { p.commit = "decade"; }) != base,
+          "another commit changes the skin salt");
+    check(with([](auto &p) {
+            p.options = "cl-opt nvptx-prec-divf32 x1: -nvptx-prec-divf32=1\n";
+          }) != base,
+          "another LLVM option changes the skin salt");
+    check(with([](auto &p) { p.options.clear(); }) != base,
+          "an LLVM option left out changes the skin salt");
+    check(with([](auto &p) { p.llvm = "23.1.3 r2"; }) != base,
+          "another LLVM changes the skin salt");
+    for (const char *state : {"yes", "unknown"}) {
+      std::string a = with([&](auto &p) { p.dirty = state; });
+      std::string b = with([&](auto &p) {
+        p.dirty = state;
+        p.image = "build-id bbbb";
+      });
+      check(a != b && a.find("image build-id aaaa\n") != std::string::npos,
+            (std::string("two images of a build of state '") + state +
+             "' differ in the skin salt")
+                .c_str());
+    }
   }
 
   outs() << (failures ? "compile cache checks FAILED\n"

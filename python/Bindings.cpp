@@ -838,6 +838,20 @@ PYBIND11_MODULE(_core, m) {
       d["pairlist_distance_source"] = resolved.getSkinSource(/*outer=*/true);
       d["pruned_distance_source"] = resolved.getSkinSource(/*outer=*/false);
       d["skin_reason"] = resolved.skinReason;
+      // The key of the cache of the skins where a run reads that cache,
+      // else None and why (D[skin-budget-record]); a clean build's is the
+      // key of `mdir` for the same system.
+      {
+        std::string why;
+        if (compiler::canSearchSkins(resolved, why)) {
+          d["skin_cache_key"] =
+              compiler::getSkinCacheKey(resolved, p.prepared->system);
+          d["skin_cache_key_reason"] = py::none();
+        } else {
+          d["skin_cache_key"] = py::none();
+          d["skin_cache_key_reason"] = why;
+        }
+      }
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";

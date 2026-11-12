@@ -50,8 +50,8 @@
 # RUN: cmp %t/auto.mlir %t/lower.mlir
 # RUN: not cmp -s %t/auto.mlir %t/given.mlir
 # RUN: cd %t && not mdir check boolean.toml 2>&1 | FileCheck %s --check-prefix=BOOLEAN
-# RUN: cd %t && mdir check --json auto.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
-# RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON-GIVEN
+# RUN: cd %t && mdir check --json auto.toml | %python -c "import json, sys; s = json.load(sys.stdin)['run']['skins']; k = s.pop('cache_key'); r = s.pop('cache_key_reason'); print(json.dumps(s, sort_keys=True)); print(k.splitlines()[0], r)" | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; s = json.load(sys.stdin)['run']['skins']; k = s.pop('cache_key'); r = s.pop('cache_key_reason'); print(json.dumps(s, sort_keys=True)); print(k, r)" | FileCheck %s --check-prefix=JSON-GIVEN
 
 # OMITTED: neighbors: groups of 16, reach 12 Ang, pruned to 9.6 Ang (AUTO: 64000 particles
 # OMITTED-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
@@ -71,4 +71,6 @@
 # GIVEN: neighbors: groups of 16, reach 11 Ang, pruned to 9.3 Ang
 # BOOLEAN: expected a positive number or "AUTO" for 'pruned_distance'
 # JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 5e+12"}
+# JSON-NEXT: {{^}}mdir skins 2 None{{$}}
 # JSON-GIVEN: {"pairlist_distance_source": "given", "pruned_distance_source": "given", "reason": ""}
+# JSON-GIVEN-NEXT: {{^}}None the reaches are given{{$}}

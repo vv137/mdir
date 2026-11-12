@@ -204,8 +204,13 @@
               "required": [
                 "source",
                 "reason",
+                "searched",
                 "cache",
+                "cache_refused",
+                "not_cached",
                 "seconds",
+                "budget",
+                "budget_basis",
                 "candidates"
               ],
               "properties": {
@@ -226,9 +231,81 @@
                     "null"
                   ]
                 },
+                "searched": {
+                  "type": "boolean"
+                },
+                "cache_refused": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "not_cached": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "seconds": {
                   "type": "number",
                   "minimum": 0
+                },
+                "budget": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "budget_basis": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "required": [
+                    "policy",
+                    "share",
+                    "most",
+                    "run_seconds",
+                    "candidate_seconds",
+                    "compile_seconds"
+                  ],
+                  "properties": {
+                    "policy": {
+                      "enum": [
+                        "auto",
+                        "always",
+                        "budget"
+                      ]
+                    },
+                    "share": {
+                      "type": "number"
+                    },
+                    "most": {
+                      "type": "integer"
+                    },
+                    "run_seconds": {
+                      "type": "number"
+                    },
+                    "candidate_seconds": {
+                      "type": "number"
+                    },
+                    "compile_seconds": {
+                      "type": "number"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "recorded_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "recorded_seconds": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
                 },
                 "candidates": {
                   "type": "array",

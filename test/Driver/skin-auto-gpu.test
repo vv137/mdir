@@ -11,6 +11,16 @@
 # repeat; across skins it agrees to the rounding, not to the bit, since the
 # order of a row of the matrix follows its cells.
 #
+# The record of the search (D[skin-budget-record]): the entry and the
+# manifest hold the budget and the candidates; the second run, with the
+# compile cache that the first one filled, reuses the choice and says so,
+# with the first one's candidates, rather than searching again. The key
+# names the build (MDIR_COMPILE_CACHE_SALT_OVERRIDE, another build, misses), and an entry
+# of format 1, one that is cut short, one without its budget, or one whose
+# choice is not among its candidates is refused (`mdir check` notes it).
+# A run that affords fewer than 3 candidates (MDIR_SKIN_SEARCH=budget, 100
+# steps) caches nothing, and its manifest gives the budget and why.
+#
 # REQUIRES: cuda, hdf5
 #
 # RUN: rm -rf %t && mkdir -p %t
@@ -22,21 +32,62 @@
 # RUN:           -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "double"\nneighbor_structure = "GROUPS"|' > %t/auto.toml
 # RUN: sed -e 's|^steps = 100|steps = 200|' %t/auto.toml > %t/longer.toml
 # RUN: sed -e 's|^time_step *= 0.001|time_step = 0.0005|' %t/auto.toml > %t/half.toml
-# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always MDIR_CHECK_PRUNING=1 mdir run auto.toml > first.log 2> first.err
+# RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cc MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always MDIR_CHECK_PRUNING=1 mdir run auto.toml > first.log 2> first.err
 # RUN: FileCheck %s --check-prefix=FIRST < %t/first.log
 # RUN: FileCheck %s --check-prefix=CHECKED < %t/first.err
-# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']))" | FileCheck %s --check-prefix=MANIFEST
+# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']), s['searched'], s['budget'], s['budget_basis']['policy'], sorted(s['budget_basis']))" | FileCheck %s --check-prefix=MANIFEST
+# RUN: cp %t/run.json %t/first.json
+# RUN: %python -c "import glob, json; e = json.load(open(glob.glob('%t/cache/*.json')[0])); print(e['format'], e['key'].splitlines()[:2], e['search']['budget'], len(e['search']['candidates']))" | FileCheck %s --check-prefix=ENTRY
 # An entry written before D396, whose reason spells the
 # angstrom in Unicode, is read as any other: the reader takes the key and
 # the two reaches alone.
 # RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f, encoding='utf-8')); e['search']['reason'] = '1.0% faster than 12 / 9.6 \u00c5, beyond the noise of 0.6%'; json.dump(e, open(f, 'w', encoding='utf-8'), ensure_ascii=False)"
-# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run auto.toml > second.log 2>&1
+# RUN: cd %t && env MDIR_COMPILE_CACHE_DIR=%t/cc MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run auto.toml > second.log 2>&1
 # RUN: FileCheck %s --check-prefix=CACHED < %t/second.log
+# The second run reused the first one's choice and search, to the bit of
+# each candidate's time: a search again would have timed them anew. Its
+# recorded reason is the one written into the entry above.
+# RUN: %python -c "import json; a, b = (json.loads(open(f, encoding='utf-8').readline())['effective'] for f in ('%t/first.json', '%t/run.json')); s, t = a['skin_search'], b['skin_search']; print(t['source'], t['searched'], t['seconds'], t['budget'] == s['budget'], t['candidates'] == s['candidates'], t['budget_basis'] == s['budget_basis'], t['recorded_reason'] == '1.0% faster than 12 / 9.6 \u00c5, beyond the noise of 0.6%', (a['pairlist_distance_angstrom'], a['pruned_distance_angstrom']) == (b['pairlist_distance_angstrom'], b['pruned_distance_angstrom']))" | FileCheck %s --check-prefix=REUSED
+# The manifests of the search and of the reuse hold what the schema
+# requires of the record (docs/run-manifest.schema.json).
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/first.json %t/run.json | FileCheck %s --check-prefix=SCHEMA
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run --continue longer.toml > continued.log 2>&1
 # RUN: FileCheck %s --check-prefix=CONTINUED < %t/continued.log
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
 # RUN: FileCheck %s --check-prefix=MISSED < %t/half.log
 # RUN: ls %t/cache | wc -l | FileCheck %s --check-prefix=ONE
+# The guards of the entry, through `mdir check`, which measures nothing:
+# the entry is taken; another build's salt misses it; an entry of format
+# 1, without a format, cut short, without its budget, or whose choice is
+# not among its candidates is refused. The entry is restored after each.
+# RUN: cp %t/cache/*.json %t/entry.saved
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefix=TAKEN
+# RUN: cd %t && env MDIR_COMPILE_CACHE_SALT_OVERRIDE=another-build MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefix=SALT --implicit-check-not=refused
+# RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f)); e['format'] = 1; json.dump(e, open(f, 'w'))"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,FORMAT1
+# RUN: %python -c "import glob, shutil; shutil.copy('%t/entry.saved', glob.glob('%t/cache/*.json')[0])"
+# RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f)); del e['format'], e['search']['budget']; json.dump(e, open(f, 'w'))"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NOFORMAT
+# RUN: %python -c "import glob, shutil; shutil.copy('%t/entry.saved', glob.glob('%t/cache/*.json')[0])"
+# RUN: %python -c "import glob; f = glob.glob('%t/cache/*.json')[0]; t = open(f).read(); open(f, 'w').write(t[:len(t) // 2])"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,CUT
+# RUN: %python -c "import glob, shutil; shutil.copy('%t/entry.saved', glob.glob('%t/cache/*.json')[0])"
+# RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f)); del e['search']['budget']; json.dump(e, open(f, 'w'))"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NOBUDGET
+# RUN: %python -c "import glob, shutil; shutil.copy('%t/entry.saved', glob.glob('%t/cache/*.json')[0])"
+# RUN: %python -c "import glob, json; f = glob.glob('%t/cache/*.json')[0]; e = json.load(open(f)); e['pairlist_distance_angstrom'] += 0.25; json.dump(e, open(f, 'w'))"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefixes=REFUSED,NOTCHOSEN
+# RUN: %python -c "import glob, shutil; shutil.copy('%t/entry.saved', glob.glob('%t/cache/*.json')[0])"
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache mdir check auto.toml 2>&1 | FileCheck %s --check-prefix=TAKEN
+# A run that affords fewer than 3 candidates: the reference alone, nothing
+# cached, and the budget and why in the manifest.
+# RUN: sed -e 's|run.json|budget.json|' -e 's|run.h5|budget.h5|' %t/auto.toml > %t/budget.toml
+# RUN: mkdir -p %t/cache-budget
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache-budget MDIR_SKIN_SEARCH=budget mdir run budget.toml > budget.log 2>&1
+# RUN: FileCheck %s --check-prefix=BUDGET < %t/budget.log
+# RUN: ls %t/cache-budget | wc -l | FileCheck %s --check-prefix=NONE
+# RUN: %python -c "import json; s = json.loads(open('%t/budget.json').readline())['effective']['skin_search']; print(s['source'], s['searched'], s['budget'], s['budget_basis']['policy'], len(s['candidates']), s['cache']); print(s['not_cached']); print(s['reason'])" | FileCheck %s --check-prefix=BUDGET-MANIFEST
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/budget.json | FileCheck %s --check-prefix=SCHEMA-BUDGET
 # Whether the loop over pairs prunes (D284) is part of the key.
 # RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run auto.toml > fused.log 2>&1
 # RUN: FileCheck %s --check-prefix=FUSEDKEY < %t/fused.log
@@ -58,16 +109,36 @@
 # FIRST: MDIR: skins: candidate 12 / 9.6 Ang: {{[0-9.]+}} us a step
 # FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Ang: {{[0-9.]+}} us a step
 # FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Ang: {{[0-9.]+}} us a step
-# FIRST: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (measured: {{.*}}; {{[3-7]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
+# FIRST: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (measured: {{.*}}; searched now: a budget of 7, {{[3-7]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
 # FIRST: MDIR: the inner lists were pruned
 # CHECKED: mdrt: the inner lists were checked at {{[0-9]+}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
-# MANIFEST: measured measured measured True True
-# CACHED: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (cached: the choice of an earlier run of the same key; from '{{.*}}cache/{{[0-9a-f]+}}.json')
+# MANIFEST: measured measured measured True True True 7 always ['candidate_seconds', 'compile_seconds', 'most', 'policy', 'run_seconds', 'share']
+# ENTRY: 2 ['mdir skins 2', 'mdir-skin-salt 1'] 7 {{[3-7]}}
+# CACHED: MDIR: skins: the reach {{[0-9.]+}} Ang, pruned to {{[0-9.]+}} Ang (cached: the choice of an earlier run of the same key; reused, not searched: the search of a budget of 7 recorded {{[3-7]}} candidates in {{[0-9.]+}} s; from '{{.*}}cache/{{[0-9a-f]+}}.json')
+# REUSED: cached False 0 True True True True True
+# SCHEMA: valid first.json
+# SCHEMA-NEXT: valid run.json
+# SCHEMA-BUDGET: valid budget.json
 # CONTINUED: MDIR: continues the run after step 100
 # CONTINUED: MDIR: skins: {{.*}} (cached:
 # MISSED: MDIR: skins: the reach 10.5 Ang (default: MDIR_SKIN_SEARCH=never)
 # FUSEDKEY: MDIR: skins: {{.*}}(default: MDIR_SKIN_SEARCH=never)
 # ONE: {{^}}1{{$}}
+# TAKEN: skins: cached (the choice of an earlier run of the same key)
+# SALT: skins: default (a short run:
+# REFUSED-DAG: skins: default (a short run:
+# FORMAT1-DAG: mdir: note: the entry '{{.*}}cache/{{[0-9a-f]+}}.json' of the cache of the skins is refused: its format is 1, not 2;
+# NOFORMAT-DAG: mdir: note: the entry '{{.*}}' of the cache of the skins is refused: it names no format, as one of format 1 did;
+# CUT-DAG: mdir: note: the entry '{{.*}}' of the cache of the skins is refused: it is not JSON
+# NOBUDGET-DAG: mdir: note: the entry '{{.*}}' of the cache of the skins is refused: its search lacks a budget of at least 3;
+# NOTCHOSEN-DAG: mdir: note: the entry '{{.*}}' of the cache of the skins is refused: the chosen reaches are not among its candidates;
+# BUDGET: MDIR: skins: candidate 12 / 9.6 Ang: {{[0-9.]+}} us a step
+# BUDGET-NOT: MDIR: skins: candidate
+# BUDGET: MDIR: skins: the reach 12 Ang, pruned to 9.6 Ang (default: a candidate costs {{[0-9]+}} s, and the run of about {{[0-9]+}} s affords 0 within 2% of it, fewer than 3; not searched: the reference alone measured, in {{[0-9.]+}} s, a budget of 0; not cached: the budget of 0 is below 3, so that a longer run of the same key may still search)
+# NONE: {{^}}0{{$}}
+# BUDGET-MANIFEST: default False 0 budget 1 None
+# BUDGET-MANIFEST-NEXT: the budget of 0 is below 3, so that a longer run of the same key may still search
+# BUDGET-MANIFEST-NEXT: a candidate costs {{[0-9]+}} s, and the run of about {{[0-9]+}} s affords 0 within 2% of it, fewer than 3
 # SAME: MDIR:   total {{ *}}[[TOTAL:-?[0-9]+\.[0-9]+]]
 # SAME: MDIR: skins: {{.*}} (measured:
 # SAME: MDIR:   total {{ *}}[[TOTAL]]

@@ -1,0 +1,33 @@
+# The build in the key of the cache of the skins (D[skin-budget-record]),
+# as `mdir check --json` reports it (`run.skins.cache_key`): its lines name
+# the commit, which getSkinSalt fills (`unknown` in a tree without git,
+# cmake/BuildInfo.cmake), and LLVM; a clean build has no line
+# of the image, a dirty one has it; an LLVM option of the command line
+# changes the key. MDIR_SKIN_SALT_DIRTY_OVERRIDE stands for the state of the
+# build, which is that of the tree the suite was built from. Python against
+# `mdir` is in skin-salt-gpu.test, another commit or LLVM in
+# Driver/compile-cache.test (composeSkinSalt).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"|' > %t/auto.toml
+# RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=no mdir check --json auto.toml > clean.json
+# RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=no mdir check --json auto.toml -nvptx-prec-divf32=0 > option.json
+# RUN: cd %t && env MDIR_SKIN_SALT_DIRTY_OVERRIDE=yes mdir check --json auto.toml > dirty.json
+# RUN: %python %S/Inputs/skin_salt.py lines %t/clean.json | FileCheck %s --check-prefix=CLEAN --implicit-check-not=image
+# RUN: %python %S/Inputs/skin_salt.py lines %t/option.json | FileCheck %s --check-prefixes=CLEAN,OPTION --implicit-check-not=image
+# RUN: %python %S/Inputs/skin_salt.py lines %t/dirty.json | FileCheck %s --check-prefix=DIRTY
+# RUN: %python %S/Inputs/skin_salt.py check %t/clean.json > %t/keys.txt
+# RUN: %python %S/Inputs/skin_salt.py check %t/option.json >> %t/keys.txt
+# RUN: %python %S/Inputs/skin_salt.py compare %t/keys.txt | FileCheck %s --check-prefix=OPTION-KEY
+
+# CLEAN: {{^}}mdir skins 2{{$}}
+# CLEAN-NEXT: {{^}}mdir-skin-salt 1{{$}}
+# CLEAN-NEXT: {{^}}mdir {{[0-9.]+}} commit {{([0-9a-f]+|unknown)}} dirty no{{$}}
+# CLEAN-NEXT: {{^}}llvm {{[0-9.]+}} {{[0-9a-z]+}}{{$}}
+# OPTION-NEXT: {{^}}cl-opt nvptx-prec-divf32 x1: -nvptx-prec-divf32=0{{$}}
+# DIRTY: {{^}}mdir-skin-salt 1{{$}}
+# DIRTY-NEXT: {{^}}image {{(build-id|file) [0-9a-f]+}}{{$}}
+# DIRTY-NEXT: {{^}}mdir {{[0-9.]+}} commit {{([0-9a-f]+|unknown)}} dirty yes{{$}}
+# OPTION-KEY: mdir -> mdir different

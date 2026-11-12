@@ -340,26 +340,122 @@ proposeCandidates(const Control &control, const CostModel &model,
   return chosen;
 }
 
-/// Reads the entry of the cache at `path` if its key is `key`.
-std::optional<std::pair<double, double>> readCache(StringRef path,
-                                                   StringRef key) {
+/// The format of an entry of the cache; the first line of its key names
+/// it as well. Format 1 held the two reaches and the search without its
+/// budget; format 2 records the budget and the candidates with the choice
+/// (D[skin-budget-record]).
+constexpr int64_t cacheFormat = 2;
+
+/// What the cache holds for a key: nothing (no file), an entry refused and
+/// why, or the choice and the search that made it.
+struct CacheEntry {
+  bool found = false;
+  std::string refused;
+  double outer = 0.0, inner = 0.0;
+  llvm::json::Object search;
+};
+
+/// Reads the entry of the cache at `path` for `key`. An entry is taken
+/// whole or not at all, and every field that a run reads or copies into its
+/// manifest is checked: one that does not parse, is of another format,
+/// holds another key, or lacks or has invalid reaches, budget, basis of the
+/// budget (its six fields), candidates (each with its two reaches, the
+/// pruned one a number or null, its prediction, and its seconds of
+/// compilation and of steps), reason, or seconds, or the chosen pair among
+/// its candidates, is refused, and the key searches as if there were none.
+/// A candidate's time, error, intervals, or failure, which the manifest's
+/// schema does not require, are copied as they are.
+CacheEntry readCache(StringRef path, StringRef key) {
+  CacheEntry entry;
   auto buffer = llvm::MemoryBuffer::getFile(path);
   if (!buffer)
-    return std::nullopt;
+    return entry;
+  auto refuse = [&](const llvm::Twine &why) {
+    entry.refused = why.str();
+    return entry;
+  };
   auto parsed = llvm::json::parse((*buffer)->getBuffer());
   if (!parsed) {
-    llvm::consumeError(parsed.takeError());
-    return std::nullopt;
+    std::string why = llvm::toString(parsed.takeError());
+    return refuse("it is not JSON (" + why + ")");
   }
   const llvm::json::Object *object = parsed->getAsObject();
   if (!object)
-    return std::nullopt;
+    return refuse("it is not a JSON object");
+  std::optional<int64_t> format = object->getInteger("format");
+  if (!format)
+    return refuse("it names no format, as one of format 1 did");
+  if (*format != cacheFormat)
+    return refuse(llvm::formatv("its format is {0}, not {1}", *format,
+                                cacheFormat));
   auto text = object->getString("key");
+  if (!text || *text != key)
+    return refuse("it holds another key");
   auto outer = object->getNumber("pairlist_distance_angstrom");
   auto inner = object->getNumber("pruned_distance_angstrom");
-  if (!text || *text != key || !outer || !inner)
-    return std::nullopt;
-  return std::make_pair(*outer, *inner);
+  if (!outer)
+    return refuse("it lacks the chosen reach of the lists");
+  if (!inner)
+    return refuse("it lacks the chosen pruned reach");
+  // The outer reach is positive; the pruned one is 0 for one list.
+  if (!(*outer > 0.0))
+    return refuse("its chosen reach of the lists is not positive");
+  if (*inner < 0.0)
+    return refuse("its chosen pruned reach is negative");
+  const llvm::json::Object *search = object->getObject("search");
+  if (!search)
+    return refuse("it lacks the search");
+  std::optional<int64_t> budget = search->getInteger("budget");
+  if (!budget || *budget < 3)
+    return refuse("its search lacks a budget of at least 3");
+  const llvm::json::Array *candidates = search->getArray("candidates");
+  if (!candidates)
+    return refuse("its search lacks its candidates");
+  if (candidates->empty())
+    return refuse("its search has no candidates");
+  if (candidates->size() > static_cast<size_t>(*budget))
+    return refuse("its search has more candidates than its budget");
+  if (!search->getString("reason"))
+    return refuse("its search lacks its reason");
+  if (!search->getNumber("seconds"))
+    return refuse("its search lacks its seconds");
+  // The basis of the budget, which a run that reuses the entry copies into
+  // its manifest (docs/run-manifest.schema.json).
+  const llvm::json::Object *basis = search->getObject("budget_basis");
+  if (!basis)
+    return refuse("its search lacks the basis of its budget");
+  if (!basis->getString("policy"))
+    return refuse("the basis of its budget lacks its policy");
+  for (const char *field :
+       {"share", "most", "run_seconds", "candidate_seconds", "compile_seconds"})
+    if (!basis->getNumber(field))
+      return refuse(llvm::Twine("the basis of its budget lacks its ") + field);
+  bool chosen = false;
+  for (const llvm::json::Value &value : *candidates) {
+    const llvm::json::Object *candidate = value.getAsObject();
+    if (!candidate)
+      return refuse("a candidate is not an object");
+    auto o = candidate->getNumber("pairlist_distance_angstrom");
+    if (!o)
+      return refuse("a candidate lacks its reach");
+    // The pruned reach is a number, or null for one list, which is 0.
+    const llvm::json::Value *pruned = candidate->get("pruned_distance_angstrom");
+    if (!pruned || (!pruned->getAsNumber() && !pruned->getAsNull()))
+      return refuse("a candidate lacks its pruned reach");
+    double i = pruned->getAsNumber().value_or(0.0);
+    for (const char *field :
+         {"predicted_relative", "compile_seconds", "run_seconds"})
+      if (!candidate->getNumber(field))
+        return refuse(llvm::Twine("a candidate lacks its ") + field);
+    chosen |= std::fabs(*o - *outer) < 1e-9 && std::fabs(i - *inner) < 1e-9;
+  }
+  if (!chosen)
+    return refuse("the chosen reaches are not among its candidates");
+  entry.found = true;
+  entry.outer = *outer;
+  entry.inner = *inner;
+  entry.search = *search;
+  return entry;
 }
 
 void writeCache(StringRef path, StringRef key, const Control &control,
@@ -376,6 +472,7 @@ void writeCache(StringRef path, StringRef key, const Control &control,
   {
     llvm::raw_fd_ostream os(fd, /*shouldClose=*/true);
     llvm::json::Object entry{
+        {"format", cacheFormat},
         {"key", key},
         {"pairlist_distance_angstrom", control.pairlistDistance},
         {"pruned_distance_angstrom", control.prunedDistance},
@@ -438,7 +535,13 @@ std::string compiler::getSkinCacheKey(const Control &control,
   std::string composition = llvm::toHex(hash.final(), /*LowerCase=*/true);
   std::string text;
   llvm::raw_string_ostream os(text);
-  os << "mdir skins 1\n"
+  // The format of the entry, then the build (getSkinSalt): the commit,
+  // LLVM, and the LLVM options of the command line, and for a build that is
+  // not clean the image's build ID, so that another build, whose kernels
+  // may differ, does not take this one's choice, and `mdir` and the Python
+  // extension of one clean build share it (D[skin-budget-record]).
+  os << "mdir skins " << cacheFormat << "\n"
+     << getSkinSalt()
      << "version " << MDIR_VERSION << "\n"
      << "particles " << system.getNumParticles() << "\n"
      << "composition " << composition << "\n"
@@ -474,9 +577,34 @@ std::string compiler::getSkinCacheKey(const Control &control,
 
 llvm::json::Value
 compiler::SkinChoice::toJSON(const driver::Control &control) const {
+  auto optional = [](const std::string &text) {
+    return text.empty() ? llvm::json::Value(nullptr) : llvm::json::Value(text);
+  };
+  llvm::json::Object object{
+      {"source", control.skinSource},
+      {"reason", control.skinReason},
+      {"searched", searched},
+      {"cache", optional(cachePath)},
+      {"cache_refused", optional(refused)},
+      {"not_cached", optional(notCached)},
+      {"seconds", seconds}};
+  if (recorded) {
+    // Reused: the budget and the candidates of the search that the entry
+    // records, and its reason and seconds.
+    auto copy = [&](StringRef from, StringRef to) {
+      const llvm::json::Value *value = recorded->get(from);
+      object[to] = value ? *value : llvm::json::Value(nullptr);
+    };
+    copy("budget", "budget");
+    copy("budget_basis", "budget_basis");
+    copy("candidates", "candidates");
+    copy("reason", "recorded_reason");
+    copy("seconds", "recorded_seconds");
+    return object;
+  }
   llvm::json::Array candidates;
   for (const SkinTrial &trial : trials) {
-    llvm::json::Object object{
+    llvm::json::Object candidate{
         {"pairlist_distance_angstrom", trial.outer},
         {"pruned_distance_angstrom",
          trial.inner != 0.0 ? llvm::json::Value(trial.inner)
@@ -485,23 +613,21 @@ compiler::SkinChoice::toJSON(const driver::Control &control) const {
         {"compile_seconds", trial.compileSeconds},
         {"run_seconds", trial.runSeconds}};
     if (trial.failure.empty()) {
-      object["microseconds_per_step"] = trial.microseconds;
-      object["relative_error"] = trial.error;
-      object["steps_per_build"] = trial.buildInterval;
+      candidate["microseconds_per_step"] = trial.microseconds;
+      candidate["relative_error"] = trial.error;
+      candidate["steps_per_build"] = trial.buildInterval;
       if (trial.inner != 0.0)
-        object["steps_per_pruning"] = trial.pruneInterval;
+        candidate["steps_per_pruning"] = trial.pruneInterval;
     } else {
-      object["failure"] = trial.failure;
+      candidate["failure"] = trial.failure;
     }
-    candidates.push_back(std::move(object));
+    candidates.push_back(std::move(candidate));
   }
-  return llvm::json::Object{
-      {"source", control.skinSource},
-      {"reason", control.skinReason},
-      {"cache", cachePath.empty() ? llvm::json::Value(nullptr)
-                                  : llvm::json::Value(cachePath)},
-      {"seconds", seconds},
-      {"candidates", std::move(candidates)}};
+  object["budget"] = budget ? llvm::json::Value(*budget)
+                            : llvm::json::Value(nullptr);
+  object["budget_basis"] = budgetBasis;
+  object["candidates"] = std::move(candidates);
+  return object;
 }
 
 compiler::SkinChoice compiler::chooseSkins(Control &control,
@@ -531,13 +657,27 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     llvm::sys::path::append(
         file, llvm::toHex(hash.final(), true).substr(0, 32) + ".json");
     path = std::string(file);
-    if (auto cached = readCache(path, key)) {
-      control.pairlistDistance = cached->first;
-      control.prunedDistance = cached->second;
+    CacheEntry cached = readCache(path, key);
+    if (cached.found) {
+      // Reused, not searched again: the budget of this run, which its
+      // compile time sets, does not change an earlier choice
+      // (D[skin-budget-record]).
+      control.pairlistDistance = cached.outer;
+      control.prunedDistance = cached.inner;
       control.skinSource = "cached";
       control.skinReason = "the choice of an earlier run of the same key";
       choice.cachePath = path;
+      choice.recorded = std::move(cached.search);
       return choice;
+    }
+    if (!cached.refused.empty()) {
+      choice.refused = cached.refused;
+      choice.refusedPath = path;
+      if (log) {
+        *log << "MDIR: skins: the entry '" << path
+             << "' of the cache is refused: " << cached.refused << "\n";
+        log->flush();
+      }
     }
   }
 
@@ -548,8 +688,10 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     control.skinReason = "MDIR_SKIN_SEARCH=never";
     return choice;
   }
-  bool longEnough =
-      policy == "always" || particleSteps >= searchParticleSteps;
+  // MDIR_SKIN_SEARCH=budget: whatever the length, within the budget that
+  // the length affords (for tests: a short run affords fewer than 3).
+  bool longEnough = policy == "always" || policy == "budget" ||
+                    particleSteps >= searchParticleSteps;
   if (!search && longEnough) {
     control.skinReason = "`mdir run` measures candidates; this does not";
     return choice;
@@ -644,26 +786,41 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   // reference's rate, and at most `maxTrials` (MDIR_SKIN_SEARCH=always: the
   // most). A large system compiles for longer: STMV took 86 to 130 s a
   // candidate on an RTX 4090's node, JAC 11 to 13 s.
+  // The budget is measured, so a warm compile cache, which shortens the
+  // reference's compilation, may raise it; it is recorded with the choice,
+  // which a later run of the key reuses instead of searching again
+  // (D[skin-budget-record]).
   constexpr size_t maxTrials = 7;
+  constexpr double share = 0.02;
   size_t budget = maxTrials;
-  if (policy != "always") {
-    double runSeconds = 1e-6 * reference.microseconds *
-                        static_cast<double>(control.numSteps);
-    double trialSeconds = reference.compileSeconds + reference.runSeconds;
+  double runSeconds =
+      1e-6 * reference.microseconds * static_cast<double>(control.numSteps);
+  double trialSeconds = reference.compileSeconds + reference.runSeconds;
+  if (policy != "always")
     budget = std::min<size_t>(
-        maxTrials, static_cast<size_t>(0.02 * runSeconds / trialSeconds));
-  }
+        maxTrials, static_cast<size_t>(share * runSeconds / trialSeconds));
+  choice.budget = static_cast<int64_t>(budget);
+  choice.budgetBasis = llvm::json::Object{
+      {"policy", policy},
+      {"share", share},
+      {"most", static_cast<int64_t>(maxTrials)},
+      {"run_seconds", runSeconds},
+      {"candidate_seconds", trialSeconds},
+      {"compile_seconds", reference.compileSeconds}};
   if (budget < 3) {
     finish();
     control.pairlistDistance = outer0;
     control.prunedDistance = inner0;
-    // Not cached: a longer run of the same key may afford the search.
     control.skinReason = llvm::formatv(
         "a candidate costs {0:f0} s, and the run of about {1:f0} s affords "
         "{2} within 2% of it, fewer than 3",
-        reference.compileSeconds + reference.runSeconds,
-        1e-6 * reference.microseconds * static_cast<double>(control.numSteps),
-        budget).str();
+        trialSeconds, runSeconds, budget).str();
+    // Not cached: a longer run of the same key may afford the search.
+    choice.notCached = llvm::formatv("the budget of {0} is below 3, so that "
+                                     "a longer run of the same key may "
+                                     "still search",
+                                     budget)
+                           .str();
     return choice;
   }
   for (auto [outer, inner] :
@@ -774,6 +931,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
                   .str();
   }
   control.skinSource = "measured";
+  choice.searched = true;
   if (!path.empty()) {
     choice.cachePath = path;
     writeCache(path, key, control, choice);

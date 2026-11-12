@@ -577,7 +577,14 @@ The candidates must pay for themselves: after the reference, the run
 affords as many as fit, at the reference's cost of a compilation and its
 steps each, within 2% of the time of the run at the reference's rate, at
 most seven. With fewer than three it keeps the reference, and caches
-nothing, so a longer run of the same key may still search. The
+nothing, so a longer run of the same key may still search; the log and the
+manifest give the budget and why (`not_cached`). The budget is measured,
+and a warm compile cache shortens the reference's compilation (D397), so
+it can raise the budget; the choice, once made, is therefore recorded with
+its budget and its candidates, and a later run of the key reuses it rather
+than searching again (Section 6.4, D[skin-budget-record]).
+`MDIR_SKIN_SEARCH=budget` searches whatever the length within the budget
+that the length affords, for tests. The
 compilation grows with the system: 11 to 13 s a candidate for JAC, 17 to
 22 s for Factor IX, 86 to 130 s for STMV on the node of an RTX 4090
 (16 cores).
@@ -600,7 +607,14 @@ reset before the run (`mdrtResetCounts`), so its log counts its own.
 The choice is stored as one JSON file a key, under `MDIR_SKIN_CACHE_DIR`,
 by default `$XDG_CACHE_HOME/mdir/skins` (else `~/.cache/mdir/skins`);
 `MDIR_SKIN_CACHE=off` neither reads nor writes it. The key is the text of
-what the choice depends on: the version of MDIR, the particle count, a
+what the choice depends on: its format (`mdir skins 2`), the build
+(D[skin-budget-record]): the commit and the dirty flag of MDIR, LLVM's
+version and revision, and the LLVM options of the command line, as in the
+salt of the compile cache (D397), and for a build that is not clean (dirty
+`yes` or `unknown`) the build ID of its image as well, so that another
+build, whose kernels may differ, searches anew, while `mdir` and the Python
+extension of one clean build, two images, share a choice; then the
+version of MDIR, the particle count, a
 hash of the composition (the types, masses, and charges), the cutoff, the
 structure, each reach given as a number or `AUTO`, the name of the device,
 the precision, the time step, the ensemble, its temperature, and whether
@@ -611,14 +625,47 @@ system searches anew; a continuation, which has the key of the run it
 continues, takes the choice of that run. Removing the directory, or an
 entry, is always safe.
 
+An entry (format 2) holds `format`, the `key`, the chosen
+`pairlist_distance_angstrom` and `pruned_distance_angstrom`, and `search`:
+the budget, what it was computed from (`budget_basis`: the policy, the
+share 0.02, the most 7, the estimated seconds of the run, and the seconds
+of a candidate and of its compilation), the reason, the seconds, and the
+candidates. It is taken whole or not at all: an entry that does not parse
+or is not an object, of another format (format 1 named none), of another
+key, without either reach, with a reach of the lists not positive or a
+pruned reach negative (0 is one list), without the search, a budget of at
+least 3, the basis of the budget or one of its six fields, its candidates,
+any candidate, its reason, or its seconds, with more candidates than its
+budget, with a candidate that is not an object or lacks its reach, its
+pruned reach (a number, or null for one list), its prediction, or its
+seconds of compilation or of steps, or whose chosen reaches are not among
+its candidates, is refused (a candidate's time, error, and intervals are
+copied as they are); the run then goes on as without an entry, its
+log says so (`MDIR: skins: the entry '...' of the cache is refused: ...`),
+a search replaces it, and `mdir check` notes it (`skin_cache_refused`).
+`mdir check --json` gives the key (`run.skins.cache_key`), and
+`Program.plan["skin_cache_key"]` in Python, where a run reads the cache;
+elsewhere it is null, with the reason (`cache_key_reason`), and the driver
+is not asked for the device.
+
 The log names the reaches and where they came from when a key was given
 as `"AUTO"` or the reaches were cached or measured (`MDIR: skins: the
-reach 14 Å, pruned to 8.8 Å (measured: ...)`), with a line for each
-candidate. The manifest's `effective` has `pairlist_distance_source` and
-`pruned_distance_source` (`given`, `default`, `cached`, or `measured`)
-and `skin_search` (the source, the reason, the file of the cache, the
-seconds, and each candidate's reaches, time, error, intervals, and the
-model's prediction relative to the reference); `mdir check` prints
+reach 14 Å, pruned to 8.8 Å (measured: ...; searched now: a budget of 7,
+6 candidates in 95.0 s; stored in '...')`, or `(cached: ...; reused, not
+searched: the search of a budget of 7 recorded 6 candidates in 95.0 s;
+from '...')`, or where the budget fell below 3 `(default: ...; not
+searched: the reference alone measured, in 13.2 s, a budget of 0; not
+cached: the budget of 0 is below 3, ...)`), with a line for each
+candidate. The manifest's `effective`
+has `pairlist_distance_source` and `pruned_distance_source` (`given`,
+`default`, `cached`, or `measured`) and `skin_search`: the source, the
+reason, `searched` (whether this run searched), the file of the cache,
+`cache_refused` and `not_cached` (why an entry was refused, why nothing
+was cached, or null), the seconds of this run's search, the `budget` and
+`budget_basis`, and each candidate's reaches, time, error, intervals, and
+the model's prediction relative to the reference; where the choice was
+reused, the budget, its basis, and the candidates are those the entry
+records, with its `recorded_reason` and `recorded_seconds`. `mdir check` prints
 `skins:`, and `run.skins` with `--json`; `Program.plan` has the sources and
 `skin_reason`. `mdir check` and `mdir.compile` measure nothing: they name
 the default or the cache. In Python, `System.pairlist_distance` and
