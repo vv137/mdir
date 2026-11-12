@@ -2350,6 +2350,223 @@ The orthorhombic systems are unchanged by the packing (8.6/8.5 below
 Gates at 658d426b: the 110 template fixtures in one run (107 passed, 3
 unsupported) and the sanitizer tier (3 fixtures, 33 s) pass.
 
+### U9: the evaluation's latency, change by change
+
+The counters of U8's first item (Nsight Compute, RTX 5090, ubiquitin in
+TIP3P and OPC) show a kernel bound by latency at low occupancy: 96
+registers, 5 blocks of 128 threads a multiprocessor, 14.2 warps a
+multiprocessor achieved (`main`'s pair kernel 27.6), an issue rate of
+38.6 % (47.8), and 61 % of the cycles of a turn waiting on a dependency
+(long and short scoreboard and fixed-latency waits). The kernel takes as
+long as the longest chain of water-water work on its busiest
+multiprocessor. Above 96 registers a block fewer fits a multiprocessor
+and the solute-water and solute-solute blocks miss the first wave, about
+7 µs a call, so every change below was kept only at 96 registers or
+fewer (checked on the six systems of the table: ubiquitin in OPC and
+TIP3P, the dodecahedron in OPC and TIP3P, the CHARMM-style 12 Å case and
+the large OPC box) and only if it ran faster on ubiquitin in TIP3P and
+OPC without slowing the large OPC box. Each was measured in 10,000-step
+captures, two rounds in one job; the times are the evaluation kernel a
+call, its calls without the prune (µs, round 1/round 2).
+
+**1. The partner's force write (c77790f1).** At the end of a batch the
+write of the partner's forces read the entry again for the partner's
+unit, then each site's row of the map from packed rows to particles
+behind the three atomics of the site before (the compiler may not move a
+load across them): four dependent round trips a batch, about 3,900 of
+the 4,500 cycles of a batch's tail. The partner's unit is now kept from
+the batch head, and the three rows are read before the first atomic, so
+the tail has one round trip, the three row loads together, then the nine
+reductions. Registers stay at 96.
+
+| System | Before | After |
+|---|---|---|
+| Ubiquitin TIP3P | 35.15/35.07 | 34.22/34.31 |
+| Ubiquitin OPC | 36.17/36.31 | 35.30/35.20 |
+| Large OPC box | 65.42/65.49 | 64.77/64.83 |
+
+The gain, 0.8 to 1.1 µs, is about half of the 1.9 to 2.9 that the stalls
+of the tail predicted; the row loads that remain are the rest. Keeping
+the three rows from the batch head too, so that the tail has no load,
+stayed at 96 registers but ran slower: 34.24/34.55 against 34.25/34.26
+in TIP3P, 37.64/37.63 against 35.20/35.23 in OPC and 72.28/71.89
+against 64.75/64.78 in the large box (three more values live across the
+sixteen turns). The fixture `template-partner-write.mlir` requires the
+partner's unit from the batch head, no read of the entry after the
+turns, and the three row loads before the first atomic; it fails on the
+code before this change.
+
+**2. The next-to-last water pair as a select (cbb03931).** ptxas
+if-converts the guards of most of the nine (TIP3P) or ten (OPC) site
+pairs of a turn and branches around the others (besides the last pair,
+whose guard jumps to the end of the turn): in TIP3P the first, the
+oxygen pair with Lennard-Jones, and the next-to-last; in OPC, whose
+first pair is Lennard-Jones alone and reads no table, the next-to-last
+alone. Inside these branches the pair's table read waits behind the
+comparison (146 and 71 cycles of long scoreboard a turn in TIP3P). The
+body issues the reads before the guards; at the PTX level the first
+pair's read is below its guard (LLVM sinks it to its only use), the
+next-to-last pair's is above it and ptxas moves it into the branch.
+Emitting the reads as non-movable inline assembly keeps both above
+their guards in the PTX, but ptxas still moves both into the branches,
+so the only lever is the branch itself. The next-to-last
+force pair of a water pair, when it reads a table and is otherwise pure,
+is now computed in every lane and kept by a select on its cutoff test
+(the same conditions under which its read already went before the
+guard); the other pairs keep their guards.
+
+| System | Before | After |
+|---|---|---|
+| Ubiquitin TIP3P | 34.15/34.35 | 34.09/34.08 |
+| Ubiquitin OPC | 35.18/35.27 | 34.90/34.80 |
+| Large OPC box | 64.90/64.90 | 62.71/62.91 |
+
+An earlier job gave the same signs (TIP3P 34.39/34.41 against
+34.08/34.17, OPC 35.31/35.22 against 34.93/34.83). The variants that
+were not kept, against the same before:
+
+- The first pair (oxygen, with Lennard-Jones) as a select: ptxas then
+  uses 80 registers (6 blocks a multiprocessor) and the kernel runs
+  36.17/36.51 in TIP3P, 2 µs slower; with the next-to-last as well
+  36.66/36.68, with the last 37.08/37.01. In OPC the first pair reads no
+  table (oxygen has no charge) and as a select takes 128 registers.
+  Rotating the order so that the oxygen pair is not first: 80 registers
+  in TIP3P and 38.30/38.08; in OPC 35.46/35.55 and the large box 67.2.
+- The last two pairs as selects: TIP3P 35.04/34.99 at 96 registers, OPC
+  122 registers and 39.00/39.00. Every pair after the first: 108 (TIP3P)
+  and 150 (OPC) registers; every pair: 114 and 148.
+- All nine table reads of a turn before its first guard, with or
+  without the selects: 125 to 167 registers, and at `.maxnreg 96` 104 to
+  256 bytes of stack; reads two pairs ahead instead of one: 96 (TIP3P)
+  and 126 (OPC) registers, three ahead (with the first pair as a
+  select) 126 and 121.
+
+The fixture `template-select-pair.mlir` requires the select for the
+next-to-last of three force pairs with clamped table reads, with the
+sum in its true operand, and guards for the first and the last; and a
+guard for all three when the read of the middle pair is not clamped. It
+fails on the code before this change.
+
+**3. A cache hint on the table reads (not kept).** The table reads were
+emitted as `ld.global.nc.L1::evict_last` (inline assembly of the same
+128-bit load), to test whether misses in L1 drive their latency (the
+three radial tables of TIP3P are 60 KB against about 96 KB of L1 beside
+32 KB of shared memory, and the frame and entry loads go through the same
+L1). On the code of change 1 it gained little: TIP3P 34.08/34.33 against
+34.15/34.35, OPC 35.01/35.24 against 35.18/35.27, the large box
+64.47/64.66 against 64.90/64.90, at 96 registers. On top of change 2 it
+was slower on all three: 34.49/34.36, 35.65/35.48 and 64.81/64.58. The
+L1 misses of the table reads are not what their latency waits on.
+
+**4. Windows of turns (not built).** The list model was rerun on the
+inner water-water lists that the evaluation reads (dumped from the
+ubiquitin runs of U8, uncompacted, 32-entry batches as evaluated). A
+batch runs sixteen turns; an entry at lane $p$ of a half needs turn
+$(b-p) \bmod 16$ for each set bit $b$ of its mask.
+
+| | TIP3P | OPC |
+|---|---|---|
+| Water-water batches | 4,502 | 4,468 |
+| Mask density, mean span of an entry's bits | 0.373, 7.74 | 0.377, 7.81 |
+| Turns now | 72,032 | 71,488 |
+| Window, entries kept in place (kernel only) | 67,565 (0.938) | 66,643 (0.932) |
+| Window, entries placed by an assignment per batch | 61,325 (0.851) | 60,800 (0.850) |
+| Window, entries sorted by span, then placed | 62,170 (0.863) | 61,646 (0.862) |
+
+Kept in place, 3,527 of the 4,502 batches (3,432 of 4,468) still need
+all sixteen turns. Sorting each cluster's entries by span, as proposed,
+gains nothing over the list order (0.863 against 0.851): the gain is in
+the placement of the entries within a batch, which needs an assignment
+in the prune (a matching of 32 entries to 16 rotations times two
+halves), the kernel's turn count and starting offset per batch, and the
+partner's forces restored to their lanes (or its unit rotated with it)
+after fewer than sixteen turns. At about half of the kernel's cycles in
+the turns, 15 % fewer turns is at most about 7 % of the evaluation,
+before those costs; the sort was not built.
+
+**Captures of the six systems.** 10,000 steps, RTX 5090, `main`
+c158870b, c59075aa (before U9), c77790f1 (change 1) and cbb03931 (change
+2) in one job, two rounds, the second in the reverse order (µs/step as
+in U8; the last column is the evaluation kernel a call without the
+prune, µs):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Evaluation a call |
+|---|---|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.4/114.7 | 33.2/33.5 | 22.5/22.6 | 123.1/123.4 | 8.1/8.2 | 33.28/33.49 |
+|  | c59075aa | 104.9/104.8 | 36.6/36.5 | 8.7/8.7 | 114.6/114.5 | 9.0/9.0 | 36.21/36.07 |
+|  | c77790f1 | 104.0/104.2 | 35.7/35.8 | 8.7/8.9 | 113.7/114.0 | 9.0/9.1 | 35.23/35.30 |
+|  | cbb03931 | 103.7/103.7 | 35.4/35.3 | 8.7/8.8 | 113.5/113.4 | 9.1/9.0 | 34.93/34.84 |
+| Ubiquitin TIP3P | main | 91.1/90.9 | 24.4/24.2 | 19.6/19.6 | 99.0/98.9 | 7.4/7.4 | 24.42/24.21 |
+|  | c59075aa | 94.5/94.4 | 35.8/35.7 | 9.6/9.6 | 103.4/103.1 | 8.3/8.1 | 35.32/35.30 |
+|  | c77790f1 | 93.5/93.5 | 34.8/34.7 | 9.5/9.6 | 102.2/102.2 | 8.1/8.1 | 34.30/34.19 |
+|  | cbb03931 | 93.3/93.4 | 34.5/34.7 | 9.6/9.6 | 102.1/102.2 | 8.2/8.2 | 34.01/34.15 |
+| Dodecahedron OPC | main | 104.8/104.6 | 27.8/27.8 | 20.7/20.7 | 115.3/113.4 | 8.4/8.2 | 27.86/27.81 |
+|  | c59075aa | 104.5/104.5 | 37.9/37.8 | 8.5/8.7 | 114.2/114.2 | 9.0/9.1 | 37.71/37.58 |
+|  | c77790f1 | 103.9/103.9 | 37.0/37.2 | 8.8/8.6 | 113.5/113.5 | 9.0/9.0 | 36.78/36.95 |
+|  | cbb03931 | 104.4/104.3 | 37.7/37.7 | 8.6/8.6 | 114.0/113.9 | 9.0/9.0 | 37.52/37.50 |
+| Dodecahedron TIP3P | main | 87.1/86.7 | 21.6/21.3 | 19.6/19.5 | 95.2/94.7 | 7.7/7.6 | 21.65/21.35 |
+|  | c59075aa | 89.8/89.9 | 33.0/33.1 | 9.1/9.1 | 98.5/98.5 | 8.0/8.0 | 32.80/32.87 |
+|  | c77790f1 | 88.7/88.7 | 31.9/31.8 | 9.1/9.2 | 97.4/97.3 | 8.2/8.0 | 31.59/31.53 |
+|  | cbb03931 | 87.6/87.6 | 30.9/30.9 | 9.0/9.1 | 96.3/96.2 | 8.1/8.0 | 30.66/30.63 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 124.2/124.0 | 42.4/42.5 | 33.5/33.5 | 132.0/131.9 | 7.3/7.3 | 42.43/42.53 |
+|  | c59075aa | 124.7/124.8 | 63.1/63.1 | 11.7/11.8 | 133.4/133.4 | 8.1/8.0 | 62.46/62.49 |
+|  | c77790f1 | 126.9/126.8 | 65.1/65.1 | 11.8/11.8 | 135.5/135.4 | 8.0/8.0 | 64.38/64.40 |
+|  | cbb03931 | 125.7/125.4 | 64.1/63.8 | 11.6/11.7 | 134.3/134.0 | 8.0/7.9 | 63.38/63.14 |
+| Large OPC box | main | 177.7/177.2 | 69.9/69.6 | 27.4/27.5 | 186.9/186.3 | 8.6/8.6 | 69.93/69.71 |
+|  | c59075aa | 147.3/147.3 | 66.4/66.5 | 5.2/5.1 | 156.3/156.2 | 8.3/8.3 | 65.35/65.49 |
+|  | c77790f1 | 146.7/146.7 | 65.7/66.0 | 5.3/5.2 | 155.6/155.7 | 8.3/8.3 | 64.69/64.90 |
+|  | cbb03931 | 144.7/144.8 | 63.8/64.0 | 5.3/5.3 | 153.7/153.8 | 8.4/8.4 | 62.71/62.89 |
+
+Against `main` the wall is now 9.6/10.0 µs/step below in ubiquitin OPC
+(8.5/8.9 before U9), 3.1/3.3 above in TIP3P (4.4/4.2), 1.3 below/0.5
+above in the dodecahedron in OPC (1.1 below/0.8 above; `main`'s first
+round is 1.9 above its second), 1.1/1.5 above in the dodecahedron in
+TIP3P (3.3/3.8), 2.3/2.1 above in the 12 Å switched case (1.4/1.5) and
+33.2/32.5 below in the large OPC box (30.6/30.1). The evaluation a call
+falls by 1.1 to 1.3 µs in ubiquitin, 2.1 to 2.2 in the dodecahedron in
+TIP3P and 2.6 in the large box; in the dodecahedron in OPC change 1
+gains 0.6 to 0.9 and change 2 gives most of it back (37.52/37.50 against
+37.71/37.58); in the 12 Å switched case change 1 costs 1.9 and change 2
+returns 1.0 to 1.3 of it, 0.9/0.7 above c59075aa. Both changes passed
+the rule of the measurements (faster on ubiquitin in TIP3P and OPC, not
+slower in the large box); the switched case, not part of the rule, is
+slower.
+
+**The switched case and the kept unit.** On cbb03931 with the partner's
+unit read again from the entry after the turns (the three row loads
+still before the first atomic), the switched case runs 58.88/59.23
+against 63.22/63.16, 3.2 to 3.6 below c59075aa, while ubiquitin in TIP3P
+runs 34.82/34.57 against 34.11/34.20, OPC 35.31/35.64 against
+34.94/34.89, the large box 63.41/63.36 against 63.12/62.83 and the
+dodecahedron in OPC 37.80/37.76 against 37.32/37.65. Both stay at 96
+registers (the switched kernel with an 8-byte spill when the unit is
+read again, without one when it is kept). One more value live across the
+turns moves ptxas's schedule of a turn by 1 to 7 % either way, by system;
+which one a system gets is not predicted by anything measured here, so
+change 1 keeps the unit, as its rule decided.
+
+Gates at cbb03931 (this section changes only this file): the 110
+template fixtures in one run (107 passed, 3 unsupported) and the
+sanitizer tier (3 fixtures, 33 s) pass.
+
+**Open, in the evaluation.**
+
+- The schedule of a turn moves with ptxas's choices by more than the
+  changes above gain: one value live across the turns (the switched case
+  ±4 µs), the order of the pairs, which pair is a select. A turn whose
+  register use and order are fixed at the PTX level (an explicit
+  `.maxnreg`, or the turn written so that ptxas has no branch to place)
+  would make the measurements of such changes repeatable; neither was
+  tried here.
+- The first pair's table read (the oxygen pair with Lennard-Jones) still
+  waits behind its guard (146 cycles of long scoreboard a turn in TIP3P);
+  every way of moving it tried here (a select, another order, non-movable
+  assembly) cost more than it saved. Issuing it a turn ahead, from the
+  rotated state, carried across the shuffle, was not tried.
+- Windows of turns need a placement of the entries in the prune; with
+  it, at most 15 % fewer turns (item 4).
+- The tail of a batch keeps one round trip, the three row loads.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
