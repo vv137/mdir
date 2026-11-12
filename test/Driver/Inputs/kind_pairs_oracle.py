@@ -16,7 +16,8 @@ a and b of [ virtual_sites3 ], and transposes its force with the constant
 weights (1 - a - b, a, b). The pair energy is
 4 eps ((sigma/r)^12 - (sigma/r)^6) + k q_i q_j / r inside the cutoff, with
 the combination rule of Lorentz and Berthelot, and k = e^2 N_A / (4 pi eps_0)
-of CODATA 2022. The force on site i is -dU/dd, d = x_i - x_j, and the strain
+of CODATA 2022
+(scripts/mdir_physical_constants.py). The force on site i is -dU/dd, d = x_i - x_j, and the strain
 of a pair d (x) F_i.
 
 The bound of each component, declared before the first run, is the sum over
@@ -40,10 +41,15 @@ import struct
 import sys
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[3] / "scripts"))
+from mdir_physical_constants import (AVOGADRO, ELEMENTARY_CHARGE,  # noqa: E402
+                                     VACUUM_PERMITTIVITY)
+
 CUTOFF = 0.9
 EPS = 2.0 ** -53
-COULOMB = (1.602176634e-19 ** 2 * 6.02214076e23
-           / (4 * math.pi * 8.8541878188e-12) * 1e9 / 1e3)
+# kJ mol^-1 nm e^-2, from the defining constants.
+COULOMB = (ELEMENTARY_CHARGE ** 2 * AVOGADRO
+           / (4 * math.pi * VACUUM_PERMITTIVITY) * 1e9 / 1e3)
 
 
 def read_top(path):

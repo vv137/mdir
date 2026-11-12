@@ -2,7 +2,7 @@
 
     compare_segment_windows.py REFERENCE.mlir GENERATED.mlir [OLD=NEW ...]
 
-REFERENCE holds the windows of D[rigid-water-template]
+REFERENCE holds the windows of #795
 (md.sum_template_window and md.gather_template_window over WW, SW and SS),
 GENERATED those of md.kind_pairs (md.sum_segment_window and
 md.gather_segment_window over segment(0, 0), (1, 0) and (1, 1)). The

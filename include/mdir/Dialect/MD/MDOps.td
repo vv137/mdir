@@ -301,13 +301,13 @@ def MD_KindPairsOp : MD_Op<"kind_pairs", [
     kind has all its own pairs excluded and none with another particle;
     the generator of the segments establishes that from D403's facts.
     `anchored` holds ordered (member, anchor) pairs of the rest, a member
-    within `radius` of its anchor, as in D[rigid-water-template]; they
+    within `radius` of its anchor, as in #795; they
     select candidates only.
 
     The results are logical tuple domains, independent of positions and of
     the storage of lists, with no implicit cutoff. For $K = 1$ the
     segments 0, 1 and 2 are the WW, SW and SS of
-    D[rigid-water-template].
+    #795.
   }];
   let arguments = (ins MD_ReferenceFieldType:$universe,
                        Variadic<MD_RelationType>:$kinds,
@@ -408,7 +408,7 @@ def MD_GatherSegmentWindowOp : MD_SegmentWindowOp<"gather_segment_window"> {
     site. Its slots are interaction-site forces: the constant transpose of
     the site's placement, $\mathbf F_{a_k} \mathrel{+}= w_k \mathbf F_s$
     over its weights, is applied after accumulation (rule (A) of
-    D[rigid-water-template]). The result has frame atoms only.
+    #795). The result has frame atoms only.
   }];
 }
 

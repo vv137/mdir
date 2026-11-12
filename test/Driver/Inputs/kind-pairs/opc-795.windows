@@ -1,5 +1,5 @@
 // The site windows of the potentials @energy, @term_lj and @term_coulomb that
-// the generator of D[rigid-water-template] (#795, its branch at 004a0735) wrote
+// the generator of #795 (its branch at 004a0735) wrote
 // for test/Driver/Inputs/opc/three.prmtop with water.template = ON, by
 // mdir emit --stage=module with the control of kind-pairs-identity.test.
 // The reference of that test; the rest of the module is left out.

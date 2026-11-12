@@ -1,6 +1,6 @@
 # The window body and its per-site cutoff executed at the IR level against
 # an independent f64 oracle over all 27 images (D[kind-pairs], the probe of
-# D[rigid-water-template]): segment (0, 0) of a kind of three frame atoms,
+# #795): segment (0, 0) of a kind of three frame atoms,
 # and of a kind with a site whose weights (-0.5, 0.75, 0.75) come from the
 # kind's descriptor. The oracle forms the site from world positions and
 # applies its own constant transpose (1 - 2 alpha, alpha, alpha).

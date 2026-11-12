@@ -1,5 +1,5 @@
 // Forces and strain of exactly the same image-aware window arithmetic
-// (D[kind-pairs]; the construction of D[rigid-water-template]).
+// (D[kind-pairs]; the construction of #795).
 #include "mdir/Dialect/MD/Transforms/SegmentWindows.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
