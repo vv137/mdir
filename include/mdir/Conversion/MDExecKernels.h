@@ -23,6 +23,12 @@ mlir::Value createZero(mlir::OpBuilder &builder, mlir::Location loc,
 mlir::Value createReal(mlir::OpBuilder &builder, mlir::Location loc,
                        mlir::Type real, double value);
 
+/// The square of `cutoff` in `type` that a loop over pairs tests
+/// `r2 < cutoff2` against: in f32 pulled in so that no distance that passes
+/// is at the cutoff in f32 (D159, MDExecKernels.cpp).
+mlir::Value createCutoff2(mlir::OpBuilder &builder, mlir::Location loc,
+                          mlir::Type type, double cutoff);
+
 /// `value`, a floating-point value or a vector of them, converted to the
 /// floating-point type `real`.
 mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,

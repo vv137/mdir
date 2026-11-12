@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MDIRMDExec
   Algebra.cpp
+  HostPairs.cpp
   MDExecDialect.cpp
   Independence.cpp
   LoopEffects.cpp
@@ -24,6 +25,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDIREffects
   MDIRMDDist
   MDIRMDRT
+  MLIRArithDialect
   MLIRControlFlowInterfaces
   MLIRFuncDialect
   MLIRFunctionInterfaces
@@ -31,7 +33,9 @@ add_mlir_dialect_library(MDIRMDExec
   MLIRGPUDialect
   MLIRMemRefDialect
   MLIRLoopLikeInterface
+  MLIRMathDialect
   MLIRSCFDialect
   MLIRSideEffectInterfaces
+  MLIRVectorDialect
   MLIRViewLikeInterface
   )

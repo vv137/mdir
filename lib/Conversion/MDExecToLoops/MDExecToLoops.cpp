@@ -5,10 +5,12 @@
 
 #include "mdir/Conversion/Passes.h"
 
+#include "mdir/Conversion/HostPairEmitter.h"
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Dialect/MDExec/HostPairs.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/ProfileMap.h"
@@ -17,6 +19,7 @@
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -339,6 +342,14 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   if (op.getTraversal() != md_exec::Traversal::Directed)
     return op.emitOpError()
            << "takes each pair once, which a loop on the host does not do";
+  // The lanes of a row (D[host-pair-vector]): the precondition of the
+  // chooser, checked again.
+  std::optional<int64_t> hostLanes = op.getHostLanes();
+  if (hostLanes)
+    if (md_exec::hostpairs::Refusal refused =
+            md_exec::hostpairs::checkLanes(op, *hostLanes))
+      return op.emitOpError() << "cannot take host(lanes(" << *hostLanes
+                              << ")): " << *refused;
 
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
@@ -399,6 +410,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
           }
           contributions.assign(filtered.getResults().begin(),
                                filtered.getResults().end());
+        } else if (hostLanes) {
+          contributions =
+              emitPairRowLanes(body, op, structure.counts, entries, box,
+                               inverse, ivs[0], *hostLanes);
         } else {
           contributions = emitPairKernel(body, op, structure.counts, entries,
                                          box, inverse, ivs[0], local);

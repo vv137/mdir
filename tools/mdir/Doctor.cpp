@@ -1,6 +1,10 @@
 // Installation checks use the same executable and runtime as a real run (D155).
 
 #include "Commands.h"
+#include "mdir/Compiler/Compile.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -268,6 +272,29 @@ bool smokeRun(StringRef executable, StringRef directory, bool gpu,
                   "finite energies\n";
   return true;
 }
+/// The machine that compiles the host code (`compiler::createHostMachine`,
+/// with `MDIR_HOST_CPU` where it is set): its CPU and whether it has AVX
+/// and AVX-512, the registers of the lanes of the loops over pairs
+/// (D[host-pair-vector]).
+bool describeHost() {
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  auto machine = mdir::compiler::createHostMachine();
+  if (!machine) {
+    llvm::outs() << "FAIL host code: " << llvm::toString(machine.takeError())
+                 << "\n";
+    return false;
+  }
+  const llvm::MCSubtargetInfo &target = (*machine)->getMCSubtargetInfo();
+  bool x86 = (*machine)->getTargetTriple().isX86();
+  auto has = [&](StringRef feature) {
+    return x86 && target.checkFeatures(("+" + feature).str()) ? "yes" : "no";
+  };
+  llvm::outs() << "host code: cpu " << (*machine)->getTargetCPU()
+               << ", avx " << has("avx") << ", avx512f " << has("avx512f")
+               << "\n";
+  return true;
+}
 } // namespace
 
 int mdir::tool::doctor(StringRef target, unsigned timeout, const char *argv0) {
@@ -299,7 +326,8 @@ int mdir::tool::doctor(StringRef target, unsigned timeout, const char *argv0) {
     static int anchor;
     std::string executable = llvm::sys::fs::getMainExecutable(argv0, &anchor);
     if (target != "gpu")
-      ok = smokeRun(executable, directory, /*gpu=*/false, timeout);
+      ok = describeHost() &&
+           smokeRun(executable, directory, /*gpu=*/false, timeout);
     if (target != "cpu") {
       if (hasGPU) {
         // Do not short-circuit a GPU check after a CPU failure.

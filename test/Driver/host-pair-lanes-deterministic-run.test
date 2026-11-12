@@ -1,0 +1,21 @@
+# REQUIRES: python-api, hdf5
+# The deterministic properties with the lanes of the host pair rows
+# (D[host-pair-vector]): the shipped default of the deterministic mode takes
+# lanes(8) in f32 and lanes(4) in f64 on every host, while the suite pins
+# MDIR_HOST_PAIRS=scalar, so the tests of these properties ran the scalar
+# row. Here they run with MDIR_HOST_PAIRS unset, the default.
+# A Python simulation against mdir run, in one part and in segments
+# (Inputs/python_deterministic_run.py, as python-deterministic-run-*-pme.test).
+#
+# RUN: rm -rf %t && mkdir -p %t/mixed %t/double
+# RUN: env -u MDIR_HOST_PAIRS MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide CPU mdir %t/mixed Mixed PME 1 21 20x3 7x5 | FileCheck %s --check-prefix=MIXED
+# RUN: env -u MDIR_HOST_PAIRS MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide CPU mdir %t/double Double PME 1 21 20x3 7x5 | FileCheck %s --check-prefix=DOUBLE
+
+# MIXED: CPU Mixed PME 1: positions same velocities same forces same
+# MIXED-NEXT: CPU Mixed PME 21: positions same velocities same forces same
+# MIXED-NEXT: CPU Mixed PME 20x3: positions same velocities same forces same
+# MIXED-NEXT: CPU Mixed PME 7x5: positions same velocities same forces same
+# DOUBLE: CPU Double PME 1: positions same velocities same forces same
+# DOUBLE-NEXT: CPU Double PME 21: positions same velocities same forces same
+# DOUBLE-NEXT: CPU Double PME 20x3: positions same velocities same forces same
+# DOUBLE-NEXT: CPU Double PME 7x5: positions same velocities same forces same

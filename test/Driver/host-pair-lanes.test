@@ -1,0 +1,162 @@
+# The rows of the loops over pairs on the CPU in lanes (D[host-pair-vector]).
+# The suite pins MDIR_HOST_PAIRS=scalar (lit.cfg.py); these runs state the
+# lanes with MDIR_HOST_PAIRS.
+#
+# 1. lanes(1) is the scalar row to the bit, in the mixed and the double mode,
+#    on the dipeptide in OPC with PME (the kernels of the Amber terms: the
+#    table of erfc, the Lennard-Jones powers, md.lookup of the types).
+# 2. On dimers of argon, whose rows hold some twenty candidates with one
+#    within the cutoff, lanes(8) is the scalar row to the bit: each lane's sum
+#    is the one term or zeros, so a difference of an op between the lanes and
+#    the scalar row would show.
+# 3. In the deterministic mode the lanes are 8 in f32 and 4 in f64 on any
+#    host, and the states after 20 steps are the same with 1, 2, 4, and 7
+#    threads, from run to run, and with the host code compiled for a host of
+#    SSE2 alone (MDIR_HOST_CPU=x86-64), which holds 8 lanes of f32 in two
+#    registers.
+#
+# REQUIRES: hdf5, host-x86
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: %python %S/Inputs/argon_dimers.py 5 %t/dimers.pdb
+# RUN: sed -n '/^#--- opc.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/opc.toml
+# RUN: sed -n '/^#--- dimers.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/dimers.toml
+# RUN: cd %t
+#
+# RUN: sh -c 'for p in mixed double; do \
+# RUN:   sed -e "s|PRECISION|$p|" -e "s|THREADS|4|" -e "s|DETERMINISTIC|false|" -e "s|OUT|opc-$p-scalar.h5|" opc.toml > opc-$p-scalar.toml && \
+# RUN:   sed -e "s|PRECISION|$p|" -e "s|THREADS|4|" -e "s|DETERMINISTIC|false|" -e "s|OUT|opc-$p-1.h5|" opc.toml > opc-$p-1.toml && \
+# RUN:   sed -e "s|PRECISION|$p|" -e "s|THREADS|4|" -e "s|OUT|dimers-$p-scalar.h5|" dimers.toml > dimers-$p-scalar.toml && \
+# RUN:   sed -e "s|PRECISION|$p|" -e "s|THREADS|4|" -e "s|OUT|dimers-$p-8.h5|" dimers.toml > dimers-$p-8.toml || exit 1; done'
+# RUN: mdir run opc-mixed-scalar.toml > /dev/null
+# RUN: env MDIR_HOST_PAIRS=lanes:1 mdir run opc-mixed-1.toml > /dev/null
+# RUN: mdir run opc-double-scalar.toml > /dev/null
+# RUN: env MDIR_HOST_PAIRS=lanes:1 mdir run opc-double-1.toml > /dev/null
+# RUN: mdir checkpoint opc-mixed-scalar.h5 opc-mixed-1.h5 | FileCheck %s
+# RUN: mdir checkpoint opc-double-scalar.h5 opc-double-1.h5 | FileCheck %s
+# RUN: mdir run dimers-mixed-scalar.toml > /dev/null
+# RUN: env MDIR_HOST_PAIRS=lanes:8 mdir run dimers-mixed-8.toml > /dev/null
+# RUN: mdir run dimers-double-scalar.toml > /dev/null
+# RUN: env MDIR_HOST_PAIRS=lanes:8 mdir run dimers-double-8.toml > /dev/null
+# RUN: mdir checkpoint dimers-mixed-scalar.h5 dimers-mixed-8.h5 | FileCheck %s
+# RUN: mdir checkpoint dimers-double-scalar.h5 dimers-double-8.h5 | FileCheck %s
+#
+# RUN: sh -c 'for p in mixed double; do for t in 1 2 4 7; do \
+# RUN:   sed -e "s|PRECISION|$p|" -e "s|THREADS|$t|" -e "s|DETERMINISTIC|true|" -e "s|OUT|det-$p-$t.h5|" opc.toml > det-$p-$t.toml || exit 1; done; done'
+# RUN: sed -e "s|det-mixed-4.h5|det-mixed-4b.h5|" det-mixed-4.toml > det-mixed-4b.toml
+# RUN: sed -e "s|det-mixed-4.h5|det-mixed-sse.h5|" det-mixed-4.toml > det-mixed-sse.toml
+# RUN: sed -e "s|det-double-4.h5|det-double-sse.h5|" det-double-4.toml > det-double-sse.toml
+# RUN: sh -c 'for f in det-mixed-?.toml det-mixed-4b.toml det-double-?.toml; do MDIR_HOST_PAIRS=lanes mdir run $f > /dev/null || exit 1; done'
+# RUN: env MDIR_HOST_PAIRS=lanes MDIR_HOST_CPU=x86-64 mdir run det-mixed-sse.toml > /dev/null
+# RUN: env MDIR_HOST_PAIRS=lanes MDIR_HOST_CPU=x86-64 mdir run det-double-sse.toml > /dev/null
+# RUN: mdir checkpoint det-mixed-1.h5 det-mixed-2.h5 | FileCheck %s
+# RUN: mdir checkpoint det-mixed-1.h5 det-mixed-4.h5 | FileCheck %s
+# RUN: mdir checkpoint det-mixed-1.h5 det-mixed-7.h5 | FileCheck %s
+# RUN: mdir checkpoint det-mixed-4.h5 det-mixed-4b.h5 | FileCheck %s
+# RUN: mdir checkpoint det-mixed-4.h5 det-mixed-sse.h5 | FileCheck %s
+# RUN: mdir checkpoint det-double-1.h5 det-double-2.h5 | FileCheck %s
+# RUN: mdir checkpoint det-double-1.h5 det-double-4.h5 | FileCheck %s
+# RUN: mdir checkpoint det-double-1.h5 det-double-7.h5 | FileCheck %s
+# RUN: mdir checkpoint det-double-4.h5 det-double-sse.h5 | FileCheck %s
+#
+# What the programs are: the lanes of the deterministic mode, whatever the
+# host, measured or not and without MDIR_HOST_PAIRS (the maintainer's ruling
+# on PR #823), and the scalar row that MDIR_HOST_PAIRS=scalar, the suite's
+# setting, selects.
+# RUN: env MDIR_HOST_PAIRS=lanes mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
+# RUN: env MDIR_HOST_PAIRS=lanes MDIR_HOST_CPU=x86-64 mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
+# RUN: env MDIR_HOST_PAIRS=lanes mdir emit det-double-4.toml --stage=lowered | FileCheck %s --check-prefix=DOUBLE
+# RUN: env -u MDIR_HOST_PAIRS mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=MIXED
+# RUN: env -u MDIR_HOST_PAIRS MDIR_HOST_CPU=x86-64 mdir emit det-double-4.toml --stage=lowered | FileCheck %s --check-prefix=DOUBLE
+# RUN: mdir emit det-mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=SCALAR
+# RUN: mdir emit det-mixed-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE
+# RUN: env MDIR_HOST_CPU=x86-64 mdir emit det-mixed-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE-SSE2
+
+# CHECK: the states are identical
+
+# MIXED: llvm.intr.powi({{.*}}) : (vector<8xf32>, i32) -> vector<8xf32>
+# DOUBLE: llvm.intr.powi({{.*}}) : (vector<4xf64>, i32) -> vector<4xf64>
+# SCALAR-NOT: llvm.intr.powi({{.*}}) : (vector<
+# PIPELINE-SSE2: md-exec-choose-host-pairs{mode=scalar cpu=x86-64 vector-bits=128},md-exec-assign-storage,
+# PIPELINE: md-exec-choose-host-pairs{mode=scalar cpu={{[a-z0-9-]+}} vector-bits={{128|256|512}}},md-exec-assign-storage,
+
+#--- opc.toml
+[input]
+topology    = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval     = 10
+checkpoint          = "OUT"
+checkpoint_interval = 20
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 20
+
+[ensemble]
+ensemble    = "NVE"
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target        = "CPU"
+threads       = THREADS
+precision     = "PRECISION"
+deterministic = DETERMINISTIC
+#--- end
+
+#--- dimers.toml
+[input]
+coordinates = "dimers.pdb"
+
+[output]
+energy_interval     = 10
+checkpoint          = "OUT"
+checkpoint_interval = 20
+
+[energy]
+cutoff            = 5.0
+pairlist_distance = 12.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 20
+
+[ensemble]
+ensemble    = "NVE"
+
+[boundary]
+type = "PERIODIC"
+box  = [50.0, 50.0, 50.0]
+
+[execution]
+target    = "CPU"
+threads   = THREADS
+precision = "PRECISION"
+#--- end

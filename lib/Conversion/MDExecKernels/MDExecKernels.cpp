@@ -48,8 +48,8 @@ Value kernels::createReal(OpBuilder &builder, Location loc, Type real,
 /// at a sigma, whose product in f32 may round to a unit below the cutoff,
 /// is then never evaluated at its pole (D159). The cutoff moves inward by
 /// some 5e-7 of itself.
-static Value createCutoff2(OpBuilder &builder, Location loc, Type type,
-                           double cutoff) {
+Value kernels::createCutoff2(OpBuilder &builder, Location loc, Type type,
+                              double cutoff) {
   double square = cutoff * cutoff;
   if (!type.isF32())
     return createReal(builder, loc, type, square);

@@ -127,7 +127,8 @@ static void fuse(PairForOp first, PairForOp second) {
       first.getCenterSet(), first.getGhostFreeAttr(),
       first.getImagesAttr(),
       // Chosen later, for the fused loop (md-exec-choose-scatter).
-      /*scatter=*/ScatterAttr());
+      /*scatter=*/ScatterAttr(),
+      /*hostLanes=*/IntegerAttr());
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();

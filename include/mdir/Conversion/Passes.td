@@ -150,6 +150,7 @@ def ConvertMDExecToLoops
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
+                           "::mlir::LLVM::LLVMDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",

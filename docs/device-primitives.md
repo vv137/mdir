@@ -1086,6 +1086,7 @@ The reductions of a device are one emitter each,
 | `emitOrderedRegisterSum` | an ordered chain of terms in one thread, held in a register; the caller supplies each term at a constant index | a serial reduction |
 | `emitWarpReduce` | the butterfly over groups of 2 to 32 lanes: offsets `lanes/2`, ..., 1, every lane with the result | `WarpReduceShfl` [[CUB]](references.md#cub) |
 | `emitBlockReduce` | the warps' butterflies, the first lane of each writing to block memory, one barrier, every thread combining the warps in their order (D150) | `BlockReduce` with `BLOCK_REDUCE_WARP_REDUCTIONS` |
+| `emitLaneReduce` | on the host, the lanes of a `vector<W x T>` combined by halving: lane $l$ with lane $l + W/2$, then $W/4$, down to one, the order in which lane 0 of `emitWarpReduce` combines a warp (D[host-pair-vector], Section 7) | — |
 
 Every one has a fixed order (the lanes and the warps decide it, not the
 timing of the threads), and so meets each of the three algebras. Sites:
@@ -1288,3 +1289,145 @@ their operations. This is a future behavior-preserving refactor, with
 byte-identical PTX as its gate, rather than five new semantic primitives.
 
 The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D350). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.
+
+## 7. Lanes of the host's pair rows (D[host-pair-vector])
+
+On the CPU target a loop over the pairs of the neighbor matrix with the
+policy `(directed, owner_only)` may run each row $W$ candidates at a time in
+registers of MLIR's `vector` dialect: the strategy `lanes(W)`, the host's
+counterpart of a device's lanes of a row (`RowLanes`). Issue #554, step 4 of
+D267.
+
+### 7.1 In the IR
+
+`host(lanes(W))` on `md_exec.pair_for`, printed only where it is set, so
+that every program without it and every GPU program print as before.
+`md-exec-choose-host-pairs` sets it on the CPU target, after
+`md-exec-assign-algebra` and before `md-exec-assign-storage`, which carries
+it. Absent, the row is scalar, in the order of its list.
+
+### 7.2 Precondition, choice, and switches
+
+One precondition, `md_exec::hostpairs::checkLanes`
+(`include/mdir/Dialect/MDExec/HostPairs.h`), which the chooser reads and
+`convert-md-exec-to-loops` checks again, failing on an attribute that it
+refuses (docs/principles.md, principle 2):
+
+1. the policy `(directed, owner_only)`, without `centers`, `center_set`,
+   `ghost_free`, or `images(explicit)`;
+2. a kernel each of whose ops has a lane mapping (`getLaneMapping`: the
+   elementwise ops of `arith` and `math`; `math.fpowi` with a scalar
+   constant exponent; `vector.extract`, `broadcast`, and `from_elements` of one
+   dimension; the reads `md.lookup`, `vector.load`, and `memref.load`;
+   constants and globals), without regions;
+3. a kernel in f32 or f64 whose values are numbers or vectors of one
+   dimension;
+4. the algebra of the reduced values stated (D301);
+5. $W$ a power of two from 1 to 64.
+
+Every loop over pairs of the corpus of `scripts/builder-equivalence`
+meets it (the survey in the decision).
+
+$W$ is `width` where it is given. In the deterministic mode it is 8 in f32
+and 4 in f64 on every host (the maintainer's ruling on PR #823): a host of
+narrower registers holds the lanes in several of them, in the same order,
+and a wider one does not widen, so the bits do not depend on the host's
+vector width. Otherwise it is the width of the host's registers over the
+bits of the kernel's type: 512 bits with `avx512f`, 256 with `avx`, and 128
+otherwise, from the machine that compiles the host code
+(`compiler::createHostMachine`), so 8 in f32 and 4 in f64 on AVX2.
+
+Whether the lanes are the default is the host's measured policy
+(`hostpairs::findPolicy`, keyed by the CPU that LLVM names, #433's host
+column). Outside the deterministic mode a host without an entry keeps the
+scalar row (the documented conservative default), and the remark of
+`explain` says so. The deterministic mode takes the lanes on every host,
+measured or not, so that its bits are the same everywhere (the maintainer's
+ruling on PR #823); `MDIR_HOST_PAIRS=scalar` still selects the scalar row.
+`MDIR_HOST_PAIRS=scalar|lanes|lanes:W` overrides it for comparisons and
+tests ([environment.md](environment.md)), and `MDIR_HOST_CPU` compiles the
+host code for another CPU, such as `x86-64` (SSE2 alone). The lit suite
+pins `scalar`, so that `mdir emit` of a CPU program does not depend on the
+host; the tests of the lanes state $W$.
+The driver checks the variables before it lowers anything
+(`compiler::checkHostEnvironment`): for every program, `MDIR_HOST_CPU`, a
+64-bit CPU that LLVM's X86 back end knows, whose width counts each of its
+features and every feature they imply; for a program for the CPU,
+`MDIR_HOST_PAIRS`, `scalar`, `lanes`, or `lanes:W` with $W$ a power of two
+from 1 to 64, which a program for a GPU does not read. Every refusal of the precondition is a remark of
+`explain`. The op's verifier refuses `host(lanes(W))` on a loop whose
+buffers are on a device, so a GPU program cannot carry it.
+
+### 7.3 The emitter
+
+`kernels::emitPairRowLanes` (`include/mdir/Conversion/HostPairEmitter.h`,
+`lib/Conversion/MDExecKernels/HostPairLanes.cpp`), which the host's
+`lowerPairFor` calls in place of `emitPairKernel` where the attribute is
+set. `emitPairKernel` is not changed, so the device lowering and the scalar
+CPU row emit the same code as before.
+
+- *Groups.* A row of $n$ candidates runs in $\lfloor n/W \rfloor$ full
+  groups, each read by one `vector.load` of the row of the matrix, and,
+  where $n$ is not a multiple of $W$, one tail read by `vector.maskedload`.
+  A padding lane takes the row's last candidate, so every lane evaluates
+  the kernel at a pair that the scalar row also evaluates; its
+  contribution is masked.
+- *Layout.* Each value of the kernel is held as its components, one
+  `vector<W x T>` each (a `vector<3 x T>` becomes three). A value that every
+  lane shares (a constant, a global, the center's position and fields)
+  stays one scalar and is splat where a lane op takes it.
+- *Gathers.* The positions, the fields of `ins`, `md.lookup`, and the rows
+  of a radial table are read one lane at a time and transposed into
+  components. `vector.gather` and relaid tables are later strategies, by
+  measurement.
+- *The kernel.* An elementwise op becomes the same op on the vectors of the
+  lanes. `math.fpowi` with a constant exponent becomes `llvm.intr.powi` of
+  the vector with the scalar exponent, which LLVM's code generator expands
+  by repeated squaring as it expands the scalar one (MLIR's `math.fpowi`
+  takes a vector of exponents, which its lowering refuses). `erfc` and
+  `log` reach `convert-math-to-libm`, which calls the scalar function for
+  each lane.
+- *The pair.* The difference of the positions in their type, the minimum
+  image and $r^2 = (d_x^2 + d_y^2) + d_z^2$ in the kernel's type, the
+  scalar row's order, and the mask
+  $(r^2 < r_c^2) \wedge (j \ne i) \wedge (\text{lane in the row})$
+  with the scalar row's $r_c^2$ (`createCutoff2`).
+- *Order.* Lane $l$ sums the candidates $k \equiv l \pmod W$ in increasing
+  $k$, in the type of the scalar row's sum. A sum that the kernel widens
+  (the energy and the virial of the mixed mode) is widened in each lane, as
+  the device's lanes widen before their butterfly. The lanes are then
+  combined by `emitLaneReduce`. The destinations and the global sums
+  (D171) follow as in the scalar row. A row's result is a function of its
+  list, $W$, and the kernel: it does not depend on the number of threads or
+  on the run, and it differs from the scalar row by the rounding of the
+  sum's order alone (Section 5.1).
+
+### 7.4 Tests
+
+- `test/Dialect/MDExec/Transforms/choose-host-pairs.mlir`: the widths, the
+  policy, every refusal under `explain` (the two-ended form, a domain,
+  `images(explicit)`, a power by a field or by a vector, a region, a value
+  of two dimensions), the attribute through `md-exec-assign-storage`, and
+  the options' bounds.
+- `test/Dialect/MDExec/host-pairs-invalid.mlir`: the verifier's widths, the
+  lanes on a device, and the kernel types that the lanes would refuse.
+- `test/Conversion/MDExecToLoops/host-pair-lanes.mlir`: the groups, the
+  tail, its padding and its mask in every sum, the gathers, `powi`, the
+  widening, and the halving at $W$ = 4; `host-pair-lanes-w8.mlir`: the
+  halving at $W$ = 8 for the force components and the energy;
+  `host-pair-lanes-invalid.mlir`: the lowering refuses an attribute that
+  fails the precondition.
+- `test/Driver/host-pair-lanes-bound.test`: on the dipeptide in water, a
+  dense system of ten types with exclusions, `lanes(8)` and `lanes(4)`,
+  checked to be on every loop over pairs, against the scalar row at step 0,
+  in double and mixed precision, every force component and the potential
+  within the bound of the order of a sum (Section 5.1), from a NumPy
+  reference of the terms of the rows.
+- `test/Driver/host-pair-lanes.test`: `lanes(1)` and the dilute `lanes(8)`
+  to the bit, and the deterministic mode across threads, runs, and a host
+  of SSE2 alone; `host-pairs-environment.test`: the host's variables, the
+  machine of the host code, and the GPU pipeline without the chooser.
+- `test/Driver/host-pair-lanes-output-independence.test`,
+  `-deterministic-run.test`, `-thermostats.test`: the deterministic
+  properties of output independence, of Python against `mdir run` in
+  segments, and of checkpoints in both directions, with the lanes.

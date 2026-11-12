@@ -57,6 +57,13 @@ mlir::Value emitWarpReduce(mlir::OpBuilder &builder, mlir::Location loc,
                            mlir::Value value, Combiner combiner,
                            int64_t lanes = 32);
 
+/// The combination of the lanes of `value`, a vector of one dimension
+/// whose length is a power of two, on the host (D[host-pair-vector]): by
+/// halving, lane l with lane l + W/2, then W/4, down to one, the order in
+/// which lane 0 of emitWarpReduce combines a warp. Returns the number.
+mlir::Value emitLaneReduce(mlir::OpBuilder &builder, mlir::Location loc,
+                           mlir::Value value, Combiner combiner);
+
 /// The combinations of `values` (numbers or vectors of floating point) over
 /// a block of `blockSize` threads, `thread` the number of this one: each
 /// warp by emitWarpReduce, the first lane of each writes the warp's numbers

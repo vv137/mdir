@@ -15,6 +15,9 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
+#include "llvm/TargetParser/X86TargetParser.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/FileSystem.h"
@@ -67,6 +70,10 @@ void mdir::compiler::useCudaToolkit() {
 llvm::Expected<std::string>
 mdir::compiler::getGpuOptions(const Control &control, int64_t device,
                               bool cache) {
+  // The host's variables (D[host-pair-vector]): every program's host code
+  // reads MDIR_HOST_CPU, a program for the CPU MDIR_HOST_PAIRS as well.
+  if (auto error = checkHostEnvironment(control.target == Target::CPU))
+    return std::move(error);
   if (control.target != Target::GPU)
     return std::string();
   auto options = mdir::getGpuPipelineOptions(device);
@@ -142,6 +149,115 @@ llvm::StringRef mdir::compiler::getFusedPruningSetting() {
   if (value == "off" || value == "always")
     return value;
   return "default";
+}
+
+namespace {
+/// The host that the host code is compiled for (D[host-pair-vector]): the
+/// CPU that LLVM detects, or the one that `MDIR_HOST_CPU` names, the width
+/// of its vector registers, and the options of md-exec-choose-host-pairs
+/// that `MDIR_HOST_PAIRS` gives.
+struct HostTarget {
+  std::string cpu;
+  int64_t vectorBits = 128;
+  std::string pairs;
+};
+} // namespace
+
+/// Reads and checks `MDIR_HOST_CPU`, and with `readPairs` `MDIR_HOST_PAIRS`,
+/// which only a program for the CPU reads. The CPU and its
+/// features are read as `JITTargetMachineBuilder::detectHost` reads them,
+/// without a machine: the pipeline of a Python program is built before its
+/// simulation initializes the target. A CPU that `MDIR_HOST_CPU` names has
+/// the features of its name and every feature they imply (`x86-64-v3` has
+/// AVX2, and so AVX; `sandybridge` has AVX itself).
+static llvm::Expected<HostTarget> getHostTarget(bool readPairs) {
+  HostTarget host;
+  StringRef chosen = readPairs && std::getenv("MDIR_HOST_PAIRS")
+                         ? std::getenv("MDIR_HOST_PAIRS")
+                         : "";
+  if (chosen == "scalar" || chosen == "lanes") {
+    host.pairs = ("mode=" + chosen + " ").str();
+  } else if (!chosen.empty()) {
+    StringRef width = chosen;
+    int64_t lanes = 0;
+    if (!width.consume_front("lanes:") || width.getAsInteger(10, lanes) ||
+        lanes < 1 || lanes > 64 || !llvm::isPowerOf2_64(lanes))
+      return llvm::make_error<compiler::CompileError>(
+          "MDIR_HOST_PAIRS='" + chosen.str() +
+          "' is not scalar, lanes, or lanes:W with W a power of two from 1 "
+          "to 64");
+    host.pairs = "mode=lanes width=" + std::to_string(lanes) + " ";
+  }
+  llvm::Triple triple(llvm::sys::getProcessTriple());
+  host.cpu = llvm::sys::getHostCPUName().str();
+  bool avx = false, avx512 = false;
+  if (const char *named = std::getenv("MDIR_HOST_CPU"); named && *named) {
+    host.cpu = named;
+    if (triple.isX86()) {
+      if (llvm::X86::parseArchX86(host.cpu, /*Only64Bit=*/true) ==
+          llvm::X86::CK_None)
+        return llvm::make_error<compiler::CompileError>(
+            "MDIR_HOST_CPU='" + host.cpu +
+            "' is not a 64-bit CPU that LLVM's X86 back end knows, such as "
+            "x86-64, x86-64-v3, or znver3");
+      llvm::SmallVector<llvm::StringRef> own;
+      llvm::X86::getFeaturesForCPU(host.cpu, own);
+      llvm::StringMap<bool> features;
+      for (llvm::StringRef feature : own) {
+        features[feature] = true;
+        llvm::X86::updateImpliedFeatures(feature, true, features);
+      }
+      avx = features.lookup("avx");
+      avx512 = features.lookup("avx512f");
+    }
+  } else if (triple.isX86()) {
+    llvm::StringMap<bool> features = llvm::sys::getHostCPUFeatures();
+    avx = features.lookup("avx");
+    avx512 = features.lookup("avx512f");
+  }
+  host.vectorBits = avx512 ? 512 : avx ? 256 : 128;
+  return host;
+}
+
+llvm::Error compiler::checkHostEnvironment(bool cpuProgram) {
+  auto host = getHostTarget(/*readPairs=*/cpuProgram);
+  return host ? llvm::Error::success() : host.takeError();
+}
+
+/// The machine of the host code before its code-generation level: the
+/// host that LLVM detects, or, with `MDIR_HOST_CPU`, the CPU it names with
+/// that CPU's own features (`x86-64` for a host of SSE2 alone), to compile
+/// for a narrower host than this one (D[host-pair-vector]). The compile
+/// cache keys a host object by this machine's CPU and features.
+static llvm::Expected<llvm::orc::JITTargetMachineBuilder> getHostBuilder() {
+  auto host = getHostTarget(/*readPairs=*/false);
+  if (!host)
+    return host.takeError();
+  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!builder)
+    return builder.takeError();
+  if (const char *cpu = std::getenv("MDIR_HOST_CPU"); cpu && *cpu) {
+    builder->setCPU(host->cpu);
+    builder->setFeatures("");
+  }
+  return builder;
+}
+
+/// The options of md-exec-choose-host-pairs (D[host-pair-vector]): the CPU
+/// of the host and the width of its vector registers, and `MDIR_HOST_PAIRS`,
+/// which overrides the host's policy for comparisons and tests: `scalar`
+/// (no loop takes the lanes), `lanes` (every loop that can, at the width of
+/// the mode and the host), or `lanes:W` (at `W` lanes). The driver checks
+/// the variables first (`checkHostEnvironment`); here a value that it
+/// refused leaves the options empty.
+static std::string getHostPairsOptions() {
+  auto host = getHostTarget(/*readPairs=*/true);
+  if (!host) {
+    llvm::consumeError(host.takeError());
+    return "";
+  }
+  return host->pairs + "cpu=" + host->cpu +
+         " vector-bits=" + std::to_string(host->vectorBits);
 }
 
 /// The options of the pruning in the loop over pairs (D284): on
@@ -290,6 +406,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // activations of the entry of an embedding front end (D253) and across
   // the segments of `mdir run` (#316).
   bool threaded = control.threads > 1;
+  // The lanes of the rows of the loops over pairs (D[host-pair-vector]),
+  // by the measured policy of the host, which a host not measured does not
+  // have (the scalar row).
+  os << "md-exec-choose-host-pairs{" << getHostPairsOptions() << "},";
   // On one thread the spreading of PME adds to its grid without atomics
   // (D271).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
@@ -536,7 +656,7 @@ compiler::lower(const driver::Control &control, driver::Program program,
 // the CPU (2%, within the noise), so the host code takes `Default` (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>>
 compiler::createHostMachine() {
-  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  auto builder = getHostBuilder();
   if (!builder)
     return builder.takeError();
   builder->setCodeGenOptLevel(llvm::CodeGenOptLevel::Default);
