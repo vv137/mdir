@@ -15,6 +15,7 @@ void MDDialect::initialize() {
 #include "mdir/Dialect/MD/MDOps.cpp.inc"
       >();
   registerTypes();
+  registerAttributes();
 }
 
 LogicalResult MDDialect::verifyOperationAttribute(Operation *op,

@@ -207,4 +207,55 @@ def MD_TableType : MD_Type<"Table", "table"> {
   let genVerifyDecl = 1;
 }
 
+
+//===----------------------------------------------------------------------===//
+// Attributes
+//===----------------------------------------------------------------------===//
+
+def MD_RigidKindAttr : AttrDef<MD_Dialect, "RigidKind"> {
+  let mnemonic = "rigid_kind";
+  let summary = "A rigid kind of D403 as the pair segments take it";
+  let description = [{
+    One kind of rigid group (D403) that `md.kind_pairs` takes. Its
+    particles are numbered by their place in a molecule, from 0; the size
+    of the kind is the arity of its relation.
+
+    ```mlir
+    #md.rigid_kind<frame = [0, 1, 2], sites = [3],
+                   weights = [0.70455878105857583, 0.14772060947071208,
+                              0.14772060947071208],
+                   extent = 0.087343313000000005>
+    ```
+
+    `frame` holds the places of the massive atoms, ascending; the first is
+    the anchor. `sites` holds the places of the massless sites; with
+    `frame` it holds every place once. `weights` holds, for each site in
+    the order of `sites`, its weights over the atoms of `frame` in frame
+    order (rule R2 of D403: they sum to 1). `extent` is the radius about
+    the anchor that the consumer checks to cover every place of a copy.
+    Charges and types are not part of the kind here: the segment bodies
+    hold them as constants (D[kind-pairs]).
+  }];
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$frame,
+                        "::mlir::DenseI64ArrayAttr":$sites,
+                        "::mlir::DenseF64ArrayAttr":$weights,
+                        "::mlir::FloatAttr":$extent);
+  // Weights and the extent are printed so that they read back as the same
+  // f64 numbers.
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// The particles of one copy: frame atoms and sites.
+    unsigned getSize() const { return getFrame().size() + getSites().size(); }
+    /// The coefficients of a place over the frame offsets x_k - x_anchor,
+    /// k = 1, ..., m - 1: zero for the anchor, a unit vector for a frame
+    /// atom, and the weights w_1, ..., w_{m-1} for a site.
+    ::llvm::SmallVector<double> getPlaceCoefficients(unsigned place) const;
+    /// The index in `frame` of a frame atom's place, or none for a site.
+    std::optional<unsigned> getFrameIndex(unsigned place) const;
+    /// The weights over the frame of the site at a place, or empty.
+    ::llvm::ArrayRef<double> getSiteWeights(unsigned place) const;
+  }];
+}
+
 #endif // MDIR_DIALECT_MD_MDTYPES_TD

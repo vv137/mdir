@@ -273,6 +273,145 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MD_KindPairsOp : MD_Op<"kind_pairs", [
+    Pure, AttrSizedOperandSegments, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Divides the pairs of rigid kinds and the rest into segments";
+  let description = [{
+    Rule R3 (D[kind-pairs]). The operands `kinds` are $K$ rigid kinds of
+    D403, numbered $0, \dots, K-1$ in operand order, each the disjoint
+    ordered tuples of its copies' particles in place order, described by
+    the `#md.rigid_kind` of the same position in `descriptors`. The rest,
+    the particles of no taken kind, is kind $K$; each of its particles is
+    a molecule of one member. The scalar i32 field `universe` supplies the
+    particle set; its values are not read.
+
+    For each pair of kinds $g \le f$ the result numbered
+    $s(f, g) = f(f+1)/2 + g$ is the segment $(f, g)$: the pairs of a
+    molecule of kind $f$ with a molecule of kind $g$, for $f = g$ each
+    unordered pair of distinct molecules once. There are
+    $(K+1)(K+2)/2$ results. A tuple of the segment holds the frame atoms of
+    the molecule of $f$ in frame order, then those of the molecule of $g$:
+    its arity is $m_f + m_g$, with $m$ the frame size of a kind and 1 for
+    the rest. It is unordered when $f = g$ and $m_f = 1$, ordered
+    otherwise. The massless sites are absent from the tuples: a segment
+    body forms them from the frame with the kind's weights.
+
+    `excluded` is removed from the segment of the rest, $(K, K)$. A taken
+    kind has all its own pairs excluded and none with another particle;
+    the generator of the segments establishes that from D403's facts.
+    `anchored` holds ordered (member, anchor) pairs of the rest, a member
+    within `radius` of its anchor, as in D[rigid-water-template]; they
+    select candidates only.
+
+    The results are logical tuple domains, independent of positions and of
+    the storage of lists, with no implicit cutoff. For $K = 1$ the
+    segments 0, 1 and 2 are the WW, SW and SS of
+    D[rigid-water-template].
+  }];
+  let arguments = (ins MD_ReferenceFieldType:$universe,
+                       Variadic<MD_RelationType>:$kinds,
+                       TypedArrayAttrBase<MD_RigidKindAttr, "rigid kinds">:$descriptors,
+                       Optional<MD_RelationType>:$excluded,
+                       Optional<MD_RelationType>:$anchored,
+                       OptionalAttr<F64Attr>:$radius);
+  let results = (outs Variadic<MD_RelationType>:$segments);
+  let assemblyFormat = [{
+    $universe `,` `kinds` `(` $kinds `)` $descriptors
+    (`exclude` `(` $excluded^ `)`)?
+    (`anchor` `(` $anchored^ `)` `radius` `(` $radius `)`)? attr-dict
+    `:` functional-type(operands, results)
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    /// The number of taken kinds; the rest is kind K.
+    unsigned getNumTakenKinds() { return getKinds().size(); }
+    /// The descriptor of a taken kind f < K.
+    RigidKindAttr getDescriptor(unsigned f) {
+      return ::llvm::cast<RigidKindAttr>(getDescriptors()[f]);
+    }
+  }];
+}
+
+// An image-aware reduction over the tuples of one segment.
+class MD_SegmentWindowOp<string mnemonic> : MD_Op<mnemonic, [
+    RecursiveMemoryEffects, SingleBlock]> {
+  let arguments = (ins MD_RelationType:$relation,
+                       MD_ReferenceFieldType:$positions, MD_CellType:$cell,
+                       Variadic<MD_ReferenceFieldType>:$gathered,
+                       I64Attr:$f, I64Attr:$g,
+                       F64Attr:$cutoff,
+                       UnitAttr:$site_forces);
+  let results = (outs AnyType:$result);
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    $relation `,` $positions `,` $cell `segment` `(` $f `,` $g `)`
+    `cutoff` `(` $cutoff `)`
+    (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+    (`site_forces` $site_forces^)?
+    $kernel attr-dict `:` qualified(type($relation)) `,`
+    qualified(type($positions)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MD_SumSegmentWindowOp : MD_SegmentWindowOp<"sum_segment_window"> {
+  let summary = "Sums the site pairs of a segment over covering anchor images";
+  let description = [{
+    The relation is the result $s(f, g)$ of `md.kind_pairs`, and
+    `segment(f, g)` names it ($g \le f$). With $m_f$ and $m_g$ the frame
+    sizes of the two kinds (1 for the rest), the body's arguments are
+    first the anchor displacement $\mathbf x_{a_0} - \mathrm{image}(\mathbf x_{b_0})$
+    in the candidate image, then the $m_f - 1$ frame offsets
+    $\mathbf x_{a_k} - \mathbf x_{a_0}$ of the molecule of $f$, then the
+    $m_g - 1$ of the molecule of $g$, each in its whole molecule. Each
+    gathered field then supplies one value per tuple member.
+
+    For M site pairs the body yields M energies followed by M site
+    displacements. Each energy is included only where its own displacement
+    has length strictly below `cutoff`. The verifier proves that every
+    yielded displacement is the anchor displacement plus the coefficients
+    of a place of $f$ minus those of a place of $g$ over the frame
+    offsets: zero for the anchor, a unit vector for a frame atom, and for a
+    site its weights $w_1, \dots, w_{m-1}$ of the kind's descriptor,
+    compared as f64. A scalar result sums energies; a vector<9xf64> result
+    sums the corresponding strain contributions.
+
+    The logical reduction enumerates all covering anchor images, as in
+    D242, not just the minimum image. The kinds' `extent` is a checked
+    covering bound on each molecule. Only after that bound and the
+    explicit site geometry are proved may lowering use a segmented pair
+    list. A covering reach below the least cell edge and a cutoff below
+    half the cell are required as on the ordinary group route. The relation
+    has no hidden real payload.
+
+    Force and strain rules differentiate this body's arithmetic, including
+    the candidate image in the anchor displacement. They hold the piecewise
+    constant membership fixed, as ordinary pair derivatives do. Higher
+    derivatives and tunable parameters are not admitted by this reduction.
+  }];
+}
+
+def MD_GatherSegmentWindowOp : MD_SegmentWindowOp<"gather_segment_window"> {
+  let summary = "Scatters the forces of a segment's site pairs to frame atoms";
+  let description = [{
+    The force transpose of `md.sum_segment_window`, with the same images,
+    operands, geometry and per-site cutoff. For M site pairs its body
+    yields M groups of force vectors followed by M site displacements. A
+    group has one force for each frame atom of the tuple, $m_f + m_g$; with
+    `site_forces` it has one for each place of the two molecules, frame
+    atoms and sites in place order, $n_f + n_g$ with $n$ a kind's size (1
+    for the rest). Each group is included only inside its site's cutoff.
+
+    `site_forces` is set by a radial derivative whose site pairs involve a
+    site. Its slots are interaction-site forces: the constant transpose of
+    the site's placement, $\mathbf F_{a_k} \mathrel{+}= w_k \mathbf F_s$
+    over its weights, is applied after accumulation (rule (A) of
+    D[rigid-water-template]). The result has frame atoms only.
+  }];
+}
+
 def MD_TripletsOp : MD_Op<"triplets", [Pure]> {
   let summary = "Derives the triplets centered on each particle from pairs";
   let description = [{
@@ -810,7 +949,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
+    ParentOneOf<["SumSegmentWindowOp", "GatherSegmentWindowOp",
+                 "ScatterStencilOp", "GatherStencilOp", "ReduceStencilOp", "MapGridOp", "SumGridOp",
                  "SumRelationOp", "GatherRelationOp", "SumTuplesOp",
                  "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {

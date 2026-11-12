@@ -29,9 +29,11 @@ def MD_Dialect : Dialect {
   let cppNamespace = "::mdir::md";
 
   let useDefaultTypePrinterParser = 1;
+  let useDefaultAttributePrinterParser = 1;
   let hasOperationAttrVerify = 1;
   let extraClassDeclaration = [{
     void registerTypes();
+    void registerAttributes();
   }];
 }
 

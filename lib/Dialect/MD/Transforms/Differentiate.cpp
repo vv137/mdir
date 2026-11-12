@@ -9,6 +9,7 @@
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/Stencils.h"
 #include "mdir/Dialect/MD/Transforms/ReciprocalGrid.h"
+#include "mdir/Dialect/MD/Transforms/SegmentWindows.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
@@ -287,6 +288,7 @@ private:
   Value energy;
   SmallVector<SumRelationOp> sums;
   SmallVector<SumTuplesOp> tupleSums;
+  SmallVector<SumSegmentWindowOp> segmentSums;
   /// Sums over particles that read the positions themselves: terms of the
   /// absolute positions, which give forces but no virial.
   SmallVector<SumParticlesOp> particleSums;
@@ -418,12 +420,16 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp, GatherRelationOp>(user) &&
                   index == 1) ||
-                 isa<SumParticlesOp>(user) || isGridGeometryUse(user, index);
+                 isa<SumParticlesOp>(user) || isGridGeometryUse(user, index) ||
+                 (isa<SumSegmentWindowOp>(user) && index == 1);
     if (!known)
       return user->emitError()
              << "cannot differentiate with respect to the positions through "
                 "this use";
   }
+  for (SumSegmentWindowOp sum : segmentSums)
+    if (failed(checkSegmentWindowActivity(sum, positions)))
+      return failure();
   for (SumRelationOp sum : sums) {
     Block &kernel = sum.getKernel().front();
     // The forces of the tangent of a pair term (D376), whose kernel reads
@@ -1410,6 +1416,16 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     terms.push_back(gather->getResult(0));
   }
 
+  for (SumSegmentWindowOp sum : segmentSums) {
+    Value weight, term;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight) continue;
+    if (failed(buildSegmentWindowDerivative(builder, sum, weight, false, term)))
+      return failure();
+    terms.push_back(term);
+  }
+
   for (SumTuplesOp sum : tupleSums) {
     Value weight;
     if (failed(getWeight(sum.getResult(), weight)))
@@ -1635,6 +1651,16 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     }
     setYield(block, contribution);
     total = outer.add(total, term->getResult(0));
+  }
+
+  for (SumSegmentWindowOp sum : segmentSums) {
+    Value weight, term;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight) continue;
+    if (failed(buildSegmentWindowDerivative(builder, sum, weight, true, term)))
+      return failure();
+    total = outer.add(total, term);
   }
 
   for (SumTuplesOp sum : tupleSums) {
@@ -3895,6 +3921,8 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       rowSums.push_back(rows);
     if (auto tuples = dyn_cast<SumTuplesOp>(&op))
       tupleSums.push_back(tuples);
+    if (auto window = dyn_cast<SumSegmentWindowOp>(&op))
+      segmentSums.push_back(window);
     if (auto reciprocal = dyn_cast<ReciprocalOp>(&op))
       reciprocals.push_back(reciprocal);
     if (auto particles = dyn_cast<SumParticlesOp>(&op))
@@ -3906,6 +3934,19 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     if (failed(expandTruncation(sum)))
       return fail();
     sums.push_back(sum);
+  }
+
+  if (!segmentSums.empty()) {
+    bool unsupported = ofTangent || llvm::any_of(kinds, [](int32_t kind) {
+      auto request = static_cast<Request>(kind);
+      return request != Request::Energy && request != Request::Forces &&
+             request != Request::Virial;
+    });
+    if (unsupported) {
+      segmentSums.front().emitOpError(
+          "supports energy, forces and virial only; higher derivatives and tunables require the general path");
+      return fail();
+    }
   }
 
   requestForces =
