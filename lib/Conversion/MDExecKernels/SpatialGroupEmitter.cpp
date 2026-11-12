@@ -49,6 +49,12 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
         item, v.firstClassSize);
     return arith::SelectOp::create(at, loc, first, values[0], values[1]);
   };
+  // The most units of the group that holds `item`: firstWidth or 16.
+  auto width = [&](OpBuilder &at, Value item) -> Value {
+    Value first = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult,
+        item, v.firstClassSize);
+    return arith::SelectOp::create(at, loc, first, ix(at, v.firstWidth), ix(at, 16));
+  };
 
   launch(b, scanSize, [&](OpBuilder &out, Value item) {
     // Word 4 of the controls records the last pass that split a group (one
@@ -135,8 +141,9 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
             memref::LoadOp::create(end, loc, v.segments, ValueRange{i}));
         Value start = index(end, memref::LoadOp::create(end, loc, v.starts, ValueRange{segment}));
         Value length = arith::SubIOp::create(end, loc, next, start);
+        Value w = width(end, i);
         Value count = arith::DivUIOp::create(end, loc,
-            arith::AddIOp::create(end, loc, length, ix(end, 15)), ix(end, 16));
+            arith::AddIOp::create(end, loc, length, arith::SubIOp::create(end, loc, w, one)), w);
         memref::StoreOp::create(end, loc, toWord(end, length), v.lengths, ValueRange{segment});
         memref::StoreOp::create(end, loc, toWord(end, count), v.counts, ValueRange{segment});
         Value first = arith::CmpIOp::create(end, loc, arith::CmpIPredicate::ult, i, v.firstClassSize);
@@ -149,13 +156,14 @@ SpatialGroupPlanResult mdir::kernels::emitSpatialGroupPlan(
       Value segment = index(in, memref::LoadOp::create(in, loc, v.segments, ValueRange{i}));
       Value start = index(in, memref::LoadOp::create(in, loc, v.starts, ValueRange{segment}));
       Value position = arith::SubIOp::create(in, loc, i, start);
+      Value w = width(in, i);
       Value groupStart = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
-          arith::RemUIOp::create(in, loc, position, ix(in, 16)), ix(in, 0));
+          arith::RemUIOp::create(in, loc, position, w), ix(in, 0));
       scf::IfOp::create(in, loc, groupStart, [&](OpBuilder &group, Location) {
         Value length = index(group,
             memref::LoadOp::create(group, loc, v.lengths, ValueRange{segment}));
         Value last = arith::MinUIOp::create(group, loc,
-            arith::AddIOp::create(group, loc, i, ix(group, 15)),
+            arith::AddIOp::create(group, loc, i, arith::SubIOp::create(group, loc, w, one)),
             arith::SubIOp::create(group, loc,
                 arith::AddIOp::create(group, loc, start, length), one));
         Value span = arith::SubIOp::create(group, loc,

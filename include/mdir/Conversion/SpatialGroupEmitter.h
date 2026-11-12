@@ -19,6 +19,8 @@ struct SpatialGroupPlanBuffers {
   /// Optional host index: the passes to run before the controls are first
   /// read (clamped to [1, N+1]; one when absent). Each later pass is read.
   mlir::Value unreadPasses;
+  /// The most units of a group of the first class (the second has 16).
+  unsigned firstWidth = 16;
 };
 struct SpatialGroupPlanResult {
   /// Host index values, available after the control readback. Per-segment

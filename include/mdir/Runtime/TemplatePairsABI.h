@@ -15,6 +15,15 @@
 #define MDRT_TEMPLATE_IMAGE_BITS 10
 #define MDRT_TEMPLATE_IMAGE_OFFSET 512
 #define MDRT_TEMPLATE_IMAGE_MASK 1023
+/* PROTOTYPE (proto/water-group-8): the units of a water row group, and the
+ * lanes of a WW rotation, fixed at build time: 16 (the default) or 8. The
+ * solute row groups stay at 16 units. */
+#ifndef MDRT_TEMPLATE_WATER_GROUP
+#define MDRT_TEMPLATE_WATER_GROUP 16
+#endif
+#if MDRT_TEMPLATE_WATER_GROUP != 16 && MDRT_TEMPLATE_WATER_GROUP != 8
+#error "MDRT_TEMPLATE_WATER_GROUP must be 16 or 8"
+#endif
 
 enum MdrtTemplateMetadataSlot {
   TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,

@@ -55,7 +55,10 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
     unsigned firstSize = firstSizes[kind], secondSize = secondSizes[kind];
     unsigned arity = firstSize + secondSize;
     Block &source = loop->getRegion(kind).front();
-    Value local = arith::AndIOp::create(at, loc, lane, word(at, 15));
+    // The lanes of a WW row group: MDRT_TEMPLATE_WATER_GROUP, as the
+    // rotation of emitTemplateClassUnit; 16 for the solute rows.
+    unsigned width = kind == 0 ? MDRT_TEMPLATE_WATER_GROUP : 16;
+    Value local = arith::AndIOp::create(at, loc, lane, word(at, width - 1));
     Value inSpan = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult, local, firstLength);
     Value limit = arith::SubIOp::create(at, loc,
         arith::MaxUIOp::create(at, loc, firstLength, word(at, 1)), word(at, 1));

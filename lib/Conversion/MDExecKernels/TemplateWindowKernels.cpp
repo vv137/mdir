@@ -1,6 +1,7 @@
 #include "mdir/Conversion/TemplateWindowKernels.h"
 #include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Runtime/TemplatePairsABI.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -555,10 +556,17 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   auto realForces = [&](OpBuilder &at, ValueRange values) {
     return mdir::md::emitTemplateForceTranspose(at, loc, values, unit.alpha);
   };
-  Value u = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 15));
-  Value half = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 16));
+  // A row group of `width` units takes `width` lanes; the warp holds
+  // 32 / width such lane groups, each rotating its own entries through
+  // `width` turns. WW rows use MDRT_TEMPLATE_WATER_GROUP (16 or 8), the
+  // solute rows 16. The caller's first unit is lane & (width - 1).
+  const int64_t width = unit.kind == TemplatePairClass::WaterWater
+      ? MDRT_TEMPLATE_WATER_GROUP : 16;
+  Value u = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, width - 1));
+  Value half = arith::AndIOp::create(builder, loc, unit.lane, word(builder, loc, 32 - width));
   Value previous = arith::AndIOp::create(builder, loc,
-      arith::AddIOp::create(builder, loc, u, word(builder, loc, 15)), word(builder, loc, 15));
+      arith::AddIOp::create(builder, loc, u, word(builder, loc, width - 1)),
+      word(builder, loc, width - 1));
   Value source = arith::OrIOp::create(builder, loc, half, previous);
   SmallVector<Value> initial;
   for (unsigned i = 0; i != fi; ++i) initial.push_back(createZero(builder, loc, forceType));
@@ -592,7 +600,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         for (unsigned i = 0; i != fj; ++i) carried.push_back(createZero(batch, loc, forceType));
         llvm::append_range(carried, own);
         auto turns = scf::ForOp::create(batch, loc, word(batch, loc, 0),
-            word(batch, loc, 16), word(batch, loc, 1), carried,
+            word(batch, loc, width), word(batch, loc, 1), carried,
             [&](OpBuilder &turn, Location, Value, ValueRange state) {
               Value bit = arith::AndIOp::create(turn, loc,
                   arith::ShRUIOp::create(turn, loc, state[maskAt], u), word(turn, loc, 1));
@@ -644,7 +652,7 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
         ValueRange final(turns.getResults());
         if (unit.forces)
           scf::IfOp::create(batch, loc, has, [&](OpBuilder &body, Location) {
-            // Sixteen rotations restore the original partner and its force.
+            // `width` rotations restore the original partner and its force.
             writeSecond(body, partner.id ? partner.id : entry,
                         realForces(body, final.slice(fjAt, fj)));
             scf::YieldOp::create(body, loc);
@@ -654,11 +662,16 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
   ValueRange final(batches.getResults());
   if (unit.forces) {
     SmallVector<Value> combined;
-    for (Value force : final.take_front(fi))
-      combined.push_back(arith::AddFOp::create(builder, loc, force,
-          shuffle(builder, loc, force, word(builder, loc, 16), gpu::ShuffleMode::XOR)));
+    // The lane groups of the warp hold the same units: sum them by
+    // butterfly, 16 then 8 (for width 8), and write from the first.
+    for (Value force : final.take_front(fi)) {
+      for (int64_t step = 16; step >= width; step /= 2)
+        force = arith::AddFOp::create(builder, loc, force,
+            shuffle(builder, loc, force, word(builder, loc, step), gpu::ShuffleMode::XOR));
+      combined.push_back(force);
+    }
     Value lowerHalf = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt,
-                                            unit.lane, word(builder, loc, 16));
+                                            unit.lane, word(builder, loc, width));
     Value writes = arith::AndIOp::create(builder, loc, lowerHalf, unit.firstValid);
     scf::IfOp::create(builder, loc, writes, [&](OpBuilder &body, Location) {
       writeFirst(body, realForces(body, combined));

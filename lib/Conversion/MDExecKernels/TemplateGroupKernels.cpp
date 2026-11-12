@@ -104,6 +104,7 @@ TemplateGroupBuffers mdir::kernels::emitPrepareTemplateGroups(OpBuilder &b,
   // The previous build's passes run before the first readback; this
   // plan's passes are kept for the next build.
   plan.unreadPasses = hostIndex("mdrtTemplatePairsPlanPasses");
+  plan.firstWidth = MDRT_TEMPLATE_WATER_GROUP;
   auto result = emitSpatialGroupPlan(b, loc, plan);
   call("mdrtTemplatePairsNotePlanPasses", ValueRange{handle, wide(result.passes)}, Type{}, false);
 
@@ -146,17 +147,20 @@ TemplateGroupBuffers mdir::kernels::emitPrepareTemplateGroups(OpBuilder &b,
     Value start = loadIndex(plan.starts, segment);
     Value length = loadIndex(plan.lengths, segment);
     Value local = arith::SubIOp::create(at, loc, item, start);
+    // A water group holds MDRT_TEMPLATE_WATER_GROUP units, a solute one 16.
+    Value width = arith::SelectOp::create(at, loc, first,
+        ix(at, MDRT_TEMPLATE_WATER_GROUP), ix(at, 16));
     Value begins = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
-        arith::RemUIOp::create(at, loc, local, ix(at, 16)), ix(at, 0));
+        arith::RemUIOp::create(at, loc, local, width), ix(at, 0));
     scf::IfOp::create(at, loc, begins, [&](OpBuilder &store, Location) {
       Value base = index(store,
           memref::LoadOp::create(store, loc, plan.offsets, ValueRange{segment}));
       Value ordinal = arith::AddIOp::create(store, loc, base,
-          arith::DivUIOp::create(store, loc, local, ix(store, 16)));
+          arith::DivUIOp::create(store, loc, local, width));
       Value group = arith::SelectOp::create(store, loc, first, ordinal,
           arith::AddIOp::create(store, loc, v.waters,
               arith::SubIOp::create(store, loc, ordinal, result.groups[0])));
-      Value count = arith::MinUIOp::create(store, loc, ix(store, 16),
+      Value count = arith::MinUIOp::create(store, loc, width,
           arith::SubIOp::create(store, loc, length, local));
       Value unit = index(store,
           memref::LoadOp::create(store, loc, v.items, ValueRange{item}));
