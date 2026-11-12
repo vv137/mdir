@@ -63,9 +63,10 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
           arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, tag, word(at, t)),
           vector::ExtractOp::create(at, loc, v.reaches, t), reach);
     Value reach32 = arith::TruncFOp::create(at, loc, f32, reach);
-    Value cell = narrow(at, v.cell);
-    Value cellMagnitude = vector::ReductionOp::create(at, loc, vector::CombiningKind::ADD,
-        math::AbsFOp::create(at, loc, cell));
+    Value cell = v.narrowCell ? v.narrowCell : narrow(at, v.cell);
+    Value cellMagnitude = v.cellMagnitude ? v.cellMagnitude
+        : Value(vector::ReductionOp::create(at, loc, vector::CombiningKind::ADD,
+              math::AbsFOp::create(at, loc, cell)));
     auto reference = [&](OpBuilder &in, Value unit) -> Value {
       Value water = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult,
           index(in, unit), v.waters);

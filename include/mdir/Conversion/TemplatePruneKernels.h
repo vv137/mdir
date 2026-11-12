@@ -8,6 +8,9 @@ struct TemplatePruneBuffers {
   mlir::Value currentPoints, innerReference, waters, cell, reaches;
   mlir::Value waterActive, atomActive;
   mlir::Value groupLengths;
+  /// Optional: the cell narrowed to f32 and the sum of its magnitudes,
+  /// computed outside the kernel (then kernel parameters).
+  mlir::Value narrowCell, cellMagnitude;
 };
 /// All 32 lanes own one outer work record (at most 64 entries). Filter its
 /// masks using hybrid reference points and compact into its existing
