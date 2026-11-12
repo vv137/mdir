@@ -50,7 +50,7 @@ with the notation of its Section 2.
 
 A build (`@mdrt_gpu_build_neighbors_groups`, written by the emitter of
 `lib/Conversion/MDExecKernels/GroupsBuild.cpp`, `GroupsBuild.h`,
-D[groups-emitter]) takes:
+D404) takes:
 
 | Input | Meaning |
 |---|---|
@@ -420,7 +420,7 @@ A triclinic cell ([triclinic.md](triclinic.md)) takes the build
 `@mdrt_gpu_build_neighbors_groups_triclinic`, which the same emitter writes
 with its parameter `triclinic`; only a module with a triclinic cell adds
 it. The parameter is a choice of the emitter: each build has the code of
-its cell and none of the other's (D[groups-emitter]).
+its cell and none of the other's (D404).
 
 | Part | Orthorhombic | Triclinic |
 |---|---|---|

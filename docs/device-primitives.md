@@ -675,7 +675,7 @@ and for the partitions to come (#38, with the ghost flag in the key).
 ### 4.2 How the sites call them
 
 The lowering calls the emitters where it builds its kernels. The build of
-the groups (the emitter of `GroupsBuild.cpp`, D[groups-emitter]) and the
+the groups (the emitter of `GroupsBuild.cpp`, D404) and the
 template `NeighborsMatrixGPU.mlir` call them by name, with a declaration
 in the module:
 
@@ -863,7 +863,7 @@ older sum. A short initialization launch clears the descriptors and the
 counter before the scan launch. The three-launch primitive remains the
 default. The compiler pass `convert-md-exec-to-gpu` selects the alternate
 group build with `single-pass-group-scan=true`; both come from one emitter
-(`GroupsBuild.cpp`, its parameter `singlePassScan`, D[groups-emitter]),
+(`GroupsBuild.cpp`, its parameter `singlePassScan`, D404),
 which emits the calls of the scan of its variant and no others.
 This is an internal compiler strategy, with no control-file
 key or output format change.
@@ -1222,7 +1222,7 @@ primitives and sites; this section is the canonical source inventory.
 
 | Function | Current source and representation | Boundary today | Migration under #558 |
 |---|---|---|---|
-| Warp synchronization | `nvvm.bar.warp.sync` occurs 181 times in each of the four variants of the build of the groups. All are emitted from seven sites of `GroupsBuild.cpp` (`warpSync`, D[groups-emitter]). `NVVM::SyncWarpOp` occurs once in `MDExecToGPU.cpp`, in fused pruning before the group pair kernel reads another lane's entry | Direct NVVM, outside a primitive emitter | A subgroup barrier emitter with an explicit participating-lane mask and convergence contract; change the sites of `GroupsBuild.cpp`, which every variant shares |
+| Warp synchronization | `nvvm.bar.warp.sync` occurs 181 times in each of the four variants of the build of the groups. All are emitted from seven sites of `GroupsBuild.cpp` (`warpSync`, D404). `NVVM::SyncWarpOp` occurs once in `MDExecToGPU.cpp`, in fused pruning before the group pair kernel reads another lane's entry | Direct NVVM, outside a primitive emitter | A subgroup barrier emitter with an explicit participating-lane mask and convergence contract; change the sites of `GroupsBuild.cpp`, which every variant shares |
 | Approximate reciprocal | `NVVM::RcpApproxFtzF32Op` occurs once in `MDExecToGPU.cpp`, for an f32 division marked `afn`; the quotient is rounded before later arithmetic (D98) | Direct NVVM, outside an emitter | An approximation emitter whose precondition states precision, subnormal handling, and contraction behavior; retain the NVIDIA instruction and results |
 | Target and binary attributes | `NVVM::NVVMTargetAttr` is read in `GPUToBinary.cpp`; `buildGpuLowerToNVVM` attaches the NVVM target with chip, triple, features, and optimization level, then lowers the GPU module and invokes NVIDIA binary tools | Backend compilation boundary, rather than a data-parallel primitive | Keep target attachment and binary production inside the NVIDIA backend; another backend supplies its own compiler and target attribute |
 | Shared-memory and global atomics | `ScatterEmitter.cpp` emits `red.shared.add.f32/f64` and `atom.shared.cas.b32` through LLVM inline assembly. `MDExecKernels.cpp` emits `red.relaxed.gpu.global.add.f32` through LLVM inline assembly; its other path uses `LLVM::AtomicRMWOp` | The shared-memory operations already have one scatter emitter; the global relaxed add is still in a kernel helper | Put target-specific assembly in the NVIDIA implementation of atomic emitters; express scope, address space, data type, ordering, and required atomic capability in the call contract |

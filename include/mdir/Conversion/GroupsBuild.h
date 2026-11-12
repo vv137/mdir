@@ -1,6 +1,6 @@
 // The device build of the groups of 16 particles that share a list of
 // neighbors (D89, docs/neighbor-groups.md), written by an emitter
-// (D[groups-emitter]).
+// (D404).
 
 #ifndef MDIR_CONVERSION_GROUPSBUILD_H
 #define MDIR_CONVERSION_GROUPSBUILD_H

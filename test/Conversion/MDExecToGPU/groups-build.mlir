@@ -1,5 +1,5 @@
 // The device build of the groups (D89) as its emitter writes it for each
-// variant (GroupsBuild.h, D[groups-emitter]): the cell, orthorhombic or
+// variant (GroupsBuild.h, D404): the cell, orthorhombic or
 // triclinic, and the scan of the counting sorts, three launches or the
 // decoupled look-back (D321). Each variant is a choice of the emitter: a
 // variant has the code of its own choices and none of the others.

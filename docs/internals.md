@@ -86,7 +86,7 @@ the pass `expand-device-primitives` does the same on a module, for tests.
 An unknown name or a wrong signature is an error. The build of the groups
 is written by an emitter, `lib/Conversion/MDExecKernels/GroupsBuild.cpp`,
 with the cell (orthorhombic or triclinic) and the scan as its parameters
-(D[groups-emitter]); the pass `add-groups-build` adds it to a module, for
+(D404); the pass `add-groups-build` adds it to a module, for
 tests, and `test/Conversion/MDExecToGPU/groups-build.mlir` pins what each
 variant holds. Detail: [device-primitives.md, Section 4.2](device-primitives.md#42-how-the-sites-call-them).
 

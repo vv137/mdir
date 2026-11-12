@@ -24,7 +24,7 @@ with the rest of the program (Section 3): `NeighborsMatrix.mlir` and
 `NeighborsMatrixGPU.mlir` for the matrix, under
 `lib/Runtime/Templates/`; the build of the groups is written by an emitter
 in C++ (`lib/Conversion/MDExecKernels/GroupsBuild.cpp`,
-D[groups-emitter]) into the same module.
+D404) into the same module.
 
 **Where a structure begins.** A structure begins empty where a segment
 between checkpoints begins, so that a run continued from a checkpoint

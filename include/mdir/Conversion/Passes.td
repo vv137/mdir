@@ -513,7 +513,7 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
                 "module";
   let description = [{
     Appends the build of the groups of 16 particles that share a list of
-    neighbors on a device (D89, D[groups-emitter]) and what it calls, as
+    neighbors on a device (D89, D404) and what it calls, as
     `convert-md-exec-to-gpu` adds it to a module with groups: the
     declarations of the device primitives, the helpers, and
     `@mdrt_gpu_build_neighbors_groups` (with `triclinic`,
