@@ -1434,6 +1434,19 @@ their kernels are bound by latency: for ubiquitin the prototype took
 87.8 µs a step for the short-range path with three launches and 68.0 µs
 with one launch over the three classes, a class per warp.
 
+**The pruning in the launch.** The template prunes its inner list in the
+evaluation launch itself, each warp the work record it then evaluates
+(D284). A row's records are its chunks of 64 entries. The warp of a
+row's chunk tests the row's outer entries from its first until as many
+survive as that chunk and the chunks before it hold, and keeps the
+survivors whose rank falls in its own chunk: the survivors of a row fill
+its first records, as the streaming repack of Section 4.4 fills the
+blocks of a group, and no warp waits for another's pruning. A record
+that the pruning leaves empty is not evaluated. In the rhombic
+dodecahedron of ubiquitin in OPC the evaluation then takes about 30.6 µs
+a call against 32.7 with each chunk pruned into itself and every record
+evaluated (D[rigid-water-template], U10).
+
 ![The lists and the launch](figures/rigid-water-lists.png)
 
 *Figure 4.3. Target layout: one spatial sort into water and solute clusters,

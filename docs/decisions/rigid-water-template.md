@@ -2586,6 +2586,247 @@ same 3 unsupported.
   it, at most 15 % fewer turns (item 4).
 - The tail of a batch keeps one round trip, the three row loads.
 
+### U10: the order of the records, their size, the cell in f32, and full records after the prune
+
+The counters of the dodecahedron (Nsight Compute, RTX 5090, ubiquitin in
+OPC in the rhombic dodecahedron against the same system in the
+orthorhombic cell) gave four findings that this step acted on: the
+launch ends on its busiest SMSP, with a maximum of the instructions an
+SMSP issues 1.49 times their mean in the dodecahedron (1.33 in the
+orthorhombic cell; a warp's SMSP is fixed by its place in its block); the
+records of two batches lie scattered through the water-water range; in
+the dodecahedron the nine table reads of the water-water turn all load
+into one register quad, where the orthorhombic turn rotates among three
+(55 values live into the turn against 48, 5.92 cycles an instruction
+against 5.32); and 96 registers is exactly the limit of five blocks a
+multiprocessor. The solute-water and solute-solute records are off the
+critical path. Each change below was kept only if it was faster on the
+dodecahedron in OPC and in TIP3P and not slower on ubiquitin in OPC and
+in TIP3P (orthorhombic) and on the large OPC box, at 96 registers or
+fewer; the CHARMM-style case (ubiquitin in TIP3P, 12 Å, switched) is
+reported beside them. Every capture is 10,000 steps on the RTX 5090,
+`main` c158870b and the builds compared in one job, two rounds, the
+second in the reverse order. The evaluation a call is the evaluation
+kernel's calls without the prune (µs, round 1/round 2), as in U9.
+
+**1. The records longest first, and a grid of live records (not
+kept).** The compaction ordered each class's work records by length
+(64 counters a class, scanned longest first, a record placed by an
+atomic counter of its length) and the evaluation launched a warp for
+each record of the last build (the chunk count of the build's one
+readback) instead of one for each record the capacity allows.
+
+| System | Head (586c4a18) | Longest first, grid of live records |
+|---|---|---|
+| Ubiquitin OPC | 34.86/35.05 | 34.69/34.56 |
+| Ubiquitin TIP3P | 34.10/34.34 | 33.95/33.93 |
+| Dodecahedron OPC | 37.49/37.30 | 38.57/38.60 |
+| Dodecahedron TIP3P | 30.71/30.72 | 31.23/31.06 |
+| CHARMM-style | 63.67/63.08 | 68.38/68.11 |
+| Large OPC box | 62.75/63.04 | 61.85/61.98 |
+
+Its parts apart (a job of their own): ordered by batches alone
+38.03/37.99 in the dodecahedron in OPC and 31.06/30.81 in TIP3P; the
+grid of live records alone, in the rows' order, 37.39/37.32 and
+30.60/30.74, against 37.31/37.47 and 30.64/30.74 for the head. The order
+made the dodecahedron slower, the grid changed nothing. The model of the
+SMSPs (blocks placed on the multiprocessors in turn, warp $k$ of a block
+on SMSP $k$) had predicted a busiest SMSP of 34.5k instructions instead
+of 41.2k for the order by the evaluated, pruned length; a build can
+order only by the outer length, for which the same model gives 36.8k,
+and 92 % of the dodecahedron's water-water outer records are of two
+batches, so the order changes little in the blocks. What made it slower
+was not measured (the records of nearby rows no longer share a
+multiprocessor's L1 is one hypothesis).
+
+**2. One batch a record (not kept).** The compaction wrote a chunk of 64
+entries as two records of 32, still ordered, each record adding its
+cluster's forces with atomic additions as before (no ownership rule is
+needed: a partner entry belongs to one record, and a cluster's forces
+are sums). In the rows' order instead of longest first: the column
+"rows".
+
+| System | Head | One batch a record | Rows |
+|---|---|---|---|
+| Ubiquitin OPC | 34.85/34.86 | 39.62/39.54 | 39.73/39.55 |
+| Ubiquitin TIP3P | 34.09/34.18 | 38.60/38.56 | 37.81/37.74 |
+| Dodecahedron OPC | 37.59/37.41 | 43.42/43.37 | 41.20/41.27 |
+| Dodecahedron TIP3P | 30.62/30.66 | 35.32/35.13 | 33.41/33.33 |
+| CHARMM-style | 63.46/63.19 | 67.03/66.79 | 72.23/72.64 |
+| Large OPC box | 62.87/63.00 | 71.26/71.25 | 71.51/71.67 |
+
+A second record of a chunk pays the head of a record again (the cluster's
+16 frames, its prune's first points, the cluster's force write), as two
+warps a record did in U6 (+11 %); the processor-sharing model of the
+launch gave the same sign (92.8k cycles against 90.1k in the
+dodecahedron). That model gains from one batch a warp only after the
+prune re-chunks a row (item 4).
+
+**3. A triclinic cell narrowed on the host (016beafd).** The partner's
+lattice shift at the head of a batch and the prune's test took the cell
+in f64 and narrowed it in the kernel. The narrowed values were hoisted
+and held in registers across the loops of a record: in the dodecahedron
+13 conversions against 10 in the orthorhombic cell, and the turn's nine
+table reads all into one quad. Narrowed on the host, the cell and the
+prune's sum of its magnitudes are kernel parameters, which the device
+reads from its constant bank where it uses them: 7 conversions, and the
+table reads rotate among three quads as in the orthorhombic cell, at 96
+registers with an 8-byte spill (one store at the kernel's start, one load
+at its end). A truncation and a sum of magnitudes round the same on the
+host as on the device, so the prune's widened reach is unchanged.
+
+| System | Head | Every cell on the host |
+|---|---|---|
+| Ubiquitin OPC | 35.15/34.78 | 35.38/35.34 |
+| Ubiquitin TIP3P | 34.02/33.94 | 33.86/33.82 |
+| Dodecahedron OPC | 37.33/37.43 | 32.80/32.66 |
+| Dodecahedron TIP3P | 30.93/30.62 | 29.94/30.01 |
+| CHARMM-style | 63.55/63.60 | 58.42/58.44 |
+| Large OPC box | 62.94/62.90 | 66.44/66.79 |
+
+In the orthorhombic cell, where three values were narrowed, the change
+moved ptxas's schedule of the kernel (2,522 SASS instructions against
+2,547 in the large box, the same registers) and made the large box 3.5
+to 3.9 µs a call slower and ubiquitin in OPC 0.2 to 0.6, while the
+CHARMM-style case ran 5.1 faster. By the rule, only a triclinic cell is
+narrowed on the host; an orthorhombic one keeps the code of the head.
+`water-template-cell-forces-gpu` compares same-frame forces of the
+template with the general double and mixed routes in the reduced
+triclinic cell of 403 TIP3P waters (PME, 6 Å, a pairlist of 7 Å), where
+the partners' images have tilt components; it fails when the
+evaluation's cell loses its tilts (the template trajectory then stops).
+`template-native-cuda` requires the six f32 parameters of a triclinic
+cell. `mdir-template-solute-test --water` runs that comparison without a
+solute.
+
+**4. The prune re-chunks a row (745c9f12).** A row's work records are its
+chunks of 64 entries. The prune compacted each record's survivors within
+its own chunk: a row of three chunks pruned to 0.64 of its entries kept
+three part-filled records. Now the warp of a row's chunk $k$ tests the
+row's entries from its first until $64(k+1)$ survive and writes those of
+rank $64k$ to $64k + 63$ into its own chunk: the row's first records hold
+full batches and its last ones may be empty, as the groups' pruning
+fills the blocks of a group (D284). Each warp writes only its own chunk's
+entries, so no record waits for another's prune. An outer record names
+its chunk ordinal above the class tag and the row's end; the inner record
+is unchanged (ABI version 9). The evaluation skips a record the prune
+left empty: it loads and writes nothing. On the head with every cell
+narrowed on the host (item 3), the evaluation a call:
+
+| System | Item 3 | Re-chunked | And empty records skipped |
+|---|---|---|---|
+| Ubiquitin OPC | 35.32/35.20 | 34.26/34.05 | 33.04/33.13 |
+| Ubiquitin TIP3P | 34.00/34.06 | 32.65/32.42 | 31.44/31.52 |
+| Dodecahedron OPC | 32.64/32.77 | 31.39/31.37 | 30.51/30.55 |
+| Dodecahedron TIP3P | 30.00/29.94 | 29.09/28.98 | 28.33/28.23 |
+| CHARMM-style | 58.24/58.32 | 55.97/55.51 | 53.88/54.13 |
+| Large OPC box | 66.46/66.56 | 63.00/62.80 | 60.63/60.75 |
+
+(the last column from a second job, against the middle one measured
+again: 34.00/34.16, 32.57/32.55, 31.44/31.49, 29.12/29.05, 55.70/55.92
+and 63.02/63.09). The prune itself costs more: a record's warp tests the
+row's entries before its chunk again, so a row of $n$ chunks is tested
+about $n(n+1)/2$ chunks' worth. The calls that prune (one in 8.5) took
+41.9 µs against 35.9 in the dodecahedron in OPC, 45.8 against 38.6 in
+ubiquitin in TIP3P and 82.5 against 75.6 in the large box (round 1), so
+the evaluation a step gains less than a call: 32.6 against 32.9 µs in the
+dodecahedron in OPC, 34.5 against 34.5 in ubiquitin in TIP3P, 65.2
+against 67.6 in the large box. A prune in a launch of its own, a warp
+for each row, testing each entry once and writing all of the row's
+records before the evaluation, was slower: the evaluation without the
+prune changed its schedule again (35.7 µs a call against 32.2 in
+ubiquitin in OPC), and the wall rose by 4.0 µs a step there, 3.6 in the
+large box, 1.2 in ubiquitin in TIP3P and 0.9 in the dodecahedron in
+TIP3P, and was unchanged in the dodecahedron in OPC; it was not kept.
+The prune oracle has a row of four chunks (133 survivors: two full
+records, one of 5, one empty) and one of three (117 survivors); it fails
+when a record's chunk ends one rank early, as do the coverage check of
+the dodecahedron and the triclinic forces of item 3.
+
+**5. The chains at a record's start (not built).** The entry's fourth
+word could carry the partner's packed row, but the row is arithmetic on
+the partner's unit, not a load, so it shortens no round trip; the loads
+at a batch's head (the entry, then the partner's frames) remain two
+round trips. Without counters of the new head, nothing here measured
+which of them waits; not built.
+
+**Captures of the six systems.**
+
+10,000 steps, RTX 5090, `main` c158870b, the head before U10 (586c4a18,
+the code of cbb03931) and 745c9f12 in one job, two rounds, the second in
+the reverse order (µs/step as in U8; the last column is the evaluation
+kernel a call without the prune, µs). The evaluation kernel stays at 96
+registers on the six systems (an 8-byte spill in the dodecahedron in
+OPC, one store and one load a thread):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Evaluation a call |
+|---|---|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.3/114.4 | 33.3/33.3 | 22.5/22.5 | 126.2/123.0 | 8.3/8.1 | 33.30/33.33 |
+|  | 586c4a18 | 103.4/104.1 | 35.2/35.7 | 8.6/8.8 | 113.1/113.7 | 9.1/9.0 | 34.69/35.22 |
+|  | 745c9f12 | 102.4/102.4 | 34.0/34.1 | 8.7/8.6 | 112.2/112.0 | 9.1/9.0 | 32.20/32.30 |
+| Ubiquitin TIP3P | main | 91.1/90.7 | 24.4/24.1 | 19.6/19.5 | 99.0/98.6 | 7.4/7.4 | 24.43/24.12 |
+|  | 586c4a18 | 93.3/93.2 | 34.7/34.5 | 9.5/9.5 | 102.0/101.8 | 8.1/8.1 | 34.17/33.99 |
+|  | 745c9f12 | 92.6/92.6 | 34.0/33.9 | 9.6/9.6 | 101.4/101.3 | 8.1/8.1 | 31.98/31.86 |
+| Dodecahedron OPC | main | 104.6/104.7 | 27.7/27.8 | 20.7/20.7 | 116.3/113.5 | 8.5/8.3 | 27.75/27.85 |
+|  | 586c4a18 | 104.1/104.3 | 37.4/37.6 | 8.6/8.6 | 113.7/113.9 | 9.0/9.0 | 37.19/37.39 |
+|  | 745c9f12 | 98.6/98.5 | 31.9/31.8 | 8.6/8.6 | 108.2/108.1 | 8.9/9.0 | 30.64/30.53 |
+| Dodecahedron TIP3P | main | 86.7/87.0 | 21.4/21.7 | 19.4/19.4 | 94.7/95.0 | 7.6/7.6 | 21.45/21.67 |
+|  | 586c4a18 | 87.5/87.7 | 30.8/30.9 | 9.1/9.1 | 96.1/96.3 | 8.0/8.1 | 30.55/30.65 |
+|  | 745c9f12 | 86.4/86.4 | 29.6/29.7 | 9.2/9.2 | 95.0/95.1 | 8.0/8.1 | 28.22/28.29 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 123.8/123.8 | 42.2/42.2 | 33.5/33.5 | 131.6/131.7 | 7.3/7.4 | 42.27/42.20 |
+|  | 586c4a18 | 125.7/125.7 | 64.0/64.0 | 11.7/11.8 | 134.2/134.4 | 7.9/8.1 | 63.34/63.33 |
+|  | 745c9f12 | 125.0/124.5 | 63.3/63.0 | 11.8/11.6 | 133.7/133.1 | 8.1/8.0 | 60.45/60.12 |
+| Large OPC box | main | 177.3/177.2 | 69.7/69.7 | 27.3/27.3 | 191.2/186.3 | 8.8/8.6 | 69.78/69.76 |
+|  | 586c4a18 | 144.7/145.0 | 63.7/64.0 | 5.2/5.2 | 153.7/153.9 | 8.4/8.3 | 62.66/62.99 |
+|  | 745c9f12 | 141.2/141.3 | 60.6/60.6 | 5.2/5.2 | 150.2/150.3 | 8.4/8.4 | 58.13/58.17 |
+
+Against `main` the wall is now 14.0/11.0 µs/step below in ubiquitin
+in OPC (13.1/9.3 before U10), 2.4/2.7 above in TIP3P (3.0/3.2), 8.1/5.4
+below in the dodecahedron in OPC (2.6 below/0.4 above), 0.3/0.1 above in
+the dodecahedron in TIP3P (1.4/1.3), 2.1/1.4 above in the 12 Å switched
+case (2.6/2.7) and 41.0/36.0 below in the large OPC box (37.5/32.4). The
+evaluation a call falls by 6.6/6.9 µs in the dodecahedron in OPC,
+2.3/2.4 in TIP3P, 2.5/2.9 in ubiquitin in OPC, 2.2/2.1 in TIP3P,
+2.9/3.2 in the switched case and 4.5/4.8 in the large box. Against
+`main` it is now 1.1/1.0 µs below in ubiquitin in OPC and 11.7/11.6 below
+in the large box, and above in the others: by 7.6/7.7 in ubiquitin in
+TIP3P, 2.9/2.7 in the dodecahedron in OPC, 6.8/6.6 in the dodecahedron in
+TIP3P and 18.2/17.9 in the switched case. No system is slower than at
+586c4a18.
+
+Gates at 745c9f12: the gate's list (it held `water-template-match.test`
+twice; the duplicate is removed, and `water-template-cell-forces-gpu.test`
+added), 112 entries in one run, 108 passed, 3 unsupported (the sanitizer
+fixtures, which run in their own tier) and
+`water-template-anchors-physical-gpu.test` stopped at the run's 300 s
+limit (293.8 s at cbb03931; the new fixture of item 3, 149 s, now runs
+beside it); alone it passed in 275.8 s. The sanitizer tier (3 fixtures,
+33 s) passed.
+
+**Open, in the evaluation.**
+
+- The dodecahedron in OPC against `main` in TIP3P, the measure of
+  #795: the wall of the template in the dodecahedron in OPC, 108.2/108.1
+µs/step, is 13.5/13.1 above that of `main` in the dodecahedron in TIP3P,
+94.7/95.0 (19.0/18.9 before U10), and its evaluation a call 30.64/30.53
+against 21.45/21.67 (37.19/37.39 before).
+- The prune's repeated tests of a row's earlier chunks (item 4) cost
+  about as much as the re-chunk gains a step in ubiquitin; a prune that
+  tests each entry once and still lets no record wait for another (the
+  survivors' count of each chunk from the previous prune, or a count
+  kept by the build) was not tried.
+- In the orthorhombic cell the cell narrowed on the host gave the
+  CHARMM-style case 5 µs a call and cost the large box 3.5 to 3.9: the
+  schedule ptxas chooses still moves by more than such changes gain
+  (U9). A turn whose schedule is fixed at the PTX level was not tried.
+- One batch a record and the longest-first order may pay once the prune
+  re-chunks (item 4), as the model of the launch has it (−21 % in the
+  dodecahedron for both together); with the re-chunk in place neither
+  was measured again.
+- Counters of the new head (the busiest SMSP, the turn's cycles an
+  instruction) would show what of the four findings remains; a script
+  for them is prepared, not run.
+
 ### Precision contract for the whole search port and future pruning
 
 The first corrections are control/launch changes: every f64 predicate,
