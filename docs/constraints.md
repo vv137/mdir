@@ -1,8 +1,8 @@
 # Constraints and Virtual Sites
 
-Status: kept current; last checked against the code on 2026-10-21. The
-decisions are D56, D63, and D68 and those that amended them
-([decisions.md](decisions.md)).
+Status: kept current; last checked against the code on 2026-11-12. The
+decisions are D56, D63, D68, and D[rigid-groups] and those that amended
+them ([decisions.md](decisions.md)).
 
 This document describes the constraints, SETTLE, SHAKE, and RATTLE
 (Section 1), the virtual sites (Section 2), and the rigid groups that the
