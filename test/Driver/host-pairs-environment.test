@@ -58,7 +58,10 @@
 # RUN: mdir emit gpu.toml --stage=pipeline | FileCheck %s --check-prefix=GPU
 # RUN: env MDIR_HOST_PAIRS=fast mdir emit gpu.toml --stage=pipeline | FileCheck %s --check-prefix=GPU
 # RUN: not env MDIR_HOST_CPU=bogus mdir emit gpu.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=BADCPU
-# RUN: not env TMPDIR=%t MDIR_HOST_PAIRS=fast mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-PAIRS
+# RUN: rm -rf %t/doctor-pairs && mkdir -p %t/doctor-pairs
+# RUN: not env TMPDIR=%t/doctor-pairs MDIR_HOST_PAIRS=fast mdir doctor --target=cpu | FileCheck %s --check-prefix=DOCTOR-PAIRS
+# The failure of doctor's CPU run is the variable's error, in the kept log.
+# RUN: cat %t/doctor-pairs/mdir-doctor-*/cpu.err | FileCheck %s --check-prefix=PAIRS -DVALUE=fast
 
 # BADCPU: MDIR_HOST_CPU='bogus' is not a 64-bit CPU that LLVM's X86 back end knows, such as x86-64, x86-64-v3, or znver3
 # NATIVE: MDIR_HOST_CPU='native' is not a 64-bit CPU

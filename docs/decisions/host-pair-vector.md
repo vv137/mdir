@@ -143,62 +143,62 @@ The tolerance is that the lanes leave the agreement with the oracle unchanged: t
 
 ## Timing
 
-The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and grids of the measurement above: `main` 8c00268e against the branch at 65e396c1, whose code is that of the head (the later commits change documents alone), with `MDIR_HOST_PAIRS=lanes` ($W$ = 8 in f32 and 4 in f64 on AVX2, 16 and 8 on AVX-512); on JAC also the branch's scalar row (`MDIR_HOST_PAIRS=scalar`) at 16 threads.
+The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and grids of the measurement above: `main` 8c00268e against the branch at 65e396c1 on `main` 8c00268e, rebased unchanged as a1eb115c, with `MDIR_HOST_PAIRS=lanes` ($W$ = 8 in f32 and 4 in f64 on AVX2, 16 and 8 on AVX-512); on JAC also the branch's scalar row (`MDIR_HOST_PAIRS=scalar`) at 16 threads. The branch's later commits change documents, tests, and the comment above the policy table in `HostPairs.cpp`; between the two bases of the rebases `main` changed the code of the skins and of the compile cache, none of it the code of the loops over pairs.
 
-- *Rate windows.* Each run writes a row of its log every twentieth of its steps, and the time of each row is taken as it reaches a pseudo-terminal, so a run has 20 windows of its rate. A run's rate is the mean of its windows after the first 3, without the highest and the lowest tenth. The tables give, for each run, the windows' spread ("within") and the change from the first third of the kept windows to the last ("drift"), so a run that is not stationary shows.
-- *Run lengths.* JAC at 16 threads: 20,000 steps (windows of 1,000). JAC at 1 thread: 2,000 steps (windows of 100). TIP3P 103k and Cellulose at 16 threads: 2,000 steps (windows of 100). The two large systems were not measured at 1 thread at the head: 100,000 steps a run would take 2.1 to 3.6 hours at 1 thread on JAC in mixed precision and 6.7 to 10.3 hours in double, and 2.4 to 14 hours at 16 threads on the large systems.
-- *Jobs.* At least two jobs a system on each CPU model. Each job ran 2 rounds of each variant, `main` and the branch alternating, the order reversed in the second; the tables give the mean and the sample standard deviation of the 2 rounds. The jobs ran at the same time as one another.
-- *Left out.* Two JAC jobs on the EPYC 7543 ran their 16-thread runs under contention: `main`'s rate there is 21% slower than in job a and in the earlier timings of this PR, and the windows drift through the runs (+5.8% and +5.3% in job b, +15% in job c). Job c also drifts at 1 thread. They are marked in the table and left out of the ranges below: job c entirely, job b at 16 threads. So JAC at 16 threads on the EPYC 7543 has one stationary job at the head; the first timing of this PR, with one rate window a run, gave 1.54 (`m16`) and 1.33 (`d16`) in two jobs there. On the EPYC 9354 the two JAC jobs' `main` differ by 8% at 16 threads, and their ratios by 0.06 in `m16`.
+- *Rate windows.* Each run writes a row of its log every twentieth of its steps, and the time of each row is taken as it reaches a pseudo-terminal, so a run has 20 windows of its rate. A run's rate is the mean of its windows after the first 3, without the highest and the lowest tenth. The tables give, for each run, the windows' spread ("within") and the change from the first third of the kept windows to the last ("drift").
+- *Run lengths.* JAC at 16 threads: 20,000 steps (windows of 1,000). JAC at 1 thread: 2,000 steps (windows of 100). TIP3P 103k and Cellulose at 16 threads: 2,000 steps (windows of 100). The two large systems were not measured at 1 thread at the head: 100,000 steps a run would take 2.1 to 3.6 hours at 1 thread on JAC in mixed precision and 6.7 to 10.3 hours in double (at the kept rates), and 2.4 to 14 hours at 16 threads on the large systems.
+- *Jobs.* At least two jobs a system on each CPU model whose runs were kept, except JAC at 16 threads on the EPYC 7543: one job. Each job ran 2 rounds of each variant, `main` and the branch alternating, the order reversed in the second; the tables give the mean and the sample standard deviation of the 2 rounds. The jobs are not independent: they ran at the same time as one another, and the two kept TIP3P jobs on the EPYC 7543 overlapped in time.
+- *The rule of leaving out.* A job's runs at one thread count are left out where `main`'s rate, averaged over the variants of that count, is more than 10% slower than in the fastest job of the same system and CPU model (the column "`main` vs the fastest job"). It leaves out two JAC jobs on the EPYC 7543 at 16 threads, whose `main` ran 15% and 16% slower (contention: 12.06 to 13.15 ms/step in `m16` against 10.41); their 1-thread runs are within 0.2% and 3.7% and are kept. Drift does not separate them: every JAC run at 16 threads drifts upward, the kept ones by +1.2% to +3.6% and the runs left out by +4.2% to +15%. So JAC at 16 threads on the EPYC 7543 has one kept job at the head; the first timing of this PR, with one rate window a run, gave 1.54 (`m16`) and 1.33 (`d16`) in two jobs there.
 
 **EPYC 9354** (ms/step: the mean of the runs' rates, each the trimmed mean of its windows after the first 3, ± the sample standard deviation of the 2 rounds; ratio = `main` / lanes; within = the largest relative standard deviation of a run's windows; drift = the largest change from a run's first kept third of windows to its last)
 
-| System | Job | Variant | Steps, windows | `main` | lanes | Ratio | within | drift | branch scalar |
-|---|---|---|---|---|---|---|---|---|---|
-| JAC | a | `m16` | 20000, 20 | 10.31 ± 0.0047 | 7.3 ± 0.039 | 1.412 | 1.2% | +2.2% | 10.31 ± 0.017 |
-| JAC | a | `d16` | 20000, 20 | 25 ± 0.13 | 18.35 ± 0.034 | 1.363 | 0.9% | +2.0% | 24.93 ± 0.041 |
-| JAC | a | `m1` | 2000, 20 | 124.9 ± 0.014 | 76.4 ± 0.47 | 1.635 | 1.7% | +1.5% | — |
-| JAC | a | `d1` | 2000, 20 | 341.1 ± 0.38 | 239.9 ± 0.1 | 1.422 | 0.3% | +0.5% | — |
-| JAC | b | `m16` | 20000, 20 | 9.569 ± 0.025 | 6.509 ± 0.0026 | 1.470 | 0.6% | +1.2% | 9.566 ± 0.014 |
-| JAC | b | `d16` | 20000, 20 | 24 ± 0.026 | 17 ± 0.023 | 1.412 | 0.8% | +1.8% | 23.99 ± 0.0039 |
-| JAC | b | `m1` | 2000, 20 | 124.1 ± 0.011 | 75.47 ± 0.024 | 1.645 | 0.9% | +1.0% | — |
-| JAC | b | `d1` | 2000, 20 | 341.2 ± 0.11 | 239.6 ± 0.27 | 1.424 | 0.4% | +0.5% | — |
-| TIP3P 103k | a | `m16` | 2000, 20 | 133.5 ± 0.53 | 86.36 ± 0.62 | 1.546 | 0.9% | +0.1% | — |
-| TIP3P 103k | a | `d16` | 2000, 20 | 378.4 ± 0.099 | 263.1 ± 2.2 | 1.438 | 0.6% | -1.2% | — |
-| TIP3P 103k | b | `m16` | 2000, 20 | 133 ± 0.29 | 85.85 ± 0.66 | 1.549 | 0.8% | +0.7% | — |
-| TIP3P 103k | b | `d16` | 2000, 20 | 380.5 ± 1 | 262.1 ± 0.11 | 1.452 | 0.3% | -0.5% | — |
-| Cellulose | a | `m16` | 2000, 20 | 186.4 ± 0.3 | 131.1 ± 0.47 | 1.422 | 1.3% | +1.0% | — |
-| Cellulose | a | `d16` | 2000, 20 | 457 ± 0.32 | 335.9 ± 10 | 1.360 | 0.4% | +0.4% | — |
-| Cellulose | b | `m16` | 2000, 20 | 183.4 ± 0.38 | 127.7 ± 0.7 | 1.436 | 1.6% | +0.9% | — |
-| Cellulose | b | `d16` | 2000, 20 | 460.8 ± 8.1 | 327.1 ± 0.082 | 1.409 | 0.4% | +0.4% | — |
-| Cellulose | c | `m16` | 2000, 20 | 187.1 ± 0.043 | 130.5 ± 0.047 | 1.433 | 1.3% | +0.9% | — |
-| Cellulose | c | `d16` | 2000, 20 | 459.5 ± 0.022 | 330.5 ± 0.4 | 1.390 | 0.4% | +0.7% | — |
+| System | Job | Variant | Steps, windows | `main` | lanes | Ratio | within | drift | `main` vs the fastest job, by thread count | branch scalar |
+|---|---|---|---|---|---|---|---|---|---|---|
+| JAC | a | `m16` | 20000, 20 | 10.31 ± 0.0047 | 7.3 ± 0.039 | 1.412 | 1.2% | +2.2% | +6.0% | 10.31 ± 0.017 |
+| JAC | a | `d16` | 20000, 20 | 25 ± 0.13 | 18.35 ± 0.034 | 1.363 | 0.9% | +2.0% | +6.0% | 24.93 ± 0.041 |
+| JAC | a | `m1` | 2000, 20 | 124.9 ± 0.014 | 76.4 ± 0.47 | 1.635 | 1.7% | +1.5% | +0.3% | — |
+| JAC | a | `d1` | 2000, 20 | 341.1 ± 0.38 | 239.9 ± 0.1 | 1.422 | 0.3% | +0.5% | +0.3% | — |
+| JAC | b | `m16` | 20000, 20 | 9.569 ± 0.025 | 6.509 ± 0.0026 | 1.470 | 0.6% | +1.2% | +0.0% | 9.566 ± 0.014 |
+| JAC | b | `d16` | 20000, 20 | 24 ± 0.026 | 17 ± 0.023 | 1.412 | 0.8% | +1.8% | +0.0% | 23.99 ± 0.0039 |
+| JAC | b | `m1` | 2000, 20 | 124.1 ± 0.011 | 75.47 ± 0.024 | 1.645 | 0.9% | +1.0% | +0.0% | — |
+| JAC | b | `d1` | 2000, 20 | 341.2 ± 0.11 | 239.6 ± 0.27 | 1.424 | 0.4% | +0.5% | +0.0% | — |
+| TIP3P 103k | a | `m16` | 2000, 20 | 133.5 ± 0.53 | 86.36 ± 0.62 | 1.546 | 0.9% | +0.1% | +0.2% | — |
+| TIP3P 103k | a | `d16` | 2000, 20 | 378.4 ± 0.099 | 263.1 ± 2.2 | 1.438 | 0.6% | -1.2% | +0.2% | — |
+| TIP3P 103k | b | `m16` | 2000, 20 | 133 ± 0.29 | 85.85 ± 0.66 | 1.549 | 0.8% | +0.7% | +0.3% | — |
+| TIP3P 103k | b | `d16` | 2000, 20 | 380.5 ± 1 | 262.1 ± 0.11 | 1.452 | 0.3% | -0.5% | +0.3% | — |
+| Cellulose | a | `m16` | 2000, 20 | 186.4 ± 0.3 | 131.1 ± 0.47 | 1.422 | 1.3% | +1.0% | +0.8% | — |
+| Cellulose | a | `d16` | 2000, 20 | 457 ± 0.32 | 335.9 ± 10 | 1.360 | 0.4% | +0.4% | +0.8% | — |
+| Cellulose | b | `m16` | 2000, 20 | 183.4 ± 0.38 | 127.7 ± 0.7 | 1.436 | 1.6% | +0.9% | +0.4% | — |
+| Cellulose | b | `d16` | 2000, 20 | 460.8 ± 8.1 | 327.1 ± 0.082 | 1.409 | 0.4% | +0.4% | +0.4% | — |
+| Cellulose | c | `m16` | 2000, 20 | 187.1 ± 0.043 | 130.5 ± 0.047 | 1.433 | 1.3% | +0.9% | +1.3% | — |
+| Cellulose | c | `d16` | 2000, 20 | 459.5 ± 0.022 | 330.5 ± 0.4 | 1.390 | 0.4% | +0.7% | +1.3% | — |
 
 **EPYC 7543** (ms/step: the mean of the runs' rates, each the trimmed mean of its windows after the first 3, ± the sample standard deviation of the 2 rounds; ratio = `main` / lanes; within = the largest relative standard deviation of a run's windows; drift = the largest change from a run's first kept third of windows to its last)
 
-| System | Job | Variant | Steps, windows | `main` | lanes | Ratio | within | drift | branch scalar |
-|---|---|---|---|---|---|---|---|---|---|
-| JAC | a | `m16` | 20000, 20 | 10.41 ± 0.0089 | 6.847 ± 0.012 | 1.520 | 1.5% | +3.6% | 10.42 ± 0.048 |
-| JAC | a | `d16` | 20000, 20 | 26.58 ± 0.014 | 20.95 ± 0.94 | 1.269 | 0.7% | +1.5% | 26.58 ± 0.028 |
-| JAC | a | `m1` | 2000, 20 | 129 ± 0.23 | 76.26 ± 0.32 | 1.691 | 1.0% | -0.5% | — |
-| JAC | a | `d1` | 2000, 20 | 358.2 ± 0.55 | 267.4 ± 0.66 | 1.339 | 0.5% | +0.5% | — |
-| JAC | b (left out) | `m16` | 20000, 20 | 12.61 ± 0.77 | 8.877 ± 0.29 | 1.420 | 2.9% | +5.8% | 12.28 ± 0.39 |
-| JAC | b (left out) | `d16` | 20000, 20 | 29.03 ± 0.17 | 22.73 ± 0.28 | 1.278 | 2.3% | +5.3% | 29.05 ± 0.098 |
-| JAC | b | `m1` | 2000, 20 | 128.5 ± 0.1 | 76.63 ± 0.039 | 1.677 | 1.3% | +0.5% | — |
-| JAC | b | `d1` | 2000, 20 | 359.5 ± 0.41 | 267.9 ± 0.22 | 1.342 | 0.6% | +0.6% | — |
-| JAC | c (left out) | `m16` | 20000, 20 | 12.61 ± 0.56 | 8.707 ± 0.89 | 1.448 | 6.5% | +15.2% | 12.32 ± 0.85 |
-| JAC | c (left out) | `d16` | 20000, 20 | 29.51 ± 0.5 | 22.86 ± 0.72 | 1.291 | 1.9% | +4.2% | 29.38 ± 0.66 |
-| JAC | c (left out) | `m1` | 2000, 20 | 132.8 ± 6.1 | 78.77 ± 4.3 | 1.686 | 0.9% | +0.3% | — |
-| JAC | c (left out) | `d1` | 2000, 20 | 372.5 ± 13 | 281.2 ± 4.9 | 1.325 | 2.0% | +4.2% | — |
-| TIP3P 103k | a | `m16` | 2000, 20 | 156.1 ± 0.023 | 98.98 ± 0.87 | 1.577 | 1.0% | +0.7% | — |
-| TIP3P 103k | a | `d16` | 2000, 20 | 429.9 ± 1.5 | 323.7 ± 2.1 | 1.328 | 0.6% | -0.7% | — |
-| TIP3P 103k | b | `m16` | 2000, 20 | 155.4 ± 1.3 | 98.15 ± 0.65 | 1.584 | 0.9% | -0.6% | — |
-| TIP3P 103k | b | `d16` | 2000, 20 | 432 ± 4.7 | 325.6 ± 0.63 | 1.327 | 0.6% | -1.0% | — |
-| Cellulose | a | `m16` | 2000, 20 | 199.7 ± 0.17 | 134.9 ± 0.38 | 1.480 | 0.9% | +0.3% | — |
-| Cellulose | a | `d16` | 2000, 20 | 508 ± 0.44 | 385.8 ± 0.21 | 1.317 | 0.3% | +0.5% | — |
-| Cellulose | b | `m16` | 2000, 20 | 198.6 ± 0.084 | 133.8 ± 0.86 | 1.484 | 0.8% | -0.2% | — |
-| Cellulose | b | `d16` | 2000, 20 | 507.7 ± 0.82 | 386.5 ± 0.61 | 1.314 | 0.3% | +0.4% | — |
+| System | Job | Variant | Steps, windows | `main` | lanes | Ratio | within | drift | `main` vs the fastest job, by thread count | branch scalar |
+|---|---|---|---|---|---|---|---|---|---|---|
+| JAC | a | `m16` | 20000, 20 | 10.41 ± 0.0089 | 6.847 ± 0.012 | 1.520 | 1.5% | +3.6% | +0.0% | 10.42 ± 0.048 |
+| JAC | a | `d16` | 20000, 20 | 26.58 ± 0.014 | 20.95 ± 0.94 | 1.269 | 0.7% | +1.5% | +0.0% | 26.58 ± 0.028 |
+| JAC | a | `m1` | 2000, 20 | 129 ± 0.23 | 76.26 ± 0.32 | 1.691 | 1.0% | -0.5% | +0.2% | — |
+| JAC | a | `d1` | 2000, 20 | 358.2 ± 0.55 | 267.4 ± 0.66 | 1.339 | 0.5% | +0.5% | +0.2% | — |
+| JAC | b (left out) | `m16` | 20000, 20 | 12.61 ± 0.77 | 8.877 ± 0.29 | 1.420 | 2.9% | +5.8% | +15.2% | 12.28 ± 0.39 |
+| JAC | b (left out) | `d16` | 20000, 20 | 29.03 ± 0.17 | 22.73 ± 0.28 | 1.278 | 2.3% | +5.3% | +15.2% | 29.05 ± 0.098 |
+| JAC | b | `m1` | 2000, 20 | 128.5 ± 0.1 | 76.63 ± 0.039 | 1.677 | 1.3% | +0.5% | +0.2% | — |
+| JAC | b | `d1` | 2000, 20 | 359.5 ± 0.41 | 267.9 ± 0.22 | 1.342 | 0.6% | +0.6% | +0.2% | — |
+| JAC | c (left out) | `m16` | 20000, 20 | 12.61 ± 0.56 | 8.707 ± 0.89 | 1.448 | 6.5% | +15.2% | +16.1% | 12.32 ± 0.85 |
+| JAC | c (left out) | `d16` | 20000, 20 | 29.51 ± 0.5 | 22.86 ± 0.72 | 1.291 | 1.9% | +4.2% | +16.1% | 29.38 ± 0.66 |
+| JAC | c | `m1` | 2000, 20 | 132.8 ± 6.1 | 78.77 ± 4.3 | 1.686 | 0.9% | +0.3% | +3.7% | — |
+| JAC | c | `d1` | 2000, 20 | 372.5 ± 13 | 281.2 ± 4.9 | 1.325 | 2.0% | +4.2% | +3.7% | — |
+| TIP3P 103k | a | `m16` | 2000, 20 | 156.1 ± 0.023 | 98.98 ± 0.87 | 1.577 | 1.0% | +0.7% | +0.2% | — |
+| TIP3P 103k | a | `d16` | 2000, 20 | 429.9 ± 1.5 | 323.7 ± 2.1 | 1.328 | 0.6% | -0.7% | +0.2% | — |
+| TIP3P 103k | b | `m16` | 2000, 20 | 155.4 ± 1.3 | 98.15 ± 0.65 | 1.584 | 0.9% | -0.6% | +0.2% | — |
+| TIP3P 103k | b | `d16` | 2000, 20 | 432 ± 4.7 | 325.6 ± 0.63 | 1.327 | 0.6% | -1.0% | +0.2% | — |
+| Cellulose | a | `m16` | 2000, 20 | 199.7 ± 0.17 | 134.9 ± 0.38 | 1.480 | 0.9% | +0.3% | +0.3% | — |
+| Cellulose | a | `d16` | 2000, 20 | 508 ± 0.44 | 385.8 ± 0.21 | 1.317 | 0.3% | +0.5% | +0.3% | — |
+| Cellulose | b | `m16` | 2000, 20 | 198.6 ± 0.084 | 133.8 ± 0.86 | 1.484 | 0.8% | -0.2% | +0.0% | — |
+| Cellulose | b | `d16` | 2000, 20 | 507.7 ± 0.82 | 386.5 ± 0.61 | 1.314 | 0.3% | +0.4% | +0.0% | — |
 
-- *Ranges, the outlier left out.* On the EPYC 7543 the step takes 1.48 to 1.69 times less time in mixed precision and 1.27 to 1.34 times less in double. on the EPYC 9354, 1.41 to 1.65 and 1.36 to 1.45.
+- *Ranges, the runs left out excluded.* On the EPYC 7543 the step takes 1.48 to 1.69 times less time in mixed precision and 1.27 to 1.34 times less in double; on the EPYC 9354, 1.41 to 1.65 and 1.36 to 1.45. The low end in double, 1.27, rests on JAC `d16` in the one kept 16-thread job on the EPYC 7543, whose two rounds of the lanes differ by 6.5% (20.28 and 21.61 ms/step) while `main` and the scalar row agree to 0.1%; the next lowest kept double ratio there is 1.31.
 - *The branch's scalar row* runs at `main`'s rate: within 0.3% of `main` in each kept job and variant of JAC.
 - *The pair loop's share* (the sampler of D267 on the tools of #836; the sampled runs of the first timing of this PR, JAC). On the EPYC 7543, `m16` goes from 57.0% to 33.5%. On the EPYC 9354, over two jobs: `m16` 54.6% to 32.9%; `d16` 79.3% and 82.4% to 75.2% and 75.6%; the one-thread proxy (`OMP_THREAD_LIMIT=1`, whose step is 1.5 to 6.0% longer than the true one-thread step) 65.2% and 65.4% to 44.2% in mixed precision and 88.3% to 83.1% in double.
 - *Why double gains less.* In double the loop stays most of the step because `erfc` is called once a lane from libm (no vector library is linked). That is the next measurable step for the f64 loops.
@@ -210,7 +210,7 @@ The NVE protocol of D333 on JAC, TIP3P 103k, and Cellulose, with the cutoffs and
 | EPYC 7543 | `znver3` | `md-exec-choose-host-pairs{cpu=znver3 vector-bits=256}` | `vector<8xf32>` (mixed), `vector<4xf64>` (double) | `host code: cpu znver3, avx yes, avx512f no` | ran; the total energy changed by 2.2e-5 of its value |
 | EPYC 9354 | `znver4` | `md-exec-choose-host-pairs{cpu=znver4 vector-bits=512}` | `vector<16xf32>` (mixed), `vector<8xf64>` (double) | `host code: cpu znver4, avx yes, avx512f yes` | ran; the total energy changed by 2.2e-5 of its value |
 
-**Policy.** On both CPU models the lanes win in each variant measured at the head, by 27 to 69%, beyond the spread of the runs. So `findPolicy` makes them the default on `znver3` (EPYC 7543) and `znver4` (EPYC 9354); the maintainer ruled on PR #823 to keep the entry of `znver4`.
+**Policy.** On both CPU models the lanes win in each variant measured at the head, beyond the spread of the runs. So `findPolicy` makes them the default on `znver3` (EPYC 7543) and `znver4` (EPYC 9354); the maintainer ruled on PR #823 to keep the entry of `znver4`.
 
 **Peak memory.** The lanes allocate nothing. Their registers and the stack of a row are the only storage they add, and every buffer of the program is the same as before.
 
