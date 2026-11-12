@@ -9,6 +9,7 @@
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Output.h"
+#include "mdir/Driver/RigidGroups.h"
 #include "mdir/Driver/System.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -58,6 +59,110 @@ static const char *getName(Precision precision) {
     return "double";
   }
   return "";
+}
+
+/// The rigid groups of the topology and their kinds, and the molecules
+/// that are none, by reason (D[rigid-groups], docs/constraints.md,
+/// Section 3). A diagnosis: no run reads it.
+static void describeRigidGroups(const Topology &topology) {
+  RigidGroups groups = findRigidGroups(topology);
+  size_t rigid = 0;
+  for (const RigidKind &kind : groups.kinds)
+    rigid += kind.getCount();
+  std::printf("rigid groups:       %zu of %zu molecules, %zu kind%s\n", rigid,
+              groups.molecules, groups.kinds.size(),
+              groups.kinds.size() == 1 ? "" : "s");
+  auto plural = [](size_t count) { return count == 1 ? "" : "s"; };
+  // The text names the most populous kinds; the JSON report has them all.
+  const size_t listed = 8;
+  for (auto [index, kind] : llvm::enumerate(groups.kinds)) {
+    if (index == listed) {
+      size_t rest = 0;
+      for (size_t k = listed; k != groups.kinds.size(); ++k)
+        rest += groups.kinds[k].getCount();
+      std::printf("  and %zu more kind%s of %zu molecule%s\n",
+                  groups.kinds.size() - listed,
+                  plural(groups.kinds.size() - listed), rest, plural(rest));
+      break;
+    }
+    std::printf("  kind %zu: %zu molecule%s of %u particle%s, %zu in the "
+                "frame, %zu site%s\n",
+                index + 1, kind.getCount(), plural(kind.getCount()), kind.size,
+                plural(kind.size), kind.frame.size(), kind.sites.size(),
+                plural(kind.sites.size()));
+    std::printf("    types:    ");
+    for (unsigned type : kind.types)
+      std::printf(" %s", topology.typeNames[type].c_str());
+    std::printf("\n    charges:  ");
+    for (double charge : kind.charges)
+      std::printf(" %.6g", charge);
+    std::printf(" e\n");
+    if (!kind.distances.empty()) {
+      std::printf("    frame:    ");
+      for (double distance : kind.distances)
+        std::printf(" %.6g", distance / units::length);
+      std::printf(" Ang\n");
+    }
+    for (const RigidKind::Site &site : kind.sites) {
+      std::printf("    site %u:   ", site.place + 1);
+      for (double weight : site.weights)
+        std::printf(" %.6g", weight);
+      std::printf(" of the frame\n");
+    }
+    if (kind.scattered)
+      std::printf("    %zu not of consecutive particles\n", kind.scattered);
+    if (kind.incompleteExclusions)
+      std::printf("    %zu with a pair of their own that is not excluded\n",
+                  kind.incompleteExclusions);
+    if (kind.outsideExclusions)
+      std::printf("    %zu with an excluded pair outside the molecule\n",
+                  kind.outsideExclusions);
+  }
+  for (unsigned reason = 0; reason != NumRigidReasons; ++reason)
+    if (size_t count = groups.leftOut[reason])
+      std::printf("  left out: %zu molecule%s with %s\n", count, plural(count),
+                  getRigidReasonText(static_cast<RigidReason>(reason)));
+}
+
+/// The same as an object of the JSON report.
+static llvm::json::Object makeRigidGroupsJSON(const Topology &topology) {
+  using llvm::json::Array;
+  using llvm::json::Object;
+  RigidGroups groups = findRigidGroups(topology);
+  Array kinds;
+  for (const RigidKind &kind : groups.kinds) {
+    Array frame, types, charges, distances, sites;
+    for (unsigned place : kind.frame)
+      frame.push_back(place);
+    for (unsigned type : kind.types)
+      types.push_back(topology.typeNames[type]);
+    for (double charge : kind.charges)
+      charges.push_back(charge);
+    for (double distance : kind.distances)
+      distances.push_back(distance / units::length);
+    for (const RigidKind::Site &site : kind.sites)
+      sites.push_back(Object{{"place", site.place},
+                             {"weights", Array(site.weights)}});
+    kinds.push_back(Object{
+        {"molecules", kind.getCount()},
+        {"particles", kind.size},
+        {"frame", std::move(frame)},
+        {"types", std::move(types)},
+        {"charges_e", std::move(charges)},
+        {"frame_distances_angstrom", std::move(distances)},
+        {"sites", std::move(sites)},
+        {"first_particle", kind.members.front()},
+        {"scattered", kind.scattered},
+        {"incomplete_exclusions", kind.incompleteExclusions},
+        {"outside_exclusions", kind.outsideExclusions}});
+  }
+  Object leftOut;
+  for (unsigned reason = 0; reason != NumRigidReasons; ++reason)
+    leftOut[getRigidReasonKey(static_cast<RigidReason>(reason))] =
+        groups.leftOut[reason];
+  return Object{{"molecules", groups.molecules},
+                {"kinds", std::move(kinds)},
+                {"left_out", std::move(leftOut)}};
 }
 
 /// What a topology describes.
@@ -137,6 +242,7 @@ static void describeTopology(const Control &control, const System &system) {
       restrained += k > 0.0;
     std::printf("restrained:         %zu particles\n", restrained);
   }
+  describeRigidGroups(topology);
 }
 
 static void describeParticles(const Control &control, const System &system) {
@@ -660,7 +766,8 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
         {"total_charge_e", std::accumulate(topology.charges.begin(),
                                            topology.charges.end(), 0.0)},
         {"virtual_sites", topology.virtualSites.size()},
-        {"rigid_waters", topology.settles.size()}};
+        {"rigid_waters", topology.settles.size()},
+        {"rigid_groups", makeRigidGroupsJSON(topology)}};
   } else {
     particles["pair_terms"] = control.pairs.size();
   }

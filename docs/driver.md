@@ -249,6 +249,33 @@ PME settings, constraint count, target, and precision. A minimization
 reports its method and iterations, with no time step or physical duration.
 A nonperiodic system has no physical cell or density in the report.
 
+With a topology the report has the rigid groups of the system
+(D[rigid-groups], [constraints.md](constraints.md), Section 3): the
+molecules whose massive atoms the constraints hold at fixed distances,
+sorted into kinds, the most populous first.
+
+```
+rigid groups:       387 of 388 molecules, 1 kind
+  kind 1: 387 molecules of 4 particles, 3 in the frame, 1 site
+    types:     OW HW HW EP
+    charges:   0 0.679142 0.679142 -1.35828 e
+    frame:     0.872433 0.872433 1.37121 Ang
+    site 4:    0.704559 0.147721 0.147721 of the frame
+  left out: 1 molecule with a pair of massive atoms without a constrained distance
+```
+
+A kind gives the types and the charges of its particles in their order,
+the constrained distances of its frame (the pairs of the massive atoms in
+lexicographic order), and for each massless site its place, from 1, and
+its weights over the frame atoms. Lines follow for the copies whose
+particles are not consecutive, that have a pair of their own that is not
+excluded, or an excluded pair with a particle outside, when there are
+any. The text lists 8 kinds and counts the rest; the JSON report has all.
+The molecules that are no rigid group are counted by reason: a pair of
+massive atoms without a constrained distance, or a site that is no
+constant-weight combination of the frame. The lines are a diagnosis: no
+run reads them, and no input runs differently for them.
+
 The output list has the files of Section 2.8 in the order of its table:
 the log, on standard output and in the file of `log`, the energies and
 the terms over centers as columns, the trajectory in DCD, XTC, or H5MD, and the
@@ -282,6 +309,7 @@ Its schema begins at version 1:
 |---|---|
 | `schema_version`, `ok` | Version 1; `ok` is true when reading and validation succeeded, even with warnings |
 | `system` | Particle and type counts, mass in amu, degrees of freedom, supplied velocities, restrained particles, periodicity, and topology counts when present |
+| `system.topology.rigid_groups` | `molecules`, the number of molecules; `kinds`, most populous first, each with `molecules` (its copies), `particles` (of a copy), `frame` (the places of the massive atoms, from 0), `types` (names) and `charges_e` by place, `frame_distances_angstrom` (the pairs of `frame` in lexicographic order), `sites` (`place` and `weights` over `frame`), `first_particle` (of its first copy, from 0), and the counts of copies `scattered`, `incomplete_exclusions`, `outside_exclusions`; `left_out`, the molecules that are no rigid group, as `flexible_frame` and `site_not_constant_weight` (D[rigid-groups], [constraints.md](constraints.md), Section 3) |
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, the neighbor structure, and input checkpoint path |
 | `run.neighbors` | `requested` (`auto`, `matrix`, `groups`), `structure` (`matrix` or `groups`, `AUTO` resolved for the system), `reason` (`given`, or why `AUTO` took it), `pairlist_distance_angstrom`, and `pruned_distance_angstrom` (`null` without a dual list); the text output has the line `neighbors:` (D261) |

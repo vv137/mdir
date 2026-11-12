@@ -1,0 +1,19 @@
+# The rigid groups of a topology and their kinds (D[rigid-groups],
+# docs/constraints.md, Section 3), on topologies made in the test: the
+# two rules on molecules of several kinds, with atomic numbers and names
+# that tell nothing; what makes two molecules one kind; one case for each
+# reason that leaves a molecule out; the facts of a kind; and the weights
+# of the sites against the placement of Section 2, within a bound from
+# the rounding of f64. The largest error is over a tenth of each bound,
+# so the bounds are not loose: transposing two weights, inverting the
+# ratio of the two lengths, or changing a sign fails the test.
+#
+# RUN: mdir-rigid-groups-test | FileCheck %s
+#
+# CHECK: kinds: 9 molecules in 5 kinds, none left out
+# CHECK-NEXT: sameness: equal numbers, no tolerance
+# CHECK-NEXT: left out: flexible frame, site not of constant weights
+# CHECK-NEXT: facts: scattered, incomplete exclusions, outside exclusions counted
+# CHECK-NEXT: bisector weights: 20000 frames of three lengths within the bound, largest error 0.{{[0-9]+}} of it
+# CHECK-NEXT: bisector site: 20000 placements within the bound, largest error 0.{{[0-9]+}} of it
+# CHECK-NEXT: linear site: 20000 placements within the bound, largest error 0.{{[0-9]+}} of it
