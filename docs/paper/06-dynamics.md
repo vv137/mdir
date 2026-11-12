@@ -291,6 +291,25 @@ zero, and the written form leaves it out. The two forms agree to the
 rounding, and the derived one is about 1% slower in a step that needs the
 virial.
 
+**Rigid groups.** Where a constraint fixes the distance $d_{ab}$ of every
+pair of the atoms with mass of a molecule, its frame, two configurations
+that satisfy the constraints are congruent, and the molecule moves as a
+rigid body (D[rigid-groups]). A linear site is a combination
+$\mathbf x_s = \sum_a w_{a}\mathbf x_a$ of the frame with constant
+weights that sum to 1 on any frame. The bisector site is one on a rigid
+frame only: with $\mathbf d_j = d_{oj}\hat{\mathbf u}$ and
+$\mathbf d_k = d_{ok}\hat{\mathbf v}$, the law of cosines gives
+$d_{oj}d_{ok}\lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert^2 =
+(d_{oj} + d_{ok})^2 - d_{jk}^2 \equiv Q$, so that
+$w_j = a\sqrt{d_{ok}/d_{oj}}/\sqrt Q$,
+$w_k = a\sqrt{d_{oj}/d_{ok}}/\sqrt Q$, and $w_o = 1 - w_j - w_k$, which
+for a water with two equal bonds $d$ is $a/(2\sqrt{d^2 - d_{jk}^2/4})$.
+The weights are constants of the molecule's kind; with the lengths held
+within a relative $\tau$ the combination and the bisector differ by
+$O(a\tau)$. `mdir check` reports the kinds of rigid groups of a system
+and their weights, found from the constraints and the sites alone; the
+step places every site by its own form.
+
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
 followed by the same drift, constraint, and correction, with no second

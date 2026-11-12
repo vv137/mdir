@@ -5,7 +5,8 @@ decisions are D56, D63, and D68 and those that amended them
 ([decisions.md](decisions.md)).
 
 This document describes the constraints, SETTLE, SHAKE, and RATTLE
-(Section 1), and the virtual sites (Section 2).
+(Section 1), the virtual sites (Section 2), and the rigid groups that the
+two make (Section 3, D[rigid-groups]).
 
 ## 1. Constraints
 
@@ -130,3 +131,193 @@ virtual sites of GROMACS, are rejected.
 | Three OPC waters: the change of the total energy with the time step (`test/Driver/virtual-sites.test`) | Shrinks as its square, 6.8 × 10⁻⁴ at 0.1 fs and 1.7 × 10⁻⁴ at 0.05 fs |
 | The same: the trace of the virial against $-dU/d\lambda$ under a uniform scaling of the atoms and the cell | Agree to 6 × 10⁻⁶; without the change of Section 2.2, 35.84 instead of 43.57 kcal/mol |
 | The order of the positions, against that of the files (`test/Driver/amber-opc-spatial_order.test`) | The same states to 2 × 10⁻¹⁵ |
+
+## 3. Rigid groups
+
+Decided: D[rigid-groups] (#855). `findRigidGroups`
+(`lib/Driver/RigidGroups.cpp`) finds the molecules of a prepared topology
+that move as rigid bodies and sorts them into kinds, from the constraints
+(Section 1) and the definitions of the sites (Section 2) alone. It reads
+no atomic number, no name of an atom or a residue, and assumes no order
+of elements. `mdir check` reports the result ([driver.md](driver.md),
+Section 1.4); no run reads it yet.
+
+### 3.1 Molecules and frames
+
+A molecule is a connected component of the graph over the particles whose
+edges are the bonds, the constrained distances (the three of a group of
+SETTLE, and the center and each hydrogen of a group of SHAKE), and the
+pairs of a site with each of the three atoms that place it. The **frame**
+of a molecule is the set of its particles with a mass; its other
+particles are sites.
+
+**R1.** A molecule is a rigid group when a constraint fixes the distance
+of every pair of atoms of its frame.
+
+*It is sufficient.* If $\lVert\mathbf x_a - \mathbf x_b\rVert = d_{ab}$
+for every pair of the frame, two configurations that satisfy the
+constraints have the same matrix of distances, and are therefore
+congruent: one is the other moved by an isometry of space. The only
+freedom left to the frame is that of a rigid body. For four or more atoms
+that are not in a plane the isometry may be a reflection, which the
+distances allow and a continuous motion does not reach; no record of
+today gives such a frame (below), and a record that will must say which
+hand it holds.
+
+*What it leaves out.* A frame of $m$ atoms may be rigid with fewer than
+$m(m-1)/2$ distances ($3m - 6$ suffice in general position for
+$m \ge 3$), so the rule is not necessary in general. For the records that
+`validateTopology` accepts today it is: the groups of SETTLE and SHAKE
+share no particle, a group of SETTLE holds the 3 distances of 3 atoms, and
+a group of SHAKE holds the $h$ distances of a center to its $h = 1, 2, 3$
+hydrogens, a tree, which leaves the angles between them free unless
+$h = 1$. A molecule whose frame is joined by constraints is therefore one
+group, and the frames that the rule accepts are exactly the rigid ones:
+
+| Frame | Atoms | Constrained pairs | Rigid group |
+|---|---|---|---|
+| A single atom | 1 | 0 of 0 | Yes: nothing to hold |
+| A group of SHAKE with one hydrogen that is the whole molecule | 2 | 1 of 1 | Yes |
+| A group of SETTLE that is the whole molecule | 3 | 3 of 3 | Yes |
+| A group of SHAKE with two or three hydrogens | 3, 4 | 2 of 3, 3 of 6 | No: the angles at the center are free |
+| Any other molecule: a bond that no constraint holds, or more than one group | | fewer than all | No |
+
+A molecule that fails the rule is counted with the reason "a pair of
+massive atoms without a constrained distance" (`flexible_frame`). A
+constraint record of a later decision that holds a frame with fewer than
+all its distances would need the rule widened; until then the rule is the
+exact condition and its test is one count per molecule.
+
+A topology whose constraints are not resolved (a flexible run, or one
+before `prepareTopologySystem`) has no rigid groups beyond its single
+atoms.
+
+### 3.2 Kinds
+
+Two rigid groups are copies of one **kind** when they have the same
+number of particles and, taking the particles of each in the order of
+their numbers, the same places of the frame atoms, the same type and
+charge at each place, the same constrained distance for each pair of the
+frame, and the same weights of each site (Section 3.3). The masses are
+not compared. The kinds are given with the most populous first, and
+kinds of equal count in the order of their first particle.
+
+"The same" is equality of the f64 values, with no tolerance, for three
+reasons. The copies of a molecule take their parameters from the same
+text of a topology through the same arithmetic, so equal inputs give
+equal values, and a difference in the last place is a difference of the
+input. A tolerance is not transitive: with one, whether $A$ and $C$ are
+one kind would depend on a $B$ between them and on the order of the
+molecules. And a consumer that replaces the values of each copy by those
+of the kind changes no number of the run only under equality. The cost is
+that two descriptions of one site (a bisector and a linear one for the
+same point) are one kind only where their weights are the same numbers;
+weights that differ in the last place are two kinds, each correct.
+
+A kind's record (`RigidKind`) has: the number of particles of a copy; the
+places of the frame; the charge and the type of each place; the distances
+of the frame, for the pairs of its places in lexicographic order; for
+each site its place and its weights over the frame; and the particles of
+every copy. Three facts that a consumer may ask are counted over the
+copies and decide neither rigidity nor the kind:
+
+| Count | A copy is counted when |
+|---|---|
+| `scattered` | its particles are not consecutive numbers |
+| `incompleteExclusions` | some pair of its own particles is not excluded |
+| `outsideExclusions` | an excluded pair has one particle in it and one outside |
+
+The Lennard-Jones parameters of a place are those of its type, in the
+tables of the topology; whether a place has any is for the consumer to
+read there. Nothing is refused because of them.
+
+### 3.3 Sites as constant-weight combinations
+
+**R2.** Each site $s$ of a rigid group is a combination of the frame
+atoms with weights that are constants of the kind and sum to 1,
+
+$$\mathbf x_s = \sum_a w_a \mathbf x_a, \qquad \sum_a w_a = 1 .$$
+
+The sum to 1 makes the site follow a translation of the frame, and the
+linearity a rotation, so the weights are the same in every configuration
+of the rigid frame. The weights follow from the two kinds of Section 2.1,
+for a site of the atoms $i$, $j$, $k$:
+
+*The linear site*, $\mathbf x_s = \mathbf x_i + a\,\mathbf d_{ji} +
+b\,\mathbf d_{ki}$, is the combination $w_i = 1 - a - b$, $w_j = a$,
+$w_k = b$ on any frame, rigid or not.
+
+*The extra point of Amber*, $\mathbf x_s = \mathbf x_i + a\,(\hat{\mathbf
+u} + \hat{\mathbf v})/\lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert$, is
+not linear in the positions. On a rigid frame the three distances
+$d_{ij}$, $d_{ik}$, $d_{jk}$ are constants, and with
+$\mathbf d_{ji} = d_{ij}\hat{\mathbf u}$, $\mathbf d_{ki} =
+d_{ik}\hat{\mathbf v}$ the law of cosines,
+$d_{jk}^2 = d_{ij}^2 + d_{ik}^2 - 2 d_{ij} d_{ik}\,\hat{\mathbf
+u}\cdot\hat{\mathbf v}$, gives
+
+$$d_{ij} d_{ik} \lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert^2
+= d_{ij} d_{ik} (2 + 2\,\hat{\mathbf u}\cdot\hat{\mathbf v})
+= (d_{ij} + d_{ik})^2 - d_{jk}^2 \equiv Q , \qquad (3.1)$$
+
+so that $\mathbf x_s - \mathbf x_i = (a/\lVert\hat{\mathbf u} +
+\hat{\mathbf v}\rVert)(\mathbf d_{ji}/d_{ij} + \mathbf d_{ki}/d_{ik})$ is
+
+$$w_j = \frac{a}{\sqrt Q}\sqrt{\frac{d_{ik}}{d_{ij}}}, \qquad
+w_k = \frac{a}{\sqrt Q}\sqrt{\frac{d_{ij}}{d_{ik}}}, \qquad
+w_i = 1 - w_j - w_k . \qquad (3.2)$$
+
+This is exact, and its condition is that the frame holds the three
+distances. `getBisectorWeights` computes $Q$ as
+$(d_{ij} + d_{ik} - d_{jk})(d_{ij} + d_{ik} + d_{jk})$. For
+$d_{ij} = d_{ik} = d$, the water of four sites,
+$w_j = w_k = a / (2\sqrt{d^2 - d_{jk}^2/4})$: $a$ over twice the height
+of the triangle. The form has no direction where the two bonds are
+opposite, $Q \le 0$, and such a site has no weights.
+
+*Off the rigid frame* the two forms differ. If the lengths are held
+within a relative $\tau$, $\ell = d(1 + \varepsilon)$ with
+$\lvert\varepsilon\rvert \le \tau$, then with $S = \lVert\hat{\mathbf u} +
+\hat{\mathbf v}\rVert$ and $S_0$ its value on the rigid frame the
+combination minus the bisector is
+$a[(1/S_0 - 1/S)(\hat{\mathbf u} + \hat{\mathbf v}) +
+(\varepsilon_{ij}\hat{\mathbf u} + \varepsilon_{ik}\hat{\mathbf v})/S_0]$.
+For $d_{ij} = d_{ik}$, $\delta(\hat{\mathbf u}\cdot\hat{\mathbf v}) =
+-(4 - S^2)(2\varepsilon_{jk} - \varepsilon_{ij} - \varepsilon_{ik})/2$
+to first order, and $\delta S/S = \delta(\hat{\mathbf u}\cdot\hat{\mathbf
+v})/S^2$, so the difference is at most
+
+$$a\,\tau\left(\frac{2}{S} + \frac{2(4 - S^2)}{S^2}\right) + O(\tau^2) ,
+ \qquad (3.3)$$
+
+$4.85\,a\tau$ for the OPC water ($S = 1.237$): $8 \times 10^{-7}$ Å at
+$\tau = 10^{-6}$. A consumer that places sites by the weights therefore
+places them as the engine does to the tolerance of its constraints, not
+bitwise, and says so where it does.
+
+A site of any other form is not assumed to be a combination: its
+molecule is counted with the reason "a site that is no constant-weight
+combination of the frame" (`site_not_constant_weight`). The readers of
+today give only the two kinds above (Section 2.4: the frames of lone
+pairs and of TIP5P in Amber, and the other kinds of virtual sites of
+GROMACS, are rejected when the topology is read), so from a file this
+reason is reached only by a bisector without a direction, which
+`validateTopology` refuses as lengths of SETTLE; the reason is there for
+the kinds of sites that a later reader adds, such as the two sites out of
+the plane of a water of five sites, which are no combination of three
+atoms with weights that sum to 1. A site of that kind is a combination of
+the frame atoms and the cross product of two bonds, whose weights are
+constants on a rigid frame as well; giving it to consumers needs a
+record with that third term, which this decision does not add.
+
+### 3.4 Validation
+
+| Test | Result |
+|---|---|
+| Made topologies with atomic numbers and names that tell nothing: three-atom groups, groups with a bisector site and with a linear site, a single atom, a constrained pair, a three-atom group with Lennard-Jones on every atom (`test/Driver/rigid-groups.test`) | 9 molecules in 5 kinds, in the order of count and first particle |
+| What makes a kind: a charge, a length, or a weight one unit in the last place away; another type; the two outer atoms of a site exchanged | Two kinds; two kinds; one kind |
+| One case for each reason: free bonds, a group of SHAKE with 2 and 3 hydrogens, a rigid triple bonded to one more atom, a site on a flexible frame; a site of an unknown form, a bisector without a direction | Counted with `flexible_frame`; with `site_not_constant_weight` |
+| Eq. (3.2) against the placement of Section 2.1 on 20,000 random frames of three different lengths, each coordinate within $\epsilon\,(4(1 + \sum_a\lvert w_a\rvert)X + 64\lvert a\rvert/S)$, $\epsilon = 2^{-52}$, $X$ the largest coordinate | Within the bound; the largest error is 0.23 of it |
+| The weights of the kinds against the placement on 20,000 rotated and shifted copies of a frame, with $40\,\epsilon\,a X/d$ more for Eq. (3.3), and for a linear site with $a \ne b$ | Within the bound; the largest error is 0.08 and 0.19 of it |
+| The same tests with $w_j$ and $w_k$ exchanged, the ratio of Eq. (3.2) inverted, a sign of $w_j$, of $w_i$, or of $d_{jk}$ in $Q$ changed, the weights put on exchanged frame atoms, or $a$ and $b$ of the linear site exchanged | Each fails |
+| A topology of GROMACS with waters of three and four sites, a rigid molecule with Lennard-Jones on its three atoms, an ion, and flexible waters; the OPC waters of Amber with and without their constraints (`test/Driver/check-rigid-groups.test`) | 4 kinds and 2 molecules left out; 387 of 388, the weights 0.147721 of Eq. (3.2); none without the constraints |

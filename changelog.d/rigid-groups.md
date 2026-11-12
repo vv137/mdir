@@ -1,0 +1,3 @@
+### Added
+
+- **`mdir check` reports the rigid groups of a topology** (D[rigid-groups], #855). The molecules whose massive atoms the constraints hold at fixed distances are found from the constraints and the definitions of the virtual sites alone, with no atomic number and no order of elements, and sorted into kinds, the most populous first: the count, the types and charges, the distances of the frame, and the weights of each massless site as a constant combination of the frame atoms; the molecules that are none are counted by reason. The JSON report has them as `system.topology.rigid_groups`. A diagnosis: no input runs differently ([docs/constraints.md](docs/constraints.md), Section 3).
