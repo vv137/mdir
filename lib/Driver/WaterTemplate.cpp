@@ -295,10 +295,10 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
     if (!(reach <= half)) {
       char text[256];
       std::snprintf(text, sizeof text,
-          "its covering reach, %.4g Å ('pairlist_distance' plus twice "
-          "%.4g Å, the larger of the water's extent and the solute "
+          "its covering reach, %.4g Ang ('pairlist_distance' plus twice "
+          "%.4g Ang, the larger of the water's extent and the solute "
           "units' radius), exceeds half the least face width of the cell, "
-          "%.4g Å", reach / units::length, extent / units::length,
+          "%.4g Ang", reach / units::length, extent / units::length,
           half / units::length);
       result.reason = text;
     }
@@ -342,9 +342,9 @@ mdir::driver::selectWaterTemplate(const Control &control, const System &system,
         char text[320];
         std::snprintf(text, sizeof text,
             "AUTO keeps a margin below half the least face width: its "
-            "covering reach, %.4g Å, plus twice %.2g Å for a widened "
-            "extent or radius at the first build, exceeds %.4g Å (half the "
-            "least face width, %.4g Å%s)", reach / units::length, widening,
+            "covering reach, %.4g Ang, plus twice %.2g Ang for a widened "
+            "extent or radius at the first build, exceeds %.4g Ang (half the "
+            "least face width, %.4g Ang%s)", reach / units::length, widening,
             allowed / units::length, half / units::length,
             control.barostat ? ", less 5 % for the barostat" : "");
         result.reason = text;

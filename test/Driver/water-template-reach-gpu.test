@@ -14,7 +14,7 @@
 # RUN: cd %t/shrink && not mdir run control.toml > run.log 2>&1
 # RUN: FileCheck %s --check-prefix=SHRINK < %t/shrink/run.log
 # SHRINK: INFO: 0 0.0000
-# SHRINK: mdir: the template's covering reach, 12.38 Å ('pairlist_distance' plus twice 1.09 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.{{[0-3][0-9]*}} Å; the run has failed
+# SHRINK: mdir: the template's covering reach, 12.38 Ang ('pairlist_distance' plus twice 1.09 Ang, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.{{[0-3][0-9]*}} Ang; the run has failed
 # A member beyond the radius at the input (HH31 a fifth away from CH3):
 # the selection's reach, 12.18 Å (10 + 2 x 1.09), fits, and the first
 # build, which widens the radius to the measured 1.308 Å, stops the run at
@@ -23,7 +23,7 @@
 # RUN: cd %t/stretch && not mdir run control.toml > run.log 2>&1
 # RUN: FileCheck %s --check-prefix=STRETCH < %t/stretch/run.log
 # STRETCH-NOT: INFO: 0 0.0000
-# STRETCH: mdir: the template's covering reach, 12.62 Å ('pairlist_distance' plus twice 1.308 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.58 Å; the run has failed
+# STRETCH: mdir: the template's covering reach, 12.62 Ang ('pairlist_distance' plus twice 1.308 Ang, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 12.58 Ang; the run has failed
 # A triclinic cell: the rhombic dodecahedron of Inputs/triclinic (403 TIP3P
 # waters, every edge 2.6 nm, face widths 2.123, 2.123 and 1.838 nm), NVT,
 # a cutoff of 6 Å. The bound is half the least face width, c_z/2 = 9.192
@@ -43,4 +43,4 @@
 # RUN: cd %t/oblique && not mdir run control.toml > run.log 2>&1
 # RUN: FileCheck %s --check-prefix=OBLIQUE < %t/oblique/run.log
 # OBLIQUE-NOT: INFO: 0 0.0000
-# OBLIQUE: mdir: the template's covering reach, 9.6 Å ('pairlist_distance' plus twice 1.25 Å, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 9.192 Å; the run has failed
+# OBLIQUE: mdir: the template's covering reach, 9.6 Ang ('pairlist_distance' plus twice 1.25 Ang, the larger of the water's extent and the solute units' radius at this build), exceeds half the least face width of the current cell, 9.192 Ang; the run has failed

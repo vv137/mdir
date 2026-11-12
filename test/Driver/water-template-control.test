@@ -37,8 +37,8 @@
 # HELD: water.template route: template (ON was given)
 # DOUBLE-ON: 'water.template = "ON"' cannot apply: MIXED precision is required
 # DOUBLE-AUTO: water.template route: general (MIXED precision is required)
-# FAR-ON: 'water.template = "ON"' cannot apply: its covering reach, {{[0-9.]+}} Å ('pairlist_distance' plus twice {{[0-9.]+}} Å, the larger of the water's extent and the solute units' radius), exceeds half the least face width of the cell, 12.58 Å
-# FAR-AUTO: water.template route: general (its covering reach, {{[0-9.]+}} Å
+# FAR-ON: 'water.template = "ON"' cannot apply: its covering reach, {{[0-9.]+}} Ang ('pairlist_distance' plus twice {{[0-9.]+}} Ang, the larger of the water's extent and the solute units' radius), exceeds half the least face width of the cell, 12.58 Ang
+# FAR-AUTO: water.template route: general (its covering reach, {{[0-9.]+}} Ang
 # AUTO keeps a margin below that bound, which ON does not: the reach plus
 # twice 0.25 Å (an extent or a radius widened at the first build) must be
 # at most half the least face width, less 5 % under a barostat. At 10 Å
@@ -57,9 +57,9 @@
 # RUN: mdir-water-template-test --select %t/npt/control.toml | FileCheck %s --check-prefix=NPT-BAND-ON
 # RUN: sed 's/pairlist_distance = 9.8/pairlist_distance = 9.2/' %t/npt/band-auto.toml > %t/npt/near-auto.toml
 # RUN: mdir-water-template-test --select %t/npt/near-auto.toml | FileCheck %s --check-prefix=NPT-NEAR-AUTO
-# BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 12.18 Å, plus twice 0.25 Å for a widened extent or radius at the first build, exceeds 12.58 Å (half the least face width, 12.58 Å))
+# BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 12.18 Ang, plus twice 0.25 Ang for a widened extent or radius at the first build, exceeds 12.58 Ang (half the least face width, 12.58 Ang))
 # NEAR-AUTO: water.template route: template (four-site water above AUTO's measured floor)
-# NPT-BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 11.98 Å, plus twice 0.25 Å for a widened extent or radius at the first build, exceeds 11.95 Å (half the least face width, 12.58 Å, less 5 % for the barostat))
+# NPT-BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 11.98 Ang, plus twice 0.25 Ang for a widened extent or radius at the first build, exceeds 11.95 Ang (half the least face width, 12.58 Ang, less 5 % for the barostat))
 # NPT-BAND-ON: water.template route: template (ON was given)
 # NPT-NEAR-AUTO: water.template route: template (four-site water above AUTO's measured floor)
 # A minimization, whose steps move the X-H bonds that the solute units

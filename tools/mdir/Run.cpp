@@ -1677,8 +1677,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       if (auto radius = (*engine)->lookup("mdrtGetTemplateRadius")) {
         auto at = reinterpret_cast<double (*)(int64_t)>(*radius);
         if (at(0) > 0.0)
-          output.log.print("MDIR: template solute radius %.4f Å, at the first "
-                           "build %.4f Å, at most %.4f Å at %lld later builds\n",
+          output.log.print("MDIR: template solute radius %.4f Ang, at the first "
+                           "build %.4f Ang, at most %.4f Ang at %lld later builds\n",
               at(0), at(1), at(2), static_cast<long long>(at(3)));
       } else {
         llvm::consumeError(radius.takeError());

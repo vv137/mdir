@@ -47,8 +47,8 @@
 # CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries; {{[1-9][0-9]*}} inner row groups, 0 in more than one lattice frame
 # SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
 # STRETCH: stretched input: the HH31-CH3 bond from 1.0900 to 1.3080 Å
-# WIDENED: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Å, at the first build 1.3080 Å, at most [[NOMINAL]] Å at {{[1-9][0-9]*}} later builds
-# HELD: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Å, at the first build [[NOMINAL]] Å, at most [[NOMINAL]] Å at {{[1-9][0-9]*}} later builds
+# WIDENED: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Ang, at the first build 1.3080 Ang, at most [[NOMINAL]] Ang at {{[1-9][0-9]*}} later builds
+# HELD: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Ang, at the first build [[NOMINAL]] Ang, at most [[NOMINAL]] Ang at {{[1-9][0-9]*}} later builds
 # WIDE: mdrt: template coverage: units
 # WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
 # TWICE: mdrt: template coverage: entry {{[0-9a-f]+}} appears twice

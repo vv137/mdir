@@ -97,10 +97,10 @@ void mdrtTemplatePairsNoteRefresh(int64_t handle) {
 void mdrtTemplatePairsStopReach(double reach, double widest, double half) {
   char message[512];
   snprintf(message, sizeof message,
-           "the template's covering reach, %.4g Å ('pairlist_distance' plus "
-           "twice %.4g Å, the larger of the water's extent and the solute "
+           "the template's covering reach, %.4g Ang ('pairlist_distance' plus "
+           "twice %.4g Ang, the larger of the water's extent and the solute "
            "units' radius at this build), exceeds half the least face width "
-           "of the current cell, %.4g Å; the run has failed (the cell shrank "
+           "of the current cell, %.4g Ang; the run has failed (the cell shrank "
            "or the input widened the extent since the selection: use a "
            "larger cell or 'water.template = \"OFF\"')",
            10.0 * reach, 10.0 * widest, 10.0 * half);
