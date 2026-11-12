@@ -35,13 +35,19 @@ references = [[F((u * 5) % 17, 32), F((u * 7) % 19, 32), F((u * 3) % 13, 32)]
 current = [[x + F((u % 3) - 1, 8), y - F(1, 16), z + F(u % 2, 8)]
            for u, (x, y, z) in enumerate(references)]
 reaches = [F(3, 2), F(5, 4), F(1)]
-units, entries = [], []
-for work, (tag, first, count) in enumerate([(0, 0, 64), (0, 0, 3), (0, 16, 0),
-                                          (1, 32, 33), (1, 48, 17), (1, 32, 1),
-                                          (2, 32, 32), (2, 48, 7)]):
+# Rows of the lists: a row's outer records are its chunks of 64 entries,
+# [class | chunk << 2, first, chunk begin, row end] (U10). The prune
+# compacts a row's surviving entries from the row's first entry across its
+# chunks, and record k keeps those of rank 64 k to 64 k + 63: of a row of
+# four chunks 133 entries survive (two full records, one of 5, one empty),
+# of one of three 117 (a full record, one of 53, one empty).
+rows = [(0, 0, 64), (0, 0, 3), (0, 16, 0), (1, 32, 33), (1, 48, 17), (1, 32, 1),
+        (2, 32, 32), (2, 48, 7), (0, 0, 230), (2, 32, 180)]
+units, entries, slices = [], [], []
+for row, (tag, first, count) in enumerate(rows):
     begin = len(entries)
     for j in range(count):
-        partner = (j * 7 + work * 3) % (waters if tag != 2 else atoms)
+        partner = (j * 7 + row * 3) % (waters if tag != 2 else atoms)
         if tag == 2:
             partner += waters
         image = [(j % 3) - 1 if j % 5 == 0 else 0,
@@ -49,7 +55,9 @@ for work, (tag, first, count) in enumerate([(0, 0, 64), (0, 0, 3), (0, 16, 0),
         code = sum((c + 512) << (10 * axis) for axis, c in enumerate(image))
         mask = ((0xffff ^ (j * 257)) & 0xffff) or 1
         entries.append([partner, code, mask, 100 + j])
-    units.append([tag, first, begin, len(entries)])
+    for chunk in range(max(1, -(-count // 64))):
+        units.append([tag | chunk << 2, first, begin + 64 * chunk, len(entries)])
+        slices.append((tag, first, begin, chunk, min(begin + 64 * (chunk + 1), len(entries))))
 
 
 def flatten(rows):
@@ -99,21 +107,23 @@ def alloc(name, data, kind, width=None):
 
 # Comparison is integer-only, including reserved words and untouched tails.
 for phase, (wa, aa) in enumerate([(True, True), (True, False), (False, True), (False, False)]):
-    inner_units = [[tag, first, begin, min(end, begin + 2)] for tag, first, begin, end in units]
+    seed_units = [[tag, first, begin + 64 * chunk, min(end, begin + 64 * chunk + 2)]
+                  for tag, first, begin, chunk, end in slices]
+    inner_units = [r[:] for r in seed_units]
     inner_entries = [r[:] for r in entries]
     for record in inner_entries:
         record[2] &= 0x5555
-    for work, (tag, first, begin, end) in enumerate(units):
+    for work, (tag, first, begin, chunk, _) in enumerate(slices):
         active = wa if tag == 0 else aa if tag == 2 else wa or aa
         if active:
+            end = units[work][3]
             kept = [r for record in entries[begin:end]
                     if (r := retained(record, first, wa, aa))[2]]
             inner_entries[begin:begin + len(kept)] = kept
-            inner_units[work][3] = begin + len(kept)
+            inner_units[work][3] = begin + min(64 * (chunk + 1), max(64 * chunk, len(kept)))
     observed = [[-999] * 4 for _ in entries]
     for _, _, begin, end in inner_units:
         observed[begin:end] = inner_entries[begin:end]
-    seed_units = [[tag, first, begin, min(end, begin + 2)] for tag, first, begin, end in units]
     seed_entries = [[j, code, mask & 0x5555, marker] for j, code, mask, marker in entries]
     integer_data = [flatten(units), flatten(seed_units), flatten(entries), flatten(seed_entries), order]
     buffers = [alloc(f'p{phase}_{i}', values, 'i32') for i, values in enumerate(integer_data)]

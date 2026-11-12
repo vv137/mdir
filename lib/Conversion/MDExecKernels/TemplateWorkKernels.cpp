@@ -194,8 +194,12 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
         }, [&](OpBuilder &body, ValueRange values) { write(body, safeFirst, values); },
         [&](OpBuilder &body, Value other, ValueRange values) { write(body, other, values); });
   };
-  Value water = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, tag, word(b, 0));
-  auto chosen = scf::IfOp::create(b, loc, water,
+  // A record the prune left empty (the last chunks of a row whose
+  // survivors fit the first ones) loads nothing and writes nothing.
+  Value nonempty = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::slt, begin, end);
+  auto evaluated = scf::IfOp::create(b, loc, nonempty, [&](OpBuilder &run, Location) {
+  Value water = arith::CmpIOp::create(run, loc, arith::CmpIPredicate::eq, tag, word(run, 0));
+  auto chosen = scf::IfOp::create(run, loc, water,
       [&](OpBuilder &body, Location) { scf::YieldOp::create(body, loc, emitClass(body, 0)); },
       [&](OpBuilder &body, Location) {
         Value mixed = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq, tag, word(body, 1));
@@ -204,5 +208,11 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateWorkUnit(
             [&](OpBuilder &inner, Location) { scf::YieldOp::create(inner, loc, emitClass(inner, 2)); });
         scf::YieldOp::create(body, loc, other.getResults());
       });
-  return SmallVector<Value, 2>(chosen.getResults());
+    scf::YieldOp::create(run, loc, chosen.getResults());
+  }, [&](OpBuilder &skip, Location) {
+    SmallVector<Value, 2> zeros;
+    for (Type type : sumTypes) zeros.push_back(createZero(skip, loc, type));
+    scf::YieldOp::create(skip, loc, zeros);
+  });
+  return SmallVector<Value, 2>(evaluated.getResults());
 }
