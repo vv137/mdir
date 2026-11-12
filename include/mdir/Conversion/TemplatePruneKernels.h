@@ -17,7 +17,8 @@ struct TemplatePruneBuffers {
 /// points, compact the survivors from the row's first entry, and write
 /// those of the record's chunk into its existing inner block: a row's
 /// first records then hold full batches (U10). Unrequested classes stay
-/// untouched. Work/row ranges retain their outer storage spans; each inner work record's end is authoritative.
+/// untouched. Work/row ranges retain their outer storage spans; each
+/// inner work record's end is authoritative.
 /// The owner publishes active currentPoints as new innerReference in the
 /// evaluation prologue. Active groups are read only from currentPoints
 /// here, so that publication cannot race a reference read by another warp.
