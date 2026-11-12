@@ -244,6 +244,7 @@ The reference of every op is [dialects/md.md](dialects/md.md).
 | `md.function` | Defines any other pure function of fields. |
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
+| `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window` | The segments of the pairs of rigid kinds and the rest, $s(f, g) = f(f+1)/2 + g$, and the sums of a segment's site pairs over covering images, each site proved from the weights of its kind (Section 4.12, D[kind-pairs]). No run reads them yet. |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
 | `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D288). |
 | `md.sum_particles` | Sums a kernel over particles. |
@@ -557,6 +558,52 @@ relation as over the tuples of a topology, without fields of tuples. The
 relation is found at the positions of the neighborhood, which the sum must
 take, and it changes with them: the kernel must vanish at the cutoff for
 the forces to be the gradient of the energy.
+
+### 4.12 `md.kind_pairs` and the segment windows (D[kind-pairs])
+
+Rule R3: the $K$ rigid kinds of D403 that a consumer takes are kinds
+$0, \dots, K-1$, and the particles of no taken kind are the rest, kind
+$K$. `md.kind_pairs` gives the $(K+1)(K+2)/2$ segments; the result
+$s(f, g) = f(f+1)/2 + g$, $g \le f$, holds the pairs of a molecule of kind
+$f$ with one of kind $g$, a tuple being the frame atoms of the first, then
+those of the second. For $K = 1$ the segments 0, 1, and 2 pair two
+molecules of the kind, the rest with the kind, and the rest with itself.
+Each kind is described by a `#md.rigid_kind`: its frame (the first place
+the anchor), its sites, their weights over the frame, and its covering
+radius.
+
+```mlir
+%s00, %s10, %s11 = md.kind_pairs %types, kinds(%kind)
+    [#md.rigid_kind<frame = [0, 1, 2], sites = [3],
+                    weights = [0.70455878105857583, 0.14772060947071208,
+                               0.14772060947071208],
+                    extent = 0.087343313000000005>]
+    exclude(%excluded)
+    : (!md.field<@atoms, i32>, !md.relation<@atoms, 4, ordered, @kind_0>,
+       !md.relation<@atoms, 2, unordered, @excluded>)
+    -> (!md.relation<@atoms, 6, ordered, @segment_0_0>,
+        !md.relation<@atoms, 4, ordered, @segment_1_0>,
+        !md.relation<@atoms, 2, unordered, @segment_1_1>)
+%u = md.sum_segment_window %s00, %x, %h segment(0, 0) cutoff(0.9) {
+^bb0(%d0: vector<3xf64>, %a1: vector<3xf64>, %a2: vector<3xf64>,
+     %b1: vector<3xf64>, %b2: vector<3xf64>):
+  ...
+  md.yield %e0, ..., %d0, ... : f64, ..., vector<3xf64>, ...
+} : !md.relation<@atoms, 6, ordered, @segment_0_0>, !md.field<@atoms, 3 x f64> -> f64
+```
+
+A segment window names its segment, `segment(f, g)`. Its body takes the
+anchor displacement $\mathbf x_{a_0} - \mathrm{image}(\mathbf x_{b_0})$, the
+frame offsets $\mathbf x_{a_k} - \mathbf x_{a_0}$ of each molecule, and the
+gathered values of the tuple's members, and yields one energy per site pair,
+then the pair's displacement. The verifier proves each displacement to be
+the anchor displacement plus the coefficients of a place of $f$ minus those
+of a place of $g$: zero for the anchor, a unit vector for a frame atom, the
+kind's weights for a site. Each energy counts where its own displacement is
+below the cutoff. `md.gather_segment_window`, the forces, is the derivative
+that `md-differentiate` builds (Section 5.2); with `site_forces` its slots
+are every place of the two molecules, and each site's force moves to the
+frame with its weights. The decision has the derivation and the generator.
 
 ## 5. Semantic differentiation for M0
 

@@ -539,6 +539,64 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.gather_segment_window` (::mdir::md::GatherSegmentWindowOp)
+
+_Scatters the forces of a segment's site pairs to frame atoms_
+
+Syntax:
+
+```
+operation ::= `md.gather_segment_window` $relation `,` $positions `,` $cell `segment` `(` $f `,` $g `)`
+              `cutoff` `(` $cutoff `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              (`site_forces` $site_forces^)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The force transpose of `md.sum_segment_window`, with the same images,
+operands, geometry and per-site cutoff. For M site pairs its body
+yields M groups of force vectors followed by M site displacements. A
+group has one force for each frame atom of the tuple, $m_f + m_g$; with
+`site_forces` it has one for each place of the two molecules, frame
+atoms and sites in place order, $n_f + n_g$ with $n$ a kind's size (1
+for the rest). Each group is included only inside its site's cutoff.
+
+`site_forces` is set by a radial derivative whose site pairs involve a
+site. Its slots are interaction-site forces: the constant transpose of
+the site's placement, $\mathbf F_{a_k} \mathrel{+}= w_k \mathbf F_s$
+over its weights, is applied after accumulation (rule (A) of
+#795). The result has frame atoms only.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>f</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>g</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>site_forces</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.gather_stencil` (::mdir::md::GatherStencilOp)
 
 _A complete pure particle-grid stencil reduction_
@@ -779,6 +837,81 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | any non-token type |
+
+
+
+### `md.kind_pairs` (::mdir::md::KindPairsOp)
+
+_Divides the pairs of rigid kinds and the rest into segments_
+
+Syntax:
+
+```
+operation ::= `md.kind_pairs` $universe `,` `kinds` `(` $kinds `)` $descriptors
+              (`exclude` `(` $excluded^ `)`)?
+              (`anchor` `(` $anchored^ `)` `radius` `(` $radius `)`)? attr-dict
+              `:` functional-type(operands, results)
+```
+
+Rule R3 (D[kind-pairs]). The operands `kinds` are $K$ rigid kinds of
+D403, numbered $0, \dots, K-1$ in operand order, each the disjoint
+ordered tuples of its copies' particles in place order, described by
+the `#md.rigid_kind` of the same position in `descriptors`. The rest,
+the particles of no taken kind, is kind $K$; each of its particles is
+a molecule of one member. The scalar i32 field `universe` supplies the
+particle set; its values are not read.
+
+For each pair of kinds $g \le f$ the result numbered
+$s(f, g) = f(f+1)/2 + g$ is the segment $(f, g)$: the pairs of a
+molecule of kind $f$ with a molecule of kind $g$, for $f = g$ each
+unordered pair of distinct molecules once. There are
+$(K+1)(K+2)/2$ results. A tuple of the segment holds the frame atoms of
+the molecule of $f$ in frame order, then those of the molecule of $g$:
+its arity is $m_f + m_g$, with $m$ the frame size of a kind and 1 for
+the rest. It is unordered when $f = g$ and $m_f = 1$, ordered
+otherwise. The massless sites are absent from the tuples: a segment
+body forms them from the frame with the kind's weights.
+
+`excluded` is removed from the segment of the rest, $(K, K)$. A taken
+kind has all its own pairs excluded and none with another particle;
+the generator of the segments establishes that from D403's facts.
+`anchored` holds ordered (member, anchor) pairs of the rest, a member
+within `radius` of its anchor, as in #795; they
+select candidates only.
+
+The results are logical tuple domains, independent of positions and of
+the storage of lists, with no implicit cutoff. For $K = 1$ the
+segments 0, 1 and 2 are the WW, SW and SS of
+#795.
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `SymbolUserOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>descriptors</code></td><td>::mlir::ArrayAttr</td><td>rigid kinds</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `kinds` | variadic of A set of tuples of distinct particles |
+| `excluded` | A set of tuples of distinct particles |
+| `anchored` | A set of tuples of distinct particles |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `segments` | variadic of A set of tuples of distinct particles |
 
 
 
@@ -1743,6 +1876,82 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.sum_segment_window` (::mdir::md::SumSegmentWindowOp)
+
+_Sums the site pairs of a segment over covering anchor images_
+
+Syntax:
+
+```
+operation ::= `md.sum_segment_window` $relation `,` $positions `,` $cell `segment` `(` $f `,` $g `)`
+              `cutoff` `(` $cutoff `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              (`site_forces` $site_forces^)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The relation is the result $s(f, g)$ of `md.kind_pairs`, and
+`segment(f, g)` names it ($g \le f$). With $m_f$ and $m_g$ the frame
+sizes of the two kinds (1 for the rest), the body's arguments are
+first the anchor displacement $\mathbf x_{a_0} - \mathrm{image}(\mathbf x_{b_0})$
+in the candidate image, then the $m_f - 1$ frame offsets
+$\mathbf x_{a_k} - \mathbf x_{a_0}$ of the molecule of $f$, then the
+$m_g - 1$ of the molecule of $g$, each in its whole molecule. Each
+gathered field then supplies one value per tuple member.
+
+For M site pairs the body yields M energies followed by M site
+displacements. Each energy is included only where its own displacement
+has length strictly below `cutoff`. The verifier proves that every
+yielded displacement is the anchor displacement plus the coefficients
+of a place of $f$ minus those of a place of $g$ over the frame
+offsets: zero for the anchor, a unit vector for a frame atom, and for a
+site its weights $w_1, \dots, w_{m-1}$ of the kind's descriptor,
+compared as f64. A scalar result sums energies; a vector<9xf64> result
+sums the corresponding strain contributions.
+
+The logical reduction enumerates all covering anchor images, as in
+D242, not just the minimum image. The kinds' `extent` is a checked
+covering bound on each molecule. Only after that bound and the
+explicit site geometry are proved may lowering use a segmented pair
+list. A covering reach below the least cell edge and a cutoff below
+half the cell are required as on the ordinary group route. The relation
+has no hidden real payload.
+
+Force and strain rules differentiate this body's arithmetic, including
+the candidate image in the anchor displacement. They hold the piecewise
+constant membership fixed, as ordinary pair derivatives do. Higher
+derivatives and tunable parameters are not admitted by this reduction.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>f</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>g</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>site_forces</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.sum_tuples` (::mdir::md::SumTuplesOp)
 
 _Sums a kernel over the tuples of a tuple set_
@@ -1986,7 +2195,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumSegmentWindowOp, GatherSegmentWindowOp, ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 
@@ -1999,6 +2208,41 @@ Effects: `MemoryEffects::Effect{}`
 | `values` | variadic of any non-token type |
 
 
+
+## Attributes
+
+### RigidKindAttr
+
+_A rigid kind of D403 as the pair segments take it_
+
+One kind of rigid group (D403) that `md.kind_pairs` takes. Its
+particles are numbered by their place in a molecule, from 0; the size
+of the kind is the arity of its relation.
+
+```mlir
+#md.rigid_kind<frame = [0, 1, 2], sites = [3],
+               weights = [0.70455878105857583, 0.14772060947071208,
+                          0.14772060947071208],
+               extent = 0.087343313000000005>
+```
+
+`frame` holds the places of the massive atoms, ascending; the first is
+the anchor. `sites` holds the places of the massless sites; with
+`frame` it holds every place once. `weights` holds, for each site in
+the order of `sites`, its weights over the atoms of `frame` in frame
+order (rule R2 of D403: they sum to 1). `extent` is the radius about
+the anchor that the consumer checks to cover every place of a copy.
+Charges and types are not part of the kind here: the segment bodies
+hold them as constants (D[kind-pairs]).
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| frame | `::mlir::DenseI64ArrayAttr` |  |
+| sites | `::mlir::DenseI64ArrayAttr` |  |
+| weights | `::mlir::DenseF64ArrayAttr` |  |
+| extent | `::mlir::FloatAttr` |  |
 
 ## Types
 

@@ -140,7 +140,11 @@ that move as rigid bodies and sorts them into kinds, from the constraints
 (Section 1) and the definitions of the sites (Section 2) alone. It reads
 no atomic number, no name of an atom or a residue, and assumes no order
 of elements. `mdir check` reports the result ([driver.md](driver.md),
-Section 1.4); no run reads it yet.
+Section 1.4); no run reads it yet. Its first consumer is the generator of
+the pair segments of D[kind-pairs] ([ops.md](ops.md), Section 4.12), which
+takes up to two kinds, refuses one whose copies have
+`incompleteExclusions` or `outsideExclusions`, and reads where
+Lennard-Jones sits from the tables of the topology.
 
 ### 3.1 Molecules and frames
 
