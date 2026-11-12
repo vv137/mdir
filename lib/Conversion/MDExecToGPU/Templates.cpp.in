@@ -17,21 +17,4 @@ extern const char *const pmeGPUProlateTemplate;
 const char *const pmeGPUProlateTemplate = R"MDIRTEMPLATE(
 @PME_GPU_PROLATE_TEMPLATE@
 )MDIRTEMPLATE";
-extern const char *const neighborsGroupsGPUTemplate;
-const char *const neighborsGroupsGPUTemplate = R"MDIRTEMPLATE(
-@NEIGHBORS_GROUPS_GPU_TEMPLATE@
-)MDIRTEMPLATE";
-extern const char *const neighborsGroupsGPUTriclinicTemplate;
-const char *const neighborsGroupsGPUTriclinicTemplate = R"MDIRTEMPLATE(
-@NEIGHBORS_GROUPS_GPU_TRICLINIC_TEMPLATE@
-)MDIRTEMPLATE";
-extern const char *const neighborsGroupsSinglePassGPUTemplate;
-const char *const neighborsGroupsSinglePassGPUTemplate = R"MDIRTEMPLATE(
-@NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TEMPLATE@
-)MDIRTEMPLATE";
-extern const char *const neighborsGroupsSinglePassGPUTriclinicTemplate;
-const char *const neighborsGroupsSinglePassGPUTriclinicTemplate =
-    R"MDIRTEMPLATE(
-@NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TRICLINIC_TEMPLATE@
-)MDIRTEMPLATE";
 } // namespace mdir

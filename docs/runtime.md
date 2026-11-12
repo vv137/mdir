@@ -375,7 +375,7 @@ Proposal: the C++ tool.
 
 | Item | State |
 |---|---|
-| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors.md](neighbors.md). On a device the templates are `NeighborsMatrixGPU.mlir` and, for groups of 16 with each pair once, `NeighborsGroupsGPU.mlir` ([neighbor-groups.md](neighbor-groups.md)); particle mesh Ewald has `PME.mlir` and `PMEGPU.mlir` ([pme.md](pme.md)). |
+| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors.md](neighbors.md). On a device the templates are `NeighborsMatrixGPU.mlir` and, for groups of 16 with each pair once, the build that `GroupsBuild.cpp` emits ([neighbor-groups.md](neighbor-groups.md)); particle mesh Ewald has `PME.mlir` and `PMEGPU.mlir` ([pme.md](pme.md)). |
 | Neighbor matrix | Implemented |
 | Overflow of a row | The runtime holds the rows (`mdrtMatrixCreate`, `mdrtHostMatrixCreate`) and makes them a quarter wider than needed (`mdrtMatrixGrow`); the build is made again. Compiled code takes the rows where it uses them (`mdrtMatrixEntries`). |
 | Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |

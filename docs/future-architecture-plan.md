@@ -43,7 +43,7 @@ This is already a useful compiler architecture. A physical neighbor representati
 |---|---|---|
 | Energy semantics and differentiation | `md` definitions and `Differentiate.cpp`; derivative tests for pairs and tuples | Implemented for supported scalar expressions and coordinates. This is not a general reverse-mode engine for arbitrary particle graphs. |
 | Traversal and accumulation | `md_exec.particle_for`, `pair_for`, `tuple_for`; exchange and traversal attributes | Implemented. The matrix baseline uses directed pairs with owner-only writes. |
-| Alternative GPU neighbors | `ChooseNeighbors.cpp`, groups template, runtime and tests | An optional groups path exists. The pass selects unique traversal and atomic accumulation only when exchange contracts permit it. The design labels G1 done and G2 under way. |
+| Alternative GPU neighbors | `ChooseNeighbors.cpp`, groups build (`GroupsBuild.cpp`), runtime and tests | An optional groups path exists. The pass selects unique traversal and atomic accumulation only when exchange contracts permit it. The design labels G1 done and G2 under way. |
 | Neighbor reuse and validity | `ReuseNeighbors.cpp`, `ExposeValidity.cpp`, `RebuildAtInterval.cpp` | Implemented. The default checks validity; a fixed rebuild interval is an explicit alternative. |
 | Single-node PME | `md.reciprocal`, `md_exec.reciprocal`, CPU/GPU templates and FFT runtime | Implemented. Reciprocal forces and virial are supplied by a specialized implementation; the compiler does not differentiate through the FFT pipeline. |
 | GPU overlap | `AssignStreams.cpp`, buffer alias/effect analysis, `md_exec.join`, CUDA events | A specific second-stream mechanism exists for reciprocal work. It is not a general distributed event scheduler. |
