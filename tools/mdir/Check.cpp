@@ -62,7 +62,7 @@ static const char *getName(Precision precision) {
 }
 
 /// The rigid groups of the topology and their kinds, and the molecules
-/// that are none, by reason (D[rigid-groups], docs/constraints.md,
+/// that are none, by reason (D403, docs/constraints.md,
 /// Section 3). A diagnosis: no run reads it.
 static void describeRigidGroups(const Topology &topology) {
   RigidGroups groups = findRigidGroups(topology);

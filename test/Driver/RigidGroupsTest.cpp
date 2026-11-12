@@ -1,4 +1,4 @@
-// The rigid groups of made topologies (D[rigid-groups]): the two rules on
+// The rigid groups of made topologies (D403): the two rules on
 // molecules of several kinds, one case for each reason that leaves a
 // molecule out, the facts of a kind, and the weights of the sites against
 // the placement of docs/constraints.md, Section 2, in f64.

@@ -294,7 +294,7 @@ virial.
 **Rigid groups.** Where a constraint fixes the distance $d_{ab}$ of every
 pair of the atoms with mass of a molecule, its frame, two configurations
 that satisfy the constraints are congruent, and the molecule moves as a
-rigid body (D[rigid-groups]). A linear site is a combination
+rigid body (D403). A linear site is a combination
 $\mathbf x_s = \sum_a w_{a}\mathbf x_a$ of the frame with constant
 weights that sum to 1 on any frame. The bisector site is one on a rigid
 frame only: there $\lVert\mathbf d_j\rVert = d_{oj}$ and

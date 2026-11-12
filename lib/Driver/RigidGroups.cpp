@@ -1,4 +1,4 @@
-// The rigid groups of a topology and their kinds (D[rigid-groups]), from
+// The rigid groups of a topology and their kinds (D403), from
 // the constraints and the site definitions alone: no atomic number, name,
 // or order of elements is read.
 

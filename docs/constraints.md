@@ -1,12 +1,12 @@
 # Constraints and Virtual Sites
 
 Status: kept current; last checked against the code on 2026-11-12. The
-decisions are D56, D63, D68, and D[rigid-groups] and those that amended
+decisions are D56, D63, D68, and D403 and those that amended
 them ([decisions.md](decisions.md)).
 
 This document describes the constraints, SETTLE, SHAKE, and RATTLE
 (Section 1), the virtual sites (Section 2), and the rigid groups that the
-two make (Section 3, D[rigid-groups]).
+two make (Section 3, D403).
 
 ## 1. Constraints
 
@@ -134,7 +134,7 @@ virtual sites of GROMACS, are rejected.
 
 ## 3. Rigid groups
 
-Decided: D[rigid-groups] (#855). `findRigidGroups`
+Decided: D403 (#855). `findRigidGroups`
 (`lib/Driver/RigidGroups.cpp`) finds the molecules of a prepared topology
 that move as rigid bodies and sorts them into kinds, from the constraints
 (Section 1) and the definitions of the sites (Section 2) alone. It reads

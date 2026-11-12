@@ -1,4 +1,4 @@
-# The rigid groups of a topology in `mdir check` (D[rigid-groups],
+# The rigid groups of a topology in `mdir check` (D403,
 # docs/constraints.md, Section 3): molecules of five kinds in one topology
 # of GROMACS. Three waters of three sites, two of four sites whose site
 # [ virtual_sites3 ] places, a rigid molecule of three atoms that all have

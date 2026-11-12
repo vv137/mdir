@@ -1,4 +1,4 @@
-// The rigid groups of a topology and their kinds (D[rigid-groups]).
+// The rigid groups of a topology and their kinds (D403).
 //
 // Two rules, stated on the constraints and the site definitions alone:
 //

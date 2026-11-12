@@ -250,7 +250,7 @@ reports its method and iterations, with no time step or physical duration.
 A nonperiodic system has no physical cell or density in the report.
 
 With a topology the report has the rigid groups of the system
-(D[rigid-groups], [constraints.md](constraints.md), Section 3): the
+(D403, [constraints.md](constraints.md), Section 3): the
 molecules whose massive atoms the constraints hold at fixed distances,
 sorted into kinds, the most populous first.
 
@@ -309,7 +309,7 @@ Its schema begins at version 1:
 |---|---|
 | `schema_version`, `ok` | Version 1; `ok` is true when reading and validation succeeded, even with warnings |
 | `system` | Particle and type counts, mass in amu, degrees of freedom, supplied velocities, restrained particles, periodicity, and topology counts when present |
-| `system.topology.rigid_groups` | `molecules`, the number of molecules; `kinds`, most populous first, each with `molecules` (its copies), `particles` (of a copy), `frame` (the places of the massive atoms, from 0), `types` (names) and `charges_e` by place, `frame_distances_angstrom` (the pairs of `frame` in lexicographic order), `sites` (`place` and `weights` over `frame`), `first_particle` (of its first copy, from 0), and the counts of copies `scattered`, `incomplete_exclusions`, `outside_exclusions`; `left_out`, the molecules that are no rigid group, as `flexible_frame` and `site_not_constant_weight` (D[rigid-groups], [constraints.md](constraints.md), Section 3) |
+| `system.topology.rigid_groups` | `molecules`, the number of molecules; `kinds`, most populous first, each with `molecules` (its copies), `particles` (of a copy), `frame` (the places of the massive atoms, from 0), `types` (names) and `charges_e` by place, `frame_distances_angstrom` (the pairs of `frame` in lexicographic order), `sites` (`place` and `weights` over `frame`), `first_particle` (of its first copy, from 0), and the counts of copies `scattered`, `incomplete_exclusions`, `outside_exclusions`; `left_out`, the molecules that are no rigid group, as `flexible_frame` and `site_not_constant_weight` (D403, [constraints.md](constraints.md), Section 3) |
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, the neighbor structure, and input checkpoint path |
 | `run.neighbors` | `requested` (`auto`, `matrix`, `groups`), `structure` (`matrix` or `groups`, `AUTO` resolved for the system), `reason` (`given`, or why `AUTO` took it), `pairlist_distance_angstrom`, and `pruned_distance_angstrom` (`null` without a dual list); the text output has the line `neighbors:` (D261) |
