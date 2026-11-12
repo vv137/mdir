@@ -1,4 +1,4 @@
-"""Writes an entry of the cache of the skins (format 2, D[skin-budget-record])
+"""Writes an entry of the cache of the skins (format 2, D401)
 for the key that `mdir check --json` reports, whole or with one defect, for
 the tests of the reader.
 

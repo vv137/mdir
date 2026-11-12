@@ -1470,7 +1470,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // The reaches that "AUTO" took, and how (D281): given ones and
   // the defaults of keys not given are not repeated.
   // Whether the choice was searched now or reused from the cache, and the
-  // budget of the search (D[skin-budget-record]).
+  // budget of the search (D401).
   bool skinsShown = control->skinSource == "cached" ||
                     control->skinSource == "measured" ||
                     control->skinsRequested || !skinChoice.refused.empty();

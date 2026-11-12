@@ -226,7 +226,7 @@ std::shared_ptr<CacheDirectory> openCacheDirectoryToClear(std::string &path);
 /// tests. The part before the override is computed once per process.
 std::string getCacheSalt();
 /// What the salt of the keys of the cache of the skins is made of
-/// (D[skin-budget-record]): the identity of the image (its build ID), the
+/// (D401): the identity of the image (its build ID), the
 /// version, commit, and dirty flag ("no", "yes", or "unknown") of MDIR, the
 /// version and revision of LLVM, and the lines of the LLVM options of the
 /// command line.

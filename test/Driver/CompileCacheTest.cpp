@@ -10,7 +10,7 @@
 // (D397): one whose value no recorded argument gives
 // turns the cache off; a `cl::alias` records the option it names, and a
 // response file is recorded expanded. The salt of the skins
-// (D[skin-budget-record]) holds the image only for a build that is not
+// (D401) holds the image only for a build that is not
 // clean.
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Runtime/GroupsABI.h"
@@ -553,7 +553,7 @@ int main(int argc, char **argv) {
     ::unsetenv("MDIR_COMPILE_CACHE_MAX_MB");
   }
 
-  // The salt of the keys of the skins (D[skin-budget-record]): a clean
+  // The salt of the keys of the skins (D401): a clean
   // build is named by its commit, LLVM, and its options, whatever the
   // image; a dirty build, or one of unknown state, by its image as well.
   {

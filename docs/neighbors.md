@@ -582,7 +582,7 @@ manifest give the budget and why (`not_cached`). The budget is measured,
 and a warm compile cache shortens the reference's compilation (D397), so
 it can raise the budget; the choice, once made, is therefore recorded with
 its budget and its candidates, and a later run of the key reuses it rather
-than searching again (Section 6.4, D[skin-budget-record]).
+than searching again (Section 6.4, D401).
 `MDIR_SKIN_SEARCH=budget` searches whatever the length within the budget
 that the length affords, for tests. The
 compilation grows with the system: 11 to 13 s a candidate for JAC, 17 to
@@ -608,7 +608,7 @@ The choice is stored as one JSON file a key, under `MDIR_SKIN_CACHE_DIR`,
 by default `$XDG_CACHE_HOME/mdir/skins` (else `~/.cache/mdir/skins`);
 `MDIR_SKIN_CACHE=off` neither reads nor writes it. The key is the text of
 what the choice depends on: its format (`mdir skins 2`), the build
-(D[skin-budget-record]): the commit and the dirty flag of MDIR, LLVM's
+(D401): the commit and the dirty flag of MDIR, LLVM's
 version and revision, and the LLVM options of the command line, as in the
 salt of the compile cache (D397), and for a build that is not clean (dirty
 `yes` or `unknown`) the build ID of its image as well, so that another

@@ -40,7 +40,7 @@ print("pairlist", round(plan["pairlist_distance"], 6), plan["pairlist_distance_s
 print("pruned", round(plan["pruned_distance"], 6), plan["pruned_distance_source"])
 print("reason", plan["skin_reason"])
 # The key of the cache of the skins: only where a run reads that cache
-# (D[skin-budget-record]); on the CPU none, and why.
+# (D401); on the CPU none, and why.
 print("key", plan["skin_cache_key"] if plan["skin_cache_key"] is None else "given", plan["skin_cache_key_reason"])
 
 # A number is fixed, as before; None is the default of a key not given.

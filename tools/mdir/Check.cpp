@@ -708,7 +708,7 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
               {"reason", control.skinReason},
               // The key of the cache of the skins where a run reads that
               // cache, else null and why: the key names the device, which
-              // only such a run asks the driver for (D[skin-budget-record]).
+              // only such a run asks the driver for (D401).
               {"cache_key", skinKey ? Value(*skinKey) : Value(nullptr)},
               {"cache_key_reason",
                skinKey ? Value(nullptr) : Value(skinKeyReason)}}},
@@ -772,7 +772,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(std::move(error), json);
   Preflight report = inspect(*control);
   // An entry of the cache of the skins that is refused is replaced by the
-  // next search of its key (D[skin-budget-record]).
+  // next search of its key (D401).
   if (!skins.refused.empty())
     report.notes.push_back(
         {"skin_cache_refused",

@@ -1,4 +1,4 @@
-"""The build part of the key of the cache of the skins (D[skin-budget-record]):
+"""The build part of the key of the cache of the skins (D401):
 the lines between the format (`mdir skins 2`) and the version, as a hash,
 and whether they name the image.
 

@@ -1,4 +1,4 @@
-# The build in the key of the cache of the skins (D[skin-budget-record]),
+# The build in the key of the cache of the skins (D401),
 # as `mdir check --json` reports it (`run.skins.cache_key`): its lines name
 # the commit, which getSkinSalt fills (`unknown` in a tree without git,
 # cmake/BuildInfo.cmake), and LLVM; a clean build has no line

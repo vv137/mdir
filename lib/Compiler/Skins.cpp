@@ -343,7 +343,7 @@ proposeCandidates(const Control &control, const CostModel &model,
 /// The format of an entry of the cache; the first line of its key names
 /// it as well. Format 1 held the two reaches and the search without its
 /// budget; format 2 records the budget and the candidates with the choice
-/// (D[skin-budget-record]).
+/// (D401).
 constexpr int64_t cacheFormat = 2;
 
 /// What the cache holds for a key: nothing (no file), an entry refused and
@@ -539,7 +539,7 @@ std::string compiler::getSkinCacheKey(const Control &control,
   // LLVM, and the LLVM options of the command line, and for a build that is
   // not clean the image's build ID, so that another build, whose kernels
   // may differ, does not take this one's choice, and `mdir` and the Python
-  // extension of one clean build share it (D[skin-budget-record]).
+  // extension of one clean build share it (D401).
   os << "mdir skins " << cacheFormat << "\n"
      << getSkinSalt()
      << "version " << MDIR_VERSION << "\n"
@@ -661,7 +661,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     if (cached.found) {
       // Reused, not searched again: the budget of this run, which its
       // compile time sets, does not change an earlier choice
-      // (D[skin-budget-record]).
+      // (D401).
       control.pairlistDistance = cached.outer;
       control.prunedDistance = cached.inner;
       control.skinSource = "cached";
@@ -789,7 +789,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   // The budget is measured, so a warm compile cache, which shortens the
   // reference's compilation, may raise it; it is recorded with the choice,
   // which a later run of the key reuses instead of searching again
-  // (D[skin-budget-record]).
+  // (D401).
   constexpr size_t maxTrials = 7;
   constexpr double share = 0.02;
   size_t budget = maxTrials;

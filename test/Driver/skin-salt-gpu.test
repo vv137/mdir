@@ -1,5 +1,5 @@
 # REQUIRES: cuda, python-api
-# The build part of the key of the cache of the skins (D[skin-budget-record])
+# The build part of the key of the cache of the skins (D401)
 # in `mdir` and in the Python extension, two images of one build: the lines
 # between the format and the version, compared as hashes, of the keys of two
 # systems (the argon of `mdir check --json`, the dipeptide of

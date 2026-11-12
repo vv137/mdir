@@ -839,7 +839,7 @@ PYBIND11_MODULE(_core, m) {
       d["pruned_distance_source"] = resolved.getSkinSource(/*outer=*/false);
       d["skin_reason"] = resolved.skinReason;
       // The key of the cache of the skins where a run reads that cache,
-      // else None and why (D[skin-budget-record]); a clean build's is the
+      // else None and why (D401); a clean build's is the
       // key of `mdir` for the same system.
       {
         std::string why;

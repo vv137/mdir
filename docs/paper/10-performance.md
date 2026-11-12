@@ -60,7 +60,7 @@ every run of the default variant took the defaults, and their logs say
 so. A run at the threshold affords fewer candidates, those whose
 compilation and steps fit within 2% of its time, so the cached choice is
 that of a run several times longer. These entries predate the record of
-D[skin-budget-record]; an entry now records the budget (seven under
+D401; an entry now records the budget (seven under
 `always`) and the candidates with the choice, and a later run of the key
 reuses it, and says so, rather than searching again. The cost of the
 search, once per key

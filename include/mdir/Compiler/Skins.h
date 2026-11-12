@@ -49,7 +49,7 @@ struct SkinChoice {
   double seconds = 0.0;
   /// Whether this run searched (measured candidates and chose among them).
   bool searched = false;
-  /// The candidates the run afforded (D[skin-budget-record]), once the
+  /// The candidates the run afforded (D401), once the
   /// reference was measured; and what it was computed from, as JSON.
   std::optional<int64_t> budget;
   llvm::json::Value budgetBasis = nullptr;
@@ -87,7 +87,7 @@ SkinChoice chooseSkins(driver::Control &control, const driver::System &system,
 
 /// The key of the cache of a choice for `control` and `system`: the text
 /// that names everything the choice depends on, the build of MDIR included
-/// (getSkinSalt, D[skin-budget-record]: the commit, LLVM, and the LLVM
+/// (getSkinSalt, D401: the commit, LLVM, and the LLVM
 /// options of the command line, and the image's build ID only for a build
 /// that is not clean).
 std::string getSkinCacheKey(const driver::Control &control,

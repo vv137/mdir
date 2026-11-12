@@ -11,7 +11,7 @@
 # repeat; across skins it agrees to the rounding, not to the bit, since the
 # order of a row of the matrix follows its cells.
 #
-# The record of the search (D[skin-budget-record]): the entry and the
+# The record of the search (D401): the entry and the
 # manifest hold the budget and the candidates; the second run, with the
 # compile cache that the first one filled, reuses the choice and says so,
 # with the first one's candidates, rather than searching again. The key

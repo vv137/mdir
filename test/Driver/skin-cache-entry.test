@@ -1,4 +1,4 @@
-# The reader of the cache of the skins (D[skin-budget-record]) takes an
+# The reader of the cache of the skins (D401) takes an
 # entry whole or not at all. An entry of format 2 for the key that
 # `mdir check --json` reports (Inputs/skin_entry.py) is taken, as is one of
 # one list (a pruned reach of 0, a candidate's null). Each defect of one

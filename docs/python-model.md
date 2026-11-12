@@ -248,7 +248,7 @@ and `["pruned_distance_source"]` where each came from (`"given"`,
 `["skin_cache_key"]` the key of the cache of the skins where a run reads
 that cache (`mdir.Auto` reaches, the groups on a GPU outside the
 deterministic mode), else `None` with the reason in
-`["skin_cache_key_reason"]`. The key names the build (D[skin-budget-record]): a
+`["skin_cache_key_reason"]`. The key names the build (D401): a
 clean build by its commit, LLVM, and the LLVM options of the command line,
 so the extension takes the choice that `mdir run` of the same clean build
 cached; a dirty build (or one whose state is unknown) by the build ID of

@@ -913,7 +913,7 @@ is measured, a warm compile cache can afford more, so the choice is cached
 with its budget and its candidates under a key of the build, the system,
 the device, the precision, the step, and the ensemble, which a
 continuation shares, and a later run of the key reuses it rather than
-searching again (D[skin-budget-record]).
+searching again (D401).
 The deterministic mode does not search: the order of a row of the matrix
 follows its cells, so its sums, which agree across skins to the rounding
 ($1.8 \times 10^{-9}$ nm in the positions of a water box after 500 steps),
