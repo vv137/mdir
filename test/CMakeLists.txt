@@ -59,6 +59,13 @@ add_llvm_executable(mdir-neighbor-count-test Driver/NeighborCountTest.cpp)
 llvm_update_compile_flags(mdir-neighbor-count-test)
 target_link_libraries(mdir-neighbor-count-test PRIVATE MDIRDriver)
 
+add_llvm_executable(mdir-water-template-test Driver/WaterTemplateTest.cpp
+  Driver/WaterTemplateIRTest.cpp Driver/WaterTemplatePackingTest.cpp
+  Driver/WaterTemplateValidityTest.cpp
+  Driver/WaterTemplateUnitTest.cpp Driver/WaterTemplateLayoutTest.cpp)
+llvm_update_compile_flags(mdir-water-template-test)
+target_link_libraries(mdir-water-template-test PRIVATE MDIRDriver MDIRMDTransforms MDIRMDExecKernels)
+
 add_llvm_executable(mdir-influence-test Driver/InfluenceTest.cpp)
 llvm_update_compile_flags(mdir-influence-test)
 target_link_libraries(mdir-influence-test PRIVATE MDIRDriver)
@@ -70,6 +77,22 @@ target_link_libraries(mdir-output-rows-test PRIVATE MDIRDriver)
 add_llvm_executable(mdir-compile-test Driver/CompileTest.cpp)
 llvm_update_compile_flags(mdir-compile-test)
 target_link_libraries(mdir-compile-test PRIVATE MDIRCompiler)
+
+add_llvm_executable(mdir-template-report-test Driver/TemplateReportTest.cpp)
+llvm_update_compile_flags(mdir-template-report-test)
+target_link_libraries(mdir-template-report-test PRIVATE MDIRSimulation)
+
+add_llvm_executable(mdir-template-physics-test Driver/TemplatePhysicsTest.cpp)
+llvm_update_compile_flags(mdir-template-physics-test)
+target_link_libraries(mdir-template-physics-test PRIVATE MDIRSimulation)
+
+add_llvm_executable(mdir-template-solute-test Driver/TemplateSoluteTest.cpp)
+llvm_update_compile_flags(mdir-template-solute-test)
+target_link_libraries(mdir-template-solute-test PRIVATE MDIRSimulation)
+
+add_llvm_executable(mdir-template-trajectory-test Driver/TemplateTrajectoryTest.cpp)
+llvm_update_compile_flags(mdir-template-trajectory-test)
+target_link_libraries(mdir-template-trajectory-test PRIVATE MDIRSimulation)
 
 add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
 llvm_update_compile_flags(mdir-jit-memory-test)
@@ -86,12 +109,17 @@ set(MDIR_TEST_DEPENDS
   mdir-jit-memory-test
   mdir-compile-cache-test
   mdir-compile-test
+  mdir-template-report-test
+  mdir-template-physics-test
+  mdir-template-trajectory-test
+  mdir-template-solute-test
   mdir-model-test
   mdir-dihedral-tunables-test
   mdir-output-rows-test
   mdir-prolate-test
   mdir-influence-test
   mdir-neighbor-count-test
+  mdir-water-template-test
   mdir
   mdir-opt
   mdrt

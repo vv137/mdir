@@ -1,0 +1,39 @@
+# REQUIRES: cuda
+# Expected: under 180 seconds on RTX 5090; submit with lit --timeout=300.
+# Exact marked fused/unfused publication and independent energy: normal groups, renumbered/nonconsecutive
+# OHH spanning warps, a partial tail, extra points, and a marked constrained
+# triplet excluded from template membership (ordinary atom-unit publication).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/template_integration_publication.py %t/normal.mlir %t/normal.json --snapshot
+# RUN: mdir-opt %t/normal.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false > %t/normal-fused-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/normal-fused-gpu.mlir %t/normal-fused-snapshot.mlir --expect-publications fused
+# RUN: mlir-opt %t/normal-fused-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/normal-fused.out
+# RUN: mdir-opt %t/normal.mlir --md-exec-assign-algebra '--convert-md-exec-to-gpu=fuse-integration=false check-template-reach=false' > %t/normal-standalone-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/normal-standalone-gpu.mlir %t/normal-standalone-snapshot.mlir --expect-publications unfused
+# RUN: mlir-opt %t/normal-standalone-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/normal-standalone.out
+# RUN: %python %S/Inputs/template_publication_snapshot.py compare %t/normal-fused.out %t/normal-standalone.out %t/normal.json
+# RUN: %python %S/Inputs/template_integration_publication.py %t/across.mlir %t/across.json --across --snapshot
+# RUN: mdir-opt %t/across.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false > %t/across-fused-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/across-fused-gpu.mlir %t/across-fused-snapshot.mlir --expect-publications fused
+# RUN: mlir-opt %t/across-fused-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/across-fused.out
+# RUN: mdir-opt %t/across.mlir --md-exec-assign-algebra '--convert-md-exec-to-gpu=fuse-integration=false check-template-reach=false' > %t/across-standalone-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/across-standalone-gpu.mlir %t/across-standalone-snapshot.mlir --expect-publications unfused
+# RUN: mlir-opt %t/across-standalone-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/across-standalone.out
+# RUN: %python %S/Inputs/template_publication_snapshot.py compare %t/across-fused.out %t/across-standalone.out %t/across.json
+# Mixed families fuse the update alone; a kernel of its own publishes the
+# stored positions, one thread per unit, exactly as the standalone writer.
+# RUN: %python %S/Inputs/template_integration_publication.py %t/mixed.mlir %t/mixed.json --mixed-loops --across --snapshot
+# RUN: mdir-opt %t/mixed.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false > %t/mixed-fused-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/mixed-fused-gpu.mlir %t/mixed-fused-snapshot.mlir --expect-publications separate
+# RUN: mlir-opt %t/mixed-fused-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/mixed-fused.out
+# RUN: mdir-opt %t/mixed.mlir --md-exec-assign-algebra '--convert-md-exec-to-gpu=fuse-integration=false check-template-reach=false' > %t/mixed-standalone-gpu.mlir
+# RUN: %python %S/Inputs/template_publication_snapshot.py instrument %t/mixed-standalone-gpu.mlir %t/mixed-standalone-snapshot.mlir --expect-publications unfused
+# RUN: mlir-opt %t/mixed-standalone-snapshot.mlir %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/mixed-standalone.out
+# RUN: %python %S/Inputs/template_publication_snapshot.py compare %t/mixed-fused.out %t/mixed-standalone.out %t/mixed.json
+# The first fused constrained update must enforce extent, even though its
+# constraint-history store is emitted after the two integration kernels.
+# RUN: %python %S/Inputs/template_integration_publication.py %t/bad.mlir %t/bad.json --bad-extent
+# RUN: mdir-opt %t/bad.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false | mlir-opt %lower_gpu_to_llvm > %t/bad-lowered.mlir
+# RUN: not --crash stdbuf -o0 mlir-runner %t/bad-lowered.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t/bad.out 2>&1
+# RUN: FileCheck %s < %t/bad.out
+# CHECK: template water exceeds its covering extent after position constraints

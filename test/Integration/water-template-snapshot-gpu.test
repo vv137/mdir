@@ -1,0 +1,28 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference.json %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --triclinic
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --three-site
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames=three-site --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --three-site --triclinic
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames=three-site --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# The production point offset, 1/2: the packing cell is c - 1/2 with c the
+# central-image cell of x - H/2, and the points are the fractions plus 1/2.
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --triclinic --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --three-site --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames="three-site point-offset=0.5" --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json
+# RUN: %python %S/Inputs/template_frames_oracle.py generate %t.input.mlir %t.reference.json --three-site --triclinic --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-frames="three-site point-offset=0.5" --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_frames_oracle.py check %t.records %t.reference.json

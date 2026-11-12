@@ -1,0 +1,14 @@
+# REQUIRES: cuda
+# Same-frame forces and energy of alanine dipeptide in OPC (NPT), PME,
+# with heavy-atom solute units: at ten frames of a template trajectory,
+# template against general double within 1.5 times general mixed's error
+# or 1e-5 of the largest force (projected forces, and the solute's atom
+# forces unprojected), energy within 1.5 times mixed's or 1e-6 relative.
+# The TIP3P (NVT) case is water-template-anchors-tip3p-physical-gpu.test:
+# the thirty compilations of each system run as a test of their own.
+# RUN: rm -rf %t && mkdir -p %t/opc
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/opc OPC NPT 200
+# RUN: mdir-template-solute-test %t/opc/control.toml 10 | tee %t/opc/metrics.txt | FileCheck %s
+# CHECK: frame 20 volume
+# CHECK: frame 200 volume
+# CHECK: solvated solute template frames passed

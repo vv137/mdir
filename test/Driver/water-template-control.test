@@ -1,0 +1,72 @@
+# The quoted dotted key lives directly in [performance], not [execution]
+# and not a nested TOML table. Only the declared choices are accepted.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/argon/argon.toml %t/run.toml
+# RUN: mdir-water-template-test %t/run.toml | FileCheck %s --check-prefix=AUTO
+# RUN: printf '\n[performance]\n"water.template" = "off"\n' >> %t/run.toml
+# RUN: mdir-water-template-test %t/run.toml | FileCheck %s --check-prefix=OFF
+# RUN: sed 's/"off"/"on"/' %t/run.toml > %t/on.toml
+# RUN: mdir-water-template-test %t/on.toml | FileCheck %s --check-prefix=ON
+# RUN: sed 's/"off"/"invalid"/' %t/run.toml > %t/invalid.toml
+# RUN: not mdir-water-template-test %t/invalid.toml 2>&1 | FileCheck %s --check-prefix=INVALID
+# AUTO: water.template = AUTO
+# OFF: water.template = OFF
+# ON: water.template = ON
+# INVALID: expected one of AUTO, ON, OFF for 'water.template', got 'invalid'
+# The route that selection takes for a system (no device): alanine
+# dipeptide in OPC with its X-H bonds free goes to the general path under
+# AUTO, for the 12 free hydrogens; double precision goes to the general
+# path under AUTO and is refused under ON; a pairlist distance whose
+# covering reach exceeds half the least face width of the cell (25.16 Å)
+# is refused under ON and takes the general path under AUTO.
+# RUN: mkdir -p %t/loose %t/held
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/loose OPC NVE 2 --loose
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/loose/control.toml > %t/loose/auto.toml
+# RUN: mdir-water-template-test --select %t/loose/auto.toml | FileCheck %s --check-prefix=LOOSE
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/held OPC NVE 2
+# RUN: mdir-water-template-test --select %t/held/control.toml | FileCheck %s --check-prefix=HELD
+# RUN: sed 's/precision = "MIXED"/precision = "DOUBLE"/' %t/held/control.toml > %t/held/double-on.toml
+# RUN: not mdir-water-template-test --select %t/held/double-on.toml 2>&1 | FileCheck %s --check-prefix=DOUBLE-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/double-on.toml > %t/held/double-auto.toml
+# RUN: mdir-water-template-test --select %t/held/double-auto.toml | FileCheck %s --check-prefix=DOUBLE-AUTO
+# RUN: sed 's/pairlist_distance = 10.0/pairlist_distance = 11.0/' %t/held/control.toml > %t/held/far-on.toml
+# RUN: not mdir-water-template-test --select %t/held/far-on.toml 2>&1 | FileCheck %s --check-prefix=FAR-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/far-on.toml > %t/held/far-auto.toml
+# RUN: mdir-water-template-test --select %t/held/far-auto.toml | FileCheck %s --check-prefix=FAR-AUTO
+# LOOSE: water.template route: general (12 solute hydrogens have no constrained bond to a heavy atom (the solute's units need [constraints] hydrogen_bonds))
+# HELD: water.template route: template (ON was given)
+# DOUBLE-ON: 'water.template = "ON"' cannot apply: MIXED precision is required
+# DOUBLE-AUTO: water.template route: general (MIXED precision is required)
+# FAR-ON: 'water.template = "ON"' cannot apply: its covering reach, {{[0-9.]+}} Ang ('pairlist_distance' plus twice {{[0-9.]+}} Ang, the larger of the water's extent and the solute units' radius), exceeds half the least face width of the cell, 12.58 Ang
+# FAR-AUTO: water.template route: general (its covering reach, {{[0-9.]+}} Ang
+# AUTO keeps a margin below that bound, which ON does not: the reach plus
+# twice 0.25 Å (an extent or a radius widened at the first build) must be
+# at most half the least face width, less 5 % under a barostat. At 10 Å
+# the reach, 12.18 Å, fits the bound (ON above) but not the margin, so
+# AUTO takes the general path; at 9.8 Å (11.98 Å plus 0.5 Å within 12.58
+# Å) AUTO takes the template. Under NPT the same 9.8 Å exceeds 11.95 Å,
+# 95 % of 12.58 Å, and 9.2 Å (11.38 Å plus 0.5 Å) takes the template.
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/control.toml > %t/held/band-auto.toml
+# RUN: mdir-water-template-test --select %t/held/band-auto.toml | FileCheck %s --check-prefix=BAND-AUTO
+# RUN: sed 's/pairlist_distance = 10.0/pairlist_distance = 9.8/' %t/held/band-auto.toml > %t/held/near-auto.toml
+# RUN: mdir-water-template-test --select %t/held/near-auto.toml | FileCheck %s --check-prefix=NEAR-AUTO
+# RUN: mkdir -p %t/npt
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/npt OPC NPT 100 --pairlist=9.8
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/npt/control.toml > %t/npt/band-auto.toml
+# RUN: mdir-water-template-test --select %t/npt/band-auto.toml | FileCheck %s --check-prefix=NPT-BAND-AUTO
+# RUN: mdir-water-template-test --select %t/npt/control.toml | FileCheck %s --check-prefix=NPT-BAND-ON
+# RUN: sed 's/pairlist_distance = 9.8/pairlist_distance = 9.2/' %t/npt/band-auto.toml > %t/npt/near-auto.toml
+# RUN: mdir-water-template-test --select %t/npt/near-auto.toml | FileCheck %s --check-prefix=NPT-NEAR-AUTO
+# BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 12.18 Ang, plus twice 0.25 Ang for a widened extent or radius at the first build, exceeds 12.58 Ang (half the least face width, 12.58 Ang))
+# NEAR-AUTO: water.template route: template (four-site water above AUTO's measured floor)
+# NPT-BAND-AUTO: water.template route: general (AUTO keeps a margin below half the least face width: its covering reach, 11.98 Ang, plus twice 0.25 Ang for a widened extent or radius at the first build, exceeds 11.95 Ang (half the least face width, 12.58 Ang, less 5 % for the barostat))
+# NPT-BAND-ON: water.template route: template (ON was given)
+# NPT-NEAR-AUTO: water.template route: template (four-site water above AUTO's measured floor)
+# A minimization, whose steps move the X-H bonds that the solute units
+# take as held, takes the general path under AUTO and is refused under ON.
+# RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator = /d' -e '/^time_step = /d' %t/held/control.toml > %t/held/minimize-on.toml
+# RUN: not mdir-water-template-test --select %t/held/minimize-on.toml 2>&1 | FileCheck %s --check-prefix=MINIMIZE-ON
+# RUN: sed 's/"water.template" = "ON"/"water.template" = "AUTO"/' %t/held/minimize-on.toml > %t/held/minimize-auto.toml
+# RUN: mdir-water-template-test --select %t/held/minimize-auto.toml | FileCheck %s --check-prefix=MINIMIZE-AUTO
+# MINIMIZE-ON: 'water.template = "ON"' cannot apply: the program minimizes instead of taking dynamics steps
+# MINIMIZE-AUTO: water.template route: general (the program minimizes instead of taking dynamics steps)

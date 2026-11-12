@@ -241,6 +241,9 @@ struct IntegrationRun {
   /// where the kernel yields true after the destinations (the test of the
   /// constraints, D278), or no value.
   llvm::SmallVector<mlir::Value, 4> flags;
+  /// Whether the loop after is a template writer whose frames a kernel of
+  /// their own publishes after the run, rather than its threads.
+  bool publishSeparately = false;
 };
 
 /// The particles that a warp of the first kernel of an integration run
@@ -278,7 +281,15 @@ void emitIntegrationThread(
     bool across,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
                             llvm::ArrayRef<mlir::Value>)>
-        storeAfter);
+        storeAfter,
+    /// Optional observer of complete final output groups. Ordinary lowering
+    /// leaves it absent. Tuple groups are delivered once by their leader;
+    /// unmatched particles are singleton groups with a null tuple operation.
+    /// Values are the original final SSA outputs, never position rereads or
+    /// the narrower inputs gathered for the tuple's arithmetic.
+    llvm::function_ref<void(mlir::OpBuilder &, md_exec::TupleForOp,
+        llvm::ArrayRef<mlir::Value>,
+        llvm::ArrayRef<llvm::SmallVector<mlir::Value>>)> observeOutputs = {});
 
 /// Emits what a loop over tuples does for the tuple `tuple` alone, on a
 /// device, where each tuple is evaluated once: the members from `members`,

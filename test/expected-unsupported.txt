@@ -49,8 +49,11 @@ without compute-sanitizer: Sanitizer/python-resident-gpu.test
 without compute-sanitizer: Sanitizer/squared-distance-switch-gpu.test
 without compute-sanitizer: Sanitizer/stage-body-scalars-gpu.test
 without compute-sanitizer: Sanitizer/target-gpu.test
+without compute-sanitizer: Sanitizer/template-integration-publication-gpu.test
 without compute-sanitizer: Sanitizer/triclinic-gpu.test
 without compute-sanitizer: Sanitizer/tuple-block-sums-gpu.test
+without compute-sanitizer: Sanitizer/water-template-native-gpu.test
+without compute-sanitizer: Sanitizer/water-template-prune-gpu.test
 
 # The plugin of learned potentials (-DMDIR_ENABLE_METATOMIC=ON) and what its
 # tests need besides (docs/metatomic-ml1.md, docs/ml4-baselines.md).

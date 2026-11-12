@@ -1,0 +1,12 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.large.mlir
+# RUN: rm -f %t.input.mlir
+# RUN: %python %S/Inputs/template_spatial_oracle.py %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --test-md-template-spatial | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# RUN: %python %S/Inputs/template_spatial_oracle.py %t.large.mlir --large
+# RUN: mdir-opt %t.large.mlir --test-md-template-spatial | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Four independent activity combinations, exact lexicographic keys/order,
+# fixed-ID ties, compact class partitions, last-bin clamping and inverse maps.
+# The larger population crosses launch blocks and uses a different number
+# and width of counting-sort digits, with many identical full keys.
+# CHECK: 1

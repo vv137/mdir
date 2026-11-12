@@ -1,0 +1,14 @@
+# RUN: mdir-opt %S/template-execution-site.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler --verify-each | FileCheck %s
+# RUN: mdir-opt %S/template-execution-site.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --test-md-template-scheduler=rotate-frames --verify-each | FileCheck %s
+# CHECK-LABEL: func.func @template_scheduler_probe
+# CHECK: gpu.alloc
+# CHECK: gpu.memcpy
+# CHECK: gpu.launch
+# CHECK: scf.for
+# CHECK: scf.for
+# CHECK: gpu.shuffle idx
+# CHECK: llvm.inline_asm has_side_effects
+# CHECK: gpu.shuffle xor
+# CHECK: gpu.memcpy
+# CHECK: gpu.dealloc
+# CHECK: return

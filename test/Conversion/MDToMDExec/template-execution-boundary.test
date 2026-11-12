@@ -1,0 +1,10 @@
+# RUN: rm -f %t.source.mlir %t.mlir
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir > %t.source.mlir
+# RUN: %python %S/../../Dialect/MD/Inputs/template_window_boundary.py %t.source.mlir %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --test-md-exec-template-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# The execution emitter uses the same independently derived 27-image f64
+# oracle and the bound declared before this first execution:
+# 2e-13 * max(1, abs(reference)), per image and total, all E/F/W components.
+# Only image (1,0,0) contributes: energy 0.405, W_xx -0.81. This validates
+# the emitted scalar body and guards, not physical GPU list generation.
+# CHECK: 1

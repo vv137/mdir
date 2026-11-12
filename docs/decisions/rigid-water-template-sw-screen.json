@@ -1,0 +1,3307 @@
+{
+  "head": "1c430fc1edd3c098ff97263003f48a7253b109ec",
+  "baseline": "30577a0817b05296b850b453bac274325ab14d3b",
+  "systems": {
+    "ubq-opc": {
+      "current": {
+        "kernel_count": 286416,
+        "stages": {
+          "joint_sort": {
+            "calls": 20090,
+            "gpu_ns": 25561934,
+            "us_per_step": 2.5561934,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 30,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 10250,
+                "grid_min": 1,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  19,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2050,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2460,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2050,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 2050,
+                "grid_min": 30,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_plan": {
+            "calls": 17276,
+            "gpu_ns": 17595512,
+            "us_per_step": 1.7595512,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  20,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 30,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 5966,
+                "grid_min": 1,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2262,
+                "grid_min": 8,
+                "grid_max": 8
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2262,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2262,
+                "grid_min": 8,
+                "grid_max": 8
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  18,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 1852,
+                "grid_min": 30,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 1852,
+                "grid_min": 30,
+                "grid_max": 30
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 30,
+                "grid_max": 30
+              }
+            ]
+          },
+          "column_clear": {
+            "calls": 410,
+            "gpu_ns": 169344,
+            "us_per_step": 0.0169344,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_boxes_histogram": {
+            "calls": 410,
+            "gpu_ns": 1485151,
+            "us_per_step": 0.1485151,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  46,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 73,
+                "grid_max": 77
+              }
+            ]
+          },
+          "column_scan_sums": {
+            "calls": 410,
+            "gpu_ns": 285152,
+            "us_per_step": 0.0285152,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_offsets": {
+            "calls": 410,
+            "gpu_ns": 335040,
+            "us_per_step": 0.033504,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_publish": {
+            "calls": 410,
+            "gpu_ns": 349792,
+            "us_per_step": 0.0349792,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "class_clear": {
+            "calls": 410,
+            "gpu_ns": 294048,
+            "us_per_step": 0.0294048,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  32,
+                  1,
+                  1,
+                  24,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "candidate_ww": {
+            "calls": 410,
+            "gpu_ns": 86118639,
+            "us_per_step": 8.6118639,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1152,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 225,
+                "grid_max": 242
+              }
+            ]
+          },
+          "candidate_sw": {
+            "calls": 410,
+            "gpu_ns": 494561745,
+            "us_per_step": 49.4561745,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  128,
+                  1,
+                  1,
+                  255,
+                  45712,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 124,
+                "grid_max": 136
+              }
+            ]
+          },
+          "candidate_ss": {
+            "calls": 410,
+            "gpu_ns": 110939737,
+            "us_per_step": 11.0939737,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1280,
+                  0,
+                  0
+                ],
+                "calls": 410,
+                "grid_min": 62,
+                "grid_max": 68
+              }
+            ]
+          },
+          "compaction": {
+            "calls": 3672,
+            "gpu_ns": 45886086,
+            "us_per_step": 4.5886086,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 408,
+                "grid_min": 3,
+                "grid_max": 3
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 816,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 816,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 816,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 408,
+                "grid_min": 3,
+                "grid_max": 3
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 408,
+                "grid_min": 24,
+                "grid_max": 24
+              }
+            ]
+          }
+        },
+        "attempts": 410,
+        "successful_refreshes": 408,
+        "prunes": 3895,
+        "growths": 2,
+        "legacy_stage_us": 73.7696094,
+        "added_order_us": 0.0,
+        "stage_with_order_us": 73.7696094,
+        "compaction_us": 4.5886086,
+        "full_closure_us": 78.358218,
+        "common_force_us": 61.053628,
+        "rest_us": 70.2668857,
+        "total_gpu_us": 205.0901231,
+        "partition_ns": [
+          737696094,
+          610536280,
+          702668857,
+          2050901231
+        ],
+        "partition_exact": true,
+        "common_force_calls": 9990,
+        "common_force_symbol": "mdir_run_template_for_292",
+        "full_construction_ns": 783582180,
+        "common_force_ns": 610536280,
+        "complete_rest_ns": 656782771,
+        "total_gpu_ns": 2050901231,
+        "full_partition_exact": true
+      },
+      "references": {
+        "a": {
+          "W1_construction_ns": 544675886,
+          "W1_force_ns": 611957548,
+          "W1_rest_ns": 656549466,
+          "W1_total_ns": 1813182900,
+          "main": {
+            "neighbor_build_prune_ns": 226701852,
+            "common_force_ns": 332975965,
+            "rest_ns": 584913982,
+            "total_kernel_ns": 1144591799,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_114",
+                "calls": 1,
+                "gpu_ns": 768,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_293",
+                "calls": 489,
+                "gpu_ns": 367200,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_295",
+                "calls": 489,
+                "gpu_ns": 791392,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_296",
+                "calls": 489,
+                "gpu_ns": 13507653,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_297",
+                "calls": 489,
+                "gpu_ns": 535392,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_299",
+                "calls": 3055,
+                "gpu_ns": 4910043,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_300",
+                "calls": 3055,
+                "gpu_ns": 84341640,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_301",
+                "calls": 3055,
+                "gpu_ns": 3341626,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_321",
+                "calls": 1,
+                "gpu_ns": 736,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_323",
+                "calls": 1,
+                "gpu_ns": 1632,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_324",
+                "calls": 1,
+                "gpu_ns": 28480,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_325",
+                "calls": 1,
+                "gpu_ns": 1088,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_327",
+                "calls": 4,
+                "gpu_ns": 6400,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_328",
+                "calls": 4,
+                "gpu_ns": 111424,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_329",
+                "calls": 4,
+                "gpu_ns": 4352,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 12300,
+                "gpu_ns": 118582842,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 169184,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        },
+        "b": {
+          "W1_construction_ns": 554602348,
+          "W1_force_ns": 610479908,
+          "W1_rest_ns": 656461860,
+          "W1_total_ns": 1821544116,
+          "main": {
+            "neighbor_build_prune_ns": 224199267,
+            "common_force_ns": 330151810,
+            "rest_ns": 584391699,
+            "total_kernel_ns": 1138742776,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_114",
+                "calls": 1,
+                "gpu_ns": 736,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_293",
+                "calls": 483,
+                "gpu_ns": 361887,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_295",
+                "calls": 483,
+                "gpu_ns": 782716,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_296",
+                "calls": 483,
+                "gpu_ns": 13262480,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_297",
+                "calls": 483,
+                "gpu_ns": 528317,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_299",
+                "calls": 3055,
+                "gpu_ns": 4912336,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_300",
+                "calls": 3055,
+                "gpu_ns": 83847920,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_301",
+                "calls": 3055,
+                "gpu_ns": 3336597,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_327",
+                "calls": 3,
+                "gpu_ns": 4832,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_328",
+                "calls": 3,
+                "gpu_ns": 81856,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_329",
+                "calls": 3,
+                "gpu_ns": 3296,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 12125,
+                "gpu_ns": 116908647,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 167647,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        }
+      }
+    },
+    "ubq-tip3p": {
+      "current": {
+        "kernel_count": 258092,
+        "stages": {
+          "joint_sort": {
+            "calls": 21070,
+            "gpu_ns": 26784087,
+            "us_per_step": 2.6784087,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 29,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 10750,
+                "grid_min": 1,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  19,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2150,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2580,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2150,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 2150,
+                "grid_min": 29,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_plan": {
+            "calls": 17628,
+            "gpu_ns": 18102392,
+            "us_per_step": 1.8102392,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  20,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 29,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 6073,
+                "grid_min": 1,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2311,
+                "grid_min": 8,
+                "grid_max": 8
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2311,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 2311,
+                "grid_min": 8,
+                "grid_max": 8
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  18,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 1881,
+                "grid_min": 29,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 1881,
+                "grid_min": 29,
+                "grid_max": 29
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 29,
+                "grid_max": 29
+              }
+            ]
+          },
+          "column_clear": {
+            "calls": 430,
+            "gpu_ns": 181888,
+            "us_per_step": 0.0181888,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_boxes_histogram": {
+            "calls": 430,
+            "gpu_ns": 1558719,
+            "us_per_step": 0.1558719,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  46,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 73,
+                "grid_max": 76
+              }
+            ]
+          },
+          "column_scan_sums": {
+            "calls": 430,
+            "gpu_ns": 306560,
+            "us_per_step": 0.030656,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_offsets": {
+            "calls": 430,
+            "gpu_ns": 357440,
+            "us_per_step": 0.035744,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_publish": {
+            "calls": 430,
+            "gpu_ns": 370496,
+            "us_per_step": 0.0370496,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "class_clear": {
+            "calls": 430,
+            "gpu_ns": 305472,
+            "us_per_step": 0.0305472,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  32,
+                  1,
+                  1,
+                  24,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "candidate_ww": {
+            "calls": 430,
+            "gpu_ns": 92464695,
+            "us_per_step": 9.2464695,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1152,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 224,
+                "grid_max": 238
+              }
+            ]
+          },
+          "candidate_sw": {
+            "calls": 430,
+            "gpu_ns": 520197325,
+            "us_per_step": 52.0197325,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  128,
+                  1,
+                  1,
+                  255,
+                  45712,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 126,
+                "grid_max": 139
+              }
+            ]
+          },
+          "candidate_ss": {
+            "calls": 430,
+            "gpu_ns": 120572085,
+            "us_per_step": 12.0572085,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1280,
+                  0,
+                  0
+                ],
+                "calls": 430,
+                "grid_min": 63,
+                "grid_max": 70
+              }
+            ]
+          },
+          "compaction": {
+            "calls": 3852,
+            "gpu_ns": 48518892,
+            "us_per_step": 4.8518892,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 428,
+                "grid_min": 3,
+                "grid_max": 3
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 856,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 856,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 856,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 428,
+                "grid_min": 3,
+                "grid_max": 3
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 428,
+                "grid_min": 24,
+                "grid_max": 24
+              }
+            ]
+          }
+        },
+        "attempts": 430,
+        "successful_refreshes": 428,
+        "prunes": 3895,
+        "growths": 2,
+        "legacy_stage_us": 78.1201159,
+        "added_order_us": 0.0,
+        "stage_with_order_us": 78.1201159,
+        "compaction_us": 4.8518892,
+        "full_closure_us": 82.9720051,
+        "common_force_us": 58.9981243,
+        "rest_us": 65.3895943,
+        "total_gpu_us": 202.5078345,
+        "partition_ns": [
+          781201159,
+          589981243,
+          653895943,
+          2025078345
+        ],
+        "partition_exact": true,
+        "common_force_calls": 9990,
+        "common_force_symbol": "mdir_run_template_for_248",
+        "full_construction_ns": 829720051,
+        "common_force_ns": 589981243,
+        "complete_rest_ns": 605377051,
+        "total_gpu_ns": 2025078345,
+        "full_partition_exact": true
+      },
+      "references": {
+        "a": {
+          "W1_construction_ns": 573220602,
+          "W1_force_ns": 584265900,
+          "W1_rest_ns": 603943691,
+          "W1_total_ns": 1761430193,
+          "main": {
+            "neighbor_build_prune_ns": 196987020,
+            "common_force_ns": 245219393,
+            "rest_ns": 471724879,
+            "total_kernel_ns": 913931292,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_249",
+                "calls": 600,
+                "gpu_ns": 408288,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_251",
+                "calls": 600,
+                "gpu_ns": 815135,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_252",
+                "calls": 600,
+                "gpu_ns": 13077940,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_253",
+                "calls": 600,
+                "gpu_ns": 645631,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_255",
+                "calls": 2979,
+                "gpu_ns": 4068445,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_256",
+                "calls": 2979,
+                "gpu_ns": 64955202,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_257",
+                "calls": 2979,
+                "gpu_ns": 3204285,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_272",
+                "calls": 1,
+                "gpu_ns": 672,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_274",
+                "calls": 1,
+                "gpu_ns": 1376,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_275",
+                "calls": 1,
+                "gpu_ns": 21408,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_276",
+                "calls": 1,
+                "gpu_ns": 1088,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_89",
+                "calls": 1,
+                "gpu_ns": 704,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 15075,
+                "gpu_ns": 109667486,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 119360,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        },
+        "b": {
+          "W1_construction_ns": 567481522,
+          "W1_force_ns": 587718461,
+          "W1_rest_ns": 604113716,
+          "W1_total_ns": 1759313699,
+          "main": {
+            "neighbor_build_prune_ns": 196976855,
+            "common_force_ns": 243766874,
+            "rest_ns": 471172108,
+            "total_kernel_ns": 911915837,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_249",
+                "calls": 603,
+                "gpu_ns": 410303,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_251",
+                "calls": 603,
+                "gpu_ns": 819675,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_252",
+                "calls": 603,
+                "gpu_ns": 13063580,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_253",
+                "calls": 603,
+                "gpu_ns": 648667,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_255",
+                "calls": 2978,
+                "gpu_ns": 4063702,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_256",
+                "calls": 2978,
+                "gpu_ns": 64489766,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_257",
+                "calls": 2978,
+                "gpu_ns": 3198102,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_272",
+                "calls": 1,
+                "gpu_ns": 672,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_274",
+                "calls": 1,
+                "gpu_ns": 1376,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_275",
+                "calls": 1,
+                "gpu_ns": 22272,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_276",
+                "calls": 1,
+                "gpu_ns": 1088,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_278",
+                "calls": 2,
+                "gpu_ns": 2752,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_279",
+                "calls": 2,
+                "gpu_ns": 43584,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_280",
+                "calls": 2,
+                "gpu_ns": 2144,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_89",
+                "calls": 1,
+                "gpu_ns": 672,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 15150,
+                "gpu_ns": 110087924,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 120576,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        }
+      }
+    },
+    "opc-small": {
+      "current": {
+        "kernel_count": 254934,
+        "stages": {
+          "joint_sort": {
+            "calls": 8330,
+            "gpu_ns": 9292478,
+            "us_per_step": 0.9292478,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 17,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 4250,
+                "grid_min": 1,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  19,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 850,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 1020,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 850,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 850,
+                "grid_min": 17,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_plan": {
+            "calls": 2732,
+            "gpu_ns": 2434559,
+            "us_per_step": 0.2434559,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  20,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 17,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 812,
+                "grid_min": 1,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 384,
+                "grid_min": 5,
+                "grid_max": 5
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 384,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 384,
+                "grid_min": 5,
+                "grid_max": 5
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  18,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 214,
+                "grid_min": 17,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 214,
+                "grid_min": 17,
+                "grid_max": 17
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 17,
+                "grid_max": 17
+              }
+            ]
+          },
+          "column_clear": {
+            "calls": 170,
+            "gpu_ns": 72512,
+            "us_per_step": 0.0072512,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "group_boxes_histogram": {
+            "calls": 170,
+            "gpu_ns": 618143,
+            "us_per_step": 0.0618143,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  46,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 35,
+                "grid_max": 36
+              }
+            ]
+          },
+          "column_scan_sums": {
+            "calls": 170,
+            "gpu_ns": 128320,
+            "us_per_step": 0.012832,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_offsets": {
+            "calls": 170,
+            "gpu_ns": 142944,
+            "us_per_step": 0.0142944,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "column_scan_publish": {
+            "calls": 170,
+            "gpu_ns": 150208,
+            "us_per_step": 0.0150208,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "class_clear": {
+            "calls": 170,
+            "gpu_ns": 121568,
+            "us_per_step": 0.0121568,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  32,
+                  1,
+                  1,
+                  24,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "candidate_ww": {
+            "calls": 170,
+            "gpu_ns": 69617114,
+            "us_per_step": 6.9617114,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1152,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 139,
+                "grid_max": 144
+              }
+            ]
+          },
+          "candidate_sw": {
+            "calls": 170,
+            "gpu_ns": 67232,
+            "us_per_step": 0.0067232,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  128,
+                  1,
+                  1,
+                  255,
+                  45712,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "candidate_ss": {
+            "calls": 170,
+            "gpu_ns": 69952,
+            "us_per_step": 0.0069952,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  64,
+                  1,
+                  1,
+                  168,
+                  1280,
+                  0,
+                  0
+                ],
+                "calls": 170,
+                "grid_min": 1,
+                "grid_max": 1
+              }
+            ]
+          },
+          "compaction": {
+            "calls": 1512,
+            "gpu_ns": 18494683,
+            "us_per_step": 1.8494683,
+            "resources": [
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  16,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 168,
+                "grid_min": 2,
+                "grid_max": 2
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  21,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 336,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  40,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 336,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  31,
+                  36,
+                  0,
+                  0
+                ],
+                "calls": 336,
+                "grid_min": 1,
+                "grid_max": 1
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  26,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 168,
+                "grid_min": 2,
+                "grid_max": 2
+              },
+              {
+                "signature": [
+                  "mdir_run_kernel",
+                  256,
+                  1,
+                  1,
+                  22,
+                  0,
+                  0,
+                  0
+                ],
+                "calls": 168,
+                "grid_min": 10,
+                "grid_max": 11
+              }
+            ]
+          }
+        },
+        "attempts": 170,
+        "successful_refreshes": 168,
+        "prunes": 1139,
+        "growths": 2,
+        "legacy_stage_us": 8.271503,
+        "added_order_us": 0.0,
+        "stage_with_order_us": 8.271503,
+        "compaction_us": 1.8494683,
+        "full_closure_us": 10.1209713,
+        "common_force_us": 32.4995366,
+        "rest_us": 46.3671731,
+        "total_gpu_us": 87.1382127,
+        "partition_ns": [
+          82715030,
+          324995366,
+          463671731,
+          871382127
+        ],
+        "partition_exact": true,
+        "common_force_calls": 9990,
+        "common_force_symbol": "mdir_run_template_for_177",
+        "full_construction_ns": 101209713,
+        "common_force_ns": 324995366,
+        "complete_rest_ns": 445177048,
+        "total_gpu_ns": 871382127,
+        "full_partition_exact": true
+      },
+      "references": {
+        "a": {
+          "W1_construction_ns": 103115432,
+          "W1_force_ns": 324330843,
+          "W1_rest_ns": 444329240,
+          "W1_total_ns": 871775515,
+          "main": {
+            "neighbor_build_prune_ns": 209248853,
+            "common_force_ns": 223295290,
+            "rest_ns": 410962464,
+            "total_kernel_ns": 843506607,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_167",
+                "calls": 462,
+                "gpu_ns": 314783,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_169",
+                "calls": 462,
+                "gpu_ns": 619263,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_170",
+                "calls": 462,
+                "gpu_ns": 12356985,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_171",
+                "calls": 462,
+                "gpu_ns": 499296,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_173",
+                "calls": 3051,
+                "gpu_ns": 4083997,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_174",
+                "calls": 3051,
+                "gpu_ns": 81640404,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_175",
+                "calls": 3051,
+                "gpu_ns": 3296735,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_195",
+                "calls": 1,
+                "gpu_ns": 672,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_197",
+                "calls": 1,
+                "gpu_ns": 1344,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_198",
+                "calls": 1,
+                "gpu_ns": 27744,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_199",
+                "calls": 1,
+                "gpu_ns": 1088,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_201",
+                "calls": 4,
+                "gpu_ns": 5344,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_202",
+                "calls": 4,
+                "gpu_ns": 104735,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_203",
+                "calls": 4,
+                "gpu_ns": 4352,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_70",
+                "calls": 1,
+                "gpu_ns": 672,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_92",
+                "calls": 1,
+                "gpu_ns": 1312,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_93",
+                "calls": 1,
+                "gpu_ns": 27776,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_94",
+                "calls": 1,
+                "gpu_ns": 1280,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 11625,
+                "gpu_ns": 106086768,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 174303,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        },
+        "b": {
+          "W1_construction_ns": 104446777,
+          "W1_force_ns": 323563297,
+          "W1_rest_ns": 444169371,
+          "W1_total_ns": 872179445,
+          "main": {
+            "neighbor_build_prune_ns": 210097287,
+            "common_force_ns": 222667414,
+            "rest_ns": 410519473,
+            "total_kernel_ns": 843284174,
+            "neighbor_kernel_inventory": [
+              {
+                "name": "mdir_run_refresh_neighbors_167",
+                "calls": 463,
+                "gpu_ns": 315455,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_169",
+                "calls": 463,
+                "gpu_ns": 619006,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_170",
+                "calls": 463,
+                "gpu_ns": 12469153,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_171",
+                "calls": 463,
+                "gpu_ns": 499743,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_173",
+                "calls": 3049,
+                "gpu_ns": 4070294,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_174",
+                "calls": 3049,
+                "gpu_ns": 82133082,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_175",
+                "calls": 3049,
+                "gpu_ns": 3288600,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_201",
+                "calls": 3,
+                "gpu_ns": 3968,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_202",
+                "calls": 3,
+                "gpu_ns": 80128,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_203",
+                "calls": 3,
+                "gpu_ns": 3264,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_70",
+                "calls": 1,
+                "gpu_ns": 704,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 16
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_92",
+                "calls": 1,
+                "gpu_ns": 1312,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 23,
+                "regs_max": 23
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_93",
+                "calls": 1,
+                "gpu_ns": 27551,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 72,
+                "regs_max": 72
+              },
+              {
+                "name": "mdir_run_refresh_neighbors_94",
+                "calls": 1,
+                "gpu_ns": 1280,
+                "block_min": 128,
+                "block_max": 128,
+                "regs_min": 24,
+                "regs_max": 24
+              },
+              {
+                "name": "mdrt_gpu_build_neighbors_groups_kernel",
+                "calls": 11625,
+                "gpu_ns": 106412324,
+                "block_min": 1,
+                "block_max": 256,
+                "regs_min": 16,
+                "regs_max": 72
+              },
+              {
+                "name": "mdrt_gpu_spatial_order_kernel",
+                "calls": 14,
+                "gpu_ns": 171423,
+                "block_min": 1,
+                "block_max": 128,
+                "regs_min": 16,
+                "regs_max": 44
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "causal_baseline_ubq_opc": {
+    "kernel_count": 286003,
+    "stages": {
+      "joint_sort": {
+        "calls": 19747,
+        "gpu_ns": 25093950,
+        "us_per_step": 2.509395,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              22,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 30,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              16,
+              0,
+              0,
+              0
+            ],
+            "calls": 10075,
+            "grid_min": 1,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              19,
+              36,
+              0,
+              0
+            ],
+            "calls": 2015,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              40,
+              36,
+              0,
+              0
+            ],
+            "calls": 2418,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              26,
+              36,
+              0,
+              0
+            ],
+            "calls": 2015,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              40,
+              0,
+              0,
+              0
+            ],
+            "calls": 2015,
+            "grid_min": 30,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              21,
+              36,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              31,
+              36,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "group_plan": {
+        "calls": 17346,
+        "gpu_ns": 17673727,
+        "us_per_step": 1.7673727,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              20,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 30,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              16,
+              0,
+              0,
+              0
+            ],
+            "calls": 6001,
+            "grid_min": 1,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              21,
+              36,
+              0,
+              0
+            ],
+            "calls": 2269,
+            "grid_min": 8,
+            "grid_max": 8
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              40,
+              36,
+              0,
+              0
+            ],
+            "calls": 2269,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              31,
+              36,
+              0,
+              0
+            ],
+            "calls": 2269,
+            "grid_min": 8,
+            "grid_max": 8
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              18,
+              0,
+              0,
+              0
+            ],
+            "calls": 1866,
+            "grid_min": 30,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              26,
+              0,
+              0,
+              0
+            ],
+            "calls": 1866,
+            "grid_min": 30,
+            "grid_max": 30
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              22,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 30,
+            "grid_max": 30
+          }
+        ]
+      },
+      "column_clear": {
+        "calls": 403,
+        "gpu_ns": 166720,
+        "us_per_step": 0.016672,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              16,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "group_boxes_histogram": {
+        "calls": 403,
+        "gpu_ns": 1459455,
+        "us_per_step": 0.1459455,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              46,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 73,
+            "grid_max": 77
+          }
+        ]
+      },
+      "column_scan_sums": {
+        "calls": 403,
+        "gpu_ns": 279904,
+        "us_per_step": 0.0279904,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              21,
+              36,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "column_scan_offsets": {
+        "calls": 403,
+        "gpu_ns": 330624,
+        "us_per_step": 0.0330624,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              40,
+              36,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "column_scan_publish": {
+        "calls": 403,
+        "gpu_ns": 343040,
+        "us_per_step": 0.034304,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              31,
+              36,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "class_clear": {
+        "calls": 403,
+        "gpu_ns": 288512,
+        "us_per_step": 0.0288512,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              32,
+              1,
+              1,
+              24,
+              0,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 1,
+            "grid_max": 1
+          }
+        ]
+      },
+      "candidate_ww": {
+        "calls": 403,
+        "gpu_ns": 85870003,
+        "us_per_step": 8.5870003,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              64,
+              1,
+              1,
+              168,
+              1152,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 227,
+            "grid_max": 237
+          }
+        ]
+      },
+      "candidate_sw": {
+        "calls": 403,
+        "gpu_ns": 247701413,
+        "us_per_step": 24.7701413,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              64,
+              1,
+              1,
+              128,
+              1152,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 63,
+            "grid_max": 69
+          }
+        ]
+      },
+      "candidate_ss": {
+        "calls": 403,
+        "gpu_ns": 102690223,
+        "us_per_step": 10.2690223,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              64,
+              1,
+              1,
+              168,
+              1280,
+              0,
+              0
+            ],
+            "calls": 403,
+            "grid_min": 63,
+            "grid_max": 69
+          }
+        ]
+      },
+      "compaction": {
+        "calls": 3609,
+        "gpu_ns": 45128153,
+        "us_per_step": 4.5128153,
+        "resources": [
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              16,
+              0,
+              0,
+              0
+            ],
+            "calls": 401,
+            "grid_min": 3,
+            "grid_max": 3
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              21,
+              36,
+              0,
+              0
+            ],
+            "calls": 802,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              40,
+              36,
+              0,
+              0
+            ],
+            "calls": 802,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              31,
+              36,
+              0,
+              0
+            ],
+            "calls": 802,
+            "grid_min": 1,
+            "grid_max": 1
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              26,
+              0,
+              0,
+              0
+            ],
+            "calls": 401,
+            "grid_min": 3,
+            "grid_max": 3
+          },
+          {
+            "signature": [
+              "mdir_run_kernel",
+              256,
+              1,
+              1,
+              22,
+              0,
+              0,
+              0
+            ],
+            "calls": 401,
+            "grid_min": 24,
+            "grid_max": 24
+          }
+        ]
+      }
+    },
+    "attempts": 403,
+    "successful_refreshes": 401,
+    "prunes": 3904,
+    "growths": 2,
+    "legacy_stage_us": 48.1897571,
+    "added_order_us": 0.0,
+    "stage_with_order_us": 48.1897571,
+    "compaction_us": 4.5128153,
+    "full_closure_us": 52.7025724,
+    "common_force_us": 61.1453292,
+    "rest_us": 70.2136441,
+    "total_gpu_us": 179.5487304,
+    "partition_ns": [
+      481897571,
+      611453292,
+      702136441,
+      1795487304
+    ],
+    "partition_exact": true,
+    "common_force_calls": 9990,
+    "common_force_symbol": "mdir_run_template_for_292",
+    "full_construction_ns": 527025724,
+    "common_force_ns": 611453292,
+    "complete_rest_ns": 657008288,
+    "total_gpu_ns": 1795487304,
+    "full_partition_exact": true
+  },
+  "exclusions": [
+    "three systems not run after external numerical stop",
+    "baseline ubqTIP pending cancelled before execution",
+    "new wall ratios not measured"
+  ],
+  "new_gpu_profiles": 4,
+  "device": "RTX 5090",
+  "steps_per_capture": 10000,
+  "timeout_seconds_per_invocation": 300,
+  "status": "parked; not retained after measured construction regression",
+  "new_wall_ratios": "not measured",
+  "repeat_spread": "one capture per route; not estimated"
+}

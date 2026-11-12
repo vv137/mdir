@@ -3,6 +3,7 @@
 #include "SiteIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -743,6 +744,8 @@ ConstraintPositionResult mdir::driver::builder::buildBondConstraints(
     }
     mdir::md::YieldOp::create(builder, loc, results);
   }
+  if (config.templateWaterEpoch)
+    change->setAttr(mdir::md::kTemplateConstraintEpoch, builder.getUnitAttr());
   return {change.getResult(), config.withFailure ? change.getFailed() : Value{}};
 }
 

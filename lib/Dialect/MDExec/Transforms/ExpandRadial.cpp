@@ -486,11 +486,13 @@ public:
       // one with a pole at the cutoff or that vanishes there with all its
       // derivatives (the factor exp(sigma / (r - a sigma)) of the
       // Stillinger-Weber form), is evaluated as itself in f64 (D159).
+      PairKernelBodyOpInterface loop;
+      for (Operation *parent = op->getParentOp(); parent;
+           parent = parent->getParentOp())
+        if ((loop = dyn_cast<PairKernelBodyOpInterface>(parent))) break;
       bool asItself = !op.getType().isF32();
-      if (!asItself)
-        if (auto loop = op->getParentOfType<PairForOp>())
-          asItself = !canTabulate(function, loop.getCutoff().convertToDouble(),
-                                  tolerance);
+      if (!asItself && loop)
+        asItself = !canTabulate(function, loop.getPairKernelCutoff(), tolerance);
       if (asItself) {
         // The function itself, in f64 or the type of the kernel.
         IRMapping values;
@@ -508,12 +510,11 @@ public:
         op.erase();
         continue;
       }
-      auto loop = op->getParentOfType<PairForOp>();
       if (!loop) {
         op.emitOpError() << "is not in the kernel of a loop over pairs";
         return signalPassFailure();
       }
-      double cutoff = loop.getCutoff().convertToDouble();
+      double cutoff = loop.getPairKernelCutoff();
       double high = cutoff * cutoff;
       double low = high * std::ldexp(1.0, -10);
       auto key = std::make_pair(op.getFunction().str(), high);
@@ -570,16 +571,36 @@ public:
       };
       Value s = op.getR2();
       Value bits = arith::BitcastOp::create(builder, loc, i32, s);
-      Value key32 = arith::ShRUIOp::create(builder, loc, bits, constant(shift));
-      Value k0 = arith::SubIOp::create(builder, loc, key32,
-                                       constant(table.base));
-      Value k = arith::MinSIOp::create(
-          builder, loc, arith::MaxSIOp::create(builder, loc, k0, constant(0)),
-          constant(count - 1));
-      Value startBits = arith::ShLIOp::create(
-          builder, loc,
-          arith::AddIOp::create(builder, loc, k, constant(table.base)),
-          constant(shift));
+      Value k, startBits;
+      if (op->getParentOfType<TemplateForOp>()) {
+        // The same index and interval start, from the bits clamped into the
+        // table's range: start = clamped bits with the fraction cleared, and
+        // index = (clamped >> shift) - base, which cannot wrap, so that the
+        // row offset of the base folds into the table's address. Only the
+        // template kernels take this form.
+        int64_t fraction = (int64_t(1) << shift) - 1;
+        Value clamped = arith::MinUIOp::create(builder, loc,
+            arith::MaxUIOp::create(builder, loc, bits,
+                                   constant(table.base << shift)),
+            constant(((table.base + count - 1) << shift) | fraction));
+        startBits = arith::AndIOp::create(builder, loc, clamped,
+                                          constant(~fraction));
+        k = arith::SubIOp::create(builder, loc,
+            arith::ShRUIOp::create(builder, loc, clamped, constant(shift)),
+            constant(table.base),
+            arith::IntegerOverflowFlags::nsw | arith::IntegerOverflowFlags::nuw);
+      } else {
+        Value key32 = arith::ShRUIOp::create(builder, loc, bits, constant(shift));
+        Value k0 = arith::SubIOp::create(builder, loc, key32,
+                                         constant(table.base));
+        k = arith::MinSIOp::create(
+            builder, loc, arith::MaxSIOp::create(builder, loc, k0, constant(0)),
+            constant(count - 1));
+        startBits = arith::ShLIOp::create(
+            builder, loc,
+            arith::AddIOp::create(builder, loc, k, constant(table.base)),
+            constant(shift));
+      }
       Value start = arith::BitcastOp::create(builder, loc,
                                              builder.getF32Type(), startBits);
       Value u = arith::SubFOp::create(builder, loc, s, start);

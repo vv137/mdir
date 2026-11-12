@@ -1,0 +1,15 @@
+# REQUIRES: cuda
+# An allocation cannot reset history after an actual marked tuple kernel.
+# RUN: rm -f %t.input.mlir %t.reference %t.records %t.error %t.lowered.mlir
+# RUN: %python %S/Inputs/template_epoch_cases.py initial-fresh %t.input.mlir %t.reference
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_native_oracle.py check %t.records %t.reference
+# RUN: %python %S/Inputs/template_epoch_cases.py within-fresh %t.input.mlir %t.reference --triclinic
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_native_oracle.py check %t.records %t.reference
+# RUN: %python %S/Inputs/template_epoch_cases.py constrained-fresh %t.input.mlir %t.reference
+# RUN: mdir-opt %t.input.mlir --md-exec-assign-algebra --convert-md-exec-to-gpu=check-template-reach=false | mlir-opt %lower_gpu_to_llvm > %t.lowered.mlir
+# cf.assert lowers to puts followed by abort; retain its stdout diagnostic.
+# RUN: not --crash stdbuf -o0 mlir-runner %t.lowered.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.error 2>&1
+# RUN: FileCheck %s < %t.error
+# CHECK: template water exceeds its covering extent after position constraints

@@ -1477,7 +1477,9 @@ void kernels::emitIntegrationThread(
     OpBuilder &builder, const IntegrationRun &run, ArrayRef<Value> boxes,
     ArrayRef<Value> inverses, Value thread, Value span, Value acrossList,
     Value acrossCount, bool across,
-    function_ref<void(OpBuilder &, Value, ArrayRef<Value>)> storeAfter) {
+    function_ref<void(OpBuilder &, Value, ArrayRef<Value>)> storeAfter,
+    function_ref<void(OpBuilder &, md_exec::TupleForOp, ArrayRef<Value>,
+        ArrayRef<SmallVector<Value>>)> observeOutputs) {
   md_exec::ParticleForOp before = run.before, after = run.after;
   SmallVector<md_exec::TupleForOp, 4> loops(run.loops.begin(),
                                             run.loops.end());
@@ -1637,9 +1639,12 @@ void kernels::emitIntegrationThread(
     for (Operation &nested : kernel.without_terminator())
       b.clone(nested, local);
     Operation *yield = kernel.getTerminator();
-    for (unsigned i = 0; i != afterOuts; ++i)
-      storeElement(b, loc, local.lookupOrDefault(yield->getOperand(i)),
-                   after.getOuts()[i], member);
+    SmallVector<Value> outputs;
+    for (unsigned i = 0; i != afterOuts; ++i) {
+      Value output = local.lookupOrDefault(yield->getOperand(i));
+      outputs.push_back(output);
+      storeElement(b, loc, output, after.getOuts()[i], member);
+    }
     for (unsigned j = 0; j != beforeOuts; ++j)
       if (!llvm::is_contained(after.getOuts(), before.getOuts()[j]))
         storeElement(b, loc, values[j], before.getOuts()[j], member);
@@ -1647,6 +1652,7 @@ void kernels::emitIntegrationThread(
     for (unsigned i = afterOuts, e = yield->getNumOperands(); i != e; ++i)
       contributions.push_back(local.lookupOrDefault(yield->getOperand(i)));
     storeAfter(b, member, contributions);
+    return outputs;
   };
 
   // The tuple of a particle in each loop, if any (at most one over the
@@ -1748,6 +1754,7 @@ void kernels::emitIntegrationThread(
                           loadMember);
           setFlag(c, i, evaluated.inside);
           Operation *yield = loop.getKernel().front().getTerminator();
+          SmallVector<SmallVector<Value>> finalOutputs;
           for (int64_t q = 0; q != arity; ++q) {
             SmallVector<SmallVector<Value>> corrections;
             for (auto [k, other] : llvm::enumerate(loops)) {
@@ -1760,8 +1767,10 @@ void kernels::emitIntegrationThread(
                            : createZero(c, loc, types[o]));
               corrections.push_back(ofLoop);
             }
-            evalAfter(c, evaluated.members[q], values[q], corrections);
+            finalOutputs.push_back(evalAfter(c, evaluated.members[q], values[q], corrections));
           }
+          if (observeOutputs)
+            observeOutputs(c, loop, evaluated.members, finalOutputs);
           scf::YieldOp::create(c, loc);
         });
       }
@@ -1878,7 +1887,7 @@ void kernels::emitIntegrationThread(
   for (int64_t q = 0; q != widest; ++q) {
     Value source = lane32;
     for (auto [i, loop] : llvm::enumerate(loops)) {
-      if (q >= loop.getArity())
+      if (q >= static_cast<int64_t>(loop.getArity()))
         continue;
       Row &row = rows[i];
       source = arith::SelectOp::create(
@@ -2028,7 +2037,7 @@ void kernels::emitIntegrationThread(
       for (unsigned o = 0, n = types.size(); o != n; ++o) {
         Value held = createZero(builder, loc, types[o]);
         for (unsigned i : group)
-          if (q < loops[i].getArity())
+          if (q < static_cast<int64_t>(loops[i].getArity()))
             held = arith::SelectOp::create(builder, loc, rows[i].useWarp,
                                            computedOf[i][q * n + o], held);
         received[q * n + o] = shuffleFrom(builder, held, leaderLane);
@@ -2082,6 +2091,62 @@ void kernels::emitIntegrationThread(
         ValueRange{arith::IndexCastOp::create(b, loc, b.getIndexType(), slot)});
     scf::YieldOp::create(b, loc);
   });
+  if (observeOutputs) {
+    SmallVector<Type> outputTypes;
+    Operation *yield = after.getKernel().front().getTerminator();
+    for (unsigned i = 0; i != afterOuts; ++i)
+      outputTypes.push_back(yield->getOperand(i).getType());
+    auto zeros = [&](OpBuilder &b) {
+      SmallVector<Value> values;
+      for (Type type : outputTypes) values.push_back(createZero(b, loc, type));
+      return values;
+    };
+    // Deferred lanes write only the predictor. Every lane then rejoins
+    // before any output shuffle; padded lanes supply zeros and publish none.
+    auto final = scf::IfOp::create(builder, loc, elsewhere,
+        [&](OpBuilder &b, Location) {
+          for (unsigned j = 0; j != beforeOuts; ++j)
+            storeElement(b, loc, own[j], before.getOuts()[j], particle);
+          scf::YieldOp::create(b, loc, zeros(b));
+        }, [&](OpBuilder &b, Location) {
+          auto values = scf::IfOp::create(b, loc, valid,
+              [&](OpBuilder &c, Location) {
+                scf::YieldOp::create(c, loc, evalAfter(c, particle, own, mine));
+              }, [&](OpBuilder &c, Location) {
+                scf::YieldOp::create(c, loc, zeros(c));
+              });
+          scf::YieldOp::create(b, loc, values.getResults());
+        });
+    SmallVector<SmallVector<Value>> complete;
+    for (Value source : sources) {
+      SmallVector<Value> values;
+      for (Value value : final.getResults())
+        values.push_back(shuffleFrom(builder, value, source));
+      complete.push_back(values);
+    }
+    Value inTuple = Value(arith::ConstantIntOp::create(builder, loc, 0, 1));
+    for (auto [i, loop] : llvm::enumerate(loops)) {
+      Row &row = rows[i];
+      inTuple = arith::OrIOp::create(builder, loc, inTuple, row.inTuple);
+      Value leader = arith::AndIOp::create(builder, loc, row.useWarp,
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                row.tuple.place, zero));
+      scf::IfOp::create(builder, loc, leader, [&](OpBuilder &b, Location) {
+        observeOutputs(b, loop, row.tuple.members,
+            ArrayRef<SmallVector<Value>>(complete).take_front(loop.getArity()));
+        scf::YieldOp::create(b, loc);
+      });
+    }
+    Value single = arith::AndIOp::create(builder, loc, valid,
+        arith::XOrIOp::create(builder, loc, inTuple, True(builder)));
+    scf::IfOp::create(builder, loc, single, [&](OpBuilder &b, Location) {
+      SmallVector<Value> outputs(final.getResults());
+      SmallVector<SmallVector<Value>, 1> values{outputs};
+      observeOutputs(b, md_exec::TupleForOp{}, ArrayRef<Value>{particle}, values);
+      scf::YieldOp::create(b, loc);
+    });
+    return;
+  }
   // A particle left to the second kernel writes its values of the loop
   // before, which that kernel takes.
   scf::IfOp::create(

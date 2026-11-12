@@ -1,0 +1,3925 @@
+# D[rigid-water-template]
+
+Recorded at its merge.
+
+**Propose a rigid-water template for the short-range pairs on a device in mixed precision: waters that match a template become units anchored at their oxygen, listed by a covering bound on the anchors, evaluated by one warp-cooperative fused kernel over water–water, solute–water, and solute–solute cluster pairs with the template's parameters as constants and the extra point formed in the kernel, under an execution choice `water.template` (`AUTO`, `ON`, `OFF`).**
+
+Status: design accepted on #795; implementation in progress. This decision
+closes #774 when its implementation gates pass. The seven accepted choices
+are recorded under [Maintainer's ruling](#maintainers-ruling).
+
+The existing measurements below are those of the prototype, not validation
+of the implementation. The
+derivation is in Section 4.7 of the white paper and the paragraph on the
+template's extra point in Section 6.1; this file states what is decided,
+why, and the gates.
+
+## Glossary
+
+These terms apply to this decision, its documentation and diagnostics.
+Implementation identifiers retain their spelling but describe the term
+they implement.
+
+| Term | Meaning | Implementation names |
+|---|---|---|
+| class-segmented pair list (segmented list) | One buffer of cluster-pair records, divided by class-pair tag into segments. | shared arena, pair allocation |
+| segment | The WW, SW or SS part of that buffer, with its outer and inner ranges. | WW/SW/SS ranges |
+| class | Water template or solute; selects the computation for a unit. | class, class row |
+| class pair | WW, SW or SS. | three-class |
+| unit | A matched water with anchor O and radius $r_\mathrm m$, or a solute unit: a heavy atom and the hydrogens whose bonds the constraints hold, anchored at the heavy atom, with radius $\rho$ (#799). A solute particle without such hydrogens is its own unit. | real unit, padded unit; atom unit, dependent |
+| anchor | A unit's reference point for sorting and displacement tests. | anchor |
+| mobility group | Units sharing a displacement test and refresh schedule: one group, the anchors of the matched waters and of the solute units (#799). | group, stale group |
+| refresh | Rebuild or prune of the segments invalidated by a mobility group's test. | stale-group refresh, cold refresh |
+| template kernel | The fused launch evaluating all three class pairs. | three-class loop, fused window |
+| extent | Largest distance of a unit's sites from its anchor, checked against $r_\mathrm m$. | extent, initial extent widening |
+| covering bound | The anchor-distance conditions $R+2r_\mathrm m$ for WW, $R+r_\mathrm m+\rho$ for SW and $R+2\rho$ for SS. | covering predicate |
+| rule (A) | The extra point's constant transpose used by template dynamics. | constant site transpose |
+| rule (B) | The true bisector transpose used for written-frame forces. | general frame evaluator |
+
+## Why
+
+In an aqueous system most pairs within $r_c$ are pairs of water sites:
+93.3% in ubiquitin with OPC and 0.15 M KCl (25,929 atoms, 6,166 waters),
+against 4.1% solute–water, 2.3% solute–solute, and 0.26% involving ions.
+The general structures (white paper, Sections 4.3 to 4.5) treat every site
+as a particle: an OPC water is four members of the lists, four positions
+tested for displacement, and 16 site pairs per pair of molecules whose
+charges and types are read from tables. When the water is rigid, its
+geometry and parameters are known when the program is compiled.
+
+Step 0 of #774 measured the alternatives first (RTX 5090): skipping zero
+terms in the present kernel was 1.4 to 3.3% slower per step, grouping the
+particles by class 1.3 to 8.7 times slower, and a kernel of one thread per
+pair of molecules 7 to 10 times slower than `main`'s group kernel. Only the
+warp-cooperative layout, (c3) of #774, gained. Stages 1 and 2 then measured
+the whole short-range path of that layout on an RTX 4090.
+
+## What is decided
+
+### 1. The template and its match
+
+A *template* is a water model that the compiler recognizes by matching the
+topology, molecule by molecule. A molecule matches when all of these hold:
+
+- the atom count and order: O, H, H for three sites; O, H, H and one extra
+  point for four;
+- the charges, equal to the template's;
+- the Lennard-Jones types, with Lennard-Jones on the oxygen alone in the
+  first version (the hydrogens' types carry $\varepsilon = 0$);
+- three distance constraints, O–H, O–H, and H–H, that hold the molecule
+  rigid (`rigid_water`, SETTLE in double and M-SHAKE in mixed precision);
+- for four sites, the extra point's definition: Amber's distance along the
+  bisector, with its owner the oxygen and its two atoms the hydrogens;
+- no other nonbonded term on its sites: no `[[energy.pair]]` term or
+  `[[energy.parameter]]` that reaches them, no LJ-PME, and not in the
+  selection of `[free_energy]`.
+
+Molecules that do not match stay on the general path, and existing inputs
+run as today. `mdir check` and the run's summary give each reason a count
+(below). CHARMM's TIP3P, whose hydrogens carry Lennard-Jones
+($\varepsilon = 0.046$ kcal/mol, $R_\mathrm{min}/2 = 0.2245$ Å), is a
+different template; the first version reports it as a mismatch, "LJ on the
+hydrogens". Making the set of LJ sites a parameter of the template is
+later work, to be measured before it is chosen, since a pair of such
+molecules has 9 LJ terms instead of 1.
+
+Flexible water and partially constrained water stay on the general path.
+Single-site ions are not a template in the first version: they go into
+the solute clusters (below), where stage 2 measured them as part of the
+solute–water and solute–solute work.
+
+### 2. The anchor and the covering bound
+
+Each matched molecule $A$ is listed by its oxygen, the anchor
+$\mathbf x_{o(A)}$. Its *extent* is
+$\varrho_A(\mathbf x) = \max_{a\in A}\lVert\mathbf x_a - \mathbf x_{o(A)}\rVert$,
+the extra point included. The compiler takes
+
+$$
+r_\mathrm m = \max\big(r_\mathrm{OH},\ r_{os}\big) + \delta_\mathrm m ,
+$$
+
+the largest distance of a site from the oxygen on the rigid geometry: the
+constraint length $r_\mathrm{OH}$, and for four sites the distance
+$r_{os} = \alpha\lVert\mathbf d_j + \mathbf d_k\rVert$ of the extra point,
+from its weight $\alpha$ (Section 3),
+plus a margin $\delta_\mathrm m$ for the residual of the constraints. For
+the models in use the hydrogens set it: OPC $0.8724 + \delta_\mathrm m$ Å,
+TIP3P $0.9572 + \delta_\mathrm m$ Å; the prototype took
+$\delta_\mathrm m = 10^{-3}$ Å, and the largest extent it observed on its
+trajectories was 0.872444 Å (OPC) and 0.957214 Å (TIP3P).
+
+**Covering bound.** If $\varrho_A, \varrho_B \le r_\mathrm m$, the
+triangle inequality gives, for every site $a\in A$ and $b\in B$,
+$\lVert\mathbf x_a - \mathbf x_b\rVert_\mathrm{mi} \ge
+\lVert\mathbf x_{o(A)} - \mathbf x_{o(B)}\rVert_\mathrm{mi} - 2r_\mathrm m$,
+so every site pair within $r_c$ belongs to a pair of molecules whose
+anchors are within $r_c + 2r_\mathrm m$. The water list is therefore a
+structure over the anchors with the cutoff $r_c + 2r_\mathrm m$ and the
+reach $R + 2r_\mathrm m$, and the theorem of validity of Section 4.1 (D80)
+applies to it unchanged, with $d$ the largest displacement of an anchor:
+
+$$
+2d \le \min(\mathbf m)\,(R + 2r_\mathrm m) - (r_c + 2r_\mathrm m) .
+$$
+
+For a solute particle $i$ and a water $B$ the bound is
+$\lVert\mathbf x_i - \mathbf x_b\rVert_\mathrm{mi} \ge
+\lVert\mathbf x_i - \mathbf x_{o(B)}\rVert_\mathrm{mi} - r_\mathrm m$; the
+solute–water list has the cutoff $r_c + r_\mathrm m$ and the reach
+$R + r_\mathrm m$, and its test takes $d$ over the solute particles and the
+anchors. The solute–solute list is the general one. The inner lists of
+the dual list (D114) take $R_\mathrm{in}$ in place of $R$ and the same
+conditions. In the cell of the build ($\mathbf m = \mathbf 1$) every
+condition is the half-skin test $d \le s/2$. The proof needs the extents
+at the current positions, not only at the build: the extent check of
+Section 6 below provides it.
+
+**Solute units (#799).** Where the constraints hold the bonds of the
+hydrogens, a solute unit is a heavy atom $X$ and its constrained
+hydrogens, anchored at $X$; an unmatched rigid water is a unit of its
+oxygen; every other solute particle, an ion or a stored extra point, is its
+own anchor. The units partition the solute. The constraints' failure test,
+which stops a run (D225), keeps $\lvert r^2/d^2-1\rvert\le\tau$ after
+every position constraint, so a member is within
+$d\sqrt{1+\tau}<d(1+\tau)$ of its anchor; the compiler takes
+
+$$
+\rho = d_{XH}^{\max}(1+\tau),
+$$
+
+the longest constrained member–anchor length with the tolerance of the
+positions ($\tau = 10^{-4}$ in mixed precision). The same triangle
+inequality as above gives, for members $a$ of $A$ and $b$ of $B$,
+$\lVert\mathbf x_a-\mathbf x_b\rVert_\mathrm{mi}\ge\lVert\mathbf x_{X(A)}-\mathbf x_{X(B)}\rVert_\mathrm{mi}-\rho_A-\rho_B$,
+so anchors within $R+\rho_A+\rho_B$ cover every site pair within $R$:
+the SW list takes the reach $R+r_\mathrm m+\rho$ and the SS list
+$R+2\rho$ (one $\rho$ for all units, zero without anchored members).
+Each member keeps its own entries, masks, exclusions and 1–4 scaling: a
+unit only selects candidates, so the search and the prune read the
+anchor's reference point for every member, in the anchor's frame: the
+member's packing cell may differ from the anchor's by whole lattice
+vectors, so that the member's frame lies at the minimum image of its bond
+from the anchor's, and its frame minus its point is that bond, within
+$\rho$, whatever image of the member the input holds. The displacement
+test of D80 runs on the anchors alone. Before the first
+constraint the input's measured member–anchor distances widen $\rho$ for
+that build, as the water extents widen $r_\mathrm m$; afterwards a build
+that measures more than $\rho$ stops the run. Without constrained
+hydrogens (any solute hydrogen not held to an anchor) the template does
+not apply: `ON` refuses, naming the count, and `AUTO` takes the general
+path from the start (the up-front constraints ruled on #795).
+
+A molecule is read whole: the packing takes each site in the image of its
+oxygen, which is exact because $r_\mathrm m$ is far below half an edge.
+The lists hold every image of every anchor pair within their reach when
+$R + 2r_\mathrm m < \min_a L_a$, the condition of D242 with the reach of
+the water list; the builder refuses a longer reach and the run stops a
+barostat that takes the cell below it, as D242 does.
+
+**The cutoff stays a cutoff of sites.** The lists only select pairs of
+molecules. Each site pair is still evaluated with its own $r < r_c$, so
+the energy is that of the general path. A cutoff on the anchors' distance
+would include or leave out whole molecules at the boundary, a different
+model [[Steinbach1994]](../references.md#steinbach1994); the template does
+not use it.
+
+### 3. The extra point: placed in the kernel with constant weights
+
+On the rigid geometry the bisector placement of Amber's extra point is the
+linear combination
+
+$$
+\mathbf x_s = \mathbf x_o + \alpha(\mathbf d_j + \mathbf d_k), \qquad
+\alpha = \frac{r_{os}}{2r_\mathrm{OH}\cos(\theta_\mathrm{HOH}/2)},
+$$
+
+with $\mathbf d_j = \mathbf x_j - \mathbf x_o$ and $r_{os}$ the distance of
+the site from the oxygen ($\alpha = 0.1477206$ for OPC). The template
+kernel forms the extra point from the three atom positions with this
+constant $\alpha$: a molecule is read as three positions, and the site is
+never loaded or stored for the short-range pairs. The definition of the
+site in the topology is kept (#774): force outputs, derivatives, and every
+path outside the template still use the bisector.
+
+The maintainer chose rule (A) for dynamics (white paper, Section 6.1).
+Rule (B), used by the prototype, is described for comparison:
+
+- **(A) The constant transpose of the linear placement.** The oxygen takes
+  $(1 - 2\alpha)\mathbf f$ and each hydrogen $\alpha\mathbf f$. These are the
+  exact derivatives of the energy that the kernel evaluates, at every
+  configuration; the site needs no accumulator and no geometry, and its
+  correction of the virial, $\sum_k(\mathbf x_k - \mathbf x_s)\otimes\mathbf
+  F_k$, is zero.
+- **(B) The bisector Jacobian evaluated with the rigid geometry's
+  constants**, which the stage 2 prototype used: with
+  $\hat{\mathbf u} = \mathbf d_j/r_\mathrm{OH}$,
+  $\hat{\mathbf v} = \mathbf d_k/r_\mathrm{OH}$,
+  $\hat{\mathbf b} = (\mathbf d_j + \mathbf d_k)/\lVert\mathbf d_j + \mathbf d_k\rVert_\mathrm{rigid}$,
+  and $\mathbf g = \mathbf f - (\mathbf f\cdot\hat{\mathbf b})\hat{\mathbf b}$,
+  hydrogen $j$ takes $\alpha(\mathbf g - (\mathbf g\cdot\hat{\mathbf u})\hat{\mathbf u})$,
+  hydrogen $k$ likewise with $\hat{\mathbf v}$, and the oxygen the rest. No
+  square root or division; on frames constrained by SETTLE it matched
+  `main`'s spreading to $1.3\times10^{-9}$ (#774, (c3)). Its virial needs
+  the correction above.
+
+On the manifold of the constraints the two rules, and `main`'s bisector,
+give atom forces that differ by a vector in the span of the gradients of
+the water's three constraints (Section 6.1 of the paper proves it). The
+constraint solver removes such a vector exactly, the total force and
+torque of the molecule are unchanged, and so are the constrained
+trajectory, the kinetic energy, and the virial of the rigid groups that
+the barostat takes. What differs is the unconstrained atom force that an
+output would write, and everything off the manifold: the coordinates of
+the input before the first step (which are not constrained, as in sander)
+and the residual of the constraints.
+
+The two rules therefore have different validation targets.
+*Atom-wise equality* of the forces with `main` holds for (B) on the
+manifold and not for (A); *dynamical equivalence* under rigid constraints
+holds for both. The gates of each are under Gates below.
+
+### 4. The class-segmented pair list
+
+One spatial sort per kind, with the same keys: water clusters of 16 whole
+molecules, sorted by their anchors, and solute clusters of 16 particles,
+sorted as the groups of D89, with the ions among them. Cluster pairs are
+tagged:
+
+- **WW**, water cluster × water cluster, each unordered pair once;
+- **SW**, solute cluster × water molecule, every pair;
+- **SS**, solute cluster × solute particle, each unordered pair once, with
+  the excluded pairs cleared from the masks at the build as in D89.
+
+The class-segmented pair list is one buffer of cluster pairs. Its three
+class-pair segments are ranges of that buffer, compacted by tag,
+with one offset per segment. The spatial search and sort run once. A warp
+stays within one segment in the fused launch, so its tag branch is uniform.
+One mobility group, the anchors of the waters and of the solute units,
+sets one displacement-test cadence for all three segments (#799; it
+replaced two groups, water anchors and atoms, whose atom test the
+protein's hydrogens tripped every 2.6 steps on ubiquitin). The cadence
+keeps the outer and pruned references of D114.
+The pruning of the solute segments is folded into the pruning in the loop
+(D284), rather than the separate launch of the prototype.
+
+For $P$ particle classes there are $P(P+1)/2$ unordered class-pair segments,
+including self-pairs, but only $C\le P$ displacement tests, one per mobility
+group, and one storage buffer. Four classes (water, solute, ions and
+perturbed atoms) give ten segments and one test while all of them are
+anchored. Segment $(a,b)$ refreshes at the faster participating cadence.
+Segments without a measured specialization gain retain the general path
+inside the same launch; a segment is not a separate kernel.
+
+Only intramolecular pairs of a water are excluded, and two different
+molecules have none, so the WW and SW work has no exclusion check: it is
+removed structurally. The validity of each entry and the cutoff test of
+each site pair remain.
+
+### 5. One fused, warp-cooperative launch
+
+The three classes run in one launch, a class per warp, each warp taking a
+block of 64 entries as the groups do (`emitGroupPairKernel`):
+
+- a lane holds one water of the warp's cluster: its three atom positions,
+  its extra point formed once, and its force accumulators;
+- the partner molecules' positions and accumulators rotate through the
+  half-warps by shuffles, so a partner's sites, its extra point included,
+  are formed once per entry and reused by the 16 molecules of the cluster;
+- the partner's forces are accumulated in registers along the rotation and
+  written once per entry, and the cluster's forces once per block, with one
+  atomic addition per atom: fewer global atomics than one per site pair;
+- the template's site pairs are unrolled with their charge products and
+  Lennard-Jones coefficients as constants, and the pairs whose terms are
+  zero are not emitted: for OPC 9 Coulomb and 1 Lennard-Jones term per
+  molecule pair, against 16 general site pairs; for TIP3P 9 Coulomb and
+  1 Lennard-Jones term.
+
+SW lanes hold a solute particle and rotate molecules; SS lanes are the
+general group kernel. The pair expression is cloned from the existing
+scalar primary-pair body, with its actual tables and parameters. The
+image-aware `md.sum_template_window` exposes the geometry and per-site
+cutoffs; its first force and strain rules differentiate that arithmetic.
+The physical specialization uses the class-segmented pair list (#774,
+"Built from primitives").
+
+The kernel reads the waters packed by molecule in f32, in the frames of
+D95, and writes their forces back: a pack and an unpack each step, which
+take the place of `main`'s gather into the order of the places. Keeping the
+waters in a layout by molecule is #794.
+
+### 6. The test of validity, fused into the integrator
+
+As for the general structures (D80, `md-exec-expose-validity`), the tests
+are reductions of booleans fused into the loop that writes the positions
+that the forces will see, with no kernel and no wait of their own: one
+test of the anchors, those of the waters and of the solute units, for all
+three segments (#799). The prototype read its test back to the host every
+step; the implementation does not. A member of a solute unit is not
+tested; the thread of its anchor publishes the unit's reference point.
+
+The covering bound also needs $\varrho_A \le r_\mathrm m$ at the current
+positions. The proposal is to test it in the same fused loop, by the
+thread that constrains the molecule, which holds its three atoms. For
+$0\le\alpha\le1/2$, two squared O–H distances cover the formed site by
+the triangle inequality. For larger weights the check includes that site's
+squared extent as well, a distinction made at compile time. Before the first step no
+constraint has run, since the positions of the input are not constrained
+(as in sander): there the extents are measured at the build, by the
+packing, which reads each molecule whole, and the water list takes
+$\max(r_\mathrm m, \max_A\varrho_A)$ for that build. Between builds the
+constraint step tests them. A molecule beyond $r_\mathrm m$ after a
+constraint step stops the run, as the maintainer ruled below.
+
+### 7. Selection: the execution choice `water.template`
+
+An execution choice in the sense of #790, of its "same accuracy" class:
+
+| Value | Meaning |
+|---|---|
+| `AUTO` (default) | The template where a declared rule says it pays, the general path elsewhere |
+| `ON` | The template wherever it applies; a program where it cannot apply is refused, naming the reason |
+| `OFF` | The general path; the program is that of `main` |
+
+It applies on a GPU, in mixed precision, outside the deterministic mode,
+to a program of dynamics with at least one matched water. `AUTO`'s rule is
+declared with the choice and set by the implementation's end-to-end
+measurements; `mdir tune` (#790) may pick per system. It must be able to
+choose the general path where the template does not pay: stage 2 measured
+ubiquitin with TIP3P at 1.015 times `main`'s step. The proposed first rule
+is recorded in the maintainer's ruling below.
+
+The record of the choice follows #790: `mdir check`, the log, and the run
+manifest state the value, its source (`AUTO`, tune, or given), and what the
+template took. A run continued from a checkpoint may change it, as the
+other execution keys (D129, D172), with a note in the log. For example:
+
+```
+template kernels: water.template = AUTO -> on (4-site water, mixed, GPU)
+  water OPC (4 sites, rigid, 6166 copies): 1 LJ and 9 Coulomb site pairs per pair of molecules,
+    the extra point formed in the kernel; r_m 0.8734 A
+  cluster pairs: WW, SW, SS in one launch; ions and solute in solute clusters
+  not matched: 0
+```
+
+and, for a run where a model does not match: `not matched: 2400 TIP3 (LJ on
+the hydrogens)`.
+
+## What stays unchanged
+
+- **The deterministic mode** keeps the general path; so do double
+  precision and the CPU target.
+- **`OFF`, and every program without a matched water**, give the program of
+  `main`: `mdir emit` of its stages is byte-identical, and the corpus and
+  the checkpoints are unchanged.
+- The definition of the extra point in the topology, its placement and
+  spreading kernels for the stored particle (the reciprocal sum and the
+  other terms read it), the reciprocal sum, the bonded terms, the
+  constraints, and the integrators. Forming the extra point in the PME
+  spread and the gather is #738, which takes this decision's rule so that
+  the two agree.
+- The neighbor structures of the general path, D261's choice between them,
+  and the skins of D281 for the solute lists.
+
+**Not bitwise equal to `main`.** With the template the step differs from
+`main`'s in the order and the rounding of its sums, within the error of
+mixed precision: the extra point's placement (linear with a constant
+weight, against the bisector's normalizations) and its spreading rule;
+the order of the accumulation (along the rotation, one atomic addition per
+atom, in another order of the clusters); the order of the f32 operations
+(charge products folded as constants, site displacements formed from the
+molecule's frame); and the layout of the data (packing by molecule, a
+different sort and different lists). This is one reason the deterministic
+mode keeps the general path; the summary and the docs say so.
+
+## Measurements of the prototype
+
+Stage 2 of #774: a prototype of the whole short-range path outside the
+repository, RTX 4090, mixed precision, against `main` with the groups
+(12 / 9.6 Å) on the same device, oxygen anchor. The whole-step figures
+are composed: the prototype's path plus `main`'s kernels that stay plus
+`main`'s gap between wall time and kernel sum. The implementation's own
+measurements replace them.
+
+| System | Composed step (µs) | `main`, same water (µs) | Ratio |
+|---|---|---|---|
+| ubiquitin, OPC, 0.15 M KCl, two lists, one launch | 166.3 | 183.3 | 0.907 |
+| ubiquitin, OPC, one list, one launch | 169.5 | 183.3 | 0.925 |
+| ubiquitin, OPC, two lists, three launches | 186.2 | 183.3 | 1.015 |
+| OPC water, 16,329 waters | 227.7 | 293.3 | 0.776 |
+| OPC water, 4,200 waters | 116.7 | 140.0 | 0.833 |
+| TIP3P water, 16,329 waters | | | 0.920 |
+| TIP3P water, 4,200 waters | | | 0.898 |
+| ubiquitin, TIP3P, two lists, one launch | | | 1.015 |
+
+- **The launch.** For ubiquitin with OPC the short-range path took 68.0 µs a
+  step in one launch and 87.8 µs in three; launched apart, the
+  solute–water (16.1 µs) and solute–solute (9.8 µs) kernels were bound by
+  latency, while one launch took 44.8 µs for all three classes against
+  40.0 µs for water–water alone.
+- **The lists.** The water lists were built about every 55 steps and pruned
+  every 8.5; the solute lists built every 38 to 43 and pruned every 3;
+  `main`'s groups build every 20.7 steps and prune every 2.8.
+- **Where the saving comes from.** In the water boxes (stage 1) about 60% of
+  the saving was the pair kernel and 40% the list. That split holds for the
+  water boxes only: in the protein the solute lists and the pack and unpack
+  change it, and for ubiquitin with TIP3P they used up the saving.
+- **The remainder.** `main` runs OPC at 1.25 times TIP3P's step for
+  ubiquitin. With the template the remainder is 19.6 µs. Per-kernel sums
+  put about 12 µs of the difference in the kernels outside the short-range
+  path in the extra point's placement and spreading, and less than 1 µs in
+  PME, since D262 already leaves the oxygen out of the spread (#774,
+  remainder analysis; the implementation confirms the assignment). That is
+  #738's work.
+- **Accuracy.** Against an f64 brute force over every non-excluded site
+  pair within $r_c$ with the bisector extra point and its exact Jacobian
+  (itself within $6\times10^{-10}$ kJ/mol/nm of `main` in double for TIP3P,
+  and $5.9\times10^{-6}$ for OPC with the constraint directions projected
+  out, #789), with forces projected the same way:
+
+  | System | Largest reference force | Max / RMS error | Energy (relative) |
+  |---|---|---|---|
+  | ubiquitin, OPC | 3998.8 | 0.034 / 0.0022 | $1.0\times10^{-7}$ |
+  | ubiquitin, TIP3P | 2582.6 | 0.020 / 0.0015 | $7.2\times10^{-8}$ |
+  | TIP3P water, large | 3064.2 | 0.035 / 0.0025 | $3.3\times10^{-8}$ |
+  | TIP3P water, small | 2759.4 | 0.015 / 0.0014 | $2.4\times10^{-8}$ |
+
+  Forces in kJ/mol/nm. Every case is within `main` mixed's own error on the
+  total forces, the criterion of step 0. The one launch agreed with the
+  separate kernels to $10^{-3}$, the order of the atomic sums.
+- **Coverage.** 50 checks on 300-frame runs, just before a pruning, just
+  before a build, and just after one, for both kinds of list and both list
+  modes: no needed pair missing, none duplicated, no excluded pair in a
+  solute–solute list.
+
+### RTX 5090 replay reference
+
+Measurement only. Unchanged source SHA256 `67b7f20293c24783e59798eb99bd2afd5ead2cc810c1d5eecedaeeee5bbe5f81`, CUDA 13.2, `-O3 --generate-line-info -arch=sm_120 -DFUSE_MINB=1`, uncapped and without fast math. Native head `f6999f3cc7dc05603841edf55dbdbc49c2b238c3`; main reference `af7a9f47bd6871324f6a4fc158ee1855f7f643c1`. Every cell is independent job A / B.
+
+| System | Prototype evaluation, us/call | Prototype short-range kernel path, us/frame | Composed whole-step ESTIMATE, us/step | ESTIMATE/main |
+| --- | --- | --- | --- | --- |
+| ubq-opc | 31.128 / 31.120 | 50.131 / 50.077 | 113.902 / 113.933 | 0.93566 / 0.93937 |
+| ubq-tip3p | 29.763 / 29.692 | 49.192 / 49.080 | 100.519 / 100.456 | 1.03211 / 1.03250 |
+| opc-small | 24.236 / 24.231 | 31.096 / 31.087 | 78.136 / 77.992 | 0.84843 / 0.84792 |
+| opc-large | 53.024 / 52.971 | 62.694 / 62.635 | 143.412 / 143.264 | 0.79899 / 0.79971 |
+| tip3p-small | 27.808 / 27.757 | 34.712 / 34.649 | 73.866 / 73.765 | 0.97280 / 0.97291 |
+| tip3p-large | 54.819 / 54.887 | 64.500 / 64.578 | 128.428 / 128.576 | 0.93799 / 0.93822 |
+
+The short-range path and ESTIMATE are the prototype's, not measured full dynamics. Composition retains main's host gap and other kernels. Replay uses consecutive main frames at 2 fs spacing, absolute steps 53001–55000 for ubiquitin and 1–2000 for boxes; selected prototype windows retain 53101–55000 and 101–2000. Native evolves independently over its unchanged 10,000-step controls. Prototype reads f32 DCD geometry, uses f32 list geometry and archived force rule B; native stores f64 positions, uses f64 coverage/pruning and rule A. Both use f32 pair/force arithmetic and atomics. Prototype force-only evaluation follows separate pruning; native common-force evaluation includes fused pruning and coexists with periodic energy work. Different histories and work volumes limit interpretation.
+
+Both jobs exited zero: 36 successful native/main wall runs, 35 stationary accepted; all 12 prototype kernel plateaus accepted and 36 captures completed. Job A ubiquitin OPC ON was nonstationary, retained/excluded without an accepted ratio, substitution or retry. Prototype evaluation A/B relative spread is at most 0.2403%. No numerical bound or source changed; this measurement does not mark the PR ready.
+
+## Prototype/native mechanisms and correction plan
+
+This table is the performance plan required by the search-first ruling.
+The controlled reference uses the unchanged prototype on RTX 5090 and
+native `f6999f3c` against `af7a9f47` as the initial baseline. Current search
+includes the retained S1, S3 and S4 corrections; rows and isolated results below
+record their measured effects. Evaluation changes `33dfacf7` and `c5f4ea57`
+are parked for after search. A planned row is
+not closed by a smaller instruction count alone: its correction needs
+its own validation and two independent timing comparisons. Every row
+must be closed or kept with a stated reason before ready.
+
+Times below are GPU microseconds per step unless marked per call or per
+refresh. Ranges cover the six systems and both independent captures.
+An evaluation subpart without an isolated measurement is marked as such;
+the common evaluation time must not be assigned to each subpart and added.
+The detailed six-system diagnosis below supplies the per-refresh values,
+launch sizes, work counts and measurement qualifications.
+
+| Stage | Prototype: algorithm, precision, work and RTX 5090 time | Native: algorithm, precision, work and RTX 5090 time | Difference and status |
+|---|---|---|---|
+| R1: integration and template-writer fusion | Full integration is outside the isolated prototype search/evaluation attribution; no isolated prototype value is claimed. Main fuses the corresponding drift/constraint/writer closure into two kernels. | The template-writer exclusion in `recordIntegration` leaves three kernels for TIP3P drift, position constraints and publication. At W1, the closure costs 11.276–23.598 us/step versus main's 5.834–10.240; excess is 5.433–14.826 across the three systems and A/B captures. Arithmetic precision is unchanged. | **Measured at `8177b18a`, retained only for one marked constraint family:** full rest improves 1.97–2.00 us/step on the small TIP3P box and 6.76–6.80 on the large box. Mixed four-family ubiquitin TIP3P regresses 6.14–6.16 and its new admission is discarded. Preserve existing proofs, final SSA precision, history and flag event/wait; ordinary integration is unchanged. This is a shared completed-output observer with a family-count precondition, not a named-model kernel. |
+| R2: position publication and validity | Full native position publication is outside the isolated prototype attribution; no isolated prototype value is claimed. Main's matching OPC writer costs 1.431–3.100 us/step. | W1's packed-frame publication, epoch-specific reference comparisons and five validity flags cost 5.225–13.809 us/step in OPC; excess is 3.776–10.708 across the three systems and A/B captures. Whole coordinates, extent, fractions and motion tests use f64; published packed coordinates use f32. | **Measured at `8177b18a`, discarded:** none of the three OPC full-rest budgets improves against either W1 reference. The audited ubiquitin OPC writer remains 449 PTX instructions with the same opcode histogram and 40 registers; SASS only loses one MOV (455 to 454 non-NOP instructions). Its instruction schedule/register names differ, so it is not byte-identical, but no arithmetic reduction or measured gain justifies retention. Restore the original writer/window/validity implementation. |
+| Spatial sort | Per-active-species CUB radix sort of column/z keys; f32 geometry, integer keys, stable input order; 0.218–0.796. | One shared joint stable counting-radix order with fixed-ID ties; f64 wrapping then f32 keys; 49 launches per refresh; 0.940–2.643. Rank restoration scans each item's bucket, giving per-digit work $\sum_b n_b^2$. | **Planned S6:** reduce rank/launch work through the shared primitives, in a separate measured correction. The initial replacement of two insertion sorts is closed by `b0f52fad`; stable fixed-ID ordering stays. A change to pre-existing shared code requires its own scope and gates. |
+| Grid and groups | Water-density grid and separate solute sort grid; f32 keys, integer gap/span cuts into at most 16 units; 0.169–1.106 for group planning. | Joint-population, arena-bounded grid; shared integer column/gap/span planner and explicit starts/lengths; 0.251–1.832. First replay-frame groups are 458/131 versus 429/152 for ubiquitin OPC. | **Closed `4abdd348`:** joint stable groups and column cuts. **Planned S7:** measure per-species grid choices within the same arena bound. **Kept on purpose:** general lattice-frame/image coverage; no nearest-image shortcut without proof. |
+| Boxes | One Cartesian f32 box per group, 16-lane reductions; source requests 24 scalar reduction shuffles; 0.022–0.086. Search reuses its first-group box and skips padded partner lanes before box loads. | After W1: Cartesian f32 and fractional f64 boxes; native f64 Cartesian producer narrows once, shared anchors feed pair/box checks, and distinct first-frame subsets keep the general proof. Cache build costs 0.063–0.153 per step; exact certificate setup is included in candidate cost, not isolated. | **S0 closed, discarded:** `ac4644f9` guarded padded partner lanes; CPU 6/6 and GPU 22/22 passed, but two independent comparisons found no consistent gain (search/refresh -0.49% to +0.58%, unchanged resources). The guard was removed; retain the original padded-lane arithmetic. S0 measurements are recorded below. **W1 closed by `5ea35cdb`, retained:** certified f32 Cartesian boxes and shared anchors; preparation is 3.61–3.69 us per attempt, versus S4 5.31–5.39. Exact CPU 6/6, GPU 22/22 and focused sanitizer 1/1 pass. B1/B2 are not standalone corrections. **Kept on purpose:** f64 fractional enumeration and the general single-image proof until a separate outward proof replaces them. **Superseded by D1 below:** a widened f32 fractional interval per partner is that outward bound; the search no longer enumerates images per column or calls the single-image proof. |
+| Candidate search | Direct column endpoints for WW, direct group spans for SW/SS; backward WW/SS ranges removed before boxes; shared Cartesian f32 first anchors; 1.0–1.3 in water boxes, 3.1–3.3 in ubiquitin. | After W1: class-specialized direct endpoints with early backward clipping, no z binary searches, immutable Cartesian f32 anchors and certified decisions/original f64 shell. Candidate cost is 7.10–9.02 in water boxes and 45.24–47.79 in ubiquitin; explicit native frame/image enumeration remains. The complete nine-kernel budget is recorded below. | **Standalone S2 stopped by the whole-port ruling:** its source is reverted without timing it. Early backward-range removal belongs to W1 as part of the complete prototype search structure. **S3 closed by `8115bceb`, retained:** direct descriptor-column endpoints reuse dead scratch and preserve retained classes, SS offsets and z searches. CPU 6/6 and GPU 22/22 pass. All 12 net search-stage comparisons improve 6.8–10.8%, including new clear/scan costs; all 11 available matched wall comparisons improve 0.48–3.94%. Detailed accounting follows. **S4 closed by `f9ea87ef`, retained for modest local gain:** immutable f64 anchor/i32 ID caches use 896 application shared bytes per block. CPU 6/6, GPU 22/22 and focused four-mode sanitizer 1/1 pass. All 12 net search/ref comparisons improve 1.13–4.79%; whole-step results are mixed, including two recorded slowdowns. Do not claim a consistent end-to-end gain. **W1 closed by `5ea35cdb`, retained for measured gain:** the complete nine-kernel stage improves all 12 per-attempt comparisons by 13.61–60.25%, and all 11 eligible normalized wall comparisons by 3.59–9.05%. General covering-image proof, entry format/masks/ownership/order, epochs and validity stay fixed. **Kept with reason, not prototype-equivalent:** the ordered general frame/image iterator and conservative fractional ranges preserve existing coverage/order. Candidate time remains 7.00–15.05 times the archived prototype per step. The later cooperative SW row experiment `1c430fc1` is **measured and discarded**: against retained parent `30577a08`, ubiquitin OPC construction rises from 52.702572 to 78.358218 us/step and its SW candidate kernel from 24.770141 to 49.456175. Registers rise from 128 to 255 and static shared bytes from 1,152 to 45,712; no hardware limiter is inferred. The partial [screen](rigid-water-template-sw-screen.json) includes all four completed captures; the independent transplant force failure stops further work. No SW code is retained. **Superseded by D1 below:** all three classes read the candidates of their visited columns once per frame subset in full warp batches, and the column/image iterator is removed. |
+| Pruning | Separate f32 Cartesian pruning with shared first anchors and CUB selection; 1.397–1.788 in water boxes, 7.436–7.609 in ubiquitin. | Fused pruning in the production evaluation; f64 hybrid-reference geometry, exact class incidence and image accounting. Its cost is not isolated in the current common evaluation. | **Kept on purpose:** fusion; the earlier separate-prune experiment `3eaad4f7` did not establish a total win. **Planned P1:** apply a proved, exact-membership f32/refined predicate separately from search. Keep reference epochs and certified validity reaches f64. |
+| Evaluation: loads | Specialized water coefficients and dynamic solute parameters; compact two-word entries; table coefficients and pair values f32. Included in 24.2–54.9 per common call; not isolated. | Actual source parameter bindings; four-word entries with explicit image/mask fields and original-member mapping; two indexed WW LJ coefficient loads remain. Included in 32.2–91.9 per common call; not isolated. | **Planned E3, after search:** invariant WW LJ operands, preserving coefficient bits and mutable bindings. **Kept on purpose:** explicit image domain, bounded-capacity records and original-particle mapping. Do not narrow their supported domain to match the prototype. |
+| Evaluation: extra point | Linear forward site geometry; the partner site is formed from its rotated frame. The force convention is rule B. Part of evaluation; no isolated time. | Exact typed source `alpha*(H1+H2)` cached per loaded partner and rotated with local geometry; dynamics uses rule A. Part of evaluation; no isolated time. | **Planned E4:** compare rematerialization with the rotated cache as its own correction after the approved evaluation items. **Kept on purpose:** source placement and the approved force convention. Anchor-cache experiment `8de4edec` was discarded by `d53ff917` for no clear measured gain. |
+| Evaluation: radial and LJ | f32 radial tables and scalar LJ arithmetic; one coefficient-vector load per Coulomb site contribution. Part of evaluation; no isolated time. | Same common pair-body interface, D94 criterion and analytic fallback; f32 pair arithmetic. Fixed water coefficient folding retains its existing precision. Part of evaluation; no isolated time. | **Closed `f0151e73` / `8d2cd418` / `f6999f3c`:** common radial route, its oracle and scalar radial forces. **Kept on purpose:** existing table error/admission contract; no approximation change to obtain speed. WW coefficient invariants remain E3. |
+| Evaluation: force form | Scalar radial factor times site displacement, site accumulation; WW static footprints are OPC 348 PTX / 431 SASS and TIP3P 321 / 391, excluding SASS NOPs. | Scalar radial factor times displacement; live site accumulators and one post-accumulation rule-A transpose; OPC 707 / 575, TIP3P 621 / 497. | **Closed `d487f859` / `f6999f3c`:** approximately 10–24% normalized improvement over pre-radial native. **Planned E1:** restore the parked accumulator-free norm guard `33dfacf7` before ready; unproved scalar expressions retain general AD. General `Differentiate` stays unchanged. |
+| Accumulation and formed-site distribution | f32 site sums/atomics; archived rule-B distribution. External unpack is measured separately; distribution inside evaluation is not isolated. | f32 site sums/atomics; rule A once at the molecular write boundary. Force-bearing observations use the isolated general rule-B evaluator. Distribution inside evaluation is not isolated. | **Kept on purpose:** the approved rule-A dynamics, rule-B observations, and general deterministic route. **Final gate:** all six systems, both OPC boxes included, compare energy/force/molecular virial to f64 brute force; project force differences off constraint directions under the unchanged declared bounds. |
+| Launches and sizes | Search uses two group warps per 64-thread block; small-box WW grids 140–143, large 538–547. Common evaluation uses its archived specialized launches. | After W1: three class-specialized searches each use two group warps per 64-thread block and original row/ordinal compaction. The whole search stage has nine launches. Empty classes retain a minimum-grid launch (about 0.4 us each), and inactive rows copy retained entries; these costs are included. Common evaluation remains one combined launch. | **S1 closed by `5652560d`, retained:** two-warp candidate blocks improve all 11 available normalized comparisons by 1.36–6.07% and all 12 search/refresh means by 12.4–25.8%; one nonstationary wall timing is excluded without retry. CPU 6/6 and GPU 22/22 pass. Box and clear launches retain their sizes; calculated resident warps decrease, not increase. Details and row-work diagnosis follow. **W1 launch port closed by `5ea35cdb`:** 64-thread specialized WW/SW/SS launches and fixed global row IDs; empty/inactive native publication semantics remain explicit. **Planned E2, after search:** restore and measure the parked local mask stream `c5f4ea57`. **Kept on purpose:** current evaluation launch until a separate experiment demonstrates a gain. |
+| Search row scheduling | One warp owns each first group; 64-thread blocks, f32 search; included in the search time above. | One warp owns each original class row; W1 uses separate 64-thread class launches with certified f32 Cartesian geometry and retained f64 general query proof. Ubiquitin SW costs 618–627 us per attempt and remains the largest candidate component. No new per-row clocks are inferred from launch p99/max. | **D0 completed at S4:** six exact-output-preserving fixed-frame captures show the latest/longest WW row spans 99.93–99.95% of instrumented kernel wall. Instrumentation overhead and all stage distributions follow below. **W1 closed by `5ea35cdb`:** its measured complete-stage gain is retained. The remaining general-iterator mismatch is explicit above; further whole-search design awaits a ruling rather than another single-mechanism experiment. |
+| Refresh and prune cadence | Independently aging WW and SL reference epochs; a WW-only rebuild remaps retained SW IDs/images instead of rebuilding SL. | Shared species reference epochs; WW follows W, SW follows W-or-S, SS follows S. Water-box refresh rates nearly match the prototype; ubiquitin class work has different weighting. | **Kept on purpose:** the approved class-list/epoch contract. The 1.85–1.93 weighted-cost alignment factor is not a literal global frequency multiplier. Independent SL water epochs would be a new design, not a timer adjustment. |
+
+S0 was discarded and S1 retained after their isolated comparisons. The
+required D0 diagnostic at S4 and **W1 whole search port** are complete.
+W1 has a measured gain but leaves the recorded large prototype gap. The later ruling below supersedes the earlier S2/S5/B1/B2
+single-mechanism plan. W1 was measured as one correction against S4.
+The subsequent image-path batch passed correctness but was discarded by
+its six-system stage screen. The R1/R2 rest batch was measured next:
+retain single-family R1 only, discard mixed-family admission and R2, then
+continue ordered SW work and the remaining evaluation items. E4 needs its own concrete
+proposal before implementation.
+Every measured correction updates this table with its head and effect.
+
+### Rest batch and ordered SW scheduling in progress
+
+R1 supplies the shared integration emitter with an optional completed-output
+observer. It consumes final SSA coordinates rather than rereading positions
+that another lane may already have stored. Publication is admitted only with
+the existing integration ownership, adjacency and flag-consumption proofs.
+Marked constraint tuples that are not members of the selected rigid class
+retain particle publication; the marker alone does not prove class membership.
+A single-family TIP3P velocity Verlet run satisfies the native fusion
+preconditions. Mixed-family runs now retain the original fallback after
+their measured regression. The OPC
+extra-point pipeline and the overlapping leapfrog integration runs retain
+their existing separate writer under those same preconditions. This is not
+a promise that every template writer becomes a fused integration kernel.
+
+R2 tested common whole-frame and magnitude arithmetic, preserving precision,
+reference ages and predicates. Its six-system stage screen established no
+OPC gain, so the experiment and its sharing-only test are removed. The
+retained writer/window/validity arithmetic is the preceding implementation.
+
+The retained single-family selection adds a mixed-family CPU fallback test.
+Its first run rejected the fixture's static zero-row tuple buffer before
+lowering; changing only that buffer to a dynamic zero-size allocation made
+the controlled rerun pass both selection/driver tests (2/2). The selection
+predicate and numerical bounds were unchanged by that fixture correction.
+
+The first device-free R1/R2 selection run passed two tests and failed the
+new native-driver structural fixture: it incorrectly required all four
+model/integrator combinations to fuse and omitted the separate count-clear
+launch from the eligible closure. Inspection of all four lowered programs
+established the precondition distinctions above. Only that fixture's
+expectations changed; its one affected rerun passed 1/1. The subsequent
+focused lowering selection passed 4/4, including the existing native and
+writer conversion tests. No numerical comparison has run for this batch
+at this checkpoint.
+
+The authorized SW correction distributes consecutive candidate descriptor
+ranges of one original row across several warps and compacts them in original
+row/subrange/ordinal order. It must preserve the existing append carry across
+windows, images and frames, as well as entries, ownership and capacity proofs.
+The image-path screen already measured SW and SS and found no gain; that
+batch was discarded. Ordered SW scheduling is therefore measured against
+retained W1, not against the discarded image implementation.
+
+Independent SW epochs remain a decision item only. D80 would require the
+water displacement since the SW build, using a kept SW water reference or an
+accumulated bound, rather than the displacement since the latest WW build.
+Neither that reference nor an independent SW skin is implemented here without
+a further ruling. The potential cadence benefit is at most approximately
+half as many SW rebuilds, in addition to any independently chosen skin.
+
+### S0 isolated measurement: padded-lane box guard
+
+The tested head was `ac4644f9`, against main `af7a9f47` and the preceding
+radial head `f6999f3c`, on RTX 5090. CPU lowering passed 6/6 and the
+controlled GPU fixtures passed 22/22 in 108.09 seconds. Both independent
+comparisons completed: 48/48 timing rows passed the unchanged stationarity
+rule and 12/12 diagnostic profiles completed. No comparison was retried.
+Precision, inputs, bounds and launch sizes were unchanged. PTX and SASS
+retain the branch before all twelve f64 box loads; 128 registers and a
+464-byte stack remain unchanged.
+
+| System | ON/main A / B | Search microseconds/refresh A / B | ON/main divided by radial A / B |
+|---|---|---|---|
+| ubq OPC | 1.83852 / 1.82597 | 1785.550 / 1782.699 | 1.00490 / 1.01015 |
+| ubq TIP3P | 2.23615 / 2.23802 | 1794.135 / 1776.088 | 0.99298 / 1.00141 |
+| OPC small | 1.24085 / 1.24274 | 1351.195 / 1348.874 | 1.00429 / 1.00456 |
+| OPC large | 1.22164 / 1.22621 | 1379.727 / 1378.939 | 1.00116 / 1.00424 |
+| TIP3P small | 1.45997 / 1.45930 | 1350.367 / 1356.143 | 0.99840 / 0.99764 |
+| TIP3P large | 1.50814 / 1.50935 | 1395.236 / 1394.360 | 1.00378 / 0.99979 |
+
+Search time per refresh changes by -0.49% to +0.58%, with mixed signs;
+per-step costs also reflect different refresh histories. Both comparisons
+show small ON/main slowdowns for the three OPC systems. This does not
+establish a useful consistent gain, so the source guard is discarded.
+The retained implementation is again the radial baseline. S1 next changes
+only the candidate-search block and its ceiling division, leaving boxes,
+row ownership, arithmetic and output compaction unchanged.
+
+### S1 isolated measurement and row-work diagnosis
+
+Head `5652560d`, base `af7a9f47`, RTX 5090; the retained comparison is
+radial `f6999f3c`. Only candidate launch size and its matching grid ceiling
+change. CPU lowering passes 6/6 (15.34 seconds), pre-push checks 6/6, and
+clean-head GPU fixtures 22/22 (107.27 seconds). Precision is unchanged:
+f64 references/search/pruning geometry, f32 packed pair arithmetic and
+force accumulation, f64 energy/virial accumulation.
+
+Both comparisons complete with 48/48 exit-zero timing executions and
+12/12 complete profiles. Stationarity accepts 47/48 wall timings. The
+first comparison's ubiquitin TIP3P ON timing has no stationary trimmed
+plateau and is excluded, preserved and never rerun or replaced. Its
+independent profile remains usable. Maximum bracketing-main spread is
+0.3885%. All eleven available matched ON/main comparisons improve by
+1.36–6.07%; the other ratio remains unknown. Every search/refresh mean
+improves by 12.4–25.8%. S1 is retained; ON still exceeds main on every
+system, so this is not the performance target or a ready claim.
+
+| System | ON/main A / B | Search microseconds/refresh A / B | Search microseconds/step A / B |
+|---|---|---|---|
+| ubq OPC | 1.71842 / 1.73420 | 1493.058 / 1492.060 | 61.215 / 60.727 |
+| ubq TIP3P | excluded / 2.10159 | 1511.897 / 1512.222 | 63.348 / 63.967 |
+| OPC small | 1.17254 / 1.17216 | 1003.890 / 1006.315 | 17.668 / 17.611 |
+| OPC large | 1.20154 / 1.20232 | 1204.216 / 1206.808 | 23.121 / 23.171 |
+| TIP3P small | 1.37834 / 1.37536 | 1006.407 / 1006.783 | 18.719 / 18.625 |
+| TIP3P large | 1.48197 / 1.47821 | 1216.871 / 1213.404 | 24.946 / 24.996 |
+
+Search PTX differs only in `.maxntid`, but compiler allocation changes:
+168 registers, 168-byte stack and 228/292 spill-store/load bytes replace
+128 registers, 464-byte stack and 560/704 bytes. These are static compiler
+resources, not measured spill traffic. The calculated register-limited
+ceiling falls from 16 to 12 warps/SM. Small-box grids have about 142
+blocks: even perfect distribution cannot occupy every SM, and 12 resident
+warps/SM must not be confused with achieved occupancy. More block
+parallelism and fewer spills accompany the gain; the experiment does not
+isolate their individual effects.
+
+The independent CPU work model uses the six initial unrounded f64 input
+snapshots. Its initial outer-entry totals match all six recorded totals:
+264865, 267364, 113185, 423498, 116491 and 432421 in the table's order.
+Startup constraint changes and later refresh history are not replayed;
+these are reconstructed work counts, not GPU row clocks. Each metric is
+**mean / p99-higher / maximum**, across all class rows. A candidate batch
+is one iteration over at most 32 partner-group descriptors; a partner
+batch handles at most two surviving groups. Separate metric maxima can
+belong to different rows and cannot be added into one longest row.
+
+| System | Rows | Frame subsets | Bin/image enumerations | Candidate-loop batches | Binary-search steps | Partner batches |
+|---|---|---|---|---|---|---|
+| ubq OPC | 723 | 1.29 / 4 / 4 | 82.51 / 196 / 196 | 76.32 / 196 / 196 | 1421.76 / 4142 / 4478 | 66.13 / 144 / 192 |
+| ubq TIP3P | 724 | 1.29 / 4 / 4 | 83.32 / 196 / 196 | 76.92 / 196 / 196 | 1425.21 / 3727 / 4501 | 66.31 / 136 / 193 |
+| OPC small | 283 | 1.12 / 2 / 2 | 87.84 / 98 / 98 | 86.96 / 98 / 98 | 1352.70 / 2159 / 2162 | 78.84 / 119 / 121 |
+| OPC large | 1079 | 1.08 / 2 / 2 | 74.61 / 98 / 98 | 74.37 / 98 / 98 | 1501.85 / 2582 / 2611 | 73.68 / 117 / 123 |
+| TIP3P small | 284 | 1.13 / 2 / 2 | 88.87 / 98 / 98 | 87.99 / 98 / 98 | 1364.81 / 2167 / 2169 | 80.06 / 123 / 125 |
+| TIP3P large | 1087 | 1.09 / 2 / 2 | 74.94 / 98 / 98 | 74.49 / 98 / 98 | 1502.54 / 2582 / 2611 | 74.14 / 119 / 124 |
+
+For an explicit serial-time estimate, calibrate one coefficient on the
+first comparison's OPC-small mean, 1003.890 microseconds. Multiplying
+maximum partner batches by 8.296609 microseconds predicts 1593, 1601,
+1004, 1020, 1037 and 1029 microseconds in table order. Actual means are
+1493, 1512, 1004, 1204, 1006 and 1217. This is an empirical proxy, not a
+measured service time or a conversion of instructions into cycles. Its
+six-system mean absolute percentage error is 7.73%, including the
+calibration case. A mean-column-search proxy fits almost equally well,
+7.99%, so the longest-row explanation is not uniquely established.
+
+Both jobs give essentially the same diagnosis: kernel-mean differences
+are 0.02–0.29%. Reusing the first calibration on the second comparison
+gives 7.76% error for maximum partner batches and 8.03% for mean column
+steps. These differences are descriptive spreads, not confidence intervals.
+The agreement does not remove the identifiability problem.
+
+A separately calibrated aggregate model, total candidate batches divided
+by the maximum possible occupied SM count, has 51.08% error. Water work
+grows 3.24–3.29 times, that aggregate proxy 2.70–2.72 times, while kernel
+time grows only 1.20–1.21 times. This rejects the simplest fixed-cost
+aggregate model, but not throughput with latency hiding and changing
+contention. Warps sharing an SM share issue and memory resources; neither
+all theoretical resident warps nor the grid limit measures actual
+parallelism. Row timestamps/stage counters would be needed to distinguish
+those mechanisms directly.
+
+The S2 counterfactual preserves each row's retained-entry/mask-bit totals
+and class/chunk totals. It approximately halves total water-box batches,
+but maximum candidate batches stay 98 in every box. Partner maxima change
+121 to 110, 123 to 115, 125 to 121 and 124 to 112. Column searches remain
+unchanged. Hence S2 does not promise a twofold critical-path reduction.
+
+The working order selected for this earlier record was **S3, S4, S2**, a source-based priority rather
+than a predicted cycle count. S3 removes dependent column searches from
+every query: maximum column steps are 1490/1932/1496/1930 in the four
+boxes and 3224/3220 in ubiquitin; z searches remain. S4 removes repeated
+first-anchor broadcasts from each surviving partner batch. S2 then removes
+backward ownership work, with its unchanged enumeration ceiling explicitly
+recorded. Each is validated and measured alone; an unsuccessful correction
+is discarded. This order may change after its own measured evidence.
+
+**Earlier R1 proposal, superseded by D0/W1 below:** keep one warp per row,
+because longest-row dominance is not proved. If serial tails remain after
+S3/S4, diagnose per-row elapsed clocks and coarse stage work on fixed frames
+before a separate split experiment. A possible split partitions disjoint
+frame/image/column ranges and compacts by original row, subrange and local
+ordinal. Ownership, images, masks and final ordering must remain unchanged;
+allocation/merge/launch costs need a separate measured proposal. R1 is
+kept with this reason, not silently implemented or claimed unnecessary.
+
+### S3 isolated measurement: direct descriptor-column endpoints
+
+Head `8115bceb`, matched retained S1 `5652560d`, main `af7a9f47`, RTX 5090.
+Inputs, protocol and precision remain unchanged. CPU lowering passes 6/6
+in 15.58 seconds, pre-push checks 6/6, and the clean-head controlled GPU
+fixtures 22/22 in 110.65 seconds. Both comparisons complete: 48/48 wall
+executions exit zero and pass stationarity; 12/12 profiles complete.
+The matched S1 first ubiquitin TIP3P wall timing remains unknown, without
+substitution; S3's accepted timing does not create that missing comparison.
+
+The new index reuses dead spatial scratch, counts every active and retained
+descriptor, and scans it without new arena allocation. The SS partition
+offset is preserved. Z searches, images, covering predicates, ownership
+and final compaction order remain unchanged. Candidate PTX removes the two
+column-bound loops; all 511 f64-typed instructions and 259 scalar shuffles
+remain. Static candidate resources are 168 registers, a 176-byte stack and
+236/284 spill-store/load bytes, versus S1's 168/168/228/292.
+
+All eleven available matched ON/main comparisons improve 0.48–3.94%.
+All twelve **net search-stage** costs improve 6.8–10.8%. The net accounts
+for seven S3 kernels versus three in S1: histogram clear, atomic boxes,
+three scans, flag clear and candidate search. New clear plus scans cost
+2.78–2.90 microseconds per refresh; they are never omitted from the gain.
+The existing grouping and sort stages remain outside this subtotal.
+
+| System | ON/main A / B | S3/S1 normalized A / B | Column index microseconds/refresh A / B | Net stage microseconds/refresh A / B | S1 net microseconds/refresh A / B |
+|---|---|---|---|---|---|
+| ubq OPC | 1.70455 / 1.66592 | 0.99193 / 0.96063 | 2.778 / 2.773 | 1352.039 / 1336.583 | 1499.031 / 1498.033 |
+| ubq TIP3P | 2.03912 / 2.05066 | unknown / 0.97576 | 2.826 / 2.819 | 1375.645 / 1374.874 | 1517.846 / 1518.176 |
+| OPC small | 1.15947 / 1.16093 | 0.98885 / 0.99042 | 2.897 / 2.899 | 933.564 / 935.327 | 1009.849 / 1012.273 |
+| OPC large | 1.19267 / 1.19298 | 0.99262 / 0.99223 | 2.834 / 2.833 | 1127.877 / 1126.439 | 1210.233 / 1212.830 |
+| TIP3P small | 1.35763 / 1.36228 | 0.98497 / 0.99049 | 2.835 / 2.830 | 941.597 / 939.092 | 1012.364 / 1012.740 |
+| TIP3P large | 1.46929 / 1.47114 | 0.99144 / 0.99522 | 2.882 / 2.880 | 1133.077 / 1136.684 | 1222.891 / 1219.425 |
+
+Helper binaries also serve sorting and compaction, so attribution uses the
+seven source-ordered roles within each refresh, rather than global function
+name counts. An initial new-analysis resource assertion failed once; the
+single corrected affected CPU extraction passed, with no recurrence in the
+remaining first-pass extractions. No GPU comparison was retried. PTX scan
+application shared memory is 36 bytes; ELF total 1060 includes an explicit
+1024-byte compiler reserve. The clear's static 8 registers and measured
+CUPTI 16 remain separate unresolved observations: no actual-run binary
+identity or driver-rounding cause is claimed. Semantic stage selection,
+production classification, numerical bounds and refusals never changed.
+
+Both-job accounting checks verify exactly that saved candidate time minus
+index, atomic-box and flag-clear deltas equals the net gain. Candidate
+savings are 73.68–92.77 microseconds per refresh in water boxes and
+145.10–164.30 in ubiquitin. A one-case calibrated maximum-column-step
+proxy predicts the savings with 11.95%/10.20% error, versus
+95.15%/94.41% for aggregate work per potential SM. This is compatible with
+serial sensitivity, without measuring row clocks or a particular stall.
+A negative control is instructive: the old mean-column-step proxy still
+fits residual S3 runtime at 7.22%/7.02% error even though those searches
+are gone. Cross-system correlation therefore cannot identify the remaining
+bottleneck or prove longest-row dominance.
+
+S3 is retained. Its modest isolated gain does not establish that column
+searches alone dominated the old serial path. The row model still has the
+same enumeration, partner batches and z searches, with column-bound steps
+removed. S4 subsequently targeted repeated first-anchor broadcasts as a separate
+correction with unchanged f64 operands and its own shared-memory gates.
+
+### S4 isolated measurement: immutable first-anchor cache
+
+Head `f9ea87ef`, matched retained S3 `8115bceb`, main `af7a9f47`, RTX 5090.
+Precision, controls and protocol remain unchanged. CPU lowering passes
+6/6 in 18.84 seconds, pre-push checks 6/6, and controlled clean-head GPU
+fixtures 22/22 in 110.46 seconds. The native sanitizer fixture then passes
+1/1 in 18.34 seconds: memcheck/initcheck/synccheck report zero errors and
+racecheck zero hazards; its oracle checks pass after every mode.
+
+Both timing comparisons complete with 48/48 exit-zero stationary wall
+runs and 12/12 complete profiles, with no exclusions or GPU retries.
+All twelve net seven-kernel search costs improve 1.13–4.79% per refresh.
+S4 is retained for this measured local gain. Whole-step effects are smaller
+and mixed: ten normalized comparisons improve 0.029–2.607%, while the
+first ubiquitin TIP3P comparison slows 0.618% and the first OPC-large
+comparison slows 0.032%. These observations remain in the report; they
+are not a consistent end-to-end gain. AUTO still needs its final end-to-end
+gate, and ON remains slower than main on every system here.
+
+| System | ON/main A / B | S4/S3 normalized A / B | Net search stage microseconds/refresh A / B | Net stage microseconds/step A / B |
+|---|---|---|---|---|
+| ubq OPC | 1.66012 / 1.65044 | 0.97393 / 0.99071 | 1304.301 / 1296.071 | 55.302 / 52.620 |
+| ubq TIP3P | 2.05172 / 2.03337 | 1.00618 / 0.99157 | 1309.805 / 1320.359 | 55.798 / 54.927 |
+| OPC small | 1.15760 / 1.15921 | 0.99839 / 0.99852 | 911.250 / 912.623 | 15.582 / 15.788 |
+| OPC large | 1.19305 / 1.19140 | 1.00032 / 0.99867 | 1113.576 / 1111.963 | 21.158 / 21.350 |
+| TIP3P small | 1.35723 / 1.35502 | 0.99971 / 0.99467 | 921.705 / 921.362 | 17.144 / 17.229 |
+| TIP3P large | 1.46657 / 1.46679 | 0.99815 / 0.99704 | 1120.258 / 1118.512 | 22.853 / 22.818 |
+
+Per-refresh gains do not imply proportional per-step gains. For example,
+first-comparison ubiquitin OPC net cost is 55.302372 microseconds per step
+versus S3's 55.298404, essentially unchanged despite a 3.53% per-refresh
+gain; captured refresh attempts are 424 versus 409. This is accounting
+from those histories, not a causal explanation or excuse for wall results.
+
+Static review confirms immutable f64 data, distinct per-warp slots and
+one full-mask warp barrier; only lower sixteen lanes store. Cache loads
+remain within the selected-partner loop; the original membership ballot
+replaces flag shuffles. Original f64 arithmetic, images, ownership and SS
+exclusions remain unchanged. Native combined search has 2280 PTX
+instructions, 131 scalar shuffles and 4091 non-NOP SASS, versus S3's
+2521/259/5058. Resources are 168 registers, 168-byte stack and 232/272
+spill-store/load bytes. Application shared memory is 896 bytes, separately
+from a 1024-byte compiler reserve (ELF total 1920). Those are static
+resources, not executed traffic or proof of shuffle latency.
+
+For the unchanged prototype reference, the following compares search only
+with search only, in microseconds per step. Native net seven-kernel cost
+above additionally includes boxes, indexing and flag clear and must not be
+used as if it were the same component. Both use RTX 5090, but native f64
+geometry and integrated histories differ from the prototype's f32 replay
+and reference epochs; this is a mechanism comparison, not a new oracle.
+
+| System | Native search A / B | Prototype search A / B | Native/prototype A / B |
+|---|---|---|---|
+| ubq OPC | 54.928 / 52.262 | 3.061 / 3.055 | 17.945 / 17.108 |
+| ubq TIP3P | 55.421 / 54.559 | 3.271 / 3.269 | 16.942 / 16.689 |
+| OPC small | 15.430 / 15.634 | 0.980 / 0.979 | 15.744 / 15.968 |
+| OPC large | 20.989 / 21.178 | 1.197 / 1.198 | 17.531 / 17.673 |
+| TIP3P small | 16.979 / 17.064 | 1.083 / 1.082 | 15.677 / 15.768 |
+| TIP3P large | 22.670 / 22.634 | 1.267 / 1.270 | 17.894 / 17.827 |
+
+A large search gap remains. The earlier S2 proposal clipped backward WW/SS
+descriptors, preserving SW, self, refusal flags and ordering through its
+zero-ownership proof. The superseding ruling stops that standalone item
+without timing it; early removal now belongs to W1. The bounded f32/f64-shell
+proof likewise supports W1, rather than a separate S5 correction.
+
+### Superseding ruling: one diagnostic, then the whole search structure
+
+The maintainer stopped S2 and further standalone search corrections. The
+already-running S2 fixture run completed 22/22; it is not a retained
+correction or a timing result. Its source is reverted
+so the active search again equals S4. No S2 timing job is submitted.
+
+First, use a separate diagnostic-only build based on S4 `f9ea87ef`, fixed
+frames of all six systems, and one device-clock measurement. Record each
+row's z search, frame/image/subset enumeration, candidate loop, partner
+batches and append elapsed time; report mean, p99 and maximum. Report
+inclusive and exclusive intervals clearly, prologue/epilogue/instrumentation
+residuals, row timelines, and whether the kernel duration follows the
+longest row. This is not the two-job timing protocol. Instrumentation and
+its build are not retained; logs, patch identity and resources are kept.
+
+Then implement W1 regardless of the diagnostic's performance result:
+class-specialized WW/SW/SS search kernels; prototype direct column/group
+endpoints and early backward-range removal; shared first anchors; its
+launch distribution; and f32 Cartesian geometry under the declared
+certified-accept/reject plus literal-original-f64 uncertainty shell.
+Retain the native general covering-image proof where the prototype's
+nearest-image assumption is narrower. Entry format, masks, ownership,
+output order, reference epochs and validity remain unchanged.
+
+Exact covering, boundary, triclinic, reframed, growth and brute-force
+coverage fixtures gate W1. A coverage counterexample stops work and does
+not justify widening a bound. Measure the complete port as one correction
+with the usual two independent jobs against S4. Close or justify the search,
+box and launch rows together from that evidence. Sort/group plan S6/S7 may
+follow with the same whole-structure approach if their gap remains large.
+No extra single-mechanism search items intervene before W1.
+
+### Completed single S4 row-clock diagnostic
+
+The detached diagnostic uses S4 `f9ea87ef`, with uncommitted diagnostic-only
+edits and patch SHA256
+`383619218876fdb132e3290cc9f5a36fd28eea0724d034596e53e577a2023ff2`.
+It is not a correction and is not kept in the PR implementation. Six
+one-step program invocations on RTX 5090 completed; every natural growth
+and search attempt was retained. The predefined primary selection is the
+first successful initial refresh, not the fastest sample. No standard
+warmup/repeat/two-job timing protocol is used for this diagnostic.
+
+All six selected outputs match the source-faithful CPU replay exactly:
+264865, 267364, 113185, 423498, 116491 and 432421 ordered entries,
+including row/ordinal, partner, image, mask, reserved word, counts and flags.
+The replay uses the actual dumped references/order/groups/keys/cells/reaches/
+exclusions and the original diagonal multiply plus x/y/z FMA norm graph.
+This validates output preservation, not independent physical-force or
+full-trajectory/state equality.
+
+Each one-step program naturally builds an initial-force list and a separate
+advanced-position list inside the checkpoint segment; reuse is not hoisted
+across that segment. Each allocation grows once and then succeeds, producing
+24 retained search attempts across six processes. All primary samples were
+fixed to serial 1, attempt 1. Serial 2 is retained, not substituted. Serial
+is a process-global refresh-call sequence, not a step number; allocation
+association is established from source/dataflow because headers omit handle
+IDs. Successful serial-1/2 snapshots and payloads differ in every case.
+
+Instrumentation preserves the original 511 static f64 operations and existing
+barriers but increases stack/spills materially: 168 registers, 448-byte stack,
+468/580 static spill-store/load bytes, versus S4's 168-byte stack and
+232/272 bytes. Application shared memory stays 896 bytes; ELF includes a
+separate 1024-byte reserve. A 64-byte private depot remains at outer query
+boundaries. There is no paired uninstrumented exact-frame run or fabricated
+constant overhead subtraction. The production S4 means below provide scale,
+not production per-row clocks or a direct overhead estimate.
+
+Times below are instrumented elapsed microseconds. Five exclusive budgets are z; candidate/filter/control excluding partner; partner mask/enumeration excluding append; append; and residual. Candidate-inclusive contains partner-inclusive, which contains append; z is disjoint. Residual=total−z−candidate-inclusive includes setup/cache/frame/image/subset/control/timer/finish overhead and is not a measured pure enumeration stage. P99 uses the higher observed order statistic. Row intervals overlap: sums across rows and sums of stage maxima are not kernel wall time.
+
+| System | Active rows | Kernel W | Row envelope E | Longest L | Latest row | Start delay | W−E | Production S4 search A/B |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ubq-opc | 723 | 1395.070 | 1394.432 | 1394.368 | 199 (WW) | 0.064 | 0.638 | 1295.472/1287.249 |
+| ubq-tip3p | 724 | 1438.814 | 1438.208 | 1438.144 | 247 (WW) | 0.064 | 0.606 | 1300.962/1311.513 |
+| opc-small | 283 | 940.350 | 939.712 | 939.680 | 3 (WW) | 0.032 | 0.638 | 902.321/903.700 |
+| opc-large | 1079 | 1132.830 | 1132.224 | 1132.160 | 5 (WW) | 0.064 | 0.606 | 1104.661/1103.046 |
+| tip3p-small | 284 | 959.934 | 959.296 | 959.264 | 3 (WW) | 0.032 | 0.638 | 912.839/912.498 |
+| tip3p-large | 1087 | 1146.493 | 1145.920 | 1145.856 | 0 (WW) | 0.064 | 0.573 | 1111.281/1109.528 |
+
+In these six instrumented initial launches, the longest row is also the latest finishing row. Its32–64ns start delay plus its total elapsed interval equals E exactly; W−E is0.573–0.638us. Thus the long row envelope accounts for essentially the entire instrumented kernel duration. Production S4 values are separately recorded stationary per-refresh means over evolving geometry, not a paired uninstrumented run on these fixed snapshots. They provide scale, not an instrumentation overhead estimate or production row-clock proof.
+
+| System | Exclusive stage | Mean | P99 | Max |
+|---|---|---:|---:|---:|
+| ubq-opc | z lookup | 122.294 | 336.992 | 393.248 |
+| ubq-opc | candidate/filter/control | 170.904 | 434.720 | 446.656 |
+| ubq-opc | partner mask/enumeration | 174.654 | 361.408 | 407.840 |
+| ubq-opc | append | 12.051 | 28.224 | 36.672 |
+| ubq-opc | setup/enumeration residual | 103.099 | 248.224 | 266.560 |
+| ubq-tip3p | z lookup | 123.403 | 335.424 | 403.328 |
+| ubq-tip3p | candidate/filter/control | 172.312 | 435.808 | 450.624 |
+| ubq-tip3p | partner mask/enumeration | 173.978 | 368.160 | 402.752 |
+| ubq-tip3p | append | 12.124 | 27.360 | 36.064 |
+| ubq-tip3p | setup/enumeration residual | 104.067 | 231.296 | 275.328 |
+| opc-small | z lookup | 127.713 | 205.728 | 208.608 |
+| opc-small | candidate/filter/control | 186.438 | 216.128 | 216.352 |
+| opc-small | partner mask/enumeration | 212.778 | 395.712 | 402.656 |
+| opc-small | append | 13.608 | 25.600 | 26.432 |
+| opc-small | setup/enumeration residual | 104.211 | 135.712 | 137.536 |
+| opc-large | z lookup | 150.052 | 241.120 | 251.712 |
+| opc-large | candidate/filter/control | 187.796 | 284.256 | 288.640 |
+| opc-large | partner mask/enumeration | 237.837 | 436.512 | 480.064 |
+| opc-large | append | 13.199 | 22.272 | 28.064 |
+| opc-large | setup/enumeration residual | 124.309 | 194.496 | 208.928 |
+| tip3p-small | z lookup | 129.211 | 204.448 | 208.288 |
+| tip3p-small | candidate/filter/control | 189.203 | 215.936 | 216.736 |
+| tip3p-small | partner mask/enumeration | 215.848 | 402.176 | 438.240 |
+| tip3p-small | append | 13.927 | 25.504 | 29.120 |
+| tip3p-small | setup/enumeration residual | 105.590 | 137.184 | 138.112 |
+| tip3p-large | z lookup | 149.696 | 239.872 | 250.272 |
+| tip3p-large | candidate/filter/control | 188.444 | 286.944 | 297.632 |
+| tip3p-large | partner mask/enumeration | 239.431 | 435.904 | 515.904 |
+| tip3p-large | append | 13.216 | 22.784 | 26.752 |
+| tip3p-large | setup/enumeration residual | 125.580 | 194.784 | 207.264 |
+
+The latest row decomposition is measured on that same row, not assembled from different maxima.
+
+| System | Start delay | z | Candidate exclusive | Partner exclusive | Append | Residual | Envelope E |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ubq-opc | 0.064 | 367.776 | 425.728 | 311.808 | 36.672 | 252.384 | 1394.432 |
+| ubq-tip3p | 0.064 | 403.328 | 442.272 | 283.936 | 33.280 | 275.328 | 1438.208 |
+| opc-small | 0.032 | 208.608 | 215.072 | 352.224 | 26.240 | 137.536 | 939.712 |
+| opc-large | 0.064 | 231.616 | 261.536 | 402.016 | 28.064 | 208.928 | 1132.224 |
+| tip3p-small | 0.032 | 208.288 | 214.624 | 370.048 | 29.120 | 137.184 | 959.296 |
+| tip3p-large | 0.064 | 188.416 | 258.112 | 515.904 | 18.656 | 164.768 | 1145.920 |
+
+No single measured stage explains every long row. Candidate/filter/control, partner mask/enumeration, z lookup and the combined residual all contribute materially; append is smaller. The residual does not isolate frame/image enumeration, and elapsed stage spans include scheduling/memory/timer effects. One representative SM ID is recorded twice after compiler CSE; this is not an independent migration detector. clock64 is auxiliary and was not compared across SMs or converted using a nominal clock. No achieved occupancy, memory throughput, instruction latency or causal speedup is claimed.
+
+The first helper attempt failed before JIT execution because the full host runtime had not been built. Its exported capture has zero CUDA activity/kernel tables and no row dumps. Evidence and cold cache were preserved. One deterministic setup correction built the complete runtime pair and verified both with CPU RTLD_NOW loader checks; the fresh corrected invocation is the only actual measurement. The premeasurement decoder was corrected to ignore uninitialized unused class/inner metadata (affected CPU smoke1/1 passed). During postcapture analysis, the wrapper-integrity parser initially assumed SHA256; unchanged cache source establishes BLAKE3, and one corrected extraction passed all six. Neither analysis correction changed source predicates, classification, refusal, tolerance, nor any GPU run.
+
+
+The required next step remains W1, the complete prototype search structure,
+regardless of this diagnostic result. No row-splitting experiment or further
+single-mechanism search correction is inserted before it.
+
+### W1: complete search correction against S4
+
+The whole correction is `5ea35cdb`. The source and build stayed fixed
+through the exact-coverage, sanitizer and two independent timing gates.
+CPU lowering passed 6/6; the first full build had one new helper API
+argument-order error, corrected once before a successful rebuild.
+Independent bounded CPU models passed 2,160 pair/singleton-box decisions
+and 28 directed threshold conversions. Three host underflow coefficients
+were rounded outward during source review, before device comparisons.
+All six push checks passed. Production PTX for all three classes has
+rounded f64 division and square root, ordinary f32 arithmetic/FMA, and no
+FTZ or approximate instructions.
+
+Exact coverage and physical fixtures passed 22/22 in 139.38 seconds on
+RTX 5090, including boundary, seam, triclinic, reframed and growth cases,
+TIP3P/OPC energy/force and molecular virial. The focused sanitizer passed
+1/1 in 22.29 seconds: memcheck, initcheck and synccheck each reported
+zero errors; racecheck reported zero hazards. No numerical retry or bound
+change occurred.
+
+The subsequent documentation CPU tier reported 18 passed and one failed:
+the unchanged output-cleanup checker found nine fixtures added by this PR
+without an initial removal of their temporary outputs. Adding only those
+removal commands fixed the affected checker in one rerun (1/1 passed).
+No production code, checker, refusal or numerical bound changed, and no
+device result was rerun. The measured source head remains `5ea35cdb`;
+the follow-up commits contain fixture cleanup and this report.
+
+Both normal-protocol timing jobs completed with exit zero. All 48 wall
+runs exited zero; 47 were stationary. B ubiquitin TIP3P ON had no stationary
+trimmed plateau and is excluded, with no replacement or rerun. All 12
+profiles completed and were attributed to the nine ordered source roles.
+The unchanged protocol uses 24 main/ON/OFF/main runs and six ON profiles
+per job. S4 `f9ea87ef` is the retained corresponding A/B reference,
+not a same-job pairing. The main reference remains `af7a9f47`.
+
+| System | A ON ms/step | A ON/main | A normalized W1/S4 | B ON ms/step | B ON/main | B normalized W1/S4 |
+|---|---:|---:|---:|---:|---:|---:|
+| ubq OPC | 0.19246 | 1.581 | 0.952 | 0.19348 | 1.591 | 0.964 |
+| ubq TIP3P | 0.18999 | 1.947 | 0.949 | excluded | excluded | excluded |
+| OPC small | 0.09806 | 1.066 | 0.921 | 0.09787 | 1.065 | 0.919 |
+| OPC large | 0.20141 | 1.125 | 0.943 | 0.20120 | 1.122 | 0.942 |
+| TIP3P small | 0.09361 | 1.235 | 0.910 | 0.09340 | 1.232 | 0.910 |
+| TIP3P large | 0.18729 | 1.368 | 0.933 | 0.18737 | 1.368 | 0.932 |
+
+All 11 eligible normalized comparisons improve by 3.59–9.05% against S4;
+none has a raw ON-time slowdown. ON remains slower than main in every
+eligible comparison. OFF/main is 0.999–1.002. The largest bracketing-main
+spread is 0.45%. These are observed differences, not a statistical
+significance or automatic-selection claim.
+
+The following microseconds are per captured refresh attempt, including
+initial growth. W1 net9 includes histogram clear, preparation/boxes,
+three scans, class clear and three candidate kernels. S4 net7 includes
+the corresponding indexing/preparation plus its combined candidate kernel.
+All overhead, including empty-class launches, is included.
+
+| System | Job | Attempts | Index clear | Prep/boxes | Three scans | Class clear | WW | SW | SS | W1 net9 | S4 net7 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ubq OPC | A | 413 | 0.412 | 3.619 | 2.365 | 0.716 | 207.623 | 619.818 | 267.860 | 1102.414 | 1304.301 |
+| ubq OPC | B | 421 | 0.412 | 3.617 | 2.362 | 0.715 | 204.835 | 618.174 | 269.042 | 1099.156 | 1296.071 |
+| ubq TIP3P | A | 425 | 0.422 | 3.611 | 2.401 | 0.708 | 214.297 | 626.556 | 283.587 | 1131.582 | 1309.805 |
+| ubq TIP3P | B | 422 | 0.422 | 3.613 | 2.399 | 0.708 | 215.799 | 626.977 | 276.632 | 1126.551 | 1320.359 |
+| OPC small | A | 174 | 0.426 | 3.618 | 2.469 | 0.714 | 407.188 | 0.403 | 0.402 | 415.219 | 911.250 |
+| OPC small | B | 176 | 0.425 | 3.622 | 2.468 | 0.712 | 408.087 | 0.399 | 0.403 | 416.116 | 912.623 |
+| OPC large | A | 192 | 0.432 | 3.682 | 2.404 | 0.713 | 435.397 | 0.407 | 0.407 | 443.442 | 1113.576 |
+| OPC large | B | 193 | 0.429 | 3.679 | 2.407 | 0.712 | 435.609 | 0.406 | 0.404 | 443.645 | 1111.963 |
+| TIP3P small | A | 190 | 0.418 | 3.628 | 2.414 | 0.708 | 410.943 | 0.412 | 0.404 | 418.927 | 921.705 |
+| TIP3P small | B | 188 | 0.417 | 3.628 | 2.415 | 0.710 | 409.399 | 0.412 | 0.403 | 417.384 | 921.362 |
+| TIP3P large | A | 206 | 0.418 | 3.686 | 2.462 | 0.713 | 437.174 | 0.409 | 0.404 | 445.268 | 1120.258 |
+| TIP3P large | B | 205 | 0.419 | 3.687 | 2.461 | 0.711 | 436.817 | 0.406 | 0.406 | 444.907 | 1118.512 |
+
+Net per-attempt time improves in all 12 comparisons, by 13.61–60.25%.
+Including the actual captured cadence gives 12.06–60.03% improvement in
+net search-stage time per step. Attempts are not active per-class rebuilds:
+WW follows W, SW follows W-or-S and SS follows S; an inactive class copies
+retained rows. Every attempt launches all three classes, including a
+minimum-grid empty launch. These empty SW/SS launches cost about 0.4
+microseconds each in water boxes and remain in the budget.
+
+The direct class-kernel comparison below gives native/prototype
+microseconds per native attempt or prototype class event. It is not
+matched-work causality: native attempts include inactive copies, while
+the prototype has separate WW and SW/SS schedules and different replay
+geometry. Water-only prototype SW/SS launches are absent; native empty
+launches are already included above.
+
+| System | WW A native/prototype | SW A native/prototype | SS A native/prototype | WW B native/prototype | SW B native/prototype | SS B native/prototype |
+|---|---:|---:|---:|---:|---:|---:|
+| ubq OPC | 207.623 / 54.325 | 619.818 / 29.438 | 267.860 / 58.017 | 204.835 / 54.213 | 618.174 / 29.363 | 269.042 / 57.922 |
+| ubq TIP3P | 214.297 / 54.292 | 626.556 / 29.853 | 283.587 / 58.917 | 215.799 / 54.033 | 626.977 / 29.829 | 276.632 / 59.053 |
+| OPC small | 407.188 / 56.425 | empty / absent | empty / absent | 408.087 / 56.370 | empty / absent | empty / absent |
+| OPC large | 435.397 / 63.188 | empty / absent | empty / absent | 435.609 / 63.245 | empty / absent | empty / absent |
+| TIP3P small | 410.943 / 57.159 | empty / absent | empty / absent | 409.399 / 57.115 | empty / absent | empty / absent |
+| TIP3P large | 437.174 / 63.345 | empty / absent | empty / absent | 436.817 / 63.484 | empty / absent | empty / absent |
+
+| System | Native preparation A/B | Prototype WW boxes A/B | Prototype SW/SS boxes A/B |
+|---|---:|---:|---:|
+| ubq OPC | 3.619 / 3.617 | 1.290 / 1.288 | 2.358 / 2.351 |
+| ubq TIP3P | 3.611 / 3.613 | 1.292 / 1.290 | 2.448 / 2.445 |
+| OPC small | 3.618 / 3.622 | 1.271 / 1.272 | absent |
+| OPC large | 3.682 / 3.679 | 1.403 / 1.403 | absent |
+| TIP3P small | 3.628 / 3.628 | 1.260 / 1.259 | absent |
+| TIP3P large | 3.686 / 3.687 | 1.400 / 1.407 | absent |
+
+Native preparation includes all hybrid descriptors, Cartesian-anchor
+cache production, fractional boxes and the descriptor histogram. The
+prototype box events cover their respective active classes. The scopes
+and cadence differ; no combined prototype preparation event is invented.
+
+| System | W1 candidate us/step A/B | Prototype candidate us/step A/B | Ratio A/B |
+|---|---:|---:|---:|
+| ubq OPC | 45.236 / 45.975 | 3.061 / 3.055 | 14.779 / 15.050 |
+| ubq TIP3P | 47.789 / 47.239 | 3.271 / 3.269 | 14.609 / 14.450 |
+| OPC small | 7.099 / 7.196 | 0.980 / 0.979 | 7.244 / 7.350 |
+| OPC large | 8.375 / 8.423 | 1.197 / 1.198 | 6.995 / 7.029 |
+| TIP3P small | 7.823 / 7.712 | 1.083 / 1.082 | 7.224 / 7.126 |
+| TIP3P large | 9.023 / 8.971 | 1.267 / 1.270 | 7.122 / 7.066 |
+
+The prototype figures are the retained unchanged RTX 5090 captures, with
+their own reference schedules and replay geometry. Native dynamics evolves
+independently. The ratios are remaining-gap context, not matched-work
+causality, equivalent coverage contracts or whole-step speedups. Summing
+one prototype WW event and one SW+SS event gives an algebraic aligned-cost
+ratio of 6.894–7.860; it is not a jointly observed event or a literal
+refresh-rate multiplier.
+
+The structural difference still present in source is explicit: native
+first-occurrence frame subsets, integer-image enumeration and conservative
+fractional column/z-image bounds remain, including for SW/SS. The
+prototype scans direct class spans with its narrower nearest-image box
+assumption. Native z binary searches are gone. Certificate setup and the
+literal f64 shell add static code; neither their dynamic contribution nor
+the iterator's isolated time is measured by these profiles. SW is the
+largest observed candidate component in ubiquitin, 618–627 microseconds
+per attempt, versus 205–216 WW and 268–284 SS. Sort and group planning
+are only 62 and 42–44 microseconds there. This evidence does not justify
+attributing the remaining gap to throughput, spills or one instruction.
+
+| Candidate | Registers | Stack bytes | Application shared bytes | ELF shared bytes | Non-NOP SASS |
+|---|---:|---:|---:|---:|---:|
+| W1 WW | 168 | 128 | 1152 | 2176 | 4926 |
+| W1 SW | 128 | 152 | 1152 | 2176 | 4938 |
+| W1 SS | 168 | 136 | 1280 | 2304 | 5590 |
+| S4 combined | 168 | 168 | 896 | 1920 | 4091 |
+| Prototype WW | 112 | 0 | not separated | 34304 | 1137 |
+| Prototype SW | 102 | 0 | not separated | 34304 | 940 |
+| Prototype SS | 102 | 0 | not separated | 34432 | 1368 |
+
+W1/S4 ELF shared figures include the explicit 1024-byte compiler reserve;
+prototype figures are the archived resource reports, without assuming an
+equivalent reserve split. All candidate blocks have 64 threads. Both
+native models produce identical role cubins. Preparation uses 46 registers
+and zero stack/shared, versus S4's 60-register preparation. Clear/scans
+are byte-identical to S4. Static footprints are not executed instruction
+counts or spill traffic; explicit spill bytes were not collected. The
+clear's static 8/CUPTI 16 register discrepancy remains unresolved and is
+not explained by an invented driver-rounding rule. Source order, launch
+resources and surrounding context identify roles; generic kernel names
+alone do not establish actual binary identity.
+
+The two initial timing wrappers failed before opening their first output
+log because preparation omitted group-write permissions. Both records
+were retained; neither reached the MDIR spawn or produced numerical or
+profile artifacts. One permission correction and actual-account write
+preflight preceded the one corrected submission per job. Analyzer setup
+also had one deterministic whitespace syntax error, corrected before it
+wrote results. These are harness corrections, not numerical retries.
+
+W1 is retained for its measured gain, but the remaining large prototype
+gap is not closed by this correction. The subsequent ruling authorizes
+the image strategies below. The parked norm proof guard and evaluation
+items remain pending; this is not a ready claim.
+
+### Refresh-selected image strategies
+
+**Measured and discarded.** The implementation and its tests below are
+the validated experiment at `30844760`; its six-system stage screen was
+slower than retained W1, so the complete image optimization batch was
+reverted under the target ruling. The active implementation retains W1's
+general iterator. Experimental source, correctness results and logs remain
+available in that commit's history; this section is not a shipping claim.
+
+The accepted next correction keeps W1's entry ABI, class ownership,
+incidence masks, epochs, validity and literal final membership predicate.
+It selects separate outlined search functions at refresh scope:
+
+1. One pass image when the greatest actual class reach, including an
+   outward numerical margin, is at most half the least cell diagonal.
+2. Pass-first conditional neighboring images when that padded reach is
+   strictly below the least diagonal. Traversal is c, b, a; b and a are
+   re-centered for each higher-axis prefix, as in D241/D242.
+3. The unchanged covering-image iterator otherwise. Every such refresh
+   logs the general fallback. This is a fallback, not a new refusal.
+
+`ImageEnumerationEmitter` is a common pair-image strategy: it receives
+the cell, displacement, padded reach and a visitor. It knows no water
+model, class tags, entry layout or membership predicate. Its callers
+must establish reduced-cell and numerical preconditions. The template
+adapter uses the same emitter for all site counts and parameter sets.
+Publication is currently specific to the segmented entry ABI because its
+ordering key includes frame-subset and descriptor order. The reusable
+publication mechanism is tracked in #841.
+
+The selector evaluates positive error arithmetic outward in f64, taking
+the next representable value and a min-normal underflow floor. It covers
+the original absolute-frame displacement graph, its rounded squared norm,
+and the new Cartesian c/b/a prefix graph. If $M$ bounds the absolute floor
+of every hybrid reference coordinate and $h$ is the outward sum of cell
+magnitudes, the prefix envelope includes
+$\gamma_{64}h(128+24M)+\beta_{256}$, where
+$\gamma_n=nu/(1-nu)$ and $\beta_n=n\nu/(1-nu)$,
+$u=2^{-53}$ and $\nu=2^{-1022}$. This is a counted rounding bound, not
+physical skin or an observed-error fit. The selected margin also covers
+the ordinary rounded addition of reach and margin. Finite arithmetic,
+reduced-cell and normal-core volume/face-width guards must all hold;
+otherwise the general strategy runs. The entry-image ABI further requires
+$M\le251$: with each provisional image component bounded by eight,
+$2M+8<512$ prevents provisional overflow before the original query-domain
+filter. Larger reference frames use the general iterator.
+
+| Operation | Retained W1 | Image strategies |
+|---|---|---|
+| References, winding, cell, reaches and validity | f64/i64 | Unchanged |
+| Refresh dispatch and margin | General iterator | Outward f64; separate host-selected functions |
+| Pair-local image prefixes | General f64 iterator | f64, correctly rounded reciprocal/multiply and round-to-even |
+| Cartesian boxes and radial certificate | Certified f32, original f64 uncertainty shell | Unchanged |
+| Final domain and membership | Original rounded f64 predicates | Same predicates, including the original query domain |
+| Entry publication | Row/ordinal compaction | Same records; stable canonical ordering restores original frame/x/y/z/partner order |
+
+No image-policy branch is added inside a candidate kernel. The temporary
+canonical-order key uses dead planning/staging storage; sorting, gathering
+all rows and final copying are separate phases so permutation scratch
+cannot alias another row's retained entries. The public reserved word is
+zero again before consumption. The general strategy keeps its original
+publication path.
+
+Gates include exact ordered comparisons against a forced general iterator
+for nearest, conditional, coupled tilted-cell, boundary and refresh cases;
+an independent all-images oracle; and a predeclared native barostat run
+crossing from nearest to conditional. The new outline fixture initially
+failed during construction because a detached callback had no parent
+module. Passing the module explicitly removed the crash. Its next run
+completed lowering and exposed a separate `func.call` versus `call`
+FileCheck spelling error; one correction and rerun passed 1/1. The six
+existing search/refresh lowering fixtures and independent image reference
+then passed 7/7. The first five-fixture device job stopped during CPU
+generation of the new conditional input, before either MDIR route ran:
+the chosen dyadic reach coincided with a lattice distance and violated
+the existing nonboundary-input guard (one failed, four skipped). Only the
+new inputs were corrected to odd-over-128 base reaches, 119/128 for
+conditional/coupled and 97/128 for ordering. All three generators passed
+once with minimum squared-distance gaps 0.00103759765625,
+0.0007934603490866721 and 0.00006103515625. The guard, oracle and comparison
+criteria are unchanged. The controlled device continuation passed all
+five exact ordered comparisons in 92.95 s on RTX 5090, including actual
+nearest/conditional selection, coupled triclinic images, retained classes
+and refresh/growth.
+
+The following 23-fixture gate stopped before numerical comparison on a
+new selector-construction error: native callers provide actual class
+reaches and leave base/extent absent, but the selector constructed the
+unused fallback expression first. Its log contains four concurrent crash
+blocks; the fail-fast summary counts one failed and 22 skipped, not four
+completed comparisons. Constructing the fallback only in its proper
+operand branch corrected the new path. The expanded CPU outline test,
+including the actual native operand form, passed its one controlled
+rerun (1/1, 1.75 s). No host arithmetic, existing lowering, membership
+criterion or comparison bound changed.
+
+The controlled continuation at `ee83da18` completed with **22 passed and
+one failed**, 151.92 s on RTX 5090. All 22 existing coverage,
+physical-energy/force and molecular-virial fixtures passed. The new native
+barostat crossing fixture failed its predeclared path-transition assertion:
+the 100-step simulation completed, but its path log was
+`nearest, nearest`, with no `conditional` and no general fallback.
+
+| Preserved native observation | Value |
+|---|---|
+| Driver exit status | 0 |
+| Crossing test exit status | 2, after the transition assertion failed |
+| Initial diagonal | 4.0 nm on each axis |
+| Step 5 diagonal | 3.9881800048142346 nm on each axis |
+| Step 100 diagonal | 3.7611718410128505 nm on each axis |
+| Smallest recorded half diagonal | 1.8805859205064253 nm |
+| Recorded trajectory frames | 20, steps 5 through 100 |
+| Reported full refreshes / prunes / growths | 2 / 2 / 0 |
+| Observed path messages | Two nearest, zero conditional, zero general |
+
+This is an unmet gate, not a passing barostat transition. No input,
+duration, bound or checker was adjusted after this observation; no rerun
+was made. Work stops for a ruling. Recommend source/CPU-only diagnosis
+of the declared fixture's refresh schedule and selector inputs using the
+preserved frames before proposing any new device run. Sanitizer and
+performance measurements for this correction have not run.
+
+#### Ruling: refresh-time selection and the redesigned barostat gate
+
+The maintainer ruled that the observation above is **not a correctness
+defect**. An image strategy is selected only at a refresh. Between
+refreshes D80, including the cell scaling $\min(\mathbf m)$, keeps the
+previous list covering all physical site pairs within $r_c$. In
+particular, the deformed built reach minus the current physical reach,
+with the displacement allowance, determines validity; crossing half the
+current diagonal alone does not invalidate a list. A list built under
+one image strategy remains valid until the next refresh. Only that next
+refresh re-selects the strategy. The two observed refreshes preceded the
+crossing. A tight outer/inner gap does not force exhaustion of the outer
+list's physical-to-built margin.
+
+The redesigned fixture predeclares the same 100-step compression and
+physical inputs, then continues its exact step-100 checkpoint in a new
+native allocation for one step and four more steps. The checkpoint does
+not serialize a template list, so the new allocation necessarily takes
+a cold refresh after the barostat-produced cell contraction. This is
+explicitly a checkpoint crossing test, **not** a claim of an uninterrupted
+validity-triggered refresh. It must observe nearest selection initially
+and conditional selection at the successful new refresh; a missing
+transition stops rather than prompting a seed, pressure or duration
+search.
+
+A route-private, explicitly registered test observer records only
+successful compacted/ordered lists. It receives the actual refresh cell
+and all three actual reaches, along with path and mobility activity.
+Observation is null by default, introduces no environment key, and adds
+no device reads, synchronization, allocation or logging when disabled.
+The test synchronizes its own snapshots through the runtime copy service.
+Floating inputs are serialized as integer bit patterns, without a
+floating JSON or decimal-coordinate round trip.
+
+Each snapshot seeds an isolated owner with its exact hybrid references,
+published groups, grid, order, maps, retained records and actual reaches.
+The test-only published-group replay skips sorting and planning and runs
+the retained **general** search emitter and normal compaction. It checks
+every row's ordered four-word entries, class row/entry boundaries and
+order, with zero overflow flags and a matching entry count. Physical
+staging addresses are not semantic ordering and are not compared. The
+live native owner is never replayed into or mutated.
+
+The existing `sameFrame` physical checker is shared without changing its
+code or bounds. It checks frames 5, 100, 101 and 105, spanning compression,
+the checkpoint and the newly selected list. General-double versus the
+independent oracle, projected-force mixed baselines, cancellation-aware
+energy and D264 molecular-virial bounds all remain as approved. The
+independent no-step references retain the small-system matrix route.
+The two CPU lowering fixtures (native operand forms and published-group
+replay) passed 2/2 in 1.61 s before the controlled device run.
+Its first submission stopped before launching the native helper because
+the new executable was missing from lit's tool substitutions (one failed,
+22 skipped). Registering that tool and passing the replay tools explicitly
+corrected the harness without changing an input or numerical criterion.
+
+The controlled continuation at `86aa758c` passed **23/23**, 371.20 s on
+RTX 5090. Three successful native refresh snapshots matched the general
+iterator exactly in row-local entry order, class ranges and particle
+order, with zero flags. The checkpoint-triggered refresh selected
+conditional after the barostat contraction; all four physical frames
+passed unchanged bounds.
+
+| Successful refresh | Phase | Cell diagonal (nm) | Half diagonal (nm) | Actual maximum reach (nm) | Selected path |
+|---|---|---|---|---|---|
+| 1 | Compression | 4.0 | 2.0 | 1.9747226260000001 | nearest |
+| 2 | Compression | 4.0 | 2.0 | 1.9747226260000001 | nearest |
+| 3 | Exact checkpoint continuation | 3.7611447879364923 | 1.8805723939682462 | 1.9747204763030917 | conditional |
+
+The following entries are absolute error / evaluated bound. Projected
+force units are kJ/mol/nm; energy and molecular virial are kJ/mol.
+
+| Frame | Projected force maximum | Projected force RMS | Energy | Molecular virial |
+|---|---|---|---|---|
+| 5 | 0.00209034975 / 0.0142782984 | 0.000615315755 / 0.0142782984 | 0.0000263915111 / 0.00907542526 | 0.00120279789 / 0.00955813613 |
+| 100 | 0.00208857179 / 0.0121522757 | 0.000535385244 / 0.0121522757 | 0.000144237865 / 0.00952499035 | 0.000752093271 / 0.0100103390 |
+| 101 | 0.00147330943 / 0.0117832935 | 0.000378430357 / 0.0117832935 | 0.0000914881422 / 0.00953321246 | 0.000386723036 / 0.0100099108 |
+| 105 | 0.00314297749 / 0.0104304061 | 0.000826148100 / 0.0104304061 | 0.000100153429 / 0.00961129990 | 0.00147953767 / 0.0100675715 |
+
+The largest independent-oracle differences over these frames were
+$2.5011104298755527\times10^{-12}$ in force,
+$9.7344354799133725\times10^{-13}$ in energy and
+$1.0587086762825493\times10^{-12}$ in molecular virial; each passed the
+existing general-double oracle bound. These are four validation frames,
+not repeated timing samples.
+
+The subsequent focused sanitizer run passed native ownership and pruning
+but failed the new search-images fixture: **2 passed, 1 failed**, 44.41 s.
+Memcheck passed and its exact coverage checks reported no missing, extra
+or duplicate pairs in all three phases. Initcheck reported 101 errors,
+with 100 detailed reports and one suppressed. All printed reports were
+host-API `cudaMemcpy` source accesses: the fixture copied its uninitialized
+36-word inverse before the first plan, and downloaded row/entry capacity
+tails although it printed only logical records. No production kernel or
+growth defect was evidenced by those reports.
+
+The narrow fixture correction initializes only its inverse and downloads
+only the logical row and entry prefixes. It retains the bounds assertions,
+record format, oracle and exact checker; it does not initialize production
+padding to hide accesses. One affected sanitizer rerun remains required;
+stage profiling stays blocked until it is clean.
+CPU preflight first passed one fixture and failed one because a proposed
+fixture `gpu.memset` remained unlowered in the existing pipeline. Reusing
+the supported upload of host zeros avoided any shared lowering change;
+the one affected CPU rerun passed 1/1 in 36.13 s.
+
+The affected four-mode sanitizer continuation at `30844760` passed 1/1
+in 26.27 s: memcheck, initcheck and synccheck zero errors, racecheck zero
+hazards. Together with the prior native/prune passes, all three focused
+fixtures are validated. The original 101-error record is retained.
+
+#### Image stage screen and batch rollback
+
+Six new ON captures at `30844760` each ran 10,000 steps on RTX 5090 and
+exited zero. All six exports, 18 current/W1 source-context checks and
+integer duration partitions passed. Main `af7a9f47` and W1 `5ea35cdb`
+references are historical 10,000-step A/B captures with the same six
+controls and inputs, rather than contemporaneous measurements. No new
+unprofiled wall ratio, repeat spread or statistical significance estimate
+is available. No 100,000-step run followed this failed stage screen.
+
+The full construction closure includes sort, group plan, index/cache
+preparation, candidate search, compaction and all three new canonical-order
+kernels. Earlier published rest included compaction; this comparison
+moves it into **both** native construction budgets and subtracts it from
+both rest budgets. New ordering is always charged to construction.
+
+| System | Image full construction | W1 A full | W1 B full | Main A neighbor build/prune | Main B neighbor build/prune | New canonical ordering |
+|---|---|---|---|---|---|---|
+| Ubiquitin OPC | 81.206866 | 54.467589 | 55.460235 | 22.670185 | 22.419927 | 3.705709 |
+| Ubiquitin TIP3P | 84.823360 | 57.322060 | 56.748152 | 19.698702 | 19.697685 | 3.911580 |
+| OPC small | 24.465447 | 10.311543 | 10.444678 | 20.924885 | 21.009729 | 1.311541 |
+| OPC large | 33.811373 | 13.085061 | 13.146270 | 27.263994 | 27.122827 | 2.094050 |
+| TIP3P small | 26.824696 | 11.340111 | 11.202876 | 18.119364 | 18.083272 | 1.471330 |
+| TIP3P large | 36.433365 | 14.036528 | 13.966508 | 23.483346 | 23.577742 | 2.304716 |
+
+All values are GPU duration sums in us/step. Construction increased
+46.424–160.862% against the two W1 references, missing every construction
+target. Candidate register use rose to 254 for WW/SS and 161 for SW,
+versus W1's 168/168 and 128; this is a resource observation, not a proven
+hardware limiter. Neither the added ordering alone nor a guessed occupancy
+loss is assigned the entire regression.
+
+The batch is therefore discarded, retaining W1 rather than its slower
+image specialization. The independent fixture-copy initialization and
+bounded-download repair remains. The next authorized rest batch includes
+R1 and R2 in the mechanism table; the remaining evaluation items stay
+planned under the established order and targets.
+
+### Target-driven remaining batches and reporting
+
+The subsequent target ruling supersedes a full timing round after every
+single edit. Each batch must pass exact coverage and physical/virial
+gates, with sanitizer coverage for device-code changes. Short profiles and
+static footprints steer implementation. Revert a batch without measured
+stage improvement. Run the full two-job timing protocol when a batch is
+expected to reach a target, or after a few batches to check progress.
+
+| RTX 5090 target | Required GPU time or ratio |
+|---|---|
+| Common evaluation, large OPC/TIP3P boxes | At most 55 us/step each |
+| Common evaluation, small OPC/TIP3P boxes | At most 25/28 us/step |
+| Common evaluation, ubiquitin OPC/TIP3P | At most 32/31 us/step |
+| Ubiquitin search, sort and group planning | At most main neighbor build and prune |
+| Water-box search, sort and group planning | At most retained W1 |
+| Other kernels | At most main, with kernel-level attribution |
+| Whole step | ON/main below one on all six systems |
+
+From the image-path measurement onward wall timings use **100,000 steps**
+and a rate every 1,000 steps, with the unchanged plateau rule, trims and
+two-job interleaving. Each job measures main, retained W1 and the new head
+at that length. Per-kernel profiles may use 10,000 steps and are labeled
+separately; old 10,000-step wall ratios are not a same-length baseline.
+Every result comment includes both ON/main tables, supporting stage/kernel
+numbers, gate counts, exclusions and spread. Only process narrative moves
+to supporting records.
+
+After image paths, inventory the remaining kernels from existing
+captures, then resume evaluation. E1 is the parked norm proof guard;
+E2 streams masks; E3 exposes fixed pair constants. E5 specializes only
+classes present, derived from host descriptor counts. E6 selects separate
+prune and nonprune functions from the invalidation flags already read on
+the host, without another device readback. All specialization comes from
+program properties with checked preconditions and shared emitters; no
+handwritten kernel for a named water model is admitted. Any template-only
+mechanism requires a stated reason and a general-form issue.
+
+### D1: direct solute-water candidate scan
+
+On ubiquitin OPC at 19bbf459 the SW search was the largest maintenance
+kernel: 24.6 us/step, about 610 us per launch. Its grid is one warp per
+solute row (64–68 blocks of 64 threads), and the D0 diagnostic already
+showed that the kernel lasts as long as its longest row. The 7 x 8 columns
+of that cell are 0.8 nm wide, and the SW radius is 0.23 of a cell edge, so
+each frame subset of a row visited nearly every column, often under two
+images. A column holds about eight water groups, so a 32-lane batch was
+three quarters idle; the worst row ran 189 column/image batches for 777
+candidates.
+
+D1 replaces the column and image loops of the SW class with the
+prototype's direct scan: for each frame subset, the warp reads every water
+group once, 32 per batch. The rest of the search is unchanged. The frame
+subsets, the f32 certificate, the certified Cartesian box test, the survivor
+loop (two partners per step), the literal f64 pair predicate, the entry
+records and masks, ownership, overflow flags and the copy of inactive rows
+stay as they were.
+
+What replaces the column/image enumeration is one fractional interval per
+partner. With $\mathbf b^-,\mathbf b^+$ the wrapped fractional box of the
+subset, $\mathbf p^-,\mathbf p^+$ that of the partner group and
+$\mathbf r$ the fractional radius of the general iterator (the class reach
+over the face widths), a pair can be within the reach at the image
+$\mathbf s$ only if, on every axis $a$,
+$b^-_a-p^+_a-r_a\le s_a\le b^+_a-p^-_a+r_a$. The kernel forms both bounds
+in f32 and widens each by $2^{-18}$ times the sum of the magnitudes of its
+operands plus one. The six f32 roundings of a bound stay below $2^{-22}$ of
+that sum, so the f32 interval contains the exact one. The integer images of
+that interval are then clipped to the query domain of the general iterator
+(the same image ranges that bound the certificate). A NaN bound takes the
+whole domain. Each image left takes the general iterator's box test and
+survivor loop. Almost every partner has one image or none, so the image
+loop runs once per batch unless some lane of the batch has more.
+
+The entries are the same as the general iterator's. An entry is a
+(subset, partner unit, absolute image) with a nonzero mask under the
+literal predicate. Any such image lies in the interval above and in the
+query domain, and the box test and predicate are computed the same way.
+Images the general iterator would also have rejected give a zero mask, and
+no partner and image is visited twice. Only the order of the entries within
+a row changes (subset, partner group, image instead of subset, column,
+image, partner), which no consumer depends on. The class's starting outer
+entry count on ubiquitin OPC is unchanged (264,865).
+
+Development profile, ubiquitin OPC, 3,000 steps, RTX 5090, 19bbf459 against
+D1: the SW search goes from 623 to 244 us per launch, or from 27.4 to 10.6
+us/step. Maintenance kernels go from 59.2 to 41.4 us/step, all kernels from
+166.8 to 149.0. The WW and SS searches are unchanged within 3%. Water boxes
+have no SW rows. The 18 exact search, refresh and native fixtures (CPU and GPU,
+orthorhombic and triclinic, with the multi-image small cells of the oracle)
+pass.
+
+The solute-solute class takes the same scan over the solute groups from
+its own row's group on (the general iterator's forward clipping), with its
+ownership and exclusion tests unchanged. Its starting entries are unchanged
+too. Same profile, D1 with SS against D1: the SS search goes from 432 to
+246 us per active launch, 11.9 to 6.7 us/step, and maintenance from 41.4 to
+35.8 us/step on ubiquitin OPC; on ubiquitin TIP3P, against 19bbf459, SW
+goes from 625 to 241 us, SS from 464 to 262, and maintenance from 61.7 to
+37.7 us/step.
+
+A survivor step then cost about as much as a batch: three dependent loads
+(the group's span, the unit at the place, then its anchor and f64
+reference) and a dozen f64 operations to floor the partner's reference for
+its image code and to form its wrapped f64 image. The search cache now
+holds, per group place, the unit's f32 anchor and its lattice frame packed
+in three ten-bit fields biased by 512, and the candidate lane loads its
+group's span together with its box. A step reads the place's record and
+unit in one dependent load and forms the image code in integers. The f64
+reference is read only by the exact shell, which still forms the wrapped
+f64 image exactly as before, and by a frame outside $[-511,511]$, which
+stores a negative word and takes the original floor. The decisions, the
+entries and their order are unchanged. Same profile: SW 243 to 193 us, SS
+246 to 219 us and WW 458 to 428 us per active launch on ubiquitin OPC
+(maintenance 35.8 to 31.8 us/step), and WW 436 to 404 us on the large OPC
+box (maintenance 14.0 to 13.3 us/step, against 19bbf459).
+
+The water-water class keeps its columns, which matter in large boxes, but
+no longer loops over images per column or reads a column alone. Lanes form
+the descriptor spans of the distinct columns of the query range, 32 at a
+time: each distinct x column of $[\mathrm{lower},\mathrm{upper})$ once, and
+in it one or two spans of its distinct y columns, which the serpentine
+column order keeps contiguous. A warp scan of the span lengths and a
+five-step search over it map the concatenation onto full 32-lane batches.
+Each candidate then takes the image interval, box test and predicate above.
+Every group of the visited columns is read once, so the entries are again
+those of the former iterator, in another order. The SW and SS classes take
+the same spans (SS from its own descriptor columns, with the forward clip),
+which for ubiquitin's 7 x 8 columns cover nearly the whole class, and the
+former column/image iterator is removed. Same profile: WW goes from 428 to
+172 us per active launch on ubiquitin OPC, 404 to 175 on the large OPC box
+and 412 to 164 on the small TIP3P box (against 19bbf459), with SW (193 to
+199 us) and SS (219 to 220 us) about as before. Maintenance kernels, 19bbf459 against now:
+59.2 to 27.0 us/step on ubiquitin OPC, 14.0 to 8.8 on the large OPC box,
+11.9 to 7.2 on the small TIP3P box. The starting outer entry counts of all
+three systems are unchanged.
+
+The chunk copy of `emitCompactTemplatePairs` took a thread per 64-entry
+staging chunk, so each thread wrote up to 64 records alone (about 106 us
+per refresh on ubiquitin OPC). It now takes a warp per chunk; lane $l$
+copies records $l$ and $l+32$, so each column's stores are coalesced, and
+lane 0 writes the work record. The records and their places are unchanged.
+Same profile: 4.4 to 0.5 us/step on ubiquitin OPC; maintenance 27.0 to 24.6
+us/step there and 8.8 to 6.9 on the large OPC box.
+
+A survivor step then decided its sixteen pairs one at a time, each behind
+its eligibility branch and the f32/f64 decision branch, so no shared load
+or test of one pair overlapped the next. The step now forms the certified
+f32 decision of all sixteen pairs without a branch, as accept and undecided
+masks over the eligible pairs. Only a lane with an undecided pair forms the
+f64 image of its partner and runs the literal predicate on those pairs, and
+the SS exclusion test walks the accepted bits one at a time. Each pair is
+decided as before. Same profile, against the previous step: SW 201 to 171
+us, SS 226 to 210 us and WW 173 to 154 us per active launch on ubiquitin
+OPC; WW 174 to 149 us on the large OPC box and 162 to 134 us on the small
+TIP3P box.
+
+Kernel-busy time, 10,000-step captures on the RTX 5090, two rounds in
+alternated order (round 1 / round 2, us/step). Maintenance is every
+`mdir_run_kernel` of the template and main's neighbor build and refresh
+kernels; search is the three candidate kernels. Main and 19bbf459 were
+captured with 494854ae (the step before the branch-free pair decisions);
+6e6dcca4 was captured with main again.
+
+| System | Build | All kernels | Maintenance | Search |
+|---|---|---|---|---|
+| Ubiquitin OPC | main b7d801d9 | 114.6/114.4; 114.3/114.0 | 22.7/22.6; 22.5/22.3 | |
+| | 19bbf459 | 161.5/160.8 | 53.9/53.2 | 44.6/43.9 |
+| | 494854ae | 130.3/130.1 | 22.8/22.6 | 17.2/17.0 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 15.6/15.2 |
+| Ubiquitin TIP3P | main b7d801d9 | 91.2/91.4; 91.3/91.1 | 19.7/19.7; 19.7/19.6 | |
+| | 19bbf459 | 158.7/156.4 | 58.7/56.2 | 48.6/46.5 |
+| | 494854ae | 124.8/124.4 | 24.6/24.3 | 18.7/18.3 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 16.4/16.7 |
+| Large OPC box | main b7d801d9 | 177.4/177.0; 176.7/177.2 | 27.3/27.3; 27.2/27.5 | |
+| | 19bbf459 | 170.8/170.9 | 13.4/13.3 | 8.3/8.3 |
+| | 494854ae | 164.0/164.1 | 6.8/6.7 | 3.4/3.3 |
+| | 6e6dcca4 | 163.4/163.6 | 6.2/6.2 | 2.8/2.8 |
+
+Template maintenance on ubiquitin OPC is now below main's neighbor build
+and refresh (21.1 against 22.4 us/step), and 2.9 above it on ubiquitin
+TIP3P. The whole step is still 14.3 us/step above main on ubiquitin OPC
+and 31.4 on ubiquitin TIP3P, in evaluation, the per-step writer and the
+rest; the large OPC box is 13.5 us/step below main. In the ubiquitin
+systems the SW and SS searches remain the largest maintenance kernels
+(about 170 and 210 us per launch): their longest rows have four frame
+subsets, each scanned and stepped separately. Without its survivor steps
+the SW search takes 38 us per launch (a development build with no
+entries), so the steps, not the scan, are the remaining cost.
+
+### U1: heavy-atom solute units and one mobility group
+
+Ruled on #799 (2026-11-11) and taken into this decision: the solute's
+hydrogens set the atom group's pace (the pruning interval of 2.6 steps on
+ubiquitin), so where the X–H bonds are constrained a solute unit is a heavy
+atom and its hydrogens, with the radius $\rho$ of Section 2, and the
+anchors of the waters and of the solute units form one mobility group.
+
+Implementation. The driver derives the units from the constraint groups
+(SHAKE groups, and the SETTLE of an unmatched water) and refuses `ON`, or
+leaves `AUTO` on the general path, when a solute hydrogen has none.
+`md.template_pairs` and the segmented-pair ops take the (member, anchor)
+pairs as a tuple relation and $\rho$ as `radius`; the runtime keeps, per
+atom unit, its anchor and up to four members. At a snapshot a member takes
+its anchor's packing cell, corrected by the lattice vector between its raw
+and minimum-image bond, so that it lies in its anchor's image, and the
+anchor's reference point in the anchor's frame (U4 corrects an earlier
+form that shifted the point with the member's cell); it reports the largest
+member–anchor distance, which widens $\rho$ at an unconstrained build and
+stops a constrained one beyond $\rho$. In the per-step writer a member
+publishes its frame only; its anchor publishes the reference point for
+itself and its members and alone takes the displacement tests, with the
+least half-margin of the three classes. Search, pruning and evaluation are
+unchanged: they read the units' points. The SW reach adds $\rho$, the SS
+reach $2\rho$, in one addition order shared by the build, the pruning and
+the validity theorem. A program without anchored members is unchanged.
+
+Gates. `water-template-anchors-coverage-gpu.test` checks every evaluated
+frame of alanine dipeptide in OPC (NPT) and in TIP3P (NVT), PME, 2 fs,
+200 steps, with an independent host check (`MDIR_TEMPLATE_CHECK_COVERAGE`):
+over all unit pairs and their near images, each site pair within the
+cutoff of the packed frames, in f64 widened by $2^{-20}$ of the cutoff
+(which contains the f32 predicate of the kernel and the pairs of the f64
+state), must have an inner entry. The first evaluation is at the
+unconstrained input. OPC: 309 checks, 3,899,165 unit pairs within the
+cutoff, none without an entry; TIP3P: 249 checks, 3,179,894 pairs, none.
+The same check at 1.5 cutoffs, beyond every inner reach, reports pairs
+without an entry, so it can fail.
+`water-template-anchors-opc-physical-gpu.test` and
+`water-template-anchors-tip3p-physical-gpu.test` (one fixture,
+`water-template-anchors-physical-gpu.test`, until the split below)
+evaluate the template, general mixed and general double routes at ten
+frames of each trajectory: the template's projected forces and the
+solute's unprojected atom forces stay within 1.5 times general mixed's
+error against double (largest 0.078 kJ/mol/nm against 0.117, with mixed's
+own 0.078), and the energy within 1.5 times mixed's or $10^{-6}$ relative.
+`water-template-anchors-refusal.test` refuses `ON` without
+`hydrogen_bonds` (12 free hydrogens of the dipeptide), and the topology
+fixture covers units, unmatched-water units, the radius in both precisions
+and the `AUTO` reason. The 105 template fixtures of the gate list pass.
+
+Cadence, RTX 5090, ubiquitin (refresh and pruning intervals in steps,
+initial event excluded): OPC 24.8 and 2.57 at 6e6dcca4, 55.6 and 8.48 with
+the units; TIP3P 23.7 and 2.56, then 52.6 and 8.48. The outer list's
+starting entries grow from 264,865 to 278,230 (OPC) and from 267,364 to
+278,794 (TIP3P), the inner list's final entries by 8%.
+
+Kernel and wall time, us/step: 6e6dcca4 and main from the 10,000-step
+captures above; the units and main again in 3,000-step captures, two rounds
+in alternated order (round 1 / round 2). Wall is the span of the middle 80%
+of the captured kernels, idle the part of it without a kernel.
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main b7d801d9 | 114.1/114.4 | 22.5/22.7 | 124.2/124.4 | 8.4/8.3 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 149.4/148.8 | 21.0 |
+| | units | 122.2/122.0 | 13.3/13.0 | 142.2/140.8 | 17.6/16.6 |
+| Ubiquitin TIP3P | main b7d801d9 | 90.9/91.0 | 19.9/19.8 | 100.2/100.3 | 7.6/7.7 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 142.8/143.2 | 20.7 |
+| | units | 115.4/115.6 | 13.9/14.0 | 134.1/134.5 | 16.9/16.8 |
+
+The criterion of U1 holds against 6e6dcca4: the step falls by 6.4 us of
+kernels and 7.6 of wall on OPC, 7.1 and 8.7 on TIP3P, mostly in
+maintenance (21 to 13 and 22 to 14 us/step). It is still above `main`, by
+7.9 us of kernels on OPC and 24.6 on TIP3P. The evaluation is unchanged
+(42.2 to 42.1 us/step on OPC: the larger SS and SW reaches cost about what
+the rarer pruning saves); the per-step writer grows from 9.8 to 11.1
+us/step with the members' points.
+
+### U2: one lattice frame per build
+
+The search queries each row once per *frame subset*, the units of its
+group that share a lattice frame $\lfloor\mathbf p\rfloor$ of their
+reference points $\mathbf p$, and writes one entry per subset, partner and
+image. The packing took the central image, $\mathbf p\in[-\tfrac12,\tfrac12)$,
+whose floors change at $\mathbf p=0$ as well as at the faces: two planes per
+axis, one through the middle of the cell. Ubiquitin sits at the middle of
+its cell (fractions 0.19 to 0.80 on every axis), so that plane cut the
+protein on all three axes, into up to eight frames, and the rows of the
+solute had up to four subsets; the water groups that the middle plane cut
+had two.
+
+The plan of this step was to merge a row's subsets per partner and
+absolute image. The measurement showed the cause instead, so the packing
+was changed: with $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$, a unit's
+packing cell is $\mathbf c-\mathbf t$ with $\mathbf c$ the central-image
+cell of $\mathbf x-H\mathbf t$, and its reference point is the fraction of
+the framed position plus $\mathbf t$. The packed f32 frame is the central
+image of $\mathbf x - H\mathbf t$, of the same magnitude as before, and the
+points of a build lie in $[0,1)$: one lattice frame for every unit, until a
+unit crosses a face of the cell. The search, the pruning and the
+evaluation read the same differences of points and of frames, with the
+same image codes. The displacement tests compare the framed position
+shifted by $H\mathbf t$ with the reference point. A member of a solute unit
+keeps its anchor's cell plus a whole lattice vector, and its anchor's
+point. The isolated writer and frame fixtures run with $\mathbf t=0$ and,
+since U4, with the production $\mathbf t=(\tfrac12,\tfrac12,\tfrac12)$.
+
+Gates: the 105 template fixtures pass (3 unsupported, as before), and the
+coverage and physical gates of U1 pass with the new points (no site pair
+without an entry; the template within the mixed criterion at all twenty
+frames). The triclinic path, which took the sequential central image of
+$\mathbf x-H\mathbf t$ (U8 takes the nearest lattice point in fractions
+instead), was run once by hand: the 403 waters of the
+dodecahedron fixture (`test/Driver/Inputs/triclinic`), PME, NPT, 50 steps
+with the coverage check, 89 checks and 1,636,909 unit pairs within the
+cutoff, none without an entry (at 1.5 cutoffs, 1,006,426 without); its
+energies agree with the general path's to 0.006 kJ/mol at every row. It is
+not yet a fixture.
+
+3,000-step captures, RTX 5090, one round against main (us/step):
+
+Evaluation is the template kernel, or main's pair kernel.
+
+| System | Build | All kernels | Evaluation | Maintenance | Outer entries at the start |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5 | 32.9 | 22.8 | |
+| | U1 (units) | 122.2 | 42.1 | 13.3 | 278,230 |
+| | U2 | 112.8 | 36.8 | 9.1 | 236,129 |
+| Ubiquitin TIP3P | main | 91.2 | 24.0 | 20.0 | |
+| | U1 | 115.4 | 40.3 | 13.9 | 278,794 |
+| | U2 | 106.6 | 35.4 | 10.0 | 235,557 |
+| Large OPC box | main | 175.1 | 68.5 | 27.3 | |
+| | 6e6dcca4 | 163.5 | 72.3 | 6.2 | |
+| | U2 | 157.6 | 66.7 | 5.5 | 403,589 |
+
+Per search launch on ubiquitin OPC, U1 against U2: WW 152 to 86 us, SW 225
+to 195, SS 174 to 66. The kernels of ubiquitin OPC are now below main's
+(112.8 against 114.5); TIP3P remains 15.4 above (the writer and the
+standalone constraint kernel, items 1 and 3 of the accounting). The wall
+time is not yet below main: the host waits for the writer's flags before
+it launches the reciprocal sum (16.7 against 8.4 us/step idle on
+ubiquitin OPC), U3 below.
+
+An experiment that placed the protein at the edges of the wrapped frame
+(points $[0,1)$ around the cell's origin rather than its middle) had the
+same entries but took the SW search from 225 to 273 us per launch: the
+search favours a solute away from the faces of the frame. The packing
+above puts the faces at those of the input cell, where solvated inputs
+leave water; a solute that spans more than half a cell still has subsets,
+and the merge of the ruling remains open for that case.
+
+### U3: the writer's flags read after the reciprocal sum is launched
+
+The per-step writer reduces its five validity flags (outer and inner
+displacement tests of the two partitions of the one mobility group, and
+the water extent) through the events of D113, and stored them into the
+list's host state right after its launch. That store was the first use of
+the flags, so the host waited for the writer's event there, before it
+launched the reciprocal sum: the device idled 5.7 us before the PME
+weights on every step of ubiquitin OPC, and the rest of the step was paced
+by host launches. The stores now go just before the refresh that reads
+them, when it follows the writer in the same block (every step loop);
+the wait then follows the launches of the reciprocal sum, as on `main`'s
+path, where the refresh of the list is the first reader. The flags, their
+values and the refresh decisions are unchanged.
+
+3,000-step captures, RTX 5090, one round in the order main, template
+(us/step; wall and idle as in U1):
+
+| System | Build | All kernels | Wall | Idle |
+|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5 | 124.6 | 8.3 |
+| | U2 | 112.8 | 131.7 | 16.7 |
+| | U3 | 112.5 | 125.0 | 10.0 |
+| Ubiquitin TIP3P | main | 90.9 | 100.3 | 7.7 |
+| | U2 | 106.6 | 125.6 | 16.9 |
+| | U3 | 106.7 | 118.6 | 9.7 |
+| Large OPC box | main | 175.0 | 185.4 | 8.6 |
+| | U2 | 157.6 | 175.4 | 15.8 |
+| | U3 | 157.3 | 168.6 | 9.2 |
+
+The gap from the writer to the PME weights falls from 5.7 to 0.2 us.
+
+### Status after U1 to U3
+
+10,000-step captures, RTX 5090, main b7d801d9 against b78aa15b, two rounds
+in alternated order (round 1 / round 2, us/step; wall and idle as in U1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.6/114.2 | 22.7/22.5 | 123.3/122.9 | 8.1/8.1 |
+| | 6e6dcca4 | 128.8/128.2 | 21.3/20.8 | 149.4/148.8 | 21.0 |
+| | b78aa15b | 111.8/112.0 | 8.6/8.6 | 122.3/122.7 | 9.8/10.0 |
+| Ubiquitin TIP3P | main | 91.4/91.4 | 19.6/19.7 | 99.3/99.3 | 7.4/7.4 |
+| | 6e6dcca4 | 122.5/122.7 | 22.3/22.6 | 142.8/143.2 | 20.7 |
+| | b78aa15b | 106.5/106.2 | 9.7/9.6 | 116.6/116.2 | 9.4/9.4 |
+| Large OPC box | main | 176.8/176.8 | 27.2/27.2 | 185.9/185.9 | 8.6/8.6 |
+| | 6e6dcca4 | 163.4/163.6 | 6.2/6.2 | | |
+| | b78aa15b | 156.9/157.0 | 5.2/5.3 | 166.5/166.7 | 9.0/9.0 |
+
+Ubiquitin in OPC now runs at main's rate (kernels 2.5 us/step below,
+wall 0.6 below), the large OPC box 19 us/step below. Ubiquitin in TIP3P is
+15 us/step of kernels and 17 of wall above main: the template's
+evaluation is 35.7 against main's pair kernel of 24.5 (OPC: 36.5 against
+33.3), and its constraint and writer kernels 12.4 + 10.6 + 1.7 against
+main's fused 9.6 (item 1 of the accounting: the writer rule refuses the
+fusion when TIP3P's four constraint families directly precede it). The
+per-step writer is 11.1 us/step on ubiquitin OPC against main's 2.0
+(item 3), larger by 1.3 than before U1 with the members' points. The
+refresh interval is 53 to 57 steps, the pruning interval 8.2 to 8.6, on
+the three systems. The conserved energy's drift over these runs, fitted to
+the rows of the log, is within the spread of the runs (+0.5 to +3.3 kJ/mol
+per 10,000 steps for the template, -1.0 to +1.5 for main, +0.3 to +2.8
+for 6e6dcca4, with a standard error of about 1.5 per fit).
+
+Gates at b78aa15b: the 105 template fixtures in one run (3 unsupported)
+and the sanitizer tier (3 fixtures) pass.
+
+### U4: corrections from the review of 6a9f03b7..13ba351a
+
+**A member's point.** U1 gave a member its anchor's packing cell plus the
+lattice vector $\mathbf L$ between its raw bond $\mathbf b$ and the
+minimum image $\mathbf b_\mathrm{mi}$ of it, which places its frame at
+$\mathbf x_X + \mathbf b_\mathrm{mi}$ in the anchor's frame, but published the
+anchor's point in that shifted cell: the member's frame minus its point
+was $\mathbf b$, not $\mathbf b_\mathrm{mi}$. Where the input splits an X–H
+bond across a face ($\mathbf L \ne 0$, a file wrapped atom by atom), the
+search took the anchor's image for the member's pairs and dropped them.
+The snapshot now publishes the anchor's point at the anchor's cells, and
+the writer gives each member its anchor's point with no cell offset; the
+members' frames are unchanged. Dipeptide inputs translated so that the
+HH31–CH3 bond of ACE lies across a face, and wrapped atom by atom (14 O–H
+bonds of water split as well), NPT, 100 steps, RTX 5090: before the fix
+the coverage check finds 11,965 of 2,135,966 unit pairs within the cutoff
+without an entry in OPC and 12,451 of 2,149,396 in TIP3P (every one that
+it prints, eight a check, is a pair of the split member); after it none, of 2,135,974 and 2,149,945. These inputs
+are now in the coverage gate.
+
+**Duplicates.** The coverage check also counts an inner entry present twice
+for one (unit, partner, image), and a pair present both as $(u, v,
+\mathbf n)$ and as $(v, u, -\mathbf n)$; `MDIR_TEMPLATE_CHECK_COVERAGE=duplicate`
+counts one entry twice and must make it fail. No gate run has a duplicate.
+
+**Up-front reach.** Selection compares the covering reach, the pairlist
+distance plus twice the larger of $r_\mathrm m$ and $\rho$ (the largest of
+the WW, SW and SS reaches), with half the least face width of the input
+cell (volume over face area, $c_z$ for a reduced dodecahedron): beyond
+it a pair can have two images within the reach, `ON` is refused with both
+lengths, and `AUTO` takes the general path. Every build checks it again
+with the current cell and the extent and radius that build holds (widened
+by an unconstrained input): beyond it the run stops, naming both lengths
+(`mdrtTemplatePairsStopReach`). The bound keeps the route's pairs those
+of the general path, one image a pair; the kernels take every image, and
+the IR fixtures that test them beyond the bound against an all-images
+oracle lower with `check-template-reach=false`, which the driver never
+sets. One check a build suffices: at the build
+every other image of a listed pair is at least $L - R \ge R$ away ($L$
+the least face width, no longer than any lattice vector), and
+between builds the validity test keeps $\sigma_\mathrm{min} R - 2d$ (the least
+singular value of the deformation of the cell since the build times the
+reach, less twice the largest displacement of an anchor) above
+the cutoff, so no second image comes within it before the next build.
+`AUTO` keeps a margin below the bound, so that its runs do not reach this
+stop (the route cannot fall back to the general path within a run): the
+reach plus $2 \times 0.25$ Å must be at most half the least face width,
+times $0.95$ under a barostat; beyond it `AUTO` takes the general path,
+naming the lengths, and `ON` is not held to it. The $0.25$ Å on the larger
+of $r_\mathrm m$ and $\rho$ covers the first, unconstrained build, which
+widens them to the input's measured distances: an X–H bond $23\,\%$
+beyond $1.09$ Å or a water's extent $29\,\%$ beyond OPC's $0.873$ Å (the
+stretched input below, a bond a fifth long, widens $\rho$ by $0.218$ Å).
+The $5\,\%$ of the half width covers a barostat's shrinkage, $14\,\%$ of
+the volume: the gate at 2000 bar with a time constant of 0.1 ps shrank it
+by $2.0\,\%$ in 400 steps, and an equilibrated run at 1 bar fluctuates
+by well under $1\,\%$. It is distinct from the extent's numerical
+margin of $10^{-3}$ Å (ruling 5). The driver does not route `AUTO` to the
+template yet (its particle-count floor is not published), so the margin
+is exercised by the selection fixture (`mdir-water-template-test
+--select`), and the run-time stop stays the backstop of `ON` and, later,
+of `AUTO`; it reads the lowered skin, so a tuned pairlist distance is
+checked too. Gates: a
+barostat run at 2000 bar whose cell shrinks from 12.58 to 12.33 Å of half
+width against a reach of 12.38 Å, and the stretched input at a pairlist
+distance of 10 Å, whose first build widens $\rho$ to 1.308 Å and the
+reach to 12.62 Å, stop with the message (`water-template-reach-gpu.test`);
+the stretched coverage input runs at 9.9 Å (12.52 Å). In a triclinic cell,
+the rhombic dodecahedron of the triclinic fixture (403 TIP3P waters, every
+edge 2.6 nm, face widths 2.123, 2.123 and 1.838 nm) under NVT with a cutoff
+of 6 Å and a pairlist distance of 7.1 Å, the input runs 20 steps (its
+first build widens $r_\mathrm m$ to the input's 1.009 Å, a reach of 9.118
+Å against half the least face width, 9.192 Å), and the same input with the
+first water's O–HW1 bond 30 % long stops at its first build with a reach
+of 9.6 Å: between half the least face width and half the next one (10.61
+Å), so a check of the wrong widths would let it run. The log's radius
+statistics belong to the run, whose programs (the terms at the start, then
+the steps) share them, so its first build is the start's; the trial runs
+of a search of the skins (D281) clear them when they end, with the counts
+of `mdrtResetCounts`.
+
+**Gates added.** The selection fixture prints the route of a control
+file's system: free X–H bonds under `AUTO` (the `hydrogen_bonds` reason),
+double precision (general under `AUTO`, refused under `ON`, and its `AUTO`
+program equal to `OFF`'s in the emit fixture), the reach bound in both
+directions, `AUTO`'s margin on both sides with and without a barostat
+(`ON` within the band takes the template), and a minimization (general
+under `AUTO`, refused under `ON`). A program minimizes or takes dynamics steps, never both, so a
+minimized state reaches the template only as the input of a dynamics run;
+the coverage gate takes an input with HH31 a fifth beyond its bond length,
+whose first, unconstrained build widens $\rho$ by the measured distance,
+and whose constrained builds hold $\rho$ again, as the log's line of the
+radius shows (1.0901 Å nominal, 1.3080 Å at the first build, at most
+1.0901 Å at the later ones; the unstretched inputs hold 1.0901 Å
+throughout) (149 checks, 1,879,254
+pairs, none without an entry). A rhombic dodecahedron, the triclinic
+fixture replicated twice along each lattice vector (3,224 TIP3P waters,
+$a = 5.2$ nm), PME, NPT, 50 steps: 89 checks, 13,096,424 pairs, none
+without an entry or twice. The refusal of `ON` without constrained
+hydrogens runs with every device hidden. The writer and snapshot fixtures
+also run at the production $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$,
+whose oracle formed the packing cell from the sequential central image of
+$\mathbf x - H\mathbf t$ (since U8, from the nearest lattice point of its
+fractions).
+
+Gates at the head of these corrections: the 106 template fixtures in one
+run (3 unsupported) and the sanitizer tier (3 fixtures) pass. The
+dipeptide checks: OPC NPT 309 checks, 3,899,162 pairs; TIP3P NVT 249
+checks, 3,179,900 pairs; none without an entry or twice.
+
+### U5: the fused update before the writer, and the writer in f32
+
+**The update of mixed families.** With ubiquitin in TIP3P the run before
+the writer has four constraint families (SETTLE and the solute's bond
+clusters of three sizes), and the writer was the loop after the run: the
+rule that kept publication inside the integration's threads to one marked
+family refused the fusion, so the kick, the constraints and the drift ran
+as three kernels (1.7, 12.4 and 10.6 µs/step against the 9.6 of `main`'s
+fused update). Such a run now fuses as without the template, and a kernel
+of its own follows it and publishes the frames from the stored final
+positions; one marked family keeps its publication in the integration's
+threads. The writer's deferred constraint flags and its validity flags
+share one event, as before. The exact fixture compares the mixed families'
+separate writer with the unfused one (across warps, with 33 unmatched atom
+units).
+
+**The writer.** The per-step writer (b78aa15b) held a whole unit in one lane of three
+or four, evaluated the loop's body once for each site, and took its
+geometry and tests in f64 (228 f64 additions, multiplications and FMAs in
+its SASS). Every writer loop now lowers as any particle loop, and the
+kernel above packs the frames, one thread per unit:
+
+- An O–H displacement is the f64 difference narrowed to f32, imaged in
+  f32 unless that moves it (a water split by a face, imaged in f64 and
+  narrowed); a hydrogen's frame is the narrowed, shifted anchor plus it.
+  The build packs the same way. The extent test takes these
+  displacements once (the wrap was computed twice), in f32, against
+  $r_\mathrm m^2(1 - 2^{-20})$: the f32 square has a relative error below
+  $11\cdot2^{-24}$, so no true excess passes.
+- The displacement test is in f32: the narrowed framed anchor
+  $\mathbf y$ plus the narrowed $H\mathbf t$, less the f32 product of the
+  narrowed $H$ and reference point $\mathbf p$, against
+  $L_\zeta = (\zeta - \delta_\zeta)^2(1 - 2^{-20})$, narrowed once per
+  launch, with $\zeta$ the half margin and $\delta_\zeta =
+  2^{-18}(\lvert H\rvert_1 + \zeta)$; $L_\zeta = -1$ when
+  $\zeta - \delta_\zeta$ is negative. A point with
+  $\lvert\mathbf p\rvert_\infty > 2$ fails, which the bound assumes. The
+  bound is derived in the paper, Section 4.7; no unit computes a guard of
+  its own. On a 5 nm cell $\delta_\zeta$ is $6\times10^{-5}$ nm.
+- The writer stores no current point: where a group prunes, a kernel
+  before the prune computes every unit's point from the positions and the
+  packing cells of its anchor (a member takes its anchor's).
+- The validity booleans are bytes of one flag word, read once: the outer
+  test, the inner test (water and atoms share each, one mobility group)
+  and the extent. The word is mapped host memory, where a kernel may not
+  take atomics (the sanitizer refused an atomic OR), so each byte is set by
+  plain stores of 1.
+
+The SASS of the writer now has 24 f64 arithmetic instructions, most on
+the rare path of a split water. The per-particle writer helper and its two
+fixtures are gone. The writer fixture adds displacements at the margins:
+$2^{-23}$ of a margin beyond it must fail and $2^{-12}$ inside it must
+pass, orthorhombic and triclinic at $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$;
+in a simulation of the f32 test without $\delta_\zeta$ and the factor
+$1 - 2^{-20}$ on these inputs, every one of the 16 units that exceed their
+margin passes.
+
+Kernels of the step, 10,000 steps, RTX 5090 (µs/step):
+
+| Kernel | Ubiquitin TIP3P | Ubiquitin OPC | Large OPC box |
+|---|---|---|---|
+| main: fused update | 9.6 | 10.1 | 10.4 |
+| main: extra points' update | | 2.0 | 3.2 |
+| b78aa15b: kick + constraints + writer | 1.7 + 12.4 + 10.6 | | |
+| b78aa15b: fused update | | 10.0 | 9.3 |
+| b78aa15b: writer (with the extra points) | | 11.1 | 14.2 |
+| U5: fused update | 9.2 | 10.0 | 9.3 |
+| U5: extra points' update | | 1.2 | 2.0 |
+| U5: writer | 2.6 | 2.7 | 2.8 |
+| U5: current points at a prune (per step) | 0.1 | 0.1 | 0.1 |
+
+### Status after U5
+
+10,000-step captures, RTX 5090, main b7d801d9 against 74ea3f31, two rounds
+in alternated order (round 1 / round 2, µs/step; wall and idle as in U1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.5/114.3 | 22.5/22.5 | 123.1/122.9 | 8.1/8.2 |
+| | b78aa15b | 111.8/112.0 | 8.6/8.6 | 122.3/122.7 | 9.8/10.0 |
+| | 74ea3f31 | 105.0/105.0 | 8.7/8.8 | 115.9/115.9 | 10.2/10.2 |
+| Ubiquitin TIP3P | main | 91.1/91.3 | 19.6/19.7 | 99.0/99.2 | 7.4/7.4 |
+| | b78aa15b | 106.5/106.2 | 9.7/9.6 | 116.6/116.2 | 9.4/9.4 |
+| | 74ea3f31 | 94.1/94.1 | 9.7/9.7 | 104.2/104.0 | 9.4/9.3 |
+| Large OPC box | main | 176.8/176.9 | 27.1/27.1 | 185.9/186.0 | 8.6/8.6 |
+| | b78aa15b | 156.9/157.0 | 5.2/5.3 | 166.5/166.7 | 9.0/9.0 |
+| | 74ea3f31 | 147.2/147.4 | 5.3/5.3 | 157.2/157.3 | 9.4/9.3 |
+
+Ubiquitin in OPC runs 9.5 µs/step of kernels and 7.1 of wall below main,
+the large OPC box 29.5 and 28.7 below. Ubiquitin in TIP3P is still 2.9
+µs/step of kernels and 4.9 of wall above main: the template's evaluation
+takes 35.4 against main's 26.2 (the pair kernel 24.4 and its two small
+kernels 1.8), its maintenance 9.7 against 19.7, the writer 2.6, and the
+device idles 1.9 µs/step more than on main. The covering reach is still
+checked against the input cell alone (U4).
+
+Gates at 74ea3f31: the 107 template fixtures in one run (3 unsupported;
+the list lost the two fixtures of the per-particle helper) and the
+sanitizer tier (3 fixtures, 35 s) pass.
+
+### U6 measurement: the evaluation by segment
+
+Step 4 of the order: why the template's evaluation takes 35.4 µs/step on
+ubiquitin in TIP3P against main's 26.2. Every number below is from
+measurement builds of 2917e5a5 on the RTX 5090, none of which is
+committed; nothing in this step measured faster, so the evaluation is
+unchanged.
+
+**By segment.** A measurement build skipped the evaluation of chosen
+classes (the record still loads, prunes and returns zeros). The table
+gives the median of the evaluation kernel's own calls from the tenth to
+the last one before the first rebuild of the loop (the 43rd to the 61st
+call, by build), so that the lists are those of one build; it is not the
+median over the whole run of the probes below (µs a call):
+
+| System | All three | WW alone | SW alone | SS alone | None |
+|---|---|---|---|---|---|
+| Ubiquitin TIP3P | 35.9 | 34.5 | 18.6 | 11.8 | 1.3 |
+| Ubiquitin OPC | 35.9 | 35.1 | 18.8 | 11.6 | 1.3 |
+| Large OPC box | 65.0 | 74.3 | — | — | 1.9 |
+
+The segments run concurrently: alone they take 65 µs, together 35.9, so
+SW and SS add 1.4 µs to the WW segment, which sets the kernel's time. The
+base of a record (setup, the reach selection, the prune's test, the
+epilogue) is at most the 1.3 µs of the kernel with no class evaluated.
+The large box has no SW or SS records, so its WW-alone build differs from
+the full one only in the dead branches removed: the same 96 registers,
+1836 SASS instructions against the full build's 2561, and 14 % slower. The scheduling of
+the WW loop by ptxas moves its time by that much on the shape of the code
+alone, which is why a change is accepted only on all three systems in
+both rounds.
+
+**The shape of the lists.** From the inner lists of ubiquitin in TIP3P at
+the first build and after pruning at the end of a run (the OPC lists
+agree within 4 %). A batch is 32 entries of one record, rotated through
+16 turns; a lane-turn computes when the partner's mask has the lane's bit:
+
+| Segment | Records | Entries | Batch fill | Pairs an entry (of 16) | Lanes active a turn |
+|---|---|---|---|---|---|
+| WW, at a build | 2698 | 157,164 | 0.95 | 6.9 | 0.41 |
+| WW, pruned | 2698 | 100,869 | 0.70 | 6.1 | 0.27 |
+| SW, at a build | 790 | 46,614 | 0.96 | 6.1 | 0.37 |
+| SW, pruned | 790 | 25,719 | 0.67 | 5.5 | 0.23 |
+| SS, at a build | 563 | 31,779 | 0.94 | 10.5 | 0.62 |
+| SS, pruned | 563 | 23,418 | 0.77 | 9.6 | 0.46 |
+
+The pruned WW segment computes in 27 % of its lane-turns: a mask density
+of 0.38 (a water within the pruned reach of 6 of the 16 molecules of a
+cluster) times a batch fill of 0.70. The SASS of the WW turn has 265
+instructions (107 FFMA, 42 FADD, 19 shuffles, 9 table loads with their 18
+clamps and 9 cutoff tests), close to the arithmetic of its 9 Coulomb and
+1 Lennard-Jones terms; main's pair loop loads one table entry an atom
+pair. Ubiquitin's WW records nearly all take one or two batches and fit
+in one wave of the 3400 warps resident at 96 registers.
+
+**Probes that measured slower** (the median of all 2997 calls of the
+evaluation kernel in 3000 steps, every one above 5 µs; µs a call):
+
+| Probe | Ubiquitin TIP3P | Ubiquitin OPC | Large OPC box |
+|---|---|---|---|
+| 2917e5a5, 96 registers | 35.0 | 36.1 | 65.4 |
+| `.maxnreg 80` (24 B spilled) | 37.7 | 40.0 | 72.4 |
+| `.maxnreg 72` (48 B) | 38.7 | 42.9 | 80.6 |
+| `.maxnreg 64` (112 B) | 43.0 | 57.2 | 127.4 |
+| 2 warps a record, batches strided | 38.9 | 40.0 | 70.8 |
+| 4 warps a record | 39.2 | 40.3 | 72.1 |
+
+More resident warps, by fewer registers or by sharing a record's batches
+among warps (each slice writing its cluster's forces), make the kernel
+slower on every system: it is not limited by a wave's tail or by its
+occupancy. Packing the half-warps with records of their own, in batches of
+16, would turn 71,952 warp-turns of the pruned WW segment into 61,632 at
+best (−14 %) if every pair of half-records were matched in length, and
+into 75,152 (+4 %) for consecutive records, the only pairing without a
+sort; it was not built.
+
+**Dropped, with the reason:** the per-record base cost (at most 1.3 µs);
+the SW and SS segments for TIP3P (1.4 µs while WW sets the kernel's
+time); 2-word entries (a load a batch, not a turn); the f64 of the search
+(maintenance, 9.7 against main's 19.7). What remains open is where the WW
+turn stalls, the table loads on its chain or the shuffles or issue, and
+main's issue efficiency on the same system: counters requested.
+
+**The extra idle** (at 74ea3f31; U7 removes most of it). All of the 1.9
+µs/step more idle than main is in the refresh. Against the stretch between two evaluations without one, a build
+adds 108 launches and 6 blocking readbacks of 16 to 32 bytes and 707 µs of
+span, of which 500 are kernels; its 196 µs of gaps are 3.7 µs/step at the
+19 builds of 999 steps (52.6 steps a build) on ubiquitin in TIP3P (3.3
+µs/step on ubiquitin in OPC, 17 builds), against main's 1.8 in its build
+and refresh. A launch costs the host 1.9 µs (host time a launch, not
+device gaps), longer than most of those kernels.
+
+### U7: the build's readbacks and launches
+
+The build of U6's extra idle, made of launches shorter than their host
+cost and of blocking readbacks, changed in three commits; each measured
+faster on all three systems in both rounds (the first two measured
+together, as 31199f1d). The evaluation is unchanged.
+
+**7454a3b1: the passes of the group plan unread.** The plan read
+its controls after every refinement pass (three to seven a build). A pass
+after convergence changes nothing (the flags only accumulate and the
+totals are recounted), so the plan now runs as many passes as the list's
+previous plan needed before its first readback, and reads on one pass at
+a time only while the last one split a group. The device records the last
+pass that split a group (word 4 of eight controls), so the plan reports
+the passes it needed, not those it ran, and the next build takes that
+number. In a 10,000-step run of ubiquitin in TIP3P at 31199f1d, of 188
+of the 197 builds (the 9 others coincide with other copies), 129 then
+read the plan once, 55 twice and 4 three times; at a03416b0, 139, 43 and
+6 in round 1 and 138, 42 and 7 in round 2. A build whose plan needs
+fewer passes than the last one's runs the passes it does not need.
+
+**31199f1d: the compaction before the search's readback.** The
+host read the search's controls (flags and entries) before it launched
+the compaction, so the device waited for its launches. The compaction now
+follows the search at once and reads the controls itself: unless the flags
+are clear and the entries fit the capacity, its kernels write no row,
+unit, entry or header range, so an overflowed search leaves no partial
+list in the arena that the host then grows. The one readback after it
+decides, as before, whether to grow and search again; a second overflow
+still stops the run.
+
+**a03416b0: the clears folded into kernels that run anyway.** Each digit
+of the spatial sort cleared its counts with a launch of its own, and so
+did the class-column counts after the sort; each pass of the plan
+cleared its controls and its segment fields with two more. The identity
+kernel and each digit's last kernel now clear the next digit's counts
+(the scan has consumed them), the copy of the order clears the
+class-column counts, the plan clears its starts, lengths and counts once
+(its segments only grow within a plan), and each pass's normalizing
+kernel clears the totals that the pass's later kernels add to.
+
+**Three readbacks remain, not one.** The snapshot's (the count of
+positions that are not numbers, the extent and the solute radius) feeds
+the stop before the search, the reach check and the search's host
+arguments; the plan's gives the group counts that size the rows and the
+search's grids; the last decides growth.
+
+10,000-step captures, RTX 5090, main b7d801d9 against the three heads,
+two rounds, the second in the reverse order (round 1 / round 2, µs/step;
+wall and idle as in U1):
+
+| System | Build | All kernels | Maintenance | Wall | Idle |
+|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.2/114.5 | 22.4/22.6 | 122.9/123.1 | 8.1/8.1 |
+| | 74ea3f31 | 104.9/104.9 | 8.7/8.6 | 115.9/115.7 | 10.2/10.2 |
+| | 31199f1d | 105.1/105.2 | 8.8/9.0 | 115.4/115.6 | 9.6/9.7 |
+| | a03416b0 | 104.9/104.9 | 8.8/8.7 | 114.6/114.6 | 9.1/9.1 |
+| Ubiquitin TIP3P | main | 90.9/91.4 | 19.6/19.7 | 98.9/99.3 | 7.5/7.4 |
+| | 74ea3f31 | 94.0/94.3 | 9.7/9.7 | 104.0/104.3 | 9.5/9.4 |
+| | 31199f1d | 94.1/94.1 | 9.7/9.8 | 103.5/103.5 | 8.7/8.8 |
+| | a03416b0 | 94.2/94.0 | 9.7/9.6 | 103.0/102.7 | 8.2/8.1 |
+| Large OPC box | main | 175.2/175.5 | 27.1/27.2 | 184.2/184.6 | 8.5/8.6 |
+| | 74ea3f31 | 147.2/147.4 | 5.2/5.3 | 157.1/157.3 | 9.3/9.3 |
+| | 31199f1d | 147.4/147.6 | 5.3/5.3 | 156.8/157.1 | 8.8/8.9 |
+| | a03416b0 | 147.1/147.4 | 5.3/5.2 | 156.1/156.5 | 8.4/8.4 |
+
+A build against the stretch between two evaluations without one (the
+medians of `idle.py` in the two rounds; gaps are the span less its
+kernels and copies, and a step's share is the gaps at the mean interval
+of about 51 steps a build, 55 on ubiquitin in OPC):
+
+| System | Build | Launches | Readbacks | Kernels (µs) | Gaps (µs) | Gaps a step (µs) |
+|---|---|---|---|---|---|---|
+| Ubiquitin TIP3P | 74ea3f31 | 108 | 6 | 507/502 | 205/195 | 4.04/3.88 |
+| | 31199f1d | 116 | 3 | 507/509 | 165/166 | 3.22/3.28 |
+| | a03416b0 | 100 | 3 | 505/503 | 136/135 | 2.68/2.64 |
+| Ubiquitin OPC | 74ea3f31 | 108 | 6 | 492/487 | 206/206 | 3.75/3.78 |
+| | 31199f1d | 116 | 3 | 496/507 | 170/172 | 3.10/3.14 |
+| | a03416b0 | 100 | 3 | 494/490 | 137/137 | 2.50/2.50 |
+| Large OPC box | 74ea3f31 | 100 | 5 | 277/277 | 137/137 | 2.67/2.69 |
+| | 31199f1d | 100 | 3 | 278/279 | 111/114 | 2.16/2.23 |
+| | a03416b0 | 88 | 3 | 274/273 | 88/88 | 1.74/1.74 |
+
+Against main, the device now idles 0.7 µs/step more on ubiquitin in
+TIP3P, 0.9 more in OPC and 0.1 less on the large box (it was 2.0, 2.1 and
+0.8 more). Ubiquitin in OPC runs 8.2/8.5 µs/step of wall below main, the
+large box 28.1/28.1; ubiquitin in TIP3P is 4.1/3.4 above, most of it in
+the evaluation (U6).
+
+**What remains in the build.** About 100 launches a build set its gaps:
+about 1.4 µs of device gaps a launch (the gaps of the table above divided
+by its launches, not U6's 1.9 µs of host time a launch). A CUDA Graph can
+hold only a stretch whose launch parameters are fixed between two
+readbacks: the spatial sort
+(about 40 launches, keyed on the unit count, the column grid and the arena
+address) would save at most about 1 µs/step on ubiquitin, and the whole
+build would also need the rows, the group counts and the plan's passes in
+its key, and a runtime whose launch, accounting and growth paths can be
+captured. It was not built. Each digit's scan over at most 256 buckets
+still takes the general scan's three kernels.
+
+### U8: one lattice frame in a triclinic cell
+
+Two systems were added to the measurements: ubiquitin in a rhombic
+dodecahedron (a reduced triclinic cell; 4,943 OPC or 4,852 TIP3P waters;
+cutoff 9 Å, pair list 12 Å, pruned 9.6 Å), and ubiquitin in TIP3P with
+the settings of the CHARMM force fields (cutoff 12 Å, `POWER_FORCE_SWITCH`
+from 10 Å, pair list 15 Å, pruned 12.6 Å). At a03416b0 the dodecahedron
+ran 6.3 (OPC) and 9.2 (TIP3P) µs/step of wall above `main` c158870b,
+although the orthorhombic OPC system ran 8.4 below, and its template had
+229,781 outer entries against the orthorhombic system's 236,129 with 20 %
+fewer waters (46.5 against 38.3 entries a water).
+
+**The pairs are exact; the entries were split.** Against an exact
+minimum image over the 27 neighboring images of the reduced cell (NumPy,
+from the build's reference points), the set bits of the masks equal the
+pairs within the WW, SW and SS reaches in every class (WW 856,675; SW
+290,477; SS 329,201 on the dodecahedron in OPC): no pair is missing, none
+is twice, none is an extra image. The search is not looser than in the
+orthorhombic cell either (the grid and the fractional search radius are
+sized by face widths; 0 or 1 image a candidate; 48.8 of 49 columns a
+query against 48.8 of 56). But 20.8 % of the units had a nonzero lattice
+frame, a WW row had 1.32 frames on average (up to 4), and 21,411 of its
+146,693 WW entries (14.6 %), 3,283 SW and 2,168 SS entries were second
+entries of a row group for a partner already listed, with the subset of
+the group in another frame: the WW density was 0.365 instead of 0.427.
+
+**The cause** was the packing cells of a triclinic cell: they rounded
+the Cartesian components along $\mathbf c$, then $\mathbf b$, then
+$\mathbf a$, the Cartesian central image, which leaves the fractions of
+$\mathbf a$ and $\mathbf b$ in about $(-0.24, 1.23)$; the search groups
+units by their wrapped fractions, so one group of 16 mixed frames, and it
+queried the columns once for each frame of a row. The WW search, one warp
+a row, takes the time of its slowest row: 4 frames, 1,348 candidate
+groups and 1,745 entries against 1, 407 and 753 orthorhombic, 212 µs a
+refresh against 85.
+
+**The change (658d426b).** The packing cells are now
+$-\mathrm{round}(H^{-1}\mathbf x)$ (ties to even) in either cell, the
+nearest lattice point of the fractions, so every reference point of a
+build lies in $[0,1)$ on the lattice frame, as U2 intended. The entry set
+is unchanged as a set of pairs (the exact count above), the reaches and
+the validity test are the same, and the f32 bounds, written in
+$h=\lvert H\rvert_1$ and in the magnitudes of the fractions, hold as
+before (the framed fractions now lie in $[-\tfrac12,\tfrac12]$). The
+first-step potential energy of the dodecahedron in OPC moves by 4e-4
+kcal/mol (−65880.3972 to −65880.3976; `main` −65880.4064). The coverage
+check now counts the row groups of the inner list whose members lie in
+more than one lattice frame of their reference points, and the
+dodecahedron fixture and the solute fixtures require none
+(`MDIR_TEMPLATE_CHECK_COVERAGE=frame` moves one member into the next
+frame and must find one). At the old packing, 952,840 of the 6,285,360
+inner entries of the dodecahedron fixture's 89 checks were second entries
+of a row group for one partner unit; that count cannot separate a split
+from a partner's second image within the reach, which a smaller cell
+has (the solute fixtures' cell, 25.2 Å on its shortest axis), so it
+was not kept. The frames oracle takes the new cells, and
+the retained-packing fixture checks two tilted anchors whose cells
+differ between the two conventions.
+
+10,000-step captures, RTX 5090, `main` c158870b against 658d426b in one
+job, two rounds, the second in the reverse order (round 1 / round 2,
+µs/step; evaluation is the template kernel or `main`'s pair kernel, wall
+and idle as in U1; entries are the outer entries at the start, a water):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Entries a water |
+|---|---|---|---|---|---|---|---|
+| Dodecahedron OPC | main | 104.7/104.7 | 27.8/27.9 | 20.8/20.6 | 113.5/113.5 | 8.3/8.3 | |
+| | 658d426b | 104.7/104.8 | 37.8/38.0 | 8.7/8.7 | 114.3/114.4 | 9.0/9.0 | 41.1 |
+| Dodecahedron TIP3P | main | 86.8/86.9 | 21.4/21.5 | 19.6/19.5 | 94.9/95.0 | 7.6/7.6 | |
+| | 658d426b | 90.0/89.9 | 33.2/33.1 | 9.2/9.1 | 98.8/98.5 | 8.1/8.1 | 41.6 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 123.8/123.9 | 42.5/42.4 | 33.2/33.5 | 131.6/131.7 | 7.4/7.3 | |
+| | 658d426b | 124.4/124.3 | 62.7/62.7 | 11.7/11.6 | 133.1/132.9 | 8.0/8.0 | 62.8 |
+| Ubiquitin OPC | main | 114.7/114.7 | 33.4/33.3 | 22.7/22.7 | 123.3/123.3 | 8.1/8.1 | |
+| | 658d426b | 105.0/105.0 | 36.5/36.6 | 8.8/8.7 | 114.7/114.8 | 9.1/9.1 | 38.3 |
+| Ubiquitin TIP3P | main | 90.8/91.3 | 24.2/24.5 | 19.6/19.7 | 98.8/99.2 | 7.4/7.4 | |
+| | 658d426b | 94.2/94.6 | 35.6/35.9 | 9.5/9.6 | 103.0/103.4 | 8.1/8.2 | 38.9 |
+
+The outer entries of the dodecahedron fall from 229,781 to 202,919 in
+OPC and from 229,027 to 201,725 in TIP3P, the counts without the split
+entries; in OPC its maintenance is 8.7 µs/step and its evaluation 37.9
+(11.6 and 40.7 at a03416b0, measured in another job). Against `main` its
+wall is now 0.8/0.9 µs/step above in OPC (6.3 before) and 3.8/3.5 in
+TIP3P (9.2 before), the 12 Å switched case 1.4/1.1 above (1.6 before).
+The orthorhombic systems are unchanged by the packing (8.6/8.5 below
+`main` in OPC, 4.2/4.2 above in TIP3P).
+
+**Open, in the evaluation body (not changed here).**
+
+- The dodecahedron's evaluation takes 37.9 µs/step against 36.5 for the
+  orthorhombic OPC system although it has 18 % fewer batches of 32
+  entries weighted 10/4/1 by class (WW 3,563 against 4,468; SW 1,159
+  against 1,198; SS 935 against 974; unweighted 5,657 against 6,640,
+  14.8 % fewer): about 25 % more a weighted batch in OPC and 16 % in
+  TIP3P. The
+  compiled turn is the same (the triclinic kernel adds 6 floating-point
+  operations an entry, the lattice shift), the kernel overlaps nothing,
+  repeated partners in a batch are about 0.01, and loads take about 0.97
+  cache lines an entry in both cells. The hypothesis is a kernel bound by
+  latency or by the load of its busiest multiprocessor (about 5,200 warps
+  for 3,400 records of at most 2 batches); it needs counters (achieved
+  occupancy, stall reasons).
+- The 12 Å switched case: the evaluation is about 1.5 times `main`'s pair
+  kernel at every cutoff (35.5 against 24.2 µs/step at 9 Å without a
+  switch, 42.1 against 29.2 at 10 Å, 54.4 against 34.6 at 11 Å, 63.0
+  against 41.9 at 12 Å; 3,000-step captures). The switch costs little (47
+  instructions of 2,476 and an 8-byte spill; 0.71 to 0.78 ns a weighted
+  batch at 10 to 12 Å against 0.69 at 9 Å). The cause is the lanes: a
+  lane of a turn computes only where its mask bit is set, so the lane use
+  is the mask density, 0.37 at 9 Å to 0.44 at 12 Å (inner WW entries
+  101.9k to 173.7k), and the other lane-turns pay for the 9 Coulomb
+  terms, the Lennard-Jones term and about 20 shuffles. The template body
+  is the same for OPC and TIP3P (36.0 against 35.4 µs/step), while
+  `main` evaluates 16 site pairs a water pair for OPC and 9 for TIP3P
+  (33.3 against 24.2): with TIP3P the template's saving on site pairs is
+  gone and its mask overhead remains. Water groups of 8 instead of 16,
+  emulated on the dumped groups at the inner reach, would raise the
+  density to 0.56 at 12 Å (0.50 at 9 Å) with 1.56 (1.51) times the
+  entries and 0.78 (0.76) times the turns, and 1.5 times the loads and
+  partner-force atomics an entry; it changes the group kernels and the
+  16-lane halves of the evaluation loop, was not built, and waits for the
+  counters of the first item.
+- The SS search of the dodecahedron stays at 219 µs a refresh against
+  203 orthorhombic.
+
+Gates at 658d426b: the 110 template fixtures in one run (107 passed, 3
+unsupported) and the sanitizer tier (3 fixtures, 33 s) pass.
+
+### U9: the evaluation's latency, change by change
+
+The counters of U8's first item (Nsight Compute, RTX 5090, ubiquitin in
+TIP3P and OPC) show a kernel bound by latency at low occupancy: 96
+registers, 5 blocks of 128 threads a multiprocessor, 14.2 warps a
+multiprocessor achieved (`main`'s pair kernel 27.6), an issue rate of
+38.6 % (47.8), and 61 % of the cycles of a turn waiting on a dependency
+(long and short scoreboard and fixed-latency waits). The kernel takes as
+long as the longest chain of water-water work on its busiest
+multiprocessor. Above 96 registers a block fewer fits a multiprocessor
+and the solute-water and solute-solute blocks miss the first wave, about
+7 µs a call, so every change below was kept only at 96 registers or
+fewer (checked on the six systems of the table: ubiquitin in OPC and
+TIP3P, the dodecahedron in OPC and TIP3P, the CHARMM-style 12 Å case and
+the large OPC box) and only if it ran faster on ubiquitin in TIP3P and
+OPC without slowing the large OPC box. Each was measured in 10,000-step
+captures, two rounds in one job; the times are the evaluation kernel a
+call, its calls without the prune (µs, round 1/round 2).
+
+**1. The partner's force write (c77790f1).** At the end of a batch the
+write of the partner's forces read the entry again for the partner's
+unit, then each site's row of the map from packed rows to particles
+behind the three atomics of the site before (the compiler may not move a
+load across them): four dependent round trips a batch, about 3,900 of
+the 4,500 cycles of a batch's tail. The partner's unit is now kept from
+the batch head, and the three rows are read before the first atomic, so
+the tail has one round trip, the three row loads together, then the nine
+reductions. Registers stay at 96.
+
+| System | Before | After |
+|---|---|---|
+| Ubiquitin TIP3P | 35.15/35.07 | 34.22/34.31 |
+| Ubiquitin OPC | 36.17/36.31 | 35.30/35.20 |
+| Large OPC box | 65.42/65.49 | 64.77/64.83 |
+
+The gain, 0.8 to 1.1 µs, is about half of the 1.9 to 2.9 that the stalls
+of the tail predicted; the row loads that remain are the rest. Keeping
+the three rows from the batch head too, so that the tail has no load,
+stayed at 96 registers but ran slower: 34.24/34.55 against 34.25/34.26
+in TIP3P, 37.64/37.63 against 35.20/35.23 in OPC and 72.28/71.89
+against 64.75/64.78 in the large box (three more values live across the
+sixteen turns). The fixture `template-partner-write.mlir` requires the
+partner's unit from the batch head, no read of the entry after the
+turns, and the three row loads before the first atomic; it fails on the
+code before this change.
+
+**2. The next-to-last water pair as a select (cbb03931).** ptxas
+if-converts the guards of most of the nine (TIP3P) or ten (OPC) site
+pairs of a turn and branches around the others (besides the last pair,
+whose guard jumps to the end of the turn): in TIP3P the first, the
+oxygen pair with Lennard-Jones, and the next-to-last; in OPC, whose
+first pair is Lennard-Jones alone and reads no table, the next-to-last
+alone. Inside these branches the pair's table read waits behind the
+comparison (146 and 71 cycles of long scoreboard a turn in TIP3P). The
+body issues the reads before the guards; at the PTX level the first
+pair's read is below its guard (LLVM sinks it to its only use), the
+next-to-last pair's is above it and ptxas moves it into the branch.
+Emitting the reads as non-movable inline assembly keeps both above
+their guards in the PTX, but ptxas still moves both into the branches,
+so the only lever is the branch itself. The next-to-last
+force pair of a water pair, when it reads a table and is otherwise pure,
+is now computed in every lane and kept by a select on its cutoff test
+(the same conditions under which its read already went before the
+guard); the other pairs keep their guards.
+
+| System | Before | After |
+|---|---|---|
+| Ubiquitin TIP3P | 34.15/34.35 | 34.09/34.08 |
+| Ubiquitin OPC | 35.18/35.27 | 34.90/34.80 |
+| Large OPC box | 64.90/64.90 | 62.71/62.91 |
+
+An earlier job gave the same signs (TIP3P 34.39/34.41 against
+34.08/34.17, OPC 35.31/35.22 against 34.93/34.83). The variants that
+were not kept, against the same before:
+
+- The first pair (oxygen, with Lennard-Jones) as a select: ptxas then
+  uses 80 registers (6 blocks a multiprocessor) and the kernel runs
+  36.17/36.51 in TIP3P, 2 µs slower; with the next-to-last as well
+  36.66/36.68, with the last 37.08/37.01. In OPC the first pair reads no
+  table (oxygen has no charge) and as a select takes 128 registers.
+  Rotating the order so that the oxygen pair is not first: 80 registers
+  in TIP3P and 38.30/38.08; in OPC 35.46/35.55 and the large box 67.2.
+- The last two pairs as selects: TIP3P 35.04/34.99 at 96 registers, OPC
+  122 registers and 39.00/39.00. Every pair after the first: 108 (TIP3P)
+  and 150 (OPC) registers; every pair: 114 and 148.
+- All nine table reads of a turn before its first guard, with or
+  without the selects: 125 to 167 registers, and at `.maxnreg 96` 104 to
+  256 bytes of stack; reads two pairs ahead instead of one: 96 (TIP3P)
+  and 126 (OPC) registers, three ahead (with the first pair as a
+  select) 126 and 121.
+
+The fixture `template-select-pair.mlir` requires the select for the
+next-to-last of three force pairs with clamped table reads, with the
+sum in its true operand, and guards for the first and the last; and a
+guard for all three when the read of the middle pair is not clamped. It
+fails on the code before this change.
+
+**3. A cache hint on the table reads (not kept).** The table reads were
+emitted as `ld.global.nc.L1::evict_last` (inline assembly of the same
+128-bit load), to test whether misses in L1 drive their latency (the
+three radial tables of TIP3P are 60 KB against about 96 KB of L1 beside
+32 KB of shared memory, and the frame and entry loads go through the same
+L1). On the code of change 1 it gained little: TIP3P 34.08/34.33 against
+34.15/34.35, OPC 35.01/35.24 against 35.18/35.27, the large box
+64.47/64.66 against 64.90/64.90, at 96 registers. On top of change 2 it
+was slower on all three: 34.49/34.36, 35.65/35.48 and 64.81/64.58. The
+L1 misses of the table reads are not what their latency waits on.
+
+**4. Windows of turns (not built).** The list model was rerun on the
+inner water-water lists that the evaluation reads (dumped from the
+ubiquitin runs of U8, uncompacted, 32-entry batches as evaluated). A
+batch runs sixteen turns; an entry at lane $p$ of a half needs turn
+$(b-p) \bmod 16$ for each set bit $b$ of its mask.
+
+| | TIP3P | OPC |
+|---|---|---|
+| Water-water batches | 4,502 | 4,468 |
+| Mask density, mean span of an entry's bits | 0.373, 7.74 | 0.377, 7.81 |
+| Turns now | 72,032 | 71,488 |
+| Window, entries kept in place (kernel only) | 67,565 (0.938) | 66,643 (0.932) |
+| Window, entries placed by an assignment per batch | 61,325 (0.851) | 60,800 (0.850) |
+| Window, entries sorted by span, then placed | 62,170 (0.863) | 61,646 (0.862) |
+
+Kept in place, 3,527 of the 4,502 batches (3,432 of 4,468) still need
+all sixteen turns. Sorting each cluster's entries by span, as proposed,
+gains nothing over the list order (0.863 against 0.851): the gain is in
+the placement of the entries within a batch, which needs an assignment
+in the prune (a matching of 32 entries to 16 rotations times two
+halves), the kernel's turn count and starting offset per batch, and the
+partner's forces restored to their lanes (or its unit rotated with it)
+after fewer than sixteen turns. At about half of the kernel's cycles in
+the turns, 15 % fewer turns is at most about 7 % of the evaluation,
+before those costs; the sort was not built.
+
+**Captures of the six systems.** 10,000 steps, RTX 5090, `main`
+c158870b, c59075aa (before U9), c77790f1 (change 1) and cbb03931 (change
+2) in one job, two rounds, the second in the reverse order (µs/step as
+in U8; the last column is the evaluation kernel a call without the
+prune, µs):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Evaluation a call |
+|---|---|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.4/114.7 | 33.2/33.5 | 22.5/22.6 | 123.1/123.4 | 8.1/8.2 | 33.28/33.49 |
+|  | c59075aa | 104.9/104.8 | 36.6/36.5 | 8.7/8.7 | 114.6/114.5 | 9.0/9.0 | 36.21/36.07 |
+|  | c77790f1 | 104.0/104.2 | 35.7/35.8 | 8.7/8.9 | 113.7/114.0 | 9.0/9.1 | 35.23/35.30 |
+|  | cbb03931 | 103.7/103.7 | 35.4/35.3 | 8.7/8.8 | 113.5/113.4 | 9.1/9.0 | 34.93/34.84 |
+| Ubiquitin TIP3P | main | 91.1/90.9 | 24.4/24.2 | 19.6/19.6 | 99.0/98.9 | 7.4/7.4 | 24.42/24.21 |
+|  | c59075aa | 94.5/94.4 | 35.8/35.7 | 9.6/9.6 | 103.4/103.1 | 8.3/8.1 | 35.32/35.30 |
+|  | c77790f1 | 93.5/93.5 | 34.8/34.7 | 9.5/9.6 | 102.2/102.2 | 8.1/8.1 | 34.30/34.19 |
+|  | cbb03931 | 93.3/93.4 | 34.5/34.7 | 9.6/9.6 | 102.1/102.2 | 8.2/8.2 | 34.01/34.15 |
+| Dodecahedron OPC | main | 104.8/104.6 | 27.8/27.8 | 20.7/20.7 | 115.3/113.4 | 8.4/8.2 | 27.86/27.81 |
+|  | c59075aa | 104.5/104.5 | 37.9/37.8 | 8.5/8.7 | 114.2/114.2 | 9.0/9.1 | 37.71/37.58 |
+|  | c77790f1 | 103.9/103.9 | 37.0/37.2 | 8.8/8.6 | 113.5/113.5 | 9.0/9.0 | 36.78/36.95 |
+|  | cbb03931 | 104.4/104.3 | 37.7/37.7 | 8.6/8.6 | 114.0/113.9 | 9.0/9.0 | 37.52/37.50 |
+| Dodecahedron TIP3P | main | 87.1/86.7 | 21.6/21.3 | 19.6/19.5 | 95.2/94.7 | 7.7/7.6 | 21.65/21.35 |
+|  | c59075aa | 89.8/89.9 | 33.0/33.1 | 9.1/9.1 | 98.5/98.5 | 8.0/8.0 | 32.80/32.87 |
+|  | c77790f1 | 88.7/88.7 | 31.9/31.8 | 9.1/9.2 | 97.4/97.3 | 8.2/8.0 | 31.59/31.53 |
+|  | cbb03931 | 87.6/87.6 | 30.9/30.9 | 9.0/9.1 | 96.3/96.2 | 8.1/8.0 | 30.66/30.63 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 124.2/124.0 | 42.4/42.5 | 33.5/33.5 | 132.0/131.9 | 7.3/7.3 | 42.43/42.53 |
+|  | c59075aa | 124.7/124.8 | 63.1/63.1 | 11.7/11.8 | 133.4/133.4 | 8.1/8.0 | 62.46/62.49 |
+|  | c77790f1 | 126.9/126.8 | 65.1/65.1 | 11.8/11.8 | 135.5/135.4 | 8.0/8.0 | 64.38/64.40 |
+|  | cbb03931 | 125.7/125.4 | 64.1/63.8 | 11.6/11.7 | 134.3/134.0 | 8.0/7.9 | 63.38/63.14 |
+| Large OPC box | main | 177.7/177.2 | 69.9/69.6 | 27.4/27.5 | 186.9/186.3 | 8.6/8.6 | 69.93/69.71 |
+|  | c59075aa | 147.3/147.3 | 66.4/66.5 | 5.2/5.1 | 156.3/156.2 | 8.3/8.3 | 65.35/65.49 |
+|  | c77790f1 | 146.7/146.7 | 65.7/66.0 | 5.3/5.2 | 155.6/155.7 | 8.3/8.3 | 64.69/64.90 |
+|  | cbb03931 | 144.7/144.8 | 63.8/64.0 | 5.3/5.3 | 153.7/153.8 | 8.4/8.4 | 62.71/62.89 |
+
+Against `main` the wall is now 9.6/10.0 µs/step below in ubiquitin OPC
+(8.5/8.9 before U9), 3.1/3.3 above in TIP3P (4.4/4.2), 1.3 below/0.5
+above in the dodecahedron in OPC (1.1 below/0.8 above; `main`'s first
+round is 1.9 above its second), 1.1/1.5 above in the dodecahedron in
+TIP3P (3.3/3.8), 2.3/2.1 above in the 12 Å switched case (1.4/1.5) and
+33.2/32.5 below in the large OPC box (30.6/30.1). The evaluation a call
+falls by 1.1 to 1.3 µs in ubiquitin, 2.1 to 2.2 in the dodecahedron in
+TIP3P and 2.6 in the large box; in the dodecahedron in OPC change 1
+gains 0.6 to 0.9 and change 2 gives most of it back (37.52/37.50 against
+37.71/37.58); in the 12 Å switched case change 1 costs 1.9 and change 2
+returns 1.0 to 1.3 of it, 0.9/0.7 above c59075aa. Both changes passed
+the rule of the measurements (faster on ubiquitin in TIP3P and OPC, not
+slower in the large box), but not every system gained. Against the build
+before it, change 1 is slower in the switched case (1.9 µs a call, 2.1/2.0
+µs/step of wall) and change 2 in the dodecahedron in OPC (0.7/0.6 µs a
+call, 0.5/0.4 of wall); against c59075aa, cbb03931 is slower in the
+switched case alone (0.9/0.7 µs a call, 0.9/0.6 of wall), the dodecahedron
+in OPC ending 0.2/0.1 µs a call faster. Against `main` the evaluation a
+call stays slower in every system but the large box: by 1.7/1.4 µs in
+ubiquitin in OPC, 9.6/9.9 in TIP3P, 9.7/9.7 in the dodecahedron in OPC,
+9.0/9.3 in the dodecahedron in TIP3P and 21.0/20.6 in the switched case;
+the wall is slower in the four systems named above (ubiquitin in TIP3P,
+the dodecahedron in TIP3P, the switched case and, in its second round,
+the dodecahedron in OPC).
+
+**The switched case and the kept unit.** On cbb03931 with the partner's
+unit read again from the entry after the turns (the three row loads
+still before the first atomic), the switched case runs 58.88/59.23
+against 63.22/63.16, 3.2 to 3.6 below c59075aa, while ubiquitin in TIP3P
+runs 34.82/34.57 against 34.11/34.20, OPC 35.31/35.64 against
+34.94/34.89, the large box 63.41/63.36 against 63.12/62.83 and the
+dodecahedron in OPC 37.80/37.76 against 37.32/37.65. Both stay at 96
+registers (the switched kernel with an 8-byte spill when the unit is
+read again, without one when it is kept). One more value live across the
+turns moves ptxas's schedule of a turn by 1 to 7 % either way, by system;
+which one a system gets is not predicted by anything measured here, so
+change 1 keeps the unit, as its rule decided.
+
+Gates at cbb03931: the gate's list of 110 entries (109 template
+fixtures, one listed twice) in one run, 107 passed and 3 unsupported
+(the sanitizer fixtures, which run in their own tier), and the sanitizer
+tier (3 fixtures, 33 s) passed. That list did not contain the tests of
+the two changes, `template-partner-write.mlir` and
+`template-select-pair.mlir`, so the gate did not run them. They are in
+the list since 8957f5c9, which also adds four cases to
+`template-select-pair.mlir` (the next-to-last pair with one clamped and
+one unclamped read, the same pair with an atomic, the SW class, two WW
+pairs; each keeps every guard, and each fails when its condition of the
+select is removed). The gate at 8957f5c9: 112 entries, 109 passed and the
+same 3 unsupported.
+
+**Open, in the evaluation.**
+
+- The schedule of a turn moves with ptxas's choices by more than the
+  changes above gain: one value live across the turns (the switched case
+  ±4 µs), the order of the pairs, which pair is a select. A turn whose
+  register use and order are fixed at the PTX level (an explicit
+  `.maxnreg`, or the turn written so that ptxas has no branch to place)
+  would make the measurements of such changes repeatable; neither was
+  tried here.
+- The first pair's table read (the oxygen pair with Lennard-Jones) still
+  waits behind its guard (146 cycles of long scoreboard a turn in TIP3P);
+  every way of moving it tried here (a select, another order, non-movable
+  assembly) cost more than it saved. Issuing it a turn ahead, from the
+  rotated state, carried across the shuffle, was not tried.
+- Windows of turns need a placement of the entries in the prune; with
+  it, at most 15 % fewer turns (item 4).
+- The tail of a batch keeps one round trip, the three row loads.
+
+### U10: the order of the records, their size, the cell in f32, and full records after the prune
+
+The counters of the dodecahedron (Nsight Compute, RTX 5090, ubiquitin in
+OPC in the rhombic dodecahedron against the same system in the
+orthorhombic cell) gave four findings that this step acted on: the
+launch ends on its busiest SMSP, with a maximum of the instructions an
+SMSP issues 1.49 times their mean in the dodecahedron (1.33 in the
+orthorhombic cell; a warp's SMSP is fixed by its place in its block); the
+records of two batches lie scattered through the water-water range; in
+the dodecahedron the nine table reads of the water-water turn all load
+into one register quad, where the orthorhombic turn rotates among three
+(55 values live into the turn against 48, 5.92 cycles an instruction
+against 5.32); and 96 registers is exactly the limit of five blocks a
+multiprocessor. The solute-water and solute-solute records are off the
+critical path. Each change below was kept only if it was faster on the
+dodecahedron in OPC and in TIP3P and not slower on ubiquitin in OPC and
+in TIP3P (orthorhombic) and on the large OPC box, at 96 registers or
+fewer; the CHARMM-style case (ubiquitin in TIP3P, 12 Å, switched) is
+reported beside them. Every capture is 10,000 steps on the RTX 5090,
+`main` c158870b and the builds compared in one job, two rounds, the
+second in the reverse order. The evaluation a call is the evaluation
+kernel's calls without the prune (µs, round 1/round 2), as in U9.
+
+**1. The records longest first, and a grid of live records (not
+kept).** The compaction ordered each class's work records by length
+(64 counters a class, scanned longest first, a record placed by an
+atomic counter of its length) and the evaluation launched a warp for
+each record of the last build (the chunk count of the build's one
+readback) instead of one for each record the capacity allows.
+
+| System | Head (586c4a18) | Longest first, grid of live records |
+|---|---|---|
+| Ubiquitin OPC | 34.86/35.05 | 34.69/34.56 |
+| Ubiquitin TIP3P | 34.10/34.34 | 33.95/33.93 |
+| Dodecahedron OPC | 37.49/37.30 | 38.57/38.60 |
+| Dodecahedron TIP3P | 30.71/30.72 | 31.23/31.06 |
+| CHARMM-style | 63.67/63.08 | 68.38/68.11 |
+| Large OPC box | 62.75/63.04 | 61.85/61.98 |
+
+Its parts apart (a job of their own): ordered by batches alone
+38.03/37.99 in the dodecahedron in OPC and 31.06/30.81 in TIP3P; the
+grid of live records alone, in the rows' order, 37.39/37.32 and
+30.60/30.74, against 37.31/37.47 and 30.64/30.74 for the head. The order
+made the dodecahedron slower, the grid changed nothing. The model of the
+SMSPs (blocks placed on the multiprocessors in turn, warp $k$ of a block
+on SMSP $k$) had predicted a busiest SMSP of 34.5k instructions instead
+of 41.2k for the order by the evaluated, pruned length; a build can
+order only by the outer length, for which the same model gives 36.8k,
+and 92 % of the dodecahedron's water-water outer records are of two
+batches, so the order changes little in the blocks. What made it slower
+was not measured (the records of nearby rows no longer share a
+multiprocessor's L1 is one hypothesis).
+
+**2. One batch a record (not kept).** The compaction wrote a chunk of 64
+entries as two records of 32, still ordered, each record adding its
+cluster's forces with atomic additions as before (no ownership rule is
+needed: a partner entry belongs to one record, and a cluster's forces
+are sums). In the rows' order instead of longest first: the column
+"rows".
+
+| System | Head | One batch a record | Rows |
+|---|---|---|---|
+| Ubiquitin OPC | 34.85/34.86 | 39.62/39.54 | 39.73/39.55 |
+| Ubiquitin TIP3P | 34.09/34.18 | 38.60/38.56 | 37.81/37.74 |
+| Dodecahedron OPC | 37.59/37.41 | 43.42/43.37 | 41.20/41.27 |
+| Dodecahedron TIP3P | 30.62/30.66 | 35.32/35.13 | 33.41/33.33 |
+| CHARMM-style | 63.46/63.19 | 67.03/66.79 | 72.23/72.64 |
+| Large OPC box | 62.87/63.00 | 71.26/71.25 | 71.51/71.67 |
+
+A second record of a chunk pays the head of a record again (the cluster's
+16 frames, its prune's first points, the cluster's force write), as two
+warps a record did in U6 (+11 %); the processor-sharing model of the
+launch gave the same sign (92.8k cycles against 90.1k in the
+dodecahedron). That model gains from one batch a warp only after the
+prune re-chunks a row (item 4).
+
+**3. A triclinic cell narrowed on the host (016beafd).** The partner's
+lattice shift at the head of a batch and the prune's test took the cell
+in f64 and narrowed it in the kernel. The narrowed values were hoisted
+and held in registers across the loops of a record: in the dodecahedron
+13 conversions against 10 in the orthorhombic cell, and the turn's nine
+table reads all into one quad. Narrowed on the host, the cell and the
+prune's sum of its magnitudes are kernel parameters, which the device
+reads from its constant bank where it uses them: 7 conversions, and the
+table reads rotate among three quads as in the orthorhombic cell, at 96
+registers with an 8-byte spill (one store at the kernel's start, one load
+at its end). A truncation and a sum of magnitudes round the same on the
+host as on the device, so the prune's widened reach is unchanged.
+
+| System | Head | Every cell on the host |
+|---|---|---|
+| Ubiquitin OPC | 35.15/34.78 | 35.38/35.34 |
+| Ubiquitin TIP3P | 34.02/33.94 | 33.86/33.82 |
+| Dodecahedron OPC | 37.33/37.43 | 32.80/32.66 |
+| Dodecahedron TIP3P | 30.93/30.62 | 29.94/30.01 |
+| CHARMM-style | 63.55/63.60 | 58.42/58.44 |
+| Large OPC box | 62.94/62.90 | 66.44/66.79 |
+
+In the orthorhombic cell, where three values were narrowed, the change
+moved ptxas's schedule of the kernel (2,522 SASS instructions against
+2,547 in the large box, the same registers) and made the large box 3.5
+to 3.9 µs a call slower and ubiquitin in OPC 0.2 to 0.6, while the
+CHARMM-style case ran 5.1 faster. By the rule, only a triclinic cell is
+narrowed on the host; an orthorhombic one keeps the code of the head.
+`water-template-cell-forces-gpu` compares same-frame forces of the
+template with the general double and mixed routes in the reduced
+triclinic cell of 403 TIP3P waters (PME, 6 Å, a pairlist of 7 Å), where
+the partners' images have tilt components; it fails when the
+evaluation's cell loses its tilts (the template trajectory then stops).
+`template-native-cuda` requires the six f32 parameters of a triclinic
+cell. `mdir-template-solute-test --water` runs that comparison without a
+solute.
+
+**4. The prune re-chunks a row (745c9f12).** A row's work records are its
+chunks of 64 entries. The prune compacted each record's survivors within
+its own chunk: a row of three chunks pruned to 0.64 of its entries kept
+three part-filled records. Now the warp of a row's chunk $k$ tests the
+row's entries from its first until $64(k+1)$ survive and writes those of
+rank $64k$ to $64k + 63$ into its own chunk: the row's first records hold
+full batches and its last ones may be empty, as the groups' pruning
+fills the blocks of a group (D284). Each warp writes only its own chunk's
+entries, so no record waits for another's prune. An outer record names
+its chunk ordinal above the class tag and the row's end; the inner record
+is unchanged (ABI version 9). The evaluation skips a record the prune
+left empty: it loads and writes nothing. On the head with every cell
+narrowed on the host (item 3), the evaluation a call:
+
+| System | Item 3 | Re-chunked | And empty records skipped |
+|---|---|---|---|
+| Ubiquitin OPC | 35.32/35.20 | 34.26/34.05 | 33.04/33.13 |
+| Ubiquitin TIP3P | 34.00/34.06 | 32.65/32.42 | 31.44/31.52 |
+| Dodecahedron OPC | 32.64/32.77 | 31.39/31.37 | 30.51/30.55 |
+| Dodecahedron TIP3P | 30.00/29.94 | 29.09/28.98 | 28.33/28.23 |
+| CHARMM-style | 58.24/58.32 | 55.97/55.51 | 53.88/54.13 |
+| Large OPC box | 66.46/66.56 | 63.00/62.80 | 60.63/60.75 |
+
+(the last column from a second job, against the middle one measured
+again: 34.00/34.16, 32.57/32.55, 31.44/31.49, 29.12/29.05, 55.70/55.92
+and 63.02/63.09). The prune itself costs more: a record's warp tests the
+row's entries before its chunk again, so a row of $n$ chunks is tested
+about $n(n+1)/2$ chunks' worth. The calls that prune (one in 8.5) took
+41.9 µs against 35.9 in the dodecahedron in OPC, 45.8 against 38.6 in
+ubiquitin in TIP3P and 82.5 against 75.6 in the large box (round 1), so
+the evaluation a step gains less than a call: 32.6 against 32.9 µs in the
+dodecahedron in OPC, 34.5 against 34.5 in ubiquitin in TIP3P, 65.2
+against 67.6 in the large box. A prune in a launch of its own, a warp
+for each row, testing each entry once and writing all of the row's
+records before the evaluation, was slower: the evaluation without the
+prune changed its schedule again (35.7 µs a call against 32.2 in
+ubiquitin in OPC), and the wall rose by 4.0 µs a step there, 3.6 in the
+large box, 1.2 in ubiquitin in TIP3P and 0.9 in the dodecahedron in
+TIP3P, and was unchanged in the dodecahedron in OPC; it was not kept.
+The prune oracle has a row of four chunks (161 of 230 entries survive
+with both groups active in the rectangular cell: two full records, one of
+33, one empty) and one of three (117 of 180 survive); it fails
+when a record's chunk ends one rank early, as do the coverage check of
+the dodecahedron and the triclinic forces of item 3.
+
+**5. The chains at a record's start (not built).** The entry's fourth
+word could carry the partner's packed row, but the row is arithmetic on
+the partner's unit, not a load, so it shortens no round trip; the loads
+at a batch's head (the entry, then the partner's frames) remain two
+round trips. Without counters of the new head, nothing here measured
+which of them waits; not built.
+
+**Captures of the six systems.**
+
+10,000 steps, RTX 5090, `main` c158870b, the head before U10 (586c4a18,
+the code of cbb03931) and 745c9f12 in one job, two rounds, the second in
+the reverse order (µs/step as in U8; the last column is the evaluation
+kernel a call without the prune, µs). The evaluation kernel stays at 96
+registers on the six systems (an 8-byte spill in the dodecahedron in
+OPC, one store and one load a thread):
+
+| System | Build | All kernels | Evaluation | Maintenance | Wall | Idle | Evaluation a call |
+|---|---|---|---|---|---|---|---|
+| Ubiquitin OPC | main | 114.3/114.4 | 33.3/33.3 | 22.5/22.5 | 126.2/123.0 | 8.3/8.1 | 33.30/33.33 |
+|  | 586c4a18 | 103.4/104.1 | 35.2/35.7 | 8.6/8.8 | 113.1/113.7 | 9.1/9.0 | 34.69/35.22 |
+|  | 745c9f12 | 102.4/102.4 | 34.0/34.1 | 8.7/8.6 | 112.2/112.0 | 9.1/9.0 | 32.20/32.30 |
+| Ubiquitin TIP3P | main | 91.1/90.7 | 24.4/24.1 | 19.6/19.5 | 99.0/98.6 | 7.4/7.4 | 24.43/24.12 |
+|  | 586c4a18 | 93.3/93.2 | 34.7/34.5 | 9.5/9.5 | 102.0/101.8 | 8.1/8.1 | 34.17/33.99 |
+|  | 745c9f12 | 92.6/92.6 | 34.0/33.9 | 9.6/9.6 | 101.4/101.3 | 8.1/8.1 | 31.98/31.86 |
+| Dodecahedron OPC | main | 104.6/104.7 | 27.7/27.8 | 20.7/20.7 | 116.3/113.5 | 8.5/8.3 | 27.75/27.85 |
+|  | 586c4a18 | 104.1/104.3 | 37.4/37.6 | 8.6/8.6 | 113.7/113.9 | 9.0/9.0 | 37.19/37.39 |
+|  | 745c9f12 | 98.6/98.5 | 31.9/31.8 | 8.6/8.6 | 108.2/108.1 | 8.9/9.0 | 30.64/30.53 |
+| Dodecahedron TIP3P | main | 86.7/87.0 | 21.4/21.7 | 19.4/19.4 | 94.7/95.0 | 7.6/7.6 | 21.45/21.67 |
+|  | 586c4a18 | 87.5/87.7 | 30.8/30.9 | 9.1/9.1 | 96.1/96.3 | 8.0/8.1 | 30.55/30.65 |
+|  | 745c9f12 | 86.4/86.4 | 29.6/29.7 | 9.2/9.2 | 95.0/95.1 | 8.0/8.1 | 28.22/28.29 |
+| Ubiquitin TIP3P, 12 Å, switched | main | 123.8/123.8 | 42.2/42.2 | 33.5/33.5 | 131.6/131.7 | 7.3/7.4 | 42.27/42.20 |
+|  | 586c4a18 | 125.7/125.7 | 64.0/64.0 | 11.7/11.8 | 134.2/134.4 | 7.9/8.1 | 63.34/63.33 |
+|  | 745c9f12 | 125.0/124.5 | 63.3/63.0 | 11.8/11.6 | 133.7/133.1 | 8.1/8.0 | 60.45/60.12 |
+| Large OPC box | main | 177.3/177.2 | 69.7/69.7 | 27.3/27.3 | 191.2/186.3 | 8.8/8.6 | 69.78/69.76 |
+|  | 586c4a18 | 144.7/145.0 | 63.7/64.0 | 5.2/5.2 | 153.7/153.9 | 8.4/8.3 | 62.66/62.99 |
+|  | 745c9f12 | 141.2/141.3 | 60.6/60.6 | 5.2/5.2 | 150.2/150.3 | 8.4/8.4 | 58.13/58.17 |
+
+Against `main` the wall is now 14.0/11.0 µs/step below in ubiquitin
+in OPC (13.1/9.3 before U10), 2.4/2.7 above in TIP3P (3.0/3.2), 8.1/5.4
+below in the dodecahedron in OPC (2.6 below/0.4 above), 0.3/0.1 above in
+the dodecahedron in TIP3P (1.4/1.3), 2.1/1.4 above in the 12 Å switched
+case (2.6/2.7) and 41.0/36.0 below in the large OPC box (37.5/32.4). The
+evaluation a call falls by 6.6/6.9 µs in the dodecahedron in OPC,
+2.3/2.4 in TIP3P, 2.5/2.9 in ubiquitin in OPC, 2.2/2.1 in TIP3P,
+2.9/3.2 in the switched case and 4.5/4.8 in the large box. Against
+`main` it is now 1.1/1.0 µs below in ubiquitin in OPC and 11.7/11.6 below
+in the large box, and above in the others: by 7.6/7.7 in ubiquitin in
+TIP3P, 2.9/2.7 in the dodecahedron in OPC, 6.8/6.6 in the dodecahedron in
+TIP3P and 18.2/17.9 in the switched case. No system is slower than at
+586c4a18.
+
+Gates at 745c9f12: the gate's list (it held `water-template-match.test`
+twice; the duplicate is removed, and `water-template-cell-forces-gpu.test`
+added), 112 entries in one run, 108 passed, 3 unsupported (the sanitizer
+fixtures, which run in their own tier) and
+`water-template-anchors-physical-gpu.test` stopped at the run's 300 s
+limit (293.8 s at cbb03931; the new fixture of item 3, 149 s, now runs
+beside it); alone it passed in 275.8 s. The sanitizer tier (3 fixtures,
+33 s) passed.
+
+After the rebase onto `main` ec32a4f8, with the fixture of item 3 at two
+frames instead of five (35 s alone, 114 s in the gate; it still fails
+when the evaluation's partner shift loses the cell's tilts, or $c_y$
+alone: the template trajectory stops before the first frame, the water
+beyond its covering extent after the position constraints): the same 112
+entries, 108 passed, 3 unsupported, and
+`water-template-anchors-physical-gpu.test` stopped at the 300 s limit
+again; alone it passed in 234.6 s. Its own sixty compilations (ten frames
+of two systems on three routes), beside seven other tests, are what
+reach the limit, not the fixture of item 3. The sanitizer tier (3
+fixtures, 33 s) passed.
+
+The fixture is split by system after 918d528e, with the same frames, routes
+and tolerances and the same shared inputs:
+`water-template-anchors-opc-physical-gpu.test` (OPC, NPT) and
+`water-template-anchors-tip3p-physical-gpu.test` (TIP3P, NVT), thirty
+compilations each. The gate's list, now 113 entries, in one run: 110
+passed, 3 unsupported (the sanitizer fixtures), none at the limit; the
+two took 95 s and 146 s beside the others, and the longest entry 232 s.
+
+**Open, in the evaluation.**
+
+- The dodecahedron in OPC against `main` in TIP3P, the measure of
+  #795: the wall of the template in the dodecahedron in OPC, 108.2/108.1
+µs/step, is 13.5/13.1 above that of `main` in the dodecahedron in TIP3P,
+94.7/95.0 (19.0/18.9 before U10), and its evaluation a call 30.64/30.53
+against 21.45/21.67 (37.19/37.39 before).
+- The prune's repeated tests of a row's earlier chunks (item 4) cost
+  about as much as the re-chunk gains a step in ubiquitin; a prune that
+  tests each entry once and still lets no record wait for another (the
+  survivors' count of each chunk from the previous prune, or a count
+  kept by the build) was not tried.
+- In the orthorhombic cell the cell narrowed on the host gave the
+  CHARMM-style case 5 µs a call and cost the large box 3.5 to 3.9: the
+  schedule ptxas chooses still moves by more than such changes gain
+  (U9). A turn whose schedule is fixed at the PTX level was not tried.
+- One batch a record and the longest-first order may pay once the prune
+  re-chunks (item 4), as the model of the launch has it (−21 % in the
+  dodecahedron for both together); with the re-chunk in place neither
+  was measured again.
+- Counters of the new head (the busiest SMSP, the turn's cycles an
+  instruction) would show what of the four findings remains; a script
+  for them is prepared, not run.
+
+### Precision contract for the whole search port and future pruning
+
+The first corrections are control/launch changes: every f64 predicate,
+image, reach, source admission and accuracy bound remains unchanged.
+The following argument is declared before a possible f32 correction,
+following [How bounds are set](../validation.md#2-how-bounds-are-set).
+
+Normalize reference fractions in f64 first. Evaluate local wrapped
+differences and a small exact integer image in f32; retain winding,
+reference epochs, cells, fractional ranges, image proofs and validity in
+f64/i64. This avoids making the f32 error scale depend on an arbitrary
+unwrapped origin. Conversion, subtraction and cell-matvec bounds use the
+component magnitudes, $u_{32}=2^{-24}$, an absolute underflow term, and
+$\gamma_n=n u/(1-n u)$; they are not a fitted multiple of the measured error.
+
+Let $\delta_p$ bound the Cartesian-vector error of precision path $p$
+against a common exact-real displacement, and let $A$ bound its norm.
+The f64 bound includes the **original** wrapping, absolute-image
+subtraction and cancellation graph. A conservative squared-norm bound is
+
+$B_p=\gamma_{5,p}(A+\delta_p)^2+2A\delta_p+\delta_p^2+\beta_{5,p}$.
+
+Here $\beta_{5,p}$ is the propagated absolute underflow floor for the
+squared-norm computation, including flush-to-zero if applicable.
+
+With outward $E=B_{32}+B_{64}$, promote the f32 squared norm $Q_{32}$
+exactly to f64. The interval
+$[\mathrm{down}(Q_{32}-E),\mathrm{up}(Q_{32}+E)]$ encloses the original
+f64 result. Accept only if its upper bound is at most the **literal
+original rounded** f64 squared reach; reject only if its lower bound is
+greater. In the uncertainty shell execute the original f64 predicate
+with the same operation graph. Nonclosing, nonfinite, overflow or image
+representation cases use f64, without a new source refusal.
+
+For Cartesian boxes, endpoint and image-shift error bounds propagate
+through the 1-Lipschitz max-gap operation. Add the resulting length error
+to the numerical box margin and round the squared threshold outward.
+Extra internal prefilter survivors are safe; **extra final pair/image
+membership is not**. Existing search and prune checkers remain exact.
+Do not publish numerical padding as additional `classReaches`: that would
+incorrectly credit an incompletely covered shell as validity skin.
+
+The whole-search implementation uses cached Cartesian anchors, rather
+than a fractional subtraction and cell multiplication for every pair.
+The cache producer retains the original f64 wrap and Cartesian transform
+before narrowing to f32. Three class-specialized searches use two warps
+per block, direct descriptor-column endpoints, early backward-range
+removal and shared first anchors. Direct column scans replace dependent
+z binary searches. The native general image/subset iterator remains:
+the prototype's nearest-image restriction cannot replace its covering
+proof or change within-row output order. The sparse append, compaction,
+entry masks and ownership are unchanged.
+
+The cache uses dead group-planning storage only after group publication.
+Every search attempt rebuilds Cartesian data for active and retained
+hybrid references under the current cell; it does not retain an old-cell
+Cartesian cache. The auxiliary Cartesian box slot has a separate f32
+view, while reference and fractional-box views retain their f64 ABI.
+
+| Operation | S4 | Whole search port |
+|---|---|---|
+| Reference fractions, wrap and cell | f64 | Same f64 |
+| Cartesian anchor producer | f64 for boxes | Same f64 expression, then f32 cache |
+| Query-image Cartesian shift | f64 | f32, with exact-integer and rounding certificate |
+| Pair displacement and norm | f64 fractional subtraction, cell transform and norm | f32 Cartesian subtraction and norm; original f64 graph in uncertainty shell |
+| Cartesian group boxes | f64 | f32 extrema with a certified conservative rejection threshold |
+| Fractional ranges and image uniqueness | f64 | Same general f64 proof |
+| Images, epochs, validity and certified reaches | f64/i64 | Unchanged |
+
+Certificate setup evaluates positive error bounds outward in f64, one
+representable step after each rounded operation. Thresholds narrow
+outward to f32. Ordinary gradual-underflow arithmetic is required; PTX
+must contain no flush-to-zero or approximate arithmetic on this path
+before device validation. NVIDIA's [PTX ISA floating-point
+instructions](https://docs.nvidia.com/cuda/parallel-thread-execution/)
+specify subnormal support for ordinary f32 arithmetic without `.ftz`.
+Unsupported representation, nonfinite or overflow cases disable the
+certificate and retain the literal f64 decision; no new source refusal
+is introduced. Numerical envelopes are never physical skin.
+
+This implementation has no performance conclusion before its gates and
+the two-job measurement against S4. The exact all-images, boundary, reframed, triclinic,
+incidence and growth fixtures remain gates. A coverage counterexample
+stops work; no bound is fitted or widened after a failure.
+
+The implemented certificate uses the equivalent reach-based implication
+to avoid charging a global coordinate norm to each squared-norm threshold.
+For the computed displacement $d_p$ and norm $Q_p$, the counted dot graph
+satisfies $(1-g_p)\lVert d_p\rVert^2-b_p\le Q_p\le
+(1+g_p)\lVert d_p\rVert^2+b_p$, where $g_p=\gamma_{3,p}$ and
+$b_p=\beta_{5,p}$. The Cartesian producer, cast, image shift and original
+absolute-frame graph give an outward
+$\Delta=\delta_{32}+\delta_{64}\ge\lVert d_{32}-d_{64}\rVert$.
+With $T$ the literal original rounded squared reach, form
+$r_+=\mathrm{up}\sqrt{(T+b_{64})/(1-g_{64})}$ and
+$r_-=\mathrm{down}\sqrt{\max(0,T-b_{64})/(1+g_{64})}$.
+The outward thresholds are
+$U=(1+g_{32})(r_++\Delta)^2+b_{32}$ and
+$L=(1-g_{32})(r_--\Delta)^2-b_{32}$.
+An original accepted pair has $Q_{32}\le U$, proving strict rejection
+above its upward f32 conversion. Acceptance below the downward conversion
+of $L$ implies $\lVert d_{64}\rVert\le r_-$ and hence $Q_{64}\le T$.
+Fast acceptance requires both $r_--\Delta$ and $L$ strictly positive.
+All other cases execute the original f64 graph, including zero when
+positivity cannot be proved.
+
+For boxes, let $\alpha$ bound the shared native f64 Cartesian producer's
+error and $\delta_G$ bound the f32 max-gap error after endpoint narrowing
+and image-shift rounding. Min/max is 1-Lipschitz per component; the bound
+accounts for extrema coming from different points. A pair accepted by the
+old predicate proves the conservative box threshold
+$U_B=(1+g_{32})(r_++\delta_{64}+2\alpha+\delta_G)^2+b_{32}$.
+Only a finite box norm strictly above its upward f32 conversion rejects.
+This changes neither the physical reach nor the fractional image proof.
+
+
+## Gates of the implementation
+
+The final-kernel short-range oracle gate covers all six measured systems,
+including both OPC water boxes. On the same exact frame, compare energy,
+forces and molecular virial with the independent f64 brute force; project
+force differences off the constraint-gradient span when comparing rules
+(A) and (B). Retain raw force diagnostics. The existing declared physical
+bounds remain unchanged; projection does not loosen energy or virial
+criteria. This additional gate runs with the final implementation gates,
+not as a prerequisite to the search diagnosis.
+
+
+The failure-only native checkpoint acquisition exposed an initialization contract error after the native
+spatial sort. Device tuple renumbering leaves an original-file host
+placeholder and registers the actual device members separately. Template
+initialization must resolve that registered buffer before acquiring both
+the water members and the exclusions. The correction is local to this new
+initializer; ordinary tuple renumbering and incidence construction retain
+their existing contract. The temporary failure-only instrumentation was
+removed after acquisition.
+
+The short fixtures and preliminary water boxes did not establish this
+contract: a sort of homogeneous water can permute complete, identical
+OHH/EP blocks while preserving the unlabeled block partition and its
+energy. The corpus and order matrix compare emitted programs, rather
+than executing the metadata handoff. The regression therefore interposes
+solute slots between spatially sorted water blocks and checks exact
+members, packed slots and exclusions, with identity and nonidentity
+orders. Its CPU check follows the initializer's copy back to the
+registered renumbered buffer in device-tuples mode and to actual host
+renumbering in the host configuration.
+
+Performance diagnosis counts successful full template refreshes, fused
+prune events and automatic arena growths separately from the general
+neighbor structures. The log reports mean intervals as the number of
+requested steps divided by the event count minus the initial event,
+and outer-entry, inner-entry, work-record and capacity occupancy at the
+first successful build and the end. Occupancy acquisition waits and reads
+the device only at those two diagnostic boundaries; it adds no per-step
+readback. NVTX marks delimit host force-evaluation intervals without a
+device wait, so a timeline can correlate their launches and copies.
+These diagnostics change no physical arithmetic, validity predicate,
+cutoff, list policy or comparison bound. The performance cause is reported
+before optimization, separately from the remaining correctness gates.
+
+The radial extension uses `PairKernelBodyOpInterface`, implemented by
+`md_exec.pair_for` and `md_exec.template_for`. Each view names the squared
+distance, its kernel region and its contribution outputs; structured
+windows can expose several site-pair views of one region. Both
+`md-exec-simplify-distance` and the parent matching in
+`md-exec-expand-radial` consume that interface. They retain D94's admission,
+error criterion and analytic fallback. A distance computed inside a region
+is the radial function's input boundary, and its derived values stay after
+its definition. The argument-distance case retains its original placement.
+This extension follows differentiation and changes no launch or group
+layout. The ordinary corpus and order matrix verify the original pair path.
+
+At implementation checkpoint `f0151e73`, the ordinary corpus checks 1,050
+cases: 1,046 are identical, including 454 identical error cases, and the
+same four previously accepted keyword-hint diagnostics differ. Its entire
+comparison log is byte-identical to the accepted pre-extension log; there
+is no new generated-program or diagnostic difference. The order matrix
+passes 560/560 cases across its exact, padded and search modes. The new
+common-interface CPU fixture checks multiple distances in one region,
+all three classes, admitted tables and the unchanged analytic fallback;
+it and the four existing radial fixtures pass.
+
+Seven focused RTX 5090 tests pass with the current bounds: the original
+zero-tolerance scheduler; independent f64 screened-Coulomb energy, analytic
+forces and strain for the differentiated body and radial table; OPC,
+TIP3P and solute physical comparisons; and the molecular-virial fixtures.
+The screened case uses `erfc(3.5*r)/r`, rotated affine sites, 243 active
+pairs and 469 checks. It uses the current physical gate's scale floors
+without its additional baseline/cancellation allowances, and checks
+untouched padding exactly. It is not an independent full-PME oracle.
+The original quadratic fixture retains zero tolerance.
+
+1. **Forces, energies, and the virial**, on ubiquitin with OPC and with
+   TIP3P and on #738's water boxes, against an f64 oracle and against
+   `main` in double on the same frame, within `main` mixed's own error
+   (step 0's criterion). With rule (A) the forces are compared with the
+   constraint directions of each water projected out (#789), and the
+   virial is compared in D264's molecular convention, with the atomic
+   total including constraint reaction retained as a diagnostic; with
+   rule (B) the raw atom forces are compared as well.
+   The independent native-topology oracles include
+   `include/mdir/Support/PhysicalConstants.h` and use its
+   `mdir::physical::coulomb`, the same physical input as the compiled
+   native route (D394, #805 part 1). Its SI/CODATA 2022 derivation and
+   compiler-rounded values are specified in
+   [conventions, Section 1](../conventions.md#1-units). Pair/image
+   enumeration, force arithmetic and the molecular virial remain
+   independently implemented. A separately rounded coefficient can
+   dominate a nearly canceled virial's net-relative bound; no comparison
+   bound changes when the fixture consumes the public header.
+   Fresh comparisons record signed oracle/general-double values and
+   exact bits, evaluated bounds, absolute contribution sums and term
+   counts before assertions, including every force component.
+   Potential energy uses the cancellation-aware bound
+   $\lvert E_\mathrm{template}-E_\mathrm{double}\rvert \le
+   \max(10^{-5}\lvert E_\mathrm{double}\rvert,10^{-6}S)$ for OPC and
+   TIP3P. Here $S=\sum_p(\lvert E_{\mathrm{LJ},p}\rvert+
+   \lvert E_{\mathrm{Coulomb},p}\rvert)$ comes from the independent CPU
+   oracle at the same frame, summing the two contributions' magnitudes
+   separately. Heavy cancellation can make the net energy a small
+   remainder of large terms; rounding then scales with those terms.
+   The $10^{-6}S$ allowance is about eight f32 epsilons of their magnitude,
+   while the first term retains the previous relative allowance. Force
+   bounds and the oracle/general-double bounds remain unchanged. The
+   physical fixtures retain both absolute pair sums in their output.
+   The scalar virial is compared directly in D264's molecular convention:
+   $\lvert W_\mathrm{template}-W_\mathrm{double}\rvert \le
+   \max(1.5\lvert W_\mathrm{mixed}-W_\mathrm{double}\rvert,
+   10^{-5}\lvert W_\mathrm{double}\rvert,10^{-6}S_W)$, where the CPU
+   oracle at the same frame computes $S_W=\sum\lvert\mathbf r\cdot
+   \mathbf F\rvert$ over the contributions to the molecular virial:
+   pair, site-transfer and removal of the internal force moment about
+   each rigid group's mass center. The independent-oracle/general-double bound is
+   $10^{-10}\max(1,\lvert W_\mathrm{oracle}\rvert)$. The extra term
+   accounts for cancellation among large positive and negative virial
+   contributions; the mixed reference error and relative term remain in
+   the maximum. Record all three reported molecular virials, the oracle's
+   pair, site-transfer and internal-force-removal traces, and the sum of
+   their absolute contributions.
+   The instantaneous physical check uses fresh no-step entries at the
+   same constrained positions and full-step velocities for velocity
+   Verlet. Its molecular oracle computes the pair and site-transfer
+   virial with the internal force moment removed. Keep the atomic total,
+   full constraint reaction and $2K_\mathrm{internal}$ as diagnostics:
+   $W_\mathrm{atomic}=W_\mathrm{molecular}-2K_\mathrm{internal}$.
+   The diagnostic constraint force solves the mass-weighted holonomic
+   system with its velocity-curvature term and oxygen-relative force
+   arms. D264 pairs the molecular virial with its group-center half-step
+   kinetic estimator; the three reported virials are used directly,
+   without velocity-dependent adjustment. The step's averaged impulse
+   virial, trajectory behavior, NPT virial and pressure remain separate
+   validation gates.
+2. **Coverage**, just before a pruning, just before a build, and just after
+   a build, for every list, against an f64 periodic brute force, including
+   runs under a barostat (the prototype's runs were NVE, with no scaling
+   of the cell).
+3. **Unchanged programs.** For `OFF` and for programs without a matched
+   water, `mdir emit` byte-identical to `main`, the corpus and the
+   checkpoints unchanged.
+4. **End to end.** Whole runs with everything in (integration, builds and
+   prunings, PME, the virtual sites) on ubiquitin with OPC and with TIP3P,
+   alternated with `main` in one job, steady-state wall time, on one kind
+   of device.
+5. **Stability over many steps.** NVE energy drift against `main` at the
+   same settings; the constraint residuals; the virial and the pressure;
+   NPT run and reported separately from NVT and NVE.
+   Include short template-versus-general trajectories for both velocity
+   Verlet and leapfrog in NVE and in NPT with the barostat, with the same
+   acceptance criteria. Leapfrog couples $\mathbf v_{n+1}$ in NPT.
+   The approved short comparison is 100 steps at 1 fs, sampled every
+   10 steps, for OPC/TIP3P, NVE/NPT and both integrators from identical
+   constrained states and seeds. Position, velocity and volume bounds
+   use $\max(3\epsilon_\mathrm{mixed},10^{-5}s)$, with the general
+   mixed/general-double difference as baseline. The scales are the
+   largest cell edge, $\max(1\ \mathrm{nm/ps},\max_i\lvert v_i\rvert)$,
+   and the general-double volume. Fresh same-frame physical evaluations
+   keep the force, energy and virial bounds above unchanged.
+   These checks construct fresh no-step simulation state for each sampled
+   frame, while keeping a separate D236 code store for each of the three
+   routes. Only compiled code is reused under the complete module, pipeline
+   and machine key; coordinates, velocities, cells and reference epochs are
+   fresh. Preparation and trajectory engines use the same keyed stores;
+   their initial state, programs and execution order are unchanged. The
+   fixture reports actual compiler reuse counts and separate creation,
+   evaluation, compilation, oracle and projection wall times. It is expected
+   to finish within three minutes on RTX 5090; gates use a 600-second per-test
+   timeout rather than leaving a slow fixture unbounded. No validation
+   frame, step, tolerance or physical convention is removed.
+   The expanded publication fixture initially failed LLVM translation
+   before numerical execution: its one-row strided memcpy left unresolved
+   conversion casts although the preceding MLIR pipeline returned success.
+   A fixture-only copy kernel now gathers only initialized logical
+   components into dense device storage before an identity-layout memcpy.
+   All four fused/unfused and normal/across CPU pipelines passed actual
+   LLVM translation after this correction. The copied values and exact
+   comparisons are unchanged; no production lowering is modified.
+   Production NVE drift uses ubiquitin with OPC and TIP3P, mixed, 2 fs,
+   1 ns, template versus general mixed for each integrator. Fit conserved
+   energy versus time and divide its slope by the degrees of freedom;
+   require $\lvert d_\mathrm t\rvert\le
+   \max(2\lvert d_\mathrm{mixed}\rvert,5\times10^{-4})$ in
+   kJ/mol/ns per degree of freedom. Report energy fluctuation and maximum
+   relative squared-bond residual. Report NPT mean and fluctuation of
+   volume and pressure separately, without instantaneous or atomic
+   equality along different trajectories.
+6. **Timings** against `main` with the groups on one kind of device:
+   #738's boxes, ubiquitin, and the Amber suite, where no system may be
+   slower under `AUTO`.
+
+## Maintainer's ruling
+
+All seven recommendations were accepted on #795:
+
+1. Constant-transpose spreading (A) for dynamics; deterministic mode keeps
+   the general path.
+2. The validity test is fused into the integrator, with solute pruning in
+   the existing pruning loop.
+3. `[performance]` `"water.template" = "AUTO"`, `"ON"` or `"OFF"`, in the
+   same-accuracy class. `ON` is refused on the CPU, in double precision or
+   deterministic mode.
+4. Initially `AUTO` selects four-site models only; end-to-end measurements
+   set the particle-count floor. Three-site models remain general under
+   `AUTO` until measurements justify selecting them.
+5. The margin is $10^{-3}$ Å. A first-evaluation extent excess widens the
+   reach; an excess after a constraint step stops the run.
+6. Written forces use the bisector transpose for that evaluation.
+   Derivative paths remain general and refuse `ON` by name. Tunable water
+   parameters likewise remain general; runtime template parameters and
+   their derivatives are an unscheduled follow-up to #774.
+7. The first-version scope is the oxygen-only-LJ three- and four-site
+   models above, one predominant template per program, with reported
+   mismatch counts.
+
+## Left to the implementation
+
+The initial structural domain, `md.template_pairs`, partitions WW, SW and
+SS without hiding continuous data. The native window arithmetic forms
+each site from an explicit anchor image and whole-molecule offsets; its
+constant transpose is derived by the scalar derivative rules. `ON` now
+constructs these windows through the native nonbonded adapter and reuses
+the scalar primary-pair expressions. GPU list lowering remains in
+implementation. `AUTO` stays general until the required end-to-end runs
+establish its particle-count floor.
+
+The maintainer authorized the dedicated image-aware reduction on #795.
+Ordinary `md.sum_tuples` takes minimum-image coordinates independently, so a window
+formed from its single oxygen displacement cannot stand for every anchor
+image in the covering reach. Selecting just that image could omit a site
+pair across a periodic boundary. The dedicated window reduction enumerates
+the covering images, exposes the site arithmetic and site cutoffs, and
+derives forces and strain from those explicit displacements. Its verifier
+proves each yielded site displacement is the anchor displacement plus
+supported affine offsets. The cutoff emitter guards the pair arithmetic
+with actual control flow.
+Its new derivative admission is limited to that reduction; existing
+classifications and refusals remain unchanged. No restriction to half-cell
+covering reaches is introduced. Before performance measurements, the
+isolated f64 reduction is checked against an independent all-images oracle.
+For the quadratic boundary probe, energy, every real-atom force component
+and every virial component must agree within
+$2\times10^{-13}\max(1,\lvert\mathrm{reference}\rvert)$. This is a
+roundoff check of the reduction, not a replacement for the mixed-precision
+physical-system bounds above. The probe uses a 2.2 nm edge, 1 nm site cutoff
+and 0.1 nm water extent, and checks the neighboring-image pair explicitly.
+That isolated quadratic probe passed for all 27 images and their totals:
+energy 0.405, virial xx -0.81, with only the neighboring image contributing.
+This does not validate the physical pair kernel or the GPU list lowering.
+
+The maintainer admitted every finite nonnegative $\alpha$ on #795, with
+no upper bound of $1/2$. The topology matcher admits, for example,
+$r_\mathrm{OH}=0.1$ nm, $r_\mathrm{HH}=0.16$ nm and
+$r_{os}=0.09$ nm, which give $\alpha=0.75$. The formed site's extent is
+tested wherever its bound cannot be inferred from the two O–H extents.
+For $\alpha\le 1/2$, the triangle inequality proves that the two O–H
+extents cover it, so those models keep the two-distance check. This
+distinction is made at compile time. Exact dyadic extent probes have
+predeclared squared extents $1/64$ for $\alpha=1/2$, and $9/256$ or
+$9/512$ for aligned or perpendicular O–H offsets at $\alpha=3/4$;
+the offsets have length $1/8$. These isolated f64 checks require exact
+agreement and do not replace the physical-system numerical bounds.
+
+The execution representation now gives the three classes one
+`!mdrt.segmented_pairs` value. `md_exec.build_segmented_pairs` declares its
+membership and bounds; `md_exec.template_for` holds three tagged scalar
+bodies, with per-output site-pair counts. Conversion shares the list
+between energy, force and strain reductions. Buffer assignment initializes
+scatter destinations and preserves explicit memory effects. Mixed
+precision assignment keeps source positions in f64, class coordinates and
+pair arithmetic in f32, forces in f32, and energy/strain reductions in f64.
+These execution-IR checks do not establish persistent-list or device
+lowering correctness.
+
+Compatible template loops now fuse their three tagged bodies, preserving
+destination and reduction order. Template-list reuse makes initialization
+separate from refresh: the state is carried through nested step/output
+loops, while segments and fresh step loops reset it. Refresh declares two
+mobility-group references and outer/inner margins, now connected to the
+native device owner. Focused checks cover those reset
+boundaries and the combined fusion, precision and storage pipeline.
+
+The isolated packing emitter adds the lattice shift to whole-molecule
+positions before narrowing, without loading a stored extra point. Its
+exact dyadic probe uses a large common translation that would erase local
+geometry if narrowed first. The warp scheduler rotates a partner's frame,
+parameters, mask and force accumulator together through 16 half-warp
+turns, then writes each partner once. It combines the two copies of each
+first unit before writing. Its structural tests cover WW, SW, SS and
+energy-only bodies; physical GPU validation remains outstanding.
+
+The scheduler prepares local O–H offsets once for the first unit, and
+once per loaded partner before its 16-turn rotation. A four-site model
+also prepares the formed-site offset there and rotates it with the
+partner. Exact typed `alpha*(H1+H2)` source expressions bind to those
+cached offsets; no alternate placement or force formula is introduced.
+Three-site models emit no formed-site products. Structural checks verify
+the products lie outside the rotation. An independent $\alpha=0.75$
+all-images f64 probe checks the cached energy, constant-transpose forces
+and strain at the same bound above; the transpose coefficients are
+$(-0.5, 0.75, 0.75)$. Its expected neighboring-image energy is 0.492032
+and virial xx is -0.984064.
+
+The physical allocation has one flat integer payload containing the outer
+and inner rows, work units and pair records for all classes. The shared
+compiler/runtime layout uses i64 physical offsets and bounded i32 payload
+indices. Initialization uploads real-unit membership once: stored extra
+points belong to water but never enter the atom complement. A growth
+discards every class range, so the subsequent build must rebuild all
+classes. No growth work occurs on a refresh that fits.
+
+Fixed topology metadata occupies a separate immutable slab: real-unit
+membership, the original-particle-to-packed-slot map, and a sorted
+symmetric CSR graph for solute exclusions. Duplicate and reversed edges
+are collapsed; water exclusions never enter that graph. Initialization
+accepts host or already-buffered device topology, with any device-to-host
+copy confined to initialization. Borrowed metadata views survive pair
+arena growth. An exact integer GPU fixture checks all four views before
+and after growth and through both initialization paths; it does not
+validate spatial search or refresh.
+
+Whole-frame preparation recovers each hydrogen's image relative to its
+oxygen in f64, shifts the entire frame into the oxygen's central cell in
+f64, and then narrows it. It uses the small intramolecular covering bound,
+not a minimum-image substitute for the enumerated molecule-pair images.
+Exact dyadic fixtures cover both cell representations, independently
+wrapped hydrogens, face crossings, and large unwrapped coordinates.
+
+The physical work-record adapter reads the compact unit order, real-site
+particle mapping and packed frames, decodes the partner's lattice image,
+and dispatches the three source bodies through a warp-uniform class tag.
+Input fields follow the same real-site mapping; force atomics target the
+original particles. An isolated seeded-record GPU fixture uses the
+rotated-frame oracle below, with exact equality for all 469 values. It
+tests record consumption, not list generation or validity.
+
+Production GPU lowering uses activation-owned compact-order and packed-frame
+views that survive pair-arena growth. It launches at most one warp per
+original particle and strides over the device-resident work count, so its
+sum scratch retains its fixed particle capacity and no work-count readback
+is needed. The three classes share that launch and the existing global-sum
+reducer. A seeded one-pair runtime fixture checks the complete allocation,
+view, launch and reduction path against the exact energy $1/4$; search and
+validity are still separate gates.
+
+The same arena also contains build staging, spatial keys, sorted unit IDs,
+inverse places, bin counts/offsets/cursors, and shared scan scratch. A spatial
+search can emit chunks once, then compact them by fixed row/class order
+without repeating its candidate search or allocating a second pair list.
+The bin budget is at least twelve and otherwise four times the number of
+64-unit groups. Scan scratch covers both fixed rows and bins; all borrowed
+arena views must be reacquired after growth.
+Physical staging addresses use i64 even when a chunk's index fits i32.
+The compactor uses the existing device scans and initializes the inner
+view with the full outer blocks; pruning subsequently shortens those
+blocks in the fused loop. An integer oracle independently concatenates
+rows for all three classes, including empty rows and a 65-entry row, with
+staging chunks supplied out of order. Its 1,182 exact checks include
+unchanged capacity tails. A separate seeded pair passes through compaction
+and production dispatch to the exact energy $1/4$. These are isolated
+compaction fixtures; the combined native checks are recorded below.
+
+The shared spatial-order emitter uses class-prefixed x-y serpentine
+columns, then z keys with fixed-unit-ID ties. Reference fractions wrap
+in f64 before narrowing to f32 for key arithmetic, as the legacy mixed group ordering
+does. One stable counting sort orders the joint (class-column, z) key.
+It starts with ascending unit IDs and composes the shared histogram,
+scan, cursor scatter and `emitRankInBins` primitives over successive
+least-significant digits. The scatter carries input positions; ranking
+those positions restores their prior order within a digit, preserving
+lower digits and fixed-ID ties. Digit widths balance the significant key
+bits across passes, with at most 256 buckets and no more buckets than
+the existing spatial-bin storage. Four temporary i32 words per unit
+use independent planning scratch before search; no allocation or persistent
+order of an inactive class changes. The original column counts and
+offsets are republished after sorting for the unchanged search.
+Each class is cut at column boundaries, adjacent gaps and refined spans
+through `emitSpatialGroupPlan` (device-primitives Section 4.12). Defaults
+are water/solute gaps 0.4/0.3 nm and spans 0.9/0.6 nm, quantized against
+the z face width. Groups have at most sixteen real units. The compact
+order and descriptor partitions have fixed class capacities. Rebuilding
+one mobility group leaves the other's order, lengths and inverse map
+untouched; the common grid stays fixed while a nonempty class is retained.
+Four-word work records keep their first-unit-begin meaning and read the
+explicit length from a separate view. Row-capacity growth preserves old
+completed lists and new spatial data. Inactive class rows use the previous
+header's class prefix when copied into their possibly moved new prefix.
+An independent lexicographic oracle checks 900 integer values over all
+four group-activity combinations, including repeated-point ties and
+coordinates that round to the final bin edge.
+The larger 516-unit variant also crosses launch blocks and exercises a
+different digit decomposition with many equal full keys.
+The search forms boxes in the wrapped key frame through the shared
+`SpatialFrameEmitter.h` helpers. An at-most-sixteen-unit group queries each
+of its distinct lattice-frame subsets once, retaining disjoint masks.
+Query images add the first unit's lattice frame before the original f64
+subtraction and compensate the partner's frame in the stored image code.
+This tightens boxes at the reference-frame seam without changing the pair
+predicate or image coverage. All 32 lanes reach each masked box
+reduction; a queried subset always contains its representative. The
+all-images oracle also covers groups spanning eight distinct frames in
+orthorhombic and triclinic cells. The ordinary group builder is unchanged;
+its eventual use of these shared helpers belongs to #817.
+Before unit enumeration, a shared conservative Cartesian box test
+rejects whole partner groups whose wrapped-reference boxes cannot reach
+the first-frame subset. A ballot and warp-uniform survivor loop select
+up to two groups for enumeration. The previous per-unit-lane box check
+is removed. Boxes and distance bounds remain f64; Cartesian and fractional
+auxiliary views survive pair-arena growth. The shared single-image helper
+admits only the proved integer image when the expanded fractional
+intervals each have width strictly below one, retaining explicit images
+otherwise (device-primitives Sections 4.11–4.12). Conservative roundoff
+allowances admit uncertain cases before the unchanged exact f64 pair test.
+All 32 lanes reach every first-unit broadcast in the uniform loop.
+The template runtime ABI is 7; ordinary builders and physical bounds
+are unchanged. The integer helper fixture covers an eleven-pass cascade
+and multiple scan blocks; native correctness and performance are separate
+gates, pending for this integration checkpoint.
+The native cold refresh owns these bins and their combined search.
+Its column dimensions use the population of water anchors plus solute
+atoms and the current cell volume: the target edge is
+$(16V/(N_\mathrm{w}+N_\mathrm{s}))^{1/3}$. Face widths divided by this
+edge are rounded to the nearest positive integer. The dimensions are
+clamped before integer conversion so that the two class-prefixed grids
+fit the existing spatial-bin arena; empty populations use one unit for
+this sizing arithmetic. This is f64 host-only cold-refresh arithmetic.
+It replaces the constant three-by-two native grid without changing the
+class keys, fixed-ID ties, covering search or physical predicates.
+
+The search's append primitive ballot-compacts sparse candidate batches
+into chunks of 64, carrying a partial chunk across rounds. Concurrent
+rows reserve chunks with an i64 counter; physical addresses remain wide.
+Capacity overflow skips writes beyond the logical capacity while retaining
+the exact required chunk/entry counts for growth. An entry total outside
+the final i32 domain sets an index flag before compaction. Independent
+row-concatenation fixtures check the ordinary path (1,190 integers), the
+expected capacity flag and untouched tails (1,574), and a preloaded total
+crossing the index bound (14). These test the primitive, not a completed
+production refresh.
+
+The combined bin-search emitter visits covering images in one kernel over
+the fixed class rows. It searches active rows once and copies retained
+outer records for inactive rows through the same chunk writer. WW and SS
+use unique-pair ownership; only SS consults the fixed exclusion graph.
+Outward column/z-key guards cover f32 key rounding, while the covering
+distance predicate uses f64 reference geometry. Its independent oracle
+enumerates all pairs and all covering images, without bins or chunks.
+Both cells pass all four activity phases with zero missing pairs, extra
+pairs or duplicates, including partial clusters and explicit images at a
+reach beyond half an edge:
+
+| Cell | Both rebuilt, WW/SW/SS | Atoms rebuilt | Waters rebuilt | Neither rebuilt |
+|---|---|---|---|---|
+| Orthorhombic | 86/132/25 | 86/98/25 | 86/144/25 | 86/144/25 |
+| Reduced triclinic | 86/108/32 | 86/99/32 | 86/169/32 | 86/169/32 |
+
+These are 1,979 exact unit/image pair memberships over eight phases, with
+predeclared reaches 135/128, 117/128 and 99/128. They validate the combined
+sort/search/staging/compaction emitters. Native refresh ownership, extent
+handling, displacement validity, fused pruning and physical dynamics
+remain separate gates.
+
+Reference points may retain independent nearby whole-cell frames. Only
+the bin keys wrap; the search compensates each partner's integer frame
+in its encoded image, preserving the actual packed geometry. The image
+payload is checked before writing. Independent-frame fixtures pass both
+cells, including retained inactive rows, with zero missing, extra or
+duplicate unit/image memberships. These checks do not recanonicalize
+the per-step packed frame or change the source site cutoff.
+
+A complete-frame particle-writer emitter evaluates the original scalar
+body for O/H/H under one thread, loading all three members before storing
+any output. Its callback receives the final values for packing and
+validity without a cross-thread position read. Unmatched atoms and stored
+extra points retain their scalar updates. The native owner selects the
+last position writer before a refresh. Its first device validation reported 323 of 1,059 values
+different from the exact dyadic oracle, with every decimal value equal
+to that oracle rounded to six significant digits. Work stopped, and the
+maintainer authorized a fixture-only change to exact-bit serialization
+and one controlled comparison. That comparison passed: all 966 f64 values
+are bitwise identical and all 93 integer visit counts equal one. The
+bound remains zero, including the signs of floating zeros; neither the
+writer arithmetic nor ordinary lowering changed. The other new exact or
+tight f64 fixtures also serialize diagnostics as integer bit patterns,
+with their original in-program comparisons and bounds unchanged.
+
+The cold-refresh orchestrator now joins shared spatial ordering, search,
+capacity handling and compaction. It reads controls only during an actual
+build, before compaction, and sizes a required growth from the exact
+entry total. Growth reacquires all arena views and prepares both mobility
+groups before rebuilding all classes; another overflow is fatal. Two
+independent coverage fixtures start undersized and require automatic
+growth, then exercise both single-group refreshes and retained inactive
+rows. Both cell types match all 1,979 expected unit/image memberships
+with zero missing pairs, extras or duplicates. The native refresh consumes
+the fused writer's group flags and prepares only stale outer epochs;
+this is not a per-step rebuild policy.
+
+Packing-cell coordinates are f64 values chosen at the outer build,
+integers less one half on each axis since U2 above. The retained-frame emitter reconstructs O/H/H and applies
+those coordinates to the current cell before narrowing. A central-image
+face crossing therefore keeps the frame of existing entry images, and a
+cell change scales the shift rather than reusing its old Cartesian value.
+Four independent dyadic CPU cases check all 72 packed, fractional, shift
+and cached-cell components exactly, with independently imaged hydrogens.
+
+Outer/inner reference fractions, retained packing cells, current points,
+the three class cells for both epochs, and their actual build reaches
+have fixed f64 views independent of pair-arena capacity. The stored reach
+can retain the initial-input extent widening in the validity theorem.
+An isolated runtime fixture checks all seven views before and after pair
+growth: 180 bitwise f64 comparisons, the dimensions and a stable-address
+check. Native epoch publication is also checked below; complete physical
+dynamics remains a separate gate.
+
+The cold snapshot emitter chooses packing cells and updates outer/current
+fractions only for requested mobility groups. It reconstructs independent
+hydrogen images before packing real sites; stored extra-point coordinates
+are never read. An unsigned maximum of nonnegative f64 extent bits records
+the measured squared extent, including the formed site where required.
+The native owner uses that measurement for initial widening or a
+post-constraint check.
+An independent rational-geometry oracle checks four activity phases for
+three-site and four-site water in both cell types. All 1,264 scalar bit
+patterns match exactly, including 3/4-weight formed-site extents, retained
+inactive views and new packing frames at an outer-build face crossing.
+
+The native template step marks its matched-water position-constraint
+operations with reserved provenance, `md.template_constraint_epoch`.
+Conversion, tuple fusion, destination merging and storage preserve it;
+ordinary gathers and ordinary native programs receive no marker. This
+gives the runtime policy an explicit constraint event instead of
+inferring one from a tuple name. Function-level host history observes
+those events and is not reset by a fresh list.
+
+The validity emitters use a conservative lower bound on Cartesian cell
+deformation: the least edge ratio for rectangular cells, and the inverse
+map's induced one/infinity-norm bound for tilted cells, with rounding
+guards and exact identity handling. Each mobility group's half-margin is
+the minimum over its incident classes. Each class margin is capped at its
+fresh-build margin, so resetting SW's cell/reach cannot reduce an inactive
+group's allowance, including during expansion. The build and validity
+share the same actual per-class reach values and addition order.
+
+Ten analytical cell cases pass 20 interval predicates: identity is exact,
+and other results stay below the mathematical norm bound and within
+1e-11 of it. Four analytical group cases and two partial-SW resets pass
+20 more predicates; ten exact boolean displacement cases include negative
+and zero margins, both cells and an unwrapped whole-cell jump that must
+invalidate. Projection and squared-distance arithmetic have conservative
+rounding guards. These are validity-primitive checks, not physical force
+tolerances or physical dynamics. The explicit-reach cold search
+also matches all 1,979 expected memberships in both cells exactly.
+
+The final-SSA writer callback now joins retained-frame packing, current
+fraction publication and both displacement tests inside its caller's
+particle kernel. It loads no world-position buffer. Unbuilt lists skip
+the epoch views, while constraint history still enforces the extent bound
+even on a fresh list. Its boolean results are supplied to the writer's
+flag reduction; the callback adds no launch, synchronization or readback.
+An isolated dyadic fixture passes 736 exact comparisons across both cell
+types, including independent hydrogen images, retained packing cells,
+outer/inner motion in both groups, untouched unbuilt state and the
+formed-site extent at alpha = 0.75. Geometry is serialized as integer
+bits from the start. The native owner connects this callback and shares
+one mapped-flag event with preceding constraint flags whose results are
+first consumed after the writer. The ordinary writer path is unchanged.
+This is not yet a physical-dynamics gate.
+
+The fixed-block pruning emitter intersects existing I masks with the
+current f64 covering predicate, compacts surviving entries within each
+outer block and publishes its inner live end. All 32 lanes participate
+in a warp barrier before evaluation can read another lane's stores. An
+inactive class retains its prior inner block. Requested groups read
+current points, and other groups read retained inner references, allowing
+the owner to publish new references in the evaluation prologue without
+a cross-warp read/write race. Outer records and storage ranges remain
+immutable; inner work records carry their actual live ends.
+An independent rational all-images oracle passes 16,096 exact integer
+comparisons in both cell types and all four group-activity combinations.
+It checks sparse masks, two-batch blocks, empty and partial blocks,
+inactive retention, immutable outer records, stable compaction and
+immediate same-kernel consumption. The tilted-cell case also passes
+memcheck, initcheck, racecheck and synccheck with zero errors or hazards;
+the focused sanitizer run held the device for five seconds. The native
+force-loop prologue now publishes requested inner references, cells and
+reaches; its work loop prunes requested classes before evaluating them.
+
+The integrated native fixture joins cold refresh, capacity growth, the
+actual scalar particle writer, both validity epochs, fused pruning and
+source-derived formed-site energy. Four unconstrained waters have extent
+3/4 against the nominal 1/5: the nominal covering radius would miss an
+interacting pair, so the first evaluation requires widening. It also
+asserts automatic arena growth. Subsequent evaluations translate one
+water, wind it by a whole lattice vector, double the cell and restore it.
+An independent rational all-images oracle passes all fourteen energies
+bitwise in the two cell representations. The final class cells and actual
+reaches add 84 exact components, also serialized as integer bit patterns.
+
+The first native sanitizer fixture passed memcheck but stopped in
+initcheck on one uninitialized 32-byte control readback; its 49 saved
+values still matched exactly. The snapshot had initialized only the
+extent word before the owner copied all four controls. One correction
+initializes all four in the existing reset launch. The affected rerun
+passes memcheck, initcheck, racecheck and synccheck with zero errors or
+hazards and all 49 values unchanged, holding the device for about twelve
+seconds. No numerical bound, pair arithmetic or shared helper changed.
+Six native schedule lowering audits also pass: NVE plus leapfrog and
+velocity-Verlet variants of isotropic, semi-isotropic, anisotropic and
+first-order pressure updates. Additional boundary coverage and the
+physical-system/end-to-end gates remain required.
+
+The fresh-list constraint-history fixture covers unmarked initial-input
+widening, marked geometry within the declared extent in a tilted cell,
+and marked excessive extent after a fresh list. Its first comparison
+stopped numerically: the fixture had supplied a three-integer member list
+where a CSR incidence structure was required, and its overwriting tuple
+loop zeroed particles outside the tuple. The approved fixture-only
+correction uses `md_exec.build_incidence` at the actual particle count,
+accumulates zero corrections, and checks all 48 position components
+bitwise before the fresh constructor. The single controlled corrected
+execution passes fourteen oracle energies bitwise, all 144 position
+checks, and the named post-constraint extent refusal. The oracle, bound
+zero and all production code remain unchanged. The refusal fixture
+captures unbuffered stdout as well as stderr because `cf.assert` lowers
+to `puts` followed by `abort`.
+
+The first small physical OPC fixture uses three waters with plain-cutoff
+Lennard-Jones and Coulomb interactions and no dispersion correction. It
+takes one template step to obtain a constrained frame, then evaluates the
+general double and mixed entries at that same frame. An independent CPU
+f64 all-pairs sum enumerates periodic images, forms the actual Amber
+bisector and applies its analytic transpose. The oracle energy is
+$-49.297633223430694$ kJ/mol against general double's
+$-49.297633223264853$: difference $1.6584\times10^{-10}$ kJ/mol. The raw
+force difference is at most $2.9746\times10^{-9}$ kJ/mol/nm, with RMS
+$1.0494\times10^{-9}$, against a largest double component of
+$1403.7811390878728$ kJ/mol/nm. The predeclared double-oracle check is
+$10^{-10}\max(1,\lvert U\rvert)$ for energy and
+$10^{-10}\max(1,F_\mathrm{max})$ for the largest force error.
+
+The force comparison removes the span of each water's three distance
+constraint gradients with the same Euclidean projection for both entries.
+On an RTX 5090, general mixed's projected max/RMS error against general
+double is $0.00165918/0.000631856$ kJ/mol/nm; the template's is
+$0.000674345/0.000217867$. Both template errors are below the accepted
+bound $\max(1.5e_\mathrm{mixed},10^{-5}F_\mathrm{max})$, which is
+$0.0140378114$ kJ/mol/nm for each quantity here. Its relative energy
+error is $1.6761\times10^{-7}$ against bound $10^{-5}$. This first
+execution passed without a correction or retry. These are small-system
+pair-arithmetic checks, not the larger-system, virial, stability or
+end-to-end gates. The oracle uses f64 throughout; the two compiled routes
+retain the precision assignments in the table below.
+
+The first corresponding three-site TIP3P fixture stopped on its energy
+comparison. Its independent f64 energy is $5.3014572263468054$ kJ/mol;
+general double gives $5.3014572263438957$, a difference of
+$2.9097\times10^{-12}$ kJ/mol. Their raw force max/RMS difference is
+$1.4258\times10^{-9}/6.7265\times10^{-10}$ kJ/mol/nm. The template's
+projected force max/RMS errors, $0.000565281/0.000237396$, pass the same
+criterion against general mixed's $0.00100856/0.000390067$, with bound
+$0.00433485148$ kJ/mol/nm. Its relative energy error,
+$1.6695968902592555\times10^{-5}$, exceeded the original $10^{-5}$
+relative bound. The first execution remains recorded as a numerical
+failure. The signed
+template energy and general mixed's energy were not printed, so neither
+is inferred from the saved absolute relative error.
+
+The separately authorized single instrumentation-only acquisition reports
+the CPU oracle's absolute pair sums as $5.3547091502235036$ kJ/mol for LJ
+and $3732.1090605247377$ for Coulomb, beside the same net
+$5.3014572263468054$. Their sum is about 705 times the net energy.
+Signed potential energies on the same recorded frame are
+$5.3013687133789062$ (template), $5.3014259338378906$ (general mixed) and
+$5.3014572263438957$ kJ/mol (general double). Template minus double is
+$-8.85129649894623\times10^{-5}$ kJ/mol; general mixed minus double is
+$-3.12925060050873\times10^{-5}$. The template's absolute energy error
+is about 2.82857 times general mixed's, and its relative error remains
+$1.6695968902592555\times10^{-5}$ against the unchanged $10^{-5}$ bound.
+The executable exits 1 at that assertion. Exact energy, oracle-sum,
+coordinate and cell bits are recorded. Inputs and paths were unchanged;
+only host diagnostic instrumentation was added, with the oracle's existing
+net-energy and force expressions retained. No bound changed for that
+acquisition. These data led to the maintainer's cancellation-aware ruling
+in the validation gates above, applied equally to OPC and TIP3P.
+
+Each physical fixture then passed its single authorized execution with
+the new bound on RTX 5090: TIP3P 1/1 and OPC 1/1. TIP3P's absolute energy
+error is $8.85129649894623\times10^{-5}$ kJ/mol against
+$0.0037374637696749612$ allowed, with $S=3737.4637696749614$ kJ/mol.
+OPC's is $8.26266463604952\times10^{-6}$ against
+$0.0090322398755513979$, with $S=9032.2398755513987$. All unchanged
+force and oracle/general-double checks passed. No additional numerical
+retry followed either execution. The prior failures remain recorded
+under their original criterion; the approved change resolves that stop
+for these two fixtures without completing the larger-system gates.
+
+An additional first-execution fixture includes three TIP3P waters and two
+synthetic charged monatomic solutes. Its independent oracle requires all
+three class pairs to be present and counts 27 WW, 18 SW and one SS site
+interaction. On RTX 5090 it passes 1/1. The oracle energy is
+$-160.3300676795815$ kJ/mol against general double's
+$-160.33006767913147$, difference $4.5003\times10^{-10}$; their raw force
+max/RMS difference is $2.8897\times10^{-9}/9.7022\times10^{-10}$ kJ/mol/nm.
+The template's projected force max/RMS errors are
+$0.000934964/0.000357931$ against general mixed's
+$0.00204032/0.000636082$, with unchanged bound $0.00841704789$ kJ/mol/nm.
+Its absolute energy error is $0.000165030206$ kJ/mol against the approved
+$0.00678867271$ allowance, with $S=6788.6727145034756$ kJ/mol. This is a
+small all-class arithmetic check, not larger-system or refresh-boundary
+coverage. No correction, threshold change or numerical retry occurred.
+
+The first physical OPC total-virial check stops at the independent
+oracle/general-double comparison: 0/1 passed. The three recorded scalar
+virials are $-16.738173485733569$ (template), $-16.737474841997027$
+(general mixed) and $-16.738609513560707$ kJ/mol (general double).
+The CPU oracle gives pair $145.6249626905543$, site-transfer
+$32.434048928111224$ and constraint $-195.00577757087518$ kJ/mol,
+total $-16.94676595220966$. The oracle/general-double difference is
+$0.2081564386489525$ kJ/mol against $1.694676595220966\times10^{-9}$
+allowed, so this gate fails. The pair/site absolute sum is
+$9267.282163805563$ and the constraint absolute sum
+$230.99318153942767$, total $9498.2753453449914$ kJ/mol. The diagnostic
+template/general-double difference, $0.00043602782713847432$, lies below
+its $0.0094982753453449909$ envelope; the independent-oracle failure
+blocks validation before that assertion. The energy and projected-force
+checks preceding the virial check passed. Exact positions, velocities,
+cell and virial bits are retained. The subsequent CPU diagnosis found a
+convention mismatch in the new fixture: D264's non-Brownian no-step entry
+reports the molecular virial. Twice the saved internal kinetic energy is
+$0.2081564380316547$ kJ/mol. The independent analytic constraint reaction
+and the replay of the velocity-constraint displacement with curvature
+agree to $1.14\times10^{-13}$ kJ/mol. The CPU molecular oracle gives
+$-16.738609514178023$, within $6.18\times10^{-10}$ of the saved general
+double value. The maintainer approved a fixture-only molecular comparison
+with both conventions recorded as above; shared code remains unchanged.
+
+The single approved corrected RTX 5090 run passed. The molecular oracle
+is $-16.738609514178052$ kJ/mol; general double differs by
+$6.1734439782412664\times10^{-10}$ against the unchanged oracle bound
+$1.6738609514178053\times10^{-9}$. The template and general mixed
+differences from general double are $0.00043602782713847432$ and
+$0.0011346715636797455$ kJ/mol. The molecular absolute contribution sum
+is $9497.0534530477507$ kJ/mol, giving the approved template envelope
+$0.0094970534530477504$ kJ/mol. The atomic diagnostic remains
+$-16.94676595220966$, its full constraint reaction
+$-195.00577757087518$, and $2K_\mathrm{internal}$ is
+$0.20815643803165473$ kJ/mol. This corrects only the new fixture's
+convention; it changes neither production arithmetic nor either bound.
+
+The all-class native epoch fixture adds two translating solutes to the
+quadratic water fixture. WW, SW and SS contributions are present in all
+seven phases: initial build, two small motions at the pruning threshold,
+larger motion requiring a build, full winding, cell expansion and cell
+restoration. Independent rational all-image sums agree bitwise in both
+rectangular and tilted cells (14 energies, bound zero), on the first
+RTX 5090 execution. This exercises generated search, pruning and immediate
+consumption rather than seeded work records. It checks cell changes but
+does not replace the physical barostat and long-trajectory gates.
+
+The same approved molecular-virial fixture also passed its first TIP3P
+water-only and TIP3P-plus-solutes executions on RTX 5090. Their CPU
+molecular references are $92.427540176839841$ and
+$-31.93733989739232$ kJ/mol. General-double differences are
+$9.0381035988684744\times10^{-12}$ and
+$3.6726532925968058\times10^{-10}$, below the respective oracle bounds
+$9.2427540176839847\times10^{-9}$ and
+$3.1937339897392322\times10^{-9}$. Template/general-double differences
+are $0.00017925847600963607$ and $0.00073529103738678714$, below
+$0.0039424069241047795$ and $0.0070071929698018436$ kJ/mol. The
+general-mixed differences are $0.00036740053724315658$ and
+$0.00039198553221808652$ kJ/mol. All three pair classes occur in the
+solute case. Both fixtures retain the atomic diagnostics and exact bits;
+neither changes a bound or production arithmetic.
+
+The new snapshot path enforces D107 before packing any real O/H/H or
+solute position: NaN, infinity and magnitudes beyond $10^{100}$ are
+counted per particle, and preparation of the invalid unit is skipped.
+The host consumes that count from the existing snapshot control packet
+and calls the existing named stop before spatial ordering. Search later
+reuses the same packet word for its flags; the published arena ABI and
+ordinary builders are unchanged. All 20 poisoned cold-build/post-writer
+cases passed their first RTX 5090 execution, including two bad hydrogens
+in one water reporting a count of two. The same 20 device-free lowerings
+and the structural ordering checks passed. The new fixture initially
+needed explicit tool paths from lit; its single affected rerun passed.
+No existing numerical comparison was retried.
+
+The first approved short trajectory stopped at step 10 of OPC leapfrog
+NPT on RTX 5090. The template's maximum velocity difference from general
+double was $0.077423795223588388$ nm/ps and RMS
+$0.029671181280507719$, both above the unchanged short-trajectory bound
+$1.9378578682114735\times10^{-5}$. The general-mixed baseline was
+$4.45384523073411\times10^{-6}$ maximum and
+$1.1859527987351613\times10^{-6}$ RMS. At zero-based particle 2,
+x velocity, template reported $0.14639574733540228$ versus general double
+$0.22381954255899067$ nm/ps. All three stored velocity offsets were
+$-0.5$ step. Position maximum/RMS differences were
+$2.5018192850723153\times10^{-8}$/$8.9255992957879745\times10^{-9}$ nm,
+below $4.0001617319761775\times10^{-5}$; volume difference
+$2.6898305804934353\times10^{-10}$ was below
+$0.000640077634487475$ nm$^3$. Exact positions, velocities and cells
+were retained. The serial matrix stopped with one failure and seven
+skipped cases; it did not reach a fresh same-frame physical evaluation.
+No trajectory rerun or production drift run followed before diagnosis.
+The established cause was the shared leapfrog/NPT backward-half-kick
+storage retaining a constraint-normal force component. The maintainer
+required the separate shared fix first: D393 (#802), merged ahead of this
+PR, projects that stored array through the mass-weighted constraints.
+After rebasing onto that fix, rerun the stopped OPC/leapfrog/NPT case once
+with the raw stored arrays and the same bounds. The helper also records
+the independently projected full-step reconstruction as a diagnostic;
+it does not replace the raw-array gate. On a pass, continue the seven
+other short cases, production drift and remaining implementation gates.
+
+Force-bearing H5MD reports evaluate rule (B) with a separate general
+no-step program at the current positions, cell and step. Its activation,
+runtime records and force buffers belong to that observation; the
+template dynamics' carried rule-(A) forces and checkpoint state remain
+unchanged. The program is compiled lazily and reused until the physics
+version changes. Its precision is the legacy general mixed route's at
+every operation, including the bisector placement and transpose; it adds
+no new pair arithmetic. No performance conclusion is drawn from this
+reporting check.
+
+The reporter isolation fixture passes two force frames against the general
+no-step API at relative bound $10^{-5}$, distinguishes rules (A) and (B),
+checks carried positions, velocities and forces bitwise before/after
+reporting, and resumes dynamics between reports. This is an API isolation
+check, not the independent physical oracle gate. Its first run stopped
+before execution because the new list-constructor declaration lacked
+read-only annotations on its two input tables. Adding those annotations
+passed lowering; the affected run then reached the new helper and found
+that the public frame API requires tunables. The helper now uses the
+existing general no-step state evaluator, without changing that refusal
+or any ordinary entry. Its single affected rerun passed. Neither failure
+was a numerical comparison or an intermittent failure.
+
+The execution-body emitter retains independent site guards and the actual
+scalar/derived expressions. A second test-only outliner checks this
+emitter against the same independent 27-image f64 quadratic oracle and
+the same predeclared bound as the semantic reduction. This remains an
+isolated body test, not physical-system or device-list validation.
+
+The current pair-arithmetic precision comparison is below. It describes
+the execution IR, packing/scheduler emitters and native epoch pipeline;
+physical-system and end-to-end measurements are still pending. Compile-time folding of
+water coefficients is the rounding difference accepted above, not f64
+per-pair device work.
+
+| Operation | Legacy mixed pair kernel | Template mixed pieces |
+|---|---|---|
+| Source positions and lattice shift before packing | f64 | f64 |
+| Reference epochs and packing shifts | f64 reference positions and cells | f64 fractions, integer-valued f64 packing cells, class cells and actual reaches |
+| Validity deformation and displacement | f64 integrator/reference arithmetic | f64 guarded inverse-cell norm bound, incident-class margins and anchor displacement |
+| Spatial-order key arithmetic | f32 on wrapped points | f64 wrapping, then f32 fractional key arithmetic; i32 class/column/z keys |
+| Covering-search geometry and radial predicate | f32 | Cached Cartesian f32 with certified decisions and the literal f64 uncertainty shell; reference fractions and general image proof remain f64; source site cutoffs remain f32 |
+| Inner-block pruning predicate | f32 | f64 hybrid reference fractions, explicit images and covering radius; source site cutoffs remain f32 |
+| Packed positions and pair displacement | f32 | f32 whole O/H/H; f32 anchor and local offsets |
+| Extra point in the pair body | Stored point loaded through packing | Formed from local offsets in f32 |
+| Squared distance and site cutoff | f32 | f32 |
+| Charge products | f32 from loaded parameters | Water constants may fold in f64 at compile time, then narrow to f32; dynamic solute products are f32 |
+| LJ and erfc/exp arithmetic | f32; existing approximation under `fast_math` | f32; the common radial interface enables D94's admitted table and analytic fallback, with the same approximation pass on the three bodies |
+| Per-pair and per-thread real-atom forces | f32 | f32 |
+| Force destination | f32 | f32 atomics at the mapped original particles |
+| Per-pair virial products | f32 | f32 |
+| Energy and virial sums | f64 | f64 |
+
+An isolated one-warp device fixture executes the actual derived WW body
+and scheduler with 13 valid first waters in a padded cluster of 16,
+35 partner entries, exclusion masks and explicit image shifts. Its
+independent quadratic oracle uses dyadic positions and coefficients;
+all 469 force/energy/virial values must agree exactly. Both the common
+orientation and distinct quarter-turn orientations passed their first
+RTX 5090 execution. The latter makes each cached site's value depend on
+its own partner and checks off-diagonal strain as well.
+
+| Frames | Reference energy | Reference virial xx | Reference virial xy | Largest reference force component | Largest difference |
+|---|---|---|---|---|---|
+| Common orientation | 37.024810791015625 | -74.04962158203125 | 0 | 9.099609375 | 0 |
+| Distinct quarter-turns | 37.713287353515625 | -74.35430908203125 | 0.545654296875 | 9.52734375 | 0 |
+
+The common-orientation fixture also passed memcheck, racecheck and
+synccheck: zero errors or hazards. This isolated device execution does
+not validate spatial list generation, the physical PME system, dynamics
+or performance; their gates above remain required.
+
+The relation kind of template instances and its specialization in the
+builder; the packing and its frames; the segmented dual-list buffer and
+the remap of SW entries after a water build; the fused kernel and its register budget;
+the extent check; the record of the choice; the end-to-end measurements
+that set `AUTO`'s rule; Section 10's numbers. Related work:
+[[Ruymgaart2012]](../references.md#ruymgaart2012) (water-specific kernels and
+water-index lists; SI Appendix C applies an oxygen–oxygen molecular cutoff
+to all nine site pairs, a different model from this decision's site cutoff;
+no virtual sites or generated code) and
+[[Nikolskiy2020]](../references.md#nikolskiy2020) (TIP4P on a GPU: the
+virtual charge placed once per molecule and stored, its force spread by a
+second kernel).
+
+### Radial force construction and site accumulation
+
+Following the isolated anchor-cache experiment (discarded for no clear
+measured gain), the derivative-window constructor recognizes energy that
+depends on its site displacement only through the existing squared norm.
+It differentiates that scalar expression and forms
+$\mathbf F=-2wU'(r^2)\mathbf d$. General differentiation is unchanged;
+unrecognized window expressions retain their existing derivative path.
+The common pair-kernel-body interface supplies D94 radial extraction for
+both ordinary pairs and template windows.
+
+A proved site set with no formed-site contribution keeps three force
+slots per water, including three-site models. Otherwise the constructed
+force layout carries O/H1/H2/E interaction-site forces
+through accumulation, then applies rule A once at each molecular write:
+$\mathbf F_O \mathrel{+}= (1-2\alpha)\mathbf F_E$ and
+$\mathbf F_{H_i} \mathrel{+}= \alpha\mathbf F_E$.
+Site displacements, per-site cutoffs and the strain chain rule retain the
+candidate image. The transpose does not use the normalized bisector.
+Mixed pair arithmetic, site accumulators and the transpose are f32;
+energy and virial accumulators remain f64 and coverage/pruning geometry
+remains f64. Reassociation may change mixed bits; every existing physical
+bound is unchanged. Deterministic mode retains the general path.
+
+### Force-only prototype-transplant diagnostic stop
+
+The never-merged diagnostic replaces native common-force evaluation with the
+unchanged archived prototype kernels, retaining native energy observation over
+the transplanted entries and charging all I/O and synchronization to integration.
+The prototype has no virial path: virial is not applicable to this diagnostic,
+while the production virial contract is unchanged. Projected-force, energy and
+trajectory bounds remain unchanged. Each case has a 300-second timeout and is
+expected to take less than 180 seconds.
+
+On RTX 5090, five systems completed 10 steps per route and four same-frame
+checks each. Large TIP3P stopped at frame 5: projected maximum force error
+0.036464730765771947 kJ/mol/nm exceeds 0.02877206333165816; the general-mixed
+baseline error is 0.019181375554438773. Projected RMS and energy pass, and no
+actual-cutoff pair is missing. Oxygen 14956 (one-based), z component, has
+projected transplant/general-mixed/general-double forces
+-207.57344170304987 / -207.53709163106606 / -207.5369769722841 kJ/mol/nm.
+
+The 23 evaluated same frames give 22 passes and one failure; all 17 completed
+trajectory samples pass. No comparison was rerun after this physical failure.
+The pending first stage profile was cancelled before execution, so there is
+no transplant timing or generated-kernel-versus-integration conclusion.
+Reach-list differences remain counted only, separately from actual-cutoff
+coverage. Full per-frame values, baseline errors, evaluated bounds, retained
+extra-bit counts and provenance hashes are in the
+[diagnostic results](rigid-water-template-transplant-diagnostic.json).
+
+Next requires a ruling: source/CPU-only diagnosis from the preserved failing
+frame, without a numerical correction, bound change or GPU rerun.

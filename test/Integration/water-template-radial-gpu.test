@@ -1,0 +1,10 @@
+# REQUIRES: cuda
+# Independent f64 erfc(3.5*r)/r, analytic site forces and strain, with the
+# current physical gate's 1e-5 scale floors and exact untouched padding.
+# This exercises the real differentiated body and shared radial interface;
+# it does not claim an independent full-PME oracle.
+# RUN: rm -f %t.mlir
+# RUN: %python %S/Inputs/template_scheduler_oracle.py %S/../Conversion/MDToMDExec/template-execution-site.mlir %t.mlir --screened --rotated --summary
+# RUN: mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-simplify-distance=radial=true --canonicalize --cse --md-exec-assign-precision=mode=mixed --md-exec-approximate --md-exec-expand-radial --canonicalize --cse --test-md-template-scheduler=rotate-frames | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# A numerical mismatch stops work; this run is never retried to obtain a pass.
+# CHECK: 1

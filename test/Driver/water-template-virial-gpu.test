@@ -1,0 +1,11 @@
+# REQUIRES: cuda
+# D264 molecular virial at one shared constrained frame and velocities;
+# atomic total, full constraint reaction and 2 K_internal are diagnostics.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_report.py %S/Inputs/opc %t
+# RUN: mdir-template-physics-test %t/control.toml OPC-VIRIAL | tee %t/metrics.txt | FileCheck %s
+# CHECK: scalar molecular virials:
+# CHECK: oracle virial:
+# CHECK: atomic diagnostics:
+# CHECK: virial oracle difference
+# CHECK: OPC physical molecular virial passed

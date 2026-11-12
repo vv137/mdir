@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -38,6 +39,10 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
     if (tuple.isStorageForm())
       return std::nullopt;
     outs = tuple.getOuts();
+  } else if (auto window = dyn_cast<TemplateForOp>(loop)) {
+    if (window.isStorageForm())
+      return std::nullopt;
+    outs = window.getOuts();
   } else {
     return std::nullopt;
   }
@@ -52,6 +57,8 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
 static MutableOperandRange getOutsMutable(Operation *loop) {
   if (auto pair = dyn_cast<PairForOp>(loop))
     return pair.getOutsMutable();
+  if (auto window = dyn_cast<TemplateForOp>(loop))
+    return window.getOutsMutable();
   return cast<TupleForOp>(loop).getOutsMutable();
 }
 
@@ -122,6 +129,8 @@ static void mergeOuts(TupleForOp loop, unsigned into, unsigned from) {
       /*overwrite=*/DenseBoolArrayAttr(), loop.getDisjointAttr(),
       // Chosen later, for the loop as it is then (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr());
+  if (auto epoch = loop->getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+    merged->setAttr(md::kTemplateConstraintEpoch, epoch);
   merged.getKernel().takeBody(loop.getKernel());
 
   // Each member takes the sum of its two contributions, in the destination
@@ -222,6 +231,96 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
 /// in one destination, and the chain adds it once. A loop with one
 /// destination less writes one field less, and may then accumulate onto
 /// another (accumulateOnce). Returns true if it merged two.
+// Template outputs retain independent site cutoffs. Merging destinations
+// concatenates their pair contributions and displacement lists; it does
+// not form a new pair expression or move arithmetic across a cutoff.
+static void mergeOuts(TemplateForOp loop, unsigned into, unsigned from) {
+  OpBuilder builder(loop);
+  Location loc = loop.getLoc();
+  unsigned outs = loop.getOuts().size();
+  unsigned columns = outs + loop.getReduce().size();
+  SmallVector<Value> destinations(loop.getOuts());
+  Value dropped = destinations[from];
+  destinations.erase(destinations.begin() + from);
+  SmallVector<Type> types(loop.getResultTypes());
+  types.erase(types.begin() + from);
+  SmallVector<int32_t> pairs;
+  for (unsigned tag = 0; tag != 3; ++tag)
+    for (unsigned column = 0; column != columns; ++column) {
+      if (column == from) continue;
+      int32_t count = loop.getPairs()[tag * columns + column];
+      if (column == into) count += loop.getPairs()[tag * columns + from];
+      pairs.push_back(count);
+    }
+  auto merged = TemplateForOp::create(
+      builder, loc, types, loop.getList(), loop.getPositions(), loop.getCell(),
+      loop.getIns(), destinations, loop.getReduce(), loop.getScratch(),
+      builder.getDenseI32ArrayAttr(pairs), loop.getCutoffAttr(),
+      loop.getExtentAttr(), loop.getAlphaAttr());
+  auto oldFlags = loop->getAttrOfType<DenseI32ArrayAttr>(md::kTemplateSiteForces);
+  SmallVector<int32_t> flags;
+  for (unsigned tag = 0; tag != 3; ++tag)
+    for (unsigned column = 0; column != outs; ++column) {
+      if (column == from) continue;
+      int32_t flag = oldFlags ? oldFlags[tag * outs + column] : 0;
+      if (column == into) {
+        int32_t other = oldFlags ? oldFlags[tag * outs + from] : 0;
+        if (!loop.getPairs()[tag * columns + into]) flag = other;
+        else if (loop.getPairs()[tag * columns + from]) flag &= other;
+      }
+      flags.push_back(flag);
+    }
+  if (oldFlags)
+    merged->setAttr(md::kTemplateSiteForces, builder.getDenseI32ArrayAttr(flags));
+  constexpr unsigned arities[] = {6, 4, 2};
+  for (unsigned tag = 0; tag != 3; ++tag) {
+    Region &region = merged->getRegion(tag);
+    region.takeBody(loop->getRegion(tag));
+    Operation *yield = region.front().getTerminator();
+    SmallVector<SmallVector<Value>> contributions;
+    SmallVector<ValueRange> displacements;
+    unsigned offset = 0;
+    for (unsigned column = 0; column != columns; ++column) {
+      unsigned count = loop.getPairs()[tag * columns + column];
+      unsigned stride = column < outs
+          ? md::getTemplateForceArity(loop, arities[tag], column, outs) : 1;
+      unsigned values = count * stride;
+      SmallVector<Value> contribution;
+      bool mergedReal = (column == into || column == from) &&
+          !flags[tag * (outs - 1) + (into < from ? into : into - 1)];
+      if (column < outs && mergedReal && stride != arities[tag]) {
+        OpBuilder body(yield);
+        unsigned first = arities[tag] == 6 ? 4 : 1;
+        for (unsigned pair = 0; pair != count; ++pair) {
+          auto sites = yield->getOperands().slice(offset + pair * stride, stride);
+          llvm::append_range(contribution, md::emitTemplateForceTranspose(
+              body, loc, sites.take_front(first), loop.getAlpha().convertToDouble()));
+          llvm::append_range(contribution, md::emitTemplateForceTranspose(
+              body, loc, sites.drop_front(first), loop.getAlpha().convertToDouble()));
+        }
+      } else llvm::append_range(contribution, yield->getOperands().slice(offset, values));
+      contributions.push_back(std::move(contribution));
+      displacements.push_back(yield->getOperands().slice(offset + values, count));
+      offset += values + count;
+    }
+    SmallVector<Value> operands;
+    for (unsigned column = 0; column != columns; ++column) {
+      if (column == from) continue;
+      llvm::append_range(operands, contributions[column]);
+      if (column == into) llvm::append_range(operands, contributions[from]);
+      llvm::append_range(operands, displacements[column]);
+      if (column == into) llvm::append_range(operands, displacements[from]);
+    }
+    yield->setOperands(operands);
+  }
+  for (unsigned i = 0; i != loop.getNumResults(); ++i)
+    if (i != from)
+      loop.getResult(i).replaceAllUsesWith(merged.getResult(i < from ? i : i - 1));
+  loop.erase();
+  if (Operation *zeros = dropped.getDefiningOp(); zeros && zeros->use_empty())
+    zeros->erase();
+}
+
 static bool mergeOnce(ParticleForOp op) {
   Block &kernel = op.getKernel().front();
   for (Chain &chain : getChains(op)) {
@@ -249,6 +348,8 @@ static bool mergeOnce(ParticleForOp op) {
       kernel.eraseArgument(after);
       if (pair)
         mergeOuts(pair, a->out, b->out);
+      else if (auto window = dyn_cast<TemplateForOp>(a->loop))
+        mergeOuts(window, a->out, b->out);
       else
         mergeOuts(cast<TupleForOp>(a->loop), a->out, b->out);
       return true;

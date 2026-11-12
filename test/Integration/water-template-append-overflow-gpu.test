@@ -1,0 +1,8 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.input.mlir --append-overflow
+# RUN: mdir-opt %t.input.mlir --test-md-template-stage=capacity=2 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# The expected capacity flag is set, row/total counts remain exact, and
+# staging beyond two logical chunks remains untouched: 1,574 comparisons.
+# No compaction or physical evaluation occurs for an overflowed build.
+# CHECK: 1

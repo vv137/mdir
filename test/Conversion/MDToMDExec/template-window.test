@@ -1,0 +1,71 @@
+# Keep a standard function as the executable entry while the semantic
+# potential and generated derivative functions are inlined into it.
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --verify-each | FileCheck %s --implicit-check-not=md.template_pairs --implicit-check-not=md.sum_template_window --implicit-check-not=md.gather_template_window
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-assign-storage=memory=host --verify-each | FileCheck %s --check-prefix=STORAGE --implicit-check-not='!md.field'
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-assign-precision=mode=mixed --verify-each | FileCheck %s --check-prefix=MIXED
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --md-exec-assign-storage=memory=host --verify-each | FileCheck %s --check-prefix=FUSED
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-reuse-neighbors --md-exec-fuse-loops --md-exec-assign-precision=mode=mixed --md-exec-assign-storage=memory=host --verify-each | FileCheck %s --check-prefix=PERSISTENT
+# One logical source owns one physical list, shared by energy, forces and
+# strain; all loops have the three tagged bodies for later compatible fusion.
+# CHECK-LABEL: func.func @entry
+# CHECK: %[[LIST:.*]] = md_exec.build_segmented_pairs
+# CHECK-NOT: md_exec.build_segmented_pairs
+# CHECK: md_exec.template_for %[[LIST]]
+# CHECK: water
+# CHECK: mixed
+# CHECK: atoms
+# CHECK: md_exec.template_for %[[LIST]]
+# CHECK-SAME: outs(
+# CHECK: water
+# CHECK: mixed
+# CHECK: atoms
+# CHECK: md_exec.template_for %[[LIST]]
+# CHECK-SAME: reduce(
+# CHECK: water
+# CHECK: mixed
+# CHECK: atoms
+# CHECK: return
+# STORAGE-LABEL: func.func @entry
+# STORAGE: md_exec.build_segmented_pairs
+# STORAGE: -> !mdrt.segmented_pairs<@atoms>
+# STORAGE: md_exec.template_for
+# STORAGE-SAME: reduce(
+# STORAGE: md_exec.template_for
+# STORAGE-SAME: outs(
+# STORAGE-SAME: memref<?x3xf64
+# STORAGE: md_exec.template_for
+# STORAGE-SAME: reduce(
+# STORAGE: return
+# Positions retain state precision: packing narrows after the lattice shift.
+# Mixed scalar bodies and displacements use f32; energies/virials sum in f64.
+# MIXED-LABEL: func.func @entry
+# MIXED-SAME: !md.field<@atoms, 3 x f64>
+# MIXED: md_exec.build_segmented_pairs
+# MIXED: md_exec.template_for
+# MIXED: water
+# MIXED: vector<3xf32>
+# MIXED: arith.extf {{.*}} : f32 to f64
+# MIXED: md_exec.yield {{.*}} : f64, vector<3xf32>
+# MIXED: md_exec.template_for
+# MIXED-SAME: !md.field<@atoms, 3 x f32>
+# MIXED: md_exec.template_for
+# MIXED: arith.extf {{.*}} : vector<9xf32> to vector<9xf64>
+# FUSED-LABEL: func.func @entry
+# FUSED: md_exec.build_segmented_pairs
+# FUSED: md_exec.template_for
+# FUSED-SAME: outs(
+# FUSED-SAME: reduce(
+# FUSED-SAME: pairs [1, 1, 1, 0, 0, 0, 0, 0, 0]
+# FUSED: water
+# FUSED: mixed
+# FUSED: atoms
+# FUSED-NOT: md_exec.template_for
+# FUSED: return
+# PERSISTENT-LABEL: func.func @entry
+# PERSISTENT: %[[EMPTY:.*]] = md_exec.empty_segmented_pairs
+# PERSISTENT: %[[LIST:.*]] = md_exec.refresh_segmented_pairs %[[EMPTY]]
+# PERSISTENT: md_exec.template_for %[[LIST]]
+# PERSISTENT-SAME: outs(
+# PERSISTENT-SAME: reduce(
+# PERSISTENT-NOT: md_exec.template_for
+# PERSISTENT: return

@@ -1076,3 +1076,391 @@ and under stochastic cell rescaling, through the builds that these cause
 barostat). With the exact list the step of 12,288 atoms on an RTX 4090
 takes 6.10 s against 6.70 s with the search; MDIR's list costs about 1 ms a
 step at every size measured (`docs/metatomic-ml1.md`, Section 12.8).
+
+## 4.7 Rigid water as a unit
+
+*D[rigid-water-template] (#774), implementation in progress. The
+measurements in this section are those of a prototype outside the
+repository (RTX 4090, mixed precision, against `main` with the groups of
+Section 4.4); the implementation's replace them.*
+
+The current implementation has the structured site windows and their
+derived forces/strain, whole-molecule packing, a rotating warp scheduler,
+and execution IR for one persistent class-segmented list. The shared
+allocation layout and initialization are checked independently, and the
+execution body's site guards pass the same isolated all-images f64
+oracle as the semantic reduction. Physical device-list generation,
+validity integration and end-to-end measurements remain in progress;
+the prototype's performance numbers are not implementation results.
+An isolated execution of the actual warp scheduler and derived body on an
+RTX 5090 also passed an exact dyadic force/energy/virial oracle, with
+partial batches, exclusion masks and differing water orientations. This
+checks scheduling and cached geometry, not a physical-system trajectory.
+
+Terminology follows the [decision's glossary](../decisions/rigid-water-template.md#glossary).
+A **class-segmented pair list** is one buffer divided into WW, SW and SS
+**segments**, each with outer and inner ranges. A **unit** is a matched
+water with oxygen **anchor** and radius $r_\mathrm m$, or a solute unit,
+a heavy atom with its constrained hydrogens and radius $r_\mathrm u$ (a
+particle without them has radius zero). Its **class** selects the
+computation; WW, SW and SS are **class pairs**. A **mobility group** shares
+a displacement test and refresh schedule: here one, the anchors of the
+matched waters and of the solute units. A **refresh**
+rebuilds or prunes the affected segments. The **template kernel** is the
+fused launch evaluating all three class pairs. The **extent** is the
+largest site distance from its anchor; the **covering bound** uses
+$R+2r_\mathrm m$ for WW, $R+r_\mathrm m+r_\mathrm u$ for SW and
+$R+2r_\mathrm u$ for SS. **Rule (A)** is the
+extra point's constant transpose used by dynamics. Written forces use
+the general bisector transpose, rule (B), in a separate no-step
+evaluation; the carried state and checkpoint forces retain rule (A).
+Rules (A) and (B) distribute the extra point's force differently but
+leave each group's total force $\mathbf F_g$ unchanged. Consequently,
+the D264 molecular virial and pressure are the same under either rule;
+the physical-virial check uses this molecular convention.
+
+In an aqueous system most pairs within $r_c$ are pairs of water sites:
+93.3% in ubiquitin with 0.15 M KCl and OPC water (25,929 atoms, 6,166
+waters), against 4.1% between solute and water and 2.3% within the
+solute. The structures of Sections 4.3 to 4.5 treat every site as a
+particle: a molecule of OPC is four members of a list, four positions
+tested for displacement, and 16 pairs of sites with every other molecule,
+each reading its charges and types. When the water is rigid, its geometry
+and its parameters are known when the program is compiled, and the
+molecule can be the unit of the structure instead.
+
+**The template.** A water *matches* the template of a model when its
+atoms come in the model's order (O, H, H, and for four sites the extra
+point), with the model's charges and Lennard-Jones types, three distance
+constraints that hold it rigid, and for four sites the extra point of
+Amber's definition (Section 6.1). The waters that match form the set
+$\mathcal T$; every other particle, solute and ions, is in $\mathcal S$
+and stays a particle of its own. In the first version only the oxygen of
+a template carries Lennard-Jones; a model whose hydrogens carry it, such
+as CHARMM's TIP3P, does not match and runs as today.
+
+**The bound.** Let the anchor of a molecule $A\in\mathcal T$ be its oxygen,
+$\mathbf x_{o(A)}$, and its extent
+$\varrho_A = \max_{a\in A}\lVert\mathbf x_a - \mathbf x_{o(A)}\rVert$,
+the extra point included. On the rigid geometry the extent is
+$\max(r_\mathrm{OH}, r_{os})$, the length of the O–H constraint or the
+distance of the extra point from the oxygen; the program takes
+$r_\mathrm m$ as that plus a margin $\delta_\mathrm m$ for the residual of
+the constraints. For OPC the hydrogens set it, $0.8724$ Å, and for TIP3P
+$0.9572$ Å.
+
+**Proposition.** Let $\varrho_A, \varrho_B \le r_\mathrm m$. For sites
+$a\in A$ and $b\in B$,
+
+$$
+\lVert\mathbf x_a - \mathbf x_b\rVert_\text{mi} \;\ge\;
+\lVert\mathbf x_{o(A)} - \mathbf x_{o(B)}\rVert_\text{mi} - 2r_\mathrm m ,
+$$
+
+and for a particle $i\in\mathcal S$,
+$\lVert\mathbf x_i - \mathbf x_b\rVert_\text{mi} \ge
+\lVert\mathbf x_i - \mathbf x_{o(B)}\rVert_\text{mi} - r_\mathrm m$.
+
+*Proof.* Let $\mathbf n$ be the image of the pair of sites that attains
+the minimum. The same image of the anchors satisfies, by the triangle
+inequality,
+$\lVert\mathbf x_{o(A)} - \mathbf x_{o(B)} + \mathbf nH\rVert \le
+\lVert\mathbf x_a - \mathbf x_b + \mathbf nH\rVert + \varrho_A +
+\varrho_B$, and the minimum image of the anchors is no longer than that
+image. The second bound is the same with $\varrho_A = 0$. $\blacksquare$
+
+Every pair of sites within $r_c$ therefore belongs to a pair of molecules
+whose anchors are within $r_c + 2r_\mathrm m$. A list of the pairs of
+anchors is then a structure in the sense of Section 4.1 with the cutoff
+$r_c + 2r_\mathrm m$ and the reach $R + 2r_\mathrm m$, and the theorem of
+Section 4.1 applies to it as it stands, with $d$ the largest displacement
+of an anchor since the build:
+
+$$
+2d \le \min(\mathbf m)\,(R + 2r_\mathrm m) - (r_c + 2r_\mathrm m) .
+$$
+
+The list of pairs between $\mathcal S$ and $\mathcal T$ takes $r_c +
+r_\mathrm m$ and $R + r_\mathrm m$, with $d$ over the particles of
+$\mathcal S$ and the anchors; the pairs within $\mathcal S$ are the
+structure of Section 4.4.
+
+**Solute units.** The solute's hydrogens move fastest: on ubiquitin in OPC
+the test of the solute particles at the inner skin of 0.6 Å failed every
+2.6 steps, set off by hydrogens, against every 8.5 steps for the water
+anchors (#799). Where the constraints hold the bonds of the hydrogens, a
+heavy atom $X(A)$ and its hydrogens form a unit $A$ anchored at $X(A)$.
+The failure test of the constraints, which stops a run, keeps
+$\lvert r^2/d^2 - 1\rvert \le \tau_\mathrm c$ after every position
+constraint, so each member is within $d\sqrt{1+\tau_\mathrm c} <
+d(1+\tau_\mathrm c)$ of its anchor, and every unit's extent is at most
+$r_\mathrm u = d^{\max}_{XH}(1+\tau_\mathrm c)$. The proposition then
+holds with $r_\mathrm u$ for a solute unit as for a water: its pairs with
+a water take $R + r_\mathrm m + r_\mathrm u$, those of two units
+$R + 2r_\mathrm u$, and the theorem of Section 4.1 takes $d$ over the
+anchors alone. The units select candidates only; each member keeps its
+own entries, exclusions and 1–4 scaling, and the search and the pruning
+read the anchor's point for each member. That point is the anchor's in the
+anchor's own frame, and the member's frame is placed at the minimum image
+of its bond from it, so a member's frame lies within $r_\mathrm u$ of its
+point whatever image of the member the input holds (a file wrapped atom by
+atom splits a bond across a face). The template is taken only where the
+largest reach, $R + 2\max(r_\mathrm m, r_\mathrm u)$, is at most half the
+least distance between opposite faces of the input cell, so that a pair
+has at most one image within it; otherwise the general path is taken. One mobility group, the anchors
+of the waters and of the units, then refreshes all three segments: on
+ubiquitin the pruning interval goes from 2.6 to 8.5 steps and the
+interval of builds from 25 to 56, while the entries of the inner list grow
+by about 8%.
+
+**One lattice frame.** The search treats the units of a group that share
+the lattice frame $\lfloor\mathbf p\rfloor$ of their reference points
+together, and a group that a frame boundary cuts takes one query and one
+entry per partner for each part. The central image puts the points in
+$[-\tfrac12,\tfrac12)$, whose floors change in the middle of the cell, where
+a solvated solute usually sits. The packing therefore takes the central
+image of $\mathbf x - H\mathbf t$, $\mathbf t = (\tfrac12,\tfrac12,\tfrac12)$,
+and adds $\mathbf t$ to the points: the frames keep the magnitude of a
+central image, and a build's points lie in $[0,1)$, one frame for all. On
+ubiquitin in OPC the entries of the list fall by 15%, and the evaluation
+from 42.1 to 36.8 µs a step. The inner lists of the dual list (Section 4.5)
+take $R_\text{in}$ for $R$ in each. In the cell of the build every
+condition is the half-skin test $d \le s/2$; under a scaling the margin is
+$(1 - \min(\mathbf m))(R + 2r_\mathrm m)$ instead of $(1 -
+\min(\mathbf m))R$. The proposition needs the extents at the positions of
+the step, not only at the build. The constraints keep them to their
+residual, but the positions of the input are not constrained before the
+first step (Section 6.2). The program therefore measures the extents at
+each build, where the packing reads every molecule whole, and takes the
+larger of $r_\mathrm m$ and the largest extent for that build; between
+builds it tests the extent of each water in the same loop as the
+displacement of its anchor, where the thread that constrains a water
+holds its three atoms. The lists hold every image
+of every pair within their reach while $R + 2r_\mathrm m < \min_a L_a$,
+the condition of D242 with the reach of the water list.
+
+For finite nonnegative $\alpha\le1/2$, the triangle inequality bounds
+$\lVert\alpha(\mathbf d_j+\mathbf d_k)\rVert$ by the larger O–H extent,
+so two squared distances suffice for that check. For larger weights the
+check also takes the formed site's squared extent. The compiler chooses
+between these cases; the larger-weight case adds no per-step work to
+models whose two O–H extents prove coverage.
+
+The compiler represents that distinction with `md.sum_template_window`:
+its body exposes every site displacement and energy, with a separate
+cutoff on each site pair. A symbolic affine proof checks the supported
+site offsets before lowering may use the covering bound. Its force and
+strain programs differentiate that same arithmetic, including the
+candidate image's cell contribution. Ordinary `md.sum_tuples` coordinates
+retain their minimum-image semantics; they cannot substitute one anchor
+image for all the images of the window.
+
+After differentiation, ordinary pair kernels and structured window bodies
+expose their squared distances, regions and contribution outputs through
+one compiler interface. The same radial canonicalization and D94 table
+admission then apply to both, retaining the original error criterion and
+analytic fallback; the physical expression remains the source body.
+For a proved radial site energy the window constructor forms
+$\mathbf F=-2wU'(r^2)\mathbf d$ directly, leaving general differentiation
+unchanged. It accumulates forces at interaction sites, then applies the
+linear rule-(A) transpose once at the molecular write boundary. This
+avoids expanding coordinate-basis derivatives and repeating the
+extra-point pullback for each site pair. The per-site cutoff and candidate
+image remain explicit; energy and strain use the same source expression.
+
+The native spatial order uses one stable counting sort of the joint
+column and z key, with the unit ID breaking ties. Each digit composes
+the shared scan, cursor scatter and rank primitives. Ranking input
+positions within the digit restores stability after the atomic scatter,
+so successive digits preserve both the lower keys and the fixed-ID ties.
+This changes the construction of the order, not the groups, covering
+predicate or physical pair expression.
+The template adapter then cuts at column boundaries and large adjacent
+z-key gaps, refining an overlong span at its rightmost largest gap.
+Shared scans produce groups of at most sixteen real units. Compact unit
+orders and explicit group lengths occupy fixed class partitions, so a
+rebuild leaves an inactive class's order and maps in place. The common
+grid also stays fixed while a nonempty class is retained. A work record
+keeps its first-unit begin and reads its length separately; growing row
+capacity preserves the previous class ranges even when their prefixes
+move (device-primitives, Section 4.12).
+The query boxes and keys use the same wrapped fractional frame. Units in
+one group may retain different whole-cell translations; disjoint
+query masks compensate those translations in the partner image before
+the original f64 covering test. A compact key group therefore does not
+acquire a whole-cell box merely because its stored references straddle
+the reference-frame seam.
+A conservative Cartesian bounding box rejects whole partner groups
+before their units are enumerated. A ballot and a warp-uniform survivor
+loop select the groups to enumerate, leaving every lane at each required
+broadcast. Its distance lower bound admits roundoff uncertainty; the
+original f64 covering test remains the reference decision. Class-specialized
+searches cache Cartesian f32 anchors and first-group data in shared memory.
+Certified outward bounds admit a fast f32 accept or reject; uncertain
+cases execute the literal original f64 predicate. The Cartesian boxes
+use a separate conservative certificate, so uncertain boxes survive.
+The numerical margins are never credited as physical skin. Fractional box
+intervals also prove when at most one integer image can be within reach;
+uncertain cases retain explicit images. Neither proof changes the
+interaction, the cutoff or its image coverage.
+
+![Which distances the structure tests](figures/rigid-water-members.png)
+
+*Figure 4.1. A pair of OPC waters to scale. Left: in the general
+structure every site is a member, and all 16 pairs of sites are
+candidates. Right: the oxygens are the only members; every site lies
+within $r_\mathrm m$ of its oxygen, so a list of the oxygens within $R +
+2r_\mathrm m$ holds every pair of sites within $R$. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**The cutoff stays a cutoff of sites.** The structure only lists pairs of
+molecules. The terms are still evaluated per pair of sites with $r < r_c$,
+so the energy is that of Section 5, unchanged. Cutting by the distance of
+the anchors instead would take or leave whole molecules at the boundary.
+That is a molecular cutoff, a different model
+[[Steinbach1994]](references.md#steinbach1994), and the structure does not
+use it.
+
+**The choice of anchor.** The oxygen is the anchor. The midpoint of the
+two hydrogens gives a smaller sphere, 0.686 Å for OPC: for an obtuse
+H–O–H angle the hydrogens are the ends of a diameter of the smallest
+sphere that holds the molecule. Measured on the prototype, the two
+anchors cost the same per step: the oxygen gives fewer builds and the
+midpoint a faster kernel. The oxygen needs no derived point.
+
+**The kernel.** The pairs of molecules run in the layout of the groups of
+Section 4.4, with a molecule in place of a particle. Water clusters hold
+16 molecules, and a lane holds one of them: its three atom positions, its
+extra point, formed once from them (Section 6.1), and its force
+accumulators. The partner molecules of a block of entries rotate through
+the half-warp by shuffles, so a partner's sites are formed once per entry
+and serve the 16 molecules of the cluster; the partner's forces are added
+up in registers along the rotation and written once per entry, and the
+cluster's once per block, with one atomic addition per atom. Because the
+template is fixed when the program is compiled:
+
+- the charge products and the Lennard-Jones coefficients are constants,
+  and nothing is read from the tables of types;
+- only the terms that are not zero are formed. For OPC the oxygen carries
+  no charge and only the oxygen carries Lennard-Jones, so a pair of
+  molecules has 9 Coulomb terms and 1 Lennard-Jones term, against 16
+  general pairs of sites (Figure 4.2);
+- two different molecules have no excluded pair, so no exclusion is
+  tested: the check is removed by the structure. The validity of each
+  entry and the cutoff of each pair of sites remain.
+
+Water-specific kernels and water-index lists were used by
+[[Ruymgaart2012]](references.md#ruymgaart2012), with one thread per molecule
+and the nine pairs of three-site water unrolled. Their SI, Appendix C,
+applies an oxygen–oxygen cutoff to all nine pairs: a molecular cutoff,
+a different model from the site cutoff retained here. Other kernels place the extra point
+of TIP4P once per molecule and store it, keeping its force per oxygen for
+a second kernel to spread [[Nikolskiy2020]](references.md#nikolskiy2020).
+A prototype of one thread per pair of molecules, with global atomic
+additions, was 7 to 10 times slower than the loop of Section 4.4 on the
+same boxes; the gain needs the reuse of the warp.
+
+![Work for one pair of waters](figures/rigid-water-pair-work.png)
+
+*Figure 4.2. The pairs of sites of two waters. The general loop forms
+every pair and reads its parameters; the template forms only the terms
+that are not zero, with constant parameters. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**The lists.** The anchors are a quarter of OPC's particles and a third of
+TIP3P's, and they move less than the hydrogens, whose librations dominate
+the test of displacement. For ubiquitin with OPC the prototype built the
+water lists about every 55 steps and pruned them every 8.5, where the
+groups of Section 4.4 build every 20.7 steps and prune every 2.8. The
+solute keeps lists of its own, tested on its particles and on the anchors,
+so that its faster atoms do not set the pace of the water lists; they
+were built every 38 to 43 steps and pruned every 3. In the water boxes
+about 60% of the saving was in the pair kernel and 40% in the lists; in a
+solvated protein the solute's lists and the packing of the waters take
+part of it back.
+
+Eligible single-family integration runs publish through the shared
+final-output observer; mixed families, and writers after an extra point,
+publish in a kernel of their own after the update, one thread per unit.
+The arithmetic-sharing experiment did not establish a stage gain and was
+discarded. Publication fusion does not change the class-list validity
+contract.
+
+**The writer's arithmetic.** The writer packs a water's frame from its
+anchor, shifted to its packing cell in f64 and narrowed, plus the O–H
+displacements, each the f64 difference narrowed to f32 (imaged in f64 when
+a face splits the water). Its displacement test is in f32 as well. With
+$\mathbf y$ the framed anchor, $\mathbf p$ its reference point (a fraction
+plus $\mathbf t$) and $\zeta$ the half margin of its group, the true
+displacement is $\mathbf D = \mathbf y + H\mathbf t - H\mathbf p$, and the
+writer computes $\hat{\mathbf d}$ from the narrowed $\mathbf y$, $H$,
+$H\mathbf t$ and $\mathbf p$ in f32. The sum $\lvert H\rvert_1$ of the
+magnitudes of the cell's components bounds every row sum of $\lvert H\rvert$.
+Where $\lvert\mathbf p\rvert_\infty \le 2$ (tested; a point beyond it fails)
+and $t_a \le \tfrac12$, each component of $\mathbf y$ is at most
+$\tfrac52\lvert H\rvert_1 + \lvert D_a\rvert$, and the roundings of the
+narrowings, the products and the sums give
+$\lVert\hat{\mathbf d} - \mathbf D\rVert \le \mathsf u\,(28\lvert H\rvert_1 +
+2\lVert\mathbf D\rVert + \lVert\hat{\mathbf d}\rVert)$. The test passes where
+the f32 sum of squares is at most $L_\zeta = (\zeta - \delta_\zeta)^2(1 -
+2^{-20})$, narrowed once per launch, with $\delta_\zeta = 2^{-18}(\lvert
+H\rvert_1 + \zeta)$; that sum is at least $\lVert\hat{\mathbf d}\rVert^2(1 -
+3\mathsf u)$, so a pass gives $\lVert\hat{\mathbf d}\rVert < \zeta -
+\delta_\zeta$ and $\lVert\mathbf D\rVert(1 - 2\mathsf u) < (\zeta -
+\delta_\zeta)(1 + \mathsf u) + 28\mathsf u\lvert H\rvert_1 \le \zeta(1 -
+2\mathsf u)$, since $\delta_\zeta \ge 28\mathsf u\lvert H\rvert_1 +
+3\mathsf u\zeta$. A negative $\zeta - \delta_\zeta$ makes $L_\zeta = -1$, and
+every unit fails. On a cubic cell of 5 nm, $\delta_\zeta$ is $6\times10^{-5}$
+nm. The extent test compares the f32 square of the largest site distance,
+whose relative error is below $11\mathsf u$, with $r_\mathrm m^2(1 -
+2^{-20})$, so that no true excess passes. The writer no longer stores the
+current points each step: where a group prunes, a kernel before the prune
+takes them from the positions and the packing cells of the anchors.
+
+The **class-segmented pair list** is one buffer of cluster pairs divided
+into segments by class-pair tag: WW, SW and SS here. For $P$ particle
+classes, $P(P+1)/2$ unordered class-pair segments, including
+self-pairs, occupy ranges of one buffer, compacted by tag with offsets.
+There are $C\le P$ displacement tests, one per mobility group; the number
+of classes does not set the number of tests. The anchors of the waters
+and of the solute units give one test even with four classes (water,
+solute, ions, perturbed atoms) and ten segments. Segment $(a,b)$ refreshes
+at the faster participating cadence. The spatial search and sort run once. A segment without a measured
+specialization gain uses the general path in the same launch.
+
+**One launch.** The pairs of clusters are of three classes: water–water,
+solute–water, and solute–solute. The last two are few, and launched apart
+their kernels are bound by latency: for ubiquitin the prototype took
+87.8 µs a step for the short-range path with three launches and 68.0 µs
+with one launch over the three classes, a class per warp.
+
+**The pruning in the launch.** The template prunes its inner list in the
+evaluation launch itself, each warp the work record it then evaluates
+(D284). A row's records are its chunks of 64 entries. The warp of a
+row's chunk tests the row's outer entries from its first until as many
+survive as that chunk and the chunks before it hold, and keeps the
+survivors whose rank falls in its own chunk: the survivors of a row fill
+its first records, as the streaming repack of Section 4.4 fills the
+blocks of a group, and no warp waits for another's pruning. A record
+that the pruning leaves empty is not evaluated. In the rhombic
+dodecahedron of ubiquitin in OPC the evaluation then takes about 30.6 µs
+a call against 32.7 with each chunk pruned into itself and every record
+evaluated (D[rigid-water-template], U10).
+
+![The lists and the launch](figures/rigid-water-lists.png)
+
+*Figure 4.3. Target layout: one spatial sort into water and solute clusters,
+three class-pair segments in one buffer, two displacement-test cadences,
+and one launch. The pair shares within $r_c$, cadences and times are the
+prototype's for ubiquitin with OPC. (From
+`scripts/paper/plot-rigid-water.py`.)*
+
+**What it gives.** Composed from the prototype's path and `main`'s other
+kernels, a step of ubiquitin with OPC takes 0.907 of `main`'s time; an
+OPC box of 16,329 waters 0.776, and one of 4,200 waters 0.833. TIP3P boxes
+take 0.920 and 0.898, but ubiquitin with TIP3P 1.015, where the solute's
+lists use up the saving of the kernel: the choice `water.template`
+(Appendix A, once implemented) therefore decides per system by a declared
+rule, and keeps the general path where the template does not pay. The
+order of the sums differs from that of the general path, so the
+deterministic mode keeps the general path.

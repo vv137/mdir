@@ -52,6 +52,17 @@ def MDRT_NeighborsType : MDRT_ParticleSetType<"Neighbors", "neighbors"> {
   }];
 }
 
+def MDRT_SegmentedPairsType : MDRT_ParticleSetType<"SegmentedPairs", "segmented_pairs"> {
+  let summary = "One class-segmented pair list with one mobility group";
+  let description = [{
+    One allocation holds the WW, SW and SS class-pair ranges and the outer
+    and inner partitions. Offsets and counts describe its ranges; it is
+    not three independently allocated or independently sorted lists.
+    The anchors of the waters and of the solute units form one mobility
+    group: one displacement test refreshes every segment.
+  }];
+}
+
 def MDRT_IncidenceType : MDRT_Type<"Incidence", "incidence"> {
   let summary = "For every particle, the tuples that it is a member of";
   let description = [{

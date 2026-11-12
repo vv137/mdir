@@ -1,0 +1,8 @@
+# REQUIRES: cuda
+# RUN: mdir-opt %S/Inputs/template-renumbered-members.mlir --convert-md-exec-to-gpu="kept-tuples=true device-tuples=true" | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# RUN: mdir-opt %S/Inputs/template-renumbered-members.mlir --convert-md-exec-to-gpu="device-tuples=false kept-tuples=false" | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Identity and nonidentity spatial order; exact real members, slots and exclusions.
+# Sixteen more sorted exercises check that each metadata upload has landed
+# before the shared stream reads it.
+# CHECK-COUNT-18: {{^}}1{{$}}
+# CHECK-NOT: {{.}}

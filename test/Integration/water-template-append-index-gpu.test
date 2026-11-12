@@ -1,0 +1,7 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir
+# RUN: %python %S/Inputs/template_compaction_oracle.py %t.input.mlir --append-index-overflow
+# RUN: mdir-opt %t.input.mlir --test-md-template-stage --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# The preloaded total crosses the final i32 payload bound. Its i64 sum
+# and the expected index flag remain exact: 14 comparisons; no compaction.
+# CHECK: 1

@@ -1,0 +1,229 @@
+// Short, identically initialized trajectories; same-frame pair accuracy
+// remains a separate check with the approved physical-oracle envelopes.
+#include "TemplatePhysicsOracle.h"
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
+static double elapsed(Clock::time_point start) {
+  return std::chrono::duration<double>(Clock::now()-start).count();
+}
+struct FrameChecks {
+  // Keep fresh simulation state at each frame, but reuse code only under
+  // D236's complete module/pipeline/machine key. Each route has its own
+  // store so the three precision/execution choices do not evict each other.
+  std::array<compiler::CodeStore,3> code;
+  compiler::CompileStats compile;
+  unsigned instances=0;
+  double createSeconds=0,evaluateSeconds=0,oracleSeconds=0,projectionSeconds=0;
+};
+
+static void installFrame(model::PreparedModel &p, const compiler::SimulationState &s) {
+  p.system.positions=s.positions;p.system.velocities=s.velocities;
+  std::copy(s.box.begin(),s.box.end(),p.system.box);
+  std::copy(s.tilt.begin(),s.tilt.end(),p.system.tilt);
+}
+static model::PreparedModel route(model::PreparedModel p, unsigned choice) {
+  p.control.waterTemplate=choice==0?driver::WaterTemplateChoice::On:driver::WaterTemplateChoice::Off;
+  p.control.precision=p.execution.precision=choice==2?driver::Precision::Double:driver::Precision::Mixed;
+  p.control.deterministic=p.execution.deterministic=choice==2;
+  return p;
+}
+static double residual(const driver::System &system, const compiler::SimulationState &s) {
+  double worst=0;
+  for(const auto &w:system.topology->settles) {
+    const unsigned pairs[3][2]={{0,1},{0,2},{1,2}};
+    for(unsigned k=0;k!=3;++k) {
+      V d=image(sub(vectorAt(s.positions,w.oxygen+pairs[k][0]),
+                    vectorAt(s.positions,w.oxygen+pairs[k][1])),s.box.data());
+      double length=k==2?w.distanceHH:w.distanceOH;
+      worst=std::max(worst,std::abs(dot(d,d)/(length*length)-1));
+    }
+  }
+  return worst;
+}
+// Diagnostic only: reconstruct the physical full-step velocity with each
+// route's carried forces, then remove constraint-normal velocity in the
+// mass metric. The gate below still compares the raw stored arrays.
+static std::vector<double> fullVelocity(const driver::System &system,
+    const compiler::SimulationState &s, double dt) {
+  auto v=s.velocities;
+  if(s.velocityOffset<0) {
+    for(size_t i=0;i!=system.masses.size();++i)
+      if(system.masses[i]>0)
+        for(unsigned k=0;k!=3;++k) v[3*i+k]+=.5*dt*s.forces[3*i+k]/system.masses[i];
+    for(const auto &water:system.topology->settles) {
+      unsigned o=water.oxygen;
+      double g[3][9]={},a[3][4]={};
+      const unsigned pairs[3][2]={{0,1},{0,2},{1,2}};
+      for(unsigned q=0;q!=3;++q) {
+        V d=image(sub(vectorAt(s.positions,o+pairs[q][1]),
+                      vectorAt(s.positions,o+pairs[q][0])),s.box.data());
+        for(unsigned k=0;k!=3;++k) {g[q][3*pairs[q][0]+k]=-d[k];g[q][3*pairs[q][1]+k]=d[k];}
+      }
+      for(unsigned i=0;i!=3;++i) {
+        for(unsigned k=0;k!=9;++k) {
+          a[i][3]+=g[i][k]*v[3*o+k];
+          for(unsigned j=0;j!=3;++j) a[i][j]+=g[i][k]*g[j][k]/system.masses[o+k/3];
+        }
+      }
+      for(unsigned i=0;i!=3;++i) {
+        unsigned pivot=i;
+        for(unsigned j=i+1;j!=3;++j) if(std::abs(a[j][i])>std::abs(a[pivot][i])) pivot=j;
+        for(unsigned k=0;k!=4;++k) std::swap(a[i][k],a[pivot][k]);
+        double divisor=a[i][i];require(std::abs(divisor)>1e-15,"singular velocity diagnostic projection");
+        for(unsigned k=i;k!=4;++k) a[i][k]/=divisor;
+        for(unsigned j=0;j!=3;++j) if(j!=i) {
+          double multiplier=a[j][i];
+          for(unsigned k=i;k!=4;++k) a[j][k]-=multiplier*a[i][k];
+        }
+      }
+      for(unsigned k=0;k!=9;++k) for(unsigned q=0;q!=3;++q)
+        v[3*o+k]-=g[q][k]*a[q][3]/system.masses[o+k/3];
+    }
+  }
+  std::vector<double> massive;
+  for(size_t i=0;i!=system.masses.size();++i) if(system.masses[i]>0)
+    for(unsigned k=0;k!=3;++k) massive.push_back(v[3*i+k]);
+  return massive;
+}
+static void sameFrame(model::PreparedModel p,const compiler::SimulationState &frame,
+                      FrameChecks &checks) {
+  installFrame(p,frame);
+  // Potential, forces and molecular virial have no velocity-time offset.
+  // Evaluate each route at the exact same x/v/cell with the VV no-step
+  // convention used by the independent physical fixture, without coupling.
+  p.control.integrator=driver::Integrator::VelocityVerlet;
+  p.control.thermostat=p.control.barostat=false;
+  std::array<compiler::SimulationState,3> s;
+  for(unsigned r=0;r!=3;++r) {
+    auto start=Clock::now();
+    auto sim=take(compiler::Simulation::create(route(p,r),true,&checks.code[r]));
+    checks.createSeconds+=elapsed(start);++checks.instances;
+    start=Clock::now();
+    succeed(sim->evaluate());s[r]=take(sim->getState());
+    checks.evaluateSeconds+=elapsed(start);
+    checks.compile+=sim->getCompileStats();
+    require(bool(s[r].energies),"fresh frame evaluation has no energy");
+  }
+  auto oracleStart=Clock::now();
+  auto ref=oracle(p.system,frame.positions,p.control.cutoffDistance*driver::units::length);
+  auto moments=molecularMoments(p.system,frame.positions,frame.velocities,ref.forces);
+  checks.oracleSeconds+=elapsed(oracleStart);
+  double largest=0;for(double f:s[2].forces) largest=std::max(largest,std::abs(f));
+  auto oe=error(s[2].forces,ref.forces);
+  double uo=std::abs(s[2].energies->potential-ref.energy);
+  double wo=std::abs(s[2].energies->virial-(ref.pairVirial+ref.siteVirial+moments.removal));
+  double wOracleBound=1e-10*std::max(1.,std::abs(ref.pairVirial+ref.siteVirial+moments.removal));
+  double fOracleBound=1e-10*std::max(1.,largest);
+  double uOracleBound=1e-10*std::max(1.,std::abs(ref.energy));
+  auto record=[&](const std::string &name,double oracleValue,double generalValue,
+                  double bound,double absolute,size_t terms) {
+    std::cout<<"fresh "<<frame.step<<' '<<name
+        <<" oracle "<<oracleValue<<" bits "<<bits(oracleValue)
+        <<" general-double "<<generalValue<<" bits "<<bits(generalValue)
+        <<" bound "<<bound<<" bits "<<bits(bound)
+        <<" absolute-sum "<<absolute<<" bits "<<bits(absolute)
+        <<" terms "<<terms<<std::endl;
+  };
+  record("energy",ref.energy,s[2].energies->potential,uOracleBound,
+      ref.ljAbsolute+ref.coulombAbsolute,2*ref.pairTerms);
+  record("molecular-virial",ref.pairVirial+ref.siteVirial+moments.removal,
+      s[2].energies->virial,wOracleBound,
+      ref.pairSiteVirialAbsolute+moments.removalAbsolute,
+      ref.pairTerms+ref.siteTerms+moments.removalTerms);
+  for(size_t i=0;i!=ref.forces.size();++i)
+    record("force-"+std::to_string(i/3)+"-"+std::to_string(i%3),ref.forces[i],
+        s[2].forces[i],fOracleBound,ref.forceAbsolute[i],ref.forceTerms[i]);
+  auto projectionStart=Clock::now();
+  auto projected=project(p.system,frame.positions,s[2].forces);
+  auto baseline=error(project(p.system,frame.positions,s[1].forces),projected);
+  auto candidate=error(project(p.system,frame.positions,s[0].forces),projected);
+  checks.projectionSeconds+=elapsed(projectionStart);
+  double fb=std::max(1.5*baseline.maximum,1e-5*largest);
+  double rb=std::max(1.5*baseline.rms,1e-5*largest);
+  double ud=std::abs(s[0].energies->potential-s[2].energies->potential);
+  double ub=std::max(1e-5*std::abs(s[2].energies->potential),1e-6*(ref.ljAbsolute+ref.coulombAbsolute));
+  double wd=std::abs(s[0].energies->virial-s[2].energies->virial);
+  double wb=std::max({1.5*std::abs(s[1].energies->virial-s[2].energies->virial),
+      1e-5*std::abs(s[2].energies->virial),1e-6*(ref.pairSiteVirialAbsolute+moments.removalAbsolute)});
+  std::cout<<"frame "<<frame.step<<" oracle force "<<oe.maximum<<" energy "<<uo
+           <<" virial "<<wo<<"; projected max "<<candidate.maximum<<" / "<<fb
+           <<" RMS "<<candidate.rms<<" / "<<rb<<"; energy "<<ud<<" / "<<ub
+           <<"; molecular virial "<<wd<<" / "<<wb<<std::endl;
+  require(oe.maximum<=fOracleBound&&uo<=uOracleBound&&wo<=wOracleBound,
+          "trajectory frame differs from independent physical oracle");
+  require(candidate.maximum<=fb&&candidate.rms<=rb&&ud<=ub&&wd<=wb,
+          "trajectory frame exceeds unchanged physical bounds");
+}
+int main(int argc,char **argv) {
+  require(argc==2,"expected short-trajectory control file");
+  llvm::InitializeNativeTarget();llvm::InitializeNativeTargetAsmPrinter();
+  model::PreparedModel p;
+  p.control=take(driver::readControl(argv[1]));
+  p.control.truncation=driver::Truncation::None;
+  p.control.topologyDispersion=driver::DispersionCorrection::None;p.control.topologyDispersionGiven=true;
+  p.system=take(driver::readSystem(p.control));driver::resolveNeighborStructure(p.control,p.system);
+  p.execution.target=p.control.target;p.execution.precision=p.control.precision;
+  require(p.control.timestep==.001&&!p.control.pme,"expected 1 fs plain-cutoff short fixture");
+  FrameChecks checks;
+  auto prep=route(p,2);prep.control.integrator=driver::Integrator::VelocityVerlet;
+  prep.control.thermostat=prep.control.barostat=false;
+  auto initial=take(compiler::Simulation::create(prep,true,&checks.code[2]));
+  require(take(initial->run(1,{},true))==1,"initial constraint preparation failed");
+  installFrame(p,take(initial->getState()));initial.reset();
+  std::array<std::unique_ptr<compiler::Simulation>,3> sims;
+  for(unsigned r=0;r!=3;++r)
+    sims[r]=take(compiler::Simulation::create(route(p,r),true,&checks.code[r]));
+  std::cout<<std::setprecision(17);
+  for(unsigned sample=0;sample!=10;++sample) {
+    std::array<compiler::SimulationState,3> s;
+    for(unsigned r=0;r!=3;++r) {
+      require(take(sims[r]->run(10,{},true))==10,"short trajectory ended early");
+      s[r]=take(sims[r]->getState());require(bool(s[r].energies),"trajectory has no energy");
+      std::cout<<"route "<<r<<" step "<<s[r].step<<" offset "<<s[r].velocityOffset
+          <<" U "<<s[r].energies->potential<<" K "<<s[r].energies->kinetic
+          <<" conserved "<<s[r].energies->conserved<<" W "<<s[r].energies->virial
+          <<" pressure "<<s[r].energies->pressure<<" volume "<<s[r].energies->volume
+          <<" relative squared-bond residual "<<residual(p.system,s[r])<<std::endl;
+      std::cout<<"position bits "<<r;for(double x:s[r].positions) std::cout<<' '<<bits(x);std::cout<<std::endl;
+      std::cout<<"velocity bits "<<r;for(double v:s[r].velocities) std::cout<<' '<<bits(v);std::cout<<std::endl;
+      std::cout<<"cell bits "<<r;for(double x:s[r].box) std::cout<<' '<<bits(x);std::cout<<std::endl;
+    }
+    std::array<Error,2> xe,ve;
+    auto fullReference=fullVelocity(p.system,s[2],p.control.timestep);
+    for(unsigned r=0;r!=2;++r) {
+      auto diagnostic=error(fullVelocity(p.system,s[r],p.control.timestep),fullReference);
+      std::cout<<"full-step velocity diagnostic "<<r<<" step "<<s[r].step
+          <<" max "<<diagnostic.maximum<<" RMS "<<diagnostic.rms<<std::endl;
+      auto x=s[r].positions;
+      for(size_t i=0;i<x.size();i+=3) {
+        V d=image(sub(vectorAt(x,i/3),vectorAt(s[2].positions,i/3)),s[2].box.data());
+        for(unsigned k=0;k!=3;++k) x[i+k]=s[2].positions[i+k]+d[k];
+      }
+      xe[r]=error(x,s[2].positions);ve[r]=error(s[r].velocities,s[2].velocities);
+    }
+    double xs=*std::max_element(s[2].box.begin(),s[2].box.end()),vs=1;
+    for(double v:s[2].velocities) vs=std::max(vs,std::abs(v));
+    double xb=std::max(3*xe[1].maximum,1e-5*xs),xr=std::max(3*xe[1].rms,1e-5*xs);
+    double vb=std::max(3*ve[1].maximum,1e-5*vs),vr=std::max(3*ve[1].rms,1e-5*vs);
+    double vd=std::abs(s[0].energies->volume-s[2].energies->volume);
+    double vbound=std::max(3*std::abs(s[1].energies->volume-s[2].energies->volume),1e-5*s[2].energies->volume);
+    std::cout<<"trajectory "<<s[0].step<<" x max "<<xe[0].maximum<<" / "<<xb<<" RMS "<<xe[0].rms<<" / "<<xr
+        <<"; v max "<<ve[0].maximum<<" / "<<vb<<" RMS "<<ve[0].rms<<" / "<<vr<<"; volume "<<vd<<" / "<<vbound<<std::endl;
+    require(xe[0].maximum<=xb&&xe[0].rms<=xr&&ve[0].maximum<=vb&&ve[0].rms<=vr&&vd<=vbound,
+            "short trajectory exceeds approved factor-three criterion");
+    sameFrame(p,s[0],checks);
+  }
+  const auto &cs=checks.compile;
+  std::cout<<"fresh-frame compilation: instances "<<checks.instances
+      <<" programs "<<cs.programs<<" reused "<<cs.reused
+      <<" host compiled "<<cs.compiled<<" PTX compiled "<<cs.gpuPtxCompiled
+      <<" cubin compiled "<<cs.gpuCubinCompiled<<" bypassed "<<cs.bypassed<<std::endl;
+  std::cout<<"fresh-frame wall seconds: create "<<checks.createSeconds
+      <<" evaluate/get-state "<<checks.evaluateSeconds
+      <<" MLIR pipeline "<<cs.pipelineSeconds<<" host codegen "<<cs.compileSeconds
+      <<" GPU codegen "<<cs.gpuCompileSeconds
+      <<" CPU oracle/moments "<<checks.oracleSeconds
+      <<" CPU force projections "<<checks.projectionSeconds<<std::endl;
+  std::cout<<"short template trajectory and ten fresh physical frames passed"<<std::endl;
+}

@@ -5,6 +5,8 @@ add_mlir_dialect_library(MDIRMD
   MDOps.cpp
   MDStencils.cpp
   MDGrid.cpp
+  MDTemplatePairs.cpp
+  MDTemplateWindow.cpp
   MDTypes.cpp
 
   ADDITIONAL_HEADER_DIRS

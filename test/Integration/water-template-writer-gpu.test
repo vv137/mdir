@@ -1,0 +1,25 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.input.mlir %t.reference %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference --triclinic
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference
+# The production point offset, 1/2: the points and references are the
+# fractions plus 1/2, with the same flags.
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference --triclinic --point-offset 0.5
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference
+# Displacements at the margins (U5): 2^-23 of a margin beyond it fails and
+# 2^-12 inside it passes. An f32 test without its error margin delta
+# passes most of the first.
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference --point-offset 0.5 --near-margin
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference
+# RUN: %python %S/Inputs/template_writer_oracle.py generate %t.input.mlir %t.reference --triclinic --point-offset 0.5 --near-margin
+# RUN: mdir-opt %t.input.mlir --test-md-template-writer=point-offset=0.5 --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.records
+# RUN: %python %S/Inputs/template_writer_oracle.py check %t.records %t.reference

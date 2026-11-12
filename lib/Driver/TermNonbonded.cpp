@@ -1,5 +1,7 @@
 // Primary, excluded, reciprocal, and within-selection nonbonded terms (#683).
 #include "BuilderImpl.h"
+#include "WaterTemplateIR.h"
+#include "mdir/Driver/WaterTemplate.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -1402,6 +1404,52 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 
 }
 
+static mlir::Value buildTemplatePrimary(
+    mlir::OpBuilder &builder, mlir::ValueRange values,
+    const PrimaryNonbondedIRConfig &config, const WaterTemplateModel &model,
+    mlir::Value molecules, mlir::Value excluded, mlir::Value anchored,
+    double radius) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto *context = builder.getContext();
+  auto atoms = cast<mdir::md::FieldType>(values[1].getType()).getParticleSet();
+  auto domain = [&](StringRef name, unsigned arity) {
+    return mdir::md::RelationType::get(context, atoms, arity,
+        arity == 2 ? mdir::md::Orientation::Unordered : mdir::md::Orientation::Ordered,
+        FlatSymbolRefAttr::get(context, name));
+  };
+  auto classes = mdir::md::TemplatePairsOp::create(builder, loc,
+      domain("template_ww", 6), domain("template_sw", 4), domain("template_ss", 2),
+      values[3], molecules, excluded, anchored,
+      anchored ? builder.getF64FloatAttr(radius) : FloatAttr());
+  // These temporary sums provide the existing scalar expressions only.
+  // None survives in the resulting program or selects a second pair path.
+  std::array<mdir::md::SumRelationOp, 4> kernels;
+  unsigned enabled = unsigned(config.lj) | (unsigned(config.coulomb) << 1);
+  for (unsigned mask = 1; mask != 4; ++mask) {
+    if (mask & ~enabled) continue;
+    auto choice = config;
+    choice.lj = mask & 1;
+    choice.coulomb = mask & 2;
+    kernels[mask] = buildNonbondedPrimary(builder, values, choice).front()
+                        .getDefiningOp<mdir::md::SumRelationOp>();
+  }
+  Value total;
+  for (Value relation : classes.getResults()) {
+    WaterTemplateReductionInputs input{relation, values[1], values[2], values[3],
+        values[4], config.cutoff, config.lj, config.coulomb,
+        config.flags ? values[5] : Value()};
+    Value term = buildWaterTemplateReduction(builder, model, input,
+        [&](OpBuilder &ir, const WaterTemplateSitePair &pair) -> Value {
+          unsigned mask = unsigned(pair.lennardJones) | (unsigned(pair.coulomb) << 1);
+          return cloneWaterTemplatePairEnergy(ir, kernels[mask].getKernel().front(), pair);
+        });
+    total = total ? arith::AddFOp::create(builder, loc, total, term).getResult() : term;
+  }
+  for (auto kernel : kernels) if (kernel) kernel.erase();
+  return total;
+}
+
 static TermIRValues buildNonbondedExcluded(mlir::OpBuilder &builder, mlir::ValueRange values, bool flags, bool alchemicalOnly, bool prolate, double beta, double cutoff, int64_t cells, int64_t polynomialTerms) {
   mlir::OpBuilder::InsertionGuard insertionGuard(builder);
 
@@ -1672,12 +1720,29 @@ static TermIRValues buildNonbondedCoulombReciprocal(mlir::OpBuilder &builder, ml
 
 }
 
-class NonbondedTermBuilder final : public TermBuilder, public TermNonbonded {
+class NonbondedTermBuilder final : public TermBuilder, public TermNonbonded,
+                                  public TermPreparation {
 public:
   NonbondedTermBuilder() {
     roles.nonbonded = this;
+    roles.preparation = this;
     tupleRank = 3;
     pairExclusion = "excluded";
+  }
+  llvm::Error validate(const TermInputs &context) const override {
+    planWater(context);
+    if (!waterError.empty()) return makeError(waterError);
+    return llvm::Error::success();
+  }
+  llvm::Error prepare(const TermInputs &, mlir::OpBuilder &builder) const override {
+    if (!waterPlan) return llvm::Error::success();
+    auto loc = builder.getUnknownLoc();
+    for (auto [name, arity] : {std::pair<const char *, unsigned>{"template_ww", 6},
+                              {"template_sw", 4}, {"template_ss", 2}})
+      mdir::md::TupleSetOp::create(builder, loc, name, "atoms", arity,
+          arity == 2 ? mdir::md::Orientation::Unordered : mdir::md::Orientation::Ordered,
+          false);
+    return llvm::Error::success();
   }
   bool rejectsTunables(const TermInputs &context) const override {
     return context.getControl().ljpme;
@@ -1745,6 +1810,7 @@ public:
       }
   }
   void collectTupleSets(TermParameters &context) const override {
+    planWater(context);
     const auto &topology = context.getTopology();
     const auto &control = context.getControl();
     const auto &system = context.getSystem();
@@ -1764,6 +1830,21 @@ public:
       for (auto [i, j] : system.alchemicalPairs) {
         set.members.push_back(i);
         set.members.push_back(j);
+      }
+    }
+    if (waterPlan) {
+      auto &set = addTupleSet(context.getTupleSets(), "template_water", waterPlan->model.sites);
+      set.reversible = false;
+      set.oriented = true;
+      for (const auto &members : waterPlan->instances)
+        for (unsigned i = 0; i != waterPlan->model.sites; ++i)
+          set.members.push_back(members[i]);
+      if (!waterPlan->anchored.empty()) {
+        auto &units = addTupleSet(context.getTupleSets(), "template_anchor", 2);
+        units.reversible = false;
+        units.oriented = true;
+        for (const auto &pair : waterPlan->anchored)
+          for (unsigned member : pair) units.members.push_back(member);
       }
     }
   }
@@ -1980,7 +2061,13 @@ public:
             !config.coulombSpec.prolateSeries)
           config.prolateTable = operand(point.physical.table("pme_far"));
       }
-      add(buildNonbondedPrimary(builder, values, config).front());
+      if (waterPlan && !point.lambdaArguments && !gradientArguments && !alchemicalOnly)
+        add(buildTemplatePrimary(builder, values, config, waterPlan->model,
+            point.relation("template_water"), point.relation("excluded"),
+            waterPlan->anchored.empty() ? mlir::Value() : point.relation("template_anchor"),
+            getAnchorRadius(*waterPlan, context.getControl().precision == Precision::Double)));
+      else
+        add(buildNonbondedPrimary(builder, values, config).front());
 
     }
 
@@ -2088,6 +2175,23 @@ public:
   }
 
 private:
+  void planWater(const TermInputs &context) const {
+    if (waterPlanned) return;
+    waterPlanned = true;
+    // AUTO remains general until the required end-to-end runs publish its
+    // particle-count floor. ON constructs the implementation's validation
+    // route without inventing an unmeasured rule.
+    if (context.getControl().waterTemplate != WaterTemplateChoice::On) return;
+    auto selection = selectWaterTemplate(context.getControl(), context.getSystem(), 0);
+    if (!selection) {
+      waterError = llvm::toString(selection.takeError());
+      return;
+    }
+    if (selection->enabled) waterPlan = std::move(selection->plan);
+  }
+  mutable bool waterPlanned = false;
+  mutable std::optional<WaterTemplatePlan> waterPlan;
+  mutable std::string waterError;
   mutable std::optional<TermNonbondedData> state;
 };
 } // namespace mdir::driver::builder

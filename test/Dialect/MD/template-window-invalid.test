@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/template_window_invalid.py mdir-opt %S/template-window.mlir | FileCheck %s
+# CHECK: template-window refusal contracts: 9 passed

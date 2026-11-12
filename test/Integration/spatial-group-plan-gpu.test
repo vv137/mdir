@@ -1,0 +1,14 @@
+# REQUIRES: cuda
+# RUN: rm -f %t.json %t.mlir
+# RUN: %python %S/Inputs/spatial_group_plan_oracle.py %t.mlir %t.json
+# RUN: mdir-opt %t.mlir --test-md-spatial-group-plan | mlir-opt %lower_gpu_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda | FileCheck %s
+# Exact flags, stable segment IDs, lengths, group offsets and scalar totals;
+# empty input, forced class boundary, equal-gap strictness/rightmost ties,
+# cascading refinements and multiple scan blocks. No physical evaluation.
+# Each case runs with 1, P-1, P and P+3 passes before the first readback
+# (P the passes it needs): a plan that stops at the unread passes without
+# reading on, or that reports the passes it ran instead of those it needed,
+# differs from the reference. The scratch starts with a sentinel, as the
+# planning view holds the previous build's plan, so a plan that does not
+# clear the tails of its starts, lengths and counts differs too.
+# CHECK: 1

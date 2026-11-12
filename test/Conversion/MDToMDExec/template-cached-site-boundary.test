@@ -1,0 +1,9 @@
+# RUN: rm -f %t.mlir
+# RUN: %python %S/../../Dialect/MD/Inputs/template_window_boundary.py %S/template-execution-site.mlir %t.mlir --site-alpha=0.75
+# RUN: mdir-opt %t.mlir --md-differentiate --md-inline --convert-md-to-md-exec --test-md-exec-template-windows=cache-sites | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# First-execution bound, unchanged: 2e-13 * max(1, abs(reference)) for
+# all 784 E/F/W components, per image and total. The oracle forms sites
+# from actual world positions and uses the independent constant-transpose
+# coefficients (-0.5, 0.75, 0.75), not the emitter's derivative expressions.
+# Only image (1,0,0) contributes: U=0.492032, W_xx=-0.984064.
+# CHECK: 1

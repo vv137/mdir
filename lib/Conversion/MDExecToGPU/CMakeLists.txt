@@ -65,6 +65,7 @@ add_mlir_conversion_library(MDIRMDExecToGPU
   MDIRMDRT
   MLIRArithDialect
   MLIRArithTransforms
+  MLIRControlFlowDialect
   MLIRBufferizationDialect
   MLIRBufferizationTransforms
   MLIRFuncTransforms

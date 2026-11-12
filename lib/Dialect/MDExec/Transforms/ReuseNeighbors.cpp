@@ -461,6 +461,8 @@ static bool hasWork(scf::ForOp loop) {
 namespace mdir {
 namespace md_exec {
 
+void reuseTemplatePairs(Operation *root, double pruneSkin);
+
 #define GEN_PASS_DEF_REUSENEIGHBORS
 #include "mdir/Dialect/MDExec/Transforms/Passes.h.inc"
 
@@ -470,6 +472,7 @@ public:
   using impl::ReuseNeighborsBase<ReuseNeighbors>::ReuseNeighborsBase;
 
   void runOnOperation() final {
+    reuseTemplatePairs(getOperation(), pruneSkin);
     reuseAll();
     removeRepeatedRefreshes(getOperation());
     // The refreshes keep dual lists where the run asks for them (D114).

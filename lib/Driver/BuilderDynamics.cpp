@@ -150,12 +150,14 @@ llvm::Error Builder::emitPrograms() {
       };
       std::vector<DescentConstraintGroupIR> constraintGroups;
       ConstraintPositionConfig config{false, control.analyticBonds,
-          control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+          getConstraintPositionTolerance(control.precision == Precision::Double),
           control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
       if (settles) {
         const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });
         constraintGroups.push_back({relationSlot(set), 3, {fieldSlot(set, "doh"), fieldSlot(set, "dhh")},
             {{0, 1, 0}, {0, 2, 0}, {1, 2, 1}}, config, true, control.precision == Precision::Double});
+        if (control.waterTemplate == WaterTemplateChoice::On)
+          constraintGroups.back().position.templateWaterEpoch = true;
       }
       for (const Program::TupleSet *set : shakeSets) {
         DescentConstraintGroupIR group{relationSlot(*set), set->arity, {}, {}, config, false, false};
@@ -244,7 +246,7 @@ void Builder::emitDescend() {
     };
     std::vector<DescentConstraintGroupIR> groups;
     ConstraintPositionConfig config{false, control.analyticBonds,
-        control.precision == Precision::Double ? 1.0e-8 : 1.0e-4,
+        getConstraintPositionTolerance(control.precision == Precision::Double),
         control.precision == Precision::Double ? 1.0e-12 : 1.0e-6};
     if (settles) {
       const auto &set = *llvm::find_if(program.tupleSets, [](const auto &set) { return set.name == "settles"; });

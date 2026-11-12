@@ -1,0 +1,4 @@
+# REQUIRES: cuda-toolkit
+# RUN: %python %S/../../Driver/Inputs/check_template_member_handoff.py mdir-opt %S/../../Integration/Inputs/template-renumbered-members.mlir | FileCheck %s
+# CHECK: device: molecule and exclusion payload provenance passed
+# CHECK-NEXT: host: molecule and exclusion payload provenance passed

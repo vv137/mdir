@@ -269,6 +269,7 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
   addTables("coupling", {"dynamics", "ensemble", "thermostat", "barostat"},
             {"steps"});
   addTables("execution", {"execution"});
+  addTables("execution", {"performance"});
 
   // The files that define the topology, by their contents: another name
   // for the same file is not a change.

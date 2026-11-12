@@ -6,9 +6,11 @@ add_mlir_dialect_library(MDIRMDExec
   MDExecOps.cpp
   NeighborCoverage.cpp
   ProfileMap.cpp
+  PairKernelBody.cpp
   Scatter.cpp
   StorageSet.cpp
   Transfers.cpp
+  TemplateWindows.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MDExec
@@ -18,6 +20,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDExecEnumsIncGen
   MDIRMDExecAttrsIncGen
   MDIRMDExecLoopEffectsIncGen
+  MDIRMDExecPairKernelBodyIncGen
 
   LINK_LIBS PUBLIC
   MDIRMD

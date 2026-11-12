@@ -1,0 +1,7 @@
+# REQUIRES: cuda, hdf5
+# Reporter/API consistency only; independent physical comparisons are separate.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_report.py %S/Inputs/opc %t
+# RUN: mdir-template-report-test %t/control.toml %t/frames.h5md | tee %t/result.txt | FileCheck %s
+# CHECK: two rule-(B) force frames; carried state unchanged; continued dynamics
+# CHECK: general-entry max difference {{.*}}, relative bound 1e-5; rule-(A)/(B) difference

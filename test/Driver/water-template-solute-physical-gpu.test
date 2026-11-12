@@ -1,0 +1,10 @@
+# REQUIRES: cuda
+# Three waters and two charged solutes exercise WW, SW and SS together.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_tip3p.py %S/Inputs/triclinic %t --solutes
+# RUN: mdir-template-physics-test %t/control.toml TIP3P-SOLUTES | tee %t/metrics.txt | FileCheck %s
+# CHECK: CPU oracle class pair counts: WW
+# CHECK: CPU oracle pair sums:
+# CHECK: projected forces: general-mixed max
+# CHECK: energy absolute error
+# CHECK: TIP3P+solutes independent physical pair oracle and projected template comparison passed

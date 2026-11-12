@@ -1,0 +1,7 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.input.mlir %t.mlir
+# RUN: %python %S/../../Integration/Inputs/template_runtime_oracle.py %S/template-for.mlir %t.input.mlir
+# RUN: mdir-opt %t.input.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK: llvm.func @execute
+# CHECK: llvm.func @main

@@ -1,0 +1,43 @@
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --test-md-exec-template-windows --verify-each | FileCheck %s --implicit-check-not=md_exec.template_for --implicit-check-not=md_exec.build_segmented_pairs
+# RUN: sed -e 's/md.function @entry/func.func @entry/' -e 's/md.return %%u, %%f, %%w/func.return %%u, %%f, %%w/' %S/../../Dialect/MD/template-window.mlir | mdir-opt --md-differentiate --md-inline --convert-md-to-md-exec --md-exec-assign-precision=mode=mixed --test-md-exec-template-windows --verify-each | FileCheck %s --check-prefix=MIXED
+# CHECK-LABEL: func.func @window_energy
+# CHECK: arith.cmpf olt
+# CHECK: scf.if
+# CHECK: arith.mulf
+# CHECK: scf.yield
+# CHECK: else
+# CHECK: arith.constant 0.000000e+00 : f64
+# CHECK: scf.yield
+# CHECK: return
+# MIXED-LABEL: func.func @window_energy
+# MIXED-SAME: vector<3xf32>
+# MIXED: arith.cmpf olt, {{.*}} : f32
+# MIXED: scf.if
+# MIXED: arith.extf {{.*}} : f32 to f64
+# MIXED: scf.yield {{.*}} : f64
+# MIXED: arith.addf {{.*}} : f64
+# A force member that is zero in the source is not carried through a guard;
+# the taken branch adds the pair's terms to the running forces and the other
+# keeps them.
+# MIXED-LABEL: func.func @window_forces
+# MIXED: %[[F:.*]] = arith.constant dense<0.000000e+00> : vector<3xf32>
+# MIXED: scf.if
+# MIXED-SAME: -> (vector<3xf32>, vector<3xf32>) {
+# MIXED: arith.addf %[[F]], {{.*}} : vector<3xf32>
+# MIXED: } else {
+# MIXED-NEXT: scf.yield %[[F]],
+# MIXED-LABEL: func.func @window_virial
+# MIXED: scf.if
+# MIXED: arith.extf {{.*}} : vector<9xf32> to vector<9xf64>
+# CHECK-LABEL: func.func @window_forces
+# CHECK: %[[F:.*]] = arith.constant dense<0.000000e+00> : vector<3xf64>
+# CHECK: %[[G:.*]]:2 = scf.if
+# CHECK-SAME: -> (vector<3xf64>, vector<3xf64>) {
+# CHECK: arith.addf %[[F]], {{.*}} : vector<3xf64>
+# CHECK: scf.yield
+# CHECK: } else {
+# CHECK-NEXT: scf.yield %[[F]],
+# CHECK: return {{.*}}%[[G]]#0, {{.*}}%[[G]]#1,
+# CHECK-LABEL: func.func @window_virial
+# CHECK: scf.if
+# CHECK: return

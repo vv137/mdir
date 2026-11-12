@@ -50,6 +50,9 @@ enum class PMEKernel { Gaussian, Prolate };
 /// Ballenegger et al. (2012) (D304).
 enum class PMEInfluence { SPME, Optimal, P3M };
 
+/// Same-accuracy execution choice for matched rigid-water relations.
+enum class WaterTemplateChoice { Auto, On, Off };
+
 /// A term of the potential energy over pairs, given by an expression in the
 /// distance `r`.
 struct PairTerm {
@@ -159,6 +162,9 @@ enum class ThermostatMethod { VRescale, Langevin, NoseHoover };
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
 struct Control {
+  // [performance]
+  WaterTemplateChoice waterTemplate = WaterTemplateChoice::Auto;
+
   // [input]
   std::string pdbFile;
   /// A topology and the coordinates of Amber, in place of `pdbFile` and the

@@ -1428,14 +1428,17 @@ build to 2 to 5, the IR to 10, the measurements to 11.
 
 ## Next
 
-From the roadmap (#603). Measure first: the mean count of bits of the
-masks of the inner list, the share of the 16 pairs of an entry that are
-work (the cost of groups over single pairs, $\zeta_c$ of Section 8.4), and
+From the roadmap (#603). A structure whose members are whole rigid waters,
+anchored at the oxygen, beside groups of the solute, is designed in
+D[rigid-water-template] (#774; white paper, Section 4.7); the groups of this
+document stay the general path. Measure first: the mean count of bits of the
+masks of the inner list, the share of the 16 pairs of an entry that are work
+(the cost of groups over single pairs, $\zeta_c$ of Section 8.4), and
 whether a pruning is bound by its loads or its arithmetic. Then: in the
 pruning, a test of the box of the group that keeps or drops an entry whole
 when its candidate is within $R_\text{in} - a$ or beyond $R_\text{in} + a$
-of the center, $a$ the half-diagonal of the box (at most about 5.3 Å for
-the prism of 16 atoms of water, Section 2), before its 16 distances; by the
+of the center, $a$ the half-diagonal of the box (at most about 5.3 Å for the
+prism of 16 atoms of water, Section 2), before its 16 distances; by the
 volume of the shell, a third or more of the outer entries lie beyond, and a
 pruning is about 6% of a step of Cellulose. The forces of the loop over
 groups accumulated in 64-bit fixed point, as the grid of PME (D70), which

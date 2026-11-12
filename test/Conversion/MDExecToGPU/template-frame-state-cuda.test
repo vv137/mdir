@@ -1,0 +1,9 @@
+# REQUIRES: cuda-toolkit
+# RUN: rm -f %t.mlir
+# RUN: mdir-opt %S/../../Integration/Inputs/template-frame-state.mlir --convert-md-exec-to-gpu | mlir-opt %lower_gpu_to_llvm > %t.mlir
+# RUN: FileCheck %s < %t.mlir
+# CHECK-NOT: builtin.unrealized_conversion_cast
+# CHECK: llvm.func @main
+# CHECK: llvm.call @mdrtTemplatePairsFrameState
+# CHECK: llvm.call @mdrtTemplatePairsGrow
+# CHECK-NOT: builtin.unrealized_conversion_cast

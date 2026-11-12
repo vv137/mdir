@@ -311,6 +311,71 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_exec.build_segmented_pairs` (::mdir::md_exec::BuildSegmentedPairsOp)
+
+_Builds one class-segmented list from proved template membership_
+
+Syntax:
+
+```
+operation ::= `md_exec.build_segmented_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+              `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($universe)) `,` qualified(type($molecules)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The molecule members are disjoint O-H-H[-site] tuples. The complement
+of those members in `universe` is the atom class. Only SS uses
+`excluded`. The physical representation has one pair allocation,
+compacted WW/SW/SS ranges, one spatial search/sort and one mobility
+group. The water covering reaches add twice `extent` for WW and
+once for SW; `anchored` solute units, with `radius`, add it once to
+SW and twice to SS, and their tests and references are those of their
+heavy-atom anchors. Without anchors SS keeps the ordinary reach.
+`extent` includes the formed site, with initial widening and
+subsequent enforcement as specified by the template contract; so
+does `radius` for the members of the solute units. Lowering must
+preserve all covering images.
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with one mobility group |
+
+
+
 ### `md_exec.build_triplets` (::mdir::md_exec::BuildTripletsOp)
 
 _Finds the triplets centered on each particle_
@@ -535,6 +600,61 @@ Interfaces: `MemoryEffectOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `result` | A physical neighbor structure |
+
+
+
+### `md_exec.empty_segmented_pairs` (::mdir::md_exec::EmptySegmentedPairsOp)
+
+_An unbuilt class-segmented list with fixed membership_
+
+Syntax:
+
+```
+operation ::= `md_exec.empty_segmented_pairs` $universe `,` $molecules
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($universe)) `,` qualified(type($molecules))
+              `->` qualified(type($result))
+```
+
+Owns one persistent allocation with WW/SW/SS outer and inner ranges.
+No configuration is valid until the first refresh. Membership and
+covering bounds are invariant for this allocation; refreshes change
+its mobility group's references, ranges and packing in place.
+Moving this initialization out of a step loop does not move a build:
+the first refresh still builds at the first evaluated configuration.
+
+Traits: `AttrSizedOperandSegments`
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `molecules` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with one mobility group |
 
 
 
@@ -805,7 +925,7 @@ each value. A loop takes no other strategy.
 
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
-Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
+Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 #### Attributes:
 
@@ -1475,6 +1595,60 @@ Interfaces: `MemoryEffectOpInterface`
 
 
 
+### `md_exec.refresh_segmented_pairs` (::mdir::md_exec::RefreshSegmentedPairsOp)
+
+_Refreshes the one mobility group of a segmented list_
+
+Syntax:
+
+```
+operation ::= `md_exec.refresh_segmented_pairs` $list `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `prune_skin` `(` $prune_skin `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)` attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+```
+
+Tests the anchors of the waters and of the solute units, one mobility
+group: any failed test rebuilds or prunes WW, SW and SS together. The
+combined spatial sort/search retains the class ranges in one pair
+allocation. The inner ranges are pruned from the outer ranges on the
+same schedule. `prune_skin` is smaller than `skin`,
+or equal to it when no separate inner margin is requested.
+
+The result continues the input list's storage and references. In
+value form the result makes that dependency explicit; in storage
+form the operation reads and writes the list in place.
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>prune_skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | One class-segmented pair list with one mobility group |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | One class-segmented pair list with one mobility group |
+
+
+
 ### `md_exec.renumber` (::mdir::md_exec::RenumberOp)
 
 _The members of tuples in the current order of the particles_
@@ -1746,6 +1920,81 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_exec.template_for` (::mdir::md_exec::TemplateForOp)
+
+_Executes explicit window bodies over the three list segments_
+
+Syntax:
+
+```
+operation ::= `md_exec.template_for` $list `,` $positions `,` $cell
+              (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+              (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+              (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+              (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+              `pairs` $pairs `cutoff` `(` $cutoff `)`
+              `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              `water` $water `mixed` $mixed `atoms` $atoms attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+              (`->` qualified(type($results))^)?
+```
+
+A fused launch has one uniformly tagged class per warp. The three
+bodies are WW, SW and SS, with the image-aware displacement signatures
+of `md.sum_template_window`, followed by each input field's member
+values. No minimum-image substitution is made for the candidate image.
+
+`pairs` has three rows of N counts, where N is the number of `outs`
+plus `reduce` values. In each body, for each destination or reduction
+in order, M is its count in that row: yield M groups of member force
+vectors for a destination, or M values for a reduction, followed by M
+site displacements. Zero denotes no contribution from that class.
+Each contribution uses its own site cutoff. An inactive body may yield
+nothing; later fusion combines compatible bodies and destinations.
+Scalar expressions, forces and strain come from the structured MD
+reduction, not a second physical expression in the scheduler.
+
+Optional `md.template_site_forces` has three rows of binary flags,
+one per `outs` column. A flagged force column yields O/H1/H2/E site
+slots for each water (WW 8, SW 5, SS 2) before its displacements.
+The scheduler accumulates these sites and applies the constant rule-A
+transpose once at each real-member write boundary. Captured source
+coefficients, site cutoffs and image displacements are unchanged.
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
+
+Interfaces: `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>pairs</code></td><td>::mlir::DenseI32ArrayAttr</td><td>i32 dense array attribute</td></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | One class-segmented pair list with one mobility group |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+| `ins` | variadic of A per-particle field or buffer of a field |
+| `outs` | variadic of A per-particle field or buffer of a field |
+| `reduce` | variadic of any non-token type |
+| `scratch` | variadic of buffer with one value per particle |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of any non-token type |
+
+
+
 ### `md_exec.tuple_for` (::mdir::md_exec::TupleForOp)
 
 _Runs a kernel over the tuples of each particle_
@@ -1872,7 +2121,7 @@ Syntax:
 operation ::= `md_exec.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, TabulateOp, TupleForOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, TabulateOp, TupleForOp, TemplateForOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

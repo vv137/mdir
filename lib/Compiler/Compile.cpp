@@ -265,6 +265,8 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
+       // The check of the template lists' coverage, for tests.
+       << (std::getenv("MDIR_TEMPLATE_CHECK_COVERAGE") ? "check-template-coverage=true " : "")
        // The pruning of a dual list in the loop over pairs that follows
        // its refresh (D284).
        << getFusedPruningOptions(gpuOptions)

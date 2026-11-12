@@ -64,6 +64,7 @@ add_mlir_library(MDIRDriver
   TermModel.cpp
   StagedModelIR.cpp
   SiteIR.cpp
+  WaterTemplateIR.cpp
   SiteSpreadIR.cpp
   ConstraintIR.cpp
   CouplingIR.cpp
@@ -116,6 +117,7 @@ add_mlir_library(MDIRDriver
   ModelTerm.cpp
   ModelFingerprint.cpp
   NeighborCount.cpp
+  WaterTemplate.cpp
   Tunables.cpp
   Output.cpp
   ProgramModule.cpp

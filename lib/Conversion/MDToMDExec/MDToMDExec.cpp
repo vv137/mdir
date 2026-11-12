@@ -8,6 +8,7 @@
 
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDTemplateWindow.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -47,6 +48,8 @@ private:
   LogicalResult convertKick(dyn::KickOp op);
   LogicalResult convertTriplets(md::TripletsOp op);
   LogicalResult convertEdges(md::EdgesOp op);
+  template <typename OpTy>
+  LogicalResult convertTemplateWindow(OpTy op, bool gather);
 
   /// The incidence structure of `relation`, a relation of a tuple set or
   /// of triplets. It is built once, where the relation is defined.
@@ -94,6 +97,11 @@ private:
   llvm::DenseMap<Value, Value> neighbors;
   /// The incidence structure that was built for a relation of a tuple set.
   llvm::DenseMap<Value, Value> incidences;
+  struct TemplateList {
+    Value positions, cell, list;
+    FloatAttr cutoff, extent, alpha;
+  };
+  llvm::DenseMap<Operation *, SmallVector<TemplateList, 2>> templateLists;
   SmallVector<Operation *> converted;
 };
 
@@ -102,6 +110,74 @@ private:
 //===----------------------------------------------------------------------===//
 // Neighborhoods
 //===----------------------------------------------------------------------===//
+
+template <typename OpTy>
+LogicalResult Converter::convertTemplateWindow(OpTy op, bool gather) {
+  auto source = op.getRelation().template getDefiningOp<md::TemplatePairsOp>();
+  if (!source) return op.emitOpError("expected a proved template domain");
+  auto relation = cast<md::RelationType>(op.getRelation().getType());
+  unsigned arity = relation.getArity();
+  unsigned tag = arity == 6 ? 0 : arity == 4 ? 1 : 2;
+  Location loc = op.getLoc();
+  builder.setInsertionPoint(op);
+  Value list;
+  auto &known = templateLists[source.getOperation()];
+  for (const TemplateList &candidate : known)
+    if (candidate.positions == op.getPositions() && candidate.cell == op.getCell() &&
+        candidate.cutoff == op.getCutoffAttr() && candidate.extent == op.getExtentAttr() &&
+        candidate.alpha == op.getAlphaAttr()) {
+      list = candidate.list;
+      break;
+    }
+  if (!list) {
+    list = md_exec::BuildSegmentedPairsOp::create(builder, loc,
+        mdrt::SegmentedPairsType::get(builder.getContext(), relation.getParticleSet()),
+        source.getUniverse(), source.getMolecules(), source.getExcluded(),
+        source.getAnchored(), op.getPositions(), op.getCell(), op.getCutoffAttr(),
+        builder.getF64FloatAttr(skin), op.getExtentAttr(), op.getAlphaAttr(),
+        source.getRadiusAttr());
+    known.push_back({op.getPositions(), op.getCell(), list, op.getCutoffAttr(),
+                     op.getExtentAttr(), op.getAlphaAttr()});
+  }
+  SmallVector<Value> outs, reductions;
+  if (gather)
+    outs.push_back(md_exec::ZerosOp::create(builder, loc, op.getResult().getType()));
+  else reductions.push_back(createZero(loc, op.getResult().getType()));
+  unsigned count = op.getKernel().front().getTerminator()->getNumOperands() /
+                   (gather ? md::getTemplateForceArity(op, arity) + 1 : 2);
+  SmallVector<int32_t> pairs(3, 0);
+  pairs[tag] = count;
+  auto loop = md_exec::TemplateForOp::create(builder, loc,
+      TypeRange{op.getResult().getType()}, list, op.getPositions(), op.getCell(),
+      op.getGathered(), outs, reductions, ValueRange{}, builder.getDenseI32ArrayAttr(pairs),
+      op.getCutoffAttr(), op.getExtentAttr(), op.getAlphaAttr());
+  if (auto flags = op->getAttr(md::kTemplateSiteForces))
+    loop->setAttr(md::kTemplateSiteForces, flags);
+  constexpr unsigned arities[] = {6, 4, 2};
+  Type vector = VectorType::get({3}, builder.getF64Type());
+  for (unsigned kind = 0; kind != 3; ++kind) {
+    auto *block = new Block();
+    loop->getRegion(kind).push_back(block);
+    for (unsigned i = 0, n = md::getTemplateWindowMembers(arities[kind]).size(); i != n; ++i)
+      block->addArgument(vector, loc);
+    for (Value field : op.getGathered())
+      for (unsigned i = 0; i != arities[kind]; ++i)
+        block->addArgument(cast<md::FieldType>(field.getType()).getKernelValueType(), loc);
+    if (kind == tag) {
+      Block &original = op.getKernel().front();
+      IRMapping mapping;
+      for (auto [a, b] : llvm::zip_equal(original.getArguments(), block->getArguments()))
+        mapping.map(a, b);
+      copyKernel(original, block, mapping);
+    } else {
+      OpBuilder empty = OpBuilder::atBlockEnd(block);
+      md_exec::YieldOp::create(empty, loc, ValueRange{});
+    }
+  }
+  op.getResult().replaceAllUsesWith(loop.getResult(0));
+  converted.push_back(op);
+  return success();
+}
 
 LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
   Location loc = op.getLoc();
@@ -348,6 +424,10 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
       // Chosen on a device (md-exec-choose-scatter, D285).
       /*scatter=*/md_exec::ScatterAttr());
 
+  if constexpr (std::is_same_v<OpTy, md::GatherTuplesOp>)
+    if (auto epoch = op->template getAttrOfType<UnitAttr>(md::kTemplateConstraintEpoch))
+      loop->setAttr(md::kTemplateConstraintEpoch, epoch);
+
   Block &source = op.getKernel().front();
   Type vector = VectorType::get({3}, builder.getF64Type());
   SmallVector<Type> arguments(displacements.size(), vector);
@@ -481,6 +561,14 @@ LogicalResult Converter::convert(Operation *op) {
 
   if (auto neighborhood = dyn_cast<md::NeighborhoodOp>(op))
     return convertNeighborhood(neighborhood);
+  if (isa<md::TemplatePairsOp>(op)) {
+    converted.push_back(op);
+    return success();
+  }
+  if (auto window = dyn_cast<md::SumTemplateWindowOp>(op))
+    return convertTemplateWindow(window, false);
+  if (auto window = dyn_cast<md::GatherTemplateWindowOp>(op))
+    return convertTemplateWindow(window, true);
   if (auto triplets = dyn_cast<md::TripletsOp>(op))
     return convertTriplets(triplets);
   if (auto edges = dyn_cast<md::EdgesOp>(op))

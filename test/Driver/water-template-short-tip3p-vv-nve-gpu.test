@@ -1,0 +1,10 @@
+# REQUIRES: cuda
+# Expected: under three minutes on RTX 5090 with same-frame code reuse.
+# Submit this gate with lit --timeout=600; do not extend a slow fixture's budget.
+# Approved short trajectory: TIP3P, VELOCITY_VERLET, NVE; stop on failure.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/water_template_trajectory.py %S/Inputs/triclinic %t TIP3P VELOCITY_VERLET NVE
+# RUN: mdir-template-trajectory-test %t/control.toml | tee %t/metrics.txt | FileCheck %s
+# CHECK: trajectory 100
+# CHECK: frame 100 oracle force
+# CHECK: short template trajectory and ten fresh physical frames passed

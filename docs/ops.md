@@ -243,6 +243,11 @@ The reference of every op is [dialects/md.md](dialects/md.md).
 | `md.potential` | Defines a potential energy function. |
 | `md.function` | Defines any other pure function of fields. |
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
+| [`md.template_pairs`](dialects/md.md#mdtemplate_pairs-mdirmdtemplatepairsop) | Partitions fixed matched-water membership into named WW, SW and SS logical domains. Geometry and per-site cutoffs remain explicit in the structured kernels; physical class segments share one buffer and mobility-group tests (D[rigid-water-template]). |
+| [`md.sum_template_window`](dialects/md.md#mdsum_template_window-mdirmdsumtemplatewindowop) | Sums explicit site energies over covering anchor images, with a cutoff on each yielded site displacement. Its affine site geometry is proved before a covering list may be used. |
+| `md_exec.build_segmented_pairs`, `md_exec.template_for` | Share one class-segmented physical-list value across energy, forces and strain. The loop retains three tagged scalar bodies and explicit per-output site displacements through precision and storage assignment. Device list lowering remains in progress (D[rigid-water-template]). |
+| `md_exec.empty_segmented_pairs`, `md_exec.refresh_segmented_pairs` | Initialize fixed membership once and carry one list state through nested step/output loops, resetting at segments and fresh runs. Outer/inner class ranges share one allocation; refresh has two mobility-group dependencies. |
+| [`md.gather_template_window`](dialects/md.md#mdgather_template_window-mdirmdgathertemplatewindowop) | The first force transpose of the same window arithmetic, scattered to the real molecule members. The strain reduction includes the anchor image's cell contribution. |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
 | `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D288). |
@@ -1208,6 +1213,13 @@ The reference of every op is [dialects/md_exec.md](dialects/md_exec.md).
 | `md_exec.build_incidence`, `md_exec.tuple_for` | The tuples of each particle, and a kernel over them; see [tuples.md](tuples.md), Section 4. |
 | `md_exec.particle_for` | Runs a kernel over particles. |
 | `md_exec.yield` | Terminator of kernels. |
+
+`PairKernelBodyOpInterface` exposes each pair's squared distance, kernel
+region and contribution outputs for `md_exec.pair_for` and
+`md_exec.template_for`. Radial canonicalization and expansion use that
+common contract, including multiple site-pair distances in one structured
+window region. D94's table admission, error criterion and fallback remain
+the same for both implementations (D[rigid-water-template]).
 
 Reductions and accumulation are clauses of the two loop ops, not separate
 ops (S6).

@@ -586,6 +586,61 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.gather_template_window` (::mdir::md::GatherTemplateWindowOp)
+
+_Scatters the derived site-window forces to real members_
+
+Syntax:
+
+```
+operation ::= `md.gather_template_window` $relation `,` $positions `,` $cell
+              `cutoff` `(` $cutoff `)` `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The force transpose of `md.sum_template_window`, with the same images,
+operands, geometry and per-site cutoff. For M site pairs of arity A,
+its body yields M groups of A force vectors followed by M site
+displacements. Each force group is included only inside that site's
+cutoff. The four-site stored particle is absent: the body's constant
+placement arithmetic supplies rule A's transpose to O, H1 and H2.
+
+A constructed radial derivative may carry `md.template_site_forces`,
+three binary class flags. In that layout each water contributes
+O/H1/H2/E slots (WW has 8, SW 5, SS 2) instead of real-member slots.
+These are interaction-site forces; scatter applies the constant rule-A
+transpose after accumulation. The stored field still has real members.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.gather_tuples` (::mdir::md::GatherTuplesOp)
 
 _Sums a kernel, per particle, over the tuples it is in_
@@ -1743,6 +1798,81 @@ Traits: `RecursiveMemoryEffects`, `SingleBlock`
 
 
 
+### `md.sum_template_window` (::mdir::md::SumTemplateWindowOp)
+
+_Sums a structured site window over covering anchor images_
+
+Syntax:
+
+```
+operation ::= `md.sum_template_window` $relation `,` $positions `,` $cell
+              `cutoff` `(` $cutoff `)` `extent` `(` $extent `)` `alpha` `(` $alpha `)`
+              (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+              $kernel attr-dict `:` qualified(type($relation)) `,`
+              qualified(type($positions)) `->` qualified(type($result))
+```
+
+The relation is one result of `md.template_pairs`. WW, SW and SS have
+respectively five, three and one displacement arguments: first the
+anchor displacement in the candidate image, then each water's H1-O
+and H2-O displacements in its whole-molecule frame, in tuple order.
+Each gathered field then supplies one value per tuple member.
+
+For M site pairs the body yields M energies followed by M site
+displacements. Each energy is included only where its own displacement
+has length strictly below `cutoff`. The body exposes all placement and
+pair arithmetic. The verifier proves that every yielded displacement
+is the anchor displacement plus supported site offsets: O, H1, H2 or
+alpha*(H1-O + H2-O). A scalar result sums energies; a vector<9xf64>
+result sums the corresponding strain contributions.
+
+`alpha` is finite and nonnegative, with no upper bound. The extent
+includes the formed site. At compile time, alpha <= 1/2 proves that
+the two O-H extents also cover that site; otherwise the extent check
+evaluates its distance explicitly.
+
+The logical reduction enumerates all covering anchor images, as in
+D242, not just the minimum image. `extent` is a checked covering bound
+on each water at the evaluation; it is widened before the first
+constrained evaluation and enforced afterward. Only after that bound
+and the explicit site geometry are proved may lowering use the
+class-segmented pair list. A covering reach below the least cell edge
+and a cutoff below half the cell are required as on the ordinary
+group route. The relation has no hidden real payload.
+
+Force and strain rules differentiate this body's arithmetic, including
+the candidate image in the anchor displacement. They hold the piecewise
+constant membership fixed, as ordinary pair derivatives do. Higher
+derivatives and tunable parameters are not admitted by this reduction.
+
+Traits: `RecursiveMemoryEffects`, `SingleBlock`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>extent</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>alpha</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `relation` | A set of tuples of distinct particles |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `gathered` | variadic of field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | any non-token type |
+
+
+
 ### `md.sum_tuples` (::mdir::md::SumTuplesOp)
 
 _Sums a kernel over the tuples of a tuple set_
@@ -1814,6 +1944,82 @@ Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 | Result | Description |
 | :----: | ----------- |
 | `result` | any non-token type |
+
+
+
+### `md.template_pairs` (::mdir::md::TemplatePairsOp)
+
+_Partitions pair work into water, mixed and atom classes_
+
+Syntax:
+
+```
+operation ::= `md.template_pairs` $universe `,` $molecules (`exclude` `(` $excluded^ `)`)?
+              (`anchor` `(` $anchored^ `)` `radius` `(` $radius `)`)? attr-dict
+              `:` functional-type(operands, results)
+```
+
+The molecules are disjoint ordered O-H-H or O-H-H-site tuples of one
+template. The scalar i32 field `universe` supplies the particle set's
+cardinality; its values are not read. Its complement after removing all
+molecule members is the solute class, including ions and unmatched sites.
+
+The results are named logical tuple domains that persist throughout the
+run, independent of positions and list storage. WW contains one ordered
+six-member tuple (O,H,H,O,H,H) for
+every pair of distinct waters, oriented by their oxygen identities.
+SW contains (solute,O,H,H) for every solute-water pair. SS contains the
+unordered solute pairs, with `excluded` removed. Waters must have no
+intermolecular exclusions and all their internal pairs excluded; the
+topology matcher establishes those preconditions.
+
+A four-site molecule's stored site is absent from the result tuples.
+Its position and transpose for the short-range terms are explicit
+arithmetic in the structured tuple kernel, not active payload hidden
+in the relation. Other consumers retain the stored site.
+
+These relations have no implicit spatial cutoff. The structured site
+kernels state their own cutoffs. A physical finite list is selected
+only after proving that support and its molecular covering bound.
+Execution keeps the three class-pair segments in one buffer and one
+mobility group; a segment is not a separate kernel or list.
+
+`anchored` holds ordered (member, anchor) solute pairs: a member that
+a constrained bond keeps within `radius` of its heavy-atom anchor.
+Each solute unit is an anchor and its members; every other solute
+particle is its own anchor. The radius is proved by the compiler from
+the constraint lengths and their tolerance. Units select candidates
+only: exclusions and 1-4 pairs keep their per-atom meaning.
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `SymbolUserOpInterface`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `molecules` | A set of tuples of distinct particles |
+| `excluded` | A set of tuples of distinct particles |
+| `anchored` | A set of tuples of distinct particles |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `water_water` | A set of tuples of distinct particles |
+| `solute_water` | A set of tuples of distinct particles |
+| `solute_solute` | A set of tuples of distinct particles |
 
 
 
@@ -1986,7 +2192,7 @@ Syntax:
 operation ::= `md.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<SumTemplateWindowOp, GatherTemplateWindowOp, ScatterStencilOp, GatherStencilOp, ReduceStencilOp, MapGridOp, SumGridOp, SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp, SumParticlesOp, MapParticlesOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

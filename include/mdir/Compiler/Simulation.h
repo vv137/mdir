@@ -170,7 +170,9 @@ public:
     int64_t framePeriod = 0;
     /// A trajectory in H5MD (D239): its positions in f32
     /// rather than f64, and whether its frames hold the velocities and the
-    /// forces of the state. With either, the program does not write the
+    /// forces of the state (template dynamics' written forces instead use
+    /// rule (B), without replacing its carried rule-(A) forces). With
+    /// either, the program does not write the
     /// frames: the front end ends a part at each (`getNextStateFrame`) and
     /// calls `writeStateFrame`.
     bool frameSingle = false, frameVelocities = false, frameForces = false;
@@ -568,6 +570,10 @@ private:
   Simulation() = default;
   std::array<uint64_t, 4> frameBatchCopyBytes{};
   llvm::Expected<Engine *> getEngine();
+  /// Rule (B) for a written force frame, evaluated separately from the
+  /// template dynamics' carried rule-(A) forces. Called outside the run
+  /// mutex; the general evaluator owns its activation and runtime records.
+  llvm::Expected<std::vector<double>> evaluateWrittenFrameForces();
   /// The counts of a part: periods (or steps) of the first nest, its plain
   /// steps per period, plain steps after it, a plain step of energy (0 or
   /// 1), and a period that closes with a step of energy (0 or 1) with its
@@ -681,6 +687,10 @@ private:
   /// first call and continues the last segment on the others
   /// (D211).
   std::unique_ptr<Engine> compiled;
+  /// A general no-step program for force-bearing reports of template
+  /// dynamics. Its physics is rebuilt only when the tunable version changes.
+  std::unique_ptr<Simulation> writtenForceEvaluator;
+  int64_t writtenForceVersion = -1;
   /// The activation of its entry that runs the parts, waiting at the end of
   /// the last one, with the state in its buffers (D215);
   /// none before the first part, after a failure, and while the values of

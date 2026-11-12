@@ -919,7 +919,157 @@ transposed strategy needs a measured benefit (#419), while a change to
 the lanes and tiles at orders 6 and 8 belongs to #411. No control-file
 key or allocation is added.
 
+### 4.10 Spatial reference frames and boxes (D[rigid-water-template])
+
+`SpatialFrameEmitter.h` shares the fractional frame used by spatial keys
+and conservative query boxes. For a finite `vector<3xf64>` reference
+$\mathbf u$, `emitSpatialReferenceFrame` returns
+$\mathbf f=\lfloor\mathbf u\rfloor$ and
+$\mathbf w=\mathbf u-\mathbf f$. Wrapping is in f64, before key narrowing.
+`emitSpatialWarpBox` takes finite points and a validity mask and composes
+the shared warp maximum reduction to obtain minimum and maximum. All 32
+lanes must reach it; an empty mask returns infinite empty bounds and must
+not be searched. These preconditions are the caller's responsibility.
+
+The template search keeps each group of at most sixteen units and partitions
+the query by distinct first-unit lattice frames. Within each subset its
+box uses the wrapped references, consistently with the keys. The first
+valid unit of each frame, in fixed group order, represents the subset;
+a ballot prevents querying the same subset twice. For query image
+$\mathbf s$ and first-unit frame $\mathbf f_i$, the original partner
+image is $\mathbf s+\mathbf f_i-\mathbf f_j$. The original f64 predicate
+still tests $\mathbf u_i-(\mathbf w_j+\mathbf s+\mathbf f_i)$,
+forming the integer image sum before the f64 addition as before. The
+subsets have disjoint masks, so every admitted pair/image occurs once.
+No minimum-image assumption replaces the explicit image coverage.
+
+The helper is available to ordinary group builders, but this decision
+migrates only its new template caller. Grid sizing and group-cut planning
+remain the broader work of #817; a frame conversion does not change the
+sort keys, class order or fixed-ID ties. Orthorhombic/triclinic all-images
+oracles cover independent reframing and groups spanning eight frames.
+
+### 4.11 Conservative group-box prefilter (D[rigid-water-template])
+
+The template build computes a Cartesian f64 bounding box for each group
+of wrapped references, through `emitSpatialWarpBox`. Two rows per group
+hold its minimum and maximum in an auxiliary frame-state view, independent
+of pair-arena growth. The search shifts the partner box by the query
+image and calls `emitSpatialBoxesWithinReach` before its pair predicates.
+For each Cartesian component, the nonnegative separation of the two
+intervals is a lower bound on every member-pair separation; its squared
+norm is a lower bound on the distance. This works for triclinic cells too:
+the boxes enclose the Cartesian points, rather than treating fractional
+axes as orthogonal.
+
+The prefilter admits uncertain cases. Let $\epsilon=2^{-52}$ and let
+$C$ be the sum of absolute cell components. Each component gap is reduced
+by $64\epsilon C(4+\sum_a\lvert f_{i,a}\rvert+
+\sum_a\lvert s_a\rvert)$, and the prefilter's reach alone is enlarged
+by $1+64\epsilon$. Coordinate transformation, image conversion/addition,
+gap subtraction and squared-norm evaluation each have fewer than 32
+rounded operations along a component's dependency chain. Their
+$\gamma_{32}=32u/(1-32u)$ envelope, $u=2^{-53}$, is below the chosen
+$64\epsilon$ allowance with the frame/image scale above. This covers
+the difference between Cartesian box arithmetic and the original f64
+displacement order, including large integer frames. Indeterminate or
+overflowing box arithmetic also falls through to the pair test.
+These allowances only admit extra candidates: the original f64 radial
+predicate, its reach and its less-than-or-equal comparison are unchanged.
+
+The search iterates partner groups. A ballot selects groups whose boxes
+pass, before loading any partner units. A warp-uniform survivor loop
+selects up to two groups and assigns one to each half warp; only then do
+lanes enumerate their units and form masks. Rejected groups never reach
+unit enumeration. All lanes still reach the first-unit broadcasts in that
+uniform loop; partial groups mask their unused lanes. The former box
+check after point enumeration is removed.
+The exact all-images fixtures include every mobility-group activity,
+reframed groups, both cell shapes, and one-dimensional cutoff rays at
+and one representable coordinate on either side of each class cutoff.
+No physical tolerance is used for their membership comparisons.
+
+### 4.12 Stable column/gap/span cuts (D[rigid-water-template])
+
+`emitSpatialGroupPlan` in `SpatialGroupEmitter.h` takes a unit permutation
+ordered by class, column, z key and fixed ID. It first marks a class or
+column boundary and each adjacent z-key gap strictly greater than its
+class's gap threshold. Shared device scans and maps produce segment IDs,
+starts and lengths. Each segment is provisionally divided into groups
+of at most sixteen. If a group's last-minus-first z key exceeds its
+span threshold, the rightmost largest adjacent gap becomes a new segment
+boundary. The scan and refinement repeat until no span is too large.
+This is the grouping rule of the measured rigid-water prototype,
+composed here from the existing scan and integer atomic primitives.
+
+Flags only accumulate. Every refinement adds a previously absent boundary
+strictly inside a segment; group spans of one are zero. Thus a valid input
+converges in at most $N+1$ passes, including the empty input, without the
+prototype harness's eight-pass cap. Stable segment IDs are materialized
+before refinement, so no thread recovers an ID from flags another thread
+may be changing. The final scan gives each segment its group offset.
+Class order and all fixed-ID ties are retained; the helper does not
+publish or transfer ownership of a retained class's order or maps.
+
+The caller supplies nonnegative integer gap/span thresholds and separate
+scratch buffers. Their physical extent is based on $M=\max(N,1)$, with
+the dummy flag/count initialized to zero for an empty input, so the
+shared scan never receives empty storage. Control readback occurs only
+during a cold plan. A pass after convergence changes nothing, so the
+caller may name a number of passes to run before the controls are first
+read; later passes are read one by one while the last one split a group.
+The template's build passes the passes of the list's previous plan, which
+usually leaves one readback a plan. The device records the last pass that
+split a group, so the passes reported are those the plan needed, however
+many ran unread. The plan clears its starts, lengths and counts once,
+since its segments only grow from pass to pass, and each pass's
+normalizing kernel clears the totals its later kernels add to. The two
+classes' counts and the number of passes are host results; the stable IDs
+and offsets remain on the device. The standalone integer oracle covers
+empty input, class boundaries even when column keys coincide, strict gap
+equality, rightmost ties, an eleven-pass cascade and more than one scan
+block, each with one, one fewer than needed, exactly as many and three
+more unread passes, from scratch that holds a sentinel.
+
+The template adapter quantizes water/solute gap defaults of 0.4/0.3 nm
+and span defaults of 0.9/0.6 nm against the z face width, rounding down
+and clipping to its 21-bit key domain. Compact unit orders occupy fixed
+class partitions; descriptor partitions have one possible group per unit.
+Only active descriptors and maps are published. Work records retain their
+four-word format and first-unit-begin meaning, with a separate length at
+each group start. The common grid is retained while any nonempty class
+is inactive and may be replanned at a joint rebuild. Row-capacity growth
+preserves completed class ranges and current spatial data; inactive rows
+are copied by the previous header's class range, even if their new row
+prefix moved. These choices do not change ordinary group builders.
+
+`emitSpatialSingleImage` expands the fractional difference interval
+between two boxes by the face-width reach and a roundoff envelope. If
+each axis interval has width strictly below one, it contains at most one
+integer image. The nearest integer to its midpoint is that image whenever
+one exists; otherwise it is a harmless extra candidate. The strict test
+has an additional absolute allowance of $2^{-40}$ for wrapped-coordinate
+endpoint and midpoint arithmetic. Its caller additionally expands the
+fractional interval by four times the Cartesian roundoff envelope divided
+by the face width. Unproved cases retain all explicit images. The search
+rejects other images before enumerating the proved group's units; bin
+and image traversal itself remains explicit. The final covering predicate
+still uses the original f64 displacement and unchanged reach.
+
 ## 5. Reductions by their algebra
+
+Completed integration outputs can be observed through the optional callback
+of `emitIntegrationThread`. The callback receives final SSA values once per
+complete tuple, or a singleton for an unmatched particle. Subgroup exchange
+is convergent; cross-warp tuples use the existing second integration kernel.
+The default absent callback preserves ordinary lowering. A caller must prove
+complete-group ownership, original adjacency and the point at which flags
+are consumed before combining publication with integration. A constraint
+marker is not by itself proof of membership in a selected rigid class.
+The template adapter currently admits one marked constraint family only:
+the measured mixed-family fusion regressed, so its existing separate
+publication remains. The R2 arithmetic-sharing experiment was discarded
+after its stage screen; the retained writer arithmetic is unchanged.
 
 ### 5.1 What is stated
 
@@ -1288,3 +1438,13 @@ their operations. This is a future behavior-preserving refactor, with
 byte-identical PTX as its gate, rather than five new semantic primitives.
 
 The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D350). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.
+
+The template derivative-window constructor can retain interaction-site
+forces through the warp accumulation. It derives a scalar radial factor
+from the source energy's squared norm through the common pair-body
+interface, then multiplies it by the site displacement. A four-site
+water's constant rule-A transpose runs once at the accumulated write
+boundary. This does not change general differentiation or the site,
+image, cutoff, coverage and pruning predicates. Pair and force arithmetic
+remain f32; energy and virial accumulation and covering geometry retain
+their declared f64 precision.

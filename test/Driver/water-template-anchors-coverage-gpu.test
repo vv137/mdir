@@ -1,0 +1,56 @@
+# REQUIRES: cuda
+# The solute units' lists against an independent all-pairs, all-near-images
+# check of every evaluated frame (MDIR_TEMPLATE_CHECK_COVERAGE): alanine
+# dipeptide in OPC under NPT and in TIP3P under NVT, PME, 2 fs, its X-H
+# bonds constrained. The first evaluation is at the unconstrained input.
+# Each site pair within the cutoff (f64, widened by 2^-20 of it, which
+# contains the f32 predicate) must have an inner entry: a superset of the
+# general path's pairs; and no entry may appear twice, nor a pair in both
+# orders. The members of every row group must lie in one lattice frame
+# of their reference points (U2). A check at 1.5 times the cutoff, beyond
+# every inner reach, must find pairs without one, so the check can fail;
+# one that counts an entry twice must find a duplicate; one that moves a
+# member of a row group into the next frame must find a row group in two.
+# RUN: rm -rf %t && mkdir -p %t/opc %t/tip3p %t/wide %t/twice %t/frame %t/split-opc %t/split-tip3p %t/stretch
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/opc OPC NPT 200
+# RUN: cd %t/opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/tip3p TIP3P NVT 200
+# RUN: cd %t/tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# The input wrapped per atom, as a .gro file is: the HH31-CH3 bond of ACE
+# and waters on the faces are split across the cell, so a member's raw bond
+# from its anchor is not its minimum image. The reference point of the
+# member must still be its anchor's, in the anchor's frame.
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/split-opc OPC NPT 100 --split | FileCheck %s --check-prefix=SPLIT
+# RUN: cd %t/split-opc && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/split-tip3p TIP3P NVT 100 --split | FileCheck %s --check-prefix=SPLIT
+# RUN: cd %t/split-tip3p && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# A member beyond the radius at the input (HH31 a fifth away from CH3, as
+# a minimization with free X-H bonds leaves it before dynamics with
+# constrained ones): the first build, before any constraint, widens the
+# radius by the measured distance; constrained builds hold it again. Its
+# 'pairlist_distance', 9.9 Å, keeps the widened reach, 9.9 + 2 x 1.308 =
+# 12.52 Å, within half the least face width, 12.58 Å, which every build
+# checks (water-template-reach-gpu.test stops at 10 Å).
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/stretch OPC NVT 100 --stretch --pairlist=9.9 | FileCheck %s --check-prefix=STRETCH
+# RUN: cd %t/stretch && env MDIR_TEMPLATE_CHECK_COVERAGE=1 mdir run control.toml | tee run.log | FileCheck %s
+# The log shows the widening: the first build held the measured 1.308 Å,
+# and every later build the nominal radius again; the log of the OPC run
+# above (its input unstretched) holds the nominal radius throughout.
+# RUN: FileCheck %s --check-prefix=WIDENED < %t/stretch/run.log
+# RUN: FileCheck %s --check-prefix=HELD < %t/opc/run.log
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/wide OPC NVE 4
+# RUN: cd %t/wide && env MDIR_TEMPLATE_CHECK_COVERAGE=1.5 mdir run control.toml 2>&1 | FileCheck %s --check-prefix=WIDE
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/twice OPC NVE 4
+# RUN: cd %t/twice && env MDIR_TEMPLATE_CHECK_COVERAGE=duplicate mdir run control.toml 2>&1 | FileCheck %s --check-prefix=TWICE
+# RUN: %python %S/Inputs/water_template_solute.py %S/Inputs %t/frame OPC NVE 4
+# RUN: cd %t/frame && env MDIR_TEMPLATE_CHECK_COVERAGE=frame mdir run control.toml 2>&1 | FileCheck %s --check-prefix=FRAME
+# CHECK: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries; {{[1-9][0-9]*}} inner row groups, 0 in more than one lattice frame
+# SPLIT: split input: the HH31-CH3 bond and {{[1-9][0-9]*}} O-H bonds of water cross a face
+# STRETCH: stretched input: the HH31-CH3 bond from 1.0900 to 1.3080 Å
+# WIDENED: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Ang, at the first build 1.3080 Ang, at most [[NOMINAL]] Ang at {{[1-9][0-9]*}} later builds
+# HELD: MDIR: template solute radius [[NOMINAL:1\.09[0-9]*]] Ang, at the first build [[NOMINAL]] Ang, at most [[NOMINAL]] Ang at {{[1-9][0-9]*}} later builds
+# WIDE: mdrt: template coverage: units
+# WIDE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, {{[1-9][0-9]*}} without an entry, 0 duplicate entries
+# TWICE: mdrt: template coverage: entry {{[0-9a-f]+}} appears twice
+# TWICE: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, {{[1-9][0-9]*}} duplicate entries
+# FRAME: template coverage checks {{[1-9][0-9]*}}: {{[1-9][0-9]*}} unit pairs within the cutoff, 0 without an entry, 0 duplicate entries; {{[1-9][0-9]*}} inner row groups, {{[1-9][0-9]*}} in more than one lattice frame
