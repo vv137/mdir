@@ -12,7 +12,7 @@ The calls of the device primitives (`@mdir.primitive.*`, D296) stay calls with t
 
 ## Each variant a choice of the emitter
 
-Every parameter of the emitter is a choice made when it runs (the maintainer, on the PR of #856): a variant has the code of its own choices and none of the others', by a branch of the C++, never by a select or a flag that a kernel reads. The triclinic build has the tilts, the windows of the rows across the faces, and the five bits a lattice vector of the shifts of the entries; the orthorhombic build has none of them. The single-pass build declares and calls `single_pass_scan` with its i64 states; the three-launch build neither declares nor calls it. Parameters beyond these two (the size of a group, the lanes) and the reuse of the emitter by the spatial order, search, and pruning of #795 (#817) are for later decisions.
+Every parameter of the emitter is a choice made when the program is compiled (the maintainer, 2026-11-12): a variant has the code of its own choices and none of the others', by a branch of the C++, never by a select or a flag that a kernel reads. The triclinic build has the tilts, the windows of the rows across the faces, and the five bits a lattice vector of the shifts of the entries; the orthorhombic build has none of them. The single-pass build declares and calls `single_pass_scan` with its i64 states; the three-launch build neither declares nor calls it. Parameters beyond these two (the size of a group, the lanes) and the reuse of the emitter by the spatial order, search, and pruning of #795 (#817) are for later decisions.
 
 ## No loss (#444)
 
