@@ -2529,8 +2529,18 @@ gains 0.6 to 0.9 and change 2 gives most of it back (37.52/37.50 against
 37.71/37.58); in the 12 Å switched case change 1 costs 1.9 and change 2
 returns 1.0 to 1.3 of it, 0.9/0.7 above c59075aa. Both changes passed
 the rule of the measurements (faster on ubiquitin in TIP3P and OPC, not
-slower in the large box); the switched case, not part of the rule, is
-slower.
+slower in the large box), but not every system gained. Against the build
+before it, change 1 is slower in the switched case (1.9 µs a call, 2.1/2.0
+µs/step of wall) and change 2 in the dodecahedron in OPC (0.7/0.6 µs a
+call, 0.5/0.4 of wall); against c59075aa, cbb03931 is slower in the
+switched case alone (0.9/0.7 µs a call, 0.9/0.6 of wall), the dodecahedron
+in OPC ending 0.2/0.1 µs a call faster. Against `main` the evaluation a
+call stays slower in every system but the large box: by 1.7/1.4 µs in
+ubiquitin in OPC, 9.6/9.9 in TIP3P, 9.7/9.7 in the dodecahedron in OPC,
+9.0/9.3 in the dodecahedron in TIP3P and 21.0/20.6 in the switched case;
+the wall is slower in the four systems named above (ubiquitin in TIP3P,
+the dodecahedron in TIP3P, the switched case and, in its second round,
+the dodecahedron in OPC).
 
 **The switched case and the kept unit.** On cbb03931 with the partner's
 unit read again from the entry after the turns (the three row loads
@@ -2545,9 +2555,18 @@ turns moves ptxas's schedule of a turn by 1 to 7 % either way, by system;
 which one a system gets is not predicted by anything measured here, so
 change 1 keeps the unit, as its rule decided.
 
-Gates at cbb03931 (this section changes only this file): the 110
-template fixtures in one run (107 passed, 3 unsupported) and the
-sanitizer tier (3 fixtures, 33 s) pass.
+Gates at cbb03931: the gate's list of 110 entries (109 template
+fixtures, one listed twice) in one run, 107 passed and 3 unsupported
+(the sanitizer fixtures, which run in their own tier), and the sanitizer
+tier (3 fixtures, 33 s) passed. That list did not contain the tests of
+the two changes, `template-partner-write.mlir` and
+`template-select-pair.mlir`, so the gate did not run them. They are in
+the list since 8957f5c9, which also adds four cases to
+`template-select-pair.mlir` (the next-to-last pair with one clamped and
+one unclamped read, the same pair with an atomic, the SW class, two WW
+pairs; each keeps every guard, and each fails when its condition of the
+select is removed). The gate at 8957f5c9: 112 entries, 109 passed and the
+same 3 unsupported.
 
 **Open, in the evaluation.**
 
