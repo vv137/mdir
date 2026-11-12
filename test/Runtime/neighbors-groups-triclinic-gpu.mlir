@@ -1,4 +1,4 @@
-// The template that builds groups of 16 particles sharing a list of
+// The device build of groups of 16 particles sharing a list of
 // neighbors on a device in a triclinic cell (docs/triclinic.md, D89),
 // against every image of every pair: each image within the reach has a
 // bit in the lists once, of its particle in the group, and an excluded
@@ -6,15 +6,13 @@
 //
 // REQUIRES: cuda
 //
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsGroupsGPUTriclinic.mlir %s \
-// RUN: | mdir-opt --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build="triclinic=true" --expand-device-primitives \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
 // RUN: | FileCheck %s
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsGroupsSinglePassGPUTriclinic.mlir %s \
-// RUN: | mdir-opt --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" --expand-device-primitives \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -41,6 +39,11 @@
 //   - the number of pairs with several images within the reach.
 
 func.func private @printI64(i64)
+// The build, which add-groups-build defines (GroupsBuild.h).
+func.func private @mdrt_gpu_build_neighbors_groups_triclinic(memref<?x3xf64, 1>,
+    vector<6xf64>, f64, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32>)
 func.func private @printNewline()
 
 // The cell as a vector of six: a_x, b_y, c_z, b_x, c_x, c_y.

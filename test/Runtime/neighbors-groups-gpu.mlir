@@ -1,12 +1,11 @@
-// The template that builds groups of 16 particles sharing a list of
+// The device build of groups of 16 particles sharing a list of
 // neighbors on a device (D89), against every pair: each pair within the
 // reach is in the lists once, with the bit of its particle in the group,
 // and an excluded pair is not.
 //
 // REQUIRES: cuda
 //
-// RUN: cat %S/../../lib/Runtime/Templates/NeighborsGroupsGPU.mlir %s \
-// RUN: | mdir-opt --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build --expand-device-primitives \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -38,6 +37,11 @@
 // than those within the reach in f64 (16349).
 
 func.func private @printI64(i64)
+// The build, which add-groups-build defines (GroupsBuild.h).
+func.func private @mdrt_gpu_build_neighbors_groups(memref<?x3xf64, 1>,
+    vector<3xf64>, f64, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32>)
 func.func private @printNewline()
 
 func.func @fill(%x: memref<?x3xf64>, %length: f64) {

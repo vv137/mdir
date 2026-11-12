@@ -8,6 +8,7 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/GroupsBuild.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
@@ -62,10 +63,6 @@ extern const char *const pmeGPUTemplate;
 extern const char *const pmeGPUTriclinicTemplate;
 /// The text of its kernels for the prolate kernel (D266).
 extern const char *const pmeGPUProlateTemplate;
-extern const char *const neighborsGroupsGPUTemplate;
-extern const char *const neighborsGroupsGPUTriclinicTemplate;
-extern const char *const neighborsGroupsSinglePassGPUTemplate;
-extern const char *const neighborsGroupsSinglePassGPUTriclinicTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
@@ -90,7 +87,6 @@ static const char *const tuplesReleaseRowsName =
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
-static const char *const buildGroupsName = "mdrt_gpu_build_neighbors_groups";
 static const char *const noteGroupsName = "mdrtNoteGroups";
 static const char *const createGroupsName = "mdrtGroupsCreate";
 static const char *const createMatrixName = "mdrtMatrixCreate";
@@ -690,9 +686,9 @@ private:
 
   /// Adds the templates for positions of the type `real` to the module.
   LogicalResult addTemplates(Type real);
-  /// Adds the template that builds groups, or with `tilted` that of a
-  /// triclinic cell.
-  LogicalResult addGroupsTemplates(bool tilted);
+  /// Adds the build of the groups (GroupsBuild.h), or with `tilted` that
+  /// of a triclinic cell.
+  LogicalResult addGroupsBuild(bool tilted);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// Adds the template of particle mesh Ewald for these types, with
   /// `tilted` the kernels of a triclinic cell as well, and with
@@ -5029,25 +5025,15 @@ LogicalResult Lowering::addTemplates(Type real) {
   return success();
 }
 
-LogicalResult Lowering::addGroupsTemplates(bool tilted) {
+LogicalResult Lowering::addGroupsBuild(bool tilted) {
   if (SymbolTable::lookupSymbolIn(
-          module, tilted ? std::string(buildGroupsName) + "_triclinic"
-                         : std::string(buildGroupsName)))
+          module, kernels::getGroupsBuildName(tilted)))
     return success();
-  ParserConfig config(context);
-  const char *source;
-  if (singlePassGroupScan)
-    source = tilted ? neighborsGroupsSinglePassGPUTriclinicTemplate
-                    : neighborsGroupsSinglePassGPUTemplate;
-  else
-    source = tilted ? neighborsGroupsGPUTriclinicTemplate
-                    : neighborsGroupsGPUTemplate;
-  OwningOpRef<ModuleOp> templates =
-      parseSourceString<ModuleOp>(source, config);
-  if (!templates)
-    return module.emitError()
-           << "cannot parse the template that builds groups of neighbors";
-  // The template's calls of the device primitives (CompactionEmitter.h).
+  // The build, written by its emitter (GroupsBuild.h) into a module of
+  // its own, whose calls of the device primitives are expanded there.
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
+  // The build's calls of the device primitives (CompactionEmitter.h).
   if (failed(kernels::expandPrimitiveCalls(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -7472,7 +7458,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
            << real;
   // A triclinic cell takes the build of its own (docs/triclinic.md).
   bool tilted = isTriclinic(box);
-  if (failed(addGroupsTemplates(tilted)))
+  if (failed(addGroupsBuild(tilted)))
     return failure();
 
   // Without excluded pairs the build takes a buffer of no elements, which
@@ -7487,8 +7473,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
     excluded = noExcluded;
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-      module, tilted ? std::string(buildGroupsName) + "_triclinic"
-                     : std::string(buildGroupsName)));
+      module, kernels::getGroupsBuildName(tilted)));
   Type wide = builder.getI64Type();
   Value reachValue = createReal(builder, loc, builder.getF64Type(), reach);
 
