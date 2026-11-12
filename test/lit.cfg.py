@@ -63,6 +63,7 @@ tools = [
     "mdir-prolate-test",
     "mdir-influence-test",
     "mdir-neighbor-count-test",
+    "mdir-rigid-groups-test",
     "mdir-compile-test",
     "mdir-jit-memory-test",
     "mdir-compile-cache-test",

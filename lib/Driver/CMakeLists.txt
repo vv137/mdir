@@ -121,6 +121,7 @@ add_mlir_library(MDIRDriver
   ProgramModule.cpp
   Prolate.cpp
   Selection.cpp
+  RigidGroups.cpp
   System.cpp
   Trajectory.cpp
   Validation.cpp
