@@ -428,6 +428,42 @@ TemplateContribution mdir::kernels::emitTemplateWindowContributions(
       // carried. Reductions keep their zero-started per-pair terms.
       SmallVector<unsigned> members = liveMembers(pair);
       if (members.empty()) continue;
+      // The next-to-last force pair of a water pair, when it reads a table
+      // and is otherwise pure, is computed in every lane and kept by a
+      // select instead of a guard. ptxas branched around this pair alone of
+      // those it if-converted and moved its hoisted table read below the
+      // branch, where the read waited behind the comparison (D[rigid-water-
+      // template], U9). Other pairs keep their guards: making them selects
+      // took the kernel above 96 registers, and making the first pair one
+      // (the oxygen pair with Lennard-Jones) left it at 80 and slower.
+      bool predicated = false;
+      if (scatter && tag == 0 && order.size() >= 3 && position + 2 == order.size()) {
+        llvm::DenseSet<Value> known;
+        bool reads = false;
+        llvm::DenseSet<Operation *> seen;
+        std::function<void(Value)> find = [&](Value value) {
+          Operation *definition = value.getDefiningOp();
+          if (!definition || definition->getBlock() != &source || !seen.insert(definition).second)
+            return;
+          reads |= isBoundedTableRead(definition);
+          for (Value operand : definition->getOperands()) find(operand);
+        };
+        predicated = llvm::all_of(members, [&](unsigned member) {
+          Value term = yield->getOperand(offset + pair * stride + member);
+          find(term);
+          return isSpeculatable(term, source, known);
+        }) && reads;
+      }
+      if (predicated) {
+        for (unsigned member : members) {
+          Value term = materializeWindowValue(builder,
+              yield->getOperand(offset + pair * stride + member), source, mapping);
+          Value sum = arith::AddFOp::create(builder, loc, destination(member), term);
+          destination(member) = arith::SelectOp::create(builder, loc, inside, sum,
+                                                        destination(member));
+        }
+        continue;
+      }
       auto guarded = scf::IfOp::create(builder, loc, inside,
           [&](OpBuilder &body, Location) {
             IRMapping local = mapping;
