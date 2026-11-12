@@ -508,6 +508,39 @@ def ExpandDevicePrimitives
                            "::mlir::scf::SCFDialect"];
 }
 
+def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
+  let summary = "Adds the device build of the groups of neighbors to the "
+                "module";
+  let description = [{
+    Appends the build of the groups of 16 particles that share a list of
+    neighbors on a device (D89, D[groups-emitter]) and what it calls, as
+    `convert-md-exec-to-gpu` adds it to a module with groups: the
+    declarations of the device primitives, the helpers, and
+    `@mdrt_gpu_build_neighbors_groups` (with `triclinic`,
+    `@mdrt_gpu_build_neighbors_groups_triclinic`). A declaration of the
+    build in the module, by which a test calls it, is replaced. The calls
+    of the device primitives stay calls, for `expand-device-primitives`.
+    This is for the tests of the build.
+  }];
+  let options = [
+    Option<"triclinic", "triclinic", "bool", /*default=*/"false",
+           "The build in the brick of a triclinic cell (docs/triclinic.md)">,
+    Option<"singlePassScan", "single-pass-scan", "bool",
+           /*default=*/"false",
+           "The decoupled look-back scan for the three counting sorts "
+           "(D321) in place of the three-launch scan">
+  ];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::LLVM::LLVMDialect",
+                           "::mlir::NVVM::NVVMDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def GpuModuleToBinary
     : Pass<"mdir-gpu-module-to-binary", "::mlir::ModuleOp"> {
   let summary = "Serialize the GPU modules to binaries in parallel";
