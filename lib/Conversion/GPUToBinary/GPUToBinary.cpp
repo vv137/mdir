@@ -661,11 +661,33 @@ struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
       llvm::cl::init(true)};
 };
 
+// PROTOTYPE (proto/water-group-8): a kernel that holds an operation with
+// `mdir.max_registers` gets `nvvm.maxnreg` of that value (.maxnreg in the
+// PTX), to keep the WW evaluation of groups of 8 at 96 registers.
+struct MaxRegistersFromMarker
+    : PassWrapper<MaxRegistersFromMarker, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(MaxRegistersFromMarker)
+  StringRef getArgument() const override { return "mdir-max-registers-from-marker"; }
+  void runOnOperation() override {
+    getOperation()->walk([](gpu::GPUFuncOp func) {
+      int64_t limit = 0;
+      func->walk([&](Operation *op) {
+        if (auto value = op->getAttrOfType<IntegerAttr>("mdir.max_registers"))
+          limit = limit ? std::min(limit, value.getInt()) : value.getInt();
+      });
+      if (limit)
+        func->setAttr("nvvm.maxnreg",
+            IntegerAttr::get(IntegerType::get(func.getContext(), 32), limit));
+    });
+  }
+};
+
 void buildGpuLowerToNVVM(OpPassManager &pm,
                          const GpuLowerToNVVMOptions &options) {
   // The common part.
   pm.addPass(createConvertNVGPUToNVVMPass());
   pm.addPass(createGpuKernelOutliningPass());
+  pm.addPass(std::make_unique<MaxRegistersFromMarker>());
   pm.addPass(createConvertVectorToSCFPass());
   pm.addPass(createSCFToControlFlowPass());
   pm.addPass(createConvertNVVMToLLVMPass());

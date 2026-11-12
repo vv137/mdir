@@ -24,6 +24,11 @@
 #if MDRT_TEMPLATE_WATER_GROUP != 16 && MDRT_TEMPLATE_WATER_GROUP != 8
 #error "MDRT_TEMPLATE_WATER_GROUP must be 16 or 8"
 #endif
+/* PROTOTYPE: a register limit (.maxnreg) of the evaluation kernel that
+ * holds the WW rotation; 0 leaves it to ptxas. */
+#ifndef MDRT_TEMPLATE_WW_MAX_REGISTERS
+#define MDRT_TEMPLATE_WW_MAX_REGISTERS 0
+#endif
 
 enum MdrtTemplateMetadataSlot {
   TEMPLATE_MEMBERS = 0, TEMPLATE_PARTICLE_SLOTS = 1,

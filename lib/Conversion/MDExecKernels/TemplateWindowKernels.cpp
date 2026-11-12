@@ -649,6 +649,9 @@ SmallVector<Value, 2> mdir::kernels::emitTemplateClassUnit(
                 next.push_back(arith::AddFOp::create(turn, loc, state[sumsAt + i], values[fi + fj + i]));
               scf::YieldOp::create(turn, loc, next);
             });
+        if (MDRT_TEMPLATE_WW_MAX_REGISTERS && unit.kind == TemplatePairClass::WaterWater)
+          turns->setAttr("mdir.max_registers",
+              batch.getI32IntegerAttr(MDRT_TEMPLATE_WW_MAX_REGISTERS));
         ValueRange final(turns.getResults());
         if (unit.forces)
           scf::IfOp::create(batch, loc, has, [&](OpBuilder &body, Location) {
