@@ -48,9 +48,9 @@ with the notation of its Section 2.
 
 ### 1.1 Inputs and outputs
 
-A build (`@mdrt_gpu_build_neighbors_groups` of
-`lib/Runtime/Templates/NeighborsGroupsGPU.mlir`, written by
-`scripts/generate-groups-gpu-template.py`) takes:
+A build (`@mdrt_gpu_build_neighbors_groups`, written by the emitter of
+`lib/Conversion/MDExecKernels/GroupsBuild.cpp`, `GroupsBuild.h`,
+D[groups-emitter]) takes:
 
 | Input | Meaning |
 |---|---|
@@ -416,9 +416,11 @@ and the build of Cellulose 30% more time (Section 11.2).
 
 ## 5.1 Triclinic cells (D126)
 
-A triclinic cell ([triclinic.md](triclinic.md)) takes the build of
-`NeighborsGroupsGPUTriclinic.mlir`, written by the same script with
-`TILTED`; only a module with a triclinic cell parses it.
+A triclinic cell ([triclinic.md](triclinic.md)) takes the build
+`@mdrt_gpu_build_neighbors_groups_triclinic`, which the same emitter writes
+with its parameter `triclinic`; only a module with a triclinic cell adds
+it. The parameter is a choice of the emitter: each build has the code of
+its cell and none of the other's (D[groups-emitter]).
 
 | Part | Orthorhombic | Triclinic |
 |---|---|---|
