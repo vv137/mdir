@@ -38,9 +38,10 @@ reaches = [F(3, 2), F(5, 4), F(1)]
 # Rows of the lists: a row's outer records are its chunks of 64 entries,
 # [class | chunk << 2, first, chunk begin, row end] (U10). The prune
 # compacts a row's surviving entries from the row's first entry across its
-# chunks, and record k keeps those of rank 64 k to 64 k + 63: of a row of
-# four chunks 133 entries survive (two full records, one of 5, one empty),
-# of one of three 117 (a full record, one of 53, one empty).
+# chunks, and record k keeps those of rank 64 k to 64 k + 63: with both
+# groups active in the rectangular cell, 161 of the 230 entries of a row
+# of four chunks survive (two full records, one of 33, one empty) and 117
+# of the 180 of one of three (a full record, one of 53, one empty).
 rows = [(0, 0, 64), (0, 0, 3), (0, 16, 0), (1, 32, 33), (1, 48, 17), (1, 32, 1),
         (2, 32, 32), (2, 48, 7), (0, 0, 230), (2, 32, 180)]
 units, entries, slices = [], [], []

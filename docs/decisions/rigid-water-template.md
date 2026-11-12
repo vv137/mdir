@@ -2738,8 +2738,9 @@ prune changed its schedule again (35.7 µs a call against 32.2 in
 ubiquitin in OPC), and the wall rose by 4.0 µs a step there, 3.6 in the
 large box, 1.2 in ubiquitin in TIP3P and 0.9 in the dodecahedron in
 TIP3P, and was unchanged in the dodecahedron in OPC; it was not kept.
-The prune oracle has a row of four chunks (133 survivors: two full
-records, one of 5, one empty) and one of three (117 survivors); it fails
+The prune oracle has a row of four chunks (161 of 230 entries survive
+with both groups active in the rectangular cell: two full records, one of
+33, one empty) and one of three (117 of 180 survive); it fails
 when a record's chunk ends one rank early, as do the coverage check of
 the dodecahedron and the triclinic forces of item 3.
 
