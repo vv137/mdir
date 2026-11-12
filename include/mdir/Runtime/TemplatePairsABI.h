@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <limits.h>
 
-#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 8
+#define MDRT_TEMPLATE_PAIRS_ABI_VERSION 9
 #define MDRT_TEMPLATE_PAIR_HEADER_WORDS 48
 #define MDRT_TEMPLATE_PAIR_ROW_WORDS 4
 #define MDRT_TEMPLATE_PAIR_UNIT_WORDS 4
@@ -101,7 +101,10 @@ enum MdrtTemplateBuildFlag {
   TEMPLATE_BUILD_INDEX_OVERFLOW = 1, TEMPLATE_BUILD_CAPACITY_OVERFLOW = 2
 };
 /* A row is [class, first-unit begin, entry begin, entry count].
- * A work unit is [class, first-unit begin, entry begin, entry end].
+ * An inner work unit is [class, first-unit begin, entry begin, entry end];
+ * an outer one [class | slice << 2, first-unit begin, entry begin, row's
+ * entry end]: the slice-th chunk of 64 of its row's entries, which the
+ * prune compacts across the row's chunks (U10).
  * An entry is [partner unit, lattice-image code, first-unit mask, reserved].
  * The first-unit mask has 16 bits; the final first cluster can be partial.
  * Image components occupy ten bits each, x first, with offset 512. They

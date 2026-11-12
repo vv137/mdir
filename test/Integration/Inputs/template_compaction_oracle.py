@@ -28,6 +28,7 @@ offsets = [0]
 works = [0]
 rows = []
 units = []
+outer_units = []
 entries = []
 
 
@@ -41,6 +42,8 @@ for row, count in enumerate(counts):
     rows.extend([tag, first, offsets[-1], count])
     for begin in range(0, count, 64):
         units.extend([tag, first, offsets[-1] + begin, offsets[-1] + min(begin + 64, count)])
+        # The outer record names its chunk of the row and the row's end.
+        outer_units.extend([tag | (begin // 64) << 2, first, offsets[-1] + begin, offsets[-1] + count])
     for entry in range(count):
         entries.extend(record(row, entry))
     offsets.append(offsets[-1] + count)
@@ -52,7 +55,8 @@ for start, end in [(0, 2), (2, 4), (4, 6)]:
 lines = ['md.particle_set @atoms', '!list = !mdrt.segmented_pairs<@atoms>']
 members = [[3 * w, 3 * w + 1, 3 * w + 2, 51 + w] for w in range(17)]
 lines.append('memref.global "private" constant @water : memref<17x4xi32> = dense<' + str(members) + '>')
-expected = {'rows': rows, 'units': units, 'entries': entries, 'counts': counts,
+expected = {'rows': rows, 'units': units, 'outer_units': outer_units,
+            'entries': entries, 'counts': counts,
             'offsets': offsets, 'works': works,
             'work_counts': [(n + 63) // 64 for n in counts], 'ranges': ranges}
 total = sum(counts) + ((1 << 31) - 1 if index_overflow else 0)
@@ -210,7 +214,7 @@ if not overflow and not index_overflow:
     lines.append('  func.call @compact_seed(%list) : (!list) -> ()')
 good = emit('arith.constant true')
 checks = [(5, 'rows', False, 0), (6, 'rows', False, 0),
-          (7, 'units', True, 0), (8, 'units', True, 0),
+          (7, 'outer_units', True, 0), (8, 'units', True, 0),
           (9, 'entries', True, 0), (10, 'entries', True, 0),
           (13, 'counts', False, 0), (14, 'offsets', False, 0),
           (15, 'work_counts', False, 0), (16, 'works', False, 0),

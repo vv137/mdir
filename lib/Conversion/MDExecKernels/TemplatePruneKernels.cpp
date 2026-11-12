@@ -30,7 +30,10 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
   auto index = [&](OpBuilder &at, Value x) -> Value {
     return arith::IndexCastUIOp::create(at, loc, at.getIndexType(), x);
   };
-  Value tag = read(b, v.outerUnits, work, 0);
+  // An outer record is [class | slice << 2, first, slice begin, row end]:
+  // the slice-th chunk of 64 entries of its row (U10).
+  Value packed = read(b, v.outerUnits, work, 0);
+  Value tag = arith::AndIOp::create(b, loc, packed, word(b, 3));
   Value ww = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, tag, word(b, 0));
   Value ss = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, tag, word(b, 2));
   Value active = arith::SelectOp::create(b, loc, ww, v.waterActive,
@@ -41,7 +44,10 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
     Value firstLength = index(at, memref::LoadOp::create(at, loc, v.groupLengths,
         ValueRange{index(at, firstBegin)}));
     Value beginWord = read(at, v.outerUnits, work, 2);
-    Value begin = index(at, beginWord);
+    Value low = arith::MulIOp::create(at, loc,
+        index(at, arith::ShRUIOp::create(at, loc, packed, word(at, 2))), ix(at, 64));
+    Value high = arith::AddIOp::create(at, loc, low, ix(at, 64));
+    Value begin = arith::SubIOp::create(at, loc, index(at, beginWord), low);
     Value end = index(at, read(at, v.outerUnits, work, 3));
     auto f32 = at.getF32Type();
     auto vec3 = VectorType::get({3}, f32);
@@ -101,11 +107,24 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
     Value firstPoint = ownPoint.getResult(0);
     Value firstValid = emitWarpBallot(at, loc, ownValid);
     Value firstMagnitude = emitWarpReduce(at, loc, largest(at, firstPoint), Combiner::Max);
+    // The row's surviving entries are compacted from the row's first entry
+    // and taken 64 a record: this record's warp tests the row's entries
+    // from its first until 64 times (slice + 1) survive, and writes those
+    // whose rank falls in its own slice. Each warp writes only its slice,
+    // so no record waits for another's prune; a row's first records hold
+    // full batches and its last ones may be empty.
     // Batches are warp uniform. A lane past the end tests the first entry
-    // of the record and discards it, so that every lane reaches the shuffles.
-    auto batches = scf::ForOp::create(at, loc, begin, end, ix(at, 32),
-        ValueRange{ix(at, 0)},
-        [&](OpBuilder &in, Location, Value batch, ValueRange keptBefore) {
+    // of the row and discards it, so that every lane reaches the shuffles.
+    auto batches = scf::WhileOp::create(at, loc, TypeRange{at.getIndexType(), at.getIndexType()},
+        ValueRange{begin, ix(at, 0)},
+        [&](OpBuilder &test, Location, ValueRange state) {
+      Value more = arith::AndIOp::create(test, loc,
+          arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ult, state[0], end),
+          arith::CmpIOp::create(test, loc, arith::CmpIPredicate::ult, state[1], high));
+      scf::ConditionOp::create(test, loc, more, state);
+    }, [&](OpBuilder &in, Location, ValueRange state) {
+      Value batch = state[0];
+      ValueRange keptBefore = state.drop_front();
       Value entry = arith::AddIOp::create(in, loc, batch, index(in, lane));
       Value present = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, entry, end);
       Value safe = arith::SelectOp::create(in, loc, present, entry, begin);
@@ -157,21 +176,26 @@ void mdir::kernels::emitPruneTemplateWork(OpBuilder &b, Location loc,
       Value ballot = emitWarpBallot(in, loc, keep);
       Value rank = index(in, emitWarpRank(in, loc, ballot, emitLanesBelow(in, loc, lane)));
       Value count = index(in, emitWarpCount(in, loc, ballot));
-      scf::IfOp::create(in, loc, keep, [&](OpBuilder &write, Location) {
-        Value destination = arith::AddIOp::create(write, loc, begin,
-            arith::AddIOp::create(write, loc, keptBefore[0], rank));
+      Value ranked = arith::AddIOp::create(in, loc, keptBefore[0], rank);
+      Value mine = arith::AndIOp::create(in, loc, keep, arith::AndIOp::create(in, loc,
+          arith::CmpIOp::create(in, loc, arith::CmpIPredicate::uge, ranked, low),
+          arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ult, ranked, high)));
+      scf::IfOp::create(in, loc, mine, [&](OpBuilder &write, Location) {
+        Value destination = arith::AddIOp::create(write, loc, begin, ranked);
         for (int col = 0; col != 4; ++col)
           memref::StoreOp::create(write, loc, fields[col], v.innerEntries,
               ValueRange{address(write, destination, col)});
         scf::YieldOp::create(write, loc);
       });
-      scf::YieldOp::create(in, loc,
-          ValueRange{arith::AddIOp::create(in, loc, keptBefore[0], count)});
+      scf::YieldOp::create(in, loc, ValueRange{arith::AddIOp::create(in, loc, batch, ix(in, 32)),
+          arith::AddIOp::create(in, loc, keptBefore[0], count)});
     });
     Value leader = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq, lane, word(at, 0));
     scf::IfOp::create(at, loc, leader, [&](OpBuilder &write, Location) {
+      Value kept = arith::MinUIOp::create(write, loc, high,
+          arith::MaxUIOp::create(write, loc, low, batches.getResult(1)));
       Value endWord = arith::IndexCastUIOp::create(write, loc, write.getI32Type(),
-          arith::AddIOp::create(write, loc, begin, batches.getResult(0)));
+          arith::AddIOp::create(write, loc, begin, kept));
       Value fields[] = {tag, firstBegin, beginWord, endWord};
       for (int col = 0; col != 4; ++col)
         memref::StoreOp::create(write, loc, fields[col], v.innerUnits,

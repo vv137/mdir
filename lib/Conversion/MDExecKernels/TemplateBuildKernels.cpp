@@ -141,10 +141,17 @@ void mdir::kernels::emitCompactTemplatePairs(OpBuilder &b, Location loc,
       Value leader = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq, lane, ix(in, 0));
       scf::IfOp::create(in, loc, leader, [&](OpBuilder &first, Location) {
         Value work = add(first, index(first, load(first, v.workOffsets, row)), ordinal);
-        Value fields[] = {word(first, classify(first, row)), word(first, firstPlace(first, row)),
+        // The outer record names its slice of the row and the row's end,
+        // which the prune re-chunks; the inner one its own entries.
+        Value tag = classify(first, row);
+        Value rowEnd = add(first, index(first, load(first, v.entryOffsets, row)),
+                           index(first, load(first, v.counts, row)));
+        Value fields[] = {word(first, tag), word(first, firstPlace(first, row)),
                          word(first, destination), word(first, add(first, destination, count))};
+        Value outer[] = {word(first, add(first, tag, mul(first, ordinal, 4))), fields[1],
+                         fields[2], word(first, rowEnd)};
         for (unsigned column = 0; column != 4; ++column) {
-          recordStore(first, v.outerUnits, work, column, fields[column]);
+          recordStore(first, v.outerUnits, work, column, outer[column]);
           recordStore(first, v.innerUnits, work, column, fields[column]);
         }
         scf::YieldOp::create(first, loc);
