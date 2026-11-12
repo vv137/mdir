@@ -35,17 +35,23 @@ struct TestExecTemplateWindows
     module.walk([&](mdir::md_exec::TemplateForOp op) { windows.push_back(op); });
     llvm::SetVector<Operation *> sources;
     for (auto op : windows) {
+      // One class is active: WW, or, for forces alone, SW or SS, whose
+      // function returns the untransposed site forces.
+      unsigned active = llvm::count_if(op.getPairs(), [](int32_t n) { return n != 0; });
+      unsigned tag = op.getPairs().size() == 3 && op.getPairs()[0] ? 0
+          : op.getPairs().size() == 3 && op.getPairs()[1] ? 1 : 2;
       if (op.getOuts().size() + op.getReduce().size() != 1 ||
-          op.getPairs().size() != 3 || !op.getPairs()[0] ||
-          op.getPairs()[1] || op.getPairs()[2]) {
-        op.emitError("test outliner expects one active WW output per loop");
+          op.getPairs().size() != 3 || active != 1 ||
+          (tag != 0 && op.getOuts().empty())) {
+        op.emitError("test outliner expects one active WW output, or SW or SS forces, per loop");
         return signalPassFailure();
       }
       sources.insert(op->getParentOfType<func::FuncOp>());
-      Block &body = op.getWater().front();
+      Block &body = op->getRegion(tag).front();
       bool forces = !op.getOuts().empty();
       bool tensor = !forces && isa<VectorType>(op.getReduce()[0].getType());
-      StringRef name = forces ? "window_forces" : tensor ? "window_virial" : "window_energy";
+      StringRef name = tag == 1 ? "window_forces_mixed" : tag == 2 ? "window_forces_atoms"
+          : forces ? "window_forces" : tensor ? "window_virial" : "window_energy";
       SmallVector<Type> inputs(body.getArgumentTypes()), outputs;
       llvm::SetVector<Value> captures;
       body.walk([&](Operation *inner) {
@@ -54,7 +60,8 @@ struct TestExecTemplateWindows
       });
       for (Value value : captures) inputs.push_back(value.getType());
       if (forces)
-        outputs.assign(6, mdir::md_exec::getKernelValueType(op.getOuts()[0].getType()));
+        outputs.assign(tag == 0 ? 6 : tag == 1 ? 4 : 2,
+                       mdir::md_exec::getKernelValueType(op.getOuts()[0].getType()));
       else
         outputs.push_back(op.getReduce()[0].getType());
       FunctionType type = FunctionType::get(module.getContext(), inputs, outputs);
@@ -74,7 +81,7 @@ struct TestExecTemplateWindows
       unsigned index = 0;
       for (Value value : body.getArguments()) mapping.map(value, entry->getArgument(index++));
       for (Value value : captures) mapping.map(value, entry->getArgument(index++));
-      if (cacheSites) {
+      if (cacheSites && tag == 0) {
         auto vector = cast<VectorType>(entry->getArgument(1).getType());
         Value weight = arith::ConstantOp::create(builder, op.getLoc(),
             DenseElementsAttr::get(vector, FloatAttr::get(vector.getElementType(),
@@ -88,7 +95,17 @@ struct TestExecTemplateWindows
         function->setAttr("test.cached_sites", builder.getI32IntegerAttr(bound));
       }
       auto contribution = mdir::kernels::emitTemplateWindowContributions(
-          builder, op.getLoc(), op, 0, mapping);
+          builder, op.getLoc(), op, tag, mapping);
+      if (tag != 0) {
+        SmallVector<Value> values(contribution.firstForces.begin(), contribution.firstForces.end());
+        llvm::append_range(values, contribution.secondForces);
+        if (values.size() != outputs.size()) {
+          op.emitError("test outliner expects SW or SS forces without formed sites");
+          return signalPassFailure();
+        }
+        func::ReturnOp::create(builder, op.getLoc(), values);
+        continue;
+      }
       auto values = mdir::md::emitTemplateForceTranspose(builder, op.getLoc(),
           contribution.firstForces, op.getAlpha().convertToDouble());
       llvm::append_range(values, mdir::md::emitTemplateForceTranspose(builder,
