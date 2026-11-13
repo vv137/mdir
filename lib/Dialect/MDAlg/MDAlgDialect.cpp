@@ -571,7 +571,32 @@ bool BinMembersOp::combinesExactly() {
                       isIntegerCombiner);
 }
 
+/// The buffer that `v` views, through the views whose elements are those
+/// of their source (as the collection analysis follows them).
+static Value viewedRoot(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (!isa<memref::MemorySpaceCastOp, memref::CastOp, memref::SubViewOp,
+             memref::ReinterpretCastOp>(def))
+      break;
+    v = def->getOperand(0);
+  }
+  return v;
+}
+
 LogicalResult BinMembersOp::verify() {
+  // A side output that is, or views, a buffer the op reads, or another side
+  // output, would let one item see what another wrote.
+  SmallVector<Value> roots = {viewedRoot(getStart()), viewedRoot(getItems())};
+  if (Value by = getBy())
+    roots.push_back(viewedRoot(by));
+  for (Value side : llvm::concat<Value>(getWrites(), getAdds())) {
+    Value root = viewedRoot(side);
+    if (llvm::is_contained(roots, root))
+      return emitOpError() << "declares as a side output a buffer that it "
+                              "reads, or another side output, or a view of "
+                              "one";
+    roots.push_back(root);
+  }
   if (getBy() && getVisit() == Visit::Unordered)
     return emitOpError() << "visits by 'by' only in the order 'sorted' or "
                             "'stable'";

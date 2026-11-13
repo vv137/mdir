@@ -254,7 +254,12 @@ the region writes only:
   `sort_by_key` (D407).
 
 The region reads no buffer of `writes` or `adds`, and no buffer of the op
-(`start`, `items`, `by`). Under `unordered`, the combiners are integer
+(`start`, `items`, `by`): it uses a side output only as the target of an
+admitted write, so a view of one made in the region is refused. A side
+output may not be, or view, a buffer that the op reads or another side
+output. The verifier follows the same views as the analysis to compare
+them. `sort_by_key` compares the values alone, so a view of one of its
+buffers passes as a side output (#871, outside this step). Under `unordered`, the combiners are integer
 combiners, which are exact, commutative, and associative. The verifier
 refuses anything else, with one case for each refusal in
 `test/Dialect/MDAlg/members-invalid.mlir`. The checks of the side outputs

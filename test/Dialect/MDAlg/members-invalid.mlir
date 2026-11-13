@@ -201,3 +201,62 @@ func.func @other_write(%s: !d, %o: !d, %x: !d, %y: !d, %a: index, %b: index) {
   }
   return
 }
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func @side_output_is_items(%s: !d, %o: !d, %a: index, %b: index) {
+  // expected-error @+1 {{declares as a side output a buffer that it reads, or another side output, or a view of one}}
+  md_alg.bin_members %s[%a, %b] items %o visit unordered writes(%o : !d)
+      : !d, !d {
+  ^bb0(%item: index):
+    md_alg.yield
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func @side_output_views_items(%s: !d, %o: !d, %a: index, %b: index) {
+  %view = memref.memory_space_cast %o : !d to memref<?xi32>
+  // expected-error @+1 {{declares as a side output a buffer that it reads, or another side output, or a view of one}}
+  md_alg.bin_members %s[%a, %b] items %o visit unordered
+      writes(%view : memref<?xi32>) : !d, !d {
+  ^bb0(%item: index):
+    %v = arith.index_cast %item : index to i32
+    memref.store %v, %view[%item] : memref<?xi32>
+    md_alg.yield
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func @two_side_outputs(%s: !d, %o: !d, %m: !d, %a: index, %b: index) {
+  // expected-error @+1 {{declares as a side output a buffer that it reads, or another side output, or a view of one}}
+  md_alg.bin_members %s[%a, %b] items %o visit unordered writes(%m : !d)
+      adds(%m : !d) : !d, !d {
+  ^bb0(%item: index):
+    md_alg.yield
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func @view_of_side_output(%s: !d, %o: !d, %m: !d, %a: index,
+                               %b: index) {
+  md_alg.bin_members %s[%a, %b] items %o visit unordered writes(%m : !d)
+      : !d, !d {
+  ^bb0(%item: index):
+    // expected-error @+1 {{reads a side output of the region of 'md_alg.bin_members', which another item may have written}}
+    %view = memref.cast %m : !d to !d
+    %c0 = arith.constant 0 : index
+    %v = memref.load %view[%c0] : !d
+    md_alg.yield
+  }
+  return
+}
