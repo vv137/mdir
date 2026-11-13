@@ -382,17 +382,17 @@ sanitizer tier was not run.
 
 ## Lines
 
-The code, without the tests and the documents, gained 1,359 lines and
-lost 69:
+The code, without the tests and the documents, gained 1,395 lines and
+lost 74:
 
 - the analysis (`CollectionAnalysis.h`, 188; `CollectionAnalysis.cpp`,
   715);
-- `bin_members`: its definition (`MDAlgOps.td`, 115), and its verifier
-  with the side-output checks shared with `sort_by_key`
-  (`MDAlgDialect.cpp`, +232 −69 in total);
+- `bin_members`: its definition and the dialect's description
+  (`MDAlgOps.td`), and its verifier with the side-output checks shared
+  with `sort_by_key` (`MDAlgDialect.cpp`, +195 −62);
 - the expansion of `bin_members` in both lowerings, the option, and the
   slot pass's query (`MDAlgLowering.cpp`, `Passes.td`,
   `MDAlgLowering.h`);
 - the test pass (38).
 
-The tests gained about 1,100 lines.
+The tests gained 1,147 lines.
