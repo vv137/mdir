@@ -98,6 +98,70 @@ The order of the steps:
    stages;
 5. the policy pass, and SIMD and dataflow lowerings.
 
-## Validation
+## Verifiers, lowerings, and their tests
 
-*(filled in with the results)*
+The verifiers replace the hand checks of `ExpandPrimitives.cpp` (the nine
+kinds of `hasKind`, the counts of operands and results of the 22 names,
+and the element type of a grid gather's result) with the types of the
+ops and these rules, each with a case in `test/Dialect/MDAlg/invalid.mlir`:
+every buffer a 1-D memref of i32 (the grid of f32 or f64); a scan's
+strategy, scratch, and launch together, the scratch i64 for `single_pass`
+and i32 otherwise, three launch values or five for `chunked`, which
+requires the cursor; a scatter's zero or three launch values, its output
+not its keys or its cursor; a sort's strategy and launch together,
+`insertion` without `into` or keys, `stable_rank` with both and without
+`by`, keys only with `into`, `into` not its items, offsets, or order;
+`signed` only on an i32 `wrap`; a grid read's coordinates of one type and
+its result the grid's element type. The SIMT lowering refuses a
+collection op without execution parameters
+(`test/Conversion/MDAlg/simt-invalid.mlir`).
+
+The serial lowering is written apart from the emitters: the scan in one
+loop, the scatter in the order of the items, the sort by exchanges with
+the item before. `test/Integration/md-alg-contract-gpu.test` lowers one
+program of cases both ways, runs the serial one on the host and the SIMT
+one on a device, and compares the outputs by the contracts above; the
+cases are random (a fixed linear congruential generator) and at the
+boundaries: no items, one, 255, 257, 1,023, 1,024, 1,025, 5,000, and
+131,083 counts (129 tiles of the single-pass scan), counts whose sum wraps
+past $2^{31}$, keys without a bin, every key a bin, all 3,000 items in one
+bin, 1,025 items in 1,000 bins, 129 in 129, and ties in the order of an
+insertion sort. Every buffer an op writes has elements past those it may
+write, which must keep their mark. `test/Integration/md-alg-serial.test`
+checks the serial run on the CPU against values written out.
+
+The tests fail on realistic breaks. With the serial scan made inclusive
+(the sum after each count in place of the one before), 56 of the 144
+output lines of the contract test differ and the values of the serial test
+fail; with the scatter's slot taken one past the cursor's old value, 24
+lines differ (the serial test, which does not run the emitters, passes);
+with the serial sort exchanging equal items (unstable), 5 lines differ,
+those of the sorts with ties, and the serial test fails.
+
+## The same programs
+
+Against the base commit, `mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never` (the PTX of every kernel and the
+host's code) and the module after `convert-md-exec-to-gpu` in the generic
+form are byte-identical on 60 programs: the nine systems of the Amber
+suite, JAC NVE with the matrix, the rhombic dodecahedron of
+`test/Driver/triclinic.test` with the matrix, with the groups, and with
+the groups and a dual list, and the prolate kernel of PME (`[pme] kernel
+= "PROLATE"`, the only input that selects its template) on the three OPC
+waters of `prolate.test` and on the dodecahedron; each in mixed and double
+precision, with the three-launch scan and with `single-pass-group-scan=true`
+(set through `MDIR_PIPELINE`). Two captures of the base gave the same
+bytes. No constant moved: each op is lowered by the emitter its call was
+expanded by, where the call stood.
+
+## Lines
+
+The code (without the templates, the tests, and the documents) gained
+1,012 lines and lost 524: the dialect (`MDAlgOps.td`, 365, most of it the
+ops' descriptions; `MDAlgDialect.cpp`, 105, the verifiers) and its two
+lowerings (`MDAlgLowering.cpp`, 337, of which about 150 the serial
+definitions) replace `ExpandPrimitives.cpp` (370) and the declarations of
+the groups build (31 lines net in `GroupsBuild.cpp`). The templates lost
+the declarations of 20 named primitives (10 in the matrix template, 4 in
+each Gaussian PME template, 2 in the prolate one) and their calls.

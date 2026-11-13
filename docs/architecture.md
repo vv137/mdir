@@ -16,7 +16,7 @@ sections there.
 
 | Section of revision 5 | Now |
 |---|---|
-| Status | [overview.md](overview.md), Sections 1 and 2.2: `md`, `dyn`, `md_exec`, `mdrt`, and `md_dist` are built; `md_dist` is not yet taken by a run |
+| Status | [overview.md](overview.md), Sections 1 and 2.2: `md`, `dyn`, `md_exec`, `mdrt`, `md_dist`, and `md_alg` are built; `md_dist` is not yet taken by a run |
 | 1. Goal, and the table of components | [overview.md](overview.md), Section 1, and the table of dialects in Section 2.2 |
 | 2. A graph and a pipeline | The pipeline: [overview.md](overview.md), Section 2.1. `md_dist` and `md_exec` as peers (A8): [distributed-ml2.md](distributed-ml2.md) |
 | 3. Compilation model | [overview.md](overview.md), Section 2.4 (what is fixed at compilation and what is an argument), from P1, D227, and [driver.md](driver.md), Section 2.5; the cache of compiled code: [compile-cache.md](compile-cache.md) |
