@@ -245,7 +245,7 @@ def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
 }
 
 //===----------------------------------------------------------------------===//
-// Stages (D[md-alg-stages], #864)
+// Stages (D407, #864)
 //===----------------------------------------------------------------------===//
 
 def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [

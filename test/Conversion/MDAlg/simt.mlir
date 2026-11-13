@@ -183,7 +183,7 @@ func.func @grid_prolate(%grid: memref<?xf64, 1>, %base: i32,
   return %value : f64
 }
 
-// The stage ops (D[md-alg-stages]).
+// The stage ops (D407).
 //
 // A counting sort by a key region: the kernel of the keys, a thread an
 // item, with the region's code where its item is below n, each bin a store

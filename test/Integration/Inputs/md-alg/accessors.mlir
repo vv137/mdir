@@ -1,5 +1,5 @@
 // The accessors of md_alg (D406), the grid plan, and the readers of bins
-// (D[md-alg-stages]) by
+// (D407) by
 // themselves, on the host (convert-md-alg-to-scf): their code is that of
 // their emitters in both lowerings, so these values, written out in
 // md-alg-accessors.test, are their test.
@@ -234,7 +234,7 @@ func.func @plans() {
   return
 }
 
-// The readers of the bins of a counting sort (D[md-alg-stages]): start
+// The readers of the bins of a counting sort (D407): start
 // (0, 2, 2, 5, 9) of four bins and the order (7, 3, 4, 0, 6, 1, 8, 2, 5);
 // the run of bins [1, 3) begins at 2 and ends at 5, the run [0, 4) at 0
 // and 9; the items at places 2 and 8 are 4 and 5.

@@ -1,4 +1,4 @@
-// The helpers of the contract tests of md_alg (D406, D[md-alg-stages]),
+// The helpers of the contract tests of md_alg (D406, D407),
 // on the host: the printers, buffers filled or random, the histogram, the
 // exclusive sums, the canonical form of a scatter, and the output of a
 // buffer (its length, a hash of its elements, and the elements where there

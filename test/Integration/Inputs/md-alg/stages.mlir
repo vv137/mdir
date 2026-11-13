@@ -1,5 +1,5 @@
 // The cases of the contract test of the stage ops of md_alg
-// (D[md-alg-stages]), after helpers.mlir and a driver of appends
+// (D407), after helpers.mlir and a driver of appends
 // (append-host.mlir or append-device.mlir), whose prelude (host.mlir or
 // device.mlir) defines `!buf`, `!wide`, `@alloc`, `@alloc_wide`,
 // `@upload`, and `@download`. md-alg-stages-contract-gpu.test runs both

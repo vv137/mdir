@@ -1,5 +1,5 @@
 // The warp helpers of CompactionEmitter.h, each by itself
-// (test-md-alg-warp-helpers, D[md-alg-stages]), in one warp of a device:
+// (test-md-alg-warp-helpers, D407), in one warp of a device:
 // for each lane l, the mask of the lanes below it; the ballot of the lanes
 // with l mod 3 = 0, the rank of each among them, and their count; the
 // inclusive scan of l + 1 over 32 lanes and over segments of 16 (the

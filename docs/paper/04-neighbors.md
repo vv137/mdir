@@ -639,7 +639,7 @@ many times over, and a compression to 0.8 of the volume. The structure
 therefore starts with one block a group, and its first build sizes the
 pool: $B_0 + \lfloor B_0/4\rfloor$ for the $B_0$ blocks that the
 configuration at the start takes. The append of a round states the
-contract that makes this count possible (D[md-alg-stages]): the pool's
+contract that makes this count possible (D407): the pool's
 counter afterwards holds every block that the appends began, below the
 capacity or not, so that it is $B$ itself even when the pool is too small;
 a block past the capacity is neither named nor written, and the lists are
@@ -800,7 +800,7 @@ Section 4); the templates and the groups build state the scans, the
 scatters, and the sorts within bins as typed ops of a dialect of collection
 algorithms, `md_alg`, which those emitters lower (D406), and the counting
 sorts, the plans of the grids, and the append of the entries as its stage
-ops (D[md-alg-stages]). (The outer list's blocks come from an atomic pool, and the loop
+ops (D407). (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
 before; the deterministic mode does not use groups.) A loop over pairs
 that follows the refresh at the same positions, in f32, takes the frames

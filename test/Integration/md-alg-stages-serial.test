@@ -1,5 +1,5 @@
 # The serial definitions of the stage ops of md_alg (convert-md-alg-to-scf,
-# D[md-alg-stages]) on the host, on the cases of Inputs/md-alg/stages.mlir:
+# D407) on the host, on the cases of Inputs/md-alg/stages.mlir:
 # the values of the small cases, written out here.
 # md-alg-stages-contract-gpu.test compares the whole output with that of the
 # SIMT lowering on a device.

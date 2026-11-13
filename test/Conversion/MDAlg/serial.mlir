@@ -58,7 +58,7 @@ func.func @sort_into(%start: !d, %items: !d, %out: !d, %keys: !d, %n: index,
   return
 }
 
-// The stage ops (D[md-alg-stages]): the counting sort a loop over the
+// The stage ops (D407): the counting sort a loop over the
 // items running the key region (each bin a store of its key and an
 // increment of its count), then the scan, the scatter, and the sort as
 // above; the append the item's own: the block taken from the pool where

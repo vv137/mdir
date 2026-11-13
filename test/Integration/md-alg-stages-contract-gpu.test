@@ -1,4 +1,4 @@
-# The contract test of the stage ops of md_alg (D[md-alg-stages]): the
+# The contract test of the stage ops of md_alg (D407): the
 # cases of Inputs/md-alg/stages.mlir run once by the serial definitions on
 # the host (convert-md-alg-to-scf) and once by the SIMT lowering on a device
 # (convert-md-alg-to-gpu), and the outputs compared by each op's contract.

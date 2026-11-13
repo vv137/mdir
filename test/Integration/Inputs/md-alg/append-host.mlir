@@ -1,5 +1,5 @@
 // The driver of the appends of stages.mlir on the host, for the serial
-// definition (D[md-alg-stages]): list after list, round after round, each
+// definition (D407): list after list, round after round, each
 // item of a round's 32 by itself, in order. The append takes no lanes.
 
 func.func @append_lists(%keep: !buf, %vals: !buf, %lists: index,

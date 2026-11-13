@@ -56,7 +56,7 @@ func.func @accessors(%rows: !d, %i: index, %e: index, %k: index,
   return %count, %v, %w, %p, %q : index, i32, i32, f32, f32
 }
 
-// The stage ops (D[md-alg-stages]): a counting sort by a key region that
+// The stage ops (D407): a counting sort by a key region that
 // writes a slot of its item and adds to a counter, one by keys given, one
 // unordered (no sort within its bins), the readers of the bins, an append,
 // and the grid plans by a width and by an occupancy.

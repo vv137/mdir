@@ -161,7 +161,7 @@ f32:
    grid. A count of each key, a scan, and a scatter put the particles in the
    order of the keys; each key's particles are then sorted by their number,
    so the order does not depend on the threads: one `md_alg.sort_by_key`
-   (D[md-alg-stages]), whose key region also writes each particle's wrapped
+   (D407), whose key region also writes each particle's wrapped
    position (a slot of the particle) and counts the positions that have no
    key (an addition to a counter, D107). The places by cell of the grid of
    the candidates are a second one. The column and candidate grids are
@@ -347,7 +347,7 @@ from one pool as it fills them: in a round, lane 0 takes from the pool's
 counter, with one atomic addition, the block that the round begins and the
 next one if the round runs into it, at most two, and names them in `units`
 and `ordinals`. A block beyond the pool is counted but not written
-(Section 8.1). The round is one `md_alg.append` (D[md-alg-stages]), whose
+(Section 8.1). The round is one `md_alg.append` (D407), whose
 contract is this: the counter holds the full demand, the list's count
 every entry, and nothing at or past the capacity is written.
 

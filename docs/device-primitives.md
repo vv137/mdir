@@ -671,7 +671,7 @@ key is computed), a scan of the counts, the scatter, and an order within
 each bin, since the order of the atomics is not fixed: the insertion sort
 for bins of a few items, the rank for bins of many (#231) and for the
 partitions to come (#38, with the ghost flag in the key). It is the op
-`md_alg.sort_by_key` (D[md-alg-stages]), whose key a region computes
+`md_alg.sort_by_key` (D407), whose key a region computes
 (Section 4.2).
 
 ### 4.2 How the sites call them
@@ -750,7 +750,7 @@ The block scan, which no site called by name, is an emitter inside the
 device scans. The 22 names of D296, D314, and D325 became 7 ops, the upstream
 ops and typed calls of the warp, and the one unnamed emitter.
 
-The stage ops (D[md-alg-stages], #864) have verifiers of their own,
+The stage ops (D407, #864) have verifiers of their own,
 listed in the decision: a counting sort's execution group whole, its sort
 within the bins present exactly under `order stable`, its key region one
 block whose every path assigns one bin, and whose every write is a slot of
@@ -817,7 +817,7 @@ emitters of Section 5 (D301).
   With `-Dsanitize=1` the device run is under memcheck and racecheck.
   `md-alg-serial.test` runs the serial definitions on the CPU against
   values written out.
-- `Integration/md-alg-stages-contract-gpu.test` (D[md-alg-stages]) does
+- `Integration/md-alg-stages-contract-gpu.test` (D407) does
   the same for the stage ops on the cases of
   `Integration/Inputs/md-alg/stages.mlir`: counting sorts by a key region
   (of i32 and index bins, with a slot of each item and an addition to a
@@ -898,7 +898,7 @@ mixed and double precision, with the three-launch scan and with
 moved: each op is lowered by the emitter its call was expanded by, at the
 same place.
 
-The move of the hand-written stages to the stage ops (D[md-alg-stages])
+The move of the hand-written stages to the stage ops (D407)
 left the 16 programs of those 60 with the matrix or the prolate kernel
 byte-identical, the spatial order, the ragged rows, and the count of cells
 among them. The 44 with the groups keep every kernel but one: the images
@@ -908,7 +908,7 @@ fewer, the same registers and number of SASS instructions), and their
 host's code allocates the scratch of a sort's scan before its key kernel
 and frees it after its sort, since the op takes the scratch as an operand.
 The maintainer accepted both on 2026-11-13, without a timing (the
-decision, D[md-alg-stages]; #865).
+decision, D407; #865).
 
 ### 4.6 Measured effect
 

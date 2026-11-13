@@ -1,5 +1,5 @@
 # The warp helpers of CompactionEmitter.h (D406) each by itself on a device
-# (test-md-alg-warp-helpers, D[md-alg-stages]): since D406 they have no
+# (test-md-alg-warp-helpers, D407): since D406 they have no
 # name in the IR, and the review of #862 asked for their own test. The
 # values, for lanes 0 to 31 and a mark past them, are worked out by hand.
 #

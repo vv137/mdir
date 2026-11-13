@@ -32,7 +32,7 @@ func.func @sort(%start: !d, %items: !d, %n: index) {
 
 // -----
 
-// The stage ops (D[md-alg-stages]): a sort without its execution group,
+// The stage ops (D407): a sort without its execution group,
 // an append without its lane, and an append whose blocks are shorter than
 // a warp's batch, which could begin more than two of them.
 !d = memref<?xi32, 1>

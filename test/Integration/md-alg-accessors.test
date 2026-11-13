@@ -1,6 +1,6 @@
 # The accessors of md_alg (D406: md_alg.ragged_row, md_alg.ragged_entry,
 # md_alg.wrap, md_alg.grid_read), the grid plan, and the readers of bins
-# (md_alg.bin_span, md_alg.bin_item; D[md-alg-stages]) by
+# (md_alg.bin_span, md_alg.bin_item; D407) by
 # themselves, on the host. Both lowerings take the code of their emitters,
 # so a contract test of one against the other could not fail (review of
 # #862); these are their values, worked out by hand from the formats of

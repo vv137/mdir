@@ -621,7 +621,7 @@ strategy, the scratch, the launch geometry) are a separate part of the op,
 which the target's policy is to fill; a CPU vector lowering or another
 device then adds a lowering, not a new op. Warp-level operations remain
 upstream `gpu` operations inside the GPU lowering. The first stages of the
-neighbor builds are ops as well (D[md-alg-stages], #864): the plan of a
+neighbor builds are ops as well (D407, #864): the plan of a
 grid, a counting sort whose key a region computes, with side outputs that
 are a slot of each item or an addition to a counter (so that the order of
 the items cannot change them) and an order within the bins that is a

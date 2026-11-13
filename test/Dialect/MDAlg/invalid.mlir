@@ -211,7 +211,7 @@ func.func @sort_launch(%start: !d, %items: !d, %n: index) {
   return
 }
 
-// The stage ops (D[md-alg-stages]): one case for each rule.
+// The stage ops (D407): one case for each rule.
 
 // -----
 

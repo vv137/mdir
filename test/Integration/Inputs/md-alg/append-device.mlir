@@ -1,5 +1,5 @@
 // The driver of the appends of stages.mlir on a device, for the SIMT
-// lowering (D[md-alg-stages]): a block of one warp for each list, all
+// lowering (D407): a block of one warp for each list, all
 // lists at once, which append round after round, the lanes of a round
 // together, each with its lane and the mask of the lanes below it.
 

@@ -3,7 +3,7 @@
 // helper by itself: since D406 the helpers have no name in the IR (the
 // groups build calls them in C++, the matrix template writes the upstream
 // ops), and the review of #862 asked for their own tests
-// (D[md-alg-stages]).
+// (D407).
 //
 //   @test.lanes_below(lane: i32) -> i32           emitLanesBelow
 //   @test.warp_ballot(predicate: i1) -> i32       emitWarpBallot
