@@ -1,4 +1,4 @@
-# The generator of the segments of rigid kinds (D[kind-pairs]): what it
+# The generator of the segments of rigid kinds (D405): what it
 # writes, and what it refuses.
 #
 # RUN: rm -rf %t && mkdir -p %t/opc %t/mixture %t/incomplete %t/outside
@@ -64,7 +64,7 @@
 #
 # The enabling condition: at most two kinds; the ops would take three.
 # RUN: mdir-kind-pairs-test refuse %t/mixture/run.toml 1,2,3 0.1,0.1,0.1 | FileCheck %s --check-prefix=THREE
-# THREE: refused: the pair segments take at most 2 kinds of rigid groups (D[kind-pairs]), not 3
+# THREE: refused: the pair segments take at most 2 kinds of rigid groups (D405), not 3
 #
 # A taken kind holds whole molecules: all their own pairs excluded, and no
 # exclusion with another particle (D403's facts).

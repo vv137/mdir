@@ -278,7 +278,7 @@ def MD_KindPairsOp : MD_Op<"kind_pairs", [
   ]> {
   let summary = "Divides the pairs of rigid kinds and the rest into segments";
   let description = [{
-    Rule R3 (D[kind-pairs]). The operands `kinds` are $K$ rigid kinds of
+    Rule R3 (D405). The operands `kinds` are $K$ rigid kinds of
     D403, numbered $0, \dots, K-1$ in operand order, each the disjoint
     ordered tuples of its copies' particles in place order, described by
     the `#md.rigid_kind` of the same position in `descriptors`. The rest,

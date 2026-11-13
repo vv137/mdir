@@ -1,5 +1,5 @@
 """Three nearby waters from the tracked TIP3P fixture, centered in 4 nm, and
-two charged ions (D[kind-pairs]; the fixture of #795).
+two charged ions (D405; the fixture of #795).
 
 The parameters and coordinates come from Inputs/triclinic. Retain whole
 molecules, no velocities, and plain-cutoff interactions for the pair oracle.

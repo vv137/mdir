@@ -1,4 +1,4 @@
-// The generator of the segments of rigid kinds (D[kind-pairs]) on a real
+// The generator of the segments of rigid kinds (D405) on a real
 // system: the kinds of D403 from its topology, and the pair term's primary
 // kernels from the program that `mdir emit --stage=module` writes for it.
 //

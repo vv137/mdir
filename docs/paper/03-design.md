@@ -242,7 +242,7 @@ derivatives. Its sites are formed from the frame with the constant weights
 of their kind, $\mathbf x_s = \mathbf x_0 + \sum_{k\ge1} w_k(\mathbf x_k -
 \mathbf x_0)$, which the verifier proves of every displacement, and whose
 derivative moves the force on a site to the frame as $w_k\mathbf F_s$
-(D[kind-pairs]). No run reads the segments yet.
+(D405). No run reads the segments yet.
 
 A relation may also follow from the positions. Besides the pairs of a
 neighborhood, `md.triplets` derives from them the triplets centered on

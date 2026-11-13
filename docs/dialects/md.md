@@ -853,7 +853,7 @@ operation ::= `md.kind_pairs` $universe `,` `kinds` `(` $kinds `)` $descriptors
               `:` functional-type(operands, results)
 ```
 
-Rule R3 (D[kind-pairs]). The operands `kinds` are $K$ rigid kinds of
+Rule R3 (D405). The operands `kinds` are $K$ rigid kinds of
 D403, numbered $0, \dots, K-1$ in operand order, each the disjoint
 ordered tuples of its copies' particles in place order, described by
 the `#md.rigid_kind` of the same position in `descriptors`. The rest,
@@ -2233,7 +2233,7 @@ the order of `sites`, its weights over the atoms of `frame` in frame
 order (rule R2 of D403: they sum to 1). `extent` is the radius about
 the anchor that the consumer checks to cover every place of a copy.
 Charges and types are not part of the kind here: the segment bodies
-hold them as constants (D[kind-pairs]).
+hold them as constants (D405).
 
 #### Parameters:
 

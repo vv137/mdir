@@ -1,4 +1,4 @@
-// One generator of the site windows of every segment (D[kind-pairs]):
+// One generator of the site windows of every segment (D405):
 // the site pairs of a segment are derived from its kinds' per-site data,
 // and the site geometry stays straight-line arithmetic, visible to
 // differentiation and lowering.
@@ -24,7 +24,7 @@ mdir::driver::planKindPairs(const Topology &topology,
   };
   if (kinds.size() > MaxPairKinds)
     return refuse("the pair segments take at most " + llvm::Twine(MaxPairKinds) +
-                  " kinds of rigid groups (D[kind-pairs]), not " +
+                  " kinds of rigid groups (D405), not " +
                   llvm::Twine(kinds.size()));
   if (extents.size() != kinds.size())
     return refuse("expected one covering radius for each kind");
@@ -209,7 +209,7 @@ static Value buildSegment(OpBuilder &builder, const KindPairsPlan &plan,
   unsigned na = kindA ? kindA->getSize() : 1, nb = kindB ? kindB->getSize() : 1;
   for (unsigned p = 0; p != na; ++p)
     for (unsigned q = 0; q != nb; ++q) {
-      // The rule of D[kind-pairs]: a site pair is taken when the product
+      // The rule of D405: a site pair is taken when the product
       // of its charges is nonzero or both sites have Lennard-Jones. Where
       // both types are known their entry decides; a value of the rest is
       // known only at run time.

@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --verify-each | FileCheck %s --check-prefix=DOMAIN
 // RUN: mdir-opt %s --md-differentiate --verify-each | FileCheck %s --check-prefix=DERIV --implicit-check-not=md.evaluate
 // The anchor image is explicit. Local site geometry stays visible to AD
-// (D[kind-pairs]). One kind of three frame atoms; segment (0, 0).
+// (D405). One kind of three frame atoms; segment (0, 0).
 md.particle_set @atoms
 md.tuple_set @kind on(@atoms) arity(3) orientation(ordered) disjoint
 md.tuple_set @s00 on(@atoms) arity(6) orientation(ordered)

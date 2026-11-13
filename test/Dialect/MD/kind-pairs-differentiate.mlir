@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --md-differentiate --verify-each | FileCheck %s --implicit-check-not=md.evaluate
 // Named segments compose with the ordinary coordinate derivative rules
-// (D[kind-pairs]). No position or cell dependence is hidden in
+// (D405). No position or cell dependence is hidden in
 // md.kind_pairs itself.
 md.particle_set @atoms
 md.tuple_set @kind on(@atoms) arity(4) orientation(ordered) disjoint

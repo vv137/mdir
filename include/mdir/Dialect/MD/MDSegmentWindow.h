@@ -1,5 +1,5 @@
 // The segments of rigid kinds and the site geometry of their windows
-// (D[kind-pairs]).
+// (D405).
 #ifndef MDIR_DIALECT_MD_MDSEGMENTWINDOW_H
 #define MDIR_DIALECT_MD_MDSEGMENTWINDOW_H
 

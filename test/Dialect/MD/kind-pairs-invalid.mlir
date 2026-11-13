@@ -1,5 +1,5 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
-// The refusals of md.kind_pairs and #md.rigid_kind (D[kind-pairs]), one
+// The refusals of md.kind_pairs and #md.rigid_kind (D405), one
 // case for each.
 md.particle_set @atoms
 md.tuple_set @four on(@atoms) arity(4) orientation(ordered) disjoint

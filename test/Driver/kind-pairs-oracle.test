@@ -1,4 +1,4 @@
-# Two kinds, K = 2 (D[kind-pairs]): the segments that the generator writes
+# Two kinds, K = 2 (D405): the segments that the generator writes
 # for a system of four kinds, their energies, forces and strains at the IR
 # level against an independent f64 oracle (Inputs/kind_pairs_oracle.py, which
 # states the bound of each component). Every window of each of the six

@@ -244,7 +244,7 @@ The reference of every op is [dialects/md.md](dialects/md.md).
 | `md.function` | Defines any other pure function of fields. |
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
-| `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window` | The segments of the pairs of rigid kinds and the rest, $s(f, g) = f(f+1)/2 + g$, and the sums of a segment's site pairs over covering images, each site proved from the weights of its kind (Section 4.12, D[kind-pairs]). No run reads them yet. |
+| `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window` | The segments of the pairs of rigid kinds and the rest, $s(f, g) = f(f+1)/2 + g$, and the sums of a segment's site pairs over covering images, each site proved from the weights of its kind (Section 4.12, D405). No run reads them yet. |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
 | `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D288). |
 | `md.sum_particles` | Sums a kernel over particles. |
@@ -559,7 +559,7 @@ relation is found at the positions of the neighborhood, which the sum must
 take, and it changes with them: the kernel must vanish at the cutoff for
 the forces to be the gradient of the energy.
 
-### 4.12 `md.kind_pairs` and the segment windows (D[kind-pairs])
+### 4.12 `md.kind_pairs` and the segment windows (D405)
 
 Rule R3: the $K$ rigid kinds of D403 that a consumer takes are kinds
 $0, \dots, K-1$, and the particles of no taken kind are the rest, kind

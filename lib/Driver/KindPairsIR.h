@@ -1,5 +1,5 @@
 // The segments of the pairs of rigid kinds and their site windows, built
-// from the kinds of D403 (D[kind-pairs]).
+// from the kinds of D403 (D405).
 #ifndef MDIR_LIB_DRIVER_KINDPAIRSIR_H
 #define MDIR_LIB_DRIVER_KINDPAIRSIR_H
 
@@ -18,7 +18,7 @@ class OpBuilder;
 
 namespace mdir::driver {
 
-/// The enabling condition of D[kind-pairs]: the generator takes at most
+/// The enabling condition of D405: the generator takes at most
 /// this many kinds. The ops and their verifier take any number.
 inline constexpr unsigned MaxPairKinds = 2;
 

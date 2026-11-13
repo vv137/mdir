@@ -1,5 +1,5 @@
 // Executes the actual segment window bodies and their per-site cutoffs
-// independently of lists (D[kind-pairs]).
+// independently of lists (D405).
 //
 // Each md.sum_segment_window and md.gather_segment_window of an md.function
 // becomes a func.func @window_<f>_<g>_<energy|forces|virial> whose

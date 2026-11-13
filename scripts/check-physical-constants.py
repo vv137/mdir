@@ -43,7 +43,7 @@ ALLOWED = [
     ("test/Integration/Inputs/obc_reference.py", "138.935457644", COUPLING),
     ("test/Driver/Inputs/kind-pairs/*.windows", "138.93545755023302",
      "the constant in the reference windows of #795, which MDIR's builder "
-     "wrote and the comparison of D[kind-pairs] checks"),
+     "wrote and the comparison of D405 checks"),
     ("test/Driver/charged.toml", "332.0637130741",
      "a pattern of FileCheck that checks the constant MDIR writes"),
     ("scripts/validation/charmm/run.py", "138.935458",

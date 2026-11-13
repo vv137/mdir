@@ -1,5 +1,5 @@
 // RUN: mdir-opt %s -split-input-file --md-differentiate -verify-diagnostics
-// The refusals of the derivative of a segment window (D[kind-pairs],
+// The refusals of the derivative of a segment window (D405,
 // those of #795), one case for each.
 md.particle_set @atoms
 md.tuple_set @kind on(@atoms) arity(3) orientation(ordered) disjoint

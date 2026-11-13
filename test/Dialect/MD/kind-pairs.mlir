@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --verify-each | FileCheck %s
 // RUN: mdir-opt %s --verify-each | mdir-opt --verify-each | FileCheck %s
-// The segments of rule R3 (D[kind-pairs]) are structural: no positions,
+// The segments of rule R3 (D405) are structural: no positions,
 // cell or hidden real payload. K kinds and the rest give (K+1)(K+2)/2
 // segments, s(f, g) = f(f+1)/2 + g.
 md.particle_set @atoms

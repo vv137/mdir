@@ -1,4 +1,4 @@
-// The rigid kinds of D403 and the segments of their pairs (D[kind-pairs]).
+// The rigid kinds of D403 and the segments of their pairs (D405).
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MD/MDSegmentWindow.h"

@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 // The refusals of md.sum_segment_window and md.gather_segment_window
-// (D[kind-pairs]), one case for each.
+// (D405), one case for each.
 md.particle_set @atoms
 md.tuple_set @kind on(@atoms) arity(4) orientation(ordered) disjoint
 md.tuple_set @s00 on(@atoms) arity(6) orientation(ordered)

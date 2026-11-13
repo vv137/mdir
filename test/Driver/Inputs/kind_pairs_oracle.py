@@ -1,4 +1,4 @@
-"""An independent f64 oracle for the segments of two kinds (D[kind-pairs]).
+"""An independent f64 oracle for the segments of two kinds (D405).
 
     kind_pairs_oracle.py emit  SYSTEM.top SYSTEM.gro WINDOWS.mlir KINDS OUT.mlir
     kind_pairs_oracle.py check SYSTEM.top SYSTEM.gro KINDS VALUES.txt

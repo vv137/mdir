@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s -split-input-file --md-differentiate --verify-each | FileCheck %s
 // Window shapes of segments that the verifier proves and the derivative
-// takes (D[kind-pairs]): the rest against a kind with a site, the rest
+// takes (D405): the rest against a kind with a site, the rest
 // with itself, and two kinds, one with a site whose weights are not
 // symmetric.
 md.particle_set @atoms

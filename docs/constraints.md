@@ -141,7 +141,7 @@ that move as rigid bodies and sorts them into kinds, from the constraints
 no atomic number, no name of an atom or a residue, and assumes no order
 of elements. `mdir check` reports the result ([driver.md](driver.md),
 Section 1.4); no run reads it yet. Its first consumer is the generator of
-the pair segments of D[kind-pairs] ([ops.md](ops.md), Section 4.12), which
+the pair segments of D405 ([ops.md](ops.md), Section 4.12), which
 takes up to two kinds, refuses one whose copies have
 `incompleteExclusions` or `outsideExclusions`, and reads where
 Lennard-Jones sits from the tables of the topology.

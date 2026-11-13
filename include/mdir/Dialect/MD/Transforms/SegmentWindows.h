@@ -1,5 +1,5 @@
 // Forces and strain of a segment window, and its per-site cutoffs
-// (D[kind-pairs]).
+// (D405).
 #ifndef MDIR_DIALECT_MD_TRANSFORMS_SEGMENTWINDOWS_H
 #define MDIR_DIALECT_MD_TRANSFORMS_SEGMENTWINDOWS_H
 #include "mlir/IR/Builders.h"

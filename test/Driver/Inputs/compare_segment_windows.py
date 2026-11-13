@@ -1,4 +1,4 @@
-"""Compare the site windows of two programs as expressions (D[kind-pairs]).
+"""Compare the site windows of two programs as expressions (D405).
 
     compare_segment_windows.py REFERENCE.mlir GENERATED.mlir [OLD=NEW ...]
 

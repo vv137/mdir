@@ -1,4 +1,4 @@
-// The proof of the site geometry of a segment window (D[kind-pairs]).
+// The proof of the site geometry of a segment window (D405).
 #include "mdir/Dialect/MD/MDSegmentWindow.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"

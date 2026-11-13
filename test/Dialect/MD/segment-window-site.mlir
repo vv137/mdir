@@ -1,5 +1,5 @@
 // RUN: mdir-opt %s --md-differentiate --verify-each | FileCheck %s
-// A site formed from the kind's weights over the frame (D[kind-pairs]):
+// A site formed from the kind's weights over the frame (D405):
 // the extra point at x_0 + 0.75 (h_1 + h_2), weights (-0.5, 0.75, 0.75).
 // The radial derivative keeps one force slot for each place, the site's
 // among them, and marks the layout.

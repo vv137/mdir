@@ -1,4 +1,4 @@
-# For one kind, K = 1, the generator of D[kind-pairs] writes the windows of
+# For one kind, K = 1, the generator of D405 writes the windows of
 # #795 at 004a0735: its segments 0, 1, 2 are WW, SW and SS. The references, Inputs/kind-pairs/*-795.windows, are #795's
 # windows for the same controls; compare_segment_windows.py compares the
 # values that each body yields as expressions, after renumbering (the

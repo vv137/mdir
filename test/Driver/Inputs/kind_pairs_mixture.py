@@ -1,4 +1,4 @@
-"""Writes a system of four kinds of rigid groups for D[kind-pairs]:
+"""Writes a system of four kinds of rigid groups for D405:
 
     python kind_pairs_mixture.py DIRECTORY [incomplete | outside]
 

@@ -234,7 +234,7 @@ def MD_RigidKindAttr : AttrDef<MD_Dialect, "RigidKind"> {
     order (rule R2 of D403: they sum to 1). `extent` is the radius about
     the anchor that the consumer checks to cover every place of a copy.
     Charges and types are not part of the kind here: the segment bodies
-    hold them as constants (D[kind-pairs]).
+    hold them as constants (D405).
   }];
   let parameters = (ins "::mlir::DenseI64ArrayAttr":$frame,
                         "::mlir::DenseI64ArrayAttr":$sites,
