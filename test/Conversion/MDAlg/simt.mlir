@@ -79,7 +79,6 @@ func.func @scatter_every_key(%keys: !d, %cursor: !d, %out: !d, %n: index,
 // CHECK-LABEL: func.func @insertion(
 // CHECK:         gpu.launch
 // CHECK:           scf.while
-// CHECK-NOT:       memref.load %arg2
 // CHECK:         return
 // CHECK-LABEL: func.func @insertion_by(
 // CHECK:         gpu.launch

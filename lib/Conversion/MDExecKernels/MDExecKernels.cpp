@@ -2607,8 +2607,7 @@ LogicalResult kernels::instantiatePMESymbols(ModuleOp templates,
                                              Type force, int64_t order) {
   // The functions that the template defines take the suffix of the
   // instance; declarations, those of the runtime (`@mdrtFFTPrepare`) and
-  // of the device primitives and the parameters of the instance among them,
-  // keep their names. A transform of the host, `@mdir.template.fft.NAME`,
+  // the parameters of the instance among them, keep their names. A transform of the host, `@mdir.template.fft.NAME`,
   // becomes that of the runtime for a grid in the type of the forces,
   // `@mdrtFFT64NAME` or `@mdrtFFT32NAME` (runtime/mdrt_fft.c)
   // (D374, #739).
