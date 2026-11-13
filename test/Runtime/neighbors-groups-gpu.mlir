@@ -5,7 +5,7 @@
 //
 // REQUIRES: cuda
 //
-// RUN: mdir-opt %s --add-groups-build --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \

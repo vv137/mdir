@@ -1,0 +1,43 @@
+# The serial definitions of the md_alg ops (convert-md-alg-to-scf,
+# D[md-alg]) on the host, on the cases of Inputs/md-alg/cases.mlir:
+# the values of the small cases, written out here. md-alg-contract-gpu.test
+# compares the whole output with that of the emitters on a device.
+#
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils \
+# RUN: | FileCheck %s
+#
+# The scans of 3, 1, 4, 1, 5 by every strategy: the sums before each count
+# and the sum of all, the cursor, and the elements past them untouched.
+# CHECK:      ( 0, 3, 4, 8, 9, 14, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, 14, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, 14, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, 14, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, 14, -7 )
+# CHECK-NEXT: ( 0, 3, 4, 8, 9, -7 )
+# No counts: start[0] = 0, and no cursor.
+# CHECK-NEXT: ( 2, {{.*}} )( 0, -7 )
+# CHECK-NEXT: ( 1, {{.*}} )( -7 )
+#
+# The counting sort of 20 items in 7 bins, two of them with no bin (gap):
+# the cursor at the end of each bin, the items of each bin ascending, and the
+# two places past the items untouched; the stable rank and the insertion
+# sort give the same; every key a bin.
+# CHECK: ( 4, 7, 8, 11, 12, 16, 18, -7 )
+# CHECK: ( 6, 12, 13, 19, 5, 10, 17, 16, 2, 4, 9, 18, 0, 1, 7, 14, 3, 11, -7, -7, -7 )
+# CHECK: ( 6, 12, 13, 19, 5, 10, 17, 16, 2, 4, 9, 18, 0, 1, 7, 14, 3, 11, -7, -7, -7 )
+# CHECK: ( 6, 12, 13, 19, 5, 10, 17, 16, 2, 4, 9, 18, 0, 1, 7, 14, 3, 11, -7, -7, -7 )
+# CHECK: ( 4, 7, 9, 12, 13, 18, 20, -7 )
+# CHECK: ( 6, 12, 13, 19, 5, 10, 17, 15, 16, 2, 4, 9, 18, 0, 1, 7, 8, 14, 3, 11, -7 )
+# The insertion sort of random items with ties, by the items and by the
+# order of each item, stably.
+# CHECK: ( 0, 6, 16, 18, 8, 10, 18, 2, 4, 11, 11, 14, 13, 10, 12, 15, 17, 19, 0, 8, 0 )
+# CHECK: ( 16, 0, 18, 6, 8, 18, 10, 4, 2, 14, 11, 11, 13, 19, 15, 12, 10, 17, 0, 8, 0 )
+# All 3,000 items in one bin, but 299 with no bin.
+# CHECK: ( 2, {{.*}} )( 2701, -7 )
+# CHECK: ( 2, {{.*}} )( 3000, -7 )

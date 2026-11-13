@@ -1,0 +1,43 @@
+# The contract test of md_alg (D[md-alg]): the cases of
+# Inputs/md-alg/cases.mlir run once by the serial definitions on the host
+# (convert-md-alg-to-scf) and once by the emitters on a device
+# (convert-md-alg-to-gpu), and the outputs compared by each op's contract.
+# The scans and the sorts within bins are ordered, compared to the bit; the
+# scatter is unordered: its bins are compared after a canonical sort, and its
+# cursor and the elements outside its bins to the bit. The cases: no
+# items, one, sizes about a scan block and a chunk (255, 257, 1,023 to
+# 1,025), 5,000 and 131,083 counts (129 tiles of the single-pass scan),
+# counts whose sum wraps, keys without a bin, a bin of all 3,000 items, many
+# empty bins, and ties in the order of a sort.
+#
+# REQUIRES: cuda
+#
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.serial
+# RUN: cat %S/Inputs/md-alg/device.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm > %t.simt.mlir
+# RUN: mlir-runner %t.simt.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.simt
+# RUN: diff %t.serial %t.simt
+# RUN: FileCheck %s < %t.simt
+# CHECK-COUNT-3: ( 0, 3, 4, 8, 9, 14, -7 )
+#
+# Under compute-sanitizer (with -Dsanitize=1): memcheck and racecheck,
+# for the barriers of the block scans, the single-pass scan's state, and
+# the atomics of the scatter.
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool memcheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.simt.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=MEM %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool racecheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.simt.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE %}
+# MEM: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

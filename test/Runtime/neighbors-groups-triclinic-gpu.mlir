@@ -6,13 +6,13 @@
 //
 // REQUIRES: cuda
 //
-// RUN: mdir-opt %s --add-groups-build="triclinic=true" --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build="triclinic=true" --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
 // RUN: | FileCheck %s
-// RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" --expand-device-primitives \
+// RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" --convert-md-alg-to-gpu \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \

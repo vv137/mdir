@@ -9,19 +9,16 @@
 // RUN: mdir-opt %s --add-groups-build="single-pass-scan=true" | FileCheck %s --check-prefixes=CHECK,ORTHO,ONE
 // RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" | FileCheck %s --check-prefixes=CHECK,TRI,ONE
 //
-// The calls of the primitives stay calls until they are expanded.
+// The scans, scatters, sorts within bins, and reads of the ragged rows stay
+// md_alg ops (D[md-alg]) until they are lowered.
 // RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" \
-// RUN:     --expand-device-primitives | FileCheck %s --check-prefix=EXPANDED
+// RUN:     --convert-md-alg-to-gpu | FileCheck %s --check-prefix=LOWERED
 
-// The declarations of the primitives, those of the single-pass scan only
-// where it is taken.
-// CHECK: func.func private @mdir.primitive.device_scan_cursor(
-// TWO-NOT: single_pass_scan
-// ONE: func.func private @mdir.primitive.single_pass_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index)
-// ONE: func.func private @mdir.primitive.single_pass_scan_cursor(
-// CHECK: func.func private @mdir.primitive.cursor_scatter(
+// The helpers; the partner of an excluded pair from its ragged row.
+// CHECK-NOT: mdir.primitive
 // CHECK: func.func private @mdrt_gpu_groups_grid(
 // CHECK: func.func private @mdrt_gpu_groups_partner(
+// CHECK: md_alg.ragged_entry %{{.*}}[%{{.*}}, %{{.*}}, %{{.*}}] entry %{{.*}} : memref<?xi32, 1>
 // CHECK: func.func private @mdrt_gpu_groups_image(
 // ORTHO-NOT: triclinic
 // TRI: func.func private @mdrt_gpu_groups_image_triclinic(
@@ -36,13 +33,17 @@
 // The three counting sorts: by key with a cursor, the chunks of the
 // columns, by cell of the grid with a cursor. The single-pass scan keeps
 // the states of its tiles in i64, one more than the tiles.
-// TWO: call @mdir.primitive.device_scan_cursor(%{{.*}}) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>) -> ()
+// TWO: md_alg.scan %{{.*}} cursor %{{.*}} strategy reduce_then_scan scratch %{{.*}} : memref<?xi32, 1> launch(%{{.*}}, %{{.*}}, %{{.*}}) : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 // ONE: gpu.alloc ({{.*}}) : memref<?xi64, 1>
-// ONE: call @mdir.primitive.single_pass_scan_cursor(
-// TWO: call @mdir.primitive.device_scan(
-// ONE: call @mdir.primitive.single_pass_scan(
-// TWO: call @mdir.primitive.device_scan_cursor(
-// ONE: call @mdir.primitive.single_pass_scan_cursor(
+// ONE: md_alg.scan %{{.*}} cursor %{{.*}} strategy single_pass scratch %{{.*}} : memref<?xi64, 1> launch(
+// CHECK: md_alg.scatter_to_bins %{{.*}} launch(
+// CHECK: md_alg.sort_bins %{{.*}} strategy insertion launch(
+// TWO: md_alg.scan %{{[^ ]*}} into %{{[^ ]*}} strategy reduce_then_scan
+// ONE: md_alg.scan %{{[^ ]*}} into %{{[^ ]*}} strategy single_pass
+// TWO: md_alg.scan %{{.*}} cursor %{{.*}} strategy reduce_then_scan
+// ONE: md_alg.scan %{{.*}} cursor %{{.*}} strategy single_pass
+// The excluded pairs of a particle from its ragged row.
+// CHECK: md_alg.ragged_row %{{.*}} entry %{{.*}} checked : memref<?xi32, 1>
 
 // The lists, then the images (27 codes): the shift of an entry in four
 // bits a cell, (e + 4), or five a lattice vector, (e + 16), in a triclinic
@@ -55,7 +56,7 @@
 // ORTHO-NOT: triclinic
 // ORTHO-NOT: 16793616
 // TRI-NOT: 4198404
-// TWO-NOT: single_pass_scan
-// ONE-NOT: device_scan
+// TWO-NOT: single_pass
+// ONE-NOT: reduce_then_scan
 
-// EXPANDED-NOT: mdir.primitive
+// LOWERED-NOT: md_alg
