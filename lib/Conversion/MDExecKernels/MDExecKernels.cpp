@@ -2897,9 +2897,7 @@ LogicalResult kernels::instantiateTemplates(ModuleOp templates, Type real) {
   }
 
   // The functions that the templates define take the names of the
-  // instance; declarations, such as those of the device primitives
-  // (`@mdir.primitive.*`, which expandPrimitiveCalls resolves by name),
-  // keep theirs.
+  // instance; declarations keep theirs.
   SmallVector<Operation *> defined;
   for (Operation &op : templates.getOps()) {
     auto symbol = dyn_cast<SymbolOpInterface>(&op);

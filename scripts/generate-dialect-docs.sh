@@ -4,7 +4,7 @@
 #
 #   scripts/generate-dialect-docs.sh MLIR_TBLGEN LLVM_INCLUDE_DIR OUT_DIR
 #
-# writes OUT_DIR/<dialect>.md for md, dyn, md_exec, md_dist, and mdrt with
+# writes OUT_DIR/<dialect>.md for md, dyn, md_exec, md_dist, mdrt, and md_alg with
 # `mlir-tblgen -gen-dialect-doc`. The build runs it (the target
 # mdir-dialect-docs, into <build>/docs/dialects); docs/dialects/ holds the
 # output, checked in, and test/Docs/dialect-docs.test fails when the two
@@ -18,7 +18,7 @@ out=${3:?usage: $0 MLIR_TBLGEN LLVM_INCLUDE_DIR OUT_DIR}
 source=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$out"
 for entry in MD:md:MDOps Dyn:dyn:DynOps MDExec:md_exec:MDExecOps \
-             MDDist:md_dist:MDDistOps MDRT:mdrt:MDRTOps; do
+             MDDist:md_dist:MDDistOps MDRT:mdrt:MDRTOps MDAlg:md_alg:MDAlgOps; do
   IFS=: read -r directory dialect file <<<"$entry"
   "$tblgen" -gen-dialect-doc -dialect="$dialect" \
     -I "$source/include" -I "$llvm_include" \

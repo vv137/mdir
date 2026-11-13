@@ -107,9 +107,6 @@ func.func private @mdrt_gpu_pme_prolate_blocks(%count: index) -> index {
   return %result : index
 }
 
-func.func private @mdir.primitive.wrapped_grid_axis_i32(i32, i32, i32) -> i32
-func.func private @mdir.primitive.grid_gather_masked_i32(memref<?x!pme_real, 1>, i32, i32, i1) -> !pme_real
-
 '''
 
 
@@ -694,8 +691,8 @@ def gather(potential, triclinic=False, listed=False):
         # outside the window, which hold 0 when 2P + c ≥ 3P, and the loop
         # stops at P where the instance knows it.
         inner += f'''          %use{c} = arith.cmpi slt, %cz{c}, %pt : i32
-          %g3{c} = func.call @mdir.primitive.wrapped_grid_axis_i32(%zstart, %cz{c}, %k3t) {{signed}} : (i32, i32, i32) -> i32
-          %p{c} = func.call @mdir.primitive.grid_gather_masked_i32(%phi, %rowk, %g3{c}, %use{c}) : (memref<?x!pme_real, 1>, i32, i32, i1) -> !pme_real
+          %g3{c} = md_alg.wrap %zstart, %cz{c}, %k3t signed : i32
+          %p{c} = md_alg.grid_read %phi[%rowk + %g3{c}] if %use{c} : memref<?x!pme_real, 1>, i32
           %pw{c} = arith.mulf %p{c}, %wz{c} : !pme_real
           %pwu{c} = arith.select %use{c}, %pw{c}, %zr : !pme_real
           %sz{c} = arith.addf {acc_z}, %pwu{c} : !pme_real

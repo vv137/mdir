@@ -1,0 +1,8 @@
+set(LLVM_TARGET_DEFINITIONS MDAlgOps.td)
+mlir_tablegen(MDAlgOps.h.inc -gen-op-decls)
+mlir_tablegen(MDAlgOps.cpp.inc -gen-op-defs)
+mlir_tablegen(MDAlgDialect.h.inc -gen-dialect-decls -dialect=md_alg)
+mlir_tablegen(MDAlgDialect.cpp.inc -gen-dialect-defs -dialect=md_alg)
+mlir_tablegen(MDAlgEnums.h.inc -gen-enum-decls)
+mlir_tablegen(MDAlgEnums.cpp.inc -gen-enum-defs)
+add_mlir_dialect_tablegen_target(MDIRMDAlgIncGen)

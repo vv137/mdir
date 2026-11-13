@@ -9,11 +9,13 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/GroupsBuild.h"
+#include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDAlg/MDAlgDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -5011,12 +5013,12 @@ LogicalResult Lowering::addTemplates(Type real) {
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
   // The template is written for f64; its instance for `real` is made in IR
-  // (D368, #739), before the calls of the device primitives are
-  // expanded, which keep their names.
+  // (D368, #739), before its md_alg ops are lowered.
   if (failed(instantiateTemplates(*templates, real)))
     return failure();
-  // The template's calls of the device primitives (CompactionEmitter.h).
-  if (failed(kernels::expandPrimitiveCalls(*templates)))
+  // The template's md_alg ops, by the emitters of the device primitives
+  // (D[md-alg]).
+  if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
@@ -5030,11 +5032,11 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
           module, kernels::getGroupsBuildName(tilted)))
     return success();
   // The build, written by its emitter (GroupsBuild.h) into a module of
-  // its own, whose calls of the device primitives are expanded there.
+  // its own, whose md_alg ops are lowered there.
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
-  // The build's calls of the device primitives (CompactionEmitter.h).
-  if (failed(kernels::expandPrimitiveCalls(*templates)))
+  // The build's md_alg ops (D[md-alg]).
+  if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
@@ -5138,7 +5140,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
-  if (failed(kernels::expandPrimitiveCalls(*templates)))
+  if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
   // The arrays of the splines, indexed by constants now, become values.
@@ -5218,7 +5220,7 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
-  if (failed(kernels::expandPrimitiveCalls(*templates)))
+  if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   // As addPMETemplates: the loops over the points unroll, and the
   // constants go back into the kernels.

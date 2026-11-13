@@ -1,9 +1,9 @@
 add_mlir_conversion_library(MDIRMDExecKernels
   CompactionEmitter.cpp
-  ExpandPrimitives.cpp
   GatherEmitter.cpp
   GroupsBuild.cpp
   HostPairLanes.cpp
+  MDAlgLowering.cpp
   MDExecKernels.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
@@ -15,9 +15,11 @@ add_mlir_conversion_library(MDIRMDExecKernels
 
   DEPENDS
   MDIRConversionPassIncGen
+  MDIRMDAlgIncGen
   MDIRMDExecIncGen
 
   LINK_LIBS PUBLIC
+  MDIRMDAlg
   MDIRMDExec
   MDIRMDRT
   MLIRArithAttrToLLVMConversion
