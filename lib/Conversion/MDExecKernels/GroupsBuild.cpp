@@ -672,7 +672,8 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
                             Value binGrid, function_ref<void(Value)> key) {
   auto [scratch, launch] = scanExecution(bins);
   auto op = md_alg::SortByKeyOp::create(
-      b, loc, count, bins, keys, counts, start, cursor, out, /*by=*/Value(),
+      b, loc, count, bins,
+      md_alg::OrderAttr::get(context, md_alg::Order::Stable), keys, counts, start, cursor, out, /*by=*/Value(),
       writes, adds, b.getUnitAttr(), /*every_key=*/UnitAttr(),
       ValueRange{grid, block, c1}, scanStrategy(context, singlePass), scratch,
       launch,
@@ -949,8 +950,9 @@ void GroupsBuild::emitChunks(gpu::LaunchOp op) {
     Value keyBegin = muli(loC, nzb);
     Value column1 = addi(loC, c1w);
     Value keyEnd = muli(column1, nzb);
-    Value colBegin32 = load(keyStart, keyBegin);
-    Value colEnd32 = load(keyStart, keyEnd);
+    auto column = md_alg::BinSpanOp::create(b, loc, keyStart, keyBegin, keyEnd);
+    Value colBegin32 = column.getBegin();
+    Value colEnd32 = column.getEnd();
     Value j64 = muli(j32, c64i);
     Value begin32 = addi(colBegin32, j64);
     Value left32 = subi(colEnd32, begin32);
@@ -967,10 +969,12 @@ void GroupsBuild::emitChunks(gpu::LaunchOp op) {
     Value inf = bitcast(f32, big);
     Value none = ci(2147483647);
     Value ia0 = ifElse(
-        i32, hasA, [&] { return Values{load(sorted, sa)}; },
+        i32, hasA,
+        [&] { return Values{md_alg::BinItemOp::create(b, loc, sorted, sa)}; },
         [&] { return Values{none}; })[0];
     Value ib0 = ifElse(
-        i32, hasB, [&] { return Values{load(sorted, sb)}; },
+        i32, hasB,
+        [&] { return Values{md_alg::BinItemOp::create(b, loc, sorted, sb)}; },
         [&] { return Values{none}; })[0];
     auto xOf = [&](Value has, Value id) {
       return ifElse(
@@ -1947,7 +1951,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
             i32, inRun,
             [&]() -> Values {
               Value si = indexCast(index, s);
-              Value q = load(gplace, si);
+              Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
               Value later = cmpi(P::sge, q, first32);
               Value qa = ifElse(
                   i32, later,
@@ -1995,7 +1999,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
           candidateTypes, inRun,
           [&]() -> Values {
             Value si = indexCast(index, s);
-            Value q = load(gplace, si);
+            Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
             Value later = cmpi(P::sge, q, first32);
             ResultRange qa = ifElse(
                 candidateTypes, later,
@@ -2190,8 +2194,10 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                       Value cto = addi(rowStart, toNext);
                       Value cfromI = indexCast(index, cfrom);
                       Value ctoI = indexCast(index, cto);
-                      Value begin = load(gstart, cfromI);
-                      Value end = load(gstart, ctoI);
+                      auto span = md_alg::BinSpanOp::create(b, loc, gstart,
+                                                            cfromI, ctoI);
+                      Value begin = span.getBegin();
+                      Value end = span.getEnd();
                       ResultRange rs = forLoop(
                           begin, end, c32i, {pa[0], pa[1], pa[2]},
                           [&](Value s0, ValueRange sa) -> Values {
@@ -2408,8 +2414,9 @@ void GroupsBuild::emitBuild() {
             Value kb = muli(item, nzb);
             Value next = addi(item, i1c);
             Value ke = muli(next, nzb);
-            Value b32 = load(keyStart, kb);
-            Value e32 = load(keyStart, ke);
+            auto run = md_alg::BinSpanOp::create(b, loc, keyStart, kb, ke);
+            Value b32 = run.getBegin();
+            Value e32 = run.getEnd();
             Value len = subi(e32, b32);
             Value len63 = addi(len, sixtyThree);
             Value nch = shrsi(len63, six);

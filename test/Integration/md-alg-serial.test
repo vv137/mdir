@@ -3,7 +3,7 @@
 # the values of the small cases, written out here. md-alg-contract-gpu.test
 # compares the whole output with that of the emitters on a device.
 #
-# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/helpers.mlir %S/Inputs/md-alg/cases.mlir \
 # RUN: | mdir-opt --convert-md-alg-to-scf \
 # RUN: | mlir-opt %lower_loops_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \

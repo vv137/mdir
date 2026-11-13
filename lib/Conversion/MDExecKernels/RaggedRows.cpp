@@ -156,7 +156,8 @@ void kernels::emitDeviceRaggedRows(OpBuilder &b, Location loc, Value keys,
   Value rowGrid = gridOf(n);
   MLIRContext *context = b.getContext();
   auto sort = md_alg::SortByKeyOp::create(
-      b, loc, m, n, keys, counts, start, cursor, items, /*by=*/Value(),
+      b, loc, m, n, md_alg::OrderAttr::get(b.getContext(), md_alg::Order::Stable),
+      keys, counts, start, cursor, items, /*by=*/Value(),
       /*writes=*/ValueRange{}, /*adds=*/ValueRange{}, b.getUnitAttr(),
       b.getUnitAttr(), ValueRange{grid, block, one},
       md_alg::ScanStrategyAttr::get(context,

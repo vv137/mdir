@@ -1,0 +1,97 @@
+# The serial definitions of the stage ops of md_alg (convert-md-alg-to-scf,
+# D[md-alg-stages]) on the host, on the cases of Inputs/md-alg/stages.mlir:
+# the values of the small cases, written out here.
+# md-alg-stages-contract-gpu.test compares the whole output with that of the
+# SIMT lowering on a device.
+#
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/helpers.mlir \
+# RUN:     %S/Inputs/md-alg/append-host.mlir %S/Inputs/md-alg/stages.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils \
+# RUN: | FileCheck %s
+#
+# No items in one bin (A): no key, counts (0), start (0, 0), cursor (0),
+# no order; no slot written and the counter of no bin at 0; the marks.
+# CHECK:      ( 1, {{.*}} )( -7 )
+# CHECK-NEXT: ( 2, {{.*}} )( 0, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 0, 0, -7 )
+# CHECK-NEXT: ( 2, {{.*}} )( 0, -7 )
+# CHECK-NEXT: ( 1, {{.*}} )( -7 )
+# CHECK-NEXT: ( 2, {{.*}} )( -7, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 0, -7 )
+#
+# 20 items in 7 bins, three without a bin (key -1).
+# A: the keys, the counts, the start, the cursor (the start of the next
+# bin), the items of each bin ascending, then the four places of the items
+# without a bin, untouched; the slot 2 i + 1 of each item holds three times
+# its key; the counter holds the three without a bin.
+# CHECK:      ( 21, {{.*}} )( 3, 2, 3, 2, -1, -1, 3, 4, 5, 1, 6, 3, 5, 0, 1, 0, -1, 2, 5, 2, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 2, 4, 4, 1, 3, 1, -7 )
+# CHECK-NEXT: ( 9, {{.*}} )( 0, 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 21, {{.*}} )( 13, 15, 9, 14, 1, 3, 17, 19, 0, 2, 6, 11, 7, 8, 12, 18, 10, -7, -7, -7, -7 )
+# CHECK-NEXT: ( 42, {{.*}} )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 3, -7 )
+# B: the same keys and offsets, the counts cleared by the caller; each bin
+# in the order of `by`, descending numbers.
+# CHECK-NEXT: ( 21, {{.*}} )( 3, 2, 3, 2, -1, -1, 3, 4, 5, 1, 6, 3, 5, 0, 1, 0, -1, 2, 5, 2, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 2, 4, 4, 1, 3, 1, -7 )
+# CHECK-NEXT: ( 9, {{.*}} )( 0, 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 21, {{.*}} )( 15, 13, 14, 9, 19, 17, 3, 1, 11, 6, 2, 0, 7, 18, 12, 8, 10, -7, -7, -7, -7 )
+# C: by the keys given (and unchanged), the same.
+# CHECK-NEXT: ( 21, {{.*}} )( 3, 2, 3, 2, -1, -1, 3, 4, 5, 1, 6, 3, 5, 0, 1, 0, -1, 2, 5, 2, 0 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 2, 4, 4, 1, 3, 1, -7 )
+# CHECK-NEXT: ( 9, {{.*}} )( 0, 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 21, {{.*}} )( 13, 15, 9, 14, 1, 3, 17, 19, 0, 2, 6, 11, 7, 8, 12, 18, 10, -7, -7, -7, -7 )
+# D: every key a bin, all 20 items in the order.
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 2, 4, 4, 2, 4, 2, -7 )
+# CHECK-NEXT: ( 9, {{.*}} )( 0, 2, 4, 8, 12, 14, 18, 20, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 4, 8, 12, 14, 18, 20, -7 )
+# CHECK-NEXT: ( 21, {{.*}} )( 13, 15, 9, 14, 1, 3, 17, 19, 0, 2, 6, 11, 4, 7, 5, 8, 12, 18, 10, 16, -7 )
+# E: unordered, the bins of A after a canonical sort.
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 2, 4, 4, 1, 3, 1, -7 )
+# CHECK-NEXT: ( 9, {{.*}} )( 0, 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 8, {{.*}} )( 2, 4, 8, 12, 13, 16, 17, -7 )
+# CHECK-NEXT: ( 21, {{.*}} )( 13, 15, 9, 14, 1, 3, 17, 19, 0, 2, 6, 11, 7, 8, 12, 18, 10, -7, -7, -7, -7 )
+#
+# The appends: the counts of the lists, the counter (at place 1), and the
+# checks [blocks named, consistent, whole].
+# No item kept: no block, a counter of 0, the lists whole.
+# CHECK:      ( 3, {{.*}} )( 0, 0, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 0, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 0, 1, 1 )
+# One item: one block.
+# CHECK-NEXT: ( 3, {{.*}} )( 1, 0, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 1, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 1, 1, 1 )
+# 640 entries, 10 blocks: with room for 10, whole; for 9, the counter and
+# the count the full demand, 9 blocks named, the tenth not written, and
+# the list not whole; for 200, whole.
+# CHECK-NEXT: ( 2, {{.*}} )( 640, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 10, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 10, 1, 1 )
+# CHECK-NEXT: ( 2, {{.*}} )( 640, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 10, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 9, 1, 0 )
+# CHECK-NEXT: ( 2, {{.*}} )( 640, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 10, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 10, 1, 1 )
+# 8 lists of half their 320 items: 24 blocks; with room for 3, the counter
+# still 24 and 3 blocks named.
+# CHECK-NEXT: ( 9, {{.*}} )( 159, 171, 149, 163, 161, 149, 171, 157, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 24, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 24, 1, 1 )
+# CHECK-NEXT: ( 9, {{.*}} )( 159, 171, 149, 163, 161, 149, 171, 157, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 24, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 3, 1, 0 )
+# 40 lists: 76 blocks; with no room, none named and nothing written.
+# CHECK-NEXT: ( 41, {{.*}} )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 76, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 76, 1, 1 )
+# CHECK-NEXT: ( 41, {{.*}} )
+# CHECK-NEXT: ( 3, {{.*}} )( -7, 76, -7 )
+# CHECK-NEXT: ( 3, {{.*}} )( 0, 1, 0 )

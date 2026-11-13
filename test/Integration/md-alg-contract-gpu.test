@@ -12,12 +12,12 @@
 #
 # REQUIRES: cuda
 #
-# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/helpers.mlir %S/Inputs/md-alg/cases.mlir \
 # RUN: | mdir-opt --convert-md-alg-to-scf \
 # RUN: | mlir-opt %lower_loops_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils > %t.serial
-# RUN: cat %S/Inputs/md-alg/device.mlir %S/Inputs/md-alg/cases.mlir \
+# RUN: cat %S/Inputs/md-alg/device.mlir %S/Inputs/md-alg/helpers.mlir %S/Inputs/md-alg/cases.mlir \
 # RUN: | mdir-opt --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm > %t.simt.mlir
 # RUN: mlir-runner %t.simt.mlir -e main --entry-point-result=void \

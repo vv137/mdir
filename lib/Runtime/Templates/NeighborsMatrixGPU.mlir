@@ -2134,7 +2134,7 @@ func.func private @mdrt_gpu_spatial_order(
   // of `ids`, by insertion: a counting sort (md_alg.sort_by_key), whose
   // counts the launch above cleared.
   md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
-      cursor %cursor into %order by %ids : memref<?xi32, 1> cleared
+      cursor %cursor into %order order stable by %ids : memref<?xi32, 1> cleared
       : memref<?xi32, 1> launch(%grid_n, %block, %c1)
       scan chunked scratch %cell_sums : memref<?xi32, 1>
       launch(%cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)

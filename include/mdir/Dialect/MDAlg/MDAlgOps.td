@@ -80,6 +80,16 @@ def MDAlg_SortStrategy
   let cppNamespace = "::mdir::md_alg";
 }
 
+def MDAlg_Order
+    : I32EnumAttr<"Order", "the order of the items within a bin", [
+        // Ascending by the item, or by `by[item]`: bitwise.
+        I32EnumAttrCase<"Stable", 0, "stable">,
+        // Not fixed: compared as multisets after a canonical sort.
+        I32EnumAttrCase<"Unordered", 1, "unordered">
+      ]> {
+  let cppNamespace = "::mdir::md_alg";
+}
+
 //===----------------------------------------------------------------------===//
 // Types
 //===----------------------------------------------------------------------===//
@@ -258,9 +268,12 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
       does not clear them again.
     - `start[b]` = the sum of `counts[c]` for `c < b`, for `b` in
       `[0, bins]`; `cursor[b]` = `start[b + 1]` afterwards.
-    - `out[start[b], start[b + 1])` holds the items of bin `b` ascending, or
-      ascending by `by[item]` where `by` is given (distinct within a bin).
-      No other element of `out` is written.
+    - `out[start[b], start[b + 1])` holds the items of bin `b`. Their order
+      is the contract `order`, which no strategy implies: `stable`,
+      ascending by the item, or by `by[item]` where `by` is given (distinct
+      within a bin); `unordered`, in no fixed order, which takes no `by` and
+      no sort, so that a caller that needs only the bins skips the sort
+      within them. No other element of `out` is written.
 
     The region computes the key of its item from any memory but the op's
     own buffers, and may write two kinds of side output, which the op
@@ -275,9 +288,10 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
     Every other write is refused. The region runs once for each item, in no
     fixed order and concurrently.
 
-    *Contract:* ordered and stable: every lowering gives the serial
-    lowering's `keys`, `counts`, `start`, `cursor`, `out`, and side outputs,
-    bitwise.
+    *Contract:* every lowering gives the serial lowering's `keys`,
+    `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
+    bitwise where `order` is `stable`, as the multiset of each bin where it
+    is `unordered`.
 
     *Execution* (the SIMT lowering, not the meaning): `launch(grid, block,
     one)`, a thread an item, for the key and for the scatter (and a thread
@@ -291,7 +305,8 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
 
     ```mlir
     md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
-        cursor %cursor into %order by %ids : memref<?xi32, 1> cleared
+        cursor %cursor into %order order stable by %ids : memref<?xi32, 1>
+        cleared : memref<?xi32, 1>
         launch(%grid_n, %block, %c1)
         scan chunked scratch %sums : memref<?xi32, 1>
             launch(%chunks, %chunk, %grid_chunks, %block, %c1)
@@ -306,6 +321,7 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
   let arguments = (ins
     Index:$n,
     Index:$bins,
+    MDAlg_Order:$order,
     Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$keys,
     Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$counts,
     Arg<MDAlg_I32Buffer, "", [MemWrite]>:$start,
@@ -327,7 +343,7 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
   let regions = (region MaxSizedRegion<1>:$key);
   let assemblyFormat = [{
     $n `bins` $bins `keys` $keys `counts` $counts `start` $start
-    `cursor` $cursor `into` $out (`by` $by^ `:` type($by))?
+    `cursor` $cursor `into` $out `order` $order (`by` $by^ `:` type($by))?
     (`writes` `(` $writes^ `:` type($writes) `)`)?
     (`adds` `(` $adds^ `:` type($adds) `)`)?
     (`cleared` $cleared^)? (`every_key` $every_key^)? `:` type($keys)
@@ -371,6 +387,53 @@ def MDAlg_NoBinOp : MDAlg_Op<"no_bin"> {
   }];
   let assemblyFormat = "attr-dict";
   let hasVerifier = 1;
+}
+
+def MDAlg_BinSpanOp : MDAlg_Op<"bin_span"> {
+  let summary = "Where a run of bins of a counting sort begins and ends";
+  let description = [{
+    `start[from]` and `start[to]`: the first place of bin `from` and the
+    first place past bin `to - 1` in the order of an `md_alg.sort_by_key`
+    whose start is `start`, as i32, read in that order. A reader of the bins
+    reads them through this op and `md_alg.bin_item`, not through the
+    buffers, so that a later pass sees which stage reads which bins.
+
+    *Contract:* per item; every lowering gives the same values.
+
+    ```mlir
+    %begin, %end = md_alg.bin_span %start[%from, %to] : memref<?xi32, 1>
+    ```
+  }];
+  let arguments = (ins
+    Arg<MDAlg_I32Buffer, "", [MemRead]>:$start,
+    Index:$from,
+    Index:$to
+  );
+  let results = (outs I32:$begin, I32:$end);
+  let assemblyFormat = [{
+    $start `[` $from `,` $to `]` attr-dict `:` type($start)
+  }];
+}
+
+def MDAlg_BinItemOp : MDAlg_Op<"bin_item"> {
+  let summary = "The item at a place of the order of a counting sort";
+  let description = [{
+    `out[place]`: the item at `place` of the order `out` of an
+    `md_alg.sort_by_key`, a place of a run of bins that `md_alg.bin_span`
+    gives.
+
+    *Contract:* per item; every lowering gives the same value.
+
+    ```mlir
+    %item = md_alg.bin_item %order[%place] : memref<?xi32, 1>
+    ```
+  }];
+  let arguments = (ins
+    Arg<MDAlg_I32Buffer, "", [MemRead]>:$out,
+    Index:$place
+  );
+  let results = (outs I32:$item);
+  let assemblyFormat = "$out `[` $place `]` attr-dict `:` type($out)";
 }
 
 def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {

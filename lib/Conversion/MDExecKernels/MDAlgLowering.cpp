@@ -229,10 +229,16 @@ static void emitSortByKey(OpBuilder &b, Location loc, SortByKeyOp op) {
                     s[4]);
     break;
   }
-  bool rank = *op.getSortStrategy() == SortStrategy::StableRank;
+  // The order within the bins is the op's contract, not its strategy's: an
+  // unordered sort ends with the scatter.
+  bool sorted = op.getOrder() == Order::Stable;
+  bool rank =
+      sorted && *op.getSortStrategy() == SortStrategy::StableRank;
   Value scattered = rank ? op.getSortBuffer() : op.getOut();
   emitCursorScatter(b, loc, keys, op.getCursor(), scattered, op.getN(), grid,
                     block, one, every);
+  if (!sorted)
+    return;
   OperandRange t = op.getSortLaunch();
   if (rank)
     emitRankInBins(b, loc, scattered, keys, op.getStart(), op.getOut(),
@@ -461,6 +467,16 @@ static SmallVector<Value> emitSIMT(OpBuilder &b, Operation *op) {
       })
       .Case([&](AppendOp append) { return emitAppend(b, loc, append); })
       .Case([&](GridPlanOp plan) { return emitGridPlan(b, loc, plan); })
+      .Case([&](BinSpanOp span) {
+        Emit e{b, loc};
+        Value begin = e.load(span.getStart(), span.getFrom());
+        Value end = e.load(span.getStart(), span.getTo());
+        return SmallVector<Value>{begin, end};
+      })
+      .Case([&](BinItemOp item) {
+        Emit e{b, loc};
+        return SmallVector<Value>{e.load(item.getOut(), item.getPlace())};
+      })
       .Case([&](GridReadOp read) {
         return SmallVector<Value>{emitGridGather(b, loc, read.getGrid(),
                                                  read.getBase(), read.getZ(),
@@ -635,6 +651,8 @@ struct Serial {
   /// sort within the bins as defined above, in place in `out`.
   void sortByKey(SortByKeyOp op) {
     Value counts = op.getCounts(), keys = op.getKeys();
+    // Before the region's code moves into the loop.
+    bool every = everyKey(op);
     if (!op.getCleared())
       loop(index(0), op.getBins(),
            [&](Value bin) { store(i32(0), counts, bin); });
@@ -673,8 +691,9 @@ struct Serial {
       });
     });
     scan(counts, op.getBins(), op.getStart(), op.getCursor());
-    scatter(keys, op.getN(), op.getCursor(), op.getOut(), everyKey(op));
-    sort(op.getStart(), op.getBins(), op.getOut(), op.getBy(), Value());
+    scatter(keys, op.getN(), op.getCursor(), op.getOut(), every);
+    if (op.getOrder() == Order::Stable)
+      sort(op.getStart(), op.getBins(), op.getOut(), op.getBy(), Value());
   }
 
   /// One item appended: a block taken where its slot begins one, named

@@ -182,3 +182,147 @@ func.func @grid_prolate(%grid: memref<?xf64, 1>, %base: i32,
   %value = md_alg.grid_read %grid[%base + %wrapped] if %active : memref<?xf64, 1>, i32
   return %value : f64
 }
+
+// The stage ops (D[md-alg-stages]).
+//
+// A counting sort by a key region: the kernel of the keys, a thread an
+// item, with the region's code where its item is below n, each bin a store
+// of the key and an atomic addition to its count, no bin a store of -1;
+// then the scan's three launches, the scatter, which skips the items
+// without a bin, and the sort. With `cleared` there is no clear.
+// CHECK-LABEL: func.func @sort_by_key(
+// CHECK:         gpu.launch blocks
+// CHECK:           arith.cmpi ult
+// CHECK:           scf.if
+// CHECK:             memref.store %{{.*}}, %[[SIDE:.*]][%{{.*}}, %{{.*}}] : memref<?x3xf32, 1>
+// CHECK:             scf.if
+// CHECK:               %[[NONE:.*]] = arith.constant -1 : i32
+// CHECK:               memref.store %[[NONE]], %[[KEYS:[a-z0-9]+]][
+// CHECK:               memref.atomic_rmw addi
+// CHECK:             } else {
+// CHECK:               %[[K32:.*]] = arith.index_cast %{{.*}} : index to i32
+// CHECK:               memref.store %[[K32]], %[[KEYS]][
+// CHECK:               llvm.atomicrmw add %{{.*}} syncscope("device") monotonic
+// CHECK-COUNT-3: gpu.launch blocks
+// CHECK:         gpu.launch blocks
+// CHECK:           arith.cmpi sge
+// CHECK:         gpu.launch blocks
+// CHECK-NOT:     gpu.launch blocks
+// CHECK:         return
+func.func @sort_by_key(%n: index, %bins: index, %k: !d, %c: !d, %s: !d,
+                       %u: !d, %o: !d, %x: !d, %w3: memref<?x3xf32, 1>,
+                       %sums: !d, %g: index, %b: index, %one: index) {
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order stable writes(%w3 : memref<?x3xf32, 1>) adds(%x : !d)
+      cleared : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+      sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %c0 = arith.constant 0 : index
+    %f = arith.constant 1.0 : f32
+    memref.store %f, %w3[%i, %c0] : memref<?x3xf32, 1>
+    %v = memref.load %x[%i] : !d
+    %zero = arith.constant 0 : i32
+    %no = arith.cmpi slt, %v, %zero : i32
+    scf.if %no {
+      md_alg.no_bin
+      %one32 = arith.constant 1 : i32
+      %old = memref.atomic_rmw addi %one32, %x[%c0] : (i32, !d) -> i32
+    } else {
+      %key = arith.index_cast %v : i32 to index
+      md_alg.bin %key : index
+    }
+  }
+  return
+}
+
+// By keys given, every key a bin, without `cleared`: the clear of the
+// counts first, a thread a bin, then a count for each item with no test
+// of its key, the scan, the scatter, and the stable rank.
+// CHECK-LABEL: func.func @sort_by_keys(
+// CHECK:         arith.maxui
+// CHECK:         gpu.launch blocks
+// CHECK:           memref.store %{{.*}}, %[[COUNTS:[a-z0-9]+]][
+// CHECK:         gpu.launch blocks
+// CHECK-NOT:       arith.cmpi sge
+// CHECK:           llvm.atomicrmw add
+// CHECK-COUNT-3: gpu.launch blocks
+// CHECK:         gpu.launch blocks
+// CHECK-NOT:       arith.cmpi sge
+// CHECK:         gpu.launch blocks
+// CHECK-NOT:     gpu.launch blocks
+// CHECK:         return
+func.func @sort_by_keys(%n: index, %bins: index, %k: !d, %c: !d, %s: !d,
+                        %u: !d, %o: !d, %x: !d, %sums: !d, %g: index,
+                        %b: index, %one: index) {
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order stable every_key : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+      sort stable_rank buffer %x : !d launch(%g, %b, %one)
+  return
+}
+
+// Unordered: the scatter ends it, with no sort within the bins.
+// CHECK-LABEL: func.func @sort_unordered(
+// CHECK:         gpu.launch blocks
+// CHECK:         gpu.launch blocks
+// CHECK-COUNT-3: gpu.launch blocks
+// CHECK:         gpu.launch blocks
+// CHECK-NOT:     gpu.launch blocks
+// CHECK:         return
+func.func @sort_unordered(%n: index, %bins: index, %k: !d, %c: !d, %s: !d,
+                          %u: !d, %o: !d, %sums: !d, %g: index, %b: index,
+                          %one: index) {
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order unordered every_key : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+  return
+}
+
+// An append by the lanes of a warp: the ballot of the lanes that keep an
+// entry, their ranks, the blocks taken by the first lane with one atomic
+// at the counter's place (a constant place, a constant offset of 4 bytes
+// an element) and shared by a shuffle, the entries stored below the
+// capacity, and the new blocks named.
+// CHECK-LABEL: func.func @append(
+// CHECK:         gpu.ballot
+// CHECK:         math.ctpop
+// CHECK:         math.ctpop
+// CHECK:         scf.if %{{.*}} -> (i32)
+// CHECK:           arith.constant 8 : i64
+// CHECK:           llvm.atomicrmw add %{{.*}} syncscope("device") monotonic
+// CHECK:         gpu.shuffle  idx
+// CHECK:         scf.if
+// CHECK:           memref.store
+// CHECK:         scf.if
+// CHECK:           memref.store
+// CHECK:           memref.store
+// CHECK:         scf.if
+// CHECK:           memref.store
+// CHECK:           memref.store
+// CHECK:         arith.select
+// CHECK:         return
+func.func @append(%keep: i1, %v: i32, %e: !d, %cs: i32, %csb: i32,
+                  %own: i32, %un: !d, %ord: !d, %pool: memref<5xi32, 1>,
+                  %cap: index, %lane: i32, %below: i32) -> (i32, i32) {
+  %c2 = arith.constant 2 : index
+  %count, %last = md_alg.append %keep values(%v) into(%e : !d)
+      list(%cs, %csb) owner %own names(%un, %ord) pool %pool[%c2]
+      capacity %cap block 64 lane(%lane, %below)
+      : !d, !d, memref<5xi32, 1>
+  return %count, %last : i32, i32
+}
+
+// A grid plan, the stages across the edges: the divisions, the floors, the
+// bounds, the conversions.
+// CHECK-LABEL: func.func @grid_plan(
+// CHECK-COUNT-2: arith.divf
+// CHECK-COUNT-2: math.floor
+// CHECK-COUNT-2: arith.maxnumf
+// CHECK-COUNT-2: arith.minnumf
+// CHECK-COUNT-2: arith.fptosi
+func.func @grid_plan(%lx: f64, %ly: f64, %w: f64) -> (i64, i64) {
+  %x, %y = md_alg.grid_plan %lx, %ly : f64, f64 width %w : f64
+      bounds [3.0 : f64, 256.0 : f64] -> i64, i64
+  return %x, %y : i64, i64
+}

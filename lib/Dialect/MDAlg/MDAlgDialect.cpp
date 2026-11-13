@@ -199,7 +199,10 @@ LogicalResult SortByKeyOp::verify() {
   bool launch = !getLaunch().empty();
   bool scan = getScanStrategy().has_value();
   bool sort = getSortStrategy().has_value();
-  if (launch != scan || scan != sort || scan != (bool)getScanScratch())
+  // The sort within the bins goes with the order 'stable' (checked below).
+  bool sorted = getOrder() == Order::Stable;
+  if (launch != scan || (sorted && scan != sort) ||
+      scan != (bool)getScanScratch())
     return emitOpError() << "takes its launch, its scan's strategy, scratch, "
                             "and launch, and its sort's strategy and launch "
                             "together";
@@ -222,9 +225,10 @@ LogicalResult SortByKeyOp::verify() {
                                    "blocks, threads, one"))) {
       return failure();
     }
-    if (failed(verifyLaunch(*this, getSortLaunch(), 3, "grid, block, one")))
+    if (sorted &&
+        failed(verifyLaunch(*this, getSortLaunch(), 3, "grid, block, one")))
       return failure();
-    bool rank = *getSortStrategy() == SortStrategy::StableRank;
+    bool rank = sort && *getSortStrategy() == SortStrategy::StableRank;
     if (rank != (bool)getSortBuffer())
       return emitOpError() << "takes the buffer of its scatter with the sort "
                               "'stable_rank' alone";
@@ -232,11 +236,19 @@ LogicalResult SortByKeyOp::verify() {
       return emitOpError()
              << "with the sort 'stable_rank' orders by the items; it takes "
                 "no 'by'";
-  } else if (getSortBuffer() || !getScanLaunch().empty() ||
+  } else if (getSortBuffer() || sort || !getScanLaunch().empty() ||
              !getSortLaunch().empty()) {
     return emitOpError() << "takes its launch, its scan's strategy, scratch, "
                             "and launch, and its sort's strategy and launch "
                             "together";
+  }
+  if (getOrder() == Order::Unordered) {
+    if (getBy())
+      return emitOpError() << "orders its bins by 'by' only with the order "
+                              "'stable'";
+    if (sort || !getSortLaunch().empty() || getSortBuffer())
+      return emitOpError() << "with the order 'unordered' takes no sort "
+                              "within its bins";
   }
   if (getEveryKey() && !getKey().empty())
     return emitOpError() << "takes 'every_key' only with keys given; with a "
