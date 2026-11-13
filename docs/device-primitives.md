@@ -907,7 +907,8 @@ conditional store of `md_alg.append` rather than inside it (one PTX line
 fewer, the same registers and number of SASS instructions), and their
 host's code allocates the scratch of a sort's scan before its key kernel
 and frees it after its sort, since the op takes the scratch as an operand.
-The decision records both for a decision of the maintainer.
+The maintainer accepted both on 2026-11-13, without a timing (the
+decision, D[md-alg-stages]; #865).
 
 ### 4.6 Measured effect
 
