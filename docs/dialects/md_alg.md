@@ -32,10 +32,14 @@ The ops are created in `convert-md-exec-to-gpu`, in the templates of
 the kernels and in the build of the groups of neighbors. Those of the
 neighbor matrix's template and of the groups build stay in the module
 after it, for the collection-level transformations
-(`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
-lowers them; the accessors of the templates of PME and the counting
-sort of the device's ragged rows are lowered where they are created
-(D408, #866).
+(`md-alg-transform-collections`, which runs the shared analysis of
+the collections and transforms nothing yet), and
+`convert-md-alg-to-gpu` lowers them; the accessors of the templates of
+PME and the counting sort of the device's ragged rows are lowered where
+they are created (D408, #866). The analysis takes what each consumer
+requires of the order of a buffer from its meaning: a reader that is
+not an `md_alg` op requires the full layout, and `md_alg.bin_members`
+the order of its visit (D[md-alg-analysis]).
 
 Each op with an ordering or a floating-point aspect states a
 determinism requirement (`determinism`), separate from the ordering
@@ -218,6 +222,111 @@ Interfaces: `InferTypeOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `item` | 32-bit signless integer |
+
+
+
+### `md_alg.bin_members` (::mdir::md_alg::BinMembersOp)
+
+_The items of a run of bins of a counting sort, visited in a stated order_
+
+Syntax:
+
+```
+operation ::= `md_alg.bin_members` $start `[` $from `,` $to `]` `items` $items `visit` $visit
+              (`by` $by^ `:` type($by))?
+              (`writes` `(` $writes^ `:` type($writes) `)`)?
+              (`adds` `(` $adds^ `:` type($adds) `)`)?
+              (`init` `(` $init^ `:` type($init) `)` `combine` $combine)?
+              (`determinism` $determinism^)?
+              attr-dict `:` type($start) `,` type($items) $body
+              (`->` type($results)^)?
+```
+
+Visits the items of the bins `[from, to)` of the order `items` of a
+counting sort whose start is `start` (`items[start[from],
+start[to])`), running the region `body` once for each item, with the
+item (as an index) for its argument. The region ends in
+`md_alg.yield`, one value for each `init`; the results are the `init`
+combined, item by item in the order of the visit, with the values the
+region yields, by the `combine` of each (`addi`, `muli`, `andi`, `ori`,
+`xori`, `maxsi`, `minsi`, `maxui`, `minui` on integers; `addf`, `mulf`,
+`maxnumf`, `minnumf` on floats).
+
+The op states the order of its visit, `visit`, which is what it requires
+of the order of its items (D[md-alg-analysis]):
+- `unordered`: any order. The region may combine its results only in
+  forms whose value does not depend on the order: the combiners on
+  integers, which are exact, commutative, and associative; a write to a
+  slot of its item in a buffer of `writes` (a `memref.store` whose first
+  index is the item, or the item times a constant other than zero plus a
+  constant, and whose other indices are constants); and an addition to
+  a counter of `adds`, as the key region of `md_alg.sort_by_key` (D407).
+  It reads no buffer of `writes` or `adds`, nor `items`, `start`, or
+  `by`. The verifier refuses anything else.
+- `sorted`: ascending by `by[item]`, or by the item without `by`; ties
+  in any order. A sort by the item is total, so it is `stable` (the
+  analysis writes it so).
+- `stable`: ascending by `by[item]`, or by the item, and ties in the
+  order of the items.
+The region's writes are restricted in the same way under every visit;
+an ordered visit may also combine floats.
+
+The order is a precondition on `items`, which the op does not sort:
+every lowering visits the places of the bins in turn. The serial
+lowering visits them in reverse under its option
+`reverse-unordered-visits`, for a test that the region of an
+`unordered` visit does not depend on the order.
+
+*Contract:* per run of bins: the results and the side outputs of an
+`unordered` visit are those of the serial definition in every order of
+the items; those of an ordered visit, those of the serial definition
+in that order. *Determinism:* every tier; `bitwise` by default.
+
+*Execution:* both lowerings are the loop over the places through
+`md_alg.bin_span` and `md_alg.bin_item`, where the op stands.
+
+```mlir
+%sum, %high = md_alg.bin_members %start[%from, %to] items %order
+    visit unordered writes(%mark : memref<?xi32, 1>)
+    init(%c0_i32, %c0_i32 : i32, i32) combine ["addi", "maxsi"]
+    : memref<?xi32, 1>, memref<?xi32, 1> {
+^bb0(%item: index):
+  ...
+  md_alg.yield %a, %b : i32, i32
+} -> i32, i32
+```
+
+Traits: `AttrSizedOperandSegments`
+
+Interfaces: `MDAlg_Deterministic`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>visit</code></td><td>::mdir::md_alg::VisitAttr</td><td>the order in which md_alg.bin_members visits the items of its bins</td></tr>
+<tr><td><code>combine</code></td><td>::mlir::ArrayAttr</td><td>string array attribute</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `start` | 1D memref of 32-bit signless integer values |
+| `from` | index |
+| `to` | index |
+| `items` | 1D memref of 32-bit signless integer values |
+| `by` | 1D memref of 32-bit signless integer values |
+| `writes` | variadic of memref of any non-token type values |
+| `adds` | variadic of memref of any non-token type values |
+| `init` | variadic of integer or index or 32-bit float or 64-bit float |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of integer or index or 32-bit float or 64-bit float |
 
 
 
@@ -863,6 +972,30 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_alg.yield` (::mdir::md_alg::YieldOp)
+
+_The values that an item of md_alg.bin_members contributes_
+
+Syntax:
+
+```
+operation ::= `md_alg.yield` ($values^ `:` type($values))? attr-dict
+```
+
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<BinMembersOp>`, `Terminator`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `values` | variadic of any non-token type |
+
+
+
 ## Enums
 
 ### Determinism
@@ -910,3 +1043,15 @@ _How the SIMT lowering sorts within bins_
 | :----: | :---: | ------ |
 | Insertion | `0` | insertion |
 | StableRank | `1` | stable_rank |
+
+### Visit
+
+_The order in which md_alg.bin_members visits the items of its bins_
+
+#### Cases:
+
+| Symbol | Value | String |
+| :----: | :---: | ------ |
+| Unordered | `0` | unordered |
+| Sorted | `1` | sorted |
+| Stable | `2` | stable |

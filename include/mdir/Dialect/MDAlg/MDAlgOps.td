@@ -41,10 +41,14 @@ def MDAlg_Dialect : Dialect {
     the kernels and in the build of the groups of neighbors. Those of the
     neighbor matrix's template and of the groups build stay in the module
     after it, for the collection-level transformations
-    (`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
-    lowers them; the accessors of the templates of PME and the counting
-    sort of the device's ragged rows are lowered where they are created
-    (D408, #866).
+    (`md-alg-transform-collections`, which runs the shared analysis of
+    the collections and transforms nothing yet), and
+    `convert-md-alg-to-gpu` lowers them; the accessors of the templates of
+    PME and the counting sort of the device's ragged rows are lowered where
+    they are created (D408, #866). The analysis takes what each consumer
+    requires of the order of a buffer from its meaning: a reader that is
+    not an `md_alg` op requires the full layout, and `md_alg.bin_members`
+    the order of its visit (D[md-alg-analysis]).
 
     Each op with an ordering or a floating-point aspect states a
     determinism requirement (`determinism`), separate from the ordering

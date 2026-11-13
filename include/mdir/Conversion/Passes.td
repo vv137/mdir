@@ -498,7 +498,9 @@ def MDAlgTransformCollections
     buffers, each reading one shared analysis of the collections
     (ordering, access pattern, cardinality, effects, lifetime, and the
     determinism requirement of each op). None is implemented: the pass
-    verifies the `md_alg` ops and changes nothing.
+    verifies the `md_alg` ops, runs that analysis (`CollectionAnalysis`,
+    D[md-alg-analysis]; `-debug-only=md-alg-collections` prints it), and
+    changes nothing.
   }];
 }
 
