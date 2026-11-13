@@ -30,7 +30,7 @@ std::string getGroupsBuildName(bool triclinic);
 /// in place of the three-launch scan.
 ///
 /// Its scans, scatters, sorts within bins, and reads of the ragged rows are
-/// left as md_alg ops (D[md-alg]), which kernels::lowerAlgToSIMT
+/// left as md_alg ops (D406), which kernels::lowerAlgToSIMT
 /// (MDAlgLowering.h) replaces with the code of their emitters.
 void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
                      bool singlePassScan);

@@ -71,7 +71,7 @@
 //
 // The code is emitted op by op in the order in which it runs. The scans,
 // the scatters, the sorts within bins, and the reads of the ragged rows are
-// md_alg ops (D[md-alg]), which convert-md-exec-to-gpu lowers by their
+// md_alg ops (D406), which convert-md-exec-to-gpu lowers by their
 // emitters after the build is emitted; the warp's votes and scans are the
 // emitters' code, emitted where they stand (CompactionEmitter.h).
 

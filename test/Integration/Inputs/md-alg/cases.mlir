@@ -1,4 +1,4 @@
-// The cases of the contract test of md_alg (D[md-alg]): each collection
+// The cases of the contract test of md_alg (D406): each collection
 // op on random and boundary inputs. A prelude defines `!buf`, `!wide`,
 // `@alloc`, `@alloc_wide`, `@upload`, and `@download`: in the memory of
 // the host for the serial run (host.mlir) or of a device for the run

@@ -611,7 +611,7 @@ FFT itself remains the same linear-transform primitive (Section 2).
 The collection algorithms of the device code (scans, scatters to bins,
 sorts within bins, and the accessors of ragged rows and of a periodic grid)
 are ops of a target-neutral dialect, `md_alg`, between `md_exec` and the
-device lowering (D[md-alg], #861). An op states what is computed and how
+device lowering (D406, #861). An op states what is computed and how
 its result is ordered, and names no warp, lane, or block. Its definition
 is a serial lowering to loops of one thread; its GPU lowering calls the
 shared emitter. A test runs both on the same inputs and compares them by

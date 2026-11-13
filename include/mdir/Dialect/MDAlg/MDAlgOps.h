@@ -1,4 +1,4 @@
-// Ops of the md_alg dialect (D[md-alg]).
+// Ops of the md_alg dialect (D406).
 
 #ifndef MDIR_DIALECT_MDALG_MDALGOPS_H
 #define MDIR_DIALECT_MDALG_MDALGOPS_H

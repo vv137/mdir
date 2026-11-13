@@ -1,4 +1,4 @@
-// The md_alg dialect (D[md-alg]).
+// The md_alg dialect (D406).
 
 #ifndef MDIR_DIALECT_MDALG_MDALGDIALECT_H
 #define MDIR_DIALECT_MDALG_MDALGDIALECT_H

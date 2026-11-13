@@ -60,11 +60,11 @@ of the fields (of the owned rows, for the transfers of domains).
 | **halo copy** $G$ | $(G a)_g = a_{s(g)}$ (plus a whole period of the cell for positions: affine) | halo sum $G^\mathsf T$: $a_s \mathrel{+}= \sum_{g : s(g) = s} b_g$ | `md_dist.halo_copy`, `md_dist.halo_sum`, declared adjoints (D275, D276; `lib/Dialect/MD/Transforms/Adjoints.cpp`) |
 | **reduction** | $s = \bigoplus_i x_i$ | broadcast (for $\oplus = +$): $\bar x_i = \bar s$ | `md.sum_particles`, `md.sum_relation`, `md.sum_tuples`; the `reduce` of the `md_exec` loops; `md_dist.all_reduce`; maxima and flags |
 | **broadcast** | $y_i = s$ | reduction | no op: a number that a map captures (`scaleField` in `Differentiate.cpp`; the factors of thermostats and barostats); the transpose of `md_dist.all_reduce` gives each domain's partial the cotangent once (`AllReduceAdjoint`) |
-| **scan** | $y_i = \sum_{k < i} x_k$ (exclusive) | reverse scan: $\bar x_k = \sum_{i > k} \bar y_i$ | `md_alg.scan` (D[md-alg]), of i32 counts, with a serial definition and the strategies of the shared emitters (`CompactionEmitter.h`, D296): the three-launch device scan, the single-pass device scan (D321, an opt-in compiler pass option for the groups' counting sorts), and the chunked scan of the matrix; `lowerNonzero` retains its serial scan; the warp and block scans are emitters inside |
+| **scan** | $y_i = \sum_{k < i} x_k$ (exclusive) | reverse scan: $\bar x_k = \sum_{i > k} \bar y_i$ | `md_alg.scan` (D406), of i32 counts, with a serial definition and the strategies of the shared emitters (`CompactionEmitter.h`, D296): the three-launch device scan, the single-pass device scan (D321, an opt-in compiler pass option for the groups' counting sorts), and the chunked scan of the matrix; `lowerNonzero` retains its serial scan; the warp and block scans are emitters inside |
 | **permutation** | $y_k = x_{\pi(k)}$ | inverse permutation | `md_exec.permute`; the members relabeled by `md_exec.renumber`; the host writing a frame by the numbers of the particles; `md_dist.distribute` and `md_dist.collect`, declared transposes of each other |
 | **compaction** | the elements with $p(i)$, packed: $y_{r(i)} = x_i$ | expansion: $\bar x_i = \bar y_{r(i)}$ where $p(i)$, else 0 | `md_exec.nonzero` (D262); the pruning, the active units, and the builds, through the shared warp compaction (`CompactionEmitter.h`, D296) |
 | **linear transform** (the FFT first) | $\hat x = F x$, the unnormalized discrete Fourier transform | the unnormalized inverse transform under the Hermitian-weighted real inner product of the half-complex values | `md.linear_transform` carries pure grid and half-spectrum values with a declared transpose (D319); `md_exec.linear_transform` has explicit buffers and the same adjoint and pairing declarations (D306). D341 (#526) bridges the two forms. cuFFT (`mdrtCudaFFTForward3D`, `runtime/mdrt_cuda.c`) and pocketfft (`runtime/mdrt_fft.c`) remain the execution strategies; the reciprocal composition is #452 |
-| **sort, neighbor build** | a permutation, or a relation, from the positions | none: structural, piecewise constant, not differentiated | `md_exec.spatial_order`, `md_exec.build_neighbors`, `refresh_neighbors`, `build_incidence`, `build_edges`, `build_triplets`; `md_dist.partition`, `md_dist.halo`; the stages of the counting sorts of the builds, `md_alg.scatter_to_bins` and `md_alg.sort_bins` (D[md-alg]) |
+| **sort, neighbor build** | a permutation, or a relation, from the positions | none: structural, piecewise constant, not differentiated | `md_exec.spatial_order`, `md_exec.build_neighbors`, `refresh_neighbors`, `build_incidence`, `build_edges`, `build_triplets`; `md_dist.partition`, `md_dist.halo`; the stages of the counting sorts of the builds, `md_alg.scatter_to_bins` and `md_alg.sort_bins` (D406) |
 
 Two members are special cases kept apart. A halo copy is a gather whose
 indices cross domains, and a halo sum a scatter-accumulate that does; they
@@ -303,7 +303,7 @@ and the emitter of its table, `BlockHashTable` in
 and the switchable tables of the loops over pairs call; and the emitters
 of compaction, scans, and counting sorts, `CompactionEmitter.h`
 (D296), which the pruning calls and which lower the `md_alg` ops that the
-templates and the groups build write (D[md-alg]).
+templates and the groups build write (D406).
 Every other primitive is written at its site.
 
 ## 3. The map

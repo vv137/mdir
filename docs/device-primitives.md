@@ -68,7 +68,7 @@ of #567 checks completion and buffer borrows while retaining current waits.
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420, #524 | In part: opt-in group scan | [Section 4.8](#48-single-pass-scan-strategy-d321) |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
-| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432, #861 | Built, behavior-neutral: one emitter for each, which the lowering calls; the templates and the groups build write the collection algorithms as typed `md_alg` ops with a serial definition (Section 4.2), with the same PTX | D296, D[md-alg] |
+| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432, #861 | Built, behavior-neutral: one emitter for each, which the lowering calls; the templates and the groups build write the collection algorithms as typed `md_alg` ops with a serial definition (Section 4.2), with the same PTX | D296, D406 |
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 | Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D340 |
@@ -678,7 +678,7 @@ The lowering calls the emitters where it builds its kernels. The build of
 the groups (the emitter of `GroupsBuild.cpp`, D404), the template
 `NeighborsMatrixGPU.mlir`, and the templates of PME write the collection
 algorithms as ops of the dialect `md_alg`
-(D[md-alg], #861; [dialects/md_alg.md](dialects/md_alg.md)), and the warp's votes
+(D406, #861; [dialects/md_alg.md](dialects/md_alg.md)), and the warp's votes
 as the upstream ops that the emitters give:
 
 ```mlir
@@ -776,7 +776,7 @@ emitters of Section 5 (D301).
 
 ### 4.4 Tests
 
-- `Integration/md-alg-contract-gpu.test` (D[md-alg]) runs the cases of
+- `Integration/md-alg-contract-gpu.test` (D406) runs the cases of
   `Integration/Inputs/md-alg/cases.mlir` twice: by the serial definitions
   on the host and by the emitters on a device, and compares the outputs
   by each op's contract (`diff`; the scatter's bins sorted on the host
@@ -832,7 +832,7 @@ primitive's code where the call stands, in the function of the site.
 
 The step was timed against `main` on an RTX 4090 (Section 4.6).
 
-The move of the named calls to the `md_alg` ops (D[md-alg], Section 4.2)
+The move of the named calls to the `md_alg` ops (D406, Section 4.2)
 changed no byte. Against its base commit, the lowered programs with the
 PTX of every kernel (`MDIR_GPU_ARCH=sm_89`) and the modules after
 `convert-md-exec-to-gpu`, in the generic form, are identical on 60

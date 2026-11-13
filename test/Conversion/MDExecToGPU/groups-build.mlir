@@ -10,7 +10,7 @@
 // RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" | FileCheck %s --check-prefixes=CHECK,TRI,ONE
 //
 // The scans, scatters, sorts within bins, and reads of the ragged rows stay
-// md_alg ops (D[md-alg]) until they are lowered.
+// md_alg ops (D406) until they are lowered.
 // RUN: mdir-opt %s --add-groups-build="triclinic=true single-pass-scan=true" \
 // RUN:     --convert-md-alg-to-gpu | FileCheck %s --check-prefix=LOWERED
 

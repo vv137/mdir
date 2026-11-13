@@ -1,5 +1,5 @@
 // The buffers of md-alg-contract.mlir in the memory of the host, for its
-// serial run (convert-md-alg-to-scf, D[md-alg]).
+// serial run (convert-md-alg-to-scf, D406).
 
 !buf = memref<?xi32>
 !wide = memref<?xi64>

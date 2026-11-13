@@ -1,4 +1,4 @@
-// The ops of md_alg (D[md-alg]) in their custom form: each prints as it
+// The ops of md_alg (D406) in their custom form: each prints as it
 // parses, and the generic form parses back to it. The result types of the
 // accessors are inferred: the grid read takes the element type of its
 // grid.

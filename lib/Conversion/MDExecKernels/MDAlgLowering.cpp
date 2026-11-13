@@ -1,4 +1,4 @@
-// The lowerings of the md_alg dialect (D[md-alg]); see
+// The lowerings of the md_alg dialect (D406); see
 // include/mdir/Conversion/MDAlgLowering.h.
 //
 // The SIMT lowering puts each op's emitter where the op stands, in the order

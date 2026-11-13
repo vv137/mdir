@@ -5017,7 +5017,7 @@ LogicalResult Lowering::addTemplates(Type real) {
   if (failed(instantiateTemplates(*templates, real)))
     return failure();
   // The template's md_alg ops, by the emitters of the device primitives
-  // (D[md-alg]).
+  // (D406).
   if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -5035,7 +5035,7 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
   // its own, whose md_alg ops are lowered there.
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
-  // The build's md_alg ops (D[md-alg]).
+  // The build's md_alg ops (D406).
   if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {

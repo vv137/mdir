@@ -21,7 +21,7 @@
 // tuple of the particle, E = a + 2 (the tuple, the place of the particle
 // in it, its a members). Code reads a row only through emitRaggedRow and
 // emitRaggedEntry; the templates and the groups build write them as
-// `md_alg.ragged_row` and `md_alg.ragged_entry` (D[md-alg]), which lower
+// `md_alg.ragged_row` and `md_alg.ragged_entry` (D406), which lower
 // to the same code.
 
 #ifndef MDIR_CONVERSION_RAGGEDROWS_H

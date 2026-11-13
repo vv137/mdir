@@ -1,5 +1,5 @@
 // The md_alg dialect: the collection algorithms of the device lowering,
-// target-neutral, each defined by a serial lowering (D[md-alg], #861).
+// target-neutral, each defined by a serial lowering (D406, #861).
 //
 // See docs/device-primitives.md, Section 4, and
 // docs/decisions/md-alg.md for the design.
@@ -19,7 +19,7 @@ def MDAlg_Dialect : Dialect {
     The `md_alg` dialect states what a collection algorithm computes, below
     `md_exec` and above the device lowering: a scan, a scatter to bins, a
     sort within bins, and the accessors of ragged rows and of a periodic
-    grid (D[md-alg], #861). An op's meaning names no warp, lane, or block.
+    grid (D406, #861). An op's meaning names no warp, lane, or block.
     Its attributes state semantics and contracts: what the result is and
     how it is ordered.
 

@@ -1,4 +1,4 @@
-// The md_alg dialect and the verifiers of its ops (D[md-alg]). The
+// The md_alg dialect and the verifiers of its ops (D406). The
 // operand types are checked by the constraints of MDAlgOps.td; the rules
 // here are those of the execution part and of the buffers that an op
 // must not share.

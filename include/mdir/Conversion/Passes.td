@@ -489,7 +489,7 @@ def ConvertMDAlgToGPU : Pass<"convert-md-alg-to-gpu", "::mlir::ModuleOp"> {
                 "the device primitives";
   let description = [{
     Replaces each op of `md_alg` with the code of the emitter of its device
-    primitive where it stands (the SIMT lowering, D[md-alg],
+    primitive where it stands (the SIMT lowering, D406,
     docs/device-primitives.md, Section 4): a scan, a scatter to bins, or a
     sort within bins becomes the launches of its strategy, and an accessor
     its arithmetic and loads. `convert-md-exec-to-gpu` does the same when
@@ -511,7 +511,7 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
   let summary = "Lowers the md_alg ops to their serial definitions";
   let description = [{
     Replaces each op of `md_alg` with its definition in `scf` loops, which
-    one thread runs over the whole collection (D[md-alg]): the
+    one thread runs over the whole collection (D406): the
     exclusive sums in order, the items scattered to their bins in the order
     of the items, each bin sorted by exchanges with the item before. The
     execution parameters of an op are ignored. The buffers may be in any

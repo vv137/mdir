@@ -1,5 +1,5 @@
 # The serial definitions of the md_alg ops (convert-md-alg-to-scf,
-# D[md-alg]) on the host, on the cases of Inputs/md-alg/cases.mlir:
+# D406) on the host, on the cases of Inputs/md-alg/cases.mlir:
 # the values of the small cases, written out here. md-alg-contract-gpu.test
 # compares the whole output with that of the emitters on a device.
 #

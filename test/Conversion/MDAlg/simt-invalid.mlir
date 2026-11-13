@@ -1,4 +1,4 @@
-// The refusals of the SIMT lowering of md_alg (D[md-alg]): a collection
+// The refusals of the SIMT lowering of md_alg (D406): a collection
 // op without the execution parameters that its emitter takes, which no
 // policy has filled in yet. The module is left as it was.
 //

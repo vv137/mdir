@@ -1,5 +1,5 @@
 // The buffers of md-alg-contract.mlir in the memory of a device, for its
-// run through the emitters (convert-md-alg-to-gpu, D[md-alg]).
+// run through the emitters (convert-md-alg-to-gpu, D406).
 
 !buf = memref<?xi32, 1>
 !wide = memref<?xi64, 1>

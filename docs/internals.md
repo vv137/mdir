@@ -80,7 +80,7 @@ gathered, with where each is checked, in
 `lib/Runtime/Templates` does not copy an emitter's code; it writes the
 collection algorithm as an op of `md_alg` (`md_alg.scan`,
 `md_alg.scatter_to_bins`, `md_alg.sort_bins`, `md_alg.ragged_row`,
-`md_alg.grid_read`, ...; D[md-alg],
+`md_alg.grid_read`, ...; D406,
 [device-primitives.md](device-primitives.md#42-how-the-sites-call-them)),
 whose verifier checks it. `kernels::lowerAlgToSIMT`
 (`lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with

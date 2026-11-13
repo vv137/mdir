@@ -1193,7 +1193,7 @@ D368, #739):
   cast of the bits;
 - the functions that the template defines take the names of the instance.
   Declarations keep theirs. The template's `md_alg` ops are lowered after
-  the instance is made (D[md-alg]).
+  the instance is made (D406).
 
 ### 7.7 Agreement with the reference
 

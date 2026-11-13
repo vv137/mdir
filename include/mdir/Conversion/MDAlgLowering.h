@@ -1,4 +1,4 @@
-// The lowerings of the md_alg dialect (D[md-alg],
+// The lowerings of the md_alg dialect (D406,
 // docs/device-primitives.md, Section 4): the serial one, which defines each
 // op, and the SIMT one, which calls the emitters of the device primitives
 // (CompactionEmitter.h, RaggedRows.h, GatherEmitter.h).

@@ -793,7 +793,7 @@ sorts of the builds are one emitter each, which the lowering and the
 templates of the builds share (D296; [device-primitives.md](../device-primitives.md),
 Section 4); the templates and the groups build state the scans, the
 scatters, and the sorts within bins as typed ops of a dialect of collection
-algorithms, `md_alg`, which those emitters lower (D[md-alg]). (The outer list's blocks come from an atomic pool, and the loop
+algorithms, `md_alg`, which those emitters lower (D406). (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
 before; the deterministic mode does not use groups.) A loop over pairs
 that follows the refresh at the same positions, in f32, takes the frames

@@ -1,4 +1,4 @@
-// The refusals of the verifiers of md_alg (D[md-alg]): one case for each
+// The refusals of the verifiers of md_alg (D406): one case for each
 // rule, in place of the hand checks of the named device primitives.
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics

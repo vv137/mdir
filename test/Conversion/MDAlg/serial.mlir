@@ -1,4 +1,4 @@
-// The serial lowering of md_alg (convert-md-alg-to-scf, D[md-alg]): the
+// The serial lowering of md_alg (convert-md-alg-to-scf, D406): the
 // definitions of the ops in loops of one thread, with no launch, atomic,
 // or barrier, whatever execution parameters the ops carry.
 // Integration/md-alg-serial.test runs them; md-alg-contract-gpu.test

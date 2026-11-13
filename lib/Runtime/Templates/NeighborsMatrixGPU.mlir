@@ -47,7 +47,7 @@
 // as the upstream ops that its emitters give.
 //
 // The scans, the scatters, the sorts within cells, and the reads of the
-// ragged rows are md_alg ops (D[md-alg]): the lowering replaces each with
+// ragged rows are md_alg ops (D406): the lowering replaces each with
 // the code of its emitter when it parses this template.
 func.func private @mdrt_gpu_cell_count(%length: f64, %width: f64) -> index {
   %c1 = arith.constant 1 : index

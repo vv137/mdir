@@ -1,4 +1,4 @@
-// The SIMT lowering of md_alg (convert-md-alg-to-gpu, D[md-alg]): each
+// The SIMT lowering of md_alg (convert-md-alg-to-gpu, D406): each
 // op becomes the code of the emitter of its device primitive where it
 // stands, and no op of md_alg is left. simt-invalid.mlir holds the
 // refusals; Integration/md-alg-contract-gpu.test runs the code.
