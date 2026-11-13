@@ -620,10 +620,18 @@ each bin where it is not. The parameters of an implementation (the
 strategy, the scratch, the launch geometry) are a separate part of the op,
 which the target's policy is to fill; a CPU vector lowering or another
 device then adds a lowering, not a new op. Warp-level operations remain
-upstream `gpu` operations inside the GPU lowering. The stages of the
-neighbor builds, the pruning, and the pair loops are to be decomposed into
-these ops in later steps, so that passes can remove intermediate buffers,
-skip sorts that are not needed, and fuse stages.
+upstream `gpu` operations inside the GPU lowering. The first stages of the
+neighbor builds are ops as well (D[md-alg-stages], #864): the plan of a
+grid, a counting sort whose key a region computes, with side outputs that
+are a slot of each item or an addition to a counter (so that the order of
+the items cannot change them) and an order within the bins that is a
+contract of its own, the readers of its bins, and the append of entries to
+lists held in blocks from a pool, whose counter holds the full demand past
+a capacity, so that a build can be repeated with enough room. Passes that
+remove intermediate buffers, skip sorts that are not needed, and fuse
+stages are to run on these ops before they are lowered; today the ops are
+created and lowered within one pass, and a pass of their own comes next
+(#866).
 
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 

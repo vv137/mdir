@@ -159,8 +159,14 @@ f32:
 3. **Counting sort.** The key of particle $i$ is $(k_y N_x + k_x)N_z +
    k_z$, with $k_a$ the column or bin of $\tilde x_{i,a}$, clamped to the
    grid. A count of each key, a scan, and a scatter put the particles in the
-   order of the keys; each key's particles are then sorted by their number
-   (`sort_bins`), so the order does not depend on the threads.
+   order of the keys; each key's particles are then sorted by their number,
+   so the order does not depend on the threads: one `md_alg.sort_by_key`
+   (D[md-alg-stages]), whose key region also writes each particle's wrapped
+   position (a slot of the particle) and counts the positions that have no
+   key (an addition to a counter, D107). The places by cell of the grid of
+   the candidates are a second one. The column and candidate grids are
+   `md_alg.grid_plan`s, and the readers of both orders take them through
+   `md_alg.bin_span` and `md_alg.bin_item`.
 4. **Chunks.** Column $c$, with $n_c$ particles, is cut into
    $\lceil n_c/64\rceil$ chunks of 64 consecutive particles, from the bottom
    in $z$; the last is short. Chunk $t$ (counted over all columns in their
@@ -341,7 +347,9 @@ from one pool as it fills them: in a round, lane 0 takes from the pool's
 counter, with one atomic addition, the block that the round begins and the
 next one if the round runs into it, at most two, and names them in `units`
 and `ordinals`. A block beyond the pool is counted but not written
-(Section 8.1).
+(Section 8.1). The round is one `md_alg.append` (D[md-alg-stages]), whose
+contract is this: the counter holds the full demand, the list's count
+every entry, and nothing at or past the capacity is written.
 
 ```text
 list(g):                                         # a warp; lane l

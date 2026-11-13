@@ -18,17 +18,17 @@ it); options are compile-time, and an unused one emits no code.
 ### `md_alg.sort_by_key`
 
 ```mlir
-md_alg.sort_by_key %n bins %bins keys %key counts %held start %start
-    cursor %cursor into %order by %ids
+md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
+    cursor %cursor into %order order stable by %ids : memref<?xi32, 1>
+    cleared : memref<?xi32, 1>
     launch(%grid_n, %block, %c1)
     scan chunked scratch %sums : memref<?xi32, 1>
         launch(%chunks, %chunk, %grid_chunks, %block, %c1)
-    sort insertion launch(%grid_cells, %block, %c1)
-    key {
+    sort insertion launch(%grid_cells, %block, %c1) key {
   ^bb0(%i: index):
     ...
     md_alg.bin %k : index
-  } : memref<?xi32, 1>, ...
+  }
 ```
 
 The items are `[0, n)`; each has a key, a bin in `[0, bins)`, or none.
@@ -40,26 +40,47 @@ The items are `[0, n)`; each has a key, a bin in `[0, bins)`, or none.
   Without the region the keys are given in `keys`; a negative key is no
   bin, and with `every_key` every key is a bin (a precondition, not
   checked).
-- **Counts.** `counts[b]` holds zeros on entry (a precondition: the op
-  does not clear them, so that the clear can share a launch with other
-  work, as at the sites) and the number of items of bin `b` afterwards.
+- **Counts.** `counts[b]` holds the number of items of bin `b`
+  afterwards. The op clears them first; with `cleared` the caller has
+  cleared them (the sites clear them in a launch of their own, which the
+  matrix shares with other work), and the op does not clear them again.
+  The serial definition is thus whole: an op without `cleared` clears, and
+  one with it reads the zeros its caller wrote.
 - **Start and cursor.** `start[b]` = the sum of `counts[c]` for `c < b`,
   for `b` in `[0, bins]`; `cursor[b]` = `start[b + 1]` afterwards.
-- **The order.** `out[start[b], start[b + 1])` holds the items of bin `b`
-  ascending, or ascending by `by[item]` where `by` is given (the values of
-  `by` within a bin must be distinct). No other element of `out` is
-  written; no other buffer of the op is written.
-- **What the region may do.** It computes the key of its item and may
-  write side outputs, which the op declares (`writes(%wrapped, ...)`):
-  every write of the region is to a declared side output, as a memref or
-  through an address taken of one (`memref.extract_aligned_pointer_as_index`);
-  it neither reads nor writes `keys`, `counts`, `start`, `cursor`, `out`,
-  or the scatter buffer of the sort. It runs once for each item, in no
-  fixed order and concurrently: a side output is written at places of its
-  item, or by atomics whose sum does not depend on the order.
-- **Contract:** ordered, stable: every lowering gives the serial
-  lowering's `keys`, `counts`, `start`, `cursor`, `out`, and side outputs,
-  bitwise.
+- **The order.** `out[start[b], start[b + 1])` holds the items of bin `b`;
+  no other element of `out` is written, and no other buffer of the op.
+  Their order within the bin is the contract `order`, an attribute of its
+  own, which no strategy implies and the verifier checks against the
+  execution group: `stable`, ascending by the item, or by `by[item]` where
+  `by` is given (distinct within a bin), which requires a sort within the
+  bins; `unordered`, in no fixed order, which takes neither `by` nor a
+  sort, so that a stage that needs only the bins does not pay for an
+  order.
+- **What the region may do.** It computes the key of its item from any
+  memory but the op's own buffers (`keys`, `counts`, `start`, `cursor`,
+  `out`, the scatter buffer of the sort), and it may write two kinds of
+  side output, which the op declares, so that the serial definition, run
+  in the order of the items, and the SIMT lowering, in no fixed order and
+  concurrently, give the same bits:
+  - **a slot of its item** in a buffer of `writes`: a `memref.store` whose
+    first index is the item, or the item times a constant other than zero
+    plus a constant (injective in the item by construction), and whose
+    other indices are constants; the groups' key kernel writes the wrapped
+    position of particle `i` at `[i, 0..2]`;
+  - **an addition to a counter** of `adds`: `memref.atomic_rmw addi`, or
+    `llvm.atomicrmw add` at an address taken of the counter
+    (`memref.extract_aligned_pointer_as_index`) plus a constant; integer
+    addition is commutative and associative, so the sum does not depend on
+    the order; the groups' key kernel counts the positions that have no
+    bin this way (D107).
+
+  Every other write is refused, as is any op whose effects the verifier
+  cannot state (a call), and any use of the op's own buffers. The region
+  runs once for each item.
+- **Contract:** every lowering gives the serial lowering's `keys`,
+  `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
+  bitwise under `stable`, as the multiset of each bin under `unordered`.
 - **Execution** (the SIMT lowering): `launch(grid, block, one)`, a thread
   an item, for the key and for the scatter; the scan's strategy, scratch,
   and launch, as for `md_alg.scan`; the sort's strategy and launch, as for
@@ -67,27 +88,39 @@ The items are `[0, n)`; each has a key, a bin in `[0, bins)`, or none.
   fills, `buffer %b`, and no `by`). The SIMT lowering is the key kernel
   followed by the code of `md_alg.scan`, `md_alg.scatter_to_bins` (with
   `every_key` where the region names no `md_alg.no_bin`), and
-  `md_alg.sort_bins`; the serial lowering is a loop over the items running
-  the region, then the serial definitions of those three.
+  `md_alg.sort_bins` (none under `unordered`); the serial lowering is a
+  loop over the items running the region, then the serial definitions of
+  those three.
 
-Verifier rules: the execution group whole or absent, with the counts of
-launch values and the scratch type of `md_alg.scan`; `stable_rank` with a
-buffer and without `by`, `insertion` without a buffer; `every_key` only
-without the region; the region one block of one index argument; on every
-path through it exactly one `md_alg.bin` or `md_alg.no_bin`, directly in
-it or in the branches of `scf.if` (not in a loop or another region); a
-bin of i32 or index; no use of the op's own buffers inside it; every write
-inside it to a declared side output; the side outputs none of the op's
-buffers; `out` none of `keys`, `counts`, `start`, `cursor`, `by`.
+Verifier rules (one negative case each in
+`test/Dialect/MDAlg/invalid.mlir`): the execution group whole or absent,
+with the counts of launch values and the scratch type of `md_alg.scan`;
+the sort within the bins with `stable` and without it under `unordered`,
+which takes no `by` either; `stable_rank` with a buffer and without `by`,
+`insertion` without a buffer; `every_key` only without the region; the
+own buffers distinct and `by` none of them; a side output none of the
+op's buffers, and not both written and added to; the region one block of
+one index argument; on every path through it exactly one `md_alg.bin` or
+`md_alg.no_bin`, directly in it or in the branches of `scf.if`, and
+neither anywhere else; no use of the op's own buffers inside it; every
+write a slot of its item in a buffer of `writes` or an addition to a
+counter of `adds`, as above.
+
+The readers of the bins: `md_alg.bin_span %start[%from, %to]` gives
+`start[from]` and `start[to]`, the run of bins `[from, to)`, and
+`md_alg.bin_item %out[%place]` an item of the order. The groups build
+reads its two orders through them (the chunks of a column, the particles
+of a chunk, the candidates of a cell), so that a pass sees which stage
+reads which bins; they lower to the loads the sites had.
 
 ### `md_alg.append`
 
 ```mlir
-%count1, %last1 = md_alg.append %keep values(%place, %bits) into(%entries, %masks)
+%count1, %last1 = md_alg.append %keep values(%place, %bits)
+    into(%entries, %masks : memref<?xi32, 1>, memref<?xi32, 1>)
     list(%count, %last) owner %g names(%units, %ordinals)
-    pool %sizes[%c2] capacity %capacity block 64
-    lane(%lane, %below)
-    : i32, i32, memref<?xi32, 1>, memref<?xi32, 1>, ...
+    pool %sizes[%c2] capacity %capacity block 64 lane(%lane, %below)
+    : memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32, 1>
 ```
 
 Appends one entry (the `values`, one to each buffer of `into`) for each
@@ -131,21 +164,27 @@ pool, a counter at `pool[at]`, when the list's next entry begins one.
   concurrently interleave their takes. *Contract:* the lists, the counts,
   and the counter bitwise; the numbers of the blocks as any distinct
   numbers, compared after the lists are read out through their names.
-- **Execution:** `lane(%lane, %below)`, the lane's number in its warp and
-  the mask of the lanes below it, which the kernels compute once and share.
+- **Order:** a property of the op, not of a strategy (it has one): the
+  entries in the order of the appends, the block numbers free.
+- **Execution** (the SIMT lowering, not the meaning): `lane(%lane,
+  %below)`, the lane's number in its warp and the mask of the lanes below
+  it, which the kernels compute once and share, and a `block` of at least
+  32, so that a warp's batch begins at most two blocks. The serial lowering
+  ignores the first and takes any power of two.
 
 Verifier rules: one buffer of `into` for each value, at least one;
 `block` a power of two; `lane` and `below` together; `into`, `units`,
-`ordinals`, and `pool` distinct. The SIMT lowering requires the execution
-group and a `block` of at least 32 (so that a batch begins at most two
-blocks).
+`ordinals`, and `pool` distinct. The SIMT lowering refuses an append
+without its lanes or with blocks of fewer than 32 entries
+(`test/Conversion/MDAlg/simt-invalid.mlir`).
 
 ### `md_alg.grid_plan`
 
 ```mlir
-%nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz width %w bounds [3.0, 256.0] : f64
-%cx, %cy = md_alg.grid_plan %lx, %ly volume %v occupancy 64.0 of %n
-    bounds [1.0, 256.0] : f64
+%nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz : f64, f64, f64
+    width %w : f64 bounds [3.0 : f64, 256.0 : f64] -> i64, i64, i64
+%cx, %cy = md_alg.grid_plan %lx, %ly : f64, f64 volume %v : f64
+    occupancy 64.0 : f64 of %n bounds [1.0 : f64, 256.0 : f64] -> i64, i64
 ```
 
 The count of cells along each of the given edges `L_a`, as i64:
@@ -155,11 +194,16 @@ ratio `most` (#168). The width is given, or follows from a target
 occupancy: `w = (occupancy / (n / V))^{1/3}`, the edge of a cube that
 holds `occupancy` of the `n` items in the volume `V` on average.
 
+- The edges, the width, the volume, the bounds, and the occupancy are of
+  one type, f64 or f32, so that a template instantiated for f32 keeps a
+  valid op.
 - *Contract:* bitwise; one lowering, on the host, which the serial and the
-  SIMT passes share.
-- Verifier rules: at least one edge; `least` and `most` whole numbers with
-  `1 <= least <= most`; a width or an occupancy, not both; an occupancy
-  with its volume and population, and positive.
+  SIMT passes share. The stages run across the edges (all the divisions,
+  then all the floors, ...), as the sites computed them.
+- Verifier rules: an edge or more, a count for each; the types alike;
+  `least` and `most` whole numbers with `1 <= least <= most`; a width or
+  an occupancy, not both; an occupancy positive, with its volume and
+  population.
 
 The grid plan moves what the sites compute alike: the counts from a
 width, clamped. What the sites choose differently stays with them: the
@@ -169,12 +213,162 @@ candidates (half the reach).
 
 ## Sites
 
-To be filled in with the implementation.
+| Op | Site | What moved |
+|---|---|---|
+| `sort_by_key` | the groups build: the particles by column and bin of z (`emitKeys`, the key region, with the wrapped positions as slots and the count of positions without a bin as an addition) | the key kernel's launch and its count, the scan, the scatter, the sort (`GroupsBuild::cursorScatter`, `sortBins`, `atomicAdd` removed) |
+| `sort_by_key` | the groups build: the places by cell of the grid of the candidates (the key region writes the positions of the places) | as above |
+| `sort_by_key` | the matrix's spatial order (`mdrt_gpu_spatial_order`): the key region, every key a bin, by `ids` | the key kernel, `md_alg.scan`, `md_alg.scatter_to_bins`, `md_alg.sort_bins` |
+| `sort_by_key` | the device build of ragged rows (`emitDeviceRaggedRows`): keys given, every key a bin | the count kernel, the scan, the scatter, the sort; the op is created and lowered there, where `buildOnDevice` takes its launches |
+| `append` | the groups build's entries of the lists and of the images (`addEntries`, four sites in two kernels) | the whole round: the ballot, the ranks, the blocks taken by the first lane and shared, the stores below the capacity, the names (`GroupsBuild::atomicBlock` removed) |
+| `grid_plan` | the groups build's columns (an occupancy of 64) and grid of the candidates (cells of half the reach, 3 to 256 a side); the matrix's `mdrt_gpu_cell_count` (both templates' builds call it) | the divisions, floors, bounds, and conversions |
+| `bin_span`, `bin_item` | the groups build's readers of its two orders: the chunks of a column, the particles of a chunk, the places of the cells that the search visits | the loads of `start` and `out` |
+
+Not moved:
+- **The matrix sort** (`mdrt_gpu_matrix_sort`): its key kernel is in each
+  of the three builds of the matrix (orthorhombic, triclinic of one pass,
+  of all images, the last generated by
+  `scripts/generate-matrix-images-template.py`) and its scan, scatter, and
+  stable rank in the function they share, whose kernels are named after
+  it: one op would move kernels between functions and rename them. Its
+  scan, scatter, and rank are step-1 ops already.
+- **The host's counting sorts** of `NeighborsMatrix.mlir`: in index
+  buffers, with the copy of the positions fused into the scatter.
+- **The cell sizes of `MDToMDExec.cpp` and `MDDistToLoops.cpp`** (#817
+  item 1): a width, $(r_c + \text{skin})/\text{cellsPerReach}$, computed
+  at compile time, not the same computation as a count of cells.
+- **Raw reads of the bins** that remain: the matrix's readers of its order
+  and of `start` (not a `sort_by_key`'s output), the spatial order's output
+  (read by the host's code of the run), and the readers of the ragged rows
+  that `buildOnDevice` builds, which read them as ragged rows
+  (`md_alg.ragged_row` downstream) after a kernel of the build writes
+  their header: the offsets are read there once to write it, by the
+  lowering in C++, where an accessor would add no visibility until the
+  build itself is an op.
 
 ## What this enables
 
-To be filled in with the implementation.
+A neighbor build is now visible as stages: the plan of a grid
+(`grid_plan`), a counting sort with its key and its side outputs
+(`sort_by_key`), the readers of its bins (`bin_span`, `bin_item`), the
+search, and the append of its entries with a capacity (`append`). The
+goals that this makes possible, none of them implemented here:
+
+- **Removing buffers.** The cursor of a counting sort is dead after its
+  scatter, and its counts after its scan; the keys of both of the groups'
+  sorts are read by no stage but their scatter. A pass that sees the op
+  and its readers can allocate them as scratch of the op, or reuse one
+  buffer for both sorts.
+- **Skipping a sort.** `order` is a contract of its own: a stage whose
+  readers need only the bins (a histogram, a count of the occupancy) can
+  take `unordered` and lose the sort within the bins; a pass can lower
+  `stable` to `unordered` where every reader of the bins is insensitive to
+  their order, and a sort whose keys are already ordered (a second sort by
+  a finer key of the same cells) can be elided.
+- **Fusing stages.** The clear of the counts with another clear (as the
+  matrix does by hand), the key kernel with the kernel that writes its
+  inputs, the scatter with the copy of the positions (the matrix sort's
+  copy kernel), and the append with the search that feeds it.
+
+These passes must run on `md_alg` ops, before either lowering: once an op
+is lowered, its stages are launches and loads that no pass can read as a
+sort or an append (which is also why the readers of the bins go through
+`bin_span` and `bin_item`, not raw indices). Today the ops are created and
+lowered inside `convert-md-exec-to-gpu`, in each template and in the groups
+build as they are emitted, so no pass sees them yet. The next step (#866)
+lowers `md_alg` by a pass of its own after `convert-md-exec-to-gpu`, which
+the passes above, and the policy pass, then precede.
+
+**What the policy pass takes over** (#433, #558; the review of #862): the
+execution groups of every op, which the callers give until then: the
+strategy, scratch, and launch values of `scan`, `scatter_to_bins`,
+`sort_bins`, and `sort_by_key` (its launch for the key and the scatter, its
+scan's, and its sort's), and `append`'s lanes and the requirement of a
+block of at least 32 entries for a warp's batch. They become an attribute
+that the pass fills from the target record, and the callers stop passing
+them; the contracts (`order`, the capacity of `append`) stay on the ops.
 
 ## Validation
 
-To be filled in with the implementation.
+**The same programs.** Against the base commit (54609b96), on the 60
+programs of D406 (the nine systems of the Amber suite, JAC NVE with the
+matrix, the rhombic dodecahedron with the matrix, with the groups, and
+with the groups and a dual list, and the prolate kernel of PME on the three
+OPC waters and on the dodecahedron; mixed and double; the three-launch and
+the single-pass group scan), `mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, the base captured twice:
+
+- 16 programs (every program with the matrix or the prolate kernel) are
+  byte-identical, the spatial order, the ragged rows, and the count of
+  cells moved among them;
+- the 44 programs with the groups have every kernel byte-identical but
+  one, the images kernel of the groups build, and 8 lines of the host's
+  code moved for each groups build in them (Section "Departures").
+
+The modules after `convert-md-exec-to-gpu`, in the generic form, differ as
+in D296's step, by ops that canonicalization removes before the lowered
+program: constants created where the lowering uses them, the cast of a bin
+next to its store, and in the device build of ragged rows the grid of the
+rows computed before the count kernel and the scatter's grid, the same
+computation as the count kernel's, taken from it.
+
+**Departures** (for a decision in #865):
+
+1. The images kernel of the groups build stores the place of an entry
+   without its shift bits; the mask, which the hand-written code computed
+   inside the conditional store, is now computed before `md_alg.append`,
+   whose values are operands. The kernel's PTX has one line fewer (3,440
+   against 3,441 at JAC, 3,637 against 3,638 at the dodecahedron), the same
+   registers (64, 128), and the same number of SASS instructions (4,080,
+   4,136), in another order at the two places where the mask is used. A
+   region of values evaluated where an entry is stored would keep the PTX;
+   it would exist only to place the mask, and was not added.
+2. The scratch of a counting sort's scan is an operand of
+   `md_alg.sort_by_key`, so the groups build allocates it before the key
+   kernel's launch and frees it after the sort, where it allocated it after
+   the key kernel and freed it after the scan: a call, a maximum, and an
+   allocation move above one launch, a free below two. The policy pass,
+   which will own the execution group, decides where the scratch lives.
+
+**Contract tests**, serial on the host against SIMT on an RTX 5090
+(`Integration/md-alg-stages-contract-gpu.test`, Section 4.4 of
+device-primitives.md), and the values of the small cases written out
+(`md-alg-stages-serial.test`). Each fails on a realistic break:
+
+| Break | Caught by |
+|---|---|
+| the serial sort decides whether every key is a bin after its key region has moved into the loop (an error made while writing it) | the serial run writes through the key -1 and does not complete: both tests |
+| the SIMT lowering does not clear the counts without `cleared` | the device run reads stale counts and fails: the contract test |
+| the serial append takes a block from the pool only below the capacity (the counter not the full demand) | the counter of the three runs past their capacity (9 for 10, 3 for 24, 0 for 76): both tests |
+| the SIMT append stores an entry whatever its block (no test of the capacity) | the device run writes past its buffers and aborts: the contract test |
+| the SIMT append ranks the lanes from the top (the order of a batch reversed) | the host's check of six runs finds entries out of their order: the contract test |
+| the grid plan bounds with `maximumf` (a length or width that is not a number gives the most) | `md-alg-accessors.test`, two values |
+| the verifier accepts any first index of a side output's store | `invalid.mlir`, two cases |
+| the test pass gives the count of the lanes for the mask of the lanes below | `md-alg-warp-gpu.test` |
+
+**Direct tests of the step-1 accessors and warp helpers** (the review of
+#862): `md-alg-accessors.test` (ragged rows checked and not, an empty
+buffer, rows past the end; entries; wraps signed and of index; grid reads
+active and not) and `md-alg-warp-gpu.test` (the mask of the lanes below,
+the ballot, the rank, the count, and the warp scan over 32 lanes, over
+segments of 16, and with a lane compared signed and unsigned, through the
+test pass `test-md-alg-warp-helpers`), against values worked out by hand.
+The warp test found that `emitWarpScan` over segments of 16 needs shuffles
+of the whole warp: with a shuffle width of 16 the first segment's sums are
+wrong on an RTX 5090, which the groups build's comment ("shuffles up by
+segments of 16 lost excluded pairs") had recorded; the test takes the
+site's form.
+
+## Lines
+
+The code (without the tests and the documents) gained 1,364 lines and lost
+359: the ops (`MDAlgOps.td`, 331, most of it their descriptions;
+`MDAlgDialect.cpp`, 324, the verifiers, the region's rules among them) and
+their lowerings (`MDAlgLowering.cpp`, 505); the sites lost 336 lines and
+gained 221. The hand-written copies that are gone: the groups build's
+histograms in its two key kernels and its helpers of the scan's sorts
+(`cursorScatter`, `sortBins`, `atomicAdd`, `atomicBlock`), the round of
+an append (`addEntries`, 85 lines, now one op), the arithmetic of its
+two grids; the spatial order's key kernel and its three ops; the clamps of
+the matrix's count of cells; the ragged rows' count kernel, scan, scatter,
+and sort.

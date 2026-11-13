@@ -666,11 +666,13 @@ The emitters are in `include/mdir/Conversion/CompactionEmitter.h`
 | `emitRankInBins` | The stable rank: a thread for each item counts the smaller items of its bin and writes its item at that place | The items of a bin are distinct | — |
 | `emitDeviceAtomicAdd` | A relaxed atomic addition of an i32 at the scope of the device, with its old value | — | — |
 
-A counting sort is the site's histogram (one device atomic for each item
-where the site computes its key), a scan of the counts, the scatter, and an
-order within each bin, since the order of the atomics is not fixed: the
-insertion sort for bins of a few items, the rank for bins of many (#231)
-and for the partitions to come (#38, with the ghost flag in the key).
+A counting sort is a histogram (one device atomic for each item where its
+key is computed), a scan of the counts, the scatter, and an order within
+each bin, since the order of the atomics is not fixed: the insertion sort
+for bins of a few items, the rank for bins of many (#231) and for the
+partitions to come (#38, with the ghost flag in the key). It is the op
+`md_alg.sort_by_key` (D[md-alg-stages]), whose key a region computes
+(Section 4.2).
 
 ### 4.2 How the sites call them
 
@@ -712,6 +714,10 @@ caller gives them, as it gave them to the emitters.
 | `md_alg.ragged_row`, `md_alg.ragged_entry` | a row of ragged rows, a value of its entry (Section 4.7) | per item | `emitRaggedRow`, `emitRaggedEntry` |
 | `md_alg.wrap` | $(s + o) \bmod N$ for $s, o \in [0, N)$, one subtraction | per item | `emitWrappedGridAxis` |
 | `md_alg.grid_read` | `grid[base + z]`; with `active` false, `grid[base]`; the result type is the grid's | per item | `emitGridGather` |
+| `md_alg.sort_by_key` | a counting sort of $n$ items into bins: the key of each item by a region (one `md_alg.bin` or `md_alg.no_bin` on every path; side outputs a slot of the item or an addition to a counter, declared) or given; the counts (cleared by the op, or by the caller with `cleared`), their exclusive sums, the scatter, and the order within the bins | `order stable`: ascending by the item or by `by[item]`, bitwise; `order unordered`: the bins as multisets, no sort; the keys, counts, start, cursor, and side outputs bitwise | the key kernel, then the strategies of the scan and of the sort above |
+| `md_alg.bin_span`, `md_alg.bin_item` | the run of bins `[from, to)` of a counting sort's start, and an item of its order | per item | loads |
+| `md_alg.append` | entries appended to a list held in blocks taken from a pool counter, named by owner and ordinal, below a capacity; a batch (a warp's lanes) as its items one by one | the entries of a list in the order of its appends, the counts and the counter (the full demand) bitwise; the numbers of the blocks free; nothing written at or past the capacity | the warp compaction of the groups build, the blocks taken by the first lane |
+| `md_alg.grid_plan` | the counts of cells along edges, $\min(\max(\lfloor L/w \rfloor, \ell), m)$ with `maxnumf` and `minnumf`, the width given or $w = (o\,V/n)^{1/3}$ from an occupancy $o$ | bitwise (one lowering, on the host) | — |
 
 Each op has three parts:
 - **a verifier**, which replaced the hand checks of the names: every buffer
@@ -744,12 +750,29 @@ The block scan, which no site called by name, is an emitter inside the
 device scans. The 22 names of D296, D314, and D325 became 7 ops, the upstream
 ops and typed calls of the warp, and the one unnamed emitter.
 
-The contracts of later ops: a fixed-order reduction (bitwise), a reordered
-floating-point reduction (within $2\gamma_{n-1}\sum_k \lvert t_k\rvert$),
-and the overflow of a capacity (which entries are written, what the counter
-holds afterwards so that a retry can size the buffer, what a caller may
-read) come with the reductions and the append. The scatter has no
-capacity: the spans of its bins are a precondition.
+The stage ops (D[md-alg-stages], #864) have verifiers of their own,
+listed in the decision: a counting sort's execution group whole, its sort
+within the bins present exactly under `order stable`, its key region one
+block whose every path assigns one bin, and whose every write is a slot of
+its item (the first index the item times a nonzero constant plus a
+constant, the others constants) in a buffer of `writes` or an addition to
+a counter of `adds`; an append's values one for each buffer, its blocks a
+power of two, its buffers distinct, and in its SIMT lowering its lanes
+given and its blocks of at least 32 entries; a grid plan's operands of one
+float type and its bounds whole, $1 \le \ell \le m$. The capacity contract
+of `md_alg.append`: the pool counter afterwards holds its value before
+plus every block that the appends began, below the capacity or not, and a
+list's count every entry, stored or not, so that a caller can size its
+buffers and build again (the groups build does); a block at or past the
+capacity is neither named nor written, and nothing at or past
+`capacity * block` entries is; a caller may read the lists only where the
+counter is at most the capacity, since which lists lost blocks depends on
+the order of concurrent takes.
+
+The contracts of later ops: a fixed-order reduction (bitwise) and a
+reordered floating-point reduction (within
+$2\gamma_{n-1}\sum_k \lvert t_k\rvert$) come with the reductions. The
+scatter has no capacity: the spans of its bins are a precondition.
 
 ### 4.3 Sites
 
@@ -759,14 +782,16 @@ The inventory of #432, by the primitive each site takes:
 |---|---|---|
 | The pruning, fused into the loop over pairs and in the refresh (D284, D114) | warp compaction | `emitPruneGroup` (lowering) |
 | The active units (D268) | warp compaction | `emitActiveUnits` (lowering) |
-| The groups build: the queue of near candidates, the kept entries, and those of the build of all images | warp compaction | `emitLists` (`GroupsBuild.cpp`, the lists and, with `images`, the images) |
+| The groups build: the queue of near candidates | warp compaction | `emitLists` (`GroupsBuild.cpp`) |
+| The groups build: the kept entries of the lists and of the images | `md_alg.append` | `emitLists`, `addEntries` |
 | The groups build: the excluded partners of a group (D106) | warp scan, 16 lanes, unsigned | `emitLists` |
-| The groups build: particles by column and z-bin key; places by cell of the search grid; the chunks of the columns | device scan (three kernels by default, two with `single-pass-group-scan=true`), scatter, insertion sort; the third a scan alone | `emitBuild`, `scan` (`GroupsBuild.cpp`) |
+| The groups build: particles by column and z-bin key; places by cell of the search grid; the chunks of the columns | `md_alg.sort_by_key` twice (the device scan, three kernels by default, two with `single-pass-group-scan=true`; the insertion sort), read by `md_alg.bin_span` and `md_alg.bin_item`; the third a scan alone; the columns and the grid by `md_alg.grid_plan` | `emitBuild`, `sortByKey`, `scan` (`GroupsBuild.cpp`) |
 | The matrix build: the rows, orthorhombic, triclinic of one pass, and of all images (D241) | warp compaction | `mdrt_gpu_build_neighbors_matrix*` (the matrix template; the images part generated by `scripts/generate-matrix-images-template.py`) |
 | The matrix build: particles by cell | chunked scan, scatter, stable rank | `mdrt_gpu_matrix_sort` |
-| The spatial order (D44, D86) | chunked scan, scatter (every key), insertion sort by the numbers of the input | `mdrt_gpu_spatial_order` |
+| The matrix build: the counts of cells | `md_alg.grid_plan` | `mdrt_gpu_cell_count` |
+| The spatial order (D44, D86) | `md_alg.sort_by_key` (chunked scan, scatter with every key a bin, insertion sort by the numbers of the input) | `mdrt_gpu_spatial_order` |
 | The listed particles of PME (D262, `md_exec.nonzero`) | the serial scan of the counts of the chunks | `lowerNonzero` (lowering) |
-| The incidence structure of the tuples, built on a device (D257, D314) | the ragged rows of Section 4.7: a count with a device atomic, the device scan, the scatter (every key), the insertion sort | `buildOnDevice` (lowering) |
+| The incidence structure of the tuples, built on a device (D257, D314) | the ragged rows of Section 4.7: `md_alg.sort_by_key` by the keys given (a count with a device atomic, the device scan, the scatter with every key a bin, the insertion sort) | `buildOnDevice` (lowering), `emitDeviceRaggedRows` |
 
 Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
 key, one atomic for a key: a warp-aggregated atomic, #418), the serial
@@ -792,11 +817,38 @@ emitters of Section 5 (D301).
   With `-Dsanitize=1` the device run is under memcheck and racecheck.
   `md-alg-serial.test` runs the serial definitions on the CPU against
   values written out.
+- `Integration/md-alg-stages-contract-gpu.test` (D[md-alg-stages]) does
+  the same for the stage ops on the cases of
+  `Integration/Inputs/md-alg/stages.mlir`: counting sorts by a key region
+  (of i32 and index bins, with a slot of each item and an addition to a
+  counter as side outputs, cleared by the op or by the caller, by `by`)
+  and by keys given (with and without items that have no bin, by every
+  scan and sort strategy, and unordered), on no items, one, 20 in 7 bins,
+  1,025 in 1,000, 3,000 in 50, all 3,000 in one bin, 129 in 129, and
+  5,000 in 3, compared to the bit (the unordered bins after a canonical
+  sort); and appends of a warp per list (drivers in `append-host.mlir` and
+  `append-device.mlir`) with no item kept, one, every item of a list of
+  640 entries with room for exactly its 10 blocks, one fewer, and many
+  more, and 8 and 40 lists at once with room to spare, far too little,
+  and none, compared by their counts and counter to the bit and by the
+  host's checks against the lists it forms itself. `md-alg-stages-serial.test`
+  holds the values of the small cases.
+- `Integration/md-alg-accessors.test` runs the accessors (`ragged_row`,
+  checked and not, on an empty buffer and past the rows; `ragged_entry`;
+  `wrap`, signed and of index; `grid_read`, active and not) and the grid
+  plan (lengths and widths that are not numbers, infinite, zero, and
+  negative; an occupancy of no items) against values worked out by hand:
+  their two lowerings share the code of the emitters, so a comparison of
+  the two could not fail. `Integration/md-alg-warp-gpu.test` runs each warp
+  helper (`emitLanesBelow`, `emitWarpBallot`, `emitWarpRank`,
+  `emitWarpCount`, `emitWarpScan` over 32 lanes, over segments of 16, and
+  with a lane compared signed and unsigned) through the test pass
+  `test-md-alg-warp-helpers`, against values worked out by hand.
 - `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
   verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
   the two lowerings, and `simt-invalid.mlir` the refusal of an op without
-  its execution parameters. The warp compaction and the warp scan are
-  run by the sites' tests below.
+  its execution parameters (and of an append with blocks shorter than a
+  warp's batch).
 - The sites' own tests run them as before (the builds of groups and of the
   matrix, the dual list, the listed particles of PME).
 - The ragged rows (Section 4.7) have no case of their own in the
@@ -844,6 +896,17 @@ mixed and double precision, with the three-launch scan and with
 `single-pass-group-scan=true`. Unlike D296's step, not even a constant
 moved: each op is lowered by the emitter its call was expanded by, at the
 same place.
+
+The move of the hand-written stages to the stage ops (D[md-alg-stages])
+left the 16 programs of those 60 with the matrix or the prolate kernel
+byte-identical, the spatial order, the ragged rows, and the count of cells
+among them. The 44 with the groups keep every kernel but one: the images
+kernel of the groups build masks the place of an entry before the
+conditional store of `md_alg.append` rather than inside it (one PTX line
+fewer, the same registers and number of SASS instructions), and their
+host's code allocates the scratch of a sort's scan before its key kernel
+and frees it after its sort, since the op takes the scratch as an operand.
+The decision records both for a decision of the maintainer.
 
 ### 4.6 Measured effect
 
