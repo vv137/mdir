@@ -34,6 +34,9 @@ class VectorDialect;
 } // namespace mlir
 
 namespace mdir {
+namespace md_alg {
+class MDAlgDialect;
+} // namespace md_alg
 namespace md_exec {
 class MDExecDialect;
 } // namespace md_exec

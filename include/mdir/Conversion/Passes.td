@@ -480,30 +480,45 @@ def ConvertMDExecToGPU
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
-                           "::mlir::vector::VectorDialect"];
+                           "::mlir::vector::VectorDialect",
+                           "::mdir::md_alg::MDAlgDialect"];
 }
 
-def ExpandDevicePrimitives
-    : Pass<"expand-device-primitives", "::mlir::ModuleOp"> {
-  let summary = "Replaces the calls of the device primitives with the code "
-                "of their emitters";
+def ConvertMDAlgToGPU : Pass<"convert-md-alg-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Lowers the md_alg ops to GPU code through the emitters of "
+                "the device primitives";
   let description = [{
-    A template of the device lowering calls a primitive of
-    `CompactionEmitter.h` by name, `func.call @mdir.primitive.<name>(...)`,
-    with a declaration of its own (D296,
-    docs/device-primitives.md, Section 4). `convert-md-exec-to-gpu`
-    replaces each call with the code of the primitive's emitter where it
-    stands when it parses a template, so that every site of a primitive,
-    in a template or in the lowering, runs the code of one emitter. This
-    pass does the same on a module, for the tests of the emitters. A call
-    of a primitive that does not exist, or with operands or results that
-    the primitive does not have, is an error.
+    Replaces each op of `md_alg` with the code of the emitter of its device
+    primitive where it stands (the SIMT lowering, D[md-alg],
+    docs/device-primitives.md, Section 4): a scan, a scatter to bins, or a
+    sort within bins becomes the launches of its strategy, and an accessor
+    its arithmetic and loads. `convert-md-exec-to-gpu` does the same when
+    it parses a template and when it emits the groups build, so that every
+    site of a primitive runs the code of one emitter; this pass does it on
+    a module, for the tests. An op that its verifier refuses, or one
+    without the execution parameters that its lowering takes, is an error,
+    and the module is left as it was.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
-                           "::mlir::func::FuncDialect",
                            "::mlir::gpu::GPUDialect",
                            "::mlir::LLVM::LLVMDialect",
                            "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect"];
+}
+
+def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
+  let summary = "Lowers the md_alg ops to their serial definitions";
+  let description = [{
+    Replaces each op of `md_alg` with its definition in `scf` loops, which
+    one thread runs over the whole collection (D[md-alg]): the
+    exclusive sums in order, the items scattered to their bins in the order
+    of the items, each bin sorted by exchanges with the item before. The
+    execution parameters of an op are ignored. The buffers may be in any
+    memory that the thread reads; the tests run it on the host, as the
+    oracle of `convert-md-alg-to-gpu`.
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect"];
 }
@@ -515,12 +530,12 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
     Appends the build of the groups of 16 particles that share a list of
     neighbors on a device (D89, D404) and what it calls, as
     `convert-md-exec-to-gpu` adds it to a module with groups: the
-    declarations of the device primitives, the helpers, and
+    helpers and
     `@mdrt_gpu_build_neighbors_groups` (with `triclinic`,
     `@mdrt_gpu_build_neighbors_groups_triclinic`). A declaration of the
-    build in the module, by which a test calls it, is replaced. The calls
-    of the device primitives stay calls, for `expand-device-primitives`.
-    This is for the tests of the build.
+    build in the module, by which a test calls it, is replaced. Its
+    collection algorithms and accessors stay `md_alg` ops, for
+    `convert-md-alg-to-gpu`. This is for the tests of the build.
   }];
   let options = [
     Option<"triclinic", "triclinic", "bool", /*default=*/"false",
@@ -538,7 +553,8 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
-                           "::mlir::vector::VectorDialect"];
+                           "::mlir::vector::VectorDialect",
+                           "::mdir::md_alg::MDAlgDialect"];
 }
 
 def GpuModuleToBinary

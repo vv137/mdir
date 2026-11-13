@@ -68,7 +68,7 @@ of #567 checks completion and buffer borrows while retaining current waits.
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420, #524 | In part: opt-in group scan | [Section 4.8](#48-single-pass-scan-strategy-d321) |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
-| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
+| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432, #861 | Built, behavior-neutral: one emitter for each, which the lowering calls; the templates and the groups build write the collection algorithms as typed `md_alg` ops with a serial definition (Section 4.2), with the same PTX | D296, D[md-alg] |
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 | Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D340 |
@@ -84,9 +84,9 @@ contributor who is about to call a primitive or write its like
 ([workflow.md](workflow.md#a-piece-of-work)). The sections remain the
 statement; this table only points to them. "Not checked" means that
 nothing in the compiler or the runtime refuses a call that breaks the
-precondition: it holds because the caller sizes its inputs for it. A
-template's `func.call @mdir.primitive.<name>` is checked for its operands
-and results when it is expanded (Section 4.2), not for these
+precondition: it holds because the caller sizes its inputs for it. An
+`md_alg` op is checked by its verifier for its operands, its execution
+parameters, and the buffers it must not share (Section 4.2), not for these
 preconditions.
 
 | Primitive | Emitter | Precondition | Where checked |
@@ -675,33 +675,81 @@ and for the partitions to come (#38, with the ghost flag in the key).
 ### 4.2 How the sites call them
 
 The lowering calls the emitters where it builds its kernels. The build of
-the groups (the emitter of `GroupsBuild.cpp`, D404) and the
-template `NeighborsMatrixGPU.mlir` call them by name, with a declaration
-in the module:
+the groups (the emitter of `GroupsBuild.cpp`, D404), the template
+`NeighborsMatrixGPU.mlir`, and the templates of PME write the collection
+algorithms as ops of the dialect `md_alg`
+(D[md-alg], #861; [dialects/md_alg.md](dialects/md_alg.md)), and the warp's votes
+as the upstream ops that the emitters give:
 
 ```mlir
-func.func private @mdir.primitive.warp_rank(i32, i32) -> i32
+%ballot = gpu.ballot %neighbor : i32
+%before_and = arith.andi %ballot, %below_mask : i32
+%before = math.ctpop %before_and : i32
 ...
-%rank = func.call @mdir.primitive.warp_rank(%kept, %below) : (i32, i32) -> i32
-func.call @mdir.primitive.sort_bins(%key_start, %sorted, %keys, %grid_of_keys,
-    %block, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, index, index, index,
-    index) -> ()
+md_alg.scan %held[%cells] into %start cursor %cursor
+    strategy chunked scratch %cell_sums : memref<?xi32, 1>
+    launch(%cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
+    : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
+md_alg.scatter_to_bins %key[%n] cursor %cursor into %order
+    launch(%grid_n, %block, %c1) {every_key}
+    : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
+md_alg.sort_bins %start[%cells] items %order by %ids
+    strategy insertion launch(%grid_cells, %block, %c1)
+    : memref<?xi32, 1>, memref<?xi32, 1> by memref<?xi32, 1>
 ```
 
-`convert-md-exec-to-gpu` replaces each call with the code of the emitter
-where it stands, when it parses the template (`expandPrimitiveCalls`), and
-removes the declarations; the pass `expand-device-primitives` does the same
-on a module. A primitive that does not exist, or a call whose operands or
-results the primitive does not have, is an error that names it. The
-parameters that are not values are attributes of the call: `lanes` and
-`unsigned` of `warp_scan`, `every_key` of `cursor_scatter`. The names are
-those of the emitters: `warp_lanes_below`, `warp_ballot`, `warp_rank`,
-`warp_count`, `warp_scan`, `block_scan`, `device_scan`,
-`device_scan_cursor`, `single_pass_scan`, `single_pass_scan_cursor`,
-`chunked_scan`, `cursor_scatter`, `sort_bins`,
-`sort_bins_by`, `rank_in_bins`, and the accessor of ragged rows,
-`ragged_row` and `ragged_entry` (Section 4.7), whose results may be
-`index`.
+An op states what is computed and the contract of its result; its meaning
+names no warp, lane, or block. The strategy, the scratch buffer, and the
+launch values are its execution parameters: the result does not depend on
+them, and until a policy pass fills them from the target (#433, #558) the
+caller gives them, as it gave them to the emitters.
+
+| Op | Computes | Contract | Strategies (SIMT) |
+|---|---|---|---|
+| `md_alg.scan` | $s_i = \sum_{k < i} c_k$ for $i \in [0, n]$ into `start`, and $s_i$ for $i < n$ into the cursor, in i32 (wrapping) | ordered: bitwise | `reduce_then_scan` (`emitDeviceScan`), `single_pass` (`emitSinglePassScan`), `chunked` (`emitChunkedScan`) |
+| `md_alg.scatter_to_bins` | item $i$ to a slot of its bin $k_i$ taken from the cursor; a negative key has no bin unless `every_key` | unordered within a bin: the bins as multisets; the cursor afterwards ($+c_k$) and the elements outside the bins bitwise | `emitCursorScatter` |
+| `md_alg.sort_bins` | each bin ascending by the item or by `by[item]`, stably; in place, or `into` another buffer | stable sort: bitwise | `insertion` (`emitSortBins`, in place), `stable_rank` (`emitRankInBins`, into `out`, with the key of each item) |
+| `md_alg.ragged_row`, `md_alg.ragged_entry` | a row of ragged rows, a value of its entry (Section 4.7) | per item | `emitRaggedRow`, `emitRaggedEntry` |
+| `md_alg.wrap` | $(s + o) \bmod N$ for $s, o \in [0, N)$, one subtraction | per item | `emitWrappedGridAxis` |
+| `md_alg.grid_read` | `grid[base + z]`; with `active` false, `grid[base]`; the result type is the grid's | per item | `emitGridGather` |
+
+Each op has three parts:
+- **a verifier**, which replaced the hand checks of the names: every buffer
+  a 1-D memref of i32 (the grid of f32 or f64); a scan's strategy, scratch,
+  and launch together, its scratch i64 for `single_pass` and i32
+  otherwise, 3 launch values or 5 for `chunked`, which requires the cursor;
+  a scatter's 0 or 3 launch values and its output none of the buffers it
+  reads; a sort's strategy and launch together, `insertion` without
+  `into` or keys, `stable_rank` with both and without `by`, keys only with
+  `into`, `into` none of the buffers it reads; `signed` only on an i32
+  `wrap`; a grid read's coordinates of one type and its result the grid's
+  element type;
+- **a serial lowering** (`convert-md-alg-to-scf`), the definition: one
+  thread, the sums in order, the items scattered in the order of the
+  items, each bin sorted by exchanges with the item before. It is written
+  apart from the emitters, so that comparing the two is a test;
+- **a SIMT lowering** (`convert-md-alg-to-gpu`): the op's emitter where the
+  op stands. `convert-md-exec-to-gpu` does the same when it parses a
+  template (after the template is instantiated for its types, so the
+  grid read's result type is inferred) and after it emits the groups
+  build: it verifies every op, refuses one without its execution
+  parameters, and only then lowers them, in the order of a walk and
+  without a rewrite driver, so that the module is that of the emitters.
+
+The warp-level helpers are not ops (#861): the templates write the
+upstream ops of the warp compaction; the groups build calls the typed
+emitters (`emitWarpBallot`, `emitWarpRank`, `emitWarpCount`,
+`emitLanesBelow`, and `emitWarpScan`, for which there is no upstream op).
+The block scan, which no site called by name, is an emitter inside the
+device scans. The 22 names of D296, D314, and D325 became 7 ops, the upstream
+ops and typed calls of the warp, and the one unnamed emitter.
+
+The contracts of later ops: a fixed-order reduction (bitwise), a reordered
+floating-point reduction (within $2\gamma_{n-1}\sum_k \lvert t_k\rvert$),
+and the overflow of a capacity (which entries are written, what the counter
+holds afterwards so that a retry can size the buffer, what a caller may
+read) come with the reductions and the append. The scatter has no
+capacity: the spans of its bins are a precondition.
 
 ### 4.3 Sites
 
@@ -728,23 +776,31 @@ emitters of Section 5 (D301).
 
 ### 4.4 Tests
 
-- `Integration/device-primitives.mlir` calls every emitter of
-  `CompactionEmitter.h` from kernels written for the test; `device-primitives-gpu.test` runs it on a device
-  and compares exactly: the compaction of 2 warps and the warp scans with
-  results written out, and the block scan of 256 threads, the device scan
-  of 5000 counts with and without the cursor, the single-pass scan of 5000
-  and 131083 counts and the empty input, the chunked scan of 1000, and
-  the counting sort of 3000 items by 50 keys (with the insertion sort, the
-  stable rank, and the order by another buffer) with results computed on
-  the host by the definition. With `-Dsanitize=1` it runs under memcheck
-  and racecheck.
-- `Conversion/MDExecToGPU/expand-primitives.mlir` checks the code of the
-  warp compaction, of the warp scans, and of the accessor of ragged rows;
-  `expand-primitives-invalid.mlir` the refusals.
+- `Integration/md-alg-contract-gpu.test` (D[md-alg]) runs the cases of
+  `Integration/Inputs/md-alg/cases.mlir` twice: by the serial definitions
+  on the host and by the emitters on a device, and compares the outputs
+  by each op's contract (`diff`; the scatter's bins sorted on the host
+  first). Every strategy of the scan, with and without the cursor, on no
+  counts, one, 255, 257, 1,023, 1,024, 1,025, 5,000, and 131,083 counts
+  (129 tiles of the single-pass scan) and on counts whose sum wraps; the
+  scatter, the stable rank, and the insertion sort of counting sorts of
+  no items, one, 20 in 7 bins, 1,025 in 1,000, 3,000 in 50, all 3,000 in
+  one bin, and 129 in 129, a tenth of the keys without a bin, and with
+  every key a bin; the insertion sort by the items and by an order with
+  ties, which shows whether it is stable. Every output buffer has
+  elements past those the op may write, which must stay as they were.
+  With `-Dsanitize=1` the device run is under memcheck and racecheck.
+  `md-alg-serial.test` runs the serial definitions on the CPU against
+  values written out.
+- `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
+  verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
+  the two lowerings, and `simt-invalid.mlir` the refusal of an op without
+  its execution parameters. The warp compaction and the warp scan are
+  run by the sites' tests below.
 - The sites' own tests run them as before (the builds of groups and of the
   matrix, the dual list, the listed particles of PME).
-- The ragged rows (Section 4.7) have no case of their own in
-  `device-primitives.mlir`. Their build on a device is compared element
+- The ragged rows (Section 4.7) have no case of their own in the
+  contract test. Their build on a device is compared element
   for element with the host's build of the same structure, by its
   definition, under `MDRT_CHECK_KEPT_TUPLES` in `python-kept-tuples-gpu.test`
   and `python-start-arguments-gpu.test`; the host's build is checked
@@ -775,6 +831,19 @@ programs show. No kernel changes its name: the expansion puts each
 primitive's code where the call stands, in the function of the site.
 
 The step was timed against `main` on an RTX 4090 (Section 4.6).
+
+The move of the named calls to the `md_alg` ops (D[md-alg], Section 4.2)
+changed no byte. Against its base commit, the lowered programs with the
+PTX of every kernel (`MDIR_GPU_ARCH=sm_89`) and the modules after
+`convert-md-exec-to-gpu`, in the generic form, are identical on 60
+programs: the nine systems of the Amber suite, JAC NVE with the matrix,
+the rhombic dodecahedron of `triclinic.test` with the matrix, with the
+groups, and with the groups and a dual list, and the prolate kernel of PME
+on the three OPC waters of `prolate.test` and on the dodecahedron, each in
+mixed and double precision, with the three-launch scan and with
+`single-pass-group-scan=true`. Unlike D296's step, not even a constant
+moved: each op is lowered by the emitter its call was expanded by, at the
+same place.
 
 ### 4.6 Measured effect
 
@@ -832,8 +901,8 @@ most $2^{31} - 1$ entries (the runtime refuses more, `mdrtTuplesSize`).
 Every reader goes through `emitRaggedRow` and `emitRaggedEntry`: the
 loops over tuples (`emitTupleKernel`, the rows of an integration run), the
 host's filter of the excluded pairs (`emitExclusionFilter`), and the
-templates of the neighbor builds, which call them by name
-(`ragged_row`, checked, and `ragged_entry`) for the excluded pairs.
+neighbor builds, which write them as `md_alg.ragged_row` (checked) and
+`md_alg.ragged_entry` for the excluded pairs (Section 4.2).
 
 The first user is the incidence structure of the tuples ($E = a + 2$: the
 tuple, the place of the particle, the members). On STMV it took 2,096 MiB
@@ -864,7 +933,7 @@ counter before the scan launch. The three-launch primitive remains the
 default. The compiler pass `convert-md-exec-to-gpu` selects the alternate
 group build with `single-pass-group-scan=true`; both come from one emitter
 (`GroupsBuild.cpp`, its parameter `singlePassScan`, D404),
-which emits the calls of the scan of its variant and no others.
+which emits the `md_alg.scan` of its variant's strategy and no other.
 This is an internal compiler strategy, with no control-file
 key or output format change.
 
@@ -908,8 +977,8 @@ The gather of a grid value is $\phi_{(aK_2+b)K_3+c}$, with
 $c=(c_0+\ell)\bmod K_3$. `emitWrappedGridAxis` computes $c$ once for
 each lane where the kernel's row loops permit it. `emitGridGather` adds
 the row base and loads one value. The generated Gaussian and prolate
-templates call these emitters as `mdir.primitive` functions, expanded
-before GPU lowering. Both i32 and index address forms keep the old
+templates write them as `md_alg.wrap` and `md_alg.grid_read`
+(Section 4.2), lowered to these emitters when the templates are parsed. Both i32 and index address forms keep the old
 arithmetic width; the prolate form also keeps its signed comparison and
 an in-bounds read for inactive window points.
 

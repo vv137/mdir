@@ -1,0 +1,167 @@
+# D[md-alg]
+
+Recorded at its merge.
+
+**A target-neutral dialect `md_alg` holds the collection algorithms of the device lowering as typed ops with verifiers, each defined by a serial lowering to `scf` and lowered for a GPU by a SIMT lowering that calls the existing emitter; step 1 replaces the 22 device primitives that the templates and the groups build called by name (`func.call @mdir.primitive.<name>`, checked by hand in `ExpandPrimitives.cpp`) with seven ops, the warp-level helpers with upstream ops and typed emitter calls, and leaves the IR after `convert-md-exec-to-gpu` and the PTX unchanged.** Issue #861, part of #558 and #604.
+
+## The layers
+
+```
+md_exec   execution skeletons and physics (unchanged)
+  |
+md_alg    what is computed: scan, scatter to bins, sort within bins,
+          the accessors of ragged rows and of a periodic grid;
+          later: histogram, select/compact, sort by key, segmented
+          reduce, append with a capacity
+  |  later: a policy pass fills in the execution model and its
+  |  parameters from the target record (#433, #558 item 4)
+  +-> serial : scf loops; the definition of each op and the test oracle
+  +-> SIMT   : GPU, through the emitters of CompactionEmitter.h,
+               SinglePassScan.cpp, RaggedRows.h, and GatherEmitter.h
+  +-> SIMD   : CPU vector lanes (D402), later
+  +-> dataflow : later; nothing in md_alg precludes it
+```
+
+An op's meaning names no warp, lane, or block. Its attributes state
+semantics and contracts: the ordering of its result and what it reads and
+writes. The execution parameters of the SIMT lowering (the strategy of a
+scan or a sort, the scratch buffer, and the launch geometry) are an optional
+group of the op that the result does not depend on: the serial lowering
+ignores it, and the SIMT lowering requires it. Until the policy pass exists,
+the caller gives them, as it gave them to the named primitives.
+
+Warp-level operations are not `md_alg` ops (#861). The SIMT code of the
+matrix template writes them as the upstream ops that the expansion emitted
+(`gpu.ballot`, `arith.andi` and `math.ctpop`, `arith.shli` and
+`arith.subi`); the groups build, C++ code, calls the typed emitters
+(`emitWarpBallot`, `emitWarpRank`, `emitWarpCount`, `emitLanesBelow`,
+`emitWarpScan`; there is no upstream subgroup scan). The block scan had no
+caller in IR; it stays an emitter inside the device scans.
+
+## The ops of step 1
+
+| Op | Replaces | Contract (against the serial lowering) |
+|---|---|---|
+| `md_alg.scan` | `device_scan`, `device_scan_cursor`, `single_pass_scan`, `single_pass_scan_cursor`, `chunked_scan` | ordered integer: bitwise |
+| `md_alg.scatter_to_bins` | `cursor_scatter` | unordered: each bin's items as a multiset, after a canonical sort; the cursor afterwards and every element outside the bins bitwise |
+| `md_alg.sort_bins` | `sort_bins`, `sort_bins_by`, `rank_in_bins` | stable sort: bitwise |
+| `md_alg.ragged_row`, `md_alg.ragged_entry` | `ragged_row`, `ragged_entry` | per item: bitwise |
+| `md_alg.wrap` | `wrapped_grid_axis_index`, `wrapped_grid_axis_i32` | per item: bitwise |
+| `md_alg.grid_read` | `grid_gather_index`, `grid_gather_i32`, `grid_gather_masked_i32` | per item: bitwise |
+
+The 22 names become seven ops, five typed emitter calls or upstream ops of
+the warp, and one emitter without a name (the block scan). A scan has one
+definition whatever its strategy, and a sort within bins one definition
+whether it sorts in place by insertion or into another buffer by the
+stable rank.
+
+The contracts that the issue lists and that no op of step 1 has: a
+fixed-order reduction (bitwise) and a reordered floating-point reduction
+(within $2\gamma_{n-1}\sum_k \lvert t_k\rvert$) come with the reductions,
+and the contract of an overflow of a capacity (which entries are written,
+what the counter holds afterwards so that a retry can size the buffer, and
+what a caller may read) with the append. The scatter has no capacity: the
+spans of the bins in `out` are a precondition, which a scan of the counts
+of the keys gives.
+
+## Pass order
+
+The ops are created and lowered inside `convert-md-exec-to-gpu`, where the
+calls were expanded: in each template after it is parsed and instantiated
+for its types, and in the groups build after it is emitted. The SIMT
+lowering walks the ops, verifies all of them before it lowers any, and
+replaces each with its emitter's code where it stands, so that the module
+after the pass is that of `main`. `convert-md-alg-to-gpu` (in place of
+`expand-device-primitives`) and `convert-md-alg-to-scf` run the two
+lowerings as passes, for the tests and for the split of #558, after which
+`md_alg` is lowered by a pass of its own after the policy pass.
+
+## What comes next
+
+The value of the layer is that the stages of a domain algorithm become
+visible in the IR. A neighbor build is a histogram, a scan, a scatter, a
+sort within bins, a candidate search, and a compaction; a prune and the
+interaction of pairs decompose similarly. Once they are `md_alg` ops, a pass
+can remove intermediate buffers, skip a sort whose order is not needed, or
+fuse stages. Step 1 is therefore not a renaming of the 22 calls: its ops are
+the collection algorithms, typed and verified, with a serial definition.
+The order of the steps:
+
+1. the collection primitives called by name (this decision);
+2. the append with a capacity and its overflow contract, the histogram, and
+   select/compact, from the hand-written copies in the groups build and the
+   prune;
+3. the counting sort and the grid plan as compositions of these ops, used
+   by the groups build, the matrix, the ragged rows, and #795;
+4. the domain algorithms (build, prune, pair interaction) decomposed into
+   collection ops, and the passes that remove buffers, skip sorts, and fuse
+   stages;
+5. the policy pass, and SIMD and dataflow lowerings.
+
+## Verifiers, lowerings, and their tests
+
+The verifiers replace the hand checks of `ExpandPrimitives.cpp` (the nine
+kinds of `hasKind`, the counts of operands and results of the 22 names,
+and the element type of a grid gather's result) with the types of the
+ops and these rules, each with a case in `test/Dialect/MDAlg/invalid.mlir`:
+every buffer a 1-D memref of i32 (the grid of f32 or f64); a scan's
+strategy, scratch, and launch together, the scratch i64 for `single_pass`
+and i32 otherwise, three launch values or five for `chunked`, which
+requires the cursor; a scatter's zero or three launch values, its output
+not its keys or its cursor; a sort's strategy and launch together,
+`insertion` without `into` or keys, `stable_rank` with both and without
+`by`, keys only with `into`, `into` not its items, offsets, or order;
+`signed` only on an i32 `wrap`; a grid read's coordinates of one type and
+its result the grid's element type. The SIMT lowering refuses a
+collection op without execution parameters
+(`test/Conversion/MDAlg/simt-invalid.mlir`).
+
+The serial lowering is written apart from the emitters: the scan in one
+loop, the scatter in the order of the items, the sort by exchanges with
+the item before. `test/Integration/md-alg-contract-gpu.test` lowers one
+program of cases both ways, runs the serial one on the host and the SIMT
+one on a device, and compares the outputs by the contracts above; the
+cases are random (a fixed linear congruential generator) and at the
+boundaries: no items, one, 255, 257, 1,023, 1,024, 1,025, 5,000, and
+131,083 counts (129 tiles of the single-pass scan), counts whose sum wraps
+past $2^{31}$, keys without a bin, every key a bin, all 3,000 items in one
+bin, 1,025 items in 1,000 bins, 129 in 129, and ties in the order of an
+insertion sort. Every buffer an op writes has elements past those it may
+write, which must keep their mark. `test/Integration/md-alg-serial.test`
+checks the serial run on the CPU against values written out.
+
+The tests fail on realistic breaks. With the serial scan made inclusive
+(the sum after each count in place of the one before), 56 of the 144
+output lines of the contract test differ and the values of the serial test
+fail; with the scatter's slot taken one past the cursor's old value, 24
+lines differ (the serial test, which does not run the emitters, passes);
+with the serial sort exchanging equal items (unstable), 5 lines differ,
+those of the sorts with ties, and the serial test fails.
+
+## The same programs
+
+Against the base commit, `mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never` (the PTX of every kernel and the
+host's code) and the module after `convert-md-exec-to-gpu` in the generic
+form are byte-identical on 60 programs: the nine systems of the Amber
+suite, JAC NVE with the matrix, the rhombic dodecahedron of
+`test/Driver/triclinic.test` with the matrix, with the groups, and with
+the groups and a dual list, and the prolate kernel of PME (`[pme] kernel
+= "PROLATE"`, the only input that selects its template) on the three OPC
+waters of `prolate.test` and on the dodecahedron; each in mixed and double
+precision, with the three-launch scan and with `single-pass-group-scan=true`
+(set through `MDIR_PIPELINE`). Two captures of the base gave the same
+bytes. No constant moved: each op is lowered by the emitter its call was
+expanded by, where the call stood.
+
+## Lines
+
+The code (without the templates, the tests, and the documents) gained
+1,012 lines and lost 524: the dialect (`MDAlgOps.td`, 365, most of it the
+ops' descriptions; `MDAlgDialect.cpp`, 105, the verifiers) and its two
+lowerings (`MDAlgLowering.cpp`, 337, of which about 150 the serial
+definitions) replace `ExpandPrimitives.cpp` (370) and the declarations of
+the groups build (31 lines net in `GroupsBuild.cpp`). The templates lost
+the declarations of 20 named primitives (10 in the matrix template, 4 in
+each Gaussian PME template, 2 in the prolate one) and their calls.

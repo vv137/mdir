@@ -1192,8 +1192,8 @@ D368, #739):
 - a truncation from `f64` to `f32`, now from `f32` to `f32`, becomes a
   cast of the bits;
 - the functions that the template defines take the names of the instance.
-  Declarations keep theirs, such as those of the device primitives, which
-  `expandPrimitiveCalls` then resolves.
+  Declarations keep theirs. The template's `md_alg` ops are lowered after
+  the instance is made (D[md-alg]).
 
 ### 7.7 Agreement with the reference
 

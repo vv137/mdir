@@ -76,14 +76,18 @@ not checked by the compiler: the caller must respect them. They are
 gathered, with where each is checked, in
 [device-primitives.md, Section 1.1](device-primitives.md#11-preconditions-at-a-glance).
 
-**Named primitives in templates.** A template in `lib/Runtime/Templates`
-does not copy an emitter's code; it declares and calls the primitive by
-name, `func.call @mdir.primitive.<name>(...)` (for example `warp_rank`,
-`block_scan`, `sort_bins`, `ragged_row`). `kernels::expandPrimitiveCalls`
-(`lib/Conversion/MDExecKernels/ExpandPrimitives.cpp`) replaces each call
-with the emitter's code when `convert-md-exec-to-gpu` parses the template;
-the pass `expand-device-primitives` does the same on a module, for tests.
-An unknown name or a wrong signature is an error. The build of the groups
+**Collection algorithms in templates: `md_alg`.** A template in
+`lib/Runtime/Templates` does not copy an emitter's code; it writes the
+collection algorithm as an op of `md_alg` (`md_alg.scan`,
+`md_alg.scatter_to_bins`, `md_alg.sort_bins`, `md_alg.ragged_row`,
+`md_alg.grid_read`, ...; D[md-alg],
+[device-primitives.md](device-primitives.md#42-how-the-sites-call-them)),
+whose verifier checks it. `kernels::lowerAlgToSIMT`
+(`lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
+its emitter's code when `convert-md-exec-to-gpu` parses the template; the
+pass `convert-md-alg-to-gpu` does the same on a module, and
+`convert-md-alg-to-scf` lowers the ops to their serial definitions, the
+oracle of the tests. The warp's votes are written as upstream ops. The build of the groups
 is written by an emitter, `lib/Conversion/MDExecKernels/GroupsBuild.cpp`,
 with the cell (orthorhombic or triclinic) and the scan as its parameters
 (D404); the pass `add-groups-build` adds it to a module, for
@@ -236,7 +240,7 @@ same path in `include/mdir/`; a row names both.
 | `lib/Dialect/MDRT`, `include/mdir/Dialect/MDRT` | The `mdrt` dialect, the runtime as the IR sees it: opaque handles, buffer conversions, host calls, halo events | Adding a type or op that reaches the C runtime | [runtime.md](runtime.md), [dialects/mdrt.md](dialects/mdrt.md) |
 | `lib/Dialect/Program` | No dialect: the one set of dialects a program may contain, shared by the driver and the compiler | A program may contain a new dialect; extend the list and its libraries together | |
 | `lib/Conversion/MDToMDExec` | `convert-md-to-md-exec` (sums over relations become loops over sets) and the passes that place semantic linear transforms | A new `md` or `dyn` op needs a lowering, or the mapping to loops changes | [ops.md](ops.md), [pme-semantic-transform.md](pme-semantic-transform.md) |
-| `lib/Conversion/MDExecKernels` | What one thread does, shared by both lowerings, and the device-primitive emitters (compaction, scans, sorts, reductions, scatters, gathers, ragged rows); `ExpandPrimitives.cpp` expands `@mdir.primitive.<name>` | Changing per-thread code common to both lowerings, or adding or changing an emitter | [device-primitives.md](device-primitives.md), [primitives-map.md](primitives-map.md) |
+| `lib/Conversion/MDExecKernels` | What one thread does, shared by both lowerings, and the device-primitive emitters (compaction, scans, sorts, reductions, scatters, gathers, ragged rows); `MDAlgLowering.cpp` lowers the `md_alg` ops, serially or through the emitters | Changing per-thread code common to both lowerings, or adding or changing an emitter | [device-primitives.md](device-primitives.md), [primitives-map.md](primitives-map.md) |
 | `lib/Conversion/MDExecToLoops` | The CPU lowering to `scf` loops, fixed-order reductions, the read-only proof; embeds the host templates | Changing how `md_exec` runs on the CPU or with OpenMP | [ops.md](ops.md), [overview.md, Section 2.4](overview.md#24-the-lowerings) |
 | `lib/Conversion/MDExecToGPU` | The device lowering to `gpu` kernels and the lowering of neural-stage bodies; embeds the device templates | Changing how `md_exec` becomes kernels or how they are launched | [ops.md](ops.md), [device-primitives.md](device-primitives.md), [ml4-ir.md](ml4-ir.md) |
 | `lib/Conversion/GPUToBinary` | The NVIDIA back end: NVVM lowering, `ptxas`, one binary per module, cached | Changing NVVM options, the target architecture, or the caching of device code | [compile-cache.md](compile-cache.md) |

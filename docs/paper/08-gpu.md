@@ -608,6 +608,23 @@ each generated occurrence, is the migration point. Runtime allocation,
 transfer, launch, and FFT plans form a separate device interface; the
 FFT itself remains the same linear-transform primitive (Section 2).
 
+The collection algorithms of the device code (scans, scatters to bins,
+sorts within bins, and the accessors of ragged rows and of a periodic grid)
+are ops of a target-neutral dialect, `md_alg`, between `md_exec` and the
+device lowering (D[md-alg], #861). An op states what is computed and how
+its result is ordered, and names no warp, lane, or block. Its definition
+is a serial lowering to loops of one thread; its GPU lowering calls the
+shared emitter. A test runs both on the same inputs and compares them by
+the op's contract: bitwise where the result is ordered, as multisets of
+each bin where it is not. The parameters of an implementation (the
+strategy, the scratch, the launch geometry) are a separate part of the op,
+which the target's policy is to fill; a CPU vector lowering or another
+device then adds a lowering, not a new op. Warp-level operations remain
+upstream `gpu` operations inside the GPU lowering. The stages of the
+neighbor builds, the pruning, and the pair loops are to be decomposed into
+these ops in later steps, so that passes can remove intermediate buffers,
+skip sorts that are not needed, and fuse stages.
+
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 
 D360 retains packed scalar buffers between same-block

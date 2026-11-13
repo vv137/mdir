@@ -43,29 +43,12 @@
 // rows (include/mdir/Conversion/RaggedRows.h; a buffer of no elements where
 // there are none), are entered as the particle itself,
 // which the loops over pairs skip. The ballot and the ranks are the warp
-// compaction of the device primitives.
-
-// The device primitives that the build calls (include/mdir/Conversion/
-// CompactionEmitter.h, D296): the lowering replaces each
-// call with the code of the primitive's emitter when it parses this
-// template.
-func.func private @mdir.primitive.warp_lanes_below(i32, i32) -> i32
-func.func private @mdir.primitive.warp_ballot(i1) -> i32
-func.func private @mdir.primitive.warp_rank(i32, i32) -> i32
-func.func private @mdir.primitive.warp_count(i32) -> i32
-func.func private @mdir.primitive.chunked_scan(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-    memref<?xi32, 1>, index, index, index, index, index, index)
-func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-    index, index, index, index)
-func.func private @mdir.primitive.sort_bins_by(memref<?xi32, 1>, memref<?xi32, 1>, index, index,
-    index, index, memref<?xi32, 1>)
-func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index)
-    -> (index, index)
-func.func private @mdir.primitive.ragged_entry(memref<?xi32, 1>, index, index,
-    index, index) -> i32
-func.func private @mdir.primitive.rank_in_bins(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-    index, index, index, index)
-
+// compaction of the device primitives (CompactionEmitter.h, D296), written
+// as the upstream ops that its emitters give.
+//
+// The scans, the scatters, the sorts within cells, and the reads of the
+// ragged rows are md_alg ops (D[md-alg]): the lowering replaces each with
+// the code of its emitter when it parses this template.
 func.func private @mdrt_gpu_cell_count(%length: f64, %width: f64) -> index {
   %c1 = arith.constant 1 : index
   %slack = arith.constant 1.0001 : f64
@@ -204,12 +187,10 @@ func.func private @mdrt_gpu_excluded_partner(%excluded: memref<?xi32, 1>,
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
   %zero = arith.constant 0 : i32
-  %place = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %c1, %c4)
-      : (memref<?xi32, 1>, index, index, index, index) -> i32
+  %place = md_alg.ragged_entry %excluded[%first, %k, %c1] entry %c4 : memref<?xi32, 1>
   %at_first = arith.cmpi eq, %place, %zero : i32
   %column = arith.select %at_first, %c3, %c2 : index
-  %partner = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %column, %c4)
-      : (memref<?xi32, 1>, index, index, index, index) -> i32
+  %partner = md_alg.ragged_entry %excluded[%first, %k, %column] entry %c4 : memref<?xi32, 1>
   return %partner : i32
 }
 
@@ -234,15 +215,15 @@ func.func private @mdrt_gpu_matrix_sort(
   // The counts become the offsets of the cells: the sums of chunks of 256
   // cells, the offsets of the chunks in one thread, and the offsets of the
   // cells of each chunk.
-  func.call @mdir.primitive.chunked_scan(%held, %start, %cursor, %cell_sums,
-      %cells, %cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
-      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index,
-         index, index) -> ()
+  md_alg.scan %held[%cells] into %start cursor %cursor
+      strategy chunked scratch %cell_sums : memref<?xi32, 1>
+      launch(%cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
+      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 
   // Each particle takes the next slot of its cell.
-  func.call @mdir.primitive.cursor_scatter(%key, %cursor, %order, %n, %grid_n,
-      %block, %c1)
-      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
+  md_alg.scatter_to_bins %key[%n] cursor %cursor into %order
+      launch(%grid_n, %block, %c1)
+      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 
   // The particles of each cell, sorted by index, and their positions in
   // that order. The place of a particle within its cell is the number of
@@ -253,9 +234,9 @@ func.func private @mdrt_gpu_matrix_sort(
   // simulation cell of 25 Å with a reach of 10 Å have 8 cells of 176, which
   // one thread each sorted in 0.85 ms of an RTX 3090 at every build (#231).
   %ranked = gpu.alloc (%n) : memref<?xi32, 1>
-  func.call @mdir.primitive.rank_in_bins(%order, %key, %start, %ranked, %cells,
-      %grid_n, %block, %c1)
-      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
+  md_alg.sort_bins %start[%cells] items %order into %ranked
+      keys %key strategy stable_rank launch(%grid_n, %block, %c1)
+      : memref<?xi32, 1>, memref<?xi32, 1> into memref<?xi32, 1> keys memref<?xi32, 1>
 
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
@@ -586,9 +567,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 
       // The excluded pairs of the particle, if the structure has any.
       %entry_excluded = arith.constant 4 : index
-      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
-          %excluded, %i, %entry_excluded)
-          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %first_excluded, %count_excluded = md_alg.ragged_row %excluded[%i]
+          entry %entry_excluded checked : memref<?xi32, 1>
       %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
@@ -620,8 +600,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
-          : (i32, i32) -> i32
+      %below_mask_bit = arith.shli %one32, %lane32 : i32
+      %below_mask = arith.subi %below_mask_bit, %one32 : i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -700,10 +680,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
-                : (i1) -> i32
-            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
-                : (i32, i32) -> i32
+            %ballot = gpu.ballot %neighbor : i32
+            %before_and = arith.andi %ballot, %below_mask : i32
+            %before = math.ctpop %before_and : i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -751,8 +730,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = func.call @mdir.primitive.warp_count(%ballot)
-                : (i32) -> i32
+            %found_here = math.ctpop %ballot : i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -1153,9 +1131,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
 
       // The excluded pairs of the particle, if the structure has any.
       %entry_excluded = arith.constant 4 : index
-      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
-          %excluded, %i, %entry_excluded)
-          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %first_excluded, %count_excluded = md_alg.ragged_row %excluded[%i]
+          entry %entry_excluded checked : memref<?xi32, 1>
       %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
@@ -1187,8 +1164,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
-          : (i32, i32) -> i32
+      %below_mask_bit = arith.shli %one32, %lane32 : i32
+      %below_mask = arith.subi %below_mask_bit, %one32 : i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -1273,10 +1250,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
-                : (i1) -> i32
-            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
-                : (i32, i32) -> i32
+            %ballot = gpu.ballot %neighbor : i32
+            %before_and = arith.andi %ballot, %below_mask : i32
+            %before = math.ctpop %before_and : i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -1324,8 +1300,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = func.call @mdir.primitive.warp_count(%ballot)
-                : (i32) -> i32
+            %found_here = math.ctpop %ballot : i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -1815,9 +1790,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
 
       // The excluded pairs of the particle, if the structure has any.
       %entry_excluded = arith.constant 4 : index
-      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
-          %excluded, %i, %entry_excluded)
-          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %first_excluded, %count_excluded = md_alg.ragged_row %excluded[%i]
+          entry %entry_excluded checked : memref<?xi32, 1>
       %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
@@ -1849,8 +1823,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
-          : (i32, i32) -> i32
+      %below_mask_bit = arith.shli %one32, %lane32 : i32
+      %below_mask = arith.subi %below_mask_bit, %one32 : i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -1953,10 +1927,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
-                : (i1) -> i32
-            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
-                : (i32, i32) -> i32
+            %ballot = gpu.ballot %neighbor : i32
+            %before_and = arith.andi %ballot, %below_mask : i32
+            %before = math.ctpop %before_and : i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -2004,8 +1977,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = func.call @mdir.primitive.warp_count(%ballot)
-                : (i32) -> i32
+            %found_here = math.ctpop %ballot : i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -2234,19 +2206,19 @@ func.func private @mdrt_gpu_spatial_order(
     gpu.terminator
   }
 
-  func.call @mdir.primitive.chunked_scan(%held, %start, %cursor, %cell_sums,
-      %cells, %cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
-      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index,
-         index, index) -> ()
+  md_alg.scan %held[%cells] into %start cursor %cursor
+      strategy chunked scratch %cell_sums : memref<?xi32, 1>
+      launch(%cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
+      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 
-  func.call @mdir.primitive.cursor_scatter(%key, %cursor, %order, %n, %grid_n,
-      %block, %c1) {every_key}
-      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
+  md_alg.scatter_to_bins %key[%n] cursor %cursor into %order
+      launch(%grid_n, %block, %c1) {every_key}
+      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 
   // The particles of each cell in the order of `ids`, by insertion.
-  func.call @mdir.primitive.sort_bins_by(%start, %order, %cells, %grid_cells,
-      %block, %c1, %ids)
-      : (memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index, memref<?xi32, 1>) -> ()
+  md_alg.sort_bins %start[%cells] items %order by %ids
+      strategy insertion launch(%grid_cells, %block, %c1)
+      : memref<?xi32, 1>, memref<?xi32, 1> by memref<?xi32, 1>
 
   %key0 = memref.memory_space_cast %key
       : memref<?xi32, 1> to memref<?xi32>

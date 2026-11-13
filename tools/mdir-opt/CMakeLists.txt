@@ -2,6 +2,7 @@ set(LIBS
   MDIRCompileCache
   MDIRDyn
   MDIRMD
+  MDIRMDAlg
   MDIRMDDist
   MDIRMDExec
   MDIRMDExecTransforms

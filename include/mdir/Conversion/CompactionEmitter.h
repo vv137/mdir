@@ -21,23 +21,6 @@ namespace mdir {
 namespace kernels {
 
 //===----------------------------------------------------------------------===//
-// The calls of the templates
-//===----------------------------------------------------------------------===//
-
-/// The prefix of the names by which a template calls a primitive:
-/// `func.call @mdir.primitive.warp_rank(%ballot, %below) : (i32, i32) ->
-/// i32`, with a declaration of the callee in the template.
-inline constexpr llvm::StringLiteral kPrimitivePrefix = "mdir.primitive.";
-
-/// Replaces every call of a primitive under `root` with the code of its
-/// emitter, where the call stands, and removes the declarations of the
-/// primitives. A primitive that does not exist, or a call whose operands or
-/// results the primitive does not have, is an error on the call. The
-/// lowering calls this on each template it parses; the pass
-/// `expand-device-primitives` calls it on a module.
-mlir::LogicalResult expandPrimitiveCalls(mlir::Operation *root);
-
-//===----------------------------------------------------------------------===//
 // Warp compaction
 //===----------------------------------------------------------------------===//
 

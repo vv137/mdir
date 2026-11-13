@@ -18,8 +18,7 @@ namespace kernels {
 std::string getGroupsBuildName(bool triclinic);
 
 /// Appends to `module` the build of the groups on a device and what it
-/// calls: the declarations of the device primitives (CompactionEmitter.h),
-/// the helpers `mdrt_gpu_groups_grid`, `mdrt_gpu_groups_partner`, and
+/// calls: the helpers `mdrt_gpu_groups_grid`, `mdrt_gpu_groups_partner`, and
 /// `mdrt_gpu_groups_image` (with `triclinic`, also
 /// `mdrt_gpu_groups_image_triclinic` and `mdrt_gpu_groups_offset_triclinic`),
 /// and the build, named by getGroupsBuildName.
@@ -30,8 +29,9 @@ std::string getGroupsBuildName(bool triclinic);
 /// takes the decoupled look-back scan for the three counting sorts (D321)
 /// in place of the three-launch scan.
 ///
-/// The calls of the device primitives are left as calls, which
-/// expandPrimitiveCalls replaces with the code of their emitters.
+/// Its scans, scatters, sorts within bins, and reads of the ragged rows are
+/// left as md_alg ops (D[md-alg]), which kernels::lowerAlgToSIMT
+/// (MDAlgLowering.h) replaces with the code of their emitters.
 void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
                      bool singlePassScan);
 

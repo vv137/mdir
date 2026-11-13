@@ -20,9 +20,9 @@
 // The incidence structure of a tuple set is the first user: an entry is a
 // tuple of the particle, E = a + 2 (the tuple, the place of the particle
 // in it, its a members). Code reads a row only through emitRaggedRow and
-// emitRaggedEntry; the templates call them as the device primitives
-// `ragged_row` and `ragged_entry` (CompactionEmitter.h), which expand to
-// the same code.
+// emitRaggedEntry; the templates and the groups build write them as
+// `md_alg.ragged_row` and `md_alg.ragged_entry` (D[md-alg]), which lower
+// to the same code.
 
 #ifndef MDIR_CONVERSION_RAGGEDROWS_H
 #define MDIR_CONVERSION_RAGGEDROWS_H

@@ -791,7 +791,9 @@ its own, and the inner list fills its blocks as a list built with
 $R_\text{in}$ would. This warp compaction, the scans, and the counting
 sorts of the builds are one emitter each, which the lowering and the
 templates of the builds share (D296; [device-primitives.md](../device-primitives.md),
-Section 4). (The outer list's blocks come from an atomic pool, and the loop
+Section 4); the templates and the groups build state the scans, the
+scatters, and the sorts within bins as typed ops of a dialect of collection
+algorithms, `md_alg`, which those emitters lower (D[md-alg]). (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
 before; the deterministic mode does not use groups.) A loop over pairs
 that follows the refresh at the same positions, in f32, takes the frames

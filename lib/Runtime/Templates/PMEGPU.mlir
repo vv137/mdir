@@ -44,10 +44,6 @@ func.func private @mdrt_gpu_pme_blocks(%count: index) -> index {
   %result = arith.divui %padded, %c128 : index
   return %result : index
 }
-func.func private @mdir.primitive.wrapped_grid_axis_index(index, index, index) -> index
-func.func private @mdir.primitive.wrapped_grid_axis_i32(i32, i32, i32) -> i32
-func.func private @mdir.primitive.grid_gather_index(memref<?x!pme_real, 1>, index, index) -> !pme_real
-func.func private @mdir.primitive.grid_gather_i32(memref<?x!pme_real, 1>, i32, i32) -> !pme_real
 
 // Spreads the charges to `grid`, in fixed point, so that the sum does not depend on the order of
 // the threads (D70; the deterministic mode, D84).
@@ -2887,7 +2883,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
+      %g3 = md_alg.wrap %pz_start, %j3, %k3 : index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -2907,7 +2903,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
+          %p = md_alg.grid_read %phi[%gbase + %g3] : memref<?x!pme_real, 1>, index
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -3352,7 +3348,7 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %j3t = arith.index_cast %j3 : index to i32
-      %g3 = func.call @mdir.primitive.wrapped_grid_axis_i32(%zstart, %j3t, %k3t) : (i32, i32, i32) -> i32
+      %g3 = md_alg.wrap %zstart, %j3t, %k3t : i32
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %j1t = arith.index_cast %j1 : index to i32
@@ -3374,7 +3370,7 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
           %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row = arith.addi %row1, %g2 : i32
           %gbase = arith.muli %row, %k3t : i32
-          %p = func.call @mdir.primitive.grid_gather_i32(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, i32, i32) -> !pme_real
+          %p = md_alg.grid_read %phi[%gbase + %g3] : memref<?x!pme_real, 1>, i32
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -3875,7 +3871,7 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
+      %g3 = md_alg.wrap %pz_start, %j3, %k3 : index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -3895,7 +3891,7 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
+          %p = md_alg.grid_read %phi[%gbase + %g3] : memref<?x!pme_real, 1>, index
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -5609,7 +5605,7 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
+      %g3 = md_alg.wrap %pz_start, %j3, %k3 : index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -5629,7 +5625,7 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
+          %p = md_alg.grid_read %phi[%gbase + %g3] : memref<?x!pme_real, 1>, index
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -6111,7 +6107,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %j3t = arith.index_cast %j3 : index to i32
-      %g3 = func.call @mdir.primitive.wrapped_grid_axis_i32(%zstart, %j3t, %k3t) : (i32, i32, i32) -> i32
+      %g3 = md_alg.wrap %zstart, %j3t, %k3t : i32
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %j1t = arith.index_cast %j1 : index to i32
@@ -6133,7 +6129,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
           %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row = arith.addi %row1, %g2 : i32
           %gbase = arith.muli %row, %k3t : i32
-          %p = func.call @mdir.primitive.grid_gather_i32(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, i32, i32) -> !pme_real
+          %p = md_alg.grid_read %phi[%gbase + %g3] : memref<?x!pme_real, 1>, i32
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real

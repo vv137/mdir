@@ -69,14 +69,17 @@
 // 16 to 30 of its mask. The images kernel of D115 takes the images a
 // lattice vector away, by their codes (emitOffsetTriclinic).
 //
-// The code is emitted op by op in the order in which it runs. The device
-// primitives are called by name (`@mdir.primitive.*`, CompactionEmitter.h)
-// and expanded by expandPrimitiveCalls.
+// The code is emitted op by op in the order in which it runs. The scans,
+// the scatters, the sorts within bins, and the reads of the ragged rows are
+// md_alg ops (D[md-alg]), which convert-md-exec-to-gpu lowers by their
+// emitters after the build is emitted; the warp's votes and scans are the
+// emitters' code, emitted where they stand (CompactionEmitter.h).
 
 #include "mdir/Conversion/GroupsBuild.h"
 
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Dialect/MDAlg/MDAlgOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -363,10 +366,6 @@ constexpr StringLiteral kImage = "mdrt_gpu_groups_image";
 constexpr StringLiteral kImageTriclinic = "mdrt_gpu_groups_image_triclinic";
 constexpr StringLiteral kOffsetTriclinic = "mdrt_gpu_groups_offset_triclinic";
 
-std::string primitive(StringRef name) {
-  return (kernels::kPrimitivePrefix + name).str();
-}
-
 /// The build: its code, and the values of its function that its kernels
 /// take, by the names they have in the code.
 class GroupsBuild : public Code {
@@ -393,7 +392,6 @@ private:
       columnChunks, sizesDevice, xp, gkey, gcount, gstart, gcursor, gplace,
       boxes;
 
-  void declarePrimitives();
   void emitGrid();
   void emitPartner();
   void emitImage();
@@ -434,32 +432,6 @@ private:
 // The helpers
 //===----------------------------------------------------------------------===//
 
-void GroupsBuild::declarePrimitives() {
-  auto declare = [&](StringRef name, TypeRange inputs, TypeRange results) {
-    function(primitive(name), b.getFunctionType(inputs, results));
-  };
-  Type bf = buffer;
-  Type wide = wideBuffer;
-  declare("warp_lanes_below", {i32, i32}, {i32});
-  declare("warp_ballot", {i1}, {i32});
-  declare("warp_rank", {i32, i32}, {i32});
-  declare("warp_count", {i32}, {i32});
-  declare("warp_scan", {i32, i32, i32, i32}, {i32});
-  declare("device_scan", {bf, bf, index, bf, index, index, index}, {});
-  declare("device_scan_cursor", {bf, bf, index, bf, index, index, index, bf},
-          {});
-  if (singlePass) {
-    declare("single_pass_scan", {bf, bf, index, wide, index, index, index},
-            {});
-    declare("single_pass_scan_cursor",
-            {bf, bf, index, wide, index, index, index, bf}, {});
-  }
-  declare("cursor_scatter", {bf, bf, bf, index, index, index, index}, {});
-  declare("sort_bins", {bf, bf, index, index, index, index}, {});
-  declare("ragged_row", {bf, index, index}, {index, index});
-  declare("ragged_entry", {bf, index, index, index, index}, {i32});
-}
-
 // The number of blocks of `block` threads that hold `count` threads.
 void GroupsBuild::emitGrid() {
   function(kGrid, b.getFunctionType({index, index}, {index}),
@@ -485,12 +457,12 @@ void GroupsBuild::emitPartner() {
              Value i3c = cx(3);
              Value i4c = cx(4);
              Value zero = ci(0);
-             Value place = call1(primitive("ragged_entry"), i32,
-                                 {rows, first, k, i1c, i4c});
+             Value place = md_alg::RaggedEntryOp::create(b, loc, rows, first,
+                                                         k, i1c, i4c);
              Value atFirst = cmpi(CmpIPredicate::eq, place, zero);
              Value column = select(atFirst, i3c, i2c);
-             Value partner = call1(primitive("ragged_entry"), i32,
-                                   {rows, first, k, column, i4c});
+             Value partner = md_alg::RaggedEntryOp::create(
+                 b, loc, rows, first, k, column, i4c);
              func::ReturnOp::create(b, loc, partner);
            });
 }
@@ -674,12 +646,11 @@ Value GroupsBuild::atomicBlock(Value v) {
 }
 
 /// The exclusive sums of the `count` i32 of `countsOf` into `start`
-/// (count + 1) and, unless it is null, `cursor` (count): the device scan of
-/// the primitives (`device_scan`, or `device_scan_cursor` with a cursor),
-/// or with `singlePass` the decoupled look-back scan (`single_pass_scan`,
-/// D321; CompactionEmitter.h), in blocks of 256 threads with 4 counts a
-/// thread, whose sums of the blocks (or the states of the tiles) this
-/// allocates.
+/// (count + 1) and, unless it is null, `cursor` (count): `md_alg.scan`
+/// by the three-launch strategy, or with `singlePass` the decoupled
+/// look-back (D321; CompactionEmitter.h), in blocks of 256 threads with 4
+/// counts a thread, whose sums of the blocks (or the states of the tiles)
+/// this allocates.
 void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
                        Value count) {
   Value perBlock = cx(1024);
@@ -690,32 +661,36 @@ void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
   if (singlePass)
     size = addi(blocks, c1);
   Value scratch = alloc(singlePass ? wideBuffer : buffer, size);
-  std::string name = singlePass ? "single_pass_scan" : "device_scan";
-  Values operands = {countsOf, start, count, scratch, blocks, threads, c1};
-  if (cursor) {
-    name += "_cursor";
-    operands.push_back(cursor);
-  }
-  call(primitive(name), {}, operands);
+  auto strategy = singlePass ? md_alg::ScanStrategy::SinglePass
+                             : md_alg::ScanStrategy::ReduceThenScan;
+  md_alg::ScanOp::create(
+      b, loc, countsOf, count, start, cursor,
+      md_alg::ScanStrategyAttr::get(context, strategy), scratch,
+      ValueRange{blocks, threads, c1});
   dealloc(scratch);
 }
 
-/// The scatter of a counting sort (`cursor_scatter`, CompactionEmitter.h):
+/// The scatter of a counting sort (`md_alg.scatter_to_bins`):
 /// each of the `count` items with a key that is not negative takes the
 /// next slot of its key from `cursor`, with an atomic, and writes its
 /// number there in `out`.
 void GroupsBuild::cursorScatter(Value keys, Value cursor, Value out,
                                 Value count, Value grid) {
-  call(primitive("cursor_scatter"), {},
-       {keys, cursor, out, count, grid, block, c1});
+  md_alg::ScatterToBinsOp::create(b, loc, keys, count, cursor, out,
+                                  /*every_key=*/false,
+                                  ValueRange{grid, block, c1});
 }
 
 /// Sorts the items (i32) of each of the `count` bins of `start` ascending,
-/// by insertion (`sort_bins`, CompactionEmitter.h): the bins hold few
+/// by insertion (`md_alg.sort_bins`): the bins hold few
 /// items, whose order after the atomics is not fixed.
 void GroupsBuild::sortBins(Value grid, Value start, Value items,
                            Value count) {
-  call(primitive("sort_bins"), {}, {start, items, count, grid, block, c1});
+  md_alg::SortBinsOp::create(
+      b, loc, start, count, items, /*by=*/Value(), /*out=*/Value(),
+      /*keys=*/Value(),
+      md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
+      ValueRange{grid, block, c1});
 }
 
 Values GroupsBuild::image(Value dx, Value dy, Value dz) {
@@ -1413,23 +1388,18 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value piie = indexCast(index, pie);
     Value reale = cmpi(P::sge, pie, zeroI);
     Value entryE = cx(4);
-    ResultRange row = call(primitive("ragged_row"), {index, index},
-                           {excluded, piie, entryE});
-    Value firste = row[0];
-    Value counte = select(reale, row[1], c0w);
+    auto row = md_alg::RaggedRowOp::create(b, loc, excluded, piie, entryE,
+                                           /*checked=*/true);
+    Value firste = row.getFirst();
+    Value counte = select(reale, row.getCount(), c0w);
     Value count32e = indexCast(i32, counte);
     // Shuffles over the whole warp: the halves hold the same counts, so a
     // lane reads one of its own half (shuffles up by segments of 16 lost
     // excluded pairs).
     Value wexcl = ci(32);
     Value pre0 = addi(count32e, zeroI);
-    auto scanCall = func::CallOp::create(b, loc, primitive("warp_scan"),
-                                         TypeRange{i32},
-                                         ValueRange{pre0, u16x32, zeroI,
-                                                    wexcl});
-    scanCall->setAttr("lanes", b.getI64IntegerAttr(16));
-    scanCall->setAttr("unsigned", b.getUnitAttr());
-    Value pre4 = scanCall.getResult(0);
+    Value pre4 = kernels::emitWarpScan(b, loc, pre0, u16x32, zeroI, wexcl,
+                                       /*lanes=*/16, /*unsignedLane=*/true);
     Value start32e = subi(pre4, count32e);
     Value starte = indexCast(index, start32e);
     Value c15i = ci(15);
@@ -1578,8 +1548,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value fy1 = select(wideY, gny1, c1y0);
     Value fz1 = select(wideZ, gnz1, c1z0);
     Value reach2 = mulf(freach, freach);
-    Value below =
-        call1(primitive("warp_lanes_below"), i32, {lane32, oneI});
+    Value below = kernels::emitLanesBelow(b, loc, lane32, oneI);
     Value first16 = addi(first32, c16i);
     Value unitCapacityW = dim(units, c0w);
     Value noneBlock = ci(-1);
@@ -1732,10 +1701,11 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                               Value si = load(order, sp);
                               Value sii = indexCast(index, si);
                               Value sentry = cx(4);
-                              ResultRange srow = call(
-                                  primitive("ragged_row"), {index, index},
-                                  {excluded, sii, sentry});
-                              Value sfirst = srow[0], sc = srow[1];
+                              auto srow = md_alg::RaggedRowOp::create(
+                                  b, loc, excluded, sii, sentry,
+                                  /*checked=*/true);
+                              Value sfirst = srow.getFirst(),
+                                    sc = srow.getCount();
                               Value sin = cmpi(P::ne, sc, c0w);
                               Value sfound = ifElse(
                                   i1, sin,
@@ -1914,10 +1884,10 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     auto addEntries = [&](Value cs, Value csb, Value qv,
                           Value bits) -> std::pair<Value, Value> {
       Value keep = cmpi(P::ne, bits, zeroI);
-      Value kept = call1(primitive("warp_ballot"), i32, keep);
-      Value rank = call1(primitive("warp_rank"), i32, {kept, below});
+      Value kept = kernels::emitWarpBallot(b, loc, keep);
+      Value rank = kernels::emitWarpRank(b, loc, kept, below);
       Value slot = addi(cs, rank);
-      Value nKept = call1(primitive("warp_count"), i32, kept);
+      Value nKept = kernels::emitWarpCount(b, loc, kept);
       Value next = addi(cs, nKept);
       // The blocks of the slots of this round: the block of slot cs, new
       // if cs begins one, and the next if the round runs into it. The
@@ -1993,9 +1963,9 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value noneQ;
     auto round = [&](Value nearq, Value cs, Value csb, Value qn) -> Values {
       Value isNear = cmpi(P::sge, nearq, zeroI);
-      Value nearBits = call1(primitive("warp_ballot"), i32, isNear);
-      Value nearRank = call1(primitive("warp_rank"), i32, {nearBits, below});
-      Value nearN = call1(primitive("warp_count"), i32, nearBits);
+      Value nearBits = kernels::emitWarpBallot(b, loc, isNear);
+      Value nearRank = kernels::emitWarpRank(b, loc, nearBits, below);
+      Value nearN = kernels::emitWarpCount(b, loc, nearBits);
       ifThen(isNear, [&] {
         Value qslot0 = addi(qn, nearRank);
         Value qslot1 = indexCast(index, qslot0);
@@ -2689,7 +2659,6 @@ void GroupsBuild::emitBuild() {
 }
 
 void GroupsBuild::emit() {
-  declarePrimitives();
   emitGrid();
   emitPartner();
   emitImage();
