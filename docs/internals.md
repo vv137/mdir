@@ -83,10 +83,16 @@ collection algorithm as an op of `md_alg` (`md_alg.scan`,
 `md_alg.grid_read`, the stages `md_alg.sort_by_key` and
 `md_alg.grid_plan`, ...; D406, D407,
 [device-primitives.md](device-primitives.md#42-how-the-sites-call-them)),
-whose verifier checks it. `kernels::lowerAlgToSIMT`
-(`lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
-its emitter's code when `convert-md-exec-to-gpu` parses the template; the
-pass `convert-md-alg-to-gpu` does the same on a module, and
+whose verifier checks it. `convert-md-exec-to-gpu` leaves the ops of the
+neighbor matrix's template and of the groups build in the module; the
+empty pass `md-alg-transform-collections` holds the place of the
+collection-level transformations, and `convert-md-alg-to-gpu`
+(`kernels::lowerAlgToSIMT`,
+`lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
+its emitter's code and records its policy in `mdir.alg_policy`, which
+`mdir run` writes to its log and manifest (D[md-alg-ir]). The accessors of
+the templates of PME and the counting sort of the device's ragged rows are
+lowered by `lowerAlgToSIMT` where `convert-md-exec-to-gpu` creates them;
 `convert-md-alg-to-scf` lowers the ops to their serial definitions, the
 oracle of the tests. The warp's votes are written as upstream ops. The build of the groups
 is written by an emitter, `lib/Conversion/MDExecKernels/GroupsBuild.cpp`,

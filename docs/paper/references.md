@@ -235,6 +235,15 @@ Workshops*, Lecture Notes in Computer Science (Springer, Cham, 2024),
 pp. 207–218.
 [doi:10.1007/978-3-031-50684-0_16](https://doi.org/10.1007/978-3-031-50684-0_16)
 
+### Henriksen2017
+
+T. Henriksen, N. G. W. Serup, M. Elsman, F. Henglein, C. E. Oancea,
+"Futhark: purely functional GPU-programming with nested parallelism and
+in-place array updates," in *Proceedings of the 38th ACM SIGPLAN
+Conference on Programming Language Design and Implementation (PLDI '17)*
+(ACM, 2017), pp. 556–571.
+[doi:10.1145/3062341.3062354](https://doi.org/10.1145/3062341.3062354)
+
 ### Hess1997
 
 B. Hess, H. Bekker, H. J. C. Berendsen, J. G. E. M. Fraaije, "LINCS: A
@@ -659,6 +668,14 @@ P. J. Steinbach, B. R. Brooks, "New spherical-cutoff methods for
 long-range forces in macromolecular simulation," *J. Comput. Chem.* **15**,
 667–683 (1994).
 [doi:10.1002/jcc.540150702](https://doi.org/10.1002/jcc.540150702)
+
+### Steuwer2017
+
+M. Steuwer, T. Remmelg, C. Dubach, "LIFT: A functional data-parallel IR
+for high-performance GPU code generation," in *2017 IEEE/ACM
+International Symposium on Code Generation and Optimization (CGO)*
+(IEEE, 2017), pp. 74–85.
+[doi:10.1109/CGO.2017.7863730](https://doi.org/10.1109/CGO.2017.7863730)
 
 ### StillingerWeber1985
 

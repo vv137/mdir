@@ -31,6 +31,14 @@ positions that the key kernels compute would lose their fused
 multiply-adds. The SIMT lowering itself writes no floating-point
 arithmetic in a kernel (the grid plan is host code).
 
+Two ops are therefore still lowered where they are created, out of reach
+of the place of the transformations:
+
+| Op lowered in place | What would free it |
+|---|---|
+| The accessors of the templates of PME (`wrap`, `grid_read`) | Nothing is needed: they compute one value for one item and have no collection-level content, and folding their arithmetic with the unrolled loops is what keeps the code identical |
+| The `sort_by_key` of the device build of ragged rows | Kernel names that do not depend on the order of the lowering, so that the function's lowering need not name its launches before the next ones |
+
 The split of `Lowering` into neighbors and interactions (#558) is not
 needed for the cut: the ops that survive come from code that the pass adds
 whole (a template, the groups build), not from the lowering of the
@@ -85,6 +93,16 @@ does not fix.
 | `append` | `reproducible`: `bitwise` contradicts its contract, which leaves the numbers of the blocks free | `unordered` | `unordered` only: concurrent lists take blocks in no fixed order |
 | `grid_plan` | `bitwise` (one lowering, on the host, shared by both) | `bitwise` | meets every tier |
 
+A requirement is about what the op's consumers observe. The lists of an
+`append`, read out through their names, are the same in every run, but
+the loop over pairs reads the blocks as they are laid out, and the order
+of the blocks decides which work goes together: the layout is a result
+of the op, and the op is `unordered` (the maintainer's review of #868). A
+later step that gives `append` a logical result (value semantics, #866
+item 3) separates the lists from their layout; the requirement on the
+logical result can then be `bitwise`, and the layout a choice of the
+policy.
+
 The accessors (`ragged_row`, `ragged_entry`, `wrap`, `grid_read`,
 `bin_span`, `bin_item`) and the bins of a key region compute one value for
 one item, exactly, and take no attribute.
@@ -102,12 +120,91 @@ the cheapest is to be chosen; no op has more than one today.
 
 `convert-md-alg-to-gpu` and the in-place lowerings of `convert-md-exec-to-gpu`
 add, for each op with a determinism aspect that they lower, an entry to the
-module's attribute `md_alg.policy`: the function, the op, its
-requirement, its order, its strategies, and the constant sizes of its
-launches' blocks. `mdir run` takes the attribute from the module once the
+module's attribute `mdir.alg_policy`, in the order of the lowering: the
+function, the op, its requirement (stated or the default), its order, its
+strategies, and its launches, each value a constant's number or `?`, for
+example `{function = "mdrt_gpu_build_neighbors_groups", op = "sort_by_key",
+determinism = "bitwise", order = "stable", launch = "(?,128,1)", scan =
+"reduce_then_scan", scan_launch = "(?,256,1)", sort = "insertion",
+sort_launch = "(?,128,1)"}`. The serial lowering, which has no policy,
+records nothing; the accessors have no entry. `mdir run` takes the attribute from the module once the
 passes have run (so that `mdir emit --stage=lowered` prints the module of
 the base), prints a line `MDIR: md_alg policy:` in the log, and writes the
 entries to the manifest as `effective.md_alg_policy`
 (`docs/run-manifest.schema.json`), next to the skin search's record
-(D401). A test that compares two runs bitwise compares their policies
-first.
+(D401). The line gives each distinct policy once, with the count of its
+ops; the dodecahedron of `test/Driver/triclinic.test` with groups records
+17 ops, among them `md_alg.sort_by_key{determinism=bitwise order=stable
+launch=(?,128,1) scan=reduce_then_scan scan_launch=(?,256,1)
+sort=insertion sort_launch=(?,128,1)} x2` for the groups build, which
+becomes `scan=single_pass` under `single-pass-group-scan=true`. A test that
+compares two runs bitwise compares their policies first.
+
+## The same programs
+
+By the method of D406 and D407, against the base commit (2bede5b2), with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, on the 60 programs of D406
+(the nine systems of the Amber suite, JAC NVE with the matrix, the rhombic
+dodecahedron of `test/Driver/triclinic.test` with the matrix, the groups,
+and the groups and a dual list, the prolate kernel of PME on the three
+OPC waters of `prolate.test` and on the dodecahedron, each in mixed and
+double precision, with the three-launch scan and with
+`single-pass-group-scan=true`):
+
+| Compared | Base | This change | Identical |
+|---|---|---|---|
+| The lowered program (`mdir emit --stage=lowered`: the PTX of every kernel and the host's code) | the full pipeline | the full pipeline | 60 of 60 |
+| The generic IR at the end of the device lowering | after `convert-md-exec-to-gpu` | after `convert-md-alg-to-gpu` | 60 of 60 |
+
+Two captures of the base gave the same bytes. The record of the policy
+is taken off the module by the driver, so neither capture holds it.
+
+## Tests
+
+- **The pass order and the slot**
+  (`test/Driver/md-alg-passes-gpu.test`): the pipeline of a groups and of
+  a matrix program names the three passes in order before
+  `check-read-only-arguments`; stopped after the empty pass, the groups
+  build holds its `grid_plan`, `sort_by_key`, and `append` ops, and the
+  matrix template its `grid_plan`, `scan`, `scatter_to_bins`, `sort_bins`,
+  and `sort_by_key`; after `convert-md-alg-to-gpu` no `md_alg` op is left.
+- **The requirement:** `test/Dialect/MDAlg/determinism.mlir` (every tier
+  up to each op's bound, in the custom and the generic form);
+  `determinism-invalid.mlir`, one case for each refusal of the verifier
+  (`bitwise` on a scatter, on an unordered counting sort, on an append);
+  `test/Conversion/MDAlg/simt-determinism.mlir`, one for each refusal of
+  the SIMT lowering (`reproducible` on the same three), which the serial
+  lowering accepts.
+- **The record:** `test/Conversion/MDAlg/policy.mlir` (an entry for each
+  kind of op, the stated and the default requirement, constant and other
+  launch values, entries kept from before, none for an accessor or the
+  serial lowering); the GPU test above checks the log line, the manifest
+  against its schema, and that the single-pass scan changes the three
+  entries of the groups build's scans and no other.
+- The contract tests of D406 and D407 are unchanged. The tests that lower
+  a program by `mdir-opt` for a device (`%md_exec_gpu_passes` in
+  `test/lit.cfg.py`, and the pipelines written out in `test/Integration`
+  and `test/Sanitizer`) run the two new passes after
+  `convert-md-exec-to-gpu`, as `mdir` does.
+
+The tests fail on realistic breaks:
+
+| Break | Caught by |
+|---|---|
+| the arithmetic of the kernels finished in the launches alone, not in the key regions of the md_alg ops | the comparison: 8 of 8 lowered programs and 8 of 8 IRs of four programs differ (the dodecahedron with groups in mixed and double, with the matrix, JAC; the contraction of the key kernels' products) |
+| the empty pass left out of the pipeline | the pipeline then reads `convert-md-exec-to-gpu{...},convert-md-alg-to-gpu,`, which the `ORDER` check of `md-alg-passes-gpu.test` refuses |
+| the verifier admits `bitwise` on a scatter | `determinism-invalid.mlir`, its case |
+| the SIMT lowering accepts `reproducible` on an append | `simt-determinism.mlir`, its case |
+| the record leaves out the appends | `policy.mlir` (the entry `append` missing) |
+
+## Lines
+
+The code (without the tests and the documents) gained 490 lines and lost
+58: the attribute, its interface, and the ops' descriptions
+(`MDAlgOps.td`, 113), the bounds and the verifier (`MDAlgDialect.cpp`,
+86), the SIMT refusal, the record, and the empty pass
+(`MDAlgLowering.cpp`, 109), the driver's log line and manifest
+(`Run.cpp`, 61), and in `MDExecToGPU.cpp` the walk of the regions whose
+code runs in a kernel, in place of the two lowerings it no longer does.
+The tests gained 463 lines.
