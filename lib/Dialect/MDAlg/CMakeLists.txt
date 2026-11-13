@@ -8,7 +8,10 @@ add_mlir_dialect_library(MDIRMDAlg
   MDIRMDAlgIncGen
 
   LINK_LIBS PUBLIC
+  MLIRArithDialect
   MLIRIR
+  MLIRLLVMDialect
+  MLIRSCFDialect
   MLIRInferTypeOpInterface
   MLIRMemRefDialect
   MLIRSideEffectInterfaces

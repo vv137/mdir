@@ -519,6 +519,7 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
     oracle of `convert-md-alg-to-gpu`.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect"];
 }

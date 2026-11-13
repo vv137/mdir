@@ -404,13 +404,13 @@ private:
               function_ref<void(gpu::LaunchOp)> body);
   void perItem(gpu::LaunchOp op, Value count, function_ref<void(Value)> body);
   void clear(Value grid, Value target, Value count, int64_t value);
-  void atomicAdd(Value target, Value at, Value v);
   void atomicMax(Value target, Value v);
-  Value atomicBlock(Value v);
+  std::pair<Value, SmallVector<Value>> scanExecution(Value count);
   void scan(Value countsOf, Value start, Value cursor, Value count);
-  void cursorScatter(Value keys, Value cursor, Value out, Value count,
-                     Value grid);
-  void sortBins(Value grid, Value start, Value items, Value count);
+  void sortByKey(Value count, Value bins, Value keys, Value counts,
+                 Value start, Value cursor, Value out, ValueRange writes,
+                 ValueRange adds, Value grid, Value binGrid,
+                 function_ref<void(Value)> key);
   /// The image of the displacements (dx, dy, dz) nearest to the center:
   /// three calls of the image of an axis, or in a triclinic cell one of
   /// the image in the cell, whose last three results are the lattice
@@ -617,17 +617,6 @@ void GroupsBuild::clear(Value grid, Value target, Value count,
   });
 }
 
-/// A relaxed atomic addition of the i32 `v` to `target[at]` at the scope
-/// of the device.
-void GroupsBuild::atomicAdd(Value target, Value at, Value v) {
-  Value bi = baseAddress(target);
-  Value ki = indexCast(i64, at);
-  Value four = cl(4);
-  Value off = muli(ki, four);
-  Value ptr = pointerTo(bi, off);
-  atomic(LLVM::AtomicBinOp::add, ptr, v);
-}
-
 /// A relaxed atomic maximum of the i32 `v` into `target[1]`.
 void GroupsBuild::atomicMax(Value target, Value v) {
   Value bi = baseAddress(target);
@@ -636,23 +625,12 @@ void GroupsBuild::atomicMax(Value target, Value v) {
   atomic(LLVM::AtomicBinOp::max, ptr, v);
 }
 
-/// Takes `v` blocks from the count of blocks, `sizes_device[2]`, with a
-/// relaxed atomic addition, and gives the first.
-Value GroupsBuild::atomicBlock(Value v) {
-  Value bi = baseAddress(sizesDevice);
-  Value eight = cl(8);
-  Value ptr = pointerTo(bi, eight);
-  return atomic(LLVM::AtomicBinOp::add, ptr, v);
-}
-
-/// The exclusive sums of the `count` i32 of `countsOf` into `start`
-/// (count + 1) and, unless it is null, `cursor` (count): `md_alg.scan`
-/// by the three-launch strategy, or with `singlePass` the decoupled
-/// look-back (D321; CompactionEmitter.h), in blocks of 256 threads with 4
-/// counts a thread, whose sums of the blocks (or the states of the tiles)
-/// this allocates.
-void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
-                       Value count) {
+/// The execution of a scan of `count` i32 (`md_alg.scan`): by the
+/// three-launch strategy, or with `singlePass` the decoupled look-back
+/// (D321; CompactionEmitter.h), in blocks of 256 threads with 4 counts a
+/// thread, whose sums of the blocks (or the states of the tiles) this
+/// allocates; the scratch and the launch values.
+std::pair<Value, SmallVector<Value>> GroupsBuild::scanExecution(Value count) {
   Value perBlock = cx(1024);
   Value threads = cx(256);
   Value blocks0 = call1(kGrid, index, {count, perBlock});
@@ -661,36 +639,52 @@ void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
   if (singlePass)
     size = addi(blocks, c1);
   Value scratch = alloc(singlePass ? wideBuffer : buffer, size);
-  auto strategy = singlePass ? md_alg::ScanStrategy::SinglePass
-                             : md_alg::ScanStrategy::ReduceThenScan;
-  md_alg::ScanOp::create(
-      b, loc, countsOf, count, start, cursor,
-      md_alg::ScanStrategyAttr::get(context, strategy), scratch,
-      ValueRange{blocks, threads, c1});
+  return {scratch, {blocks, threads, c1}};
+}
+
+static md_alg::ScanStrategyAttr scanStrategy(MLIRContext *context,
+                                             bool singlePass) {
+  return md_alg::ScanStrategyAttr::get(
+      context, singlePass ? md_alg::ScanStrategy::SinglePass
+                          : md_alg::ScanStrategy::ReduceThenScan);
+}
+
+/// The exclusive sums of the `count` i32 of `countsOf` into `start`
+/// (count + 1) and, unless it is null, `cursor` (count).
+void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
+                       Value count) {
+  auto [scratch, launch] = scanExecution(count);
+  md_alg::ScanOp::create(b, loc, countsOf, count, start, cursor,
+                         scanStrategy(context, singlePass), scratch, launch);
   dealloc(scratch);
 }
 
-/// The scatter of a counting sort (`md_alg.scatter_to_bins`):
-/// each of the `count` items with a key that is not negative takes the
-/// next slot of its key from `cursor`, with an atomic, and writes its
-/// number there in `out`.
-void GroupsBuild::cursorScatter(Value keys, Value cursor, Value out,
-                                Value count, Value grid) {
-  md_alg::ScatterToBinsOp::create(b, loc, keys, count, cursor, out,
-                                  /*every_key=*/false,
-                                  ValueRange{grid, block, c1});
-}
-
-/// Sorts the items (i32) of each of the `count` bins of `start` ascending,
-/// by insertion (`md_alg.sort_bins`): the bins hold few
-/// items, whose order after the atomics is not fixed.
-void GroupsBuild::sortBins(Value grid, Value start, Value items,
-                           Value count) {
-  md_alg::SortBinsOp::create(
-      b, loc, start, count, items, /*by=*/Value(), /*out=*/Value(),
-      /*keys=*/Value(),
+/// A counting sort of the `count` items into `bins` bins
+/// (`md_alg.sort_by_key`), whose counts the caller has cleared: the key of
+/// each item from `key(item)`, which writes the slots of its item in
+/// `writes` and adds to the counters of `adds`; the scan as above, a
+/// thread an item for the key and the scatter, and the particles of a bin
+/// sorted by number by insertion, a thread a bin: the bins hold few items,
+/// whose order after the atomics is not fixed.
+void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
+                            Value start, Value cursor, Value out,
+                            ValueRange writes, ValueRange adds, Value grid,
+                            Value binGrid, function_ref<void(Value)> key) {
+  auto [scratch, launch] = scanExecution(bins);
+  auto op = md_alg::SortByKeyOp::create(
+      b, loc, count, bins,
+      md_alg::OrderAttr::get(context, md_alg::Order::Stable), keys, counts, start, cursor, out, /*by=*/Value(),
+      writes, adds, b.getUnitAttr(), /*every_key=*/UnitAttr(),
+      ValueRange{grid, block, c1}, scanStrategy(context, singlePass), scratch,
+      launch,
       md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
-      ValueRange{grid, block, c1});
+      /*sort_buffer=*/Value(), ValueRange{binGrid, block, c1});
+  {
+    OpBuilder::InsertionGuard guard(b);
+    Block *body = b.createBlock(&op.getKey(), {}, {index}, {loc});
+    key(body->getArgument(0));
+  }
+  dealloc(scratch);
 }
 
 Values GroupsBuild::image(Value dx, Value dy, Value dz) {
@@ -714,7 +708,9 @@ Values GroupsBuild::imageTriclinic(Value dx, Value dy, Value dz) {
 // The compact order
 //===----------------------------------------------------------------------===//
 
-/// The key of each particle, and its position wrapped into the cell.
+/// The bin of each particle (its column and bin of z), its position
+/// wrapped into the cell, and the count of the positions that have no bin:
+/// the key region of the counting sort.
 void GroupsBuild::emitKeys(Value item) {
   Value i0 = cx(0);
   Value i1c = cx(1);
@@ -796,7 +792,6 @@ void GroupsBuild::emitKeys(Value item) {
   Value column = addi(colY, kx);
   Value colZ = muli(column, nzb);
   Value k = addi(colZ, kz);
-  Value k32 = indexCast(i32, k);
   // A position that is not a number, or is beyond any cell, has no key and
   // no place, so that the build completes, and is counted in the fifth
   // size: the run stops after the build (D107). The largest coordinate,
@@ -832,17 +827,13 @@ void GroupsBuild::emitKeys(Value item) {
   ifThenElse(
       bad,
       [&] {
-        Value noKey = ci(-1);
-        store(noKey, key, item);
+        md_alg::NoBinOp::create(b, loc);
         Value bi = baseAddress(sizesDevice);
         Value sixteen = cl(16);
         Value ptr = pointerTo(bi, sixteen);
         atomic(LLVM::AtomicBinOp::add, ptr, one);
       },
-      [&] {
-        store(k32, key, item);
-        atomicAdd(keyCount, k, one);
-      });
+      [&] { md_alg::BinOp::create(b, loc, k); });
 }
 
 /// A bitonic network sorting `values` (32 or 64) pairs (key f32, id i32)
@@ -959,8 +950,9 @@ void GroupsBuild::emitChunks(gpu::LaunchOp op) {
     Value keyBegin = muli(loC, nzb);
     Value column1 = addi(loC, c1w);
     Value keyEnd = muli(column1, nzb);
-    Value colBegin32 = load(keyStart, keyBegin);
-    Value colEnd32 = load(keyStart, keyEnd);
+    auto column = md_alg::BinSpanOp::create(b, loc, keyStart, keyBegin, keyEnd);
+    Value colBegin32 = column.getBegin();
+    Value colEnd32 = column.getEnd();
     Value j64 = muli(j32, c64i);
     Value begin32 = addi(colBegin32, j64);
     Value left32 = subi(colEnd32, begin32);
@@ -977,10 +969,12 @@ void GroupsBuild::emitChunks(gpu::LaunchOp op) {
     Value inf = bitcast(f32, big);
     Value none = ci(2147483647);
     Value ia0 = ifElse(
-        i32, hasA, [&] { return Values{load(sorted, sa)}; },
+        i32, hasA,
+        [&] { return Values{md_alg::BinItemOp::create(b, loc, sorted, sa)}; },
         [&] { return Values{none}; })[0];
     Value ib0 = ifElse(
-        i32, hasB, [&] { return Values{load(sorted, sb)}; },
+        i32, hasB,
+        [&] { return Values{md_alg::BinItemOp::create(b, loc, sorted, sb)}; },
         [&] { return Values{none}; })[0];
     auto xOf = [&](Value has, Value id) {
       return ifElse(
@@ -1552,8 +1546,6 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value first16 = addi(first32, c16i);
     Value unitCapacityW = dim(units, c0w);
     Value noneBlock = ci(-1);
-    Value c63iW = ci(63);
-    Value c6iW = ci(6);
     Value g32W = indexCast(i32, g);
     Value fz1p = addi(fz1, oneI);
     Value fy1p = addi(fy1, oneI);
@@ -1884,76 +1876,20 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     auto addEntries = [&](Value cs, Value csb, Value qv,
                           Value bits) -> std::pair<Value, Value> {
       Value keep = cmpi(P::ne, bits, zeroI);
-      Value kept = kernels::emitWarpBallot(b, loc, keep);
-      Value rank = kernels::emitWarpRank(b, loc, kept, below);
-      Value slot = addi(cs, rank);
-      Value nKept = kernels::emitWarpCount(b, loc, kept);
-      Value next = addi(cs, nKept);
-      // The blocks of the slots of this round: the block of slot cs, new
-      // if cs begins one, and the next if the round runs into it. The
-      // first lane takes the new ones; the warp shares them.
-      Value any = cmpi(P::ne, nKept, zeroI);
-      Value firstK = shrui(cs, c6iW);
-      Value lastSlot = subi(next, oneI);
-      Value lastK = shrui(lastSlot, c6iW);
-      Value csMod = andi(cs, c63iW);
-      Value atStart = cmpi(P::eq, csMod, zeroI);
-      Value needA = andi(any, atStart);
-      Value crosses = cmpi(P::ugt, lastK, firstK);
-      Value needB = andi(any, crosses);
-      Value na = extui(needA);
-      Value nb = extui(needB);
-      Value taken = addi(na, nb);
-      Value takes = cmpi(P::ne, taken, zeroI);
-      Value laneFirst = cmpi(P::eq, lane32, zeroI);
-      Value allocates = andi(takes, laneFirst);
-      Value base0 = ifElse(
-          i32, allocates, [&]() -> Values { return {atomicBlock(taken)}; },
-          [&]() -> Values { return {zeroI}; })[0];
-      Value w32s = ci(32);
-      Value takenAt =
-          shuffle(gpu::ShuffleMode::IDX, base0, zeroI, w32s).first;
-      Value blockA = select(needA, takenAt, csb);
-      Value takenAt1 = addi(takenAt, oneI);
-      Value blockB = select(needA, takenAt1, takenAt);
-      Value slotK = shrui(slot, c6iW);
-      Value inA = cmpi(P::eq, slotK, firstK);
-      Value slotBlock = select(inA, blockA, blockB);
-      Value slotMod = andi(slot, c63iW);
-      Value slotBase = shli(slotBlock, c6iW);
-      Value pos32 = addi(slotBase, slotMod);
-      Value slotBlockI = indexCast(index, slotBlock);
-      Value fits = cmpi(P::ult, slotBlockI, unitCapacityW);
-      Value storeIt = andi(keep, fits);
-      ifThen(storeIt, [&] {
-        Value pos = indexCast(index, pos32);
-        Value place = qv;
-        if (images) {
-          Value qplaceMask = ci(67108863);
-          place = andi(qv, qplaceMask);
-        }
-        store(place, entries, pos);
-        store(bits, masks, pos);
-      });
-      // The first lane names the new blocks.
-      Value nameA = andi(needA, laneFirst);
-      Value aI = indexCast(index, blockA);
-      Value aFits = cmpi(P::ult, aI, unitCapacityW);
-      Value writeA = andi(nameA, aFits);
-      ifThen(writeA, [&] {
-        store(g32W, units, aI);
-        store(firstK, ordinals, aI);
-      });
-      Value nameB = andi(needB, laneFirst);
-      Value bI = indexCast(index, blockB);
-      Value bFits = cmpi(P::ult, bI, unitCapacityW);
-      Value writeB = andi(nameB, bFits);
-      ifThen(writeB, [&] {
-        store(g32W, units, bI);
-        store(lastK, ordinals, bI);
-      });
-      Value nextBlock = select(needB, blockB, blockA);
-      return {next, nextBlock};
+      Value place = qv;
+      if (images) {
+        Value qplaceMask = ci(67108863);
+        place = andi(qv, qplaceMask);
+      }
+      // Into blocks of 64 entries from the count of blocks,
+      // `sizes_device[2]`, named by the group and their ordinal: the first
+      // lane takes the new ones; the warp shares them (md_alg.append).
+      Value at = cx(2);
+      auto append = md_alg::AppendOp::create(
+          b, loc, keep, ValueRange{place, bits}, ValueRange{entries, masks},
+          cs, csb, g32W, units, ordinals, sizesDevice, at, unitCapacityW,
+          b.getI64IntegerAttr(64), lane32, below);
+      return {append.getNextCount(), append.getNextLast()};
     };
 
     // A round of the queue of the warp: the candidate `nearq` of the lane
@@ -2015,7 +1951,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
             i32, inRun,
             [&]() -> Values {
               Value si = indexCast(index, s);
-              Value q = load(gplace, si);
+              Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
               Value later = cmpi(P::sge, q, first32);
               Value qa = ifElse(
                   i32, later,
@@ -2063,7 +1999,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
           candidateTypes, inRun,
           [&]() -> Values {
             Value si = indexCast(index, s);
-            Value q = load(gplace, si);
+            Value q = md_alg::BinItemOp::create(b, loc, gplace, si);
             Value later = cmpi(P::sge, q, first32);
             ResultRange qa = ifElse(
                 candidateTypes, later,
@@ -2258,8 +2194,10 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                       Value cto = addi(rowStart, toNext);
                       Value cfromI = indexCast(index, cfrom);
                       Value ctoI = indexCast(index, cto);
-                      Value begin = load(gstart, cfromI);
-                      Value end = load(gstart, ctoI);
+                      auto span = md_alg::BinSpanOp::create(b, loc, gstart,
+                                                            cfromI, ctoI);
+                      Value begin = span.getBegin();
+                      Value end = span.getEnd();
                       ResultRange rs = forLoop(
                           begin, end, c32i, {pa[0], pa[1], pa[2]},
                           [&](Value s0, ValueRange sa) -> Values {
@@ -2373,32 +2311,19 @@ void GroupsBuild::emitBuild() {
         freach = truncf(reachWide);
 
         // The columns: about 64 particles in a cube of their width.
+        // At least one column and at most 256 along an edge
+        // (md_alg.grid_plan), with maxnumf and minnumf, which take the
+        // other operand for one that is not a number: a cell that is not a
+        // number, or one that a run that has failed has blown up, gives
+        // counts that are defined and fit memory (#168).
         Value lxy = mulf(lx, ly);
         Value volume = mulf(lxy, lz);
-        Value n64 = indexCast(i64, n);
-        Value nf = sitofp(f64, n64);
-        Value density = divf(nf, volume);
-        Value sixtyFour = cd(64.0);
-        Value cube = divf(sixtyFour, density);
-        Value third = cd(0.3333333333333333);
-        Value side = powf(cube, third);
-        Value fcx = divf(lx, side);
-        Value fcy = divf(ly, side);
-        Value fcxf = floor(fcx);
-        Value fcyf = floor(fcy);
-        Value oneF = cd(1.0);
-        // At least one column and at most 256 along an edge, with maxnumf
-        // and minnumf, which take the other operand for one that is not a
-        // number: a cell that is not a number, or one that a run that has
-        // failed has blown up, gives counts that are defined and fit
-        // memory (#168).
-        Value mostF = cd(256.0);
-        Value ncxf0 = maxnumf(fcxf, oneF);
-        Value ncyf0 = maxnumf(fcyf, oneF);
-        Value ncxf = minnumf(ncxf0, mostF);
-        Value ncyf = minnumf(ncyf0, mostF);
-        ncx64 = fptosi(i64, ncxf);
-        ncy64 = fptosi(i64, ncyf);
+        auto columnPlan = md_alg::GridPlanOp::create(
+            b, loc, TypeRange{i64, i64}, ValueRange{lx, ly}, /*width=*/Value(),
+            volume, b.getF64FloatAttr(64.0), n, b.getF64FloatAttr(1.0),
+            b.getF64FloatAttr(256.0));
+        ncx64 = columnPlan.getCounts()[0];
+        ncy64 = columnPlan.getCounts()[1];
         ncx = indexCast(index, ncx64);
         ncy = indexCast(index, ncy64);
         columns = muli(ncx, ncy);
@@ -2411,26 +2336,18 @@ void GroupsBuild::emitBuild() {
 
         // The grid of the candidates: cells of half the reach, 3 a side or
         // more.
-        Value half = cd(0.5);
-        Value cellSize = mulf(reach, half);
-        Value gxf0 = divf(lx, cellSize);
-        Value gyf0 = divf(ly, cellSize);
-        Value gzf0 = divf(lz, cellSize);
-        Value threeF = cd(3.0);
-        Value gxf1 = floor(gxf0);
-        Value gyf1 = floor(gyf0);
-        Value gzf1 = floor(gzf0);
         // At most 256 a side, as the columns: wider cells only give more
         // candidates, whose range is clamped to the whole grid.
-        Value gxf2 = maxnumf(gxf1, threeF);
-        Value gyf2 = maxnumf(gyf1, threeF);
-        Value gzf2 = maxnumf(gzf1, threeF);
-        Value gxf = minnumf(gxf2, mostF);
-        Value gyf = minnumf(gyf2, mostF);
-        Value gzf = minnumf(gzf2, mostF);
-        Value gx64 = fptosi(i64, gxf);
-        Value gy64 = fptosi(i64, gyf);
-        Value gz64 = fptosi(i64, gzf);
+        Value half = cd(0.5);
+        Value cellSize = mulf(reach, half);
+        auto cellPlan = md_alg::GridPlanOp::create(
+            b, loc, TypeRange{i64, i64, i64}, ValueRange{lx, ly, lz}, cellSize,
+            /*volume=*/Value(), /*occupancy=*/FloatAttr(),
+            /*population=*/Value(), b.getF64FloatAttr(3.0),
+            b.getF64FloatAttr(256.0));
+        Value gx64 = cellPlan.getCounts()[0];
+        Value gy64 = cellPlan.getCounts()[1];
+        Value gz64 = cellPlan.getCounts()[2];
         Value gnx = indexCast(index, gx64);
         Value gny = indexCast(index, gy64);
         Value gnz = indexCast(index, gz64);
@@ -2482,15 +2399,11 @@ void GroupsBuild::emitBuild() {
           store(zNone, sizesDevice, zI4);
         });
         // The key of each particle, and its position wrapped into the
-        // cell.
-        launch(gridOfN, block, {}, [&](gpu::LaunchOp op) {
-          perItem(op, n, [&](Value item) { emitKeys(item); });
-        });
-        scan(keyCount, keyStart, keyCursor, keys);
-        // Each particle takes the next slot of its key; the particles of a
-        // key are then sorted by number.
-        cursorScatter(key, keyCursor, sorted, n, gridOfN);
-        sortBins(gridOfKeys, keyStart, sorted, keys);
+        // cell; each particle at the next slot of its key, and the
+        // particles of a key sorted by number.
+        sortByKey(n, keys, key, keyCount, keyStart, keyCursor, sorted,
+                  {wrapped}, {sizesDevice}, gridOfN, gridOfKeys,
+                  [&](Value item) { emitKeys(item); });
         // The chunks of each column, the first chunk of each, and the
         // places.
         launch(gridOfColumns, block, {}, [&](gpu::LaunchOp op) {
@@ -2501,8 +2414,9 @@ void GroupsBuild::emitBuild() {
             Value kb = muli(item, nzb);
             Value next = addi(item, i1c);
             Value ke = muli(next, nzb);
-            Value b32 = load(keyStart, kb);
-            Value e32 = load(keyStart, ke);
+            auto run = md_alg::BinSpanOp::create(b, loc, keyStart, kb, ke);
+            Value b32 = run.getBegin();
+            Value e32 = run.getEnd();
             Value len = subi(e32, b32);
             Value len63 = addi(len, sixtyThree);
             Value nch = shrsi(len63, six);
@@ -2546,8 +2460,10 @@ void GroupsBuild::emitBuild() {
         //===------------------------------------------------------------===//
 
         clear(gridOfGcells, gcount, gcells, 0);
-        launch(gridOfCapacity, block, {}, [&](gpu::LaunchOp op) {
-          perItem(op, capacity, [&](Value item) {
+        // The cell of each place in the grid of the candidates, and the
+        // places of each cell in order.
+        sortByKey(capacity, gcells, gkey, gcount, gstart, gcursor, gplace,
+                  {xp}, {}, gridOfCapacity, gridOfGcells, [&](Value item) {
             Value i0 = cx(0);
             Value i1c = cx(1);
             Value i2c = cx(2);
@@ -2560,7 +2476,6 @@ void GroupsBuild::emitBuild() {
             Value pi = load(order, item);
             Value real0 = cmpi(CmpIPredicate::sge, pi, zero);
             Value real = andi(inUse, real0);
-            Value none = ci(-1);
             ifThenElse(
                 real,
                 [&] {
@@ -2596,22 +2511,17 @@ void GroupsBuild::emitBuild() {
                   Value rzy = addi(rz, ky);
                   Value r = muli(rzy, gnx32);
                   Value k = addi(r, kx);
-                  store(k, gkey, item);
-                  Value ki = indexCast(index, k);
-                  atomicAdd(gcount, ki, one);
+                  md_alg::BinOp::create(b, loc, k);
                 },
                 [&] {
-                  store(none, gkey, item);
+                  md_alg::NoBinOp::create(b, loc);
                   Value far = cf(1.0e30);
                   store(far, xp, {item, i0});
                   store(far, xp, {item, i1c});
                   store(far, xp, {item, i2c});
                 });
-          });
         });
-        scan(gcount, gstart, gcursor, gcells);
-        cursorScatter(gkey, gcursor, gplace, capacity, gridOfCapacity);
-        sortBins(gridOfGcells, gstart, gplace, gcells);
+
 
         //===------------------------------------------------------------===//
         // The boxes of the groups: a half-warp a group, relative to its

@@ -2,6 +2,8 @@
 
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/MDAlgLowering.h"
+#include "mdir/Dialect/MDAlg/MDAlgOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -139,32 +141,29 @@ void kernels::emitDeviceRaggedRows(OpBuilder &b, Location loc, Value keys,
     Value zero = arith::ConstantOp::create(t, loc, i32, t.getI32IntegerAttr(0));
     memref::StoreOp::create(t, loc, zero, counts, ValueRange{row});
   });
-  // A count for each item, in its row.
-  launchEach(b, loc, m, block, one, [&](OpBuilder &t, Value item) {
-    Value step = arith::ConstantOp::create(t, loc, i32, t.getI32IntegerAttr(1));
-    Value key = loadAsIndex(t, loc, keys, item);
-    emitDeviceAtomicAdd(t, loc, counts, key, step);
-  });
-  // The offsets of the rows, and the cursors at their beginnings.
-  emitDeviceScan(b, loc, counts, start, cursor, n, sums, blocks, block, one);
-  // Each item at the next slot of its row, then each row in order.
-  Value grid = arith::MaxUIOp::create(
-      b, loc,
-      arith::DivUIOp::create(
-          b, loc,
-          arith::AddIOp::create(b, loc, m,
-                                arith::SubIOp::create(b, loc, block, one)),
-          block),
-      one);
-  emitCursorScatter(b, loc, keys, cursor, items, m, grid, block, one,
-                    /*everyKey=*/true);
-  Value rowGrid = arith::MaxUIOp::create(
-      b, loc,
-      arith::DivUIOp::create(
-          b, loc,
-          arith::AddIOp::create(b, loc, n,
-                                arith::SubIOp::create(b, loc, block, one)),
-          block),
-      one);
-  emitSortBins(b, loc, start, items, n, rowGrid, block, one);
+  // A count for each item in its row, the offsets of the rows and the
+  // cursors at their beginnings, each item at the next slot of its row, then
+  // each row in order: a counting sort by the keys given
+  // (md_alg.sort_by_key), lowered here, where the build takes its launches.
+  auto gridOf = [&](Value count) -> Value {
+    Value last = arith::SubIOp::create(b, loc, block, one);
+    Value grid = arith::DivUIOp::create(
+        b, loc, arith::AddIOp::create(b, loc, count, last), block);
+    // A grid of no blocks is not a launch.
+    return arith::MaxUIOp::create(b, loc, grid, one);
+  };
+  Value grid = gridOf(m);
+  Value rowGrid = gridOf(n);
+  MLIRContext *context = b.getContext();
+  auto sort = md_alg::SortByKeyOp::create(
+      b, loc, m, n, md_alg::OrderAttr::get(b.getContext(), md_alg::Order::Stable),
+      keys, counts, start, cursor, items, /*by=*/Value(),
+      /*writes=*/ValueRange{}, /*adds=*/ValueRange{}, b.getUnitAttr(),
+      b.getUnitAttr(), ValueRange{grid, block, one},
+      md_alg::ScanStrategyAttr::get(context,
+                                    md_alg::ScanStrategy::ReduceThenScan),
+      sums, ValueRange{blocks, block, one},
+      md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
+      /*sort_buffer=*/Value(), ValueRange{rowGrid, block, one});
+  (void)lowerAlgToSIMT(sort);
 }

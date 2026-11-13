@@ -57,3 +57,60 @@ func.func @sort_into(%start: !d, %items: !d, %out: !d, %keys: !d, %n: index,
       strategy stable_rank launch(%g, %t, %one) : !d, !d into !d keys !d
   return
 }
+
+// The stage ops (D[md-alg-stages]): the counting sort a loop over the
+// items running the key region (each bin a store of its key and an
+// increment of its count), then the scan, the scatter, and the sort as
+// above; the append the item's own: the block taken from the pool where
+// its slot begins one.
+// CHECK-LABEL: func.func @sort_by_key(
+// CHECK:         scf.for
+// CHECK:           memref.store %{{.*}}, %[[C:[a-z0-9]+]][
+// CHECK:         scf.for %[[I:.+]] = %{{.+}} to %{{.+}} step
+// CHECK:           memref.load %{{.*}}[%[[I]]]
+// CHECK:           scf.if
+// CHECK:             arith.constant -1 : i32
+// CHECK:           } else {
+// CHECK:             memref.load %[[C]][
+// CHECK:             arith.addi
+// CHECK:             memref.store %{{.*}}, %[[C]][
+// CHECK:         scf.for
+// CHECK:         scf.for
+// CHECK:         scf.for
+// CHECK:         return
+func.func @sort_by_key(%n: index, %bins: index, %k: !d, %c: !d, %s: !d,
+                       %u: !d, %o: !d, %x: !d, %sums: !d, %g: index,
+                       %b: index, %one: index) {
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order stable : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+      sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %v = memref.load %x[%i] : !d
+    %zero = arith.constant 0 : i32
+    %no = arith.cmpi slt, %v, %zero : i32
+    scf.if %no {
+      md_alg.no_bin
+    } else {
+      md_alg.bin %v : i32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @append(
+// CHECK:         scf.if %{{.*}} -> (i32, i32)
+// CHECK:           arith.remui
+// CHECK:           arith.divui
+// CHECK:           scf.if %{{.*}} -> (i32)
+// CHECK:             memref.load %[[POOL:[a-z0-9]+]][
+// CHECK:             memref.store %{{.*}}, %[[POOL]][
+// CHECK:         return
+func.func @append(%keep: i1, %v: i32, %e: !d, %cs: i32, %csb: i32,
+                  %own: i32, %un: !d, %ord: !d, %pool: !d, %at: index,
+                  %cap: index, %lane: i32, %below: i32) -> (i32, i32) {
+  %count, %last = md_alg.append %keep values(%v) into(%e : !d)
+      list(%cs, %csb) owner %own names(%un, %ord) pool %pool[%at]
+      capacity %cap block 64 lane(%lane, %below) : !d, !d, !d
+  return %count, %last : i32, i32
+}

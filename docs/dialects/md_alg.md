@@ -34,6 +34,282 @@ templates of the kernels and in the build of the groups of neighbors.
 
 ## Operations
 
+### `md_alg.append` (::mdir::md_alg::AppendOp)
+
+_Entries appended to a list held in blocks from a pool_
+
+Syntax:
+
+```
+operation ::= `md_alg.append` $keep `values` `(` $values `)` `into` `(` $into `:` type($into) `)`
+              `list` `(` $count `,` $last `)` `owner` $owner
+              `names` `(` $units `,` $ordinals `)` `pool` $pool `[` $at `]`
+              `capacity` $capacity `block` $block
+              (`lane` `(` $lane^ `,` $below `)`)?
+              attr-dict `:` type($units) `,` type($ordinals) `,` type($pool)
+```
+
+Appends one entry (the `values`, one to each buffer of `into`) for each
+item that keeps one (`keep`), to a list held in blocks of `block`
+entries. The list has `count` entries; `last` is the block that holds
+its last one (any value while `count` is a multiple of `block`). A
+block is taken from the pool, the counter `pool[at]`, when the list's
+next entry begins one.
+
+Serially, for each item: if `keep`, with `s = count`, `k = s / block`,
+and `j = s mod block`: if `j = 0` the next block `b = pool[at]` is taken
+(`pool[at]` incremented), named (`units[b] = owner`,
+`ordinals[b] = k`) if `b < capacity`, and becomes `last`; the values
+are written at `last * block + j` if `last < capacity`; `count`
+increments. The results are `count` and `last` afterwards.
+
+The items that execute the op together are a batch, in an order, with
+the same `count` and `last`; its result is that of its items appended
+one at a time in that order. Serially a batch is one item; in the SIMT
+lowering it is the lanes of a warp, in the order of the lanes, which
+execute the op convergently.
+
+*Capacity:* `pool[at]` counts every block that is begun, below the
+capacity or not, and `count` every entry, stored or not: afterwards they
+hold the full demand, so that a caller can size its buffers and build
+again. A block at or beyond the capacity is neither named nor written;
+no element of `into` at or beyond `capacity * block`, none of `units`
+or `ordinals` at or beyond `capacity`, and no slot of a block past the
+list's last entry is written. A caller may read the lists (the blocks
+named by an owner, in the order of their ordinals) only where `pool[at]`
+after every append is at most the capacity; otherwise only the counter
+and the counts, since which lists lost blocks depends on the order in
+which concurrent lists took them.
+
+*Contract:* the entries of a list are in the order of its appends (the
+batches in the order in which they execute, the items of a batch in its
+order): the lists, the counts, and the counter bitwise. The numbers of
+the blocks are not fixed, since concurrent lists interleave their
+takes: any distinct numbers, compared after the lists are read out
+through their names.
+
+*Execution* (the SIMT lowering, not the meaning): `lane(lane, below)`,
+the lane's number in its warp and the mask of the lanes below it, which
+a kernel computes once; and a `block` of at least 32, so that a batch
+begins at most two blocks. The serial lowering ignores the first and
+takes any power of two.
+
+```mlir
+%count1, %last1 = md_alg.append %keep values(%place, %bits)
+    into(%entries, %masks : memref<?xi32, 1>, memref<?xi32, 1>)
+    list(%count, %last) owner %g names(%units, %ordinals)
+    pool %sizes[%c2] capacity %capacity block 64 lane(%lane, %below)
+    : memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32, 1>
+```
+
+Traits: `AttrSizedOperandSegments`
+
+Interfaces: `InferTypeOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>block</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `keep` | 1-bit signless integer |
+| `values` | variadic of 32-bit signless integer |
+| `into` | variadic of 1D memref of 32-bit signless integer values |
+| `count` | 32-bit signless integer |
+| `last` | 32-bit signless integer |
+| `owner` | 32-bit signless integer |
+| `units` | 1D memref of 32-bit signless integer values |
+| `ordinals` | 1D memref of 32-bit signless integer values |
+| `pool` | 1D memref of 32-bit signless integer values |
+| `at` | index |
+| `capacity` | index |
+| `lane` | 32-bit signless integer |
+| `below` | 32-bit signless integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `next_count` | 32-bit signless integer |
+| `next_last` | 32-bit signless integer |
+
+
+
+### `md_alg.bin` (::mdir::md_alg::BinOp)
+
+_The bin of the item of a key region_
+
+Syntax:
+
+```
+operation ::= `md_alg.bin` $bin attr-dict `:` type($bin)
+```
+
+In the `key` region of `md_alg.sort_by_key`: the item's bin is `bin`,
+which must lie in `[0, bins)`. Exactly one `md_alg.bin` or
+`md_alg.no_bin` runs on every path through the region.
+
+```mlir
+md_alg.bin %k : index
+```
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `bin` | 32-bit signless integer or index |
+
+
+
+### `md_alg.bin_item` (::mdir::md_alg::BinItemOp)
+
+_The item at a place of the order of a counting sort_
+
+Syntax:
+
+```
+operation ::= `md_alg.bin_item` $out `[` $place `]` attr-dict `:` type($out)
+```
+
+`out[place]`: the item at `place` of the order `out` of an
+`md_alg.sort_by_key`, a place of a run of bins that `md_alg.bin_span`
+gives.
+
+*Contract:* per item; every lowering gives the same value.
+
+```mlir
+%item = md_alg.bin_item %order[%place] : memref<?xi32, 1>
+```
+
+Interfaces: `InferTypeOpInterface`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `out` | 1D memref of 32-bit signless integer values |
+| `place` | index |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `item` | 32-bit signless integer |
+
+
+
+### `md_alg.bin_span` (::mdir::md_alg::BinSpanOp)
+
+_Where a run of bins of a counting sort begins and ends_
+
+Syntax:
+
+```
+operation ::= `md_alg.bin_span` $start `[` $from `,` $to `]` attr-dict `:` type($start)
+```
+
+`start[from]` and `start[to]`: the first place of bin `from` and the
+first place past bin `to - 1` in the order of an `md_alg.sort_by_key`
+whose start is `start`, as i32, read in that order. A reader of the bins
+reads them through this op and `md_alg.bin_item`, not through the
+buffers, so that a later pass sees which stage reads which bins.
+
+*Contract:* per item; every lowering gives the same values.
+
+```mlir
+%begin, %end = md_alg.bin_span %start[%from, %to] : memref<?xi32, 1>
+```
+
+Interfaces: `InferTypeOpInterface`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `start` | 1D memref of 32-bit signless integer values |
+| `from` | index |
+| `to` | index |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `begin` | 32-bit signless integer |
+| `end` | 32-bit signless integer |
+
+
+
+### `md_alg.grid_plan` (::mdir::md_alg::GridPlanOp)
+
+_The counts of the cells of a grid along edges of a cell_
+
+Syntax:
+
+```
+operation ::= `md_alg.grid_plan` $lengths `:` type($lengths) (`width` $width^ `:` type($width))?
+              (`volume` $volume^ `:` type($volume) `occupancy` $occupancy
+              `of` $population)?
+              `bounds` `[` $least `,` $most `]` attr-dict `->` type($counts)
+```
+
+The count of cells along each of the edges `lengths` (f32 or f64, all
+operands and bounds of one type, as a template is instantiated), as
+i64:
+`min(max(floor(L / w), least), most)` with `maxnumf` and `minnumf`, so
+that a length or width that is not a number gives `least` and an
+infinite ratio `most` (#168). The width `w` is given, or follows from a
+target occupancy of the `population` items in the `volume`:
+`w = (occupancy / (population / volume))^(1/3)`, the edge of a cube
+that holds `occupancy` items on average.
+
+*Contract:* bitwise: there is one lowering, on the host, which the
+serial and the SIMT passes share.
+
+```mlir
+%nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz : f64, f64, f64
+    width %w : f64 bounds [3.0 : f64, 256.0 : f64] -> i64, i64, i64
+%cx, %cy = md_alg.grid_plan %lx, %ly : f64, f64 volume %v : f64
+    occupancy 64.0 : f64 of %n bounds [1.0 : f64, 256.0 : f64]
+    -> i64, i64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>occupancy</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
+<tr><td><code>least</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
+<tr><td><code>most</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `lengths` | variadic of 32-bit float or 64-bit float |
+| `width` | 32-bit float or 64-bit float |
+| `volume` | 32-bit float or 64-bit float |
+| `population` | index |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `counts` | variadic of 64-bit signless integer |
+
+
+
 ### `md_alg.grid_read` (::mdir::md_alg::GridReadOp)
 
 _A point of a row of a grid_
@@ -75,6 +351,25 @@ Interfaces: `InferTypeOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `result` | 32-bit float or 64-bit float |
+
+
+
+### `md_alg.no_bin` (::mdir::md_alg::NoBinOp)
+
+_The item of a key region has no bin_
+
+Syntax:
+
+```
+operation ::= `md_alg.no_bin` attr-dict
+```
+
+In the `key` region of `md_alg.sort_by_key`: the item has no bin; its
+key is -1 and it is in no bin of the order.
+
+```mlir
+md_alg.no_bin
+```
 
 
 
@@ -354,6 +649,126 @@ Traits: `AttrSizedOperandSegments`
 
 
 
+### `md_alg.sort_by_key` (::mdir::md_alg::SortByKeyOp)
+
+_A counting sort of items by a key that a region computes_
+
+Syntax:
+
+```
+operation ::= `md_alg.sort_by_key` $n `bins` $bins `keys` $keys `counts` $counts `start` $start
+              `cursor` $cursor `into` $out `order` $order (`by` $by^ `:` type($by))?
+              (`writes` `(` $writes^ `:` type($writes) `)`)?
+              (`adds` `(` $adds^ `:` type($adds) `)`)?
+              (`cleared` $cleared^)? (`every_key` $every_key^)? `:` type($keys)
+              (`launch` `(` $launch^ `)`)?
+              (`scan` $scan_strategy^ `scratch` $scan_scratch `:` type($scan_scratch)
+              `launch` `(` $scan_launch `)`)?
+              (`sort` $sort_strategy^ (`buffer` $sort_buffer^ `:` type($sort_buffer))?
+              `launch` `(` $sort_launch `)`)?
+              (`key` $key^)?
+              attr-dict
+```
+
+The items `[0, n)`, each with a key: a bin in `[0, bins)`, or none.
+
+- The key: with the region `key`, which runs once for each item with
+  the item as its argument, by exactly one `md_alg.bin %k` (the bin
+  `k`, which must lie in `[0, bins)`) or `md_alg.no_bin` on every path
+  through it; `keys[i]` is then `k`, or -1. Without the region the
+  keys are given in `keys`: a negative key is no bin, and with
+  `every_key` every key is a bin (a precondition, not checked).
+- `counts[b]` holds the number of items of bin `b` afterwards. The op
+  clears the counts first; with `cleared` the caller has cleared them
+  (so that the clear can share a launch with other work), and the op
+  does not clear them again.
+- `start[b]` = the sum of `counts[c]` for `c < b`, for `b` in
+  `[0, bins]`; `cursor[b]` = `start[b + 1]` afterwards.
+- `out[start[b], start[b + 1])` holds the items of bin `b`. Their order
+  is the contract `order`, which no strategy implies: `stable`,
+  ascending by the item, or by `by[item]` where `by` is given (distinct
+  within a bin); `unordered`, in no fixed order, which takes no `by` and
+  no sort, so that a caller that needs only the bins skips the sort
+  within them. No other element of `out` is written.
+
+The region computes the key of its item from any memory but the op's
+own buffers, and may write two kinds of side output, which the op
+declares, so that the result does not depend on the order of the items:
+- a slot of its item in a buffer of `writes`: a `memref.store` whose
+  first index is the item, or the item times a constant other than zero
+  plus a constant, and whose other indices are constants;
+- an addition to a counter of `adds`: `memref.atomic_rmw addi`, or
+  `llvm.atomicrmw add` at an address taken of the counter
+  (`memref.extract_aligned_pointer_as_index`) plus a constant, which
+  sum in any order to the same integers.
+Every other write is refused. The region runs once for each item, in no
+fixed order and concurrently.
+
+*Contract:* every lowering gives the serial lowering's `keys`,
+`counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
+bitwise where `order` is `stable`, as the multiset of each bin where it
+is `unordered`.
+
+*Execution* (the SIMT lowering, not the meaning): `launch(grid, block,
+one)`, a thread an item, for the key and for the scatter (and a thread
+a bin of blocks of `block` for the clear); the scan's
+strategy, scratch, and launch, as for `md_alg.scan`; the sort's strategy
+and launch, as for `md_alg.sort_bins`, where `stable_rank` takes the
+buffer that the scatter fills (`buffer`). The SIMT lowering is the
+kernel of the key followed by the code of `md_alg.scan`,
+`md_alg.scatter_to_bins` (with `every_key` where the region names no
+`md_alg.no_bin`), and `md_alg.sort_bins`.
+
+```mlir
+md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
+    cursor %cursor into %order order stable by %ids : memref<?xi32, 1>
+    cleared : memref<?xi32, 1>
+    launch(%grid_n, %block, %c1)
+    scan chunked scratch %sums : memref<?xi32, 1>
+        launch(%chunks, %chunk, %grid_chunks, %block, %c1)
+    sort insertion launch(%grid_cells, %block, %c1)
+    key {
+^bb0(%i: index):
+  ...
+  md_alg.bin %k : index
+} : memref<?xi32, 1>
+```
+
+Traits: `AttrSizedOperandSegments`, `NoTerminator`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>order</code></td><td>::mdir::md_alg::OrderAttr</td><td>the order of the items within a bin</td></tr>
+<tr><td><code>cleared</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>every_key</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>scan_strategy</code></td><td>::mdir::md_alg::ScanStrategyAttr</td><td>how the SIMT lowering scans</td></tr>
+<tr><td><code>sort_strategy</code></td><td>::mdir::md_alg::SortStrategyAttr</td><td>how the SIMT lowering sorts within bins</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `n` | index |
+| `bins` | index |
+| `keys` | 1D memref of 32-bit signless integer values |
+| `counts` | 1D memref of 32-bit signless integer values |
+| `start` | 1D memref of 32-bit signless integer values |
+| `cursor` | 1D memref of 32-bit signless integer values |
+| `out` | 1D memref of 32-bit signless integer values |
+| `by` | 1D memref of 32-bit signless integer values |
+| `writes` | variadic of memref of any non-token type values |
+| `adds` | variadic of memref of any non-token type values |
+| `launch` | variadic of index |
+| `scan_scratch` | 1D memref of 32-bit signless integer or 64-bit signless integer values |
+| `scan_launch` | variadic of index |
+| `sort_buffer` | 1D memref of 32-bit signless integer values |
+| `sort_launch` | variadic of index |
+
+
+
 ### `md_alg.wrap` (::mdir::md_alg::WrapOp)
 
 _The sum of two coordinates of a periodic axis, wrapped_
@@ -406,6 +821,17 @@ Effects: `MemoryEffects::Effect{}`
 
 
 ## Enums
+
+### Order
+
+_The order of the items within a bin_
+
+#### Cases:
+
+| Symbol | Value | String |
+| :----: | :---: | ------ |
+| Stable | `0` | stable |
+| Unordered | `1` | unordered |
 
 ### ScanStrategy
 

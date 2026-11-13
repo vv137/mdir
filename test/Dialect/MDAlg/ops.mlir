@@ -55,3 +55,66 @@ func.func @accessors(%rows: !d, %i: index, %e: index, %k: index,
   %q = md_alg.grid_read %grid[%base + %w] if %use : memref<?xf32, 1>, i32
   return %count, %v, %w, %p, %q : index, i32, i32, f32, f32
 }
+
+// The stage ops (D[md-alg-stages]): a counting sort by a key region that
+// writes a slot of its item and adds to a counter, one by keys given, one
+// unordered (no sort within its bins), the readers of the bins, an append,
+// and the grid plans by a width and by an occupancy.
+// CHECK-LABEL: func.func @stages(
+func.func @stages(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d,
+                  %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>,
+                  %sums: !d, %g: index, %b: index, %one: index,
+                  %keep: i1, %v: i32, %cs: i32, %csb: i32, %own: i32,
+                  %pool: memref<5xi32, 1>, %at: index, %lane: i32,
+                  %below: i32, %lx: f64, %ly: f64, %w: f64, %vol: f64)
+    -> (i32, i64) {
+  // CHECK: md_alg.sort_by_key %{{.*}} bins %{{.*}} keys %{{.*}} counts %{{.*}} start %{{.*}} cursor %{{.*}} into %{{.*}} order stable by %{{.*}} : memref<?xi32, 1> writes(%{{.*}} : memref<?x3xf32, 1>) adds(%{{.*}} : memref<?xi32, 1>) cleared : memref<?xi32, 1> launch(%{{.*}}, %{{.*}}, %{{.*}}) scan chunked scratch %{{.*}} : memref<?xi32, 1> launch(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}) sort insertion launch(%{{.*}}, %{{.*}}, %{{.*}}) key {
+  // CHECK: ^bb0(%{{.*}}: index):
+  // CHECK: md_alg.no_bin
+  // CHECK: md_alg.bin %{{.*}} : i32
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order stable by %by : !d writes(%w3 : memref<?x3xf32, 1>) adds(%x : !d)
+      cleared : !d launch(%g, %b, %one)
+      scan chunked scratch %sums : !d launch(%g, %b, %g, %b, %one)
+      sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %c0 = arith.constant 0 : index
+    %f = arith.constant 1.0 : f32
+    memref.store %f, %w3[%i, %c0] : memref<?x3xf32, 1>
+    %key = memref.load %by[%i] : !d
+    %zero = arith.constant 0 : i32
+    %none = arith.cmpi slt, %key, %zero : i32
+    scf.if %none {
+      md_alg.no_bin
+      %one32 = arith.constant 1 : i32
+      %old = memref.atomic_rmw addi %one32, %x[%c0] : (i32, !d) -> i32
+    } else {
+      md_alg.bin %key : i32
+    }
+  }
+  // CHECK: md_alg.sort_by_key %{{.*}} every_key : memref<?xi32, 1> launch(%{{.*}}) scan reduce_then_scan scratch %{{.*}} : memref<?xi32, 1> launch(%{{.*}}) sort stable_rank buffer %{{.*}} : memref<?xi32, 1> launch(
+  // CHECK-NOT: key {
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order stable every_key : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+      sort stable_rank buffer %x : !d launch(%g, %b, %one)
+  // CHECK: md_alg.sort_by_key %{{.*}} order unordered every_key : memref<?xi32, 1> launch(%{{.*}}) scan reduce_then_scan scratch %{{.*}} : memref<?xi32, 1> launch(%{{.*}}){{$}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u
+      into %o order unordered every_key : !d launch(%g, %b, %one)
+      scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one)
+  // CHECK: md_alg.bin_span %{{.*}}[%{{.*}}, %{{.*}}] : memref<?xi32, 1>
+  %begin, %end = md_alg.bin_span %s[%g, %b] : !d
+  // CHECK: md_alg.bin_item %{{.*}}[%{{.*}}] : memref<?xi32, 1>
+  %item = md_alg.bin_item %o[%g] : !d
+  // CHECK: md_alg.append %{{.*}} values(%{{.*}}) into(%{{.*}} : memref<?xi32, 1>) list(%{{.*}}, %{{.*}}) owner %{{.*}} names(%{{.*}}, %{{.*}}) pool %{{.*}}[%{{.*}}] capacity %{{.*}} block 64 lane(%{{.*}}, %{{.*}}) : memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32, 1>
+  %count, %last = md_alg.append %keep values(%v) into(%o : !d)
+      list(%cs, %csb) owner %own names(%s, %u) pool %pool[%at]
+      capacity %b block 64 lane(%lane, %below) : !d, !d, memref<5xi32, 1>
+  // CHECK: md_alg.grid_plan %{{.*}}, %{{.*}} : f64, f64 width %{{.*}} : f64 bounds[3.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64
+  %gx, %gy = md_alg.grid_plan %lx, %ly : f64, f64 width %w : f64
+      bounds [3.0 : f64, 256.0 : f64] -> i64, i64
+  // CHECK: md_alg.grid_plan %{{.*}} : f64 volume %{{.*}} : f64 occupancy 6.400000e+01 : f64 of %{{.*}} bounds[1.000000e+00 : f64, 2.560000e+02 : f64] -> i64
+  %cx = md_alg.grid_plan %lx : f64 volume %vol : f64 occupancy 64.0 : f64
+      of %n bounds [1.0 : f64, 256.0 : f64] -> i64
+  return %count, %cx : i32, i64
+}
