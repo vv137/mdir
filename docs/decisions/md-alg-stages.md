@@ -303,7 +303,7 @@ MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, the base captured twice:
   cells moved among them;
 - the 44 programs with the groups have every kernel byte-identical but
   one, the images kernel of the groups build, and 8 lines of the host's
-  code moved for each groups build in them (Section "Departures").
+  code moved for each groups build in them (the exceptions below).
 
 The modules after `convert-md-exec-to-gpu`, in the generic form, differ as
 in D296's step, by ops that canonicalization removes before the lowered
@@ -312,7 +312,11 @@ next to its store, and in the device build of ragged rows the grid of the
 rows computed before the count kernel and the scatter's grid, the same
 computation as the count kernel's, taken from it.
 
-**Departures** (for a decision in #865):
+**Exceptions to identical output**, accepted without a timing (the
+maintainer, 2026-11-13, in #865). Neither changes a result; both follow
+from an op that takes its values and its scratch as operands, and no
+region or attribute was added only to restore the order of the
+hand-written code:
 
 1. The images kernel of the groups build stores the place of an entry
    without its shift bits; the mask, which the hand-written code computed
@@ -322,13 +326,14 @@ computation as the count kernel's, taken from it.
    registers (64, 128), and the same number of SASS instructions (4,080,
    4,136), in another order at the two places where the mask is used. A
    region of values evaluated where an entry is stored would keep the PTX;
-   it would exist only to place the mask, and was not added.
+   it would exist only to restore the mask's place, and was not added.
 2. The scratch of a counting sort's scan is an operand of
    `md_alg.sort_by_key`, so the groups build allocates it before the key
    kernel's launch and frees it after the sort, where it allocated it after
    the key kernel and freed it after the scan: a call, a maximum, and an
-   allocation move above one launch, a free below two. The policy pass,
-   which will own the execution group, decides where the scratch lives.
+   allocation move above one launch, a free below two; no kernel changes.
+   The policy pass, which will own the execution group, decides where the
+   scratch lives.
 
 **Contract tests**, serial on the host against SIMT on an RTX 5090
 (`Integration/md-alg-stages-contract-gpu.test`, Section 4.4 of
