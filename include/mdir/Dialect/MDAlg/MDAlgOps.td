@@ -235,6 +235,274 @@ def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
 }
 
 //===----------------------------------------------------------------------===//
+// Stages (D[md-alg-stages], #864)
+//===----------------------------------------------------------------------===//
+
+def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
+    AttrSizedOperandSegments, NoTerminator,
+    AllTypesMatch<["keys", "counts", "start", "cursor", "out"]>
+  ]> {
+  let summary = "A counting sort of items by a key that a region computes";
+  let description = [{
+    The items `[0, n)`, each with a key: a bin in `[0, bins)`, or none.
+
+    - The key: with the region `key`, which runs once for each item with
+      the item as its argument, by exactly one `md_alg.bin %k` (the bin
+      `k`, which must lie in `[0, bins)`) or `md_alg.no_bin` on every path
+      through it; `keys[i]` is then `k`, or -1. Without the region the
+      keys are given in `keys`: a negative key is no bin, and with
+      `every_key` every key is a bin (a precondition, not checked).
+    - `counts[b]` holds the number of items of bin `b` afterwards. The op
+      clears the counts first; with `cleared` the caller has cleared them
+      (so that the clear can share a launch with other work), and the op
+      does not clear them again.
+    - `start[b]` = the sum of `counts[c]` for `c < b`, for `b` in
+      `[0, bins]`; `cursor[b]` = `start[b + 1]` afterwards.
+    - `out[start[b], start[b + 1])` holds the items of bin `b` ascending, or
+      ascending by `by[item]` where `by` is given (distinct within a bin).
+      No other element of `out` is written.
+
+    The region computes the key of its item from any memory but the op's
+    own buffers, and may write two kinds of side output, which the op
+    declares, so that the result does not depend on the order of the items:
+    - a slot of its item in a buffer of `writes`: a `memref.store` whose
+      first index is the item, or the item times a constant other than zero
+      plus a constant, and whose other indices are constants;
+    - an addition to a counter of `adds`: `memref.atomic_rmw addi`, or
+      `llvm.atomicrmw add` at an address taken of the counter
+      (`memref.extract_aligned_pointer_as_index`) plus a constant, which
+      sum in any order to the same integers.
+    Every other write is refused. The region runs once for each item, in no
+    fixed order and concurrently.
+
+    *Contract:* ordered and stable: every lowering gives the serial
+    lowering's `keys`, `counts`, `start`, `cursor`, `out`, and side outputs,
+    bitwise.
+
+    *Execution* (the SIMT lowering, not the meaning): `launch(grid, block,
+    one)`, a thread an item, for the key and for the scatter (and a thread
+    a bin of blocks of `block` for the clear); the scan's
+    strategy, scratch, and launch, as for `md_alg.scan`; the sort's strategy
+    and launch, as for `md_alg.sort_bins`, where `stable_rank` takes the
+    buffer that the scatter fills (`buffer`). The SIMT lowering is the
+    kernel of the key followed by the code of `md_alg.scan`,
+    `md_alg.scatter_to_bins` (with `every_key` where the region names no
+    `md_alg.no_bin`), and `md_alg.sort_bins`.
+
+    ```mlir
+    md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
+        cursor %cursor into %order by %ids : memref<?xi32, 1> cleared
+        launch(%grid_n, %block, %c1)
+        scan chunked scratch %sums : memref<?xi32, 1>
+            launch(%chunks, %chunk, %grid_chunks, %block, %c1)
+        sort insertion launch(%grid_cells, %block, %c1)
+        key {
+    ^bb0(%i: index):
+      ...
+      md_alg.bin %k : index
+    } : memref<?xi32, 1>
+    ```
+  }];
+  let arguments = (ins
+    Index:$n,
+    Index:$bins,
+    Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$keys,
+    Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$counts,
+    Arg<MDAlg_I32Buffer, "", [MemWrite]>:$start,
+    Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$cursor,
+    Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$out,
+    Arg<Optional<MDAlg_I32Buffer>, "", [MemRead]>:$by,
+    Arg<Variadic<AnyMemRef>, "", [MemRead, MemWrite]>:$writes,
+    Arg<Variadic<AnyMemRef>, "", [MemRead, MemWrite]>:$adds,
+    UnitAttr:$cleared,
+    UnitAttr:$every_key,
+    Variadic<Index>:$launch,
+    OptionalAttr<MDAlg_ScanStrategy>:$scan_strategy,
+    Arg<Optional<MemRefRankOf<[I32, I64], [1]>>, "", [MemRead, MemWrite]>:$scan_scratch,
+    Variadic<Index>:$scan_launch,
+    OptionalAttr<MDAlg_SortStrategy>:$sort_strategy,
+    Arg<Optional<MDAlg_I32Buffer>, "", [MemRead, MemWrite]>:$sort_buffer,
+    Variadic<Index>:$sort_launch
+  );
+  let regions = (region MaxSizedRegion<1>:$key);
+  let assemblyFormat = [{
+    $n `bins` $bins `keys` $keys `counts` $counts `start` $start
+    `cursor` $cursor `into` $out (`by` $by^ `:` type($by))?
+    (`writes` `(` $writes^ `:` type($writes) `)`)?
+    (`adds` `(` $adds^ `:` type($adds) `)`)?
+    (`cleared` $cleared^)? (`every_key` $every_key^)? `:` type($keys)
+    (`launch` `(` $launch^ `)`)?
+    (`scan` $scan_strategy^ `scratch` $scan_scratch `:` type($scan_scratch)
+     `launch` `(` $scan_launch `)`)?
+    (`sort` $sort_strategy^ (`buffer` $sort_buffer^ `:` type($sort_buffer))?
+     `launch` `(` $sort_launch `)`)?
+    (`key` $key^)?
+    attr-dict
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MDAlg_BinOp : MDAlg_Op<"bin"> {
+  let summary = "The bin of the item of a key region";
+  let description = [{
+    In the `key` region of `md_alg.sort_by_key`: the item's bin is `bin`,
+    which must lie in `[0, bins)`. Exactly one `md_alg.bin` or
+    `md_alg.no_bin` runs on every path through the region.
+
+    ```mlir
+    md_alg.bin %k : index
+    ```
+  }];
+  let arguments = (ins MDAlg_I32OrIndex:$bin);
+  let assemblyFormat = "$bin attr-dict `:` type($bin)";
+  let hasVerifier = 1;
+}
+
+def MDAlg_NoBinOp : MDAlg_Op<"no_bin"> {
+  let summary = "The item of a key region has no bin";
+  let description = [{
+    In the `key` region of `md_alg.sort_by_key`: the item has no bin; its
+    key is -1 and it is in no bin of the order.
+
+    ```mlir
+    md_alg.no_bin
+    ```
+  }];
+  let assemblyFormat = "attr-dict";
+  let hasVerifier = 1;
+}
+
+def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {
+  let summary = "Entries appended to a list held in blocks from a pool";
+  let description = [{
+    Appends one entry (the `values`, one to each buffer of `into`) for each
+    item that keeps one (`keep`), to a list held in blocks of `block`
+    entries. The list has `count` entries; `last` is the block that holds
+    its last one (any value while `count` is a multiple of `block`). A
+    block is taken from the pool, the counter `pool[at]`, when the list's
+    next entry begins one.
+
+    Serially, for each item: if `keep`, with `s = count`, `k = s / block`,
+    and `j = s mod block`: if `j = 0` the next block `b = pool[at]` is taken
+    (`pool[at]` incremented), named (`units[b] = owner`,
+    `ordinals[b] = k`) if `b < capacity`, and becomes `last`; the values
+    are written at `last * block + j` if `last < capacity`; `count`
+    increments. The results are `count` and `last` afterwards.
+
+    The items that execute the op together are a batch, in an order, with
+    the same `count` and `last`; its result is that of its items appended
+    one at a time in that order. Serially a batch is one item; in the SIMT
+    lowering it is the lanes of a warp, in the order of the lanes, which
+    execute the op convergently.
+
+    *Capacity:* `pool[at]` counts every block that is begun, below the
+    capacity or not, and `count` every entry, stored or not: afterwards they
+    hold the full demand, so that a caller can size its buffers and build
+    again. A block at or beyond the capacity is neither named nor written;
+    no element of `into` at or beyond `capacity * block`, none of `units`
+    or `ordinals` at or beyond `capacity`, and no slot of a block past the
+    list's last entry is written. A caller may read the lists (the blocks
+    named by an owner, in the order of their ordinals) only where `pool[at]`
+    after every append is at most the capacity; otherwise only the counter
+    and the counts, since which lists lost blocks depends on the order in
+    which concurrent lists took them.
+
+    *Contract:* the entries of a list are in the order of its appends (the
+    batches in the order in which they execute, the items of a batch in its
+    order): the lists, the counts, and the counter bitwise. The numbers of
+    the blocks are not fixed, since concurrent lists interleave their
+    takes: any distinct numbers, compared after the lists are read out
+    through their names.
+
+    *Execution* (the SIMT lowering, not the meaning): `lane(lane, below)`,
+    the lane's number in its warp and the mask of the lanes below it, which
+    a kernel computes once; and a `block` of at least 32, so that a batch
+    begins at most two blocks. The serial lowering ignores the first and
+    takes any power of two.
+
+    ```mlir
+    %count1, %last1 = md_alg.append %keep values(%place, %bits)
+        into(%entries, %masks : memref<?xi32, 1>, memref<?xi32, 1>)
+        list(%count, %last) owner %g names(%units, %ordinals)
+        pool %sizes[%c2] capacity %capacity block 64 lane(%lane, %below)
+        : memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32, 1>
+    ```
+  }];
+  let arguments = (ins
+    I1:$keep,
+    Variadic<I32>:$values,
+    Arg<Variadic<MDAlg_I32Buffer>, "", [MemWrite]>:$into,
+    I32:$count,
+    I32:$last,
+    I32:$owner,
+    Arg<MDAlg_I32Buffer, "", [MemWrite]>:$units,
+    Arg<MDAlg_I32Buffer, "", [MemWrite]>:$ordinals,
+    Arg<MemRefRankOf<[I32], [1]>, "", [MemRead, MemWrite]>:$pool,
+    Index:$at,
+    Index:$capacity,
+    I64Attr:$block,
+    Optional<I32>:$lane,
+    Optional<I32>:$below
+  );
+  let results = (outs I32:$next_count, I32:$next_last);
+  let assemblyFormat = [{
+    $keep `values` `(` $values `)` `into` `(` $into `:` type($into) `)`
+    `list` `(` $count `,` $last `)` `owner` $owner
+    `names` `(` $units `,` $ordinals `)` `pool` $pool `[` $at `]`
+    `capacity` $capacity `block` $block
+    (`lane` `(` $lane^ `,` $below `)`)?
+    attr-dict `:` type($units) `,` type($ordinals) `,` type($pool)
+  }];
+  let hasVerifier = 1;
+}
+
+def MDAlg_GridPlanOp : MDAlg_Op<"grid_plan", [
+    Pure, AttrSizedOperandSegments
+  ]> {
+  let summary = "The counts of the cells of a grid along edges of a cell";
+  let description = [{
+    The count of cells along each of the edges `lengths` (f32 or f64, all
+    operands and bounds of one type, as a template is instantiated), as
+    i64:
+    `min(max(floor(L / w), least), most)` with `maxnumf` and `minnumf`, so
+    that a length or width that is not a number gives `least` and an
+    infinite ratio `most` (#168). The width `w` is given, or follows from a
+    target occupancy of the `population` items in the `volume`:
+    `w = (occupancy / (population / volume))^(1/3)`, the edge of a cube
+    that holds `occupancy` items on average.
+
+    *Contract:* bitwise: there is one lowering, on the host, which the
+    serial and the SIMT passes share.
+
+    ```mlir
+    %nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz : f64, f64, f64
+        width %w : f64 bounds [3.0 : f64, 256.0 : f64] -> i64, i64, i64
+    %cx, %cy = md_alg.grid_plan %lx, %ly : f64, f64 volume %v : f64
+        occupancy 64.0 : f64 of %n bounds [1.0 : f64, 256.0 : f64]
+        -> i64, i64
+    ```
+  }];
+  let arguments = (ins
+    Variadic<AnyTypeOf<[F32, F64]>>:$lengths,
+    Optional<AnyTypeOf<[F32, F64]>>:$width,
+    Optional<AnyTypeOf<[F32, F64]>>:$volume,
+    OptionalAttr<AnyAttrOf<[F32Attr, F64Attr]>>:$occupancy,
+    Optional<Index>:$population,
+    AnyAttrOf<[F32Attr, F64Attr]>:$least,
+    AnyAttrOf<[F32Attr, F64Attr]>:$most
+  );
+  let results = (outs Variadic<I64>:$counts);
+  let assemblyFormat = [{
+    $lengths `:` type($lengths) (`width` $width^ `:` type($width))?
+    (`volume` $volume^ `:` type($volume) `occupancy` $occupancy
+     `of` $population)?
+    `bounds` `[` $least `,` $most `]` attr-dict `->` type($counts)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Accessors
 //===----------------------------------------------------------------------===//
 
