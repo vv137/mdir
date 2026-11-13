@@ -200,3 +200,13 @@ func.func @read_grid(%grid: memref<?xi32, 1>, %base: i32, %z: i32) -> i32 {
   %p = "md_alg.grid_read"(%grid, %base, %z) : (memref<?xi32, 1>, i32, i32) -> i32
   return %p : i32
 }
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func @sort_launch(%start: !d, %items: !d, %n: index) {
+  // expected-error @+1 {{takes 3 launch values (grid, block, one), not 4}}
+  md_alg.sort_bins %start[%n] items %items strategy insertion
+      launch(%n, %n, %n, %n) : !d, !d
+  return
+}
