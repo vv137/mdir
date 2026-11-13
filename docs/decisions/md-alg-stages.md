@@ -359,12 +359,22 @@ wrong on an RTX 5090, which the groups build's comment ("shuffles up by
 segments of 16 lost excluded pairs") had recorded; the test takes the
 site's form.
 
+**Sanitizer and suite**, on an RTX 5090. The sanitizer tier
+(`-Dsanitize=1`: `test/Sanitizer` and the contract tests of md_alg, the
+stage ops', and the warp test): 25 passed, 1 unsupported (JAX), and
+`Sanitizer/analytic-bonds-gpu.test` failed once, in the run during which
+the build tree's `mdir` was relinked (with the same code); it passed when
+run again, at the head and at the base. `Sanitizer/position-guard-gpu.test`
+timed out after 20 minutes in its one run, the intermittent hang of #863,
+also on `main`. The tier held the device for 24 minutes, 20 of them that
+hang. The full suite: 976 tests, 938 passed, 38 unsupported, none failed.
+
 ## Lines
 
 The code (without the tests and the documents) gained 1,364 lines and lost
 359: the ops (`MDAlgOps.td`, 331, most of it their descriptions;
 `MDAlgDialect.cpp`, 324, the verifiers, the region's rules among them) and
-their lowerings (`MDAlgLowering.cpp`, 505); the sites lost 336 lines and
+their lowerings (`MDAlgLowering.cpp`, 482); the sites lost 336 lines and
 gained 221. The hand-written copies that are gone: the groups build's
 histograms in its two key kernels and its helpers of the scan's sorts
 (`cursorScatter`, `sortBins`, `atomicAdd`, `atomicBlock`), the round of
