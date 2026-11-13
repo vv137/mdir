@@ -837,7 +837,8 @@ emitters of Section 5 (D301).
   checked and not, on an empty buffer and past the rows; `ragged_entry`;
   `wrap`, signed and of index; `grid_read`, active and not) and the grid
   plan (lengths and widths that are not numbers, infinite, zero, and
-  negative; an occupancy of no items) against values worked out by hand:
+  negative; an occupancy of no items), and the readers of bins
+  (`bin_span`, `bin_item`) against values worked out by hand:
   their two lowerings share the code of the emitters, so a comparison of
   the two could not fail. `Integration/md-alg-warp-gpu.test` runs each warp
   helper (`emitLanesBelow`, `emitWarpBallot`, `emitWarpRank`,

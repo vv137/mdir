@@ -353,11 +353,12 @@ active and not) and `md-alg-warp-gpu.test` (the mask of the lanes below,
 the ballot, the rank, the count, and the warp scan over 32 lanes, over
 segments of 16, and with a lane compared signed and unsigned, through the
 test pass `test-md-alg-warp-helpers`), against values worked out by hand.
-The warp test found that `emitWarpScan` over segments of 16 needs shuffles
-of the whole warp: with a shuffle width of 16 the first segment's sums are
-wrong on an RTX 5090, which the groups build's comment ("shuffles up by
-segments of 16 lost excluded pairs") had recorded; the test takes the
-site's form.
+The readers of bins, `bin_span` and `bin_item`, are in
+`md-alg-accessors.test` too. Over segments of 16, the warp test takes the
+site's form (shuffles of the whole warp, the lane its place in its
+segment): with a shuffle width of 16, the first segment's sums on an RTX
+5090 were other than those of a whole-warp shuffle, as the groups build's
+comment records ("shuffles up by segments of 16 lost excluded pairs").
 
 **Sanitizer and suite**, on an RTX 5090. The sanitizer tier
 (`-Dsanitize=1`: `test/Sanitizer` and the contract tests of md_alg, the

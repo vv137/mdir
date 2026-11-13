@@ -1,5 +1,6 @@
 # The accessors of md_alg (D406: md_alg.ragged_row, md_alg.ragged_entry,
-# md_alg.wrap, md_alg.grid_read) and the grid plan (D[md-alg-stages]) by
+# md_alg.wrap, md_alg.grid_read), the grid plan, and the readers of bins
+# (md_alg.bin_span, md_alg.bin_item; D[md-alg-stages]) by
 # themselves, on the host. Both lowerings take the code of their emitters,
 # so a contract test of one against the other could not fail (review of
 # #862); these are their values, worked out by hand from the formats of
@@ -70,3 +71,11 @@
 # CHECK-NEXT: 46
 # CHECK-NEXT: 10
 # CHECK-NEXT: 4
+# The readers of bins: the runs [1, 3) and [0, 4) of start (0, 2, 2, 5,
+# 9), and the items at places 2 and 8 of the order.
+# CHECK-NEXT: 2
+# CHECK-NEXT: 5
+# CHECK-NEXT: 0
+# CHECK-NEXT: 9
+# CHECK-NEXT: 4
+# CHECK-NEXT: 5

@@ -1,4 +1,5 @@
-// The accessors of md_alg (D406) and the grid plan (D[md-alg-stages]) by
+// The accessors of md_alg (D406), the grid plan, and the readers of bins
+// (D[md-alg-stages]) by
 // themselves, on the host (convert-md-alg-to-scf): their code is that of
 // their emitters in both lowerings, so these values, written out in
 // md-alg-accessors.test, are their test.
@@ -233,10 +234,43 @@ func.func @plans() {
   return
 }
 
+// The readers of the bins of a counting sort (D[md-alg-stages]): start
+// (0, 2, 2, 5, 9) of four bins and the order (7, 3, 4, 0, 6, 1, 8, 2, 5);
+// the run of bins [1, 3) begins at 2 and ends at 5, the run [0, 4) at 0
+// and 9; the items at places 2 and 8 are 4 and 5.
+func.func @bins() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %c5 = arith.constant 5 : index
+  %c8 = arith.constant 8 : index
+  %c9 = arith.constant 9 : index
+  %start = memref.alloc(%c5) : memref<?xi32>
+  %out = memref.alloc(%c9) : memref<?xi32>
+  %s = arith.constant dense<[0, 2, 2, 5, 9]> : vector<5xi32>
+  %o = arith.constant dense<[7, 3, 4, 0, 6, 1, 8, 2, 5]> : vector<9xi32>
+  vector.store %s, %start[%c0] : memref<?xi32>, vector<5xi32>
+  vector.store %o, %out[%c0] : memref<?xi32>, vector<9xi32>
+  %b1, %e1 = md_alg.bin_span %start[%c1, %c3] : memref<?xi32>
+  %b2, %e2 = md_alg.bin_span %start[%c0, %c4] : memref<?xi32>
+  %i2 = md_alg.bin_item %out[%c2] : memref<?xi32>
+  %i8 = md_alg.bin_item %out[%c8] : memref<?xi32>
+  func.call @print32(%b1) : (i32) -> ()
+  func.call @print32(%e1) : (i32) -> ()
+  func.call @print32(%b2) : (i32) -> ()
+  func.call @print32(%e2) : (i32) -> ()
+  func.call @print32(%i2) : (i32) -> ()
+  func.call @print32(%i8) : (i32) -> ()
+  return
+}
+
 func.func @main() {
   func.call @ragged() : () -> ()
   func.call @wraps() : () -> ()
   func.call @reads() : () -> ()
   func.call @plans() : () -> ()
+  func.call @bins() : () -> ()
   return
 }
