@@ -38,8 +38,11 @@ mlir::LogicalResult lowerAlgToSIMT(mlir::Operation *root);
 /// Replaces every md_alg op under `root` with its serial definition in
 /// `scf` loops, on whatever memory its buffers are in: the oracle of the
 /// tests of the SIMT lowering. The execution parameters are ignored. The
-/// pass `convert-md-alg-to-scf`.
-mlir::LogicalResult lowerAlgToSerial(mlir::Operation *root);
+/// pass `convert-md-alg-to-scf`. With `reverseUnorderedVisits`, an
+/// `md_alg.bin_members` of the visit `unordered` visits its items in
+/// reverse, for the test that its region does not depend on the order.
+mlir::LogicalResult lowerAlgToSerial(mlir::Operation *root,
+                                     bool reverseUnorderedVisits = false);
 
 } // namespace kernels
 } // namespace mdir

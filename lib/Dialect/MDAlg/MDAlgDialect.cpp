@@ -196,6 +196,100 @@ static int64_t binsOnEveryPath(Block &block) {
   return count;
 }
 
+/// Whether every write of `region`, whose items run in no fixed order, is
+/// a slot of its item (`item`) in a buffer of `writes` or an addition to a
+/// counter of `adds` (D407), and no op uses a buffer of `own`. With
+/// `strict`, a buffer of `writes` or `adds` is used only as the target of
+/// such a write, so that no item reads what another wrote
+/// (D[md-alg-analysis]). `noun` and `name` name the region and its op in
+/// the messages.
+static LogicalResult verifySideOutputs(Region &region, Value item,
+                                       ArrayRef<Value> own, ValueRange writes,
+                                       ValueRange adds, StringRef noun,
+                                       StringRef name, bool strict) {
+  WalkResult result = region.walk([&](Operation *op) -> WalkResult {
+    for (Value operand : op->getOperands())
+      if (llvm::is_contained(own, operand))
+        return op->emitOpError()
+               << "uses a buffer of the '" << name << "' of its " << noun;
+    if (strict)
+      for (OpOperand &use : op->getOpOperands()) {
+        Value v = use.get();
+        if (!llvm::is_contained(writes, v) && !llvm::is_contained(adds, v))
+          continue;
+        bool target =
+            (isa<memref::StoreOp>(op) &&
+             use.getOperandNumber() ==
+                 cast<memref::StoreOp>(op).getMemrefMutable()
+                     .getOperandNumber()) ||
+            (isa<memref::AtomicRMWOp>(op) &&
+             use.getOperandNumber() ==
+                 cast<memref::AtomicRMWOp>(op).getMemrefMutable()
+                     .getOperandNumber()) ||
+            isa<memref::ExtractAlignedPointerAsIndexOp>(op);
+        if (!target)
+          return op->emitOpError()
+                 << "reads a side output of the " << noun << " of '" << name
+                 << "', which another item may have written";
+      }
+    if (isa<BinOp, NoBinOp, YieldOp, scf::IfOp, scf::YieldOp>(op))
+      return WalkResult::advance();
+    if (auto store = dyn_cast<memref::StoreOp>(op)) {
+      Value target = store.getMemRef();
+      if (!llvm::is_contained(writes, target))
+        return op->emitOpError() << "writes a buffer that the " << noun
+                                 << " does not declare in 'writes'";
+      ValueRange indices = store.getIndices();
+      bool slot = !indices.empty() && isItemSlot(indices[0], item);
+      for (Value other : indices.drop_front())
+        slot = slot && matchPattern(other, m_Constant());
+      if (!slot)
+        return op->emitOpError()
+               << "writes a side output at a place that is not a slot of "
+                  "the item: the first index the item times a constant "
+                  "other than zero plus a constant, the others constants";
+      return WalkResult::advance();
+    }
+    if (auto rmw = dyn_cast<memref::AtomicRMWOp>(op)) {
+      if (rmw.getKind() != arith::AtomicRMWKind::addi ||
+          !llvm::is_contained(adds, rmw.getMemref()))
+        return op->emitOpError() << "is not an addition to a counter that "
+                                    "the "
+                                 << noun << " declares in 'adds'";
+      return WalkResult::advance();
+    }
+    if (auto rmw = dyn_cast<LLVM::AtomicRMWOp>(op)) {
+      if (rmw.getBinOp() != LLVM::AtomicBinOp::add ||
+          !isAddressOf(rmw.getPtr(), adds))
+        return op->emitOpError()
+               << "is not an addition at the address of a counter that the "
+               << noun << " declares in 'adds', plus a constant";
+      return WalkResult::advance();
+    }
+    if (auto extract = dyn_cast<memref::ExtractAlignedPointerAsIndexOp>(op)) {
+      if (!llvm::is_contained(adds, extract.getSource()))
+        return op->emitOpError() << "takes the address of a buffer that the "
+                                 << noun << " does not declare in 'adds'";
+      return WalkResult::advance();
+    }
+    if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
+      return WalkResult::advance();
+    auto effects = dyn_cast<MemoryEffectOpInterface>(op);
+    if (!effects)
+      return op->emitOpError() << "has effects that the " << noun << " of '"
+                               << name << "' cannot state";
+    SmallVector<MemoryEffects::EffectInstance> list;
+    effects.getEffects(list);
+    for (auto &effect : list)
+      if (!isa<MemoryEffects::Read>(effect.getEffect()))
+        return op->emitOpError()
+               << "writes memory in the " << noun << " of '" << name
+               << "' other than a declared side output";
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
+
 LogicalResult SortByKeyOp::verify() {
   bool launch = !getLaunch().empty();
   bool scan = getScanStrategy().has_value();
@@ -293,68 +387,9 @@ LogicalResult SortByKeyOp::verifyRegions() {
                             getOut()};
   if (Value buffer = getSortBuffer())
     own.push_back(buffer);
-  ValueRange writes = getWrites(), adds = getAdds();
-  WalkResult result = region.walk([&](Operation *op) -> WalkResult {
-    for (Value operand : op->getOperands())
-      if (llvm::is_contained(own, operand))
-        return op->emitOpError()
-               << "uses a buffer of the 'md_alg.sort_by_key' of its key "
-                  "region";
-    if (isa<BinOp, NoBinOp, scf::IfOp, scf::YieldOp>(op))
-      return WalkResult::advance();
-    if (auto store = dyn_cast<memref::StoreOp>(op)) {
-      Value target = store.getMemRef();
-      if (!llvm::is_contained(writes, target))
-        return op->emitOpError() << "writes a buffer that the key region "
-                                    "does not declare in 'writes'";
-      ValueRange indices = store.getIndices();
-      bool slot = !indices.empty() && isItemSlot(indices[0], item);
-      for (Value other : indices.drop_front())
-        slot = slot && matchPattern(other, m_Constant());
-      if (!slot)
-        return op->emitOpError()
-               << "writes a side output at a place that is not a slot of "
-                  "the item: the first index the item times a constant "
-                  "other than zero plus a constant, the others constants";
-      return WalkResult::advance();
-    }
-    if (auto rmw = dyn_cast<memref::AtomicRMWOp>(op)) {
-      if (rmw.getKind() != arith::AtomicRMWKind::addi ||
-          !llvm::is_contained(adds, rmw.getMemref()))
-        return op->emitOpError() << "is not an addition to a counter that "
-                                    "the key region declares in 'adds'";
-      return WalkResult::advance();
-    }
-    if (auto rmw = dyn_cast<LLVM::AtomicRMWOp>(op)) {
-      if (rmw.getBinOp() != LLVM::AtomicBinOp::add ||
-          !isAddressOf(rmw.getPtr(), adds))
-        return op->emitOpError()
-               << "is not an addition at the address of a counter that the "
-                  "key region declares in 'adds', plus a constant";
-      return WalkResult::advance();
-    }
-    if (auto extract = dyn_cast<memref::ExtractAlignedPointerAsIndexOp>(op)) {
-      if (!llvm::is_contained(adds, extract.getSource()))
-        return op->emitOpError() << "takes the address of a buffer that the "
-                                    "key region does not declare in 'adds'";
-      return WalkResult::advance();
-    }
-    if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
-      return WalkResult::advance();
-    auto effects = dyn_cast<MemoryEffectOpInterface>(op);
-    if (!effects)
-      return op->emitOpError() << "has effects that the key region of "
-                                  "'md_alg.sort_by_key' cannot state";
-    SmallVector<MemoryEffects::EffectInstance> list;
-    effects.getEffects(list);
-    for (auto &effect : list)
-      if (!isa<MemoryEffects::Read>(effect.getEffect()))
-        return op->emitOpError() << "writes memory in the key region of "
-                                    "'md_alg.sort_by_key' other than a "
-                                    "declared side output";
-    return WalkResult::advance();
-  });
-  return failure(result.wasInterrupted());
+  return verifySideOutputs(region, item, own, getWrites(), getAdds(),
+                           "key region", "md_alg.sort_by_key",
+                           /*strict=*/false);
 }
 
 /// Whether `op` is in the key region of an md_alg.sort_by_key, through the
@@ -513,3 +548,76 @@ Determinism AppendOp::getDeterminismDefault() {
 StringRef AppendOp::getFreeResults() {
   return "the numbers of the blocks";
 }
+
+//===----------------------------------------------------------------------===//
+// md_alg.bin_members (D[md-alg-analysis])
+//===----------------------------------------------------------------------===//
+
+/// Whether `name` combines integers (exactly, commutatively, associatively)
+/// or floats, or is no combiner (neither).
+static bool isIntegerCombiner(StringRef name) {
+  return llvm::is_contained({"addi", "muli", "andi", "ori", "xori", "maxsi",
+                             "minsi", "maxui", "minui"},
+                            name);
+}
+static bool isFloatCombiner(StringRef name) {
+  return llvm::is_contained({"addf", "mulf", "maxnumf", "minnumf"}, name);
+}
+
+bool BinMembersOp::combinesExactly() {
+  if (!getCombine())
+    return true;
+  return llvm::all_of(getCombine()->getAsValueRange<StringAttr>(),
+                      isIntegerCombiner);
+}
+
+LogicalResult BinMembersOp::verify() {
+  if (getBy() && getVisit() == Visit::Unordered)
+    return emitOpError() << "visits by 'by' only in the order 'sorted' or "
+                            "'stable'";
+  size_t combiners = getCombine() ? getCombine()->size() : 0;
+  if (combiners != getInit().size())
+    return emitOpError() << "takes one combiner for each initial value";
+  if (getResults().getTypes() != getInit().getTypes())
+    return emitOpError() << "has results of the types of its initial values";
+  if (!getCombine())
+    return success();
+  for (auto [name, type] :
+       llvm::zip(getCombine()->getAsValueRange<StringAttr>(),
+                 getInit().getTypes())) {
+    bool integer = type.isIntOrIndex();
+    if (!(integer ? isIntegerCombiner(name) : isFloatCombiner(name)))
+      return emitOpError() << "cannot combine " << type << " by '" << name
+                           << "'";
+    if (!integer && getVisit() == Visit::Unordered)
+      return emitOpError()
+             << "with the visit 'unordered' combines integers alone: '"
+             << name << "' on " << type
+             << " depends on the order of the items";
+  }
+  return success();
+}
+
+LogicalResult BinMembersOp::verifyRegions() {
+  Block &block = getBody().front();
+  if (block.getNumArguments() != 1 || !block.getArgument(0).getType().isIndex())
+    return emitOpError() << "takes a region of one index argument, the item";
+  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  if (!yield)
+    return emitOpError() << "ends its region in 'md_alg.yield'";
+  if (yield.getValues().getTypes() != getInit().getTypes())
+    return emitOpError() << "yields one value of the type of each initial "
+                            "value";
+  SmallVector<Value> own = {getStart(), getItems()};
+  if (Value by = getBy())
+    own.push_back(by);
+  return verifySideOutputs(getBody(), block.getArgument(0), own, getWrites(),
+                           getAdds(), "region", "md_alg.bin_members",
+                           /*strict=*/true);
+}
+
+Determinism BinMembersOp::getDeterminismBound() { return Determinism::Bitwise; }
+Determinism BinMembersOp::getDeterminismDefault() {
+  return Determinism::Bitwise;
+}
+StringRef BinMembersOp::getFreeResults() { return ""; }

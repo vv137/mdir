@@ -23,6 +23,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -37,6 +38,92 @@ namespace mdir {
 #define GEN_PASS_DEF_MDALGTRANSFORMCOLLECTIONS
 #include "mdir/Conversion/Passes.h.inc"
 } // namespace mdir
+
+/// The combination of `acc` and `v` by the combiner `name` of
+/// md_alg.bin_members.
+static Value combine(OpBuilder &b, Location loc, StringRef name, Value acc,
+                     Value v) {
+  if (name == "addi")
+    return arith::AddIOp::create(b, loc, acc, v);
+  if (name == "muli")
+    return arith::MulIOp::create(b, loc, acc, v);
+  if (name == "andi")
+    return arith::AndIOp::create(b, loc, acc, v);
+  if (name == "ori")
+    return arith::OrIOp::create(b, loc, acc, v);
+  if (name == "xori")
+    return arith::XOrIOp::create(b, loc, acc, v);
+  if (name == "maxsi")
+    return arith::MaxSIOp::create(b, loc, acc, v);
+  if (name == "minsi")
+    return arith::MinSIOp::create(b, loc, acc, v);
+  if (name == "maxui")
+    return arith::MaxUIOp::create(b, loc, acc, v);
+  if (name == "minui")
+    return arith::MinUIOp::create(b, loc, acc, v);
+  if (name == "addf")
+    return arith::AddFOp::create(b, loc, acc, v);
+  if (name == "mulf")
+    return arith::MulFOp::create(b, loc, acc, v);
+  if (name == "maxnumf")
+    return arith::MaxNumFOp::create(b, loc, acc, v);
+  assert(name == "minnumf" && "a combiner that the verifier admits");
+  return arith::MinNumFOp::create(b, loc, acc, v);
+}
+
+/// Each md_alg.bin_members under `root` (verified) replaced with the loop
+/// over the places of its bins through md_alg.bin_span and md_alg.bin_item,
+/// which both lowerings share (D[md-alg-analysis]): in order, or in reverse
+/// where `reverse` and the visit is `unordered`.
+static LogicalResult expandMembers(Operation *root, bool reverse) {
+  SmallVector<BinMembersOp> ops;
+  root->walk([&](BinMembersOp op) { ops.push_back(op); });
+  for (BinMembersOp op : ops)
+    if (failed(mlir::verify(op)))
+      return failure();
+  for (BinMembersOp op : ops) {
+    OpBuilder b(op);
+    Location loc = op.getLoc();
+    auto span =
+        BinSpanOp::create(b, loc, op.getStart(), op.getFrom(), op.getTo());
+    Type index = b.getIndexType();
+    Value begin = arith::IndexCastOp::create(b, loc, index, span.getBegin());
+    Value end = arith::IndexCastOp::create(b, loc, index, span.getEnd());
+    Value one = arith::ConstantIndexOp::create(b, loc, 1);
+    bool backwards = reverse && op.getVisit() == Visit::Unordered;
+    Block &body = op.getBody().front();
+    auto yield = cast<YieldOp>(body.getTerminator());
+    SmallVector<StringRef> combiners;
+    if (op.getCombine())
+      llvm::append_range(combiners,
+                         op.getCombine()->getAsValueRange<StringAttr>());
+    auto loop = scf::ForOp::create(
+        b, loc, begin, end, one, op.getInit(),
+        [&](OpBuilder &nb, Location l, Value p, ValueRange acc) {
+          Value place = p;
+          if (backwards) {
+            // end - 1 - (p - begin)
+            Value last = arith::SubIOp::create(
+                nb, l, arith::AddIOp::create(nb, l, end, begin), one);
+            place = arith::SubIOp::create(nb, l, last, p);
+          }
+          Value item = BinItemOp::create(nb, l, op.getItems(), place);
+          IRMapping map;
+          map.map(body.getArgument(0),
+                  arith::IndexCastOp::create(nb, l, index, item));
+          for (Operation &inner : body.without_terminator())
+            nb.clone(inner, map);
+          SmallVector<Value> next;
+          for (auto [i, v] : llvm::enumerate(yield.getValues()))
+            next.push_back(
+                combine(nb, l, combiners[i], acc[i], map.lookupOrDefault(v)));
+          scf::YieldOp::create(nb, l, next);
+        });
+    op->replaceAllUsesWith(loop.getResults());
+    op->erase();
+  }
+  return success();
+}
 
 /// The ops of md_alg under `root`, in the order of a walk, each verified.
 static FailureOr<SmallVector<Operation *>> collect(Operation *root) {
@@ -566,6 +653,8 @@ static SmallVector<Value> emitSIMT(OpBuilder &b, Operation *op) {
 }
 
 LogicalResult kernels::lowerAlgToSIMT(Operation *root) {
+  if (failed(expandMembers(root, /*reverse=*/false)))
+    return failure();
   FailureOr<SmallVector<Operation *>> ops = collect(root);
   if (failed(ops))
     return failure();
@@ -845,7 +934,10 @@ struct Serial {
 };
 } // namespace
 
-LogicalResult kernels::lowerAlgToSerial(Operation *root) {
+LogicalResult kernels::lowerAlgToSerial(Operation *root,
+                                        bool reverseUnorderedVisits) {
+  if (failed(expandMembers(root, reverseUnorderedVisits)))
+    return failure();
   FailureOr<SmallVector<Operation *>> ops = collect(root);
   if (failed(ops))
     return failure();
@@ -897,8 +989,10 @@ public:
 class ConvertMDAlgToSCF
     : public mdir::impl::ConvertMDAlgToSCFBase<ConvertMDAlgToSCF> {
 public:
+  using Base::Base;
   void runOnOperation() final {
-    if (failed(kernels::lowerAlgToSerial(getOperation())))
+    if (failed(kernels::lowerAlgToSerial(getOperation(),
+                                         reverseUnorderedVisits)))
       signalPassFailure();
   }
 };
