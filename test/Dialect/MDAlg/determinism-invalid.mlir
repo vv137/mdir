@@ -1,4 +1,4 @@
-// The refusals of the determinism requirements of md_alg (D[md-alg-ir]):
+// The refusals of the determinism requirements of md_alg (D408):
 // one case for each op whose contract leaves a result free, where
 // `bitwise`, the results of the serial definition on every target, is
 // above its bound.

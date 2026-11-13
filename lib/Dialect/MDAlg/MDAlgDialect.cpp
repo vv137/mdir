@@ -430,7 +430,7 @@ LogicalResult GridPlanOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// Determinism (D[md-alg-ir])
+// Determinism (D408)
 //===----------------------------------------------------------------------===//
 
 StringRef mdir::md_alg::getDeterminismName(Determinism determinism) {

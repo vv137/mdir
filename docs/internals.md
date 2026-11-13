@@ -90,7 +90,7 @@ collection-level transformations, and `convert-md-alg-to-gpu`
 (`kernels::lowerAlgToSIMT`,
 `lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
 its emitter's code and records its policy in `mdir.alg_policy`, which
-`mdir run` writes to its log and manifest (D[md-alg-ir]). The accessors of
+`mdir run` writes to its log and manifest (D408). The accessors of
 the templates of PME and the counting sort of the device's ragged rows are
 lowered by `lowerAlgToSIMT` where `convert-md-exec-to-gpu` creates them;
 `convert-md-alg-to-scf` lowers the ops to their serial definitions, the

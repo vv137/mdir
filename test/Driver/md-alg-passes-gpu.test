@@ -1,4 +1,4 @@
-# The md_alg ops as IR between passes (D[md-alg-ir], #866): on a device the
+# The md_alg ops as IR between passes (D408, #866): on a device the
 # pipeline runs convert-md-exec-to-gpu, the empty place of the
 # collection-level transformations (md-alg-transform-collections), and
 # convert-md-alg-to-gpu, in this order. Stopped after the empty pass, the

@@ -1,5 +1,5 @@
 """Reads the policy of the md_alg ops (effective.md_alg_policy,
-D[md-alg-ir]) from the manifests given: for the first, the number of its
+D408) from the manifests given: for the first, the number of its
 entries and of its appends and grid plans; for each later one, each entry
 in which it differs from the first, by op and function, with the fields
 that differ.

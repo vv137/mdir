@@ -667,7 +667,7 @@ Conference on Programming Language Design and Implementation (PLDI '17)*
 Used for: the collection ops of `md_alg` kept as IR between passes, since
 fusion and the removal of intermediate buffers need the collection-level
 form, and fusion that duplicates computation or reduces parallelism only
-where a measurement shows a gain (D[md-alg-ir], #866).
+where a measurement shows a gain (D408, #866).
 
 ### Hess1997
 
@@ -1606,7 +1606,7 @@ International Symposium on Code Generation and Optimization (CGO)*
 
 Used for: the collection ops of `md_alg` kept as IR between passes, a
 data-parallel form that later passes rewrite before it is lowered to loops
-(D[md-alg-ir], #866).
+(D408, #866).
 
 ### StillingerWeber1985
 

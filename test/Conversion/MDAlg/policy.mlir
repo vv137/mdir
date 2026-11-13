@@ -1,4 +1,4 @@
-// The record of the policy (D[md-alg-ir]): for each op with a determinism
+// The record of the policy (D408): for each op with a determinism
 // aspect that the SIMT lowering lowers, an entry of the module's attribute
 // `mdir.alg_policy`, in the order of the lowering, after the entries that
 // were there (those of the ops that convert-md-exec-to-gpu lowers where it

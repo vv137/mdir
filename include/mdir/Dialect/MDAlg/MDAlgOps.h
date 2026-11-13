@@ -14,7 +14,7 @@
 #include "mdir/Dialect/MDAlg/MDAlgEnums.h.inc"
 
 namespace mdir::md_alg {
-/// Refuses a determinism requirement above the op's bound (D[md-alg-ir]).
+/// Refuses a determinism requirement above the op's bound (D408).
 mlir::LogicalResult verifyDeterminism(mlir::Operation *op);
 /// The name of a tier, as the IR writes it.
 llvm::StringRef getDeterminismName(Determinism determinism);

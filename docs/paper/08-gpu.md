@@ -635,7 +635,7 @@ form [[Steuwer2017]](references.md#steuwer2017),
 [[Henriksen2017]](references.md#henriksen2017). The ops of the
 neighbor builds therefore survive the lowering of `md_exec`, and a pass of
 their own lowers them after an empty place for those transformations
-(D[md-alg-ir], #866). Each op states, apart from its ordering, the
+(D408, #866). Each op states, apart from its ordering, the
 determinism its consumers require: `unordered`, `reproducible` under a
 fixed policy and target, or `bitwise`, the results of the serial
 definition on every target; its verifier refuses a requirement that its

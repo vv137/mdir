@@ -77,7 +77,7 @@ static LogicalResult checkExecution(Operation *op) {
            << "takes blocks of at least 32 entries in its SIMT lowering, a "
               "warp's batch beginning at most two; not "
            << append.getBlock();
-  // The requirement that the SIMT code meets (D[md-alg-ir]): the
+  // The requirement that the SIMT code meets (D408): the
   // cursor's atomics order the items of a scatter, and concurrent lists
   // take an append's blocks, in no fixed order.
   if (auto deterministic = dyn_cast<DeterminismInterface>(op)) {
@@ -96,7 +96,7 @@ static LogicalResult checkExecution(Operation *op) {
 }
 
 /// The execution parameters that `op` is lowered with, for the record of
-/// the policy (D[md-alg-ir]): a launch as its values, a constant as its
+/// the policy (D408): a launch as its values, a constant as its
 /// number and any other value as `?`.
 static std::string describeLaunch(OperandRange launch) {
   std::string text;
@@ -573,7 +573,7 @@ LogicalResult kernels::lowerAlgToSIMT(Operation *root) {
     if (failed(checkExecution(op)))
       return failure();
   // The policy of each op with a determinism aspect, added to the record
-  // of the module that the ops are in (D[md-alg-ir]).
+  // of the module that the ops are in (D408).
   auto module = dyn_cast<ModuleOp>(root);
   if (!module)
     module = root->getParentOfType<ModuleOp>();
@@ -882,7 +882,7 @@ public:
   }
 };
 
-/// The place of the collection-level transformations (D[md-alg-ir]):
+/// The place of the collection-level transformations (D408):
 /// none yet; the ops are verified.
 class MDAlgTransformCollections
     : public mdir::impl::MDAlgTransformCollectionsBase<

@@ -14,7 +14,7 @@ namespace mdir {
 namespace kernels {
 
 /// The module's record of the policy that each op with a determinism
-/// aspect was lowered with (D[md-alg-ir]): an array of dictionaries of
+/// aspect was lowered with (D408): an array of dictionaries of
 /// strings (`function`, `op`, `determinism`, and its `order`,
 /// strategies, and launches), in the order of the lowering. `mdir run`
 /// takes it off the module once the passes have run, for its log and its

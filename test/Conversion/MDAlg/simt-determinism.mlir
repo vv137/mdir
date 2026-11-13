@@ -1,5 +1,5 @@
 // The determinism requirements that the SIMT lowering of md_alg refuses
-// (D[md-alg-ir]): those that the verifier accepts but that its code, whose
+// (D408): those that the verifier accepts but that its code, whose
 // atomics fix no order, does not meet. The module is left as it was. The
 // serial lowering, which runs the items in order, meets them.
 //

@@ -1,4 +1,4 @@
-// The determinism requirements of md_alg (D[md-alg-ir]): each op with an
+// The determinism requirements of md_alg (D408): each op with an
 // ordering or a floating-point aspect states one, in its custom form, and
 // the generic form parses back to it. Every tier up to an op's bound is
 // accepted: a scan, a sort within bins, a stable counting sort, and a grid

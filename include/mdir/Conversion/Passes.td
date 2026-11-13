@@ -492,7 +492,7 @@ def MDAlgTransformCollections
     Runs between `convert-md-exec-to-gpu`, which leaves the collection ops
     of the neighbor matrix's template and of the groups build in the
     module, and `convert-md-alg-to-gpu`, which lowers them
-    (D[md-alg-ir], #866). The transformations that need the
+    (D408, #866). The transformations that need the
     collection-level form go here: the fusion of stages, the elision of a
     sort whose order no consumer needs, and the removal of intermediate
     buffers, each reading one shared analysis of the collections
@@ -515,7 +515,7 @@ def ConvertMDAlgToGPU : Pass<"convert-md-alg-to-gpu", "::mlir::ModuleOp"> {
     matrix's template and of the groups build; `convert-md-exec-to-gpu`
     lowers the accessors of the templates of PME and the counting sort of
     the device's ragged rows itself, where they are created
-    (D[md-alg-ir]). An op that its verifier refuses, one without the
+    (D408). An op that its verifier refuses, one without the
     execution parameters that its lowering takes, or one whose
     determinism requirement the lowering cannot meet, is an error, and the
     module is left as it was. For each op with a determinism aspect, an

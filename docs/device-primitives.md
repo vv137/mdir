@@ -740,7 +740,7 @@ Each op has three parts:
   meet, and only then lowers them, in the order of a walk and without a
   rewrite driver, so that the module is that of the emitters.
 
-**Pass order (D[md-alg-ir], #866).** `convert-md-exec-to-gpu` instantiates
+**Pass order (D408, #866).** `convert-md-exec-to-gpu` instantiates
 the neighbor matrix's template for its types and emits the groups build,
 and leaves their ops in the module; `md-alg-transform-collections`, empty,
 is the place of the collection-level transformations (fusion, the elision

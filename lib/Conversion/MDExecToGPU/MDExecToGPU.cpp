@@ -5014,7 +5014,7 @@ LogicalResult Lowering::addTemplates(Type real) {
            << "cannot parse the neighbor build template for devices";
   // The template is written for f64; its instance for `real` is made in IR
   // (D368, #739). Its md_alg ops stay, typed, for the collection-level
-  // passes and convert-md-alg-to-gpu (D[md-alg-ir]).
+  // passes and convert-md-alg-to-gpu (D408).
   if (failed(instantiateTemplates(*templates, real)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -5030,7 +5030,7 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
     return success();
   // The build, written by its emitter (GroupsBuild.h) into a module of
   // its own; its md_alg ops stay for convert-md-alg-to-gpu
-  // (D[md-alg-ir]).
+  // (D408).
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -5138,7 +5138,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   // The accessors of the template (md_alg.wrap, md_alg.grid_read) are
   // lowered here, not by convert-md-alg-to-gpu: the unrolling and the
   // promotion below fold their arithmetic, and they have no order and no
-  // collection for a later pass to transform (D[md-alg-ir]).
+  // collection for a later pass to transform (D408).
   if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
@@ -9019,7 +9019,7 @@ namespace {
 /// body of every launch (but those marked `mdir.frame_host_arithmetic`,
 /// with `skipHostArithmetic`), and every region of an md_alg op outside a
 /// launch, the key region of a `sort_by_key`, whose body becomes the key
-/// kernel when convert-md-alg-to-gpu lowers the op (D[md-alg-ir]). The
+/// kernel when convert-md-alg-to-gpu lowers the op (D408). The
 /// arithmetic of the kernels is finished here, so it is finished in those
 /// regions too, as it was when the ops were lowered inside this pass.
 static void forEachKernelRegion(ModuleOp module, bool skipHostArithmetic,

@@ -44,7 +44,7 @@ def MDAlg_Dialect : Dialect {
     (`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
     lowers them; the accessors of the templates of PME and the counting
     sort of the device's ragged rows are lowered where they are created
-    (D[md-alg-ir], #866).
+    (D408, #866).
 
     Each op with an ordering or a floating-point aspect states a
     determinism requirement (`determinism`), separate from the ordering
@@ -128,7 +128,7 @@ def MDAlg_DeterminismInterface : OpInterface<"DeterminismInterface"> {
   let description = [{
     An op with an ordering or a floating-point aspect, which states a
     determinism requirement in its optional attribute `determinism`
-    (D[md-alg-ir]). The tiers are ordered, `unordered` < `reproducible` <
+    (D408). The tiers are ordered, `unordered` < `reproducible` <
     `bitwise`. Without the attribute the requirement is the op's default,
     what its lowerings give today, so that a program keeps its meaning. The
     verifier refuses a requirement above the op's bound, the strongest that

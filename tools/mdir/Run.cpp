@@ -211,7 +211,7 @@ private:
 };
 
 /// The policy that each md_alg op with a determinism aspect was lowered
-/// with (D[md-alg-ir]), taken off the module after the passes, so that the
+/// with (D408), taken off the module after the passes, so that the
 /// module is what it was without the record: the entries for the manifest
 /// and the line of the log, which gives each distinct policy once with the
 /// count of its ops.
@@ -712,7 +712,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
   // The execution parameters of the md_alg ops, for the log and the
-  // manifest (D[md-alg-ir]).
+  // manifest (D408).
   auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
 
   // The profile map of the lowered program, which names the source of each
@@ -1165,7 +1165,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"skin_search", control->isSkinAuto()
              ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
-        // The policy each md_alg op was lowered with (D[md-alg-ir]): a
+        // The policy each md_alg op was lowered with (D408): a
         // bitwise comparison of two runs compares these first.
         {"md_alg_policy", std::move(algPolicy)},
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},

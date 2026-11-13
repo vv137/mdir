@@ -1193,7 +1193,7 @@ D368, #739):
   cast of the bits;
 - the functions that the template defines take the names of the instance.
   Declarations keep theirs. The template's `md_alg` ops, typed for the
-  instance, stay for `convert-md-alg-to-gpu` (D406, D[md-alg-ir]).
+  instance, stay for `convert-md-alg-to-gpu` (D406, D408).
 
 ### 7.7 Agreement with the reference
 

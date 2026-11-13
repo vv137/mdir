@@ -389,7 +389,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The collection ops of md_alg that the lowering left (the matrix
        // template's and the groups build's) are lowered after the place of
        // the collection-level transformations, which is empty
-       // (D[md-alg-ir]).
+       // (D408).
        << "md-alg-transform-collections,convert-md-alg-to-gpu,"
        // The code of the host writes no buffer of the model that the entry
        // takes (D258): proven here, or no compile.
