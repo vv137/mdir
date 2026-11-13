@@ -1,0 +1,131 @@
+# The md_alg ops as IR between passes (D[md-alg-ir], #866): on a device the
+# pipeline runs convert-md-exec-to-gpu, the empty place of the
+# collection-level transformations (md-alg-transform-collections), and
+# convert-md-alg-to-gpu, in this order. Stopped after the empty pass, the
+# module holds the collection ops of the groups build and of the neighbor
+# matrix's template; after convert-md-alg-to-gpu it holds none. A run
+# records the policy that each op was lowered with in its log and its
+# manifest, and the single-pass scan of the groups build (D321) records
+# another: a bitwise comparison of two runs compares like with like.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/groups.toml
+# RUN: sed 's/^neighbor_structure = "GROUPS"/neighbor_structure = "MATRIX"/' %t/groups.toml > %t/matrix.toml
+# RUN: cd %t && mdir emit groups.toml --stage=pipeline > groups.pipeline
+# RUN: cd %t && mdir emit matrix.toml --stage=pipeline > matrix.pipeline
+# RUN: FileCheck %s --check-prefix=ORDER < %t/groups.pipeline
+# RUN: FileCheck %s --check-prefix=ORDER < %t/matrix.pipeline
+# RUN: sed 's/,convert-md-alg-to-gpu,.*//' %t/groups.pipeline > %t/groups.slot
+# RUN: sed 's/,convert-md-alg-to-gpu,.*//' %t/matrix.pipeline > %t/matrix.slot
+# RUN: sed 's/\(,convert-md-alg-to-gpu\),.*/\1/' %t/groups.pipeline > %t/groups.lowered
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat groups.slot)" mdir emit groups.toml --stage=lowered' > groups.slot.mlir
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat matrix.slot)" mdir emit matrix.toml --stage=lowered' > matrix.slot.mlir
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat groups.lowered)" mdir emit groups.toml --stage=lowered' > groups.lowered.mlir
+# RUN: FileCheck %s --check-prefix=GROUPS < %t/groups.slot.mlir
+# RUN: FileCheck %s --check-prefix=MATRIX < %t/matrix.slot.mlir
+# RUN: FileCheck %s --check-prefix=LOWERED --implicit-check-not=md_alg < %t/groups.lowered.mlir
+# The policy in the log and the manifest, with each scan of the groups build.
+# RUN: cd %t && mdir run groups.toml > groups.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/groups.log
+# RUN: sed 's|convert-md-exec-to-gpu{|convert-md-exec-to-gpu{single-pass-group-scan=true |' %t/groups.pipeline > %t/single.pipeline
+# RUN: sed 's|^manifest = "run.json"|manifest = "single.json"|' %t/groups.toml > %t/single.toml
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat single.pipeline)" mdir run single.toml' > single.log
+# RUN: FileCheck %s --check-prefix=SINGLE < %t/single.log
+# RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/run.json %t/single.json | FileCheck %s --check-prefix=SCHEMA
+# RUN: %python %S/Inputs/md_alg_policy.py %t/run.json %t/single.json | FileCheck %s --check-prefix=MANIFEST
+
+# ORDER: convert-md-exec-to-gpu{{[{][^}]*[}]}},md-alg-transform-collections,convert-md-alg-to-gpu,check-read-only-arguments,
+
+# The matrix template's ops, which a program of groups takes too, and the
+# groups build's counting sorts, grid plans, and appends.
+# GROUPS-LABEL: func.func private @mdrt_gpu_matrix_sort(
+# GROUPS: md_alg.scan
+# GROUPS-LABEL: func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
+# GROUPS: md_alg.grid_plan
+# GROUPS: md_alg.sort_by_key {{.*}} order stable
+# GROUPS: md_alg.append
+
+# MATRIX-LABEL: func.func private @mdrt_gpu_cell_count(
+# MATRIX: md_alg.grid_plan
+# MATRIX-LABEL: func.func private @mdrt_gpu_matrix_sort(
+# MATRIX: md_alg.scan
+# MATRIX: md_alg.scatter_to_bins
+# MATRIX: md_alg.sort_bins
+# MATRIX-LABEL: func.func private @mdrt_gpu_spatial_order(
+# MATRIX: md_alg.sort_by_key {{.*}} order stable
+
+# LOWERED-LABEL: func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
+# LOWERED: gpu.launch
+
+# The policy, each distinct one once with the count of its ops, in the
+# order of the lowering: the counting sorts of the ragged rows of the
+# tuples (lowered where convert-md-exec-to-gpu builds them), the matrix
+# template's ops (the grid plans of its cells and the groups' counted
+# together), and the groups build's, whose counting sorts and scan take the
+# three-launch scan by default and the single-pass scan where asked.
+# LOG: MDIR: md_alg policy: 17 ops:
+# LOG-SAME: {{ }}md_alg.sort_by_key{determinism=bitwise order=stable launch=(?,256,1) scan=reduce_then_scan scan_launch=(?,256,1) sort=insertion sort_launch=(?,256,1)} x3;
+# LOG-SAME: {{ }}md_alg.grid_plan{determinism=bitwise} x3;
+# LOG-SAME: {{ }}md_alg.scan{determinism=bitwise strategy=chunked launch=(?,256,?,128,1)} x1;
+# LOG-SAME: {{ }}md_alg.scatter_to_bins{determinism=unordered launch=(?,128,1)} x1;
+# LOG-SAME: {{ }}md_alg.sort_bins{determinism=bitwise strategy=stable_rank launch=(?,128,1)} x1;
+# LOG-SAME: {{ }}md_alg.sort_by_key{determinism=bitwise order=stable launch=(?,128,1) scan=chunked scan_launch=(?,256,?,128,1) sort=insertion sort_launch=(?,128,1)} x1;
+# LOG-SAME: {{ }}md_alg.sort_by_key{determinism=bitwise order=stable launch=(?,128,1) scan=reduce_then_scan scan_launch=(?,256,1) sort=insertion sort_launch=(?,128,1)} x2;
+# LOG-SAME: {{ }}md_alg.scan{determinism=bitwise strategy=reduce_then_scan launch=(?,256,1)} x1;
+# LOG-SAME: {{ }}md_alg.append{determinism=unordered block=64} x4{{$}}
+# SINGLE: MDIR: md_alg policy: 17 ops:
+# SINGLE-SAME: {{ }}md_alg.sort_by_key{determinism=bitwise order=stable launch=(?,128,1) scan=single_pass scan_launch=(?,256,1) sort=insertion sort_launch=(?,128,1)} x2;
+# SINGLE-SAME: {{ }}md_alg.scan{determinism=bitwise strategy=single_pass launch=(?,256,1)} x1;
+# SCHEMA: valid run.json
+# SCHEMA: valid single.json
+# MANIFEST: run.json: 17 entries, append 4, grid_plan 3
+# MANIFEST-NEXT: single.json: 3 entries differ
+# MANIFEST-NEXT: sort_by_key in @mdrt_gpu_build_neighbors_groups_triclinic: scan reduce_then_scan -> single_pass
+# MANIFEST-NEXT: scan in @mdrt_gpu_build_neighbors_groups_triclinic: strategy reduce_then_scan -> single_pass
+# MANIFEST-NEXT: sort_by_key in @mdrt_gpu_build_neighbors_groups_triclinic: scan reduce_then_scan -> single_pass
+
+#--- run.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+defines     = ["FLEXIBLE"]
+
+[output]
+energy_interval = 0
+manifest = "run.json"
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+
+[pme]
+tolerance = 1e-05
+order     = 4
+grid      = [28, 28, 28]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[constraints]
+hydrogen_bonds = false
+rigid_water    = false
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+neighbor_structure = "GROUPS"
+#--- end

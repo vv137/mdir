@@ -28,8 +28,21 @@ result does not depend on them: the serial lowering ignores them and
 the SIMT lowering requires them. Until a policy pass fills them from
 the target (#433, #558), the caller gives them.
 
-The ops are created and lowered inside `convert-md-exec-to-gpu`, in the
-templates of the kernels and in the build of the groups of neighbors.
+The ops are created in `convert-md-exec-to-gpu`, in the templates of
+the kernels and in the build of the groups of neighbors. Those of the
+neighbor matrix's template and of the groups build stay in the module
+after it, for the collection-level transformations
+(`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
+lowers them; the accessors of the templates of PME and the counting
+sort of the device's ragged rows are lowered where they are created
+(D[md-alg-ir], #866).
+
+Each op with an ordering or a floating-point aspect states a
+determinism requirement (`determinism`), separate from the ordering
+contract `order`: `unordered`, `reproducible` (the same bits from run
+to run under a fixed policy and target), or `bitwise` (those of the
+serial definition on every target). The verifier refuses a requirement
+that the op's contract rules out.
 
 
 ## Operations
@@ -46,6 +59,7 @@ operation ::= `md_alg.append` $keep `values` `(` $values `)` `into` `(` $into `:
               `names` `(` $units `,` $ordinals `)` `pool` $pool `[` $at `]`
               `capacity` $capacity `block` $block
               (`lane` `(` $lane^ `,` $below `)`)?
+              (`determinism` $determinism^)?
               attr-dict `:` type($units) `,` type($ordinals) `,` type($pool)
 ```
 
@@ -86,7 +100,10 @@ batches in the order in which they execute, the items of a batch in its
 order): the lists, the counts, and the counter bitwise. The numbers of
 the blocks are not fixed, since concurrent lists interleave their
 takes: any distinct numbers, compared after the lists are read out
-through their names.
+through their names. *Determinism:* `unordered` by default; at most
+`reproducible`, since the contract leaves the numbers of the blocks,
+and so where each entry is stored, free; the SIMT lowering meets
+`unordered` alone.
 
 *Execution* (the SIMT lowering, not the meaning): `lane(lane, below)`,
 the lane's number in its warp and the mask of the lanes below it, which
@@ -104,13 +121,14 @@ takes any power of two.
 
 Traits: `AttrSizedOperandSegments`
 
-Interfaces: `InferTypeOpInterface`
+Interfaces: `InferTypeOpInterface`, `MDAlg_Deterministic`
 
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>block</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -254,7 +272,8 @@ Syntax:
 operation ::= `md_alg.grid_plan` $lengths `:` type($lengths) (`width` $width^ `:` type($width))?
               (`volume` $volume^ `:` type($volume) `occupancy` $occupancy
               `of` $population)?
-              `bounds` `[` $least `,` $most `]` attr-dict `->` type($counts)
+              `bounds` `[` $least `,` $most `]` (`determinism` $determinism^)?
+              attr-dict `->` type($counts)
 ```
 
 The count of cells along each of the edges `lengths` (f32 or f64, all
@@ -268,7 +287,8 @@ target occupancy of the `population` items in the `volume`:
 that holds `occupancy` items on average.
 
 *Contract:* bitwise: there is one lowering, on the host, which the
-serial and the SIMT passes share.
+serial and the SIMT passes share. *Determinism:* every tier; `bitwise`
+by default.
 
 ```mlir
 %nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz : f64, f64, f64
@@ -280,7 +300,7 @@ serial and the SIMT passes share.
 
 Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
 
-Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+Interfaces: `ConditionallySpeculatable`, `MDAlg_Deterministic`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
 Effects: `MemoryEffects::Effect{}`
 
@@ -291,6 +311,7 @@ Effects: `MemoryEffects::Effect{}`
 <tr><td><code>occupancy</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
 <tr><td><code>least</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
 <tr><td><code>most</code></td><td>::mlir::Attribute</td><td>32-bit float attribute or 64-bit float attribute</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -478,6 +499,7 @@ operation ::= `md_alg.scan` $counts `[` $n `]` `into` $start (`cursor` $cursor^)
               (`strategy` $strategy^)?
               (`scratch` $scratch^ `:` type($scratch))?
               (`launch` `(` $launch^ `)`)?
+              (`determinism` $determinism^)?
               attr-dict `:` type($counts) `,` type($start) (`,` type($cursor)^)?
 ```
 
@@ -491,7 +513,7 @@ in i32 arithmetic, which wraps (two's complement). `start` holds
 No other element is written.
 
 *Contract:* ordered integer: every lowering gives the serial lowering's
-values, bitwise.
+values, bitwise. *Determinism:* every tier; `bitwise` by default.
 
 *Execution* (the SIMT lowering, not the meaning): `strategy`, the
 `scratch` buffer, and the `launch` values.
@@ -513,11 +535,14 @@ md_alg.scan %counts[%n] into %start cursor %cursor
 
 Traits: `AttrSizedOperandSegments`
 
+Interfaces: `MDAlg_Deterministic`
+
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>strategy</code></td><td>::mdir::md_alg::ScanStrategyAttr</td><td>how the SIMT lowering scans</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -542,6 +567,7 @@ Syntax:
 ```
 operation ::= `md_alg.scatter_to_bins` $keys `[` $n `]` `cursor` $cursor `into` $out
               (`launch` `(` $launch^ `)`)?
+              (`determinism` $determinism^)?
               attr-dict `:` type($keys) `,` type($cursor) `,` type($out)
 ```
 
@@ -561,6 +587,10 @@ cursor); this is a precondition, not checked.
 fixed. Every lowering gives the serial lowering's items of each bin as
 a multiset, its cursor bitwise, and leaves the same elements of `out`
 untouched. The serial lowering writes each bin's items ascending.
+*Determinism:* `unordered` by default; at most `reproducible`, since the
+contract leaves the order within a bin free (an op of a fixed order is
+`md_alg.sort_by_key` with `order stable`); the SIMT lowering meets
+`unordered` alone, the cursor's atomics ordering the items.
 
 *Execution*: `launch(grid, block, one)`, a thread an item.
 
@@ -570,11 +600,14 @@ md_alg.scatter_to_bins %keys[%n] cursor %cursor into %order
     : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
 ```
 
+Interfaces: `MDAlg_Deterministic`
+
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>every_key</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -599,6 +632,7 @@ Syntax:
 operation ::= `md_alg.sort_bins` $start `[` $bins `]` `items` $items (`by` $by^)? (`into` $out^)?
               (`keys` $keys^)? (`strategy` $strategy^)?
               (`launch` `(` $launch^ `)`)?
+              (`determinism` $determinism^)?
               attr-dict `:` type($start) `,` type($items)
               (`by` type($by)^)? (`into` type($out)^)? (`keys` type($keys)^)?
 ```
@@ -610,7 +644,7 @@ order. In place, or, with `into`, written to the same places of `out`,
 `items` unchanged. No other element is written.
 
 *Contract:* stable sort: every lowering gives the serial lowering's
-values, bitwise.
+values, bitwise. *Determinism:* every tier; `bitwise` by default.
 
 *Execution*: `strategy` and `launch(grid, block, one)`.
 - `insertion`: a thread a bin, in place; `grid` blocks hold `bins`
@@ -628,11 +662,14 @@ md_alg.sort_bins %start[%bins] items %order by %number
 
 Traits: `AttrSizedOperandSegments`
 
+Interfaces: `MDAlg_Deterministic`
+
 #### Attributes:
 
 <table>
 <tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
 <tr><td><code>strategy</code></td><td>::mdir::md_alg::SortStrategyAttr</td><td>how the SIMT lowering sorts within bins</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -666,6 +703,7 @@ operation ::= `md_alg.sort_by_key` $n `bins` $bins `keys` $keys `counts` $counts
               `launch` `(` $scan_launch `)`)?
               (`sort` $sort_strategy^ (`buffer` $sort_buffer^ `:` type($sort_buffer))?
               `launch` `(` $sort_launch `)`)?
+              (`determinism` $determinism^)?
               (`key` $key^)?
               attr-dict
 ```
@@ -707,7 +745,9 @@ fixed order and concurrently.
 *Contract:* every lowering gives the serial lowering's `keys`,
 `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
 bitwise where `order` is `stable`, as the multiset of each bin where it
-is `unordered`.
+is `unordered`. *Determinism:* under `stable`, every tier, `bitwise` by
+default; under `unordered`, `unordered` by default and at most
+`reproducible`, which the SIMT lowering does not meet.
 
 *Execution* (the SIMT lowering, not the meaning): `launch(grid, block,
 one)`, a thread an item, for the key and for the scatter (and a thread
@@ -736,6 +776,8 @@ md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
 
 Traits: `AttrSizedOperandSegments`, `NoTerminator`
 
+Interfaces: `MDAlg_Deterministic`
+
 #### Attributes:
 
 <table>
@@ -745,6 +787,7 @@ Traits: `AttrSizedOperandSegments`, `NoTerminator`
 <tr><td><code>every_key</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>scan_strategy</code></td><td>::mdir::md_alg::ScanStrategyAttr</td><td>how the SIMT lowering scans</td></tr>
 <tr><td><code>sort_strategy</code></td><td>::mdir::md_alg::SortStrategyAttr</td><td>how the SIMT lowering sorts within bins</td></tr>
+<tr><td><code>determinism</code></td><td>::mdir::md_alg::DeterminismAttr</td><td>what the bits of an op's results must not depend on</td></tr>
 </table>
 
 #### Operands:
@@ -821,6 +864,18 @@ Effects: `MemoryEffects::Effect{}`
 
 
 ## Enums
+
+### Determinism
+
+_What the bits of an op's results must not depend on_
+
+#### Cases:
+
+| Symbol | Value | String |
+| :----: | :---: | ------ |
+| Unordered | `0` | unordered |
+| Reproducible | `1` | reproducible |
+| Bitwise | `2` | bitwise |
 
 ### Order
 

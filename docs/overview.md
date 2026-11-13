@@ -157,7 +157,7 @@ Table 3.3 describes those over `md_exec`
 | Loops | `md-exec-fuse-loops`, `md-exec-accumulate-destinations`, `md-exec-narrow-sums`, `md-exec-fold-tables`, `md-exec-simplify-distance` and `md-exec-approximate` (with `fast_math`) | Fuses loops, sums forces into one destination in a fixed order, computes table entries once |
 | Numerics | `md-exec-assign-precision`, `md-exec-share-divisions` (with `fast_math`), `md-exec-assign-algebra` | Gives every field and kernel a type by its role and mode; makes the divisions of an f64 pair kernel products by one shared reciprocal of each divisor, and on a device a division by a root be a product by its rsqrt (D366); states the algebra of every sum (D301) |
 | Strategies and storage | `md-exec-choose-scatter` (GPU), `md-exec-assign-storage`, `md-exec-assign-streams` (GPU), `md-exec-lower-stage-bodies` (staged models) | Chooses a scatter strategy where its preconditions hold (D285); gives every field a buffer typed with its set (D337); moves independent work to a second stream (D87) |
-| Lowering | `convert-md-exec-to-loops` with `fixed-order-reductions`, or `convert-md-exec-to-gpu`; `check-read-only-arguments` | Emits `scf` loops or `gpu` kernels; proves that the code writes no buffer the entry declares read-only (D258) |
+| Lowering | `convert-md-exec-to-loops` with `fixed-order-reductions`, or `convert-md-exec-to-gpu`, `md-alg-transform-collections` (empty), and `convert-md-alg-to-gpu`; `check-read-only-arguments` | Emits `scf` loops or `gpu` kernels, on a device with the `md_alg` ops of the neighbor builds lowered by a pass of their own after the place of collection-level transformations (D[md-alg-ir]); proves that the code writes no buffer the entry declares read-only (D258) |
 
 ### 2.4 The lowerings
 

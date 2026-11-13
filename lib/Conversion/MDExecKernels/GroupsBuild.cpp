@@ -655,7 +655,8 @@ void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
                        Value count) {
   auto [scratch, launch] = scanExecution(count);
   md_alg::ScanOp::create(b, loc, countsOf, count, start, cursor,
-                         scanStrategy(context, singlePass), scratch, launch);
+                         scanStrategy(context, singlePass), scratch, launch,
+                         /*determinism=*/nullptr);
   dealloc(scratch);
 }
 
@@ -678,7 +679,8 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
       ValueRange{grid, block, c1}, scanStrategy(context, singlePass), scratch,
       launch,
       md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
-      /*sort_buffer=*/Value(), ValueRange{binGrid, block, c1});
+      /*sort_buffer=*/Value(), ValueRange{binGrid, block, c1},
+      /*determinism=*/nullptr);
   {
     OpBuilder::InsertionGuard guard(b);
     Block *body = b.createBlock(&op.getKey(), {}, {index}, {loc});
@@ -1888,7 +1890,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
       auto append = md_alg::AppendOp::create(
           b, loc, keep, ValueRange{place, bits}, ValueRange{entries, masks},
           cs, csb, g32W, units, ordinals, sizesDevice, at, unitCapacityW,
-          b.getI64IntegerAttr(64), lane32, below);
+          b.getI64IntegerAttr(64), lane32, below, /*determinism=*/nullptr);
       return {append.getNextCount(), append.getNextLast()};
     };
 
@@ -2321,7 +2323,7 @@ void GroupsBuild::emitBuild() {
         auto columnPlan = md_alg::GridPlanOp::create(
             b, loc, TypeRange{i64, i64}, ValueRange{lx, ly}, /*width=*/Value(),
             volume, b.getF64FloatAttr(64.0), n, b.getF64FloatAttr(1.0),
-            b.getF64FloatAttr(256.0));
+            b.getF64FloatAttr(256.0), /*determinism=*/nullptr);
         ncx64 = columnPlan.getCounts()[0];
         ncy64 = columnPlan.getCounts()[1];
         ncx = indexCast(index, ncx64);
@@ -2344,7 +2346,7 @@ void GroupsBuild::emitBuild() {
             b, loc, TypeRange{i64, i64, i64}, ValueRange{lx, ly, lz}, cellSize,
             /*volume=*/Value(), /*occupancy=*/FloatAttr(),
             /*population=*/Value(), b.getF64FloatAttr(3.0),
-            b.getF64FloatAttr(256.0));
+            b.getF64FloatAttr(256.0), /*determinism=*/nullptr);
         Value gx64 = cellPlan.getCounts()[0];
         Value gy64 = cellPlan.getCounts()[1];
         Value gz64 = cellPlan.getCounts()[2];

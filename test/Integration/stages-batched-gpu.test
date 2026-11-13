@@ -30,7 +30,7 @@
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies='short-reductions=true' \
-# RUN:     --convert-md-exec-to-gpu \
+# RUN:     --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -39,7 +39,7 @@
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-precision="mode=mixed stage-fields-f64=true" \
 # RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies='short-reductions=true' \
-# RUN:     --convert-md-exec-to-gpu \
+# RUN:     --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \

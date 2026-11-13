@@ -5013,12 +5013,9 @@ LogicalResult Lowering::addTemplates(Type real) {
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
   // The template is written for f64; its instance for `real` is made in IR
-  // (D368, #739), before its md_alg ops are lowered.
+  // (D368, #739). Its md_alg ops stay, typed, for the collection-level
+  // passes and convert-md-alg-to-gpu (D[md-alg-ir]).
   if (failed(instantiateTemplates(*templates, real)))
-    return failure();
-  // The template's md_alg ops, by the emitters of the device primitives
-  // (D406).
-  if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
@@ -5032,12 +5029,10 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
           module, kernels::getGroupsBuildName(tilted)))
     return success();
   // The build, written by its emitter (GroupsBuild.h) into a module of
-  // its own, whose md_alg ops are lowered there.
+  // its own; its md_alg ops stay for convert-md-alg-to-gpu
+  // (D[md-alg-ir]).
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
-  // The build's md_alg ops (D406).
-  if (failed(kernels::lowerAlgToSIMT(*templates)))
-    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -5140,6 +5135,10 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
+  // The accessors of the template (md_alg.wrap, md_alg.grid_read) are
+  // lowered here, not by convert-md-alg-to-gpu: the unrolling and the
+  // promotion below fold their arithmetic, and they have no order and no
+  // collection for a later pass to transform (D[md-alg-ir]).
   if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
@@ -5220,6 +5219,7 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
+  // The accessors here, as addPMETemplates.
   if (failed(kernels::lowerAlgToSIMT(*templates)))
     return failure();
   // As addPMETemplates: the loops over the points unroll, and the
@@ -9015,6 +9015,32 @@ namespace mdir {
 #include "mdir/Conversion/Passes.h.inc"
 
 namespace {
+/// Calls `body` on each region of `module` whose code runs in a kernel: the
+/// body of every launch (but those marked `mdir.frame_host_arithmetic`,
+/// with `skipHostArithmetic`), and every region of an md_alg op outside a
+/// launch, the key region of a `sort_by_key`, whose body becomes the key
+/// kernel when convert-md-alg-to-gpu lowers the op (D[md-alg-ir]). The
+/// arithmetic of the kernels is finished here, so it is finished in those
+/// regions too, as it was when the ops were lowered inside this pass.
+static void forEachKernelRegion(ModuleOp module, bool skipHostArithmetic,
+                                function_ref<void(Region &)> body) {
+  module->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (auto launch = dyn_cast<gpu::LaunchOp>(op)) {
+      if (!(skipHostArithmetic &&
+            launch->hasAttr("mdir.frame_host_arithmetic")))
+        body(launch.getBody());
+      return WalkResult::skip();
+    }
+    if (isa_and_nonnull<md_alg::MDAlgDialect>(op->getDialect()) &&
+        op->getNumRegions()) {
+      for (Region &region : op->getRegions())
+        body(region);
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+}
+
 class ConvertMDExecToGPU
     : public impl::ConvertMDExecToGPUBase<ConvertMDExecToGPU> {
 public:
@@ -9069,10 +9095,9 @@ public:
     // Products and sums in the kernels may become fused multiply-adds, as
     // nvcc makes them by default: the backend fuses only what is marked.
     if (contract)
-      getOperation()->walk([](gpu::LaunchOp launch) {
-        if (launch->hasAttr("mdir.frame_host_arithmetic"))
-          return;
-        launch.getBody().walk([](arith::ArithFastMathInterface op) {
+      forEachKernelRegion(getOperation(), /*skipHostArithmetic=*/true,
+                          [](Region &kernel) {
+        kernel.walk([](arith::ArithFastMathInterface op) {
           arith::FastMathFlags flags = arith::FastMathFlags::none;
           if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())
             flags = given.getValue();
@@ -9088,15 +9113,14 @@ public:
     // that the energies and the virial of a step give a product would
     // decide its rounding; here the product stays for its other uses. Of
     // two products, the first operand is fused.
+    // Only the frame-batch postprocessing kernels are left out: they
+    // implement the host entry's chain rule and output arithmetic, whose
+    // separate roundings are part of the entry equivalence gate.
     if (explicitFma)
-      getOperation()->walk([](gpu::LaunchOp launch) {
-        // Only the new frame-batch postprocessing kernels carry this mark.
-        // They implement the host entry's chain rule and output arithmetic,
-        // whose separate roundings are part of the entry equivalence gate.
-        if (launch->hasAttr("mdir.frame_host_arithmetic"))
-          return;
+      forEachKernelRegion(getOperation(), /*skipHostArithmetic=*/true,
+                          [](Region &kernel) {
         SmallVector<Operation *> sums;
-        launch.getBody().walk([&](Operation *op) {
+        kernel.walk([&](Operation *op) {
           if (isa<arith::AddFOp, arith::SubFOp>(op))
             sums.push_back(op);
         });
@@ -9132,9 +9156,10 @@ public:
       });
     // An approximate division in f32 is a product with an approximate
     // reciprocal that flushes subnormal numbers (D98).
-    getOperation()->walk([](gpu::LaunchOp launch) {
+    forEachKernelRegion(getOperation(), /*skipHostArithmetic=*/false,
+                        [](Region &kernel) {
       SmallVector<arith::DivFOp> divisions;
-      launch.getBody().walk([&](arith::DivFOp op) {
+      kernel.walk([&](arith::DivFOp op) {
         if (op.getType().isF32() &&
             arith::bitEnumContainsAll(op.getFastmath(),
                                       arith::FastMathFlags::afn))

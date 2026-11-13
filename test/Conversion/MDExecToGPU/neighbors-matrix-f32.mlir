@@ -1,11 +1,13 @@
 // The instance for positions in f32 of the template that builds a neighbor
 // matrix on a device (NeighborsMatrixGPU.mlir), made in IR from the template
 // written for f64 (D368, #739). The functions that the template
-// defines take the names of the instance, and its md_alg ops are lowered
-// after the instance is made (D406): no `md_alg` op is left.
+// defines take the names of the instance, and its md_alg ops, typed for
+// the instance, are lowered by convert-md-alg-to-gpu (D406,
+// D[md-alg-ir]): no `md_alg` op is left.
 //
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu \
-// RUN: | FileCheck %s --implicit-check-not=md_alg
+// RUN:     --md-alg-transform-collections --convert-md-alg-to-gpu \
+// RUN: | FileCheck %s --implicit-check-not=md_alg.
 
 md.particle_set @atoms
 

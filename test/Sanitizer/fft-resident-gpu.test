@@ -4,7 +4,7 @@
 # RUN: %mdir_python %S/../Integration/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision mixed \
 # RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \
 # RUN:     --buffer-deallocation-pipeline --convert-linalg-to-loops \
-# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --convert-complex-to-llvm \
+# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu --convert-complex-to-llvm \
 # RUN: | mlir-opt %lower_gpu_to_llvm > %t/resident.mlir
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t/resident.mlir \
 # RUN:   -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=MEM

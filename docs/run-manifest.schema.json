@@ -332,6 +332,67 @@
                 ]
               }
             },
+            "md_alg_policy": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "function": {
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "scan",
+                      "scatter_to_bins",
+                      "sort_bins",
+                      "sort_by_key",
+                      "append",
+                      "grid_plan"
+                    ]
+                  },
+                  "determinism": {
+                    "enum": [
+                      "unordered",
+                      "reproducible",
+                      "bitwise"
+                    ]
+                  },
+                  "order": {
+                    "enum": [
+                      "stable",
+                      "unordered"
+                    ]
+                  },
+                  "strategy": {
+                    "type": "string"
+                  },
+                  "launch": {
+                    "type": "string"
+                  },
+                  "scan": {
+                    "type": "string"
+                  },
+                  "scan_launch": {
+                    "type": "string"
+                  },
+                  "sort": {
+                    "type": "string"
+                  },
+                  "sort_launch": {
+                    "type": "string"
+                  },
+                  "block": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "function",
+                  "op",
+                  "determinism"
+                ],
+                "additionalProperties": false
+              }
+            },
             "buffer_precision": {
               "type": "object",
               "properties": {
@@ -433,6 +494,7 @@
             "pruned_distance_source",
             "skin_search",
             "neighbor_structures",
+            "md_alg_policy",
             "buffer_precision",
             "pme"
           ],

@@ -629,9 +629,18 @@ contract of its own, the readers of its bins, and the append of entries to
 lists held in blocks from a pool, whose counter holds the full demand past
 a capacity, so that a build can be repeated with enough room. Passes that
 remove intermediate buffers, skip sorts that are not needed, and fuse
-stages are to run on these ops before they are lowered; today the ops are
-created and lowered within one pass, and a pass of their own comes next
-(#866).
+stages are to run on these ops before they are lowered, as in functional
+data-parallel compilers, where these rewrites need the collection-level
+form [[Steuwer2017]](references.md#steuwer2017),
+[[Henriksen2017]](references.md#henriksen2017). The ops of the
+neighbor builds therefore survive the lowering of `md_exec`, and a pass of
+their own lowers them after an empty place for those transformations
+(D[md-alg-ir], #866). Each op states, apart from its ordering, the
+determinism its consumers require: `unordered`, `reproducible` under a
+fixed policy and target, or `bitwise`, the results of the serial
+definition on every target; its verifier refuses a requirement that its
+contract rules out, and the policy that each op is lowered with is
+recorded with the run.
 
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 

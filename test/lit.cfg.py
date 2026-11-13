@@ -370,10 +370,13 @@ config.substitutions.append(
 
 # The same for a device, up to ops of the gpu dialect, and the upstream
 # pipeline that lowers those. The kernels are embedded as PTX text, which
-# the driver compiles when the program starts.
+# the driver compiles when the program starts. The md_alg ops that the
+# lowering leaves are lowered after the place of the collection-level
+# transformations, as in the pipeline of mdir (D[md-alg-ir]).
 md_exec_gpu_lowering = (
     " --md-exec-assign-algebra --md-exec-assign-storage=memory=device"
-    " --convert-md-exec-to-gpu"
+    " --convert-md-exec-to-gpu --md-alg-transform-collections"
+    " --convert-md-alg-to-gpu"
 )
 config.substitutions.append(
     ("%md_exec_gpu_passes", md_exec_transforms + md_exec_gpu_lowering)

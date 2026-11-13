@@ -21,6 +21,7 @@ using namespace mdir::md_alg;
 
 #include "mdir/Dialect/MDAlg/MDAlgDialect.cpp.inc"
 #include "mdir/Dialect/MDAlg/MDAlgEnums.cpp.inc"
+#include "mdir/Dialect/MDAlg/MDAlgInterfaces.cpp.inc"
 
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDAlg/MDAlgOps.cpp.inc"
@@ -426,4 +427,89 @@ LogicalResult GridPlanOp::verify() {
     return emitOpError() << "takes an occupancy with its volume and its "
                             "population";
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Determinism (D[md-alg-ir])
+//===----------------------------------------------------------------------===//
+
+StringRef mdir::md_alg::getDeterminismName(Determinism determinism) {
+  return stringifyDeterminism(determinism);
+}
+
+Determinism DeterminismInterface::getRequiredDeterminism() {
+  if (auto stated = (*this)->getAttrOfType<DeterminismAttr>("determinism"))
+    return stated.getValue();
+  return getDeterminismDefault();
+}
+
+LogicalResult mdir::md_alg::verifyDeterminism(Operation *op) {
+  auto self = cast<DeterminismInterface>(op);
+  auto stated = op->getAttrOfType<DeterminismAttr>("determinism");
+  if (!stated)
+    return success();
+  Determinism bound = self.getDeterminismBound();
+  if (static_cast<uint32_t>(stated.getValue()) <=
+      static_cast<uint32_t>(bound))
+    return success();
+  return op->emitOpError()
+         << "cannot meet the determinism requirement '"
+         << stringifyDeterminism(stated.getValue()) << "': its contract leaves "
+         << self.getFreeResults() << " free, so it admits at most '"
+         << stringifyDeterminism(bound) << "'";
+}
+
+// An integer scan, a stable sort, and the grid plan fix every result: their
+// serial definitions are the results on every target.
+Determinism ScanOp::getDeterminismBound() { return Determinism::Bitwise; }
+Determinism ScanOp::getDeterminismDefault() { return Determinism::Bitwise; }
+StringRef ScanOp::getFreeResults() { return ""; }
+Determinism SortBinsOp::getDeterminismBound() { return Determinism::Bitwise; }
+Determinism SortBinsOp::getDeterminismDefault() {
+  return Determinism::Bitwise;
+}
+StringRef SortBinsOp::getFreeResults() { return ""; }
+Determinism GridPlanOp::getDeterminismBound() { return Determinism::Bitwise; }
+Determinism GridPlanOp::getDeterminismDefault() {
+  return Determinism::Bitwise;
+}
+StringRef GridPlanOp::getFreeResults() { return ""; }
+
+// The order within a bin, left free, can be fixed by a schedule
+// (reproducible) but is no result of the serial definition (bitwise).
+Determinism ScatterToBinsOp::getDeterminismBound() {
+  return Determinism::Reproducible;
+}
+Determinism ScatterToBinsOp::getDeterminismDefault() {
+  return Determinism::Unordered;
+}
+StringRef ScatterToBinsOp::getFreeResults() {
+  return "the order of the items within a bin";
+}
+
+Determinism SortByKeyOp::getDeterminismBound() {
+  return getOrder() == Order::Stable ? Determinism::Bitwise
+                                     : Determinism::Reproducible;
+}
+Determinism SortByKeyOp::getDeterminismDefault() {
+  return getOrder() == Order::Stable ? Determinism::Bitwise
+                                     : Determinism::Unordered;
+}
+StringRef SortByKeyOp::getFreeResults() {
+  return getOrder() == Order::Stable
+             ? ""
+             : "the order of the items within a bin (order unordered)";
+}
+
+// The lists read through their names are fixed; where their entries are
+// stored, the numbers of the blocks, is left to the order in which
+// concurrent lists take them.
+Determinism AppendOp::getDeterminismBound() {
+  return Determinism::Reproducible;
+}
+Determinism AppendOp::getDeterminismDefault() {
+  return Determinism::Unordered;
+}
+StringRef AppendOp::getFreeResults() {
+  return "the numbers of the blocks";
 }

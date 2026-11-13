@@ -10,7 +10,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -22,7 +22,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten halo-events=true" \
 // RUN:     --convert-md-dist-to-loops="halo-events=true" --lower-mdrt-halo-events \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -34,7 +34,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -46,7 +46,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -58,7 +58,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -70,7 +70,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -82,7 +82,7 @@
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -95,7 +95,7 @@
 // RUN:     --convert-md-dist-to-loops="halo-events=true" --lower-mdrt-halo-events \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -108,7 +108,7 @@
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -121,7 +121,7 @@
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \

@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-11-11.
+Last updated: 2026-11-13.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -654,6 +654,20 @@ pp. 207–218.
 
 Used for: related work, FFTc, a language for FFTs on dialects of MLIR;
 MDIR calls cuFFT and pocketfft for the transforms of PME.
+
+### Henriksen2017
+
+T. Henriksen, N. G. W. Serup, M. Elsman, F. Henglein, C. E. Oancea,
+"Futhark: purely functional GPU-programming with nested parallelism and
+in-place array updates," in *Proceedings of the 38th ACM SIGPLAN
+Conference on Programming Language Design and Implementation (PLDI '17)*
+(ACM, 2017), pp. 556–571.
+[doi:10.1145/3062341.3062354](https://doi.org/10.1145/3062341.3062354)
+
+Used for: the collection ops of `md_alg` kept as IR between passes, since
+fusion and the removal of intermediate buffers need the collection-level
+form, and fusion that duplicates computation or reduces parallelism only
+where a measurement shows a gain (D[md-alg-ir], #866).
 
 ### Hess1997
 
@@ -1581,6 +1595,18 @@ long-range forces in macromolecular simulation," *J. Comput. Chem.* **15**,
 
 Used for: force switching and potential switching as truncations of
 nonbonded terms at a cutoff.
+
+### Steuwer2017
+
+M. Steuwer, T. Remmelg, C. Dubach, "LIFT: A functional data-parallel IR
+for high-performance GPU code generation," in *2017 IEEE/ACM
+International Symposium on Code Generation and Optimization (CGO)*
+(IEEE, 2017), pp. 74–85.
+[doi:10.1109/CGO.2017.7863730](https://doi.org/10.1109/CGO.2017.7863730)
+
+Used for: the collection ops of `md_alg` kept as IR between passes, a
+data-parallel form that later passes rewrite before it is lowered to loops
+(D[md-alg-ir], #866).
 
 ### StillingerWeber1985
 

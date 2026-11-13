@@ -735,12 +735,37 @@ Each op has three parts:
   items, each bin sorted by exchanges with the item before. It is written
   apart from the emitters, so that comparing the two is a test;
 - **a SIMT lowering** (`convert-md-alg-to-gpu`): the op's emitter where the
-  op stands. `convert-md-exec-to-gpu` does the same when it parses a
-  template (after the template is instantiated for its types, so the
-  grid read's result type is inferred) and after it emits the groups
-  build: it verifies every op, refuses one without its execution
-  parameters, and only then lowers them, in the order of a walk and
-  without a rewrite driver, so that the module is that of the emitters.
+  op stands. It verifies every op, refuses one without its execution
+  parameters or with a determinism requirement that its code does not
+  meet, and only then lowers them, in the order of a walk and without a
+  rewrite driver, so that the module is that of the emitters.
+
+**Pass order (D[md-alg-ir], #866).** `convert-md-exec-to-gpu` instantiates
+the neighbor matrix's template for its types and emits the groups build,
+and leaves their ops in the module; `md-alg-transform-collections`, empty,
+is the place of the collection-level transformations (fusion, the elision
+of a sort that no consumer needs, the removal of intermediate buffers);
+`convert-md-alg-to-gpu` then lowers the ops, before
+`check-read-only-arguments`. Two kinds of op are still lowered where
+`convert-md-exec-to-gpu` creates them: the accessors of the templates of
+PME, before their loops over the order are unrolled and canonicalized, and
+the counting sort of the device's ragged rows, whose launches the
+function's lowering names in order (D354). The arithmetic that
+`convert-md-exec-to-gpu` finishes in its kernels (contraction, explicit
+fused multiply-adds, the approximate reciprocal) covers the key regions of
+the `sort_by_key` ops too, whose bodies become the key kernels.
+
+**Determinism requirements.** Each collection op and the grid plan take an
+optional `determinism`, separate from `order`: `unordered`, `reproducible`
+(the same bits under a fixed policy and target), or `bitwise` (those of
+the serial definition everywhere). A scan, a sort within bins, a stable
+counting sort, and a grid plan admit every tier and are `bitwise` by
+default; a scatter, an unordered counting sort, and an append, whose
+contracts leave the order within a bin or the numbers of the blocks free,
+admit at most `reproducible`, are `unordered` by default, and their SIMT
+lowering meets `unordered` alone. The policy each op was lowered with is
+recorded in the module (`mdir.alg_policy`), the log
+(`MDIR: md_alg policy:`), and the manifest (`effective.md_alg_policy`).
 
 The warp-level helpers are not ops (#861): the templates write the
 upstream ops of the warp compaction; the groups build calls the typed

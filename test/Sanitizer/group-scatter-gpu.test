@@ -14,7 +14,7 @@
 # RUN:     --md-exec-choose-neighbors="kind=groups" \
 # RUN:     --md-exec-assign-precision="mode=mixed" \
 # RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
-# RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm > %t.mlir
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t.mlir \
 # RUN:     -e main --entry-point-result=void \
@@ -44,7 +44,7 @@
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-precision="mode=mixed" \
 # RUN:     --md-exec-assign-algebra --md-exec-choose-scatter=pair-hash=on \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm > %t.matrix.mlir
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t.matrix.mlir \
 # RUN:     -e main --entry-point-result=void \

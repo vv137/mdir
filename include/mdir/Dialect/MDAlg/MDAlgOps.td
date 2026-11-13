@@ -37,8 +37,21 @@ def MDAlg_Dialect : Dialect {
     the SIMT lowering requires them. Until a policy pass fills them from
     the target (#433, #558), the caller gives them.
 
-    The ops are created and lowered inside `convert-md-exec-to-gpu`, in the
-    templates of the kernels and in the build of the groups of neighbors.
+    The ops are created in `convert-md-exec-to-gpu`, in the templates of
+    the kernels and in the build of the groups of neighbors. Those of the
+    neighbor matrix's template and of the groups build stay in the module
+    after it, for the collection-level transformations
+    (`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
+    lowers them; the accessors of the templates of PME and the counting
+    sort of the device's ragged rows are lowered where they are created
+    (D[md-alg-ir], #866).
+
+    Each op with an ordering or a floating-point aspect states a
+    determinism requirement (`determinism`), separate from the ordering
+    contract `order`: `unordered`, `reproducible` (the same bits from run
+    to run under a fixed policy and target), or `bitwise` (those of the
+    serial definition on every target). The verifier refuses a requirement
+    that the op's contract rules out.
   }];
   let cppNamespace = "::mdir::md_alg";
 }
@@ -90,6 +103,59 @@ def MDAlg_Order
   let cppNamespace = "::mdir::md_alg";
 }
 
+def MDAlg_Determinism
+    : I32EnumAttr<"Determinism", "what the bits of an op's results must "
+                  "not depend on", [
+        // The results that the contract leaves free (the order of the items
+        // within a bin, the numbers of blocks) may differ from run to run.
+        I32EnumAttrCase<"Unordered", 0, "unordered">,
+        // Every result is the same from run to run under a fixed policy
+        // (the execution parameters) and target.
+        I32EnumAttrCase<"Reproducible", 1, "reproducible">,
+        // Every result is that of the serial definition, on every target
+        // and under every policy.
+        I32EnumAttrCase<"Bitwise", 2, "bitwise">
+      ]> {
+  let cppNamespace = "::mdir::md_alg";
+}
+
+//===----------------------------------------------------------------------===//
+// Interfaces
+//===----------------------------------------------------------------------===//
+
+def MDAlg_DeterminismInterface : OpInterface<"DeterminismInterface"> {
+  let cppNamespace = "::mdir::md_alg";
+  let description = [{
+    An op with an ordering or a floating-point aspect, which states a
+    determinism requirement in its optional attribute `determinism`
+    (D[md-alg-ir]). The tiers are ordered, `unordered` < `reproducible` <
+    `bitwise`. Without the attribute the requirement is the op's default,
+    what its lowerings give today, so that a program keeps its meaning. The
+    verifier refuses a requirement above the op's bound, the strongest that
+    its contract admits; a lowering refuses one that its implementation
+    cannot meet.
+  }];
+  let methods = [
+    InterfaceMethod<"The strongest requirement that the op's contract "
+                    "admits.",
+                    "::mdir::md_alg::Determinism", "getDeterminismBound">,
+    InterfaceMethod<"The requirement without the attribute.",
+                    "::mdir::md_alg::Determinism", "getDeterminismDefault">,
+    InterfaceMethod<"What the contract leaves free, which bounds the "
+                    "requirement (for the verifier's message); empty where "
+                    "the contract fixes every result.",
+                    "::llvm::StringRef", "getFreeResults">
+  ];
+  let extraClassDeclaration = [{
+    /// The stated requirement, or the default.
+    ::mdir::md_alg::Determinism getRequiredDeterminism();
+  }];
+  let verify = [{ return ::mdir::md_alg::verifyDeterminism($_op); }];
+}
+
+def MDAlg_Deterministic
+    : DeclareOpInterfaceMethods<MDAlg_DeterminismInterface>;
+
 //===----------------------------------------------------------------------===//
 // Types
 //===----------------------------------------------------------------------===//
@@ -102,7 +168,8 @@ def MDAlg_I32OrIndex : AnyTypeOf<[I32, Index]>;
 // Collection algorithms
 //===----------------------------------------------------------------------===//
 
-def MDAlg_ScanOp : MDAlg_Op<"scan", [AttrSizedOperandSegments]> {
+def MDAlg_ScanOp : MDAlg_Op<"scan", [AttrSizedOperandSegments,
+                                     MDAlg_Deterministic]> {
   let summary = "The exclusive sums of i32 counts";
   let description = [{
     ```text
@@ -115,7 +182,7 @@ def MDAlg_ScanOp : MDAlg_Op<"scan", [AttrSizedOperandSegments]> {
     No other element is written.
 
     *Contract:* ordered integer: every lowering gives the serial lowering's
-    values, bitwise.
+    values, bitwise. *Determinism:* every tier; `bitwise` by default.
 
     *Execution* (the SIMT lowering, not the meaning): `strategy`, the
     `scratch` buffer, and the `launch` values.
@@ -142,19 +209,22 @@ def MDAlg_ScanOp : MDAlg_Op<"scan", [AttrSizedOperandSegments]> {
     Arg<Optional<MDAlg_I32Buffer>, "", [MemWrite]>:$cursor,
     OptionalAttr<MDAlg_ScanStrategy>:$strategy,
     Arg<Optional<MemRefRankOf<[I32, I64], [1]>>, "", [MemRead, MemWrite]>:$scratch,
-    Variadic<Index>:$launch
+    Variadic<Index>:$launch,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let assemblyFormat = [{
     $counts `[` $n `]` `into` $start (`cursor` $cursor^)?
     (`strategy` $strategy^)?
     (`scratch` $scratch^ `:` type($scratch))?
     (`launch` `(` $launch^ `)`)?
+    (`determinism` $determinism^)?
     attr-dict `:` type($counts) `,` type($start) (`,` type($cursor)^)?
   }];
   let hasVerifier = 1;
 }
 
-def MDAlg_ScatterToBinsOp : MDAlg_Op<"scatter_to_bins"> {
+def MDAlg_ScatterToBinsOp : MDAlg_Op<"scatter_to_bins",
+                                      [MDAlg_Deterministic]> {
   let summary = "Each item to a slot of its bin, taken from a cursor";
   let description = [{
     For each item `i` in `[0, n)` with the key `k = keys[i]`: if `k` is not
@@ -173,6 +243,10 @@ def MDAlg_ScatterToBinsOp : MDAlg_Op<"scatter_to_bins"> {
     fixed. Every lowering gives the serial lowering's items of each bin as
     a multiset, its cursor bitwise, and leaves the same elements of `out`
     untouched. The serial lowering writes each bin's items ascending.
+    *Determinism:* `unordered` by default; at most `reproducible`, since the
+    contract leaves the order within a bin free (an op of a fixed order is
+    `md_alg.sort_by_key` with `order stable`); the SIMT lowering meets
+    `unordered` alone, the cursor's atomics ordering the items.
 
     *Execution*: `launch(grid, block, one)`, a thread an item.
 
@@ -188,17 +262,20 @@ def MDAlg_ScatterToBinsOp : MDAlg_Op<"scatter_to_bins"> {
     Arg<MDAlg_I32Buffer, "", [MemRead, MemWrite]>:$cursor,
     Arg<MDAlg_I32Buffer, "", [MemWrite]>:$out,
     UnitAttr:$every_key,
-    Variadic<Index>:$launch
+    Variadic<Index>:$launch,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let assemblyFormat = [{
     $keys `[` $n `]` `cursor` $cursor `into` $out
     (`launch` `(` $launch^ `)`)?
+    (`determinism` $determinism^)?
     attr-dict `:` type($keys) `,` type($cursor) `,` type($out)
   }];
   let hasVerifier = 1;
 }
 
-def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
+def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments,
+                                              MDAlg_Deterministic]> {
   let summary = "The items of each bin sorted ascending, stably";
   let description = [{
     The items (i32) of each of the `bins` bins of `start` (`bins + 1`
@@ -208,7 +285,7 @@ def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
     `items` unchanged. No other element is written.
 
     *Contract:* stable sort: every lowering gives the serial lowering's
-    values, bitwise.
+    values, bitwise. *Determinism:* every tier; `bitwise` by default.
 
     *Execution*: `strategy` and `launch(grid, block, one)`.
     - `insertion`: a thread a bin, in place; `grid` blocks hold `bins`
@@ -232,12 +309,14 @@ def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
     Arg<Optional<MDAlg_I32Buffer>, "", [MemWrite]>:$out,
     Arg<Optional<MDAlg_I32Buffer>, "", [MemRead]>:$keys,
     OptionalAttr<MDAlg_SortStrategy>:$strategy,
-    Variadic<Index>:$launch
+    Variadic<Index>:$launch,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let assemblyFormat = [{
     $start `[` $bins `]` `items` $items (`by` $by^)? (`into` $out^)?
     (`keys` $keys^)? (`strategy` $strategy^)?
     (`launch` `(` $launch^ `)`)?
+    (`determinism` $determinism^)?
     attr-dict `:` type($start) `,` type($items)
     (`by` type($by)^)? (`into` type($out)^)? (`keys` type($keys)^)?
   }];
@@ -250,7 +329,8 @@ def MDAlg_SortBinsOp : MDAlg_Op<"sort_bins", [AttrSizedOperandSegments]> {
 
 def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
     AttrSizedOperandSegments, NoTerminator,
-    AllTypesMatch<["keys", "counts", "start", "cursor", "out"]>
+    AllTypesMatch<["keys", "counts", "start", "cursor", "out"]>,
+    MDAlg_Deterministic
   ]> {
   let summary = "A counting sort of items by a key that a region computes";
   let description = [{
@@ -291,7 +371,9 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
     *Contract:* every lowering gives the serial lowering's `keys`,
     `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
     bitwise where `order` is `stable`, as the multiset of each bin where it
-    is `unordered`.
+    is `unordered`. *Determinism:* under `stable`, every tier, `bitwise` by
+    default; under `unordered`, `unordered` by default and at most
+    `reproducible`, which the SIMT lowering does not meet.
 
     *Execution* (the SIMT lowering, not the meaning): `launch(grid, block,
     one)`, a thread an item, for the key and for the scatter (and a thread
@@ -338,7 +420,8 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
     Variadic<Index>:$scan_launch,
     OptionalAttr<MDAlg_SortStrategy>:$sort_strategy,
     Arg<Optional<MDAlg_I32Buffer>, "", [MemRead, MemWrite]>:$sort_buffer,
-    Variadic<Index>:$sort_launch
+    Variadic<Index>:$sort_launch,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let regions = (region MaxSizedRegion<1>:$key);
   let assemblyFormat = [{
@@ -352,6 +435,7 @@ def MDAlg_SortByKeyOp : MDAlg_Op<"sort_by_key", [
      `launch` `(` $scan_launch `)`)?
     (`sort` $sort_strategy^ (`buffer` $sort_buffer^ `:` type($sort_buffer))?
      `launch` `(` $sort_launch `)`)?
+    (`determinism` $determinism^)?
     (`key` $key^)?
     attr-dict
   }];
@@ -436,7 +520,8 @@ def MDAlg_BinItemOp : MDAlg_Op<"bin_item"> {
   let assemblyFormat = "$out `[` $place `]` attr-dict `:` type($out)";
 }
 
-def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {
+def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments,
+                                         MDAlg_Deterministic]> {
   let summary = "Entries appended to a list held in blocks from a pool";
   let description = [{
     Appends one entry (the `values`, one to each buffer of `into`) for each
@@ -476,7 +561,10 @@ def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {
     order): the lists, the counts, and the counter bitwise. The numbers of
     the blocks are not fixed, since concurrent lists interleave their
     takes: any distinct numbers, compared after the lists are read out
-    through their names.
+    through their names. *Determinism:* `unordered` by default; at most
+    `reproducible`, since the contract leaves the numbers of the blocks,
+    and so where each entry is stored, free; the SIMT lowering meets
+    `unordered` alone.
 
     *Execution* (the SIMT lowering, not the meaning): `lane(lane, below)`,
     the lane's number in its warp and the mask of the lanes below it, which
@@ -506,7 +594,8 @@ def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {
     Index:$capacity,
     I64Attr:$block,
     Optional<I32>:$lane,
-    Optional<I32>:$below
+    Optional<I32>:$below,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let results = (outs I32:$next_count, I32:$next_last);
   let assemblyFormat = [{
@@ -515,13 +604,14 @@ def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments]> {
     `names` `(` $units `,` $ordinals `)` `pool` $pool `[` $at `]`
     `capacity` $capacity `block` $block
     (`lane` `(` $lane^ `,` $below `)`)?
+    (`determinism` $determinism^)?
     attr-dict `:` type($units) `,` type($ordinals) `,` type($pool)
   }];
   let hasVerifier = 1;
 }
 
 def MDAlg_GridPlanOp : MDAlg_Op<"grid_plan", [
-    Pure, AttrSizedOperandSegments
+    Pure, AttrSizedOperandSegments, MDAlg_Deterministic
   ]> {
   let summary = "The counts of the cells of a grid along edges of a cell";
   let description = [{
@@ -536,7 +626,8 @@ def MDAlg_GridPlanOp : MDAlg_Op<"grid_plan", [
     that holds `occupancy` items on average.
 
     *Contract:* bitwise: there is one lowering, on the host, which the
-    serial and the SIMT passes share.
+    serial and the SIMT passes share. *Determinism:* every tier; `bitwise`
+    by default.
 
     ```mlir
     %nx, %ny, %nz = md_alg.grid_plan %lx, %ly, %lz : f64, f64, f64
@@ -553,14 +644,16 @@ def MDAlg_GridPlanOp : MDAlg_Op<"grid_plan", [
     OptionalAttr<AnyAttrOf<[F32Attr, F64Attr]>>:$occupancy,
     Optional<Index>:$population,
     AnyAttrOf<[F32Attr, F64Attr]>:$least,
-    AnyAttrOf<[F32Attr, F64Attr]>:$most
+    AnyAttrOf<[F32Attr, F64Attr]>:$most,
+    OptionalAttr<MDAlg_Determinism>:$determinism
   );
   let results = (outs Variadic<I64>:$counts);
   let assemblyFormat = [{
     $lengths `:` type($lengths) (`width` $width^ `:` type($width))?
     (`volume` $volume^ `:` type($volume) `occupancy` $occupancy
      `of` $population)?
-    `bounds` `[` $least `,` $most `]` attr-dict `->` type($counts)
+    `bounds` `[` $least `,` $most `]` (`determinism` $determinism^)?
+    attr-dict `->` type($counts)
   }];
   let hasVerifier = 1;
 }
