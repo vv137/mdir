@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MDIRMDAlg
+  CollectionAnalysis.cpp
   MDAlgDialect.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -9,6 +10,9 @@ add_mlir_dialect_library(MDIRMDAlg
 
   LINK_LIBS PUBLIC
   MLIRArithDialect
+  MLIRCallInterfaces
+  MLIRFunctionInterfaces
+  MLIRLoopLikeInterface
   MLIRIR
   MLIRLLVMDialect
   MLIRSCFDialect

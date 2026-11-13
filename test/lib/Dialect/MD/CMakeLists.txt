@@ -7,11 +7,13 @@ add_mlir_library(MDIRTestPasses
   TestTranspose.cpp
   TestSegmentWindows.cpp
   TestWarpHelpers.cpp
+  TestCollectionAnalysis.cpp
 
   EXCLUDE_FROM_LIBMLIR
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIRMDAlg
   MDIRMDExecKernels
   MDIRMDExec
   MDIRMDTransforms

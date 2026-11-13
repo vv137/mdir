@@ -13,6 +13,7 @@
 #include "mdir/Conversion/GatherEmitter.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Conversion/RaggedRows.h"
+#include "mdir/Dialect/MDAlg/CollectionAnalysis.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -27,6 +28,9 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "md-alg-collections"
 
 using namespace mlir;
 using namespace mdir;
@@ -975,14 +979,22 @@ public:
 };
 
 /// The place of the collection-level transformations (D408):
-/// none yet; the ops are verified.
+/// none yet; the ops are verified, and the shared analysis of the
+/// collections (D[md-alg-analysis]) runs, which the transformations will
+/// read. It changes nothing.
 class MDAlgTransformCollections
     : public mdir::impl::MDAlgTransformCollectionsBase<
           MDAlgTransformCollections> {
 public:
   void runOnOperation() final {
-    if (failed(collect(getOperation())))
+    if (failed(collect(getOperation()))) {
       signalPassFailure();
+      return;
+    }
+    auto &analysis = getAnalysis<CollectionAnalysis>();
+    LLVM_DEBUG(analysis.print(llvm::dbgs()));
+    (void)analysis;
+    markAllAnalysesPreserved();
   }
 };
 
