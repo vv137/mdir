@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -33,6 +34,7 @@ using namespace mdir::md_alg;
 namespace mdir {
 #define GEN_PASS_DEF_CONVERTMDALGTOGPU
 #define GEN_PASS_DEF_CONVERTMDALGTOSCF
+#define GEN_PASS_DEF_MDALGTRANSFORMCOLLECTIONS
 #include "mdir/Conversion/Passes.h.inc"
 } // namespace mdir
 
@@ -75,7 +77,86 @@ static LogicalResult checkExecution(Operation *op) {
            << "takes blocks of at least 32 entries in its SIMT lowering, a "
               "warp's batch beginning at most two; not "
            << append.getBlock();
+  // The requirement that the SIMT code meets (D[md-alg-ir]): the
+  // cursor's atomics order the items of a scatter, and concurrent lists
+  // take an append's blocks, in no fixed order.
+  if (auto deterministic = dyn_cast<DeterminismInterface>(op)) {
+    bool atomic = isa<ScatterToBinsOp, AppendOp>(op);
+    if (auto sort = dyn_cast<SortByKeyOp>(op))
+      atomic = sort.getOrder() == Order::Unordered;
+    Determinism required = deterministic.getRequiredDeterminism();
+    if (atomic && required != Determinism::Unordered)
+      return op->emitOpError()
+             << "cannot meet the determinism requirement '"
+             << getDeterminismName(required)
+             << "' in its SIMT lowering, whose atomics fix no order; it "
+                "meets 'unordered'";
+  }
   return success();
+}
+
+/// The execution parameters that `op` is lowered with, for the record of
+/// the policy (D[md-alg-ir]): a launch as its values, a constant as its
+/// number and any other value as `?`.
+static std::string describeLaunch(OperandRange launch) {
+  std::string text;
+  llvm::raw_string_ostream os(text);
+  os << "(";
+  llvm::interleave(
+      launch, os,
+      [&](Value v) {
+        if (std::optional<int64_t> c = getConstantIntValue(v))
+          os << *c;
+        else
+          os << "?";
+      },
+      ",");
+  os << ")";
+  return text;
+}
+
+/// The entry of the record of the policy for `op`: its function, its name,
+/// its requirement, its order, its strategies, and its launches.
+static DictionaryAttr describePolicy(DeterminismInterface op) {
+  Builder b(op->getContext());
+  SmallVector<NamedAttribute> entry;
+  auto add = [&](StringRef name, StringRef value) {
+    entry.push_back(b.getNamedAttr(name, b.getStringAttr(value)));
+  };
+  auto function = op->getParentOfType<FunctionOpInterface>();
+  add("function", function ? function.getName() : StringRef());
+  add("op", op->getName().stripDialect());
+  add("determinism", getDeterminismName(op.getRequiredDeterminism()));
+  TypeSwitch<Operation *>(op)
+      .Case([&](ScanOp scan) {
+        if (scan.getStrategy())
+          add("strategy", stringifyScanStrategy(*scan.getStrategy()));
+        add("launch", describeLaunch(scan.getLaunch()));
+      })
+      .Case([&](ScatterToBinsOp scatter) {
+        add("launch", describeLaunch(scatter.getLaunch()));
+      })
+      .Case([&](SortBinsOp sort) {
+        if (sort.getStrategy())
+          add("strategy", stringifySortStrategy(*sort.getStrategy()));
+        add("launch", describeLaunch(sort.getLaunch()));
+      })
+      .Case([&](SortByKeyOp sort) {
+        add("order", stringifyOrder(sort.getOrder()));
+        add("launch", describeLaunch(sort.getLaunch()));
+        if (sort.getScanStrategy()) {
+          add("scan", stringifyScanStrategy(*sort.getScanStrategy()));
+          add("scan_launch", describeLaunch(sort.getScanLaunch()));
+        }
+        if (sort.getSortStrategy()) {
+          add("sort", stringifySortStrategy(*sort.getSortStrategy()));
+          add("sort_launch", describeLaunch(sort.getSortLaunch()));
+        }
+      })
+      .Case([&](AppendOp append) {
+        add("block", std::to_string(append.getBlock()));
+      });
+  return b.getDictionaryAttr(entry);
 }
 
 
@@ -491,6 +572,22 @@ LogicalResult kernels::lowerAlgToSIMT(Operation *root) {
   for (Operation *op : *ops)
     if (failed(checkExecution(op)))
       return failure();
+  // The policy of each op with a determinism aspect, added to the record
+  // of the module that the ops are in (D[md-alg-ir]).
+  auto module = dyn_cast<ModuleOp>(root);
+  if (!module)
+    module = root->getParentOfType<ModuleOp>();
+  SmallVector<Attribute> policy;
+  if (module)
+    if (auto recorded = module->getAttrOfType<ArrayAttr>(kPolicyAttrName))
+      llvm::append_range(policy, recorded.getValue());
+  size_t before = policy.size();
+  for (Operation *op : *ops)
+    if (auto deterministic = dyn_cast<DeterminismInterface>(op))
+      policy.push_back(describePolicy(deterministic));
+  if (module && policy.size() != before)
+    module->setAttr(kPolicyAttrName,
+                    ArrayAttr::get(module->getContext(), policy));
   for (Operation *op : *ops) {
     OpBuilder builder(op);
     SmallVector<Value> results = emitSIMT(builder, op);
@@ -781,6 +878,18 @@ class ConvertMDAlgToGPU
 public:
   void runOnOperation() final {
     if (failed(kernels::lowerAlgToSIMT(getOperation())))
+      signalPassFailure();
+  }
+};
+
+/// The place of the collection-level transformations (D[md-alg-ir]):
+/// none yet; the ops are verified.
+class MDAlgTransformCollections
+    : public mdir::impl::MDAlgTransformCollectionsBase<
+          MDAlgTransformCollections> {
+public:
+  void runOnOperation() final {
+    if (failed(collect(getOperation())))
       signalPassFailure();
   }
 };

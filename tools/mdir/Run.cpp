@@ -8,6 +8,7 @@
 #include "Manifest.h"
 
 #include "mdir/Conversion/GPUToBinary.h"
+#include "mdir/Conversion/MDAlgLowering.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -208,6 +209,59 @@ public:
 private:
   std::set<std::string> &kinds;
 };
+
+/// The policy that each md_alg op with a determinism aspect was lowered
+/// with (D[md-alg-ir]), taken off the module after the passes, so that the
+/// module is what it was without the record: the entries for the manifest
+/// and the line of the log, which gives each distinct policy once with the
+/// count of its ops.
+static std::pair<llvm::json::Array, std::string>
+takeAlgPolicy(mlir::ModuleOp module) {
+  llvm::json::Array entries;
+  auto recorded =
+      module->getAttrOfType<mlir::ArrayAttr>(kernels::kPolicyAttrName);
+  if (!recorded)
+    return {std::move(entries), std::string()};
+  module->removeAttr(kernels::kPolicyAttrName);
+  static const char *const fields[] = {"determinism", "order", "strategy",
+                                       "launch", "scan", "scan_launch",
+                                       "sort", "sort_launch", "block"};
+  SmallVector<std::pair<std::string, unsigned>> distinct;
+  for (mlir::Attribute attribute : recorded) {
+    auto entry = mlir::cast<mlir::DictionaryAttr>(attribute);
+    llvm::json::Object object;
+    for (mlir::NamedAttribute field : entry)
+      object[field.getName().getValue()] =
+          mlir::cast<mlir::StringAttr>(field.getValue()).getValue().str();
+    std::string text =
+        "md_alg." +
+        mlir::cast<mlir::StringAttr>(entry.get("op")).getValue().str() + "{";
+    bool first = true;
+    for (const char *name : fields)
+      if (auto value = entry.getAs<mlir::StringAttr>(name)) {
+        text += (first ? "" : " ") + std::string(name) + "=" +
+                value.getValue().str();
+        first = false;
+      }
+    text += "}";
+    auto *found = llvm::find_if(
+        distinct, [&](const auto &seen) { return seen.first == text; });
+    if (found == distinct.end())
+      distinct.push_back({text, 1});
+    else
+      ++found->second;
+    entries.push_back(std::move(object));
+  }
+  std::string line = llvm::formatv("MDIR: md_alg policy: {0} ops: ",
+                                   recorded.size());
+  llvm::interleave(
+      distinct,
+      [&](const auto &policy) {
+        line += policy.first + " x" + std::to_string(policy.second);
+      },
+      [&] { line += "; "; });
+  return {std::move(entries), line + "\n"};
+}
 
 int mdir::tool::runControl(StringRef controlFile, Emit emit,
                            const char *argv0, const RunOptions &options) {
@@ -657,6 +711,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                 "input of the passes is in '" + reproducer + "'. Please "
                 "report it with the directory that `mdir bug-report " +
                 controlFile + "` writes");
+  // The execution parameters of the md_alg ops, for the log and the
+  // manifest (D[md-alg-ir]).
+  auto [algPolicy, algPolicyLine] = takeAlgPolicy(*module);
 
   // The profile map of the lowered program, which names the source of each
   // parallel region of the host (D398).
@@ -1108,6 +1165,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"skin_search", control->isSkinAuto()
              ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
+        // The policy each md_alg op was lowered with (D[md-alg-ir]): a
+        // bitwise comparison of two runs compares these first.
+        {"md_alg_policy", std::move(algPolicy)},
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
             {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
@@ -1513,6 +1573,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   output.log.print("%s", cacheLine.c_str());
+  output.log.print("%s", algPolicyLine.c_str());
   if (output.models)
     output.log.print("%s", output.models->describe().c_str());
   writeLogHeader(output);

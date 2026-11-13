@@ -164,6 +164,7 @@ void kernels::emitDeviceRaggedRows(OpBuilder &b, Location loc, Value keys,
                                     md_alg::ScanStrategy::ReduceThenScan),
       sums, ValueRange{blocks, block, one},
       md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
-      /*sort_buffer=*/Value(), ValueRange{rowGrid, block, one});
+      /*sort_buffer=*/Value(), ValueRange{rowGrid, block, one},
+      /*determinism=*/nullptr);
   (void)lowerAlgToSIMT(sort);
 }

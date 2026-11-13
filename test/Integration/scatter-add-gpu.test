@@ -9,25 +9,25 @@
 # REQUIRES: cuda
 #
 # RUN: mdir-opt %S/scatter-add.mlir --md-exec-assign-algebra --md-exec-choose-scatter=scatter-hash=off \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
 # RUN: | FileCheck %S/scatter-add.mlir
 # RUN: mdir-opt %S/scatter-add.mlir --md-exec-assign-algebra --md-exec-choose-scatter=scatter-hash=on \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
 # RUN: | FileCheck %S/scatter-add.mlir
 # RUN: mdir-opt %S/scatter-add.mlir --md-exec-assign-algebra --md-exec-choose-scatter=hash-least=500 \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
 # RUN: | FileCheck %S/scatter-add.mlir
 # RUN: mdir-opt %S/scatter-add.mlir --md-exec-assign-algebra --md-exec-choose-scatter=hash-least=5000 \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
 # RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -36,7 +36,7 @@
 # Under compute-sanitizer (with -Dsanitize=1), the table at any count.
 # RUN: %if compute-sanitizer %{ mdir-opt %S/scatter-add.mlir \
 # RUN:     --md-exec-assign-algebra --md-exec-choose-scatter=scatter-hash=on \
-# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 # RUN:   | mlir-opt %lower_gpu_to_llvm > %t.mlir %}
 # RUN: %if compute-sanitizer %{ %compute_sanitizer --tool memcheck \
 # RUN:     --error-exitcode 1 mlir-runner %t.mlir -e main \

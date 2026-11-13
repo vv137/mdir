@@ -15,7 +15,7 @@
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
 // RUN:     --md-exec-assign-storage="memory=device" \
-// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" \
+// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -25,7 +25,7 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
-// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -39,7 +39,7 @@
 // RUN:     --md-exec-assign-precision="mode=mixed" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
 // RUN:     --md-exec-assign-storage="memory=device" \
-// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" \
+// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -52,7 +52,7 @@
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
-// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu --md-alg-transform-collections --convert-md-alg-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \

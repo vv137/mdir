@@ -484,6 +484,24 @@ def ConvertMDExecToGPU
                            "::mdir::md_alg::MDAlgDialect"];
 }
 
+def MDAlgTransformCollections
+    : Pass<"md-alg-transform-collections", "::mlir::ModuleOp"> {
+  let summary = "The place of the collection-level transformations of "
+                "md_alg (empty)";
+  let description = [{
+    Runs between `convert-md-exec-to-gpu`, which leaves the collection ops
+    of the neighbor matrix's template and of the groups build in the
+    module, and `convert-md-alg-to-gpu`, which lowers them
+    (D[md-alg-ir], #866). The transformations that need the
+    collection-level form go here: the fusion of stages, the elision of a
+    sort whose order no consumer needs, and the removal of intermediate
+    buffers, each reading one shared analysis of the collections
+    (ordering, access pattern, cardinality, effects, lifetime, and the
+    determinism requirement of each op). None is implemented: the pass
+    verifies the `md_alg` ops and changes nothing.
+  }];
+}
+
 def ConvertMDAlgToGPU : Pass<"convert-md-alg-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Lowers the md_alg ops to GPU code through the emitters of "
                 "the device primitives";
@@ -492,12 +510,19 @@ def ConvertMDAlgToGPU : Pass<"convert-md-alg-to-gpu", "::mlir::ModuleOp"> {
     primitive where it stands (the SIMT lowering, D406,
     docs/device-primitives.md, Section 4): a scan, a scatter to bins, or a
     sort within bins becomes the launches of its strategy, and an accessor
-    its arithmetic and loads. `convert-md-exec-to-gpu` does the same when
-    it parses a template and when it emits the groups build, so that every
-    site of a primitive runs the code of one emitter; this pass does it on
-    a module, for the tests. An op that its verifier refuses, or one
-    without the execution parameters that its lowering takes, is an error,
-    and the module is left as it was.
+    its arithmetic and loads. In the pipeline it runs after
+    `md-alg-transform-collections` and lowers the ops of the neighbor
+    matrix's template and of the groups build; `convert-md-exec-to-gpu`
+    lowers the accessors of the templates of PME and the counting sort of
+    the device's ragged rows itself, where they are created
+    (D[md-alg-ir]). An op that its verifier refuses, one without the
+    execution parameters that its lowering takes, or one whose
+    determinism requirement the lowering cannot meet, is an error, and the
+    module is left as it was. For each op with a determinism aspect, an
+    entry is added to the module's attribute `mdir.alg_policy`: its
+    function, op, requirement, order, strategies, and the constant sizes
+    of the blocks of its launches, which `mdir run` writes to its log and
+    manifest.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::gpu::GPUDialect",
