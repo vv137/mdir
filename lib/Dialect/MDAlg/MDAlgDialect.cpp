@@ -602,7 +602,7 @@ LogicalResult BinMembersOp::verifyRegions() {
   Block &block = getBody().front();
   if (block.getNumArguments() != 1 || !block.getArgument(0).getType().isIndex())
     return emitOpError() << "takes a region of one index argument, the item";
-  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  auto yield = block.empty() ? YieldOp() : dyn_cast<YieldOp>(block.back());
   if (!yield)
     return emitOpError() << "ends its region in 'md_alg.yield'";
   if (yield.getValues().getTypes() != getInit().getTypes())
