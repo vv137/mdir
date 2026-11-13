@@ -53,17 +53,13 @@ func.func private @mdrt_gpu_cell_count(%length: f64, %width: f64) -> index {
   %c1 = arith.constant 1 : index
   %slack = arith.constant 1.0001 : f64
   %padded = arith.mulf %width, %slack : f64
-  %ratio = arith.divf %length, %padded : f64
-  %floor = math.floor %ratio : f64
-  // At least one cell and at most 256: a cell that is not a number, or one
-  // that a run that has failed has blown up, gives a count of cells that is
-  // defined and fits memory; the cells are then wider than the reach needs,
-  // and the range of the search follows from their count (#168).
-  %one_f = arith.constant 1.0 : f64
-  %most_f = arith.constant 256.0 : f64
-  %least = arith.maxnumf %floor, %one_f : f64
-  %bounded = arith.minnumf %least, %most_f : f64
-  %wide = arith.fptosi %bounded : f64 to i64
+  // At least one cell and at most 256 (md_alg.grid_plan): a cell that is
+  // not a number, or one that a run that has failed has blown up, gives a
+  // count of cells that is defined and fits memory; the cells are then
+  // wider than the reach needs, and the range of the search follows from
+  // their count (#168).
+  %wide = md_alg.grid_plan %length : f64 width %padded : f64
+      bounds [1.0 : f64, 256.0 : f64] -> i64
   %count = arith.index_cast %wide : i64 to index
   %result = arith.maxsi %count, %c1 : index
   return %result : index
@@ -2131,94 +2127,74 @@ func.func private @mdrt_gpu_spatial_order(
     gpu.terminator
   }
 
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %i = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %i, %n : index
-    scf.if %inside {
-      %i0 = arith.constant 0 : index
-      %i1 = arith.constant 1 : index
-      %i2 = arith.constant 2 : index
-      %one = arith.constant 1 : i32
-      %xi = memref.load %x[%i, %i0] : memref<?x3xf64, 1>
-      %yi = memref.load %x[%i, %i1] : memref<?x3xf64, 1>
-      %zi = memref.load %x[%i, %i2] : memref<?x3xf64, 1>
-
-      %x0 = arith.mulf %xi, %ilx : f64
-      %x1 = math.floor %x0 : f64
-      %x2 = arith.mulf %x1, %lx : f64
-      %wx = arith.subf %xi, %x2 : f64
-      %x3 = arith.mulf %wx, %ilx : f64
-      %x4 = arith.index_cast %nx : index to i64
-      %x5 = arith.sitofp %x4 : i64 to f64
-      %x6 = arith.mulf %x3, %x5 : f64
-      %x7 = arith.fptosi %x6 : f64 to i64
-      %x8 = arith.index_cast %x7 : i64 to index
-      %xl = arith.subi %nx, %i1 : index
-      %xb = arith.minsi %x8, %xl : index
-      %cx = arith.maxsi %xb, %i0 : index
-
-      %y0 = arith.mulf %yi, %ily : f64
-      %y1 = math.floor %y0 : f64
-      %y2 = arith.mulf %y1, %ly : f64
-      %wy = arith.subf %yi, %y2 : f64
-      %y3 = arith.mulf %wy, %ily : f64
-      %y4 = arith.index_cast %ny : index to i64
-      %y5 = arith.sitofp %y4 : i64 to f64
-      %y6 = arith.mulf %y3, %y5 : f64
-      %y7 = arith.fptosi %y6 : f64 to i64
-      %y8 = arith.index_cast %y7 : i64 to index
-      %yl = arith.subi %ny, %i1 : index
-      %yb = arith.minsi %y8, %yl : index
-      %cy = arith.maxsi %yb, %i0 : index
-
-      %z0 = arith.mulf %zi, %ilz : f64
-      %z1 = math.floor %z0 : f64
-      %z2 = arith.mulf %z1, %lz : f64
-      %wz = arith.subf %zi, %z2 : f64
-      %z3 = arith.mulf %wz, %ilz : f64
-      %z4 = arith.index_cast %nz : index to i64
-      %z5 = arith.sitofp %z4 : i64 to f64
-      %z6 = arith.mulf %z3, %z5 : f64
-      %z7 = arith.fptosi %z6 : f64 to i64
-      %z8 = arith.index_cast %z7 : i64 to index
-      %zl = arith.subi %nz, %i1 : index
-      %zb = arith.minsi %z8, %zl : index
-      %cz = arith.maxsi %zb, %i0 : index
-
-      %zy = arith.muli %cz, %ny : index
-      %row = arith.addi %zy, %cy : index
-      %rows = arith.muli %row, %nx : index
-      %k = arith.addi %rows, %cx : index
-      %k32 = arith.index_cast %k : index to i32
-      memref.store %k32, %key[%i] : memref<?xi32, 1>
-      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
-      %rx3_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
-      %rx3_bi = arith.index_cast %rx3_base : index to i64
-      %rx3_ki = arith.index_cast %k : index to i64
-      %rx3_four = arith.constant 4 : i64
-      %rx3_off = arith.muli %rx3_ki, %rx3_four : i64
-      %rx3_addr = arith.addi %rx3_bi, %rx3_off : i64
-      %rx3_ptr = llvm.inttoptr %rx3_addr : i64 to !llvm.ptr<1>
-      %old = llvm.atomicrmw add %rx3_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
-    }
-    gpu.terminator
-  }
-
-  md_alg.scan %held[%cells] into %start cursor %cursor
-      strategy chunked scratch %cell_sums : memref<?xi32, 1>
+  // Each particle's cell, its key; the counts of the cells, their offsets
+  // (the sums of chunks of 256 cells, the offsets of the chunks in one
+  // thread, and the offsets of the cells of each chunk), each particle at
+  // the next slot of its cell, and the particles of each cell in the order
+  // of `ids`, by insertion: a counting sort (md_alg.sort_by_key), whose
+  // counts the launch above cleared.
+  md_alg.sort_by_key %n bins %cells keys %key counts %held start %start
+      cursor %cursor into %order by %ids : memref<?xi32, 1> cleared
+      : memref<?xi32, 1> launch(%grid_n, %block, %c1)
+      scan chunked scratch %cell_sums : memref<?xi32, 1>
       launch(%cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
-      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
+      sort insertion launch(%grid_cells, %block, %c1) key {
+  ^bb0(%i: index):
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %xi = memref.load %x[%i, %i0] : memref<?x3xf64, 1>
+    %yi = memref.load %x[%i, %i1] : memref<?x3xf64, 1>
+    %zi = memref.load %x[%i, %i2] : memref<?x3xf64, 1>
 
-  md_alg.scatter_to_bins %key[%n] cursor %cursor into %order
-      launch(%grid_n, %block, %c1) {every_key}
-      : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
+    %x0 = arith.mulf %xi, %ilx : f64
+    %x1 = math.floor %x0 : f64
+    %x2 = arith.mulf %x1, %lx : f64
+    %wx = arith.subf %xi, %x2 : f64
+    %x3 = arith.mulf %wx, %ilx : f64
+    %x4 = arith.index_cast %nx : index to i64
+    %x5 = arith.sitofp %x4 : i64 to f64
+    %x6 = arith.mulf %x3, %x5 : f64
+    %x7 = arith.fptosi %x6 : f64 to i64
+    %x8 = arith.index_cast %x7 : i64 to index
+    %xl = arith.subi %nx, %i1 : index
+    %xb = arith.minsi %x8, %xl : index
+    %cx = arith.maxsi %xb, %i0 : index
 
-  // The particles of each cell in the order of `ids`, by insertion.
-  md_alg.sort_bins %start[%cells] items %order by %ids
-      strategy insertion launch(%grid_cells, %block, %c1)
-      : memref<?xi32, 1>, memref<?xi32, 1> by memref<?xi32, 1>
+    %y0 = arith.mulf %yi, %ily : f64
+    %y1 = math.floor %y0 : f64
+    %y2 = arith.mulf %y1, %ly : f64
+    %wy = arith.subf %yi, %y2 : f64
+    %y3 = arith.mulf %wy, %ily : f64
+    %y4 = arith.index_cast %ny : index to i64
+    %y5 = arith.sitofp %y4 : i64 to f64
+    %y6 = arith.mulf %y3, %y5 : f64
+    %y7 = arith.fptosi %y6 : f64 to i64
+    %y8 = arith.index_cast %y7 : i64 to index
+    %yl = arith.subi %ny, %i1 : index
+    %yb = arith.minsi %y8, %yl : index
+    %cy = arith.maxsi %yb, %i0 : index
+
+    %z0 = arith.mulf %zi, %ilz : f64
+    %z1 = math.floor %z0 : f64
+    %z2 = arith.mulf %z1, %lz : f64
+    %wz = arith.subf %zi, %z2 : f64
+    %z3 = arith.mulf %wz, %ilz : f64
+    %z4 = arith.index_cast %nz : index to i64
+    %z5 = arith.sitofp %z4 : i64 to f64
+    %z6 = arith.mulf %z3, %z5 : f64
+    %z7 = arith.fptosi %z6 : f64 to i64
+    %z8 = arith.index_cast %z7 : i64 to index
+    %zl = arith.subi %nz, %i1 : index
+    %zb = arith.minsi %z8, %zl : index
+    %cz = arith.maxsi %zb, %i0 : index
+
+    %zy = arith.muli %cz, %ny : index
+    %row = arith.addi %zy, %cy : index
+    %rows = arith.muli %row, %nx : index
+    %k = arith.addi %rows, %cx : index
+    md_alg.bin %k : index
+  }
 
   %key0 = memref.memory_space_cast %key
       : memref<?xi32, 1> to memref<?xi32>

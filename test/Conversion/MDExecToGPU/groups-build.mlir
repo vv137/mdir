@@ -30,18 +30,28 @@
 // TRI: func.func private @mdrt_gpu_build_neighbors_groups_triclinic(%{{.*}}: memref<?x3xf64, 1>, %{{.*}}: vector<6xf64>, %{{.*}}: f64,
 // TRI: vector.extract %{{.*}}[5] : f64 from vector<6xf64>
 
-// The three counting sorts: by key with a cursor, the chunks of the
-// columns, by cell of the grid with a cursor. The single-pass scan keeps
-// the states of its tiles in i64, one more than the tiles.
-// TWO: md_alg.scan %{{.*}} cursor %{{.*}} strategy reduce_then_scan scratch %{{.*}} : memref<?xi32, 1> launch(%{{.*}}, %{{.*}}, %{{.*}}) : memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>
+// The plans of the columns (about 64 particles in a cube) and of the grid
+// of the candidates (cells of half the reach, 3 to 256 a side).
+// CHECK: md_alg.grid_plan %{{.*}}, %{{.*}} : f64, f64 volume %{{.*}} : f64 occupancy 6.400000e+01 : f64 of %{{.*}} bounds[1.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64
+// CHECK: md_alg.grid_plan %{{.*}}, %{{.*}}, %{{.*}} : f64, f64, f64 width %{{.*}} : f64 bounds[3.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64, i64
+
+// The counting sort by key, the scan of the chunks of the columns, and the
+// counting sort by cell of the grid. The key of a particle writes its
+// wrapped position and counts the positions without a bin; that of a
+// place writes its position. The single-pass scan keeps the states of its
+// tiles in i64, one more than the tiles.
 // ONE: gpu.alloc ({{.*}}) : memref<?xi64, 1>
-// ONE: md_alg.scan %{{.*}} cursor %{{.*}} strategy single_pass scratch %{{.*}} : memref<?xi64, 1> launch(
-// CHECK: md_alg.scatter_to_bins %{{.*}} launch(
-// CHECK: md_alg.sort_bins %{{.*}} strategy insertion launch(
+// CHECK: md_alg.sort_by_key %{{.*}} writes(%{{.*}} : memref<?x3xf32, 1>) adds(%{{.*}} : memref<5xi32, 1>) cleared : memref<?xi32, 1> launch(
+// TWO-SAME: scan reduce_then_scan scratch %{{.*}} : memref<?xi32, 1> launch(
+// ONE-SAME: scan single_pass scratch %{{.*}} : memref<?xi64, 1> launch(
+// CHECK-SAME: sort insertion launch(
+// CHECK: md_alg.no_bin
+// CHECK: md_alg.bin %{{.*}} : index
 // TWO: md_alg.scan %{{[^ ]*}} into %{{[^ ]*}} strategy reduce_then_scan
 // ONE: md_alg.scan %{{[^ ]*}} into %{{[^ ]*}} strategy single_pass
-// TWO: md_alg.scan %{{.*}} cursor %{{.*}} strategy reduce_then_scan
-// ONE: md_alg.scan %{{.*}} cursor %{{.*}} strategy single_pass
+// CHECK: md_alg.sort_by_key %{{.*}} writes(%{{.*}} : memref<?x4xf32, 1>) cleared : memref<?xi32, 1> launch(
+// CHECK: md_alg.bin %{{.*}} : i32
+// CHECK: md_alg.no_bin
 // The excluded pairs of a particle from its ragged row.
 // CHECK: md_alg.ragged_row %{{.*}} entry %{{.*}} checked : memref<?xi32, 1>
 
@@ -50,8 +60,12 @@
 // cell, whose images kernel takes the images by their offsets.
 // ORTHO: arith.constant 4198404 : i32
 // TRI: arith.constant 16793616 : i32
+// The entries of a round of a warp, into blocks of 64 from the count of
+// blocks: twice in the lists and twice in the images.
+// CHECK-COUNT-2: md_alg.append %{{.*}} block 64 lane(
 // CHECK: arith.constant 27 : i32
 // TRI: func.call @mdrt_gpu_groups_offset_triclinic(
+// CHECK-COUNT-2: md_alg.append %{{.*}} block 64 lane(
 // CHECK: return
 // ORTHO-NOT: triclinic
 // ORTHO-NOT: 16793616
