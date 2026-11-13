@@ -198,6 +198,19 @@ The tests fail on realistic breaks:
 | the SIMT lowering accepts `reproducible` on an append | `simt-determinism.mlir`, its case |
 | the record leaves out the appends | `policy.mlir` (the entry `append` missing) |
 
+## Sanitizer and suite
+
+On an RTX 5090. The sanitizer tier (`-Dsanitize=1`: `test/Sanitizer` and
+the contract tests of md_alg, of the stage ops, and the warp test): 25
+passed, 2 unsupported (the JAX and frame-batch entries), and
+`Sanitizer/position-guard-gpu.test` timed out after 25 minutes in its one
+run, the intermittent hang of #863 (1 run, 1 hang); the tier held the
+device for 29 minutes. The full suite: 981 tests, 942 passed, 38
+unsupported, and `Driver/compile-cache-default.test` failed on a file
+that an earlier run of it on the host, as another user, had left
+unremovable in its output directory; with that directory removed it
+passed.
+
 ## Lines
 
 The code (without the tests and the documents) gained 490 lines and lost
