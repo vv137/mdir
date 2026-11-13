@@ -1,0 +1,76 @@
+# D[kind-pairs]
+
+Recorded at its merge.
+
+**The pairs of the rigid kinds of D403 are divided into segments by one rule, R3: the $K$ kinds that a consumer takes are kinds $0, \dots, K-1$, the rest of the particles is kind $K$, and the segment $s(f, g) = f(f+1)/2 + g$, $g \le f$, holds the pairs of a molecule of kind $f$ with one of kind $g$. The `md` ops `md.kind_pairs`, `md.sum_segment_window`, and `md.gather_segment_window` name their segment by $(f, g)$ and prove every site from the weights of its kind (`#md.rigid_kind`); one generator in the driver derives each segment's site pairs from the kinds' per-site data and clones the pair energy from the general nonbonded kernel. The generator takes $K \le 2$; the ops take any $K$. No run reads these ops yet.** Issue #859: the Interaction IR layer of #795, cut onto `main` and made general before it lands. For $K = 1$ the segments 0, 1 and 2 are #795's WW, SW and SS, and the generator writes #795's windows.
+
+## Rule R3
+
+Take $K$ kinds of D403, in the consumer's order, and number them $0, \dots, K-1$; the particles of no taken kind are the *rest*, kind $K$, each particle a molecule of one member. Every pair of particles of two different molecules is then a pair of a molecule of kind $f$ with one of kind $g$, and with the two kinds ordered, $g \le f$, it belongs to exactly one segment,
+
+$$s(f, g) = \frac{f(f+1)}{2} + g, \qquad 0 \le g \le f \le K,$$
+
+of the $(K+1)(K+2)/2$ segments: $s$ is the position of $(f, g)$ in the rows of a lower triangle, $s(f, 0) = f(f+1)/2$ starting row $f$. For $K = 1$, $s(0, 0) = 0$ is WW, $s(1, 0) = 1$ SW, and $s(1, 1) = 2$ SS; for $K = 2$ there are six: $(0,0), (1,0), (1,1), (2,0), (2,1), (2,2)$. Since the rest is the largest number, a segment that involves it has it as $f$.
+
+A *tuple* of segment $(f, g)$ is the frame atoms of a molecule of $f$, in frame order, then those of a molecule of $g$: its arity is $m_f + m_g$, with $m$ the frame size of a kind and 1 for the rest. For $f = g$ each unordered pair of distinct molecules is one tuple. A segment of arity 2 with $f = g$ is unordered (the rest with itself, or a taken kind of single atoms); every other is ordered. The massless sites are absent from the tuples: a segment's body forms them.
+
+**The pair term is the sum over the segments.** The pair term is $U = \sum_{\{i,j\}\notin X} u(\mathbf x_i - \mathbf x_j)$ over the pairs that the exclusions $X$ do not remove. A taken kind has all the pairs of its own particles in $X$ and no pair of $X$ with a particle outside it (D403's facts `incompleteExclusions` and `outsideExclusions` are zero; the generator refuses a kind where they are not). So every pair of $X$ is either inside one molecule of a taken kind, which no segment holds, or a pair of the rest, which $s(K, K)$ removes; and every other pair is in one segment. Hence $U = \sum_s \sum_{t \in s} U_t$, with $U_t$ the energy of the site pairs of tuple $t$: the segments partition the pairs, and the sum over them is the same sum as the general kernel's, in another order.
+
+## The site pairs of a segment
+
+A segment's body sums the pair term over the site pairs $(p, q)$ of its two molecules, $p$ a place of $f$ (frame atoms and sites, $n_f$ of them) and $q$ of $g$. **A site pair is taken when the product of its charges is nonzero or both sites have Lennard-Jones.** Where both types are known, both sites of taken kinds, the entry $\varepsilon(t_p, t_q)$ of the table decides; a site against the rest, whose type is known only at run time, has Lennard-Jones when its type's row has a nonzero entry; a pair of the rest is always taken. The rule is exact where every term of the pair energy is a multiple of $\varepsilon(t_p, t_q)$ or of $q_p q_q$, as in the general kernel's $4\varepsilon((\sigma/r)^{12} - (\sigma/r)^6) + k q_p q_q/r$ and its switched, shifted, reaction-field, soft-core, and real-space Ewald forms: a pair with both zero contributes nothing to the energy, and so nothing to the forces and strain, its derivatives, and leaving it out changes no number. The real-space correction of LJ-PME takes its $C_6$ from the grid's table, not from $\varepsilon$; a consumer with LJ-PME does not take the segments (as #795 does not). Which parts the pair takes, Lennard-Jones, Coulomb, or both, selects the general kernel's body built for those parts, as in #795.
+
+For OPC, of the 16 site pairs of two waters 10 are taken: the oxygens for Lennard-Jones, and the 9 pairs among the charged hydrogens and extra points; the oxygen has no charge, the hydrogens and the extra point no Lennard-Jones, so the 6 pairs of an oxygen with one of them are not written. For TIP3P all 9 pairs have charges. Against the rest every place of a kind is taken (the oxygen for Lennard-Jones, the others for their charge).
+
+## Sites from the weights of their kind
+
+Rule R2 of D403 gives each site the weights $w_k$ over the frame atoms, $\sum_k w_k = 1$, so with the frame offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$, $k \ge 1$, from the anchor $\mathbf x_0$ (the first frame atom),
+
+$$\mathbf x_s = \sum_k w_k\mathbf x_k = \mathbf x_0 + \sum_{k\ge 1} w_k\,\mathbf h_k .$$
+
+The generator forms a site so, from the kind's weights; frame offsets of equal weight are summed before they are scaled, $w(\mathbf h_1 + \mathbf h_2)$ for the extra point of OPC, which is #795's $\alpha(\mathbf h_1 + \mathbf h_2)$ with $\alpha$ replaced by D403's weight. That weight is $0.14772060947071208$; #795 computed $\alpha = 0.14772060947071211$ from the lengths, one unit in the last place apart. The derivative of the placement is constant: a force $\mathbf F_s$ on the site moves to the frame as $\mathbf F_k \mathrel{+}= w_k\mathbf F_s$, rule (A) of #795, for OPC $(w_O, w_H, w_H)$ in place of $(1 - 2\alpha, \alpha, \alpha)$.
+
+## The ops
+
+The reference is [dialects/md.md](../dialects/md.md); [ops.md](../ops.md), Section 4.12, has the summary.
+
+**`#md.rigid_kind<frame = [...], sites = [...], weights = [...], extent = r>`** describes one taken kind: the places of its frame (ascending; the first is the anchor), the places of its sites, each site's weights over the frame atoms in frame order (one row per site), and the covering radius of its places about the anchor that the consumer checks (#795's `extent`, now one per kind). The kind's size is the arity of its relation. Charges and types are not in the descriptor: they are constants of the bodies. Weights and the radius are printed so that they read back as the same f64 numbers. The descriptor is refused unless the frame is nonempty and ascending, frame and sites hold each place once, there is one weight for each site and frame atom, each row of $m$ weights sums to 1 within $2m$ times the machine epsilon of f64 times the sum of their magnitudes, and the radius is positive and finite.
+
+**`md.kind_pairs %universe, kinds(%k0, ...) [#md.rigid_kind<...>, ...] exclude(%x) anchor(%a) radius(r)`** replaces #795's `md.template_pairs`. Its operands are the universe (a scalar i32 field; only its particle set is read), the $K$ kinds, variadic and possibly none, the excluded pairs, and the anchors of the rest with their radius, as in #795. Its results are the $(K+1)(K+2)/2$ segments, result $s(f, g)$ that of $(f, g)$. The verifier checks: each kind is a named ordered relation of the universe, declared `disjoint`, of the arity its descriptor's size, and no two kinds share a tuple set; there is one descriptor per kind; there are $(K+1)(K+2)/2$ results, each of the arity and orientation above, aliasing neither a kind nor the excluded pairs; the excluded pairs are unordered pairs of the universe; anchors come with a positive finite radius.
+
+**`md.sum_segment_window` and `md.gather_segment_window`** replace `md.sum_template_window` and `md.gather_template_window`. They name their segment, `segment(f, g)`, instead of identifying it by the relation's arity, and lose `alpha` and `extent` to the kinds' descriptors. The gather's layout of site forces is a unit attribute `site_forces` instead of three flags of classes. Their body takes the anchor displacement $\mathbf x_{a_0} - \mathrm{image}(\mathbf x_{b_0})$, the $m_f - 1$ frame offsets of the molecule of $f$, the $m_g - 1$ of the molecule of $g$, then each gathered field's values of the tuple's members. The verifier checks: the relation is the result $s(f, g)$ of an `md.kind_pairs`, with $g \le f \le K$; the positions, the gathered fields, the cutoff, and the result as in #795; the block's arguments, in number and type, for the segment's kinds; a straight-line, effect-free body that yields $M$ contributions (one per site pair for a sum; one force per slot for a gather: $m_f + m_g$ slots, or $n_f + n_g$ with `site_forces`) and then $M$ displacements; and each displacement proved, symbolically, to be $\mathbf d_0 + \mathbf c_p - \mathbf c_q$ for a place $p$ of $f$ and a place $q$ of $g$, where the coefficients of a place over its molecule's frame offsets are zero for the anchor, a unit vector for a frame atom, and the site's weights $(w_1, \dots, w_{m-1})$ for a site, compared as f64 with the descriptor's.
+
+The rest of #795's contract is kept: the reduction enumerates all covering images of the anchors, each energy is counted where its own displacement is strictly below the cutoff, forces and strain differentiate the body's arithmetic with the membership held fixed, and higher derivatives and tunable parameters are refused.
+
+## The derivative
+
+#795's construction of the derivative is kept and its counts made general. A body whose energies depend on each displacement only through its squared length takes the radial form, $\mathbf F = -2wU'(r^2)\mathbf d$, on the two places of the pair; any other differentiates the body in its coordinates. In the radial form the slots of a molecule are its frame atoms, unless a pair involves a site: then they are all its places (`site_forces`), and the transpose of the sites, over the weights of the kind, is applied after accumulation. #795 also marked SS; here a segment without sites keeps the frame layout, which for it is the same.
+
+## The generator
+
+`lib/Driver/KindPairsIR.{h,cpp}` replaces #795's three hand-written builders (`buildWaterWaterWindow`, `buildSoluteWaterWindow`, and the SS case of `buildWaterTemplateReduction`) by one, `buildSegment`, run for every segment. `planKindPairs` takes the kinds as D403 gives them (`RigidKind`) with their covering radii and the topology's Lennard-Jones table, and gives each place its charge, type, and whether its type has Lennard-Jones. `buildKindPairsTerm` writes `md.kind_pairs` and a window for every segment that has a site pair, and sums them. The pair energy is cloned from the primary body of the general nonbonded kernel, unchanged from #795 (`cloneKindPairEnergy`).
+
+Every choice is made when the program is built: a segment's body holds its own site pairs and nothing else, and gathers per-particle values only where the rest takes part; there are no flags read at run time.
+
+**The enabling condition is $K \le 2$** (`MaxPairKinds`). A consumer that asks for three kinds is refused, "the pair segments take at most 2 kinds of rigid groups (D[kind-pairs]), not 3". The mechanism does not depend on $K$; the bound is that of the kernels the later lowering will be measured with (six bodies at $K = 2$). A kind is also refused when its copies have a pair of their own that is not excluded or an excluded pair outside the molecule, and the covering radii must be one per kind, positive.
+
+For the later lowering, not implemented here: the predicated select that #795 takes in WW is taken by a segment whose two kinds are multi-site (a frame of more than one atom), which at $K = 1$ is WW alone.
+
+## Not here
+
+Nothing reads these ops in a run: no control key, the neighbor layer (#795's N0 to N4, on the emitter of D404), the lowering below `md`, the runtime, and the ABI are later slices. #795's `emitTemplateExtentSquared` serves the lowering only and is not ported.
+
+## Validation
+
+**$K = 1$ is #795.** For TIP3P with two ions (the fixture of #795, `Inputs/kind_pairs_tip3p.py`) and for three waters of OPC (`Inputs/opc/three.prmtop`), the windows of `@energy`, `@term_lj`, and `@term_coulomb` that #795's generator wrote at 004a0735, through `mdir emit --stage=module` with `water.template = "ON"`, are the references (`test/Driver/Inputs/kind-pairs/*-795.windows`). The generator of this decision, given the primary kernels of `main`'s program for the same control, writes windows whose yielded values are the same expressions: `compare_segment_windows.py` names every value by its operation, attributes, types, and the names of its operands, recursively, with block arguments by position, so the order of the operations, the names, and repeated constants do not count (`kind-pairs-identity.test`). For TIP3P all 9 windows are the same with no exception; for OPC, with the constant $\alpha$ replaced by D403's weight (18 occurrences), all 9. The derivative of `@energy` (`md-differentiate`, the function of energy, forces and virial) was compared the same way, once, for both: its 12 windows are the same, with the same replacement for OPC.
+
+**$K = 2$ against an oracle.** `kind-pairs-oracle.test` calls the outlined windows of all six segments on every tuple of a system of four kinds, at the IR level, and compares each energy, force, and strain component with an f64 oracle in Python that reads the topology and coordinates itself, places sites by the file's weights, and transposes their forces with its own coefficients; the bound of each component is derived from the rounding of the displacements and the pair term (the oracle's docstring).
+
+| Taken kinds | Tuples | Components | Largest error / bound |
+|---|---|---|---|
+| TIP3P and a four-site water with OPC's parameters | 60 | 1,290 | 0.073 |
+| TIP3P and a rigid three-atom molecule with Lennard-Jones on every atom | 79 | 1,654 | 0.052 |
+
+**Refusals**, one test each: the descriptor (empty frame, a place twice, a frame not ascending, the count of weights, a row that does not sum to 1, the radius), `md.kind_pairs` (the universe, the count of descriptors, a kind's site count, two kinds of one tuple set, the count, arity and orientation of the segments, aliasing, the anchors' radius, a kind not disjoint), the windows ($g > f$, $f > K$, a segment that is not result $s(f, g)$, the number of frame offsets, weights that differ from the kind, a transposed row of weights, the cutoff, `site_forces` on a sum, the result types, the yield, a body with a region), the derivative (#795's three), and the generator ($K = 3$, an incomplete or outside exclusion, the radii).
+
+**Mutations**, each tried once: the generator's weights read reversed (consistently into the descriptor and the body) fails the identity, the generator's checks and the oracle (194 of 1,290 components outside the bound); a weight read one place off fails the verifier, and with it all three driver tests; the segment read as $s(g, f)$ fails at $K = 2$ ("segment(2, 0) is s(f, g) = 3, not result 2"), not at $K = 1$, where $s(0, 1) = s(1, 0)$; a site slot counted from the frame size instead of the size fails the boundary test, two shape tests, and the oracle (63 components); the transpose with its weights reversed fails the boundary test and the oracle (48 components).

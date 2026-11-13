@@ -1,0 +1,15 @@
+# The window body and its per-site cutoff executed at the IR level against
+# an independent f64 oracle over all 27 images (D[kind-pairs], the probe of
+# #795): segment (0, 0) of a kind of three frame atoms,
+# and of a kind with a site whose weights (-0.5, 0.75, 0.75) come from the
+# kind's descriptor. The oracle forms the site from world positions and
+# applies its own constant transpose (1 - 2 alpha, alpha, alpha).
+# Bound, declared before the first run: 2e-13 * max(1, abs(reference)) for
+# every energy, force and virial component, per image and in total.
+# RUN: rm -f %t.mlir %t-site.mlir
+# RUN: %python %S/Inputs/segment_window_boundary.py %S/segment-window.mlir %t.mlir
+# RUN: mdir-opt %t.mlir --md-differentiate --test-md-segment-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# RUN: %python %S/Inputs/segment_window_boundary.py %S/segment-window-site.mlir %t-site.mlir --site-alpha=0.75
+# RUN: mdir-opt %t-site.mlir --md-differentiate --test-md-segment-windows | mlir-opt --convert-scf-to-cf --convert-cf-to-llvm %lower_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils | FileCheck %s
+# Only image (1,0,0) counts (U=0.405 and W_xx=-0.81 for the frame atoms).
+# CHECK: 1

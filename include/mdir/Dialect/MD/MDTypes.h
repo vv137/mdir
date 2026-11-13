@@ -11,6 +11,10 @@
 #define GET_TYPEDEF_CLASSES
 #include "mdir/Dialect/MD/MDTypes.h.inc"
 
+#include <optional>
+#define GET_ATTRDEF_CLASSES
+#include "mdir/Dialect/MD/MDAttrs.h.inc"
+
 namespace mlir {
 class Operation;
 } // namespace mlir

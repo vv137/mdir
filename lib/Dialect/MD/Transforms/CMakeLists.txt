@@ -19,6 +19,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   StencilValues.cpp
   ReciprocalGrid.cpp
   ExpandReciprocal.cpp
+  SegmentWindows.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MD/Transforms

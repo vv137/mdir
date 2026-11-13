@@ -1,0 +1,40 @@
+# For one kind, K = 1, the generator of D[kind-pairs] writes the windows of
+# #795 at 004a0735: its segments 0, 1, 2 are WW, SW and SS. The references, Inputs/kind-pairs/*-795.windows, are #795's
+# windows for the same controls; compare_segment_windows.py compares the
+# values that each body yields as expressions, after renumbering (the
+# order of operations and repeated constants aside), with the segment,
+# cutoff, gathered fields, block arguments and result of each window.
+#
+# TIP3P with two ions: the same, with no exception.
+# RUN: rm -rf %t && mkdir -p %t/tip3p %t/opc
+# RUN: %python %S/Inputs/kind_pairs_tip3p.py %S/Inputs/triclinic %t/tip3p --solutes
+# RUN: mdir emit --stage=module %t/tip3p/control.toml > %t/tip3p.mlir
+# RUN: mdir-kind-pairs-test generate %t/tip3p/control.toml %t/tip3p.mlir 1 0.09582 > %t/tip3p-kinds.mlir
+# RUN: %python %S/Inputs/compare_segment_windows.py %S/Inputs/kind-pairs/tip3p-795.windows %t/tip3p-kinds.mlir | FileCheck %s --check-prefix=TIP3P
+#
+# TIP3P: @energy sum segment(0, 0): 18 yielded values, the same expressions
+# TIP3P: @energy sum segment(1, 0): 6 yielded values, the same expressions
+# TIP3P: @energy sum segment(1, 1): 2 yielded values, the same expressions
+# TIP3P: identical: 9 windows
+#
+# For OPC the same, with one constant replaced. The extra point's weight on each
+# hydrogen is D403's, 0.14772060947071208, where #795 formed
+# alpha = 0.14772060947071211 from the lengths; they differ by one unit in
+# the last place. 18 occurrences: 9 windows' alpha and the 9 constants of
+# the six windows that form the site twice (WW) or once (SW).
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/opc
+# RUN: sed -e 's/TOPOLOGY/three.prmtop/' -e 's/COORDINATES/three.inpcrd/' %S/Inputs/kind-pairs/opc-run.toml > %t/opc/run.toml
+# RUN: mdir emit --stage=module %t/opc/run.toml > %t/opc.mlir
+# RUN: mdir-kind-pairs-test generate %t/opc/run.toml %t/opc.mlir 1 0.087343313000000005 > %t/opc-kinds.mlir
+# RUN: %python %S/Inputs/compare_segment_windows.py %S/Inputs/kind-pairs/opc-795.windows %t/opc-kinds.mlir 0.14772060947071211=0.14772060947071208 | FileCheck %s --check-prefix=OPC
+#
+# OPC: replaced 0.14772060947071211 by 0.14772060947071208 in the reference: 18 times
+# OPC: @energy sum segment(0, 0): 20 yielded values, the same expressions
+# OPC: @energy sum segment(1, 0): 8 yielded values, the same expressions
+# OPC: @energy sum segment(1, 1): 2 yielded values, the same expressions
+# OPC: identical: 9 windows
+#
+# Without the replacement the comparison fails at the first window that
+# forms the site.
+# RUN: not %python %S/Inputs/compare_segment_windows.py %S/Inputs/kind-pairs/opc-795.windows %t/opc-kinds.mlir 2>&1 | FileCheck %s --check-prefix=WEIGHT
+# WEIGHT: @energy sum segment(0, 0): the yielded expressions differ

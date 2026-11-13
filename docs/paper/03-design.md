@@ -224,6 +224,26 @@ those updates are zero at its members; and the lowering evaluates a
 disjoint tuple once, in the thread of its first member, writing every
 member without atomics (Section 8.1).
 
+**Segments of rigid kinds.** The rigid groups of a topology fall into
+kinds (Section 6.1, D403). A consumer that takes $\kappa$ of them numbers
+them $0, \dots, \kappa - 1$ and makes the particles of no taken kind kind
+$\kappa$; `md.kind_pairs` then divides the pairs of different molecules
+into the segments $s(f, g) = f(f+1)/2 + g$, $g \le f$, a pair of a molecule
+of kind $f$ with one of kind $g$ belonging to exactly one. A taken kind has
+all its own pairs excluded and none with another particle, so the excluded
+pairs are those inside its molecules, which no segment holds, and those of
+the rest, which $s(\kappa, \kappa)$ removes: the sum of the pair term over
+the segments is its sum over the pairs, in another order. A segment's body
+sums over the site pairs of its two molecules, $n_f n_g$ of them, and keeps
+those whose charges have a nonzero product or that both have
+Lennard-Jones; every term of the pair energy is a multiple of one or the
+other, so the others contribute nothing to the energy and to its
+derivatives. Its sites are formed from the frame with the constant weights
+of their kind, $\mathbf x_s = \mathbf x_0 + \sum_{k\ge1} w_k(\mathbf x_k -
+\mathbf x_0)$, which the verifier proves of every displacement, and whose
+derivative moves the force on a site to the frame as $w_k\mathbf F_s$
+(D[kind-pairs]). No run reads the segments yet.
+
 A relation may also follow from the positions. Besides the pairs of a
 neighborhood, `md.triplets` derives from them the triplets centered on
 each particle: each center with each unordered pair of its neighbors

@@ -4,6 +4,7 @@ add_mlir_library(MDIRTestPasses
   TestLoopEffects.cpp
   TestStageAdjoint.cpp
   TestTranspose.cpp
+  TestSegmentWindows.cpp
 
   EXCLUDE_FROM_LIBMLIR
 

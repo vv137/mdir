@@ -25,6 +25,7 @@ void registerTestOutlineKernels();
 void registerTestLoopEffects();
 void registerTestStageAdjoint();
 void registerTestTranspose();
+void registerTestSegmentWindows();
 } // namespace test
 } // namespace mdir
 
@@ -38,6 +39,7 @@ int main(int argc, char **argv) {
   mdir::test::registerTestLoopEffects();
   mdir::test::registerTestStageAdjoint();
   mdir::test::registerTestTranspose();
+  mdir::test::registerTestSegmentWindows();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
