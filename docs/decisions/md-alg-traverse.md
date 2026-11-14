@@ -69,8 +69,8 @@ The table lists everything that path read, and where each fact went:
 
 | Fact | Read at | Goes to |
 |---|---|---|
-| `findSharedFrames` (D268): the loop follows its refresh at the same positions and in the same cell, and nothing between them writes the positions | `:2043`–`:2075`; read at `:3858` | SIMT attribute `frames`, set by the converter |
-| `findPrunedInLoop` (D284), its reach, and `fuse-pruning`/`fusePruningGroups` | `:2077`–`:2102`; read at `:4142`–`:4198`; **also read by the refresh**, `:7783` | SIMT attribute `prune(G, R)`, set by the converter, which takes the options `fuse-pruning` and `fuse-pruning-groups`. The refresh finds it on the op among its result's users (`getFusedPruning`) |
+| `findSharedFrames` (D268): the loop follows its refresh at the same positions and in the same cell, and nothing between them writes the positions | `:2043`–`:2075`; read at `:3858` | SIMT attribute `frames`, which `convert-md-exec-to-gpu` sets where it ran the analysis, after it moves the reciprocal sums (D113) |
+| `findPrunedInLoop` (D284), its reach, and `fuse-pruning`/`fusePruningGroups` | `:2077`–`:2102`; read at `:4142`–`:4198`; **also read by the refresh**, `:7783` | SIMT attribute `prune(G, R)`, set by `convert-md-exec-to-gpu` with the same analysis and its options `fuse-pruning` and `fuse-pruning-groups`. The refresh finds it on the op among its result's users (`getFusedPruning`) |
 | `check-pruning` (D268) | `:4195`–`:4197`; the refresh, `:7811` | host: an option of `convert-md-exec-to-gpu`, which the refresh reads too |
 | `block-size` | `:3801`–`:3803`, `:4022` | host: an option of `convert-md-exec-to-gpu` |
 | the deterministic refusal | `:3797` | the verifier (Section 4) |
@@ -145,10 +145,26 @@ lowerings differ only in the order of the sums:
 - `prune(G, R)`: the loop prunes for its refresh from $G$ groups, with the
   reach $R$ (D284).
 
-The converter fills it from the analyses of `md_exec` that the big pass
-ran before (`findSharedFrames`, `findPrunedInLoop`, moved). The block size
-and `check-pruning` stay options of `convert-md-exec-to-gpu`, whose
-refreshes read them too.
+The converter sets `scatter`, which `md-exec-choose-scatter` chose.
+`convert-md-exec-to-gpu` sets `frames` and `prune` by the analysis it ran
+before, which now walks the traversals. It runs after the pass moves the
+reciprocal sums before the refreshes (D113). Run in the converter, before
+that move, the analysis met a reciprocal sum between a refresh and its
+loop. On FactorIX one loop lost its pruning in the loop, and the step was
+3.5% slower; the bytes showed it. The block size, `check-pruning`, and
+the options of the pruning in the loop stay options of
+`convert-md-exec-to-gpu`, whose refreshes read them too.
+
+The big pass's analyses that name the loops over pairs know the traversal
+too:
+- the aliases of a structure's buffers, among the readers of a structure
+  (`Independence.cpp`);
+- `overwritesAll`, by which a fused integration leaves a destination that
+  the next loop overwrites;
+- the writes that the fusion of a term over centers must not cross.
+
+Without them, FactorIX's fused integration kernel also wrote the forces
+that the loop overwrites.
 
 **Effects.** The op declares its effects exactly, as `pair_for` does:
 - it reads the list, the positions, and `ins`;
@@ -277,7 +293,7 @@ bytes. Four things tie the schedule to the big pass:
   arithmetic would miss it;
 - (d) the pass's analyses, which the refresh reads too.
 
-The converter takes (d). By ruling 1, `convert-md-exec-to-gpu` calls the
+(d) stays with the pass (Section 2). By ruling 1, `convert-md-exec-to-gpu` calls the
 pattern where it meets the op, in program order, through `TraverseHost`
 (`include/mdir/Conversion/TraversePairs.h`). The interface gives:
 - the block size, the launches, `bringIn`, and the device's buffers;
@@ -299,19 +315,17 @@ The requirement that would allow an elision is in the type (D413).
 
 ```
 ... md-exec-assign-storage, md-exec-assign-streams, [stage bodies],
-convert-md-exec-to-md-alg{fuse-pruning=true fuse-pruning-groups=G},
-convert-md-exec-to-gpu{...},
+convert-md-exec-to-md-alg,
+convert-md-exec-to-gpu{... fuse-pruning=true fuse-pruning-groups=G ...},
 md-alg-transform-collections, convert-md-alg-to-gpu, ...
 ```
 
-- **The fused pruning.** The options of the pruning in the loop moved from
-  `convert-md-exec-to-gpu` to the new pass. Without them, the pass name
-  stands alone.
+- **The new pass** takes no option.
 - **Removed:**
   - `lowerGroupPairFor`;
   - the `unique` branch of `lowerPairFor`, which now refuses;
-  - `findSharedFrames`, `findPrunedInLoop`, and their sets in the big
-    pass;
+  - the sets of `findSharedFrames` and `findPrunedInLoop`, which became
+    one analysis over the traversals that sets their attributes;
   - `emitGroupPairKernel` in `MDExecKernels.cpp`.
 - **Stays in the big pass:** MATRIX, the ragged rows, PME's accessors, and
   the batched stages, which take a matrix alone.
@@ -377,8 +391,8 @@ $x \cdot 0$ does not fold in IEEE arithmetic.
 - `test/Dialect/MDAlg/traverse-invalid.mlir`: one case for each refusal of
   the verifier (20).
 - `test/Conversion/MDExecToMDAlg/convert.mlir`: the converter on a dual
-  list with two loops, with the frames, the pruning in the loop, and the
-  refusal of the deterministic mode's `fixed_order`.
+  list with two loops, and the refusal of the deterministic mode's
+  `fixed_order`.
 - `test/Conversion/MDExecToGPU/traverse-invalid.test`: the refusals of
   the lowerings and of the pipeline (10).
 - `test/Integration/md-alg-traverse-serial.test`: the serial definition on
