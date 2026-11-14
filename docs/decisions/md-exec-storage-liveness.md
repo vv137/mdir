@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**Reuse by lifetime finds almost nothing to share in the storage of `md_exec`. The census covers four programs: the dodecahedron with the groups and with the matrix, JAC with the groups, and STMV with the groups. In each, every buffer that the loop over steps touches is live through the whole step, with one exception: the reference positions of the neighbor lists, which are dead only from the decision to rebuild to the copy that ends the rebuild. The only buffers of the storage that are not live everywhere in the step are the ones the loop never touches. These are the setup's copies and intermediates, kept to the end of the run: 38.4 MB at STMV, 2.64% of its peak in use. Sharing allocations saves no more than releasing these buffers before the loop: the first fit by size reaches the lower bound, the most bytes live at one point of the step. At the program's peak, which is at every build of the lists in the loop, 89.6 MB of the storage is not live (6.16%). The extra 51.2 MB is the two reference positions, which could share only with the build's own collections, an owner of another layer. The census is therefore the result, and no transformation is added. An analysis, `StorageLiveness`, and a test pass that prints it, `--test-md-exec-print-storage-liveness`, are added; neither enters a pipeline, and the lowered programs are those of `main`.** Issue #880, after the census of #879 and #876.
+**Reuse by lifetime finds almost nothing to share in the storage of `md_exec`. The census covers four programs: the dodecahedron with the groups and with the matrix, JAC with the groups, and STMV with the groups. In each, every buffer that the loop over steps touches is live through the whole step, with one exception: the reference positions of the neighbor lists, which are dead only from the decision to rebuild to the copy that ends the rebuild. The only buffers of the storage that are not live everywhere in the step are the ones the loop never touches. These are the setup's copies and intermediates, kept to the end of the run: 38.4 MB at STMV, 2.64% of its peak in use. Sharing allocations saves no more than releasing these buffers before the loop: the first fit by size reaches the lower bound, the most bytes live at one point of the step. At the program's peak, which is at every build of the lists in the loop, 89.6 MB of the storage is not live (6.16%) when a launch that only writes a buffer is taken to overwrite it (`kills=stores`), and 64.0 MB (4.40%) when only fills and copies are (`kills=proven`). The extra 51.2 MB is the two reference positions, which could share only with the build's own collections, an owner of another layer. The census is therefore the result, and no transformation is added. An analysis, `StorageLiveness`, and a test pass that prints it, `--test-md-exec-print-storage-liveness`, are added; neither enters a pipeline, and the lowered programs are those of `main`.** Issue #880, after the census of #879 and #876.
 
 ## 1. The rule
 
@@ -16,6 +16,12 @@ The analysis (`include/mdir/Dialect/MDExec/StorageLiveness.h`,
 - Every kernel is a `gpu.launch` whose body names the buffers it reads and
   writes.
 - The host's order of the launches is the order of the code.
+- "The step" is one iteration of that loop. On the dodecahedron and JAC
+  it is one time step of a loop of 200. At STMV, at constant pressure
+  with the thermostat every 25 steps, the loop runs 8 times, and its body
+  holds an inner loop of 23 steps and two steps peeled after it. Its
+  points are those of all three, and the inner loop's back edge is an
+  edge of the flow.
 
 The analysis is a backward dataflow of liveness over the host's control
 flow, with buffers in place of the variables of register allocation
@@ -54,6 +60,13 @@ flow, with buffers in place of the variables of register allocation
     assumed, not proven, so the bound of this mode is an upper bound.
 
 A buffer is live at a point if a use is reachable from it without a kill.
+The rule is conservative in one place. The loop's yield swaps its
+carried buffers, so each argument views two buffers, and a write
+through it is never a kill. Both buffers of a pair are then live through
+the whole step, though each is dead in turn, from its last read in one
+step to its first write in the next. For sharing by a fixed allocation
+this is exact, since the dead one alternates from step to step. For the
+storage not live at a given point it undercounts.
 The loop's back edge, the branches, and the exit to the code after the
 loop are edges of the flow, so "carried by the loop" and "read after the
 loop" follow from the dataflow and need no special case. A buffer is
@@ -252,7 +265,11 @@ Three buffers match no block:
     part of the saving survives in the peak with the pool.
 
   This PR does not do it.
-- **Reuse at the peak needs another owner.** The storage dead at the build
+- **Reuse at the peak needs another owner.** The bound at the peak
+  undercounts by the swapped carried buffers (Section 1): one of a pair is
+  dead at the build when the step writes it only after the build. Using that room would also need an allocation per
+  step, or sharing with the build.
+- **Across owners.** The storage dead at the build
   (89.6 MB at STMV, with PME's grids another 73.8 MB) could share only
   with the build's collections. That is a sharing across layers, on one
   branch, which neither this owner nor the `md_alg` slot can decide
@@ -287,7 +304,8 @@ Three buffers match no block:
   - **Completions ignored.** Ignoring the waits of tokens makes it fail at
     `@memset`, whose fills are asynchronous, and `@async` loses its
     interference.
-- **No program changes.** On six programs, `mdir emit --stage=lowered`
+- **No program changes.** On six programs, at the base 79a91c24 before
+  the rebase (which brings only `main`'s commits), `mdir emit --stage=lowered`
   with `MDIR_GPU_BINARY=ptx`, `MDIR_COMPILE_CACHE=off`, and
   `MDIR_SKIN_CACHE=off` is the same, to the byte, as that of `main`
   (D406's method). The programs are the four of the census, FactorIX NVE
