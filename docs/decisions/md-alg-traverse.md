@@ -53,10 +53,10 @@ new form:
 | `dual`: the inner list (D114) | set by the refresh with `prune_skin`, `:7814`; read at `:3971`–`:3981` | attribute `lists(inner)`, which the converter reads from the refresh |
 | the inner list's `entries`, `masks`, `counts`, and the active units with their number (D268) | `getInnerLists`, `:6670`; `getPruneBuffers`, `:6677` | operands of the buffer form |
 | `prunedNow`, the frames that the pruning left (`getGroupsPlaced`, `:6688`) | `:3847`–`:3864`, `:4150`–`:4152` | host (SIMT state) |
-| the empty place (`order[p] = -1`) | `:3891`–`:3897`; `MDExecKernels.cpp:883`–`:887`, `:903`–`:912` | type (layout) |
-| the shift of a place, 10 bits an axis from −512 | `:3901`–`:3924` | type (layout) |
-| the bits of an entry's mask: 16 pairs, then the shift of the entry in 4 bits an axis, or 5 for a triclinic cell (D95, D115) | `MDExecKernels.cpp:701`–`:726`, `:732`–`:762`; `getEntryShiftBits`, `include/mdir/Conversion/MDExecKernels.h:75` | type (layout; I4 of D413) |
-| groups of 16 places, blocks of 64 entries (D89) | `MDExecKernels.cpp:582`–`:616`, `:660`; `GroupsBuild.cpp` | type (layout). Both the build and the schedule hard-code them today |
+| the empty place (`order[p] = -1`) | `:3891`–`:3897`; `MDExecKernels.cpp:883`–`:887`, `:903`–`:912` | layout, shared with the build |
+| the shift of a place, 10 bits an axis from −512 | `:3901`–`:3924` | layout, shared with the build |
+| the bits of an entry's mask: 16 pairs, then the shift of the entry in 4 bits an axis, or 5 for a triclinic cell (D95, D115) | `MDExecKernels.cpp:701`–`:726`, `:732`–`:762`; `getEntryShiftBits`, `include/mdir/Conversion/MDExecKernels.h:75` | layout, shared with the build; the type states only what it means, `minimum` images by the entry's shift (I4 of D413) |
+| groups of 16 places, blocks of 64 entries (D89) | `MDExecKernels.cpp:582`–`:616`, `:660`; `GroupsBuild.cpp` | layout, shared with the build: constants of D89 that the build and the schedule both write out today. They become one header, read by the build and both lowerings. They are not a type parameter, since D413 keeps the group size a cost of the build; the buffer form states them in its layout (`groups(16, 64)`) for the serial lowering |
 
 ### From the pass
 
@@ -108,6 +108,17 @@ Here $\sigma_a = +1$ for a `symmetric` destination and $-1$ for an
 `antisymmetric` one (`unique`: each unordered pair once). A destination
 with `overwrite` starts from zero. The results are the initial values plus
 the sums.
+
+**Where the precision changes** is part of the meaning, so that the two
+lowerings differ only in the order of the sums:
+- a position is moved into the frame of its group, by its place's shift,
+  in the type it is stored in (f64 in mixed precision);
+- that sum is converted to the type of the region's first argument (D95,
+  `:3921`–`:3933`);
+- the entry's shift is added in that type (`MDExecKernels.cpp:706`–`:726`).
+
+Both lowerings do exactly this. The serial loop does not convert before
+it shifts.
 
 **Operands:** the list (Section 3), the positions, the cell, `ins`, `outs`,
 and the initial values of `reduce`. In the execution group: `scratch`.
@@ -168,7 +179,7 @@ The SIMT lowering called by `convert-md-exec-to-gpu` takes the structure
 form and binds the buffers itself: it calls the runtime's getters through
 the host interface at the places where `main` calls them. In this step,
 nothing turns one form into the other as a pass. That conversion is item
-(d) of Section 7.
+(b) of Section 7.
 
 **Rejected:** a new list type with a pack op. It would need a 1:N type
 conversion from one value to the seven buffers in the big pass. It would
@@ -220,7 +231,15 @@ Each rule has one negative test, and each test is a realistic bug
    `pair_for` (`MDExecOps.cpp:1141`–`:1154`).
 6. **`combine owner` takes `directed`.** With `unique`, the partner's end
    is not the owner's row.
-7. **Shapes:** one `algebra` and one `exchange` entry for each value, one
+7. **Coverage.** The structure form runs D357's query on its operand, as
+   `pair_for` does: the cutoff is within the reach that the structure was
+   built for. `verifyNeighborCoverage` becomes a query over an interface
+   of the consumers, which both ops implement. The buffer form states its
+   reach with its contract, `reach(R)`, as a precondition, and the
+   verifier refuses a cutoff beyond it. Without this, a hand-written op
+   could claim any cutoff over any list, which is P2 of #877 one layer
+   down.
+8. **Shapes:** one `algebra` and one `exchange` entry for each value, one
    `weights` entry for each sum, and one `overwrite` flag for each
    destination. In the buffer form: the buffers of the layout, i32 and
    rank 1, and the contract.
@@ -307,10 +326,19 @@ The converter takes (d): it runs the two analyses, which are facts of
   - `finishSums`.
 - The bytes are then those of `main` by construction, and the comparison
   of D406 checks it.
+- `convert-md-alg-to-gpu` supplies a default `TraverseHost` for the op on
+  its own, in the buffer form:
+  - names by its own counter;
+  - device buffers by `gpu.alloc`;
+  - the partial sums reduced by the existing block reduction
+    (`ReductionEmitter.h`).
+
+  The contract test of Section 10 runs the pattern through this default.
 
 This departs from the issue's words: the pattern of
-`convert-md-alg-to-gpu` is the code, but the big pass calls it. D408's
-table gets a row for it, "Op lowered in place", with what would free it:
+`convert-md-alg-to-gpu` is the code, but the big pass calls it. The list
+of the ops that are lowered in place (D408; `docs/device-primitives.md`,
+"Pass order") gains this op, with what would free it:
 - (a) names of kernels that do not depend on the order of the lowering:
   a one-time rename of every kernel, which changes every program's bytes;
 - the sums of a loop as an `md_alg` reduction op, the reordered
@@ -369,6 +397,10 @@ md-alg-transform-collections, convert-md-alg-to-gpu, ...
   - `emitGroupPairKernel` in `MDExecKernels.cpp`, which moves.
 - **Stays:** MATRIX, the ragged rows, PME's accessors, and the batched
   stages.
+- **The documents** that change with the implementation: `docs/device-primitives.md`
+  ("Pass order", and the ops of `md_alg`), `docs/neighbor-groups.md` (the
+  loop over pairs), the dialect's reference, the roadmap, and the paper's
+  section on the layers.
 - **`mdir-opt`.** The tests that lower groups by `mdir-opt` (in
   `test/Conversion/MDExecToGPU/` and the `md_dist` programs with
   `md-exec-choose-neighbors=kind=groups`) put the new pass before the big
