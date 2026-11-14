@@ -59,9 +59,9 @@ Recorded at its merge.
   against 985,452, 3,162,836, 30,062,108, and 1,426,518,020 for the rule
   above. At STMV that is 16.0 MB more, a slack of 25.1 MB against 9.1. On
   the input of `Driver/pool-retention-gpu.test` it held 75 and 78 arenas
-  against 70 and 73 (Section 2a). It was not kept.
+  against 70 and 73 (below). It was not kept.
 
-## 2a. The test of the pool's growth with the run
+### The test of the pool's growth with the run
 
 `Driver/pool-retention-gpu.test` compares the blocks that the driver
 holds (taken less returned) after a short and a long run of the
@@ -74,13 +74,12 @@ once, and then stay, three runs each on an RTX 4090:
 |---|---:|---:|---:|---:|---:|
 | `main`, blocks | 95 | 97 | 97 | 97 | 97 |
 | this change, arenas | 70 | 73 | 73 | 73 | 73 |
-| the variant of D312 unchanged (Section 2), arenas | 75 | 78 | 78 | 78 | 78 |
+| the variant of D312 unchanged (above), arenas | 75 | 78 | 78 | 78 | 78 |
 
 From 100 steps, this change and the variant are past the slack by one (3
-against 2). The
-short run is now of 1,000 steps, after the rise. Both trees then hold
-the same count in the short and the long run (3,000 steps), and the
-slack of 2 stays. The defect that the test guards against (D312) left
+against 2). The short run is now of 1,000 steps, after the rise. Both
+trees then hold the same count in the short and the long run (3,000
+steps), and the slack of 2 stays. The defect that the test guards against (D312) left
 blocks in the pool at each build, and grew with the run past 1,000
 steps (783 MiB at STMV after 1,000 steps, more after). It was not run
 again here.
@@ -222,7 +221,7 @@ on a pool that breaks the property it names:
 | `trim` | a trim returns the idle arena and keeps the one with a piece in use, then returns it once the piece is freed | a trim of a partly used arena |
 | `pieces` (budget of 1 MiB) | an idle piece of an arena in use stays past the budget; the arena goes back once wholly idle | a piece returned alone |
 | `off` (budget of 0) | a freed arena goes back at once; nothing is kept or split | |
-| `replaced` | a buffer that a growth may replace takes an arena of its own, not the larger idle piece beside it, and a growth gives it back to the driver (D312) | a growable buffer cut from a larger piece |
+| `replaced` | a growth returns a buffer that is an arena of its own to the driver, and a piece of a larger arena to the pool | a piece returned to the driver alone (D312) |
 | `streams` | the order of the streams (Section 3) | a reuse before the work on another stream is done |
 
 The earlier scenarios (`registry`, `budget`, `retry`) pass unchanged.
@@ -236,14 +235,14 @@ every line.
 
 | Mutant | Fails |
 |---|---|
-| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `streams` |
+| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `replaced`, `streams` |
 | no rounding of the cut to 256 bytes | `split` |
 | the event wait of a change of stream skipped | `streams` (values 1 and 2) |
 | a split that leaves a rest below 256 bytes | `tail` |
 | a trim of a partly used arena | `trim` |
 | merging across arenas | `arenas`, `best`, `trim`, `pieces`, and the earlier `registry`, `budget`, `retry` |
 | first fit in place of best fit | `best` |
-| a growable buffer of the runtime cut from a larger piece | `replaced` |
+| a replaced piece returned to the driver alone | `replaced` |
 | the budget applied to a piece of an arena in use | `pieces` |
 
 ## 8. compute-sanitizer
