@@ -795,15 +795,35 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
 /* Memory of the device is kept for reuse when it is freed. All work goes
    to one stream, in order, so a block that is freed may be handed to work
    issued after the free without waiting: that work runs after the work that
-   used the block. Freeing memory with the driver would wait for the device,
-   and a build of a neighbor structure frees a dozen blocks. The live blocks
-   are recorded with their sizes, and the free blocks are reused for
-   requests of the same size. A block of a size that no later request asks
-   for would stay in the pool for the rest of the run, so the sizes that
+   used the block. A change of the stream (mdrtUseStream) makes the new
+   stream wait for an event recorded on the old one, so this holds across
+   it; the second stream of mdrtSideBegin allocates and frees nothing (D87).
+   Freeing memory with the driver would wait for the device, and a build of
+   a neighbor structure frees a dozen blocks.
+
+   The pool is a best-fit allocator with splitting and immediate
+   coalescing (Wilson, Johnstone, Neely and Boles, "Dynamic storage
+   allocation: a survey and critical review", IWMM 1995, LNCS 986), over
+   the allocations that it takes from the driver. A request that no idle
+   piece can hold takes an allocation of its own size from the driver, an
+   arena, which is then cut into pieces. A request is served from the
+   smallest idle piece that holds it, so a piece of exactly its size is
+   taken first, as the pool took before it split. The piece is cut at the
+   request's size rounded up to POOL_ALIGNMENT bytes when the rest is at
+   least that much; otherwise the request takes it whole. A freed piece is
+   merged with the idle pieces next to it in its own arena, never with
+   another arena, even one that the driver placed right after it. Every
+   byte of a merged piece was freed by work issued before the request that
+   takes it, so the order of the stream covers each part. The sizes that
    compiled code asks for at every step do not follow the builds: a buffer
    indexed by the places of the groups takes the room of the places, not
-   the number that a build occupied, and a buffer of the runtime that a
-   growth replaces goes back to the driver (D312).
+   the number that a build occupied (D312).
+
+   Only a whole arena goes back to the driver: an idle piece of an arena
+   that holds a block in use stays in the pool until the arena is idle as a
+   whole. A buffer of the runtime that a growth replaces goes back to the
+   driver if its arena is then idle as a whole, and stays in the pool
+   otherwise (D312).
 
    The registry of the blocks, live and pooled, is what returns them: an
    activation that closes takes back the blocks that it owns, and a block
@@ -811,14 +831,15 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    the process. So it grows with the blocks, however many there are; it
    held 4096 before #622, and a block past that was handed out untracked
    and never reclaimed. If it cannot grow, the block is given back to the
-   driver and the run stops. The idle blocks of the pool are bounded in
-   bytes (MDIR_DEVICE_POOL_BYTES, by default half of the device): a freed
-   block that would exceed the budget goes back to the driver. A request
-   that the driver refuses for want of memory releases the idle blocks of
-   the pool and the plans of cuFFT (trimIdle) and is made once more; and
-   an embedding program may release them itself (mdrtDeviceTrim). The
-   copies of the blocks at the peaks, for MDIR_DEVICE_MEMORY=2, keep at
-   most MAX_BLOCKS of them. */
+   driver and the run stops. The idle pieces of the pool are bounded in
+   bytes (MDIR_DEVICE_POOL_BYTES, by default half of the device): an arena
+   that becomes idle as a whole when the idle pieces would exceed the
+   budget goes back to the driver, so the idle arenas never exceed it. A
+   request that the driver refuses for want of memory releases the idle
+   arenas of the pool and the plans of cuFFT (trimIdle) and is made once
+   more; and an embedding program may release them itself
+   (mdrtDeviceTrim). The copies of the blocks at the peaks, for
+   MDIR_DEVICE_MEMORY=2, keep at most MAX_BLOCKS of them. */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
    calls (a Python simulation, D215): what the activation
@@ -839,22 +860,36 @@ struct Activation {
 };
 static struct Activation *currentActivation = NULL;
 
+/* A block in use, or an idle piece of the pool. */
 struct Block {
   CUdeviceptr pointer;
+  /* The bytes asked for; of an idle piece, its extent. */
   uint64_t size;
   /* The activation that allocated the block, or null. */
   struct Activation *owner;
   /* What the block was last allocated for: a buffer of the runtime's
      structures, or null for compiled code (MDIR_DEVICE_MEMORY=2). */
   const char *tag;
+  /* The bytes of the piece that it occupies from `pointer`: at least
+     `size`, and a multiple of POOL_ALIGNMENT unless the piece ends its
+     arena. */
+  uint64_t extent;
+  /* The arena: the allocation of the driver that holds the piece. */
+  CUdeviceptr base;
+  uint64_t baseSize;
 };
+/* The alignment of the pieces of an arena: the driver aligns an
+   allocation to at least 256 bytes, and the code may rely on that. */
+#define POOL_ALIGNMENT 256u
 static struct Block *liveBlocks = NULL;
 static int numLive = 0, roomLive = 0;
 static struct Block *freeBlocks = NULL;
 static int numFree = 0, roomFree = 0;
-/* The blocks of the pool's allocator that the driver holds, live or idle:
-   what a trim of everything gives back (mdrtDeviceMemoryCounts). */
+/* The arenas of the pool's allocator that the driver holds, live or idle,
+   and their bytes: what a trim of everything gives back
+   (mdrtDeviceMemoryCounts). */
 static int64_t numDriverBlocks = 0;
+static uint64_t reservedBytes = 0;
 /* Makes room for one more block in `list`, twice as much as it had; 0 if
    the host has no memory for it. */
 static int reserveBlock(struct Block **list, int count, int *room) {
@@ -872,7 +907,8 @@ static int reserveBlock(struct Block **list, int count, int *room) {
    the block is first given back, so that nothing stays untracked. */
 static void recordLiveBlock(struct Block block) {
   if (!reserveBlock(&liveBlocks, numLive, &roomLive)) {
-    cuMemFree(block.pointer);
+    if (block.pointer == block.base && block.extent == block.baseSize)
+      cuMemFree(block.pointer);
     fprintf(stderr, "mdrt: out of memory of the host for the registry of "
                     "the blocks of the device; the block is given back\n");
     abort();
@@ -898,7 +934,7 @@ static uint64_t getPoolBudget(void) {
   }
   return budget;
 }
-/* Returns the idle blocks of the pool and the plans of cuFFT to the driver
+/* Returns the idle arenas of the pool and the plans of cuFFT to the driver
    once the device has run its work; the bytes returned. */
 static uint64_t trimIdle(void);
 /* cuMemAlloc, made once more after a trim if the driver has no memory.
@@ -917,17 +953,22 @@ static CUresult allocateDevice(CUdeviceptr *pointer, size_t size) {
     result = cuMemAlloc(pointer, size);
   return result;
 }
-/* Puts an idle block in the pool if the budget and the host have room for
-   it, otherwise gives it back to the driver; the caller has waited for the
-   work that may use it, or the work after it runs after that work. */
-static void poolBlock(struct Block block, int gone);
+/* Puts a freed block in the pool, merged with the idle pieces next to it
+   in its arena. An arena that is then idle as a whole goes back to the
+   driver if the budget has no room for it, or if `replaced` (a buffer that
+   a growth replaced, D312); otherwise the piece stays idle. The caller has
+   waited for the work that may use it, or the work after it runs after
+   that work. */
+static void poolBlock(struct Block block, int gone, int replaced);
 /* What the runtime allocates a block for, while it does (null for
    compiled code). */
 static const char *allocationTag = NULL;
 
-/* The bytes of the blocks in use and of those in the pool, and their peaks
-   since the program started (D294): with MDIR_DEVICE_MEMORY
-   set, they are printed when the process ends. */
+/* The bytes asked for by the blocks in use and the bytes of the idle
+   pieces of the pool, and the peaks since the program started (D294) of
+   the bytes in use and of the bytes of the arenas, those in use, idle, or
+   rounded up within a piece in use: with MDIR_DEVICE_MEMORY set, they are
+   printed when the process ends. */
 static uint64_t liveBytes = 0, poolBytes = 0, peakLive = 0, peakReserved = 0;
 /* With MDIR_DEVICE_MEMORY=2: the blocks at the peak in use and at the peak
    with the pool (those in the pool after those in use), the driver's use
@@ -937,7 +978,9 @@ static int numPeakLive = 0;
 static struct Block peakReservedBlocks[2 * MAX_BLOCKS];
 static int numPeakReservedLive = 0, numPeakReservedFree = 0;
 static int64_t usedAtPeakReserved = -1;
+static uint64_t paddingAtPeakReserved = 0;
 static int64_t numAllocations = 0, numFromPool = 0, numToDriver = 0;
+static int64_t numSplits = 0;
 static void noteBytes(void) {
   int detailed = isMemoryDetailed();
   if (liveBytes > peakLive) {
@@ -948,8 +991,9 @@ static void noteBytes(void) {
       numPeakLive = live;
     }
   }
-  if (liveBytes + poolBytes > peakReserved) {
-    peakReserved = liveBytes + poolBytes;
+  if (reservedBytes > peakReserved) {
+    peakReserved = reservedBytes;
+    paddingAtPeakReserved = reservedBytes - liveBytes - poolBytes;
     if (detailed) {
       int live = numLive < MAX_BLOCKS ? numLive : MAX_BLOCKS;
       int idle = numFree < MAX_BLOCKS ? numFree : MAX_BLOCKS;
@@ -1023,9 +1067,10 @@ static void printDeviceMemory(void) {
                      : -1;
   fprintf(stderr,
           "mdrt: device memory: %lld allocations of blocks, %lld from the "
-          "pool, %lld returned to the driver\n",
+          "pool, %lld returned to the driver, %lld split from a larger "
+          "piece\n",
           (long long)numAllocations, (long long)numFromPool,
-          (long long)numToDriver);
+          (long long)numToDriver, (long long)numSplits);
   fprintf(stderr,
           "mdrt: device memory: the driver's use of the device: %.1f MiB "
           "once the context was made, %.1f MiB at the peak with the pool, "
@@ -1051,6 +1096,12 @@ static void printDeviceMemory(void) {
   printBlocks("in use", peakReservedBlocks, numPeakReservedLive);
   printBlocks("pool", peakReservedBlocks + numPeakReservedLive,
               numPeakReservedFree);
+  if (paddingAtPeakReserved)
+    fprintf(stderr,
+            "mdrt:   %-7s %10.1f MiB  %12llu bytes  the pieces in use "
+            "beyond the bytes asked for\n",
+            "padding", paddingAtPeakReserved / mib,
+            (unsigned long long)paddingAtPeakReserved);
 }
 static void watchDeviceMemory(void) {
   static int registered = 0;
@@ -1095,25 +1146,55 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     return (void *)pointer;
   }
   watchDeviceMemory();
+  struct Block block = {.size = size,
+                        .owner = currentActivation,
+                        .tag = allocationTag};
+  /* The best fit: the smallest idle piece that holds the request; among
+     pieces of one extent, the last in the list. */
+  int best = -1;
   for (int i = numFree; i-- != 0;) {
-    if (freeBlocks[i].size != size)
+    uint64_t extent = freeBlocks[i].extent;
+    if (extent < size || (best >= 0 && extent >= freeBlocks[best].extent))
       continue;
-    pointer = freeBlocks[i].pointer;
-    freeBlocks[i] = freeBlocks[--numFree];
-    poolBytes -= size;
-    ++numFromPool;
-    break;
+    best = i;
+    if (extent == size)
+      break;
   }
   ++numAllocations;
-  if (!pointer) {
+  if (best >= 0) {
+    struct Block piece = freeBlocks[best];
+    freeBlocks[best] = freeBlocks[--numFree];
+    poolBytes -= piece.extent;
+    uint64_t used =
+        (size + POOL_ALIGNMENT - 1) & ~(uint64_t)(POOL_ALIGNMENT - 1);
+    if (piece.extent >= used + POOL_ALIGNMENT) {
+      /* The rest stays idle; the list has the room of the piece taken. */
+      struct Block rest = piece;
+      rest.pointer += used;
+      rest.extent -= used;
+      rest.size = rest.extent;
+      freeBlocks[numFree++] = rest;
+      poolBytes += rest.extent;
+      piece.extent = used;
+      ++numSplits;
+    }
+    block.pointer = piece.pointer;
+    block.extent = piece.extent;
+    block.base = piece.base;
+    block.baseSize = piece.baseSize;
+    ++numFromPool;
+  } else {
     int64_t before = beginAccount();
     check(allocateDevice(&pointer, size), "cuMemAlloc");
     endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
     ++numDriverBlocks;
+    reservedBytes += size;
+    block.pointer = block.base = pointer;
+    block.extent = block.baseSize = size;
   }
+  pointer = block.pointer;
   liveBytes += size;
-  recordLiveBlock(
-      (struct Block){pointer, size, currentActivation, allocationTag});
+  recordLiveBlock(block);
   noteBytes();
   end(ALLOCATE, start);
   return (void *)pointer;
@@ -1131,7 +1212,7 @@ void mgpuMemFree(void *pointer, CUstream stream) {
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
     liveBytes -= block.size;
-    poolBlock(block, 0);
+    poolBlock(block, 0, 0);
     end(ALLOCATE, start);
     return;
   }
@@ -1143,29 +1224,69 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   end(ALLOCATE, start);
 }
 
-static void poolBlock(struct Block block, int gone) {
-  block.owner = NULL;
-  if (poolBytes + block.size <= getPoolBudget() &&
-      reserveBlock(&freeBlocks, numFree, &roomFree)) {
-    freeBlocks[numFree++] = block;
-    poolBytes += block.size;
-    return;
-  }
-  /* Past the budget the block goes back to the driver, once the work that
-     may use it is done. */
+/* Gives an idle arena back to the driver, once the work that may use it is
+   done unless the caller has waited for it. */
+static void releaseArena(struct Block arena, int gone, int waited) {
   --numDriverBlocks;
+  reservedBytes -= arena.baseSize;
   if (gone)
     return;
-  finish();
-  check(cuMemFree(block.pointer), "cuMemFree");
+  if (!waited)
+    finish();
+  check(cuMemFree(arena.base), "cuMemFree");
   ++numToDriver;
 }
 
+static void poolBlock(struct Block block, int gone, int replaced) {
+  block.owner = NULL;
+  block.size = block.extent;
+  /* The idle neighbors in the arena: one ends where the block begins, one
+     begins where it ends. Two idle pieces are never next to each other, so
+     one pass over the list finds both. The merged piece keeps the tag of
+     its larger part. */
+  for (int i = numFree; i-- != 0;) {
+    struct Block other = freeBlocks[i];
+    if (other.base != block.base)
+      continue;
+    if (other.pointer + other.extent == block.pointer)
+      block.pointer = other.pointer;
+    else if (block.pointer + block.extent != other.pointer)
+      continue;
+    if (other.extent > block.extent)
+      block.tag = other.tag;
+    block.extent += other.extent;
+    block.size = block.extent;
+    poolBytes -= other.extent;
+    freeBlocks[i] = freeBlocks[--numFree];
+  }
+  int whole = block.pointer == block.base && block.extent == block.baseSize;
+  if (whole && (replaced || poolBytes + block.extent > getPoolBudget())) {
+    /* Past the budget, or replaced by a growth, an idle arena goes back to
+       the driver. */
+    releaseArena(block, gone, replaced);
+    return;
+  }
+  if (!reserveBlock(&freeBlocks, numFree, &roomFree)) {
+    if (whole) {
+      releaseArena(block, gone, replaced);
+      return;
+    }
+    fprintf(stderr, "mdrt: out of memory of the host for the list of the "
+                    "idle pieces of the device\n");
+    abort();
+  }
+  freeBlocks[numFree++] = block;
+  poolBytes += block.extent;
+}
+
 /* Returns a buffer of the runtime's structures that a growth replaces to
-   the driver, not to the pool (D312): the buffer that
-   replaces it is larger, and a later request of the old size is unlikely,
-   so in the pool it would stay for the rest of the run. The caller has
-   waited for the device, as a growth does, so the free does not wait. */
+   the driver, not to the pool (D312): the buffer that replaces it is
+   larger, and a later request of the old size is unlikely, so in the pool
+   it would stay for the rest of the run. A piece of an arena that holds
+   other blocks in use cannot go back alone: it stays idle in the pool,
+   where a smaller request may take it, and its arena goes back once it is
+   idle as a whole. The caller has waited for the device, as a growth does,
+   so the free does not wait. */
 static void releaseReplaced(void *pointer) {
   if (!pointer)
     return;
@@ -1173,10 +1294,11 @@ static void releaseReplaced(void *pointer) {
   for (int i = numLive; i-- != 0;) {
     if (liveBlocks[i].pointer != address)
       continue;
-    liveBytes -= liveBlocks[i].size;
+    struct Block block = liveBlocks[i];
+    liveBytes -= block.size;
     liveBlocks[i] = liveBlocks[--numLive];
-    --numDriverBlocks;
-    break;
+    poolBlock(block, 0, 1);
+    return;
   }
   check(cuMemFree(address), "cuMemFree");
   ++numToDriver;
@@ -1490,14 +1612,18 @@ static uint64_t trimIdle(void) {
   if (isDriverGone())
     return 0;
   finish();
-  uint64_t released = poolBytes + fftPlanBytes;
-  for (int i = 0; i != numFree; ++i) {
-    check(cuMemFree(freeBlocks[i].pointer), "cuMemFree");
-    --numDriverBlocks;
-    ++numToDriver;
+  /* Only an arena that is idle as a whole goes back; the idle pieces of an
+     arena that holds a block in use stay. */
+  uint64_t released = fftPlanBytes;
+  for (int i = numFree; i-- != 0;) {
+    struct Block piece = freeBlocks[i];
+    if (piece.pointer != piece.base || piece.extent != piece.baseSize)
+      continue;
+    released += piece.extent;
+    poolBytes -= piece.extent;
+    freeBlocks[i] = freeBlocks[--numFree];
+    releaseArena(piece, 0, 1);
   }
-  numFree = 0;
-  poolBytes = 0;
   while (numFFTPlans)
     destroyFFTPlan(numFFTPlans - 1);
   return released;
@@ -1974,7 +2100,7 @@ void mdrtDeviceActivationClose(void *activation) {
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
     liveBytes -= block.size;
-    poolBlock(block, gone);
+    poolBlock(block, gone, 0);
   }
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
@@ -2329,7 +2455,12 @@ void *mdrtDeviceAllocateRecorded(uint64_t size) {
   int64_t before = beginAccount();
   check(allocateDevice(&pointer, size), "cuMemAlloc");
   endAccount(ACCOUNT_KEPT, before, (int64_t)size);
-  recordLiveBlock((struct Block){pointer, size, NULL, "a plugin's outputs"});
+  recordLiveBlock((struct Block){.pointer = pointer,
+                                 .size = size,
+                                 .tag = "a plugin's outputs",
+                                 .extent = size,
+                                 .base = pointer,
+                                 .baseSize = size});
   return (void *)pointer;
 }
 
