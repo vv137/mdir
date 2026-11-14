@@ -687,6 +687,31 @@ memory of the largest system. Of that peak, 56% is the lists of the
 groups and 28% the fields of the step, at layers below and above
 `md_alg`.
 
+The requirements that would let a sort go are known above `md_alg`, where
+the structure is chosen and each loop over pairs states its policy and
+its algebra. The type of a neighbor structure therefore carries what its
+build guarantees (D[neighbors-contract], #881). It has four parts. The
+first is the traversal: both orders of each pair, as in a matrix, or
+each pair once, as in the groups. The second is the images. The third is
+how the excluded pairs are left out: marked by an entry that a consumer
+skips, or absent. The last is the organization of the lists, in the
+values above, keyed by the row of a center or by a group of a build. A
+build may state no more than it guarantees. Each loop states what it
+requires from its policy and its algebra:
+- the same traversal and images as the list;
+- for a loop whose centers each store once, the grouping by its center;
+- for a sum of fixed order, the order of the search.
+
+The verifier refuses a loop whose requirement the type does not meet,
+in the order of required and delivered physical properties of a query
+optimizer [[Graefe1993]](references.md#graefe1993). Because the
+guarantee is a type, it passes through the refreshes and the values that
+loops carry and branches choose, where the type rules keep it. A sort
+becomes removable once a cast to a weaker type leaves it without a
+reader. Cost choices, such as the kind of the structure and the order of
+the places, stay with the build, so that a change of the cost model does
+not change a type.
+
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 
 D360 retains packed scalar buffers between same-block

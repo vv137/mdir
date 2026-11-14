@@ -479,20 +479,46 @@ A relation without a tuple set, such as the triplets of
 
 _A physical neighbor structure_
 
-Syntax:
-
-```
-!mdrt.neighbors<
-  ::mlir::FlatSymbolRefAttr   # particleSet
->
-```
-
 A list of pairs that was built at a reference configuration. It contains
 every pair within the cutoff for as long as no particle has moved more
 than half the skin.
 
+The type states what the build guarantees about its lists
+(D[neighbors-contract], `NeighborsContract.h`), in four words:
+
+- the traversal: `directed`, both orders of each pair, or `unique`,
+  each pair once;
+- the images: `minimum`, the minimum image in the cell, or `explicit`,
+  the plain difference of positions that carry their images (D290);
+- the exclusions: `masked`, an entry may stand for an excluded pair
+  (the particle itself), which a consumer skips, or `removed`, no entry
+  stands for one;
+- the organization (the values of D409): `none`, `grouped_by(G)`,
+  `sorted_within(G, K)`, or `stable(G, K)`, with the group `G` the row
+  of one center (`owner`) or a group of a build of groups (`group`),
+  and the key `K` the partner (`item`) or the order of the build's
+  search (`search`). Both keys are total, so `sorted_within(G, K)` is
+  read as `stable(G, K)`.
+
+A consumer states what it requires in the same values, and its verifier
+refuses a structure whose guarantee does not meet it: `masked ⊑
+removed`, `none ⊑ grouped_by(G) ⊑ sorted_within(G, K) ⊑ stable(G, K)`
+for the same keys, and the traversal and the images equal. Cost
+choices, such as the kind of the structure, its width, or the order of
+the places of a build of groups, are attributes of the build, not part
+of the type.
+
+Without the four words, the type states what a matrix guarantees:
+
 ```mlir
 !mdrt.neighbors<@atoms>
+!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+```
+
+A structure of groups, and its dual list:
+
+```mlir
+!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
 ```
 
 #### Parameters:
@@ -500,6 +526,7 @@ than half the skin.
 | Parameter | C++ type | Description |
 | :-------: | :-------: | ----------- |
 | particleSet | `::mlir::FlatSymbolRefAttr` |  |
+| contract | `::mdir::mdrt::NeighborsContract` |  |
 
 ### PermutationType
 

@@ -1872,6 +1872,54 @@ Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
 
 
 
+### `md_exec.weaken_neighbors` (::mdir::md_exec::WeakenNeighborsOp)
+
+_States less of a neighbor structure than its type does_
+
+Syntax:
+
+```
+operation ::= `md_exec.weaken_neighbors` $neighbors attr-dict `:` qualified(type($neighbors)) `to`
+              qualified(type($result))
+```
+
+The result is the structure `neighbors` itself, with a type that
+guarantees less of its lists (D[neighbors-contract],
+`!mdrt.neighbors`): the same particle set, and on every axis a value
+that the operand's meets. Nothing of the structure changes. A pass that
+finds that no consumer needs an order weakens the type first; the sort
+that gave the order then has no reader (#877).
+
+```mlir
+%w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+       to !mdrt.neighbors<@atoms, directed, minimum, masked,
+                          grouped_by(owner)>
+```
+
+The op folds to its operand when the two types are equal. Its verifier
+refuses a result that states more than the operand, or a value that
+the operand's does not meet, such as another key.
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `neighbors` | A physical neighbor structure |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A physical neighbor structure |
+
+
+
 ### `md_exec.yield` (::mdir::md_exec::YieldOp)
 
 _Yields the contributions of a kernel_

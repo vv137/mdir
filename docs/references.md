@@ -178,6 +178,20 @@ Units (SI)*, SI Brochure, 9th ed. (2019), ISBN 978-92-822-2272-0.
 Used for: the exact SI defining elementary charge, Boltzmann constant and
 Avogadro constant in the single public physical-constants header.
 
+### Bik2022
+
+A. Bik, P. Koanantakool, T. Shpeisman, N. Vasilache, B. Zheng,
+F. Kjolstad, "Compiler support for sparse tensor computations in MLIR,"
+*ACM Trans. Archit. Code Optim.* **19**(4), 1–25 (2022).
+[doi:10.1145/3544559](https://doi.org/10.1145/3544559)
+
+Used for: properties of a collection (ordered, unique levels) stated in
+its type, with a change of them only through an explicit conversion op:
+the precedent of the layout contract of `!mdrt.neighbors` and of
+`md_exec.weaken_neighbors` (D[neighbors-contract], #881). Unlike its
+encoding, the type of a neighbor structure keeps the storage choices
+out: they are attributes of the build.
+
 ### Blackman2021
 
 D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
@@ -575,6 +589,19 @@ Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
 Used for: the cost of privatized sums in block memory, the model behind
 the privatized scatter-accumulate (D285,
 [device-primitives.md](device-primitives.md)).
+
+### Graefe1993
+
+G. Graefe, W. J. McKenna, "The Volcano optimizer generator: extensibility
+and efficient search," in *Proceedings of IEEE 9th International
+Conference on Data Engineering* (IEEE, 1993), pp. 209–218.
+[doi:10.1109/ICDE.1993.344061](https://doi.org/10.1109/ICDE.1993.344061)
+
+Used for: the physical properties that a producer delivers and a
+consumer requires, met when the required is at most the delivered, with
+a sort as an enforcer placed only where they differ: the guarantee of a
+neighbor structure in its type and the requirement of each consumer
+(D[neighbors-contract], #881, #877).
 
 ### Gratl2022
 
@@ -1224,6 +1251,17 @@ Used for: Allegro, the example of a strictly local learned potential, and
 the model of ML1 (docs/metatomic-ml1.md), which the `nequip` package's ASE
 calculator evaluates as its reference.
 
+### Neumann2004
+
+T. Neumann, G. Moerkotte, "A combined framework for grouping and order
+optimization," in *Proceedings 2004 VLDB Conference* (Elsevier, 2004),
+pp. 960–971.
+[doi:10.1016/B978-012088469-8.50084-X](https://doi.org/10.1016/B978-012088469-8.50084-X)
+
+Used for: grouping as a property apart from ordering, and weaker: the
+organization axis of the layout contract of a neighbor structure, where
+`grouped_by` is below `stable` (D[neighbors-contract], #881).
+
 ### Nose1984
 
 S. Nosé, "A molecular dynamics method for simulations in the canonical
@@ -1533,7 +1571,10 @@ portable library for particle-based simulations," *J. Open Source Softw.*
 **7**(72), 4115 (2022).
 [doi:10.21105/joss.04115](https://doi.org/10.21105/joss.04115)
 
-Used for: identifying Cabana, a model for the runtime.
+Used for: identifying Cabana, a model for the runtime; full and half
+neighbor lists and their layout as parameters of the list's type, the
+closest precedent in particle codes of the traversal and the
+organization in `!mdrt.neighbors` (D[neighbors-contract], #881).
 
 ### Slepian1961
 
