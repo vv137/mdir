@@ -1431,6 +1431,17 @@ Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 
 Used for: the FFT of particle mesh Ewald on the host (D64, pme.md).
 
+### Rinard1997
+
+M. C. Rinard, P. C. Diniz, "Commutativity analysis: a new analysis
+technique for parallelizing compilers," *ACM Transactions on Programming
+Languages and Systems* **19**, 942–991 (1997).
+[doi:10.1145/267959.269969](https://doi.org/10.1145/267959.269969)
+
+Used for: why a consumer's requirement is declared and checked, not
+inferred from its code: an inference from code is the conservative guess
+that the declaration replaces (D[md-alg-traverse], #877).
+
 ### Roe2013
 
 D. R. Roe, T. E. Cheatham III, "PTRAJ and CPPTRAJ: Software for processing

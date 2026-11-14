@@ -739,6 +739,28 @@ reader. Cost choices, such as the kind of the structure and the order of
 the places, stay with the build, so that a change of the cost model does
 not change a type.
 
+The consumer itself then moves into `md_alg` (D[md-alg-traverse]). A loop
+over pairs over groups becomes one op, `md_alg.traverse_pairs`, that keeps
+the loop's kernel as its region and declares what the loop needs: whether
+it visits each pair once, whether its visit is ordered, how its
+destinations receive their values, and the algebra of each sum. Its
+meaning is the sum over the entries of the list within the cutoff:
+
+$$a_i \mathrel{+}= k_a(i,j),\qquad a_j \mathrel{+}= \sigma_a\,k_a(i,j),\qquad S \mathrel{+}= 2\,w_S\,k_S(i,j),$$
+
+with $\sigma_a = \pm 1$ the exchange contract of the destination. The
+verifier allows the region no write, so that every write goes through the
+declared combination. It refuses a declaration that the list's type does
+not meet, and a visit weaker than an algebra needs. The requirement is
+read from declarations, never inferred from the region, which is the
+conservative guess that the type set out to replace
+[[Rinard1997]](references.md#rinard1997). The op's serial definition is
+the plain loop over the entries, and the schedule of the groups is its
+SIMT lowering. Two orders of a sum of $n$ terms differ by at most
+$2\gamma_{n-1}\sum_k\lvert t_k\rvert$, with $\gamma_m = mu/(1-mu)$ and $u$
+the unit roundoff, and the schedule and the serial definition agree within
+that bound on every force, the energy, and the virial.
+
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 
 D360 retains packed scalar buffers between same-block
