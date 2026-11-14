@@ -758,6 +758,15 @@ summation in bilayer simulations has critical effects on surface tension
 and lipid properties," *J. Chem. Theory Comput.* **9**, 3527–3537 (2013).
 [doi:10.1021/ct400140n](https://doi.org/10.1021/ct400140n)
 
+### Wilson1995
+
+P. R. Wilson, M. S. Johnstone, M. Neely, D. Boles, "Dynamic storage
+allocation: A survey and critical review," in *Memory Management*
+(International Workshop IWMM 95, Kinross, UK, 1995), Lecture Notes in
+Computer Science, Vol. 986 (Springer, Berlin, Heidelberg, 1995),
+pp. 1–116.
+[doi:10.1007/3-540-60368-9_19](https://doi.org/10.1007/3-540-60368-9_19)
+
 ### Xiao2001
 
 H. Xiao, V. Rokhlin, N. Yarvin, "Prolate spheroidal wavefunctions,

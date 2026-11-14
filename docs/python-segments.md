@@ -205,7 +205,8 @@ waits between parts keeps its memory while another runs. It is freed when
 the activation ends: at the end of the simulation, at a failure, and where
 an update of tunables or an evaluation after the first run begins another;
 the device blocks return to the runtime's pool, where later activations
-take the blocks of the same sizes. The memory of a simulation therefore
+take them again, a block of a request's size first, or a piece of a larger
+one. The memory of a simulation therefore
 stays that of one activation however many parts it runs (#110), and a live
 simulation holds it between runs, so that live simulations hold the sum of
 theirs. `mdir run` calls its entry once and opens no activation; for
@@ -309,9 +310,10 @@ M2b (#138).
 
 The memory of the device that a simulation's activation took returns to
 the runtime's pool when the simulation ends, where a later simulation
-takes the blocks of the same sizes. In a long process that alternates
+takes them again. In a long process that alternates
 systems of other sizes, grids, or precisions, the idle blocks stay within
-`MDIR_DEVICE_POOL_BYTES` (half of the device by default), and
+`MDIR_DEVICE_POOL_BYTES` (half of the device by default) once the
+simulations have ended, and
 `mdir.trim_device_memory()` gives them, and the cached plans of cuFFT,
 back to the driver; it returns the bytes given back. A request that the
 driver refuses for want of memory does the same once by itself
