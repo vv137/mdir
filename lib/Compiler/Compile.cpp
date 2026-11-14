@@ -373,15 +373,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : getStageBodiesPass())
-       // The loops over pairs over groups become md_alg.traverse_pairs,
-       // with the pruning of a dual list in the loop that follows its
-       // refresh (D284) as an execution choice of the op
+       // The loops over pairs over groups become md_alg.traverse_pairs
        // (D[md-alg-traverse]).
-       << "convert-md-exec-to-md-alg"
-       << (getFusedPruningOptions(gpuOptions).empty()
-               ? std::string()
-               : "{" + getFusedPruningOptions(gpuOptions) + "}")
-       << ","
+       << "convert-md-exec-to-md-alg,"
        << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
@@ -408,6 +402,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
+       // The pruning of a dual list in the loop over pairs that follows
+       // its refresh (D284).
+       << getFusedPruningOptions(gpuOptions)
        // The serial definition of md_alg.traverse_pairs on the host in
        // place of its schedule, for the contract test
        // (D[md-alg-traverse]).

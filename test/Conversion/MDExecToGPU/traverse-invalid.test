@@ -41,8 +41,8 @@
 # BLOCK: runs a warp for each unit of work, which needs blocks of whole warps, not 48 threads
 #
 # The serial oracle where the loop prunes for its refresh (D284).
-# RUN: mdir-opt %t.exec.mlir --convert-md-exec-to-md-alg="fuse-pruning=true fuse-pruning-groups=7" \
-# RUN: | not mdir-opt --convert-md-exec-to-gpu=traverse-oracle=serial 2>&1 \
+# RUN: not mdir-opt %t.alg.mlir \
+# RUN:     --convert-md-exec-to-gpu="fuse-pruning=true fuse-pruning-groups=7 traverse-oracle=serial" 2>&1 \
 # RUN: | FileCheck %s --check-prefix=ORACLE
 # ORACLE: 'md_alg.traverse_pairs' op prunes for its refresh (D284), which its serial definition does not: the oracle takes the pruning in the refresh
 #

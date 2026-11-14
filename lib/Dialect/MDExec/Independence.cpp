@@ -3,6 +3,7 @@
 // See Independence.h, and D87 in docs/decisions.md for the argument that
 // running independent ops at once is correct.
 
+#include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 
 #include "mdir/Dialect/MD/MDTypes.h"
@@ -156,9 +157,11 @@ BufferAliases::getRoots(Value value) {
             }
             continue;
           }
+          // md_alg.traverse_pairs reads a structure as the loop over pairs
+          // it was made from (D[md-alg-traverse]).
           if (!isa<PairForOp, BuildTripletsOp, BuildEdgesOp,
-                   ReferencePositionsOp, ReferenceCellOp, RebuildCountOp>(
-                  user)) {
+                   ReferencePositionsOp, ReferenceCellOp, RebuildCountOp,
+                   md_alg::TraversePairsOp>(user)) {
             computed.reset();
             break;
           }

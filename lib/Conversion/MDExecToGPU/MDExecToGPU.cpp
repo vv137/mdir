@@ -252,6 +252,12 @@ public:
   /// by its serial definition on the host over copies of its buffers, in
   /// order, in reverse, or with the magnitudes of the terms.
   std::string traverseOracle = "simt";
+  /// Whether the first loop over pairs after a refresh of a dual list, at
+  /// the same positions and in the same cell, prunes the inner list in its
+  /// own kernel, a warp a group, where the refresh prunes, from
+  /// `fusePruningGroups` groups (`fuse-pruning`, D284).
+  bool fusePruning = false;
+  int64_t fusePruningGroups = 0;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
@@ -309,6 +315,14 @@ private:
   LogicalResult lowerTraversePairsSerial(md_alg::TraversePairsOp op,
                                          const Neighbors &structure);
   friend class GroupsHost;
+  /// Sets the execution choices of each md_alg.traverse_pairs of
+  /// `function` that need md_exec's view of the program, after the moves
+  /// of the reciprocal sums (D113): `frames`, where the loop follows its
+  /// refresh at the same positions and in the same cell with nothing
+  /// between that may write the positions (D268); and with `fusePruning`,
+  /// `prune(G, R)` on the first such loop that takes the refresh's result
+  /// (D284).
+  void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
   /// The buffers of the structure of groups `handle`, as they are where
   /// `builder` is.
   GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc,
@@ -1463,6 +1477,9 @@ void Lowering::findCenterFusions(func::FuncOp function) {
       if (auto pair = dyn_cast<md_exec::PairForOp>(op)) {
         llvm::append_range(writes, pair.getOuts());
         llvm::append_range(writes, pair.getScratch());
+      } else if (auto pair = dyn_cast<md_alg::TraversePairsOp>(op)) {
+        llvm::append_range(writes, pair.getOuts());
+        llvm::append_range(writes, pair.getScratch());
       } else if (auto particle = dyn_cast<md_exec::ParticleForOp>(op)) {
         llvm::append_range(writes, particle.getOuts());
         llvm::append_range(writes, particle.getScratch());
@@ -2187,6 +2204,8 @@ static bool overwritesAll(Operation *op, Value buffer) {
   if (auto loop = dyn_cast<md_exec::TupleForOp>(op))
     return overwrites(loop);
   if (auto loop = dyn_cast<md_exec::PairForOp>(op))
+    return overwrites(loop);
+  if (auto loop = dyn_cast<md_alg::TraversePairsOp>(op))
     return overwrites(loop);
   if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op))
     return reciprocal.getOut() == buffer &&
@@ -3703,6 +3722,73 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 //===----------------------------------------------------------------------===//
 // Loops over pairs over groups (md_alg.traverse_pairs, D[md-alg-traverse])
 //===----------------------------------------------------------------------===//
+
+void Lowering::findSharedFrames(func::FuncOp function,
+                                md_exec::BufferAliases &aliases) {
+  MLIRContext *context = function.getContext();
+  SmallVector<md_alg::TraversePairsOp> shares;
+  function.walk([&](md_alg::TraversePairsOp pair) {
+    pair.setFrames(false);
+    pair.removePruneGroupsAttr();
+    pair.removePruneReachAttr();
+    if (pair.isBufferForm())
+      return;
+    auto refresh =
+        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    if (!refresh || !refresh.getPruneSkin() ||
+        refresh->getBlock() != pair->getBlock() ||
+        refresh.getPositions() != pair.getPositions() ||
+        refresh.getCellMutable().get() != pair.getCell())
+      return;
+    Value positions = pair.getPositions();
+    for (Operation *crossed = refresh->getNextNode(); crossed != pair;
+         crossed = crossed->getNextNode()) {
+      // An op whose effects are not all declared, or that may write or
+      // free the positions, ends the sharing.
+      std::optional<SmallVector<MemoryEffects::EffectInstance>> effects =
+          getEffectsRecursively(crossed);
+      if (!effects)
+        return;
+      for (const MemoryEffects::EffectInstance &effect : *effects) {
+        if (!isa<MemoryEffects::Write, MemoryEffects::Free>(
+                effect.getEffect()))
+          continue;
+        Value value = effect.getValue();
+        if (!value || aliases.mayAlias(value, positions))
+          return;
+      }
+    }
+    shares.push_back(pair);
+  });
+  for (md_alg::TraversePairsOp pair : shares)
+    pair.setFrames(true);
+  if (!fusePruning)
+    return;
+  // A loop that shares the frames prunes for its refresh if it is also the
+  // first op that takes the refresh's result: nothing reads the inner
+  // list before the loop writes it.
+  for (md_alg::TraversePairsOp pair : shares) {
+    auto refresh =
+        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    if (!refresh.getStale())
+      continue;
+    Value result = refresh.getResult();
+    bool first = true;
+    for (Operation *crossed = refresh->getNextNode();
+         first && crossed != pair.getOperation();
+         crossed = crossed->getNextNode())
+      crossed->walk([&](Operation *inner) {
+        first &= !llvm::is_contained(inner->getOperands(), result);
+      });
+    if (!first)
+      continue;
+    pair.setPruneGroupsAttr(
+        IntegerAttr::get(IntegerType::get(context, 64), fusePruningGroups));
+    pair.setPruneReachAttr(FloatAttr::get(
+        Float64Type::get(context), refresh.getCutoff().convertToDouble() +
+                                       refresh.getPruneSkin()->convertToDouble()));
+  }
+}
 
 namespace {
 /// What the SIMT schedule of md_alg.traverse_pairs takes from this pass
@@ -8517,6 +8603,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       reciprocal->moveBefore(refresh);
   });
 
+  // The execution choices of the loops over pairs over groups that need
+  // the order of the program after the moves above (D268, D284).
+  findSharedFrames(function, aliases);
+
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
   findRows(function);
@@ -8777,6 +8867,8 @@ public:
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
     lowering.traverseOracle = traverseOracle;
+    lowering.fusePruning = fusePruning;
+    lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;
     if (failed(lowering.run()))
       return signalPassFailure();

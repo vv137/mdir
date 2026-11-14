@@ -21,9 +21,11 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDExecEnumsIncGen
   MDIRMDExecAttrsIncGen
   MDIRMDExecLoopEffectsIncGen
+  MDIRMDAlgIncGen
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIRMDAlg
   MDIREffects
   MDIRMDDist
   MDIRMDRT
