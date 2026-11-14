@@ -1,5 +1,5 @@
 // What the builds of md_exec guarantee about a neighbor structure, and what
-// its consumers require (D[neighbors-contract], #881, step 1 of #877).
+// its consumers require (D413, #881, step 1 of #877).
 //
 // The guarantee is a parameter of `!mdrt.neighbors`
 // (include/mdir/Dialect/MDRT/NeighborsContract.h). A build or an empty

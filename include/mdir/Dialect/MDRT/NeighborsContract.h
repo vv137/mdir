@@ -1,4 +1,4 @@
-// The layout contract of a neighbor structure (D[neighbors-contract]).
+// The layout contract of a neighbor structure (D413).
 //
 // What a build guarantees about the lists of a structure, on two axes:
 // multiplicity (the traversal, the images, the encoding of the excluded

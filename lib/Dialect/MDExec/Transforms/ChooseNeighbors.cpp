@@ -70,7 +70,7 @@ bool allowsUnique(PairForOp loop) {
 /// initial value, the iteration argument, the yielded value, and the result
 /// of a loop that carries it; and the result of an scf.if with the values
 /// that its branches yield. They have one type, which states the
-/// guarantee of the structure (D[neighbors-contract]).
+/// guarantee of the structure (D413).
 class Webs {
 public:
   explicit Webs(Operation *root) {
@@ -212,7 +212,7 @@ public:
         if (!allowsUnique(loop) || domainRows)
           keep.insert(beginning);
       }
-    // The values of one structure have one type (D[neighbors-contract]):
+    // The values of one structure have one type (D413):
     // the beginnings of a structure that escapes, or that has a beginning
     // no loop over pairs takes, stay matrices with the rest of it.
     Webs webs(getOperation());

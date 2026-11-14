@@ -484,7 +484,7 @@ every pair within the cutoff for as long as no particle has moved more
 than half the skin.
 
 The type states what the build guarantees about its lists
-(D[neighbors-contract], `NeighborsContract.h`), in four words:
+(D413, `NeighborsContract.h`), in four words:
 
 - the traversal: `directed`, both orders of each pair, or `unique`,
   each pair once;

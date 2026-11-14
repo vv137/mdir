@@ -1,4 +1,4 @@
-// What the parser of !mdrt.neighbors refuses (D[neighbors-contract]).
+// What the parser of !mdrt.neighbors refuses (D413).
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics
 

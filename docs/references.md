@@ -188,7 +188,7 @@ F. Kjolstad, "Compiler support for sparse tensor computations in MLIR,"
 Used for: properties of a collection (ordered, unique levels) stated in
 its type, with a change of them only through an explicit conversion op:
 the precedent of the layout contract of `!mdrt.neighbors` and of
-`md_exec.weaken_neighbors` (D[neighbors-contract], #881). Unlike its
+`md_exec.weaken_neighbors` (D413, #881). Unlike its
 encoding, the type of a neighbor structure keeps the storage choices
 out: they are attributes of the build.
 
@@ -273,7 +273,7 @@ G. J. Chaitin, "Register allocation & spilling via graph coloring,"
 
 Used for: the interference of buffers that are live at one point, and the
 coloring that bounds their sharing of allocations
-(D[md-exec-storage-liveness]).
+(D412).
 
 ### Chodera2007
 
@@ -611,7 +611,7 @@ Used for: the physical properties that a producer delivers and a
 consumer requires, met when the required is at most the delivered, with
 a sort as an enforcer placed only where they differ: the guarantee of a
 neighbor structure in its type and the requirement of each consumer
-(D[neighbors-contract], #881, #877).
+(D413, #881, #877).
 
 ### Gratl2022
 
@@ -1270,7 +1270,7 @@ pp. 960–971.
 
 Used for: grouping as a property apart from ordering, and weaker: the
 organization axis of the layout contract of a neighbor structure, where
-`grouped_by` is below `stable` (D[neighbors-contract], #881).
+`grouped_by` is below `stable` (D413, #881).
 
 ### Nose1984
 
@@ -1584,7 +1584,7 @@ portable library for particle-based simulations," *J. Open Source Softw.*
 Used for: identifying Cabana, a model for the runtime; full and half
 neighbor lists and their layout as parameters of the list's type, the
 closest precedent in particle codes of the traversal and the
-organization in `!mdrt.neighbors` (D[neighbors-contract], #881).
+organization in `!mdrt.neighbors` (D413, #881).
 
 ### Slepian1961
 

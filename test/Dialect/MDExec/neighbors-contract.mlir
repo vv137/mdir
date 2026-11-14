@@ -1,4 +1,4 @@
-// The layout contract of a neighbor structure (D[neighbors-contract], #881):
+// The layout contract of a neighbor structure (D413, #881):
 // the type goes through a refresh, the values that a loop carries, and the
 // results of an scf.if unchanged; each consumer whose requirement it meets
 // is accepted; the cast that weakens it folds away where it changes nothing.

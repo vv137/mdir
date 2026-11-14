@@ -1,5 +1,5 @@
 // The liveness of the storage of md_exec within the loop over steps
-// (D[md-exec-storage-liveness]); see
+// (D412); see
 // include/mdir/Dialect/MDExec/StorageLiveness.h.
 //
 // Three steps:

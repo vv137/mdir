@@ -15,7 +15,7 @@ md.particle_set @atoms
 // every loop over it has a contract for each value: an antisymmetric
 // destination and a symmetric sum. Its loops take each pair once (D89).
 //
-// Every value of the structure takes the type of groups (D[neighbors-contract]).
+// Every value of the structure takes the type of groups (D413).
 //
 // CHECK-LABEL: func.func @groups(
 // CHECK:         md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
@@ -131,7 +131,7 @@ func.func @dual(%x: !vec, %cell: !md.cell, %n: index) -> (f64, f64) {
 
 // A structure that an scf.if chooses is one structure with the values its
 // branches yield: it becomes groups, and the scf.if's result takes the
-// type of groups too (D[neighbors-contract]).
+// type of groups too (D413).
 //
 // CHECK-LABEL: func.func @through_if(
 // CHECK:         md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
@@ -165,7 +165,7 @@ func.func @through_if(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64
 
 // A structure passed to a call keeps the matrix: the signature of the
 // callee fixes the type of its argument, and the pass does not change
-// functions (D[neighbors-contract]).
+// functions (D413).
 //
 // CHECK-LABEL: func.func @called(
 // CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>

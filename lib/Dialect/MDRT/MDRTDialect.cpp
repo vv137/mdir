@@ -408,7 +408,7 @@ LogicalResult TemplateConvertOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// NeighborsType (D[neighbors-contract])
+// NeighborsType (D413)
 //===----------------------------------------------------------------------===//
 
 /// Parses one of `words`, the values of an axis in their order, into its

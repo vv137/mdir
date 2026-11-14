@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s --test-md-exec-print-storage-liveness=kills=proven -o /dev/null | FileCheck %s --check-prefix=PROVEN
 
 // The liveness of the storage of md_exec within the loop over steps
-// (D[md-exec-storage-liveness], #880). Each function is one rule, with the
+// (D412, #880). Each function is one rule, with the
 // bug it must catch. A buffer must interfere with one whose life lies
 // inside its own when it is read after the loop, carried by the loop,
 // used by an asynchronous launch until its wait or by a side stream until

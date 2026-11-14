@@ -1,5 +1,5 @@
 // The liveness of the storage of md_exec within the loop over steps
-// (D[md-exec-storage-liveness], #880).
+// (D412, #880).
 //
 // The storage of md_exec is the device buffers that `md-exec-assign-storage`
 // and `convert-md-exec-to-gpu` allocate in the host function before its loop

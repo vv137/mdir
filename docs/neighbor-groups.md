@@ -1036,7 +1036,7 @@ is counted rather than estimated.
   kind of each structure and the policy of its loops on a device (the kind
   stays `matrix` on the CPU).
 - The type of a structure states what its build guarantees
-  (D[neighbors-contract]): `!mdrt.neighbors<@atoms, unique, minimum,
+  (D413): `!mdrt.neighbors<@atoms, unique, minimum,
   removed, stable(group, search)>` for groups and their dual list. That
   is each pair once (I1), in the frame of its group (I4), with no bit for
   an excluded pair, and the list of each group in the order of its search
@@ -1071,7 +1071,7 @@ Section 7.1), and no open issue tracks a proof of it in the IR.
 neighbor type. Provenance was chosen for coverage: the cutoff and the
 exact centers are SSA facts and values, which a type cannot hold, and
 unresolved required facts are errors. The layout contract of
-D[neighbors-contract] is in the type instead: it is a closed lattice that
+D413 is in the type instead: it is a closed lattice that
 the build fixes, with no SSA subjects. The type also carries the images,
 so the verifier refuses a loop whose images are not its structure's
 before the query runs. Identity forwarding

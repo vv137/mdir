@@ -233,7 +233,7 @@ LogicalResult Coverage::prove() {
         return failure();
       continue;
     }
-    // A cast of the type is the same structure (D[neighbors-contract]).
+    // A cast of the type is the same structure (D413).
     if (auto weaken = request.neighbors.getDefiningOp<WeakenNeighborsOp>()) {
       append(weaken.getNeighbors(), request.centers, request.boundary);
       continue;

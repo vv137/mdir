@@ -1,5 +1,5 @@
 // A test pass that prints the liveness of the storage of md_exec within the
-// loop over steps (D[md-exec-storage-liveness], #880): for each host
+// loop over steps (D412, #880): for each host
 // function with a loop over steps, each buffer allocated before the loop,
 // the points of the step where it is live, its first and last access there,
 // whether the loop carries it, whether it is read after the loop or pinned,

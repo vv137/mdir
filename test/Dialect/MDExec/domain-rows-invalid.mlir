@@ -96,7 +96,7 @@ md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index,
 md.particle_set @local
 
 // A loop takes the images that its structure holds: the type states them
-// (D[neighbors-contract]).
+// (D413).
 md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index)
     -> f64 {
   %cells = md_exec.build_cells %x, %cell width(0.67)

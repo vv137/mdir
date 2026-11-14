@@ -352,7 +352,7 @@ device peak of STMV falls from 2.05 to 1.92 GB and that of the
 fourteenfold replica from 23.0 to 21.1 GB, and the fifteenfold (16.0
 million atoms) runs in 22.6 GB.
 
-**The lifetimes of the step's buffers** (D[md-exec-storage-liveness]).
+**The lifetimes of the step's buffers** (D412).
 The fields and parameters that the storage pass allocates before the loop
 over steps are kept to its end: 28% of STMV's peak in use. Two of them
 could share one allocation if no point of the host's code needed both.
@@ -709,7 +709,7 @@ groups and 28% the fields of the step, at layers below and above
 The requirements that would let a sort go are known above `md_alg`, where
 the structure is chosen and each loop over pairs states its policy and
 its algebra. The type of a neighbor structure therefore carries what its
-build guarantees (D[neighbors-contract], #881). It has four parts. The
+build guarantees (D413, #881). It has four parts. The
 first is the traversal: both orders of each pair, as in a matrix, or
 each pair once, as in the groups. The second is the images. The third is
 how the excluded pairs are left out: marked by an entry that a consumer

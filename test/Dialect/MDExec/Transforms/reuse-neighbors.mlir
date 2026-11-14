@@ -308,7 +308,7 @@ func.func @repeated(%x0: !vec, %cell: !md.cell, %other: !md.cell,
   return %x, %total : !vec, f64
 }
 
-// A structure of groups keeps its type (D[neighbors-contract]): the empty
+// A structure of groups keeps its type (D413): the empty
 // structure that the loop starts from, the value it carries, and the
 // refresh that replaces the build all take the type of the build.
 //

@@ -1,5 +1,5 @@
 // What the verifier refuses of the layout contract of a neighbor structure
-// (D[neighbors-contract], #881): a consumer whose requirement the type does
+// (D413, #881): a consumer whose requirement the type does
 // not meet, a build whose type states more than it guarantees, and a cast
 // that strengthens. Each case is a bug that a pass could make.
 //

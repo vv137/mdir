@@ -47,7 +47,7 @@ def MDRT_NeighborsType : MDRT_Type<"Neighbors", "neighbors"> {
     than half the skin.
 
     The type states what the build guarantees about its lists
-    (D[neighbors-contract], `NeighborsContract.h`), in four words:
+    (D413, `NeighborsContract.h`), in four words:
 
     - the traversal: `directed`, both orders of each pair, or `unique`,
       each pair once;

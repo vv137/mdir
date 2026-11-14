@@ -863,7 +863,7 @@ LogicalResult RefreshNeighborsOp::verify() {
                             "policy 'always' and without 'prune_skin'";
 
   // A refresh builds with its images, which its type states
-  // (D[neighbors-contract]).
+  // (D413).
   Contract::Images images = getImages() == Images::Explicit
                                 ? Contract::Images::Explicit
                                 : Contract::Images::Minimum;
@@ -1174,7 +1174,7 @@ LogicalResult PairForOp::verify() {
                            << overwrite->size();
   }
 
-  // What the loop requires of the lists (D[neighbors-contract]).
+  // What the loop requires of the lists (D413).
   if (failed(verifyRequirement(getOperation(), getNeighbors(),
                                getRequirement(*this))))
     return failure();
@@ -1327,7 +1327,7 @@ LogicalResult BuildTripletsOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
-  // The rows of a matrix (D[neighbors-contract]).
+  // The rows of a matrix (D413).
   if (failed(verifyRequirement(getOperation(), getNeighbors(),
                                getRowsRequirement())))
     return failure();
@@ -1374,7 +1374,7 @@ LogicalResult BuildEdgesOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
-  // The rows of a matrix (D[neighbors-contract]).
+  // The rows of a matrix (D413).
   if (failed(verifyRequirement(getOperation(), getNeighbors(),
                                getRowsRequirement())))
     return failure();

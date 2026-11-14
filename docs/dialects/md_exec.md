@@ -1884,7 +1884,7 @@ operation ::= `md_exec.weaken_neighbors` $neighbors attr-dict `:` qualified(type
 ```
 
 The result is the structure `neighbors` itself, with a type that
-guarantees less of its lists (D[neighbors-contract],
+guarantees less of its lists (D413,
 `!mdrt.neighbors`): the same particle set, and on every axis a value
 that the operand's meets. Nothing of the structure changes. A pass that
 finds that no consumer needs an order weakens the type first; the sort

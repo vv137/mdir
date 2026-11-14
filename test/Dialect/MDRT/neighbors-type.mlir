@@ -1,4 +1,4 @@
-// The layout contract of !mdrt.neighbors (D[neighbors-contract]): the four
+// The layout contract of !mdrt.neighbors (D413): the four
 // words, always spelled and printed, and the normalization of a sort by a
 // total key.
 //

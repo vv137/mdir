@@ -861,7 +861,7 @@ def MDExec_WeakenNeighborsOp : MDExec_Op<"weaken_neighbors", [Pure]> {
   let summary = "States less of a neighbor structure than its type does";
   let description = [{
     The result is the structure `neighbors` itself, with a type that
-    guarantees less of its lists (D[neighbors-contract],
+    guarantees less of its lists (D413,
     `!mdrt.neighbors`): the same particle set, and on every axis a value
     that the operand's meets. Nothing of the structure changes. A pass that
     finds that no consumer needs an order weakens the type first; the sort
