@@ -15,6 +15,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   FuseLoops.cpp
   NarrowSums.cpp
   RebuildAtInterval.cpp
+  ReleaseDeadStorage.cpp
   ReuseNeighbors.cpp
   ShareDivisions.cpp
   SimplifyDistance.cpp
