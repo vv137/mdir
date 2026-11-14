@@ -191,7 +191,7 @@ emits the cast.
 ## The same programs
 
 The lowered programs of the branch were compared with those of the base
-(79a91c24), by the method of D406. The command was `mdir emit
+(125b1f94), by the method of D406. The command was `mdir emit
 --stage=lowered` with `MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89
 MDIR_COMPILE_CACHE=off MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, which
 gives the PTX of every kernel and the host's code, through
