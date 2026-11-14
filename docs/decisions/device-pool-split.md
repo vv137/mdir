@@ -109,7 +109,7 @@ steps, `[output] energy_interval = 0`, mixed precision) on an RTX 4090,
 with `MDIR_DEVICE_MEMORY=2`, built from `main` 9c10a859 and from this
 change, alternated in one job. The bytes are the sums of the runtime's
 tables of the blocks at each peak: in use, idle, and padding. `main`'s
-numbers are D414's to the byte.
+numbers are those of D414's change (#885, in `main` since) to the byte.
 
 | | Dodecahedron, groups | Dodecahedron, matrix | JAC, groups | STMV, groups |
 |---|---:|---:|---:|---:|
