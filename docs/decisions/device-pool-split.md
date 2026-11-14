@@ -262,7 +262,8 @@ every job, so it is a real cost and not noise.
   `mgpuMemAlloc` and `mgpuMemFree` (counted together, from runs of
   2,000 and 4,000 steps) are 12.3 a step at JAC and 15.5 at STMV, on
   both trees. Their host time is 0.6 µs a step at JAC against 0.4 on
-  `main`, and 0.9 to 1.0 µs at STMV against 0.55, about 50 ns a call. No
+  `main`, and 0.85 to 1.05 µs at STMV against 0.55: 50 to 70 ns a call
+against 35, beside steps of 135 µs and 4 ms. No
   driver call is made in the step: the arenas that the driver holds are
   the same after 2,000 and 4,000 steps (71 at STMV), and the requests
   split from a larger piece grow by 1.8 a step.
