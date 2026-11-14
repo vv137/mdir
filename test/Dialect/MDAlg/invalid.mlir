@@ -399,7 +399,7 @@ func.func @stage_11(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o:
 func.func private @opaque()
 // A side output is none of its own buffers.
 func.func @stage_12(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
-  // expected-error @+1 {{declares one of its own buffers as a side output}}
+  // expected-error @+1 {{declares as a side output one of its own buffers or its 'by', or another side output, or a view of one}}
   md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable writes(%c : !d) : !d
       launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
   ^bb0(%i: index):
@@ -417,6 +417,57 @@ func.func private @opaque()
 func.func @stage_13(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
   // expected-error @+1 {{declares a buffer both written and added to}}
   md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable writes(%x : !d) adds(%x : !d) : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %v = memref.load %x[%i] : !d
+    md_alg.bin %v : i32
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
+// A side output is no view of its own buffers: a subview of the keys (#871).
+func.func @stage_13a(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.subview %k[0] [4] [1] : !d to memref<4xi32, strided<[1]>, 1>
+  // expected-error @+1 {{declares as a side output one of its own buffers or its 'by', or another side output, or a view of one}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable writes(%view : memref<4xi32, strided<[1]>, 1>) : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %v = memref.load %x[%i] : !d
+    md_alg.bin %v : i32
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
+// Nor a cast of the order, which it fills (#871).
+func.func @stage_13b(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.cast %o : !d to !d
+  // expected-error @+1 {{declares as a side output one of its own buffers or its 'by', or another side output, or a view of one}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable writes(%view : !d) : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %v = memref.load %x[%i] : !d
+    md_alg.bin %v : i32
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
+// Nor a view of another side output (#871).
+func.func @stage_13c(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.memory_space_cast %x : !d to memref<?xi32>
+  // expected-error @+1 {{declares as a side output one of its own buffers or its 'by', or another side output, or a view of one}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable writes(%x : !d) adds(%view : memref<?xi32>) : !d
       launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
   ^bb0(%i: index):
     %v = memref.load %x[%i] : !d

@@ -290,6 +290,41 @@ static LogicalResult verifySideOutputs(Region &region, Value item,
   return failure(result.wasInterrupted());
 }
 
+/// The buffer that `v` views, through the views whose elements are those
+/// of their source (as the collection analysis follows them).
+static Value viewedRoot(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (!isa<memref::MemorySpaceCastOp, memref::CastOp, memref::SubViewOp,
+             memref::ReinterpretCastOp>(def))
+      break;
+    v = def->getOperand(0);
+  }
+  return v;
+}
+
+/// Refuses, on `op`, a side output of `writes` or `adds` that is, or views,
+/// a buffer of `own` or another side output (D409, #871): it would let one
+/// item see what another wrote, or what the op itself writes or reads.
+/// `owned` names the buffers of `own` in the message.
+static LogicalResult verifyDistinctSideOutputs(Operation *op,
+                                               ArrayRef<Value> own,
+                                               ValueRange writes,
+                                               ValueRange adds,
+                                               StringRef owned) {
+  SmallVector<Value> roots;
+  for (Value v : own)
+    roots.push_back(viewedRoot(v));
+  for (Value side : llvm::concat<Value>(writes, adds)) {
+    Value root = viewedRoot(side);
+    if (llvm::is_contained(roots, root))
+      return op->emitOpError() << "declares as a side output " << owned
+                               << ", or another side output, or a view of "
+                                  "one";
+    roots.push_back(root);
+  }
+  return success();
+}
+
 LogicalResult SortByKeyOp::verify() {
   bool launch = !getLaunch().empty();
   bool scan = getScanStrategy().has_value();
@@ -360,14 +395,13 @@ LogicalResult SortByKeyOp::verify() {
   if (Value by = getBy())
     if (by == getOut() || by == getSortBuffer())
       return emitOpError() << "sorts into its order 'by', which it reads";
-  for (Value side : llvm::concat<Value>(getWrites(), getAdds()))
-    if (llvm::is_contained(own, side) || side == getBy())
-      return emitOpError() << "declares one of its own buffers as a side "
-                              "output";
   for (Value w : getWrites())
     if (llvm::is_contained(getAdds(), w))
       return emitOpError() << "declares a buffer both written and added to";
-  return success();
+  if (Value by = getBy())
+    own.push_back(by);
+  return verifyDistinctSideOutputs(*this, own, getWrites(), getAdds(),
+                                   "one of its own buffers or its 'by'");
 }
 
 LogicalResult SortByKeyOp::verifyRegions() {
@@ -571,32 +605,13 @@ bool BinMembersOp::combinesExactly() {
                       isIntegerCombiner);
 }
 
-/// The buffer that `v` views, through the views whose elements are those
-/// of their source (as the collection analysis follows them).
-static Value viewedRoot(Value v) {
-  while (Operation *def = v.getDefiningOp()) {
-    if (!isa<memref::MemorySpaceCastOp, memref::CastOp, memref::SubViewOp,
-             memref::ReinterpretCastOp>(def))
-      break;
-    v = def->getOperand(0);
-  }
-  return v;
-}
-
 LogicalResult BinMembersOp::verify() {
-  // A side output that is, or views, a buffer the op reads, or another side
-  // output, would let one item see what another wrote.
-  SmallVector<Value> roots = {viewedRoot(getStart()), viewedRoot(getItems())};
+  SmallVector<Value> reads = {getStart(), getItems()};
   if (Value by = getBy())
-    roots.push_back(viewedRoot(by));
-  for (Value side : llvm::concat<Value>(getWrites(), getAdds())) {
-    Value root = viewedRoot(side);
-    if (llvm::is_contained(roots, root))
-      return emitOpError() << "declares as a side output a buffer that it "
-                              "reads, or another side output, or a view of "
-                              "one";
-    roots.push_back(root);
-  }
+    reads.push_back(by);
+  if (failed(verifyDistinctSideOutputs(*this, reads, getWrites(), getAdds(),
+                                       "a buffer that it reads")))
+    return failure();
   if (getBy() && getVisit() == Visit::Unordered)
     return emitOpError() << "visits by 'by' only in the order 'sorted' or "
                             "'stable'";
