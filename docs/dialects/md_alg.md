@@ -262,7 +262,9 @@ of the order of its items (D409):
   constant, and whose other indices are constants); and an addition to
   a counter of `adds`, as the key region of `md_alg.sort_by_key` (D407).
   It reads no buffer of `writes` or `adds`, nor `items`, `start`, or
-  `by`. The verifier refuses anything else.
+  `by`, nor a view of one (`memref.memory_space_cast`, `cast`,
+  `subview`, `reinterpret_cast`), wherever the view is made (#874).
+  The verifier refuses anything else.
 - `sorted`: ascending by `by[item]`, or by the item without `by`; ties
   in any order. A sort by the item is total, so it is `stable` (the
   analysis writes it so).
@@ -852,7 +854,10 @@ Every other write is refused. The region runs once for each item, in no
 fixed order and concurrently. A side output is none of the op's own
 buffers nor its `by`, nor another side output, nor a view of one
 (`memref.memory_space_cast`, `cast`, `subview`, `reinterpret_cast`,
-as for `md_alg.bin_members`; #871).
+as for `md_alg.bin_members`; #871). The own buffers are distinct, and
+`by` is not the order, by the same views: two operands that view one
+buffer are one buffer. The region uses no own buffer through a view
+either, wherever the view is made (#874).
 
 *Contract:* every lowering gives the serial lowering's `keys`,
 `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`

@@ -196,12 +196,35 @@ static int64_t binsOnEveryPath(Block &block) {
   return count;
 }
 
+/// The buffer that `v` views, through the views whose elements are those
+/// of their source (as the collection analysis follows them).
+static Value viewedRoot(Value v) {
+  while (Operation *def = v.getDefiningOp()) {
+    if (!isa<memref::MemorySpaceCastOp, memref::CastOp, memref::SubViewOp,
+             memref::ReinterpretCastOp>(def))
+      break;
+    v = def->getOperand(0);
+  }
+  return v;
+}
+
+/// Whether `v` and one of `buffers` are, or view, one buffer (#874): the
+/// checks of md_alg.sort_by_key and md_alg.bin_members that two operands,
+/// or an operand and a use in the region, are not one buffer compare the
+/// buffers that they view, so that a view does not pass for another buffer.
+static bool viewsAnyOf(ValueRange buffers, Value v) {
+  Value root = viewedRoot(v);
+  return llvm::any_of(buffers,
+                      [&](Value buffer) { return viewedRoot(buffer) == root; });
+}
+
 /// Whether every write of `region`, whose items run in no fixed order, is
 /// a slot of its item (`item`) in a buffer of `writes` or an addition to a
 /// counter of `adds` (D407), and no op uses a buffer of `own`. With
 /// `strict`, a buffer of `writes` or `adds` is used only as the target of
 /// such a write, so that no item reads what another wrote
-/// (D409). `noun` and `name` name the region and its op in
+/// (D409). A use of a view of a buffer, made outside the region, is a use
+/// of the buffer (#874). `noun` and `name` name the region and its op in
 /// the messages.
 static LogicalResult verifySideOutputs(Region &region, Value item,
                                        ArrayRef<Value> own, ValueRange writes,
@@ -209,13 +232,13 @@ static LogicalResult verifySideOutputs(Region &region, Value item,
                                        StringRef name, bool strict) {
   WalkResult result = region.walk([&](Operation *op) -> WalkResult {
     for (Value operand : op->getOperands())
-      if (llvm::is_contained(own, operand))
+      if (viewsAnyOf(own, operand))
         return op->emitOpError()
                << "uses a buffer of the '" << name << "' of its " << noun;
     if (strict)
       for (OpOperand &use : op->getOpOperands()) {
         Value v = use.get();
-        if (!llvm::is_contained(writes, v) && !llvm::is_contained(adds, v))
+        if (!viewsAnyOf(writes, v) && !viewsAnyOf(adds, v))
           continue;
         bool target =
             (isa<memref::StoreOp>(op) &&
@@ -288,18 +311,6 @@ static LogicalResult verifySideOutputs(Region &region, Value item,
     return WalkResult::advance();
   });
   return failure(result.wasInterrupted());
-}
-
-/// The buffer that `v` views, through the views whose elements are those
-/// of their source (as the collection analysis follows them).
-static Value viewedRoot(Value v) {
-  while (Operation *def = v.getDefiningOp()) {
-    if (!isa<memref::MemorySpaceCastOp, memref::CastOp, memref::SubViewOp,
-             memref::ReinterpretCastOp>(def))
-      break;
-    v = def->getOperand(0);
-  }
-  return v;
 }
 
 /// Refuses, on `op`, a side output of `writes` or `adds` that is, or views,
@@ -389,11 +400,12 @@ LogicalResult SortByKeyOp::verify() {
     own.push_back(buffer);
   for (size_t i = 0; i < own.size(); ++i)
     for (size_t j = i + 1; j < own.size(); ++j)
-      if (own[i] == own[j])
+      if (viewsAnyOf(own[j], own[i]))
         return emitOpError() << "takes one buffer for two of its keys, "
                                 "counts, start, cursor, order, and scatter";
   if (Value by = getBy())
-    if (by == getOut() || by == getSortBuffer())
+    if (viewsAnyOf(getOut(), by) ||
+        (getSortBuffer() && viewsAnyOf(getSortBuffer(), by)))
       return emitOpError() << "sorts into its order 'by', which it reads";
   for (Value w : getWrites())
     if (llvm::is_contained(getAdds(), w))
