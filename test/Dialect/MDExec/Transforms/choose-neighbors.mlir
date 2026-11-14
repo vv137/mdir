@@ -129,15 +129,16 @@ func.func @dual(%x: !vec, %cell: !md.cell, %n: index) -> (f64, f64) {
   return %a, %b : f64, f64
 }
 
-// A structure that reaches an op whose types the pass does not follow, here
-// the results of an scf.if, keeps the matrix: its values have one type, and
-// the pass cannot give the groups' type to the scf.if (D[neighbors-contract]).
+// A structure that an scf.if chooses is one structure with the values its
+// branches yield: it becomes groups, and the scf.if's result takes the
+// type of groups too (D[neighbors-contract]).
 //
-// CHECK-LABEL: func.func @escapes(
-// CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
-// CHECK:         md_exec.pair_for {{.*}} policy(directed, owner_only)
-// CHECK:         scf.if {{.*}} -> (!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>)
-func.func @escapes(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
+// CHECK-LABEL: func.func @through_if(
+// CHECK:         md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+// CHECK:         md_exec.pair_for {{.*}} policy(unique, atomic)
+// CHECK:         scf.if {{.*}} -> (!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>)
+// CHECK:         md_exec.rebuild_count {{.*}} : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+func.func @through_if(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %u0 = arith.constant 0.0 : f64
@@ -159,5 +160,38 @@ func.func @escapes(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
     scf.yield %nl0 : !nl
   }
   %builds = md_exec.rebuild_count %chosen : !nl
+  return %e, %builds : f64, i64
+}
+
+// A structure passed to a call keeps the matrix: the signature of the
+// callee fixes the type of its argument, and the pass does not change
+// functions (D[neighbors-contract]).
+//
+// CHECK-LABEL: func.func @called(
+// CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+// CHECK:         md_exec.pair_for {{.*}} policy(directed, owner_only)
+// CHECK:         call @count(%{{.*}}) : (!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) -> i64
+func.func private @count(%nl: !nl) -> i64 {
+  %builds = md_exec.rebuild_count %nl : !nl
+  return %builds : i64
+}
+
+func.func @called(%x: !vec, %cell: !md.cell, %n: index) -> (f64, i64) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %u0 = arith.constant 0.0 : f64
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(96) : !nl
+  %nl, %e = scf.for %i = %c0 to %n step %c1 iter_args(%s = %nl0, %t = %u0)
+      -> (!nl, f64) {
+    %s1 = md_exec.refresh_neighbors %s, %x, %cell
+        cutoff(2.5) skin(0.3) cell_width(2.8) policy(check) : !nl, !vec
+    %u = md_exec.pair_for %s1, %x, %cell reduce(%u0 : f64) cutoff(2.5)
+        weights [0.5] exchange [symmetric] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+    scf.yield %s1, %u : !nl, f64
+  }
+  %builds = func.call @count(%nl) : (!nl) -> i64
   return %e, %builds : f64, i64
 }

@@ -66,9 +66,10 @@ bool allowsUnique(PairForOp loop) {
   return true;
 }
 
-/// The values that are one structure: a refresh's operand and result, and
-/// the initial value, the iteration argument, the yielded value, and the
-/// result of a loop that carries it. They have one type, which states the
+/// The values that are one structure: a refresh's operand and result; the
+/// initial value, the iteration argument, the yielded value, and the result
+/// of a loop that carries it; and the result of an scf.if with the values
+/// that its branches yield. They have one type, which states the
 /// guarantee of the structure (D[neighbors-contract]).
 class Webs {
 public:
@@ -90,6 +91,13 @@ public:
         join(value, loop.getRegionIterArgs()[index]);
         join(value, loop.getYieldedValues()[index]);
       }
+      // The two branches of an scf.if yield one type.
+      if (auto branch = value.getDefiningOp<scf::IfOp>()) {
+        unsigned index = cast<OpResult>(value).getResultNumber();
+        join(value, branch.thenYield().getOperand(index));
+        if (!branch.getElseRegion().empty())
+          join(value, branch.elseYield().getOperand(index));
+      }
     }
   }
 
@@ -103,9 +111,9 @@ public:
     return root;
   }
 
-  /// Returns true if `value` has a use that the type of a structure of
-  /// groups could not reach, or whose type is fixed elsewhere: anything
-  /// but the ops that carry, refresh, or read a structure.
+  /// Returns true if `value` has a use whose type is fixed elsewhere: a
+  /// call or a return, whose function's signature fixes it, or any op
+  /// that does not carry, choose, refresh, or read a structure.
   static bool escapes(Value value) {
     for (OpOperand &use : value.getUses()) {
       Operation *user = use.getOwner();
@@ -119,7 +127,8 @@ public:
       if (auto loop = dyn_cast<scf::ForOp>(user))
         if (use.getOperandNumber() >= loop.getNumControlOperands())
           continue;
-      if (isa<scf::YieldOp>(user) && isa<scf::ForOp>(user->getParentOp()))
+      if (isa<scf::YieldOp>(user) &&
+          isa<scf::ForOp, scf::IfOp>(user->getParentOp()))
         continue;
       return true;
     }
@@ -226,7 +235,7 @@ public:
           argument.getOwner() ==
               cast<scf::ForOp>(argument.getOwner()->getParentOp()).getBody();
       bool made = op && isa<EmptyNeighborsOp, BuildNeighborsOp,
-                            RefreshNeighborsOp, scf::ForOp>(op);
+                            RefreshNeighborsOp, scf::ForOp, scf::IfOp>(op);
       if (Webs::escapes(value) || !(carried || made))
         escaping.insert(web);
     }

@@ -1042,9 +1042,10 @@ is counted rather than estimated.
   an excluded pair, and the list of each group in the order of its search
   (I2, I5). The matrix is `directed, minimum, masked, stable(owner,
   search)`. The four words are always spelled. `md-exec-choose-neighbors` gives the
-  type to every value of a structure that it turns into groups. A
-  structure whose values reach an op whose types the pass does not
-  follow, such as an `scf.if`, keeps the matrix. Each loop over pairs
+  type to every value of a structure that it turns into groups, across the
+  loops that carry it and the `scf.if` ops that choose it. A structure
+  passed to a call or returned keeps the matrix: the function's signature
+  fixes its type. Each loop over pairs
   states what it requires: its traversal and images, `grouped_by(owner)`
   under `owner_only`, and the order of the search for a `fixed_order`
   sum. The verifier refuses a loop whose requirement the type does not

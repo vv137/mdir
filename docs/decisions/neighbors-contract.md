@@ -105,14 +105,20 @@ make the branches of a program disagree (#877, correction 5).
   it turns into groups. It retypes every value of the structure: the
   build or `empty_neighbors`, the refreshes, and the initial values,
   iteration arguments, yielded values, and results of the `scf.for` ops
-  that carry it. A structure keeps the matrix, with all its beginnings,
-  in two cases:
-  - its values reach an op whose types the pass does not follow, such as
-    an `scf.if`, a call, or a return;
+  that carry it, and the results of the `scf.if` ops that choose it with
+  the values their branches yield. A structure keeps the matrix, with all
+  its beginnings, in two cases:
+  - its values reach a call, a return, or another op that does not carry,
+    choose, refresh, or read a structure. The signature of the callee or
+    of the function fixes the type there, and the pass changes no
+    function. On `main` such a structure became groups with its type
+    unchanged, which the type no longer allows;
   - one of its beginnings has no loop over pairs.
 
-  No program of `main` has such a structure: the lowered programs are
-  identical (below).
+  No program of the corpus has such a structure: the lowered programs are
+  identical (below). A loop over pairs over the result of an `scf.if`
+  keeps the whole module a matrix, as on `main`: `findBeginnings` does
+  not follow an `scf.if`.
 - The other passes copy the type: `md-exec-reuse-neighbors` (the empty
   structure and the refresh that replace a build) and
   `md-exec-assign-storage` (the storage and its refreshes).
@@ -261,7 +267,9 @@ binary (`LLVMIRToISATimeInMs`). They have 85 to 315 kernels each.
   - the fold of the cast (`--canonicalize`).
 - `test/Dialect/MDExec/Transforms/choose-neighbors.mlir` checks the type on
   every value of a structure that becomes groups (with a dual list too),
-  and a structure that reaches an `scf.if`, which keeps the matrix.
+  a structure chosen by an `scf.if`, which becomes groups with the
+  `scf.if`'s result retyped, and a structure passed to a call, which keeps
+  the matrix.
 - `test/Dialect/MDExec/Transforms/reuse-neighbors.mlir` checks that a
   structure of groups keeps its type on the empty structure, the value the
   loop carries, and the refresh.
