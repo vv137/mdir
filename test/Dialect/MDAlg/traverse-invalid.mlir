@@ -2,7 +2,8 @@
 // one case each, each a realistic bug: a write outside the declared
 // combination, a read of a destination, owner registers over a list that is
 // not grouped by owner, a visit weaker than the algebra needs or than the list
-// gives, and the forms of the list.
+// gives, the forms of the list, the counts of the declarations, and the
+// region. Each case is a valid op with one change.
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics
 
@@ -410,6 +411,267 @@ func.func @yields(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64) {
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_alg.yield %d : vector<3xf32>
+  } -> f64
+  return
+}
+
+// -----
+
+// A buffer of the layout in f32, not i32.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @buffer_type(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index, %g: memref<?xf32>) {
+  // expected-error @+1 {{takes rank-1 buffers of i32 for the layout of the groups}}
+  %u = md_alg.traverse_pairs lists(%l, %l, %l, %l, %l, %l, %g : !i, !i, !i, !i, !i, !i, memref<?xf32>) sizes(%np, %nu) contract(!groups) reach(1.0)
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// The buffer form with the places alone, without the units.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @sizes(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{takes two sizes, the places and the units, in its buffer form}}
+  %u = md_alg.traverse_pairs lists(%l, %l, %l, %l, %l, %l, %l : !i, !i, !i, !i, !i, !i, !i) sizes(%np) contract(!groups) reach(1.0)
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// The buffer form without its reach.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @no_reach(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{states the reach of its buffers in its buffer form}}
+  %u = md_alg.traverse_pairs lists(%l, %l, %l, %l, %l, %l, %l : !i, !i, !i, !i, !i, !i, !i) sizes(%np, %nu) contract(!groups)
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// An exchange contract for the destination alone.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @exchange_count(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{expected 2 exchange contracts, one per destination and sum, got 1}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// Two weights for one sum.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @weights_count(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{expected 1 weights, one per sum, got 2}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9) weights [0.5, 0.5] {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// Two overwrite flags for one destination.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @overwrite_count(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{expected 1 overwrite flags, one per destination, got 2}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9) overwrite [true, false] {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// A cutoff of zero.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @cutoff(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{expected a positive cutoff}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.0)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// An algebra that D301 does not have.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @unknown_algebra(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{has an unknown algebra 'any'}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// An exchange contract that the md dialect does not have.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @unknown_exchange(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{has an unknown exchange contract 'odd'}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["odd", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// Two destinations that are one buffer: one of the two sums would be lost.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @one_buffer(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{has destinations 0 and 1, which are one buffer}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f, %f : !f, !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order", "any_order"] exchange ["antisymmetric", "antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %d, %e : vector<3xf32>, vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// A region with an argument for a field that the op does not take.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @arguments(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{takes a region of 2 arguments: r^2, the displacement, and two values for each buffer of}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>, %q: f32):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// A region that ends in another terminator than md_alg.yield.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func @terminator(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  // expected-error @+1 {{ends its region in 'md_alg.yield'}}
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    llvm.unreachable
+  } -> f64
+  return
+}
+
+// -----
+
+// A call in the region, whose effects the verifier cannot see: it could write anywhere.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!i = memref<?xi32>
+func.func private @g(f32)
+func.func @unseen_effects(%nl: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64, %l: !i, %np: index, %nu: index) {
+  %u = md_alg.traverse_pairs structure %nl : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic
+      algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"] cutoff(0.9)  {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    // expected-error @+1 {{has effects that the verifier of 'md_alg.traverse_pairs' cannot see; its region may not write}}
+    func.call @g(%r2) : (f32) -> ()
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
   } -> f64
   return
 }

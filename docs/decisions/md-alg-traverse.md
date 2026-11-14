@@ -227,7 +227,12 @@ Each case is a realistic bug:
      that reach;
    - one algebra and one exchange entry for each value, one weight for
      each sum, and one overwrite flag for each destination;
-   - the region's arguments and yields.
+   - the region's arguments, its terminator, and its yields;
+   - the known names of the algebras and of the exchange contracts, and a
+     positive cutoff;
+   - two destinations that are one buffer, which would lose one sum.
+
+Each case is a valid op with one change, and checks the message.
 
 `convert-md-exec-to-gpu` refuses what its context decides, each with a case
 in `test/Conversion/MDExecToGPU/traverse-invalid.test`:
@@ -237,15 +242,30 @@ in `test/Conversion/MDExecToGPU/traverse-invalid.test`:
 - a cutoff beyond the reach that the structure was built for. This is
   D357's query (`verifyNeighborCoverage`), now over any consumer, so that
   a hand-written op cannot claim any cutoff over any list;
-- the outer list of a dual list.
+- the outer list of a dual list;
+- a traversal that visits each pair in both orders, written by hand over
+  a matrix: the loops over a matrix stay `md_exec.pair_for` in this step.
+
+Two refusals that the design listed cannot be reached, and are now
+assertions:
+- the schedule's refusal of a combination other than `atomic`. `owner`
+  takes `directed`, which the pass refuses before it calls the schedule;
+- its refusal of a `fixed_order` value. The verifier refuses one with
+  `unique` or `atomic` (D290, D301), so the deterministic mode stops
+  there, in `convert-md-exec-to-md-alg`'s output
+  (`test/Conversion/MDExecToMDAlg/convert.mlir`).
+
+The pass's check that the structure is of groups is an assertion too.
+A `unique` type is a structure of groups: no other build may state it
+(D413), and the verifier compared the op with the type.
 
 The schedule refuses:
 - a stable visit;
 - a block that is not whole warps.
 
 The serial oracle refuses the pruning in the loop.
-`convert-md-alg-to-gpu` refuses the op, and `convert-md-alg-to-scf` the
-structure form.
+`convert-md-alg-to-gpu` refuses the op. `convert-md-alg-to-scf` refuses the
+structure form, and a buffer form whose cell is not a vector of 3 or 6.
 
 ## 5. The two lowerings
 
@@ -497,7 +517,9 @@ the device for 181 s.
   the dual list, as the Amber suite sets them;
 - the rate of the second half of each run, as `mdir run` reports it.
 
-The rates in ns/day, the mean of the three rounds:
+The rates are in ns/day. For each system, job, and build, the table gives
+the arithmetic mean of the three rounds' second-half rates, with no
+trimming:
 
 | System | Job | Base | Branch | Branch / base |
 |---|---|---:|---:|---:|
@@ -507,20 +529,26 @@ The rates in ns/day, the mean of the three rounds:
 | FactorIX | 2 | 558.2 | 558.4 | 1.000 |
 
 Within a job the rounds spread by up to 0.6%, and the two jobs differ by
-1% (their clocks were 2,775 and 2,745 MHz at most). No slowdown is beyond
-the spread. The programs are identical, so this is a guard.
+1%. The clocks that `gpu-run` sampled under load were:
+- job 1: SM 210–2,775 MHz, at most 64 °C;
+- job 2: SM 210–2,745 MHz, at most 61 °C.
+
+No slowdown is beyond the spread. The programs are identical, so this is
+a guard. The sanitizer tier and the timing ran on the branch before its
+rebase onto 9c10a859. The lowered programs were compared again after the
+rebase, and they are identical (Section 9).
 
 ## Tests
 
 - `test/Dialect/MDAlg/traverse.mlir`: both forms, in the custom and the
   generic form.
 - `test/Dialect/MDAlg/traverse-invalid.mlir`: one case for each refusal of
-  the verifier (20).
+  the verifier (33).
 - `test/Conversion/MDExecToMDAlg/convert.mlir`: the converter on a dual
   list with two loops, and the refusal of the deterministic mode's
   `fixed_order`.
 - `test/Conversion/MDExecToGPU/traverse-invalid.test`: the refusals of
-  the lowerings and of the pipeline (10).
+  the lowerings and of the pipeline (12).
 - `test/Integration/md-alg-traverse-serial.test`: the serial definition on
   the host on a list written by hand, the outer and the inner list, in
   order and reversed, with the values worked out.

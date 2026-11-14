@@ -3879,14 +3879,19 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
            << "takes its list as buffers, a form for the serial oracle and "
               "the tests; the pipeline takes the structure form, whose "
               "contract is in the type";
+  // The loops over a matrix stay md_exec.pair_for in this step.
+  if (op.getMultiplicity() != md_alg::Multiplicity::Unique)
+    return op.emitOpError()
+           << "visits each pair in both orders, which only the loops over a "
+              "matrix do: they stay 'md_exec.pair_for'";
   if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
     return failure();
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
     return failure();
-  if (!structure.groups)
-    return op.emitOpError() << "takes each pair once, which only a structure "
-                               "of groups gives";
+  // A `unique` type is a structure of groups: no other build may state it
+  // (D413), and the verifier compared the op with the type.
+  assert(structure.groups && "a unique traversal over a matrix");
   if (op.getInner() != structure.dual)
     return op.emitOpError()
            << (op.getInner() ? "reads the inner list of a structure that its "

@@ -483,19 +483,16 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
     return op.emitOpError()
            << "visits its entries stably, which the schedule of the groups "
               "does not: its rotation and its atomics fix no tree";
-  if (op.getCombine() != md_alg::Combine::Atomic)
-    return op.emitOpError() << "combines otherwise than by 'atomic', which "
-                               "the schedule of the groups does not";
-  // The atomic additions make the sums depend on the order of the threads;
-  // the deterministic mode needs them in fixed point (D89), which is to
-  // come.
-  // Its destinations take atomics, and its global sums the partial sums of
-  // warps over units of lists built with atomics: every value it reduces
-  // must allow reordering (D301).
-  if (llvm::is_contained(getAlgebras(op), md_exec::Algebra::FixedOrder))
-    return op.emitOpError()
-           << "takes each pair once with atomic additions in floating "
-              "point, which the deterministic mode does not allow";
+  // The verifier has refused what the schedule could not keep: `owner`
+  // takes `directed`, which convert-md-exec-to-gpu refuses before it calls
+  // the schedule; and a `fixed_order` value with `unique` or `atomic`
+  // (D290, D301): the atomic additions make the sums depend on the order
+  // of the threads.
+  assert(op.getCombine() == md_alg::Combine::Atomic &&
+         op.getMultiplicity() == md_alg::Multiplicity::Unique &&
+         "the verifier and the pass refuse another combination");
+  assert(!llvm::is_contained(getAlgebras(op), md_exec::Algebra::FixedOrder) &&
+         "the verifier refuses fixed_order with unique and atomic");
   if (blockSize % 32 != 0)
     return op.emitOpError() << "runs a warp for each unit of work, which "
                                "needs blocks of whole warps, not "
