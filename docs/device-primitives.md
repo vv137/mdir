@@ -1001,7 +1001,7 @@ and frees it after its sort, since the op takes the scratch as an operand.
 The maintainer accepted both on 2026-11-13, without a timing (the
 decision, D407; #865).
 
-The always-legal transformations at the slot (D[md-alg-canonical],
+The always-legal transformations at the slot (D411,
 #876) were not added. On the programs of `main`, no fold has a constant
 input, no collection is dead or computed twice, and reuse by lifetime
 applies only in the groups build (0.64% of STMV's peak). The decision
