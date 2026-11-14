@@ -11,6 +11,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mdir/Dialect/MDRT/MDRTTypes.td"
 
 def MDAlg_Dialect : Dialect {
   let name = "md_alg";
@@ -117,6 +118,31 @@ def MDAlg_Visit
         I32EnumAttrCase<"Sorted", 1, "sorted">,
         // Ascending by the key, ties in the order of the items.
         I32EnumAttrCase<"Stable", 2, "stable">
+      ]> {
+  let cppNamespace = "::mdir::md_alg";
+}
+
+def MDAlg_Multiplicity
+    : I32EnumAttr<"Multiplicity", "how often md_alg.traverse_pairs visits a "
+                  "pair", [
+        // Each pair in both orders.
+        I32EnumAttrCase<"Directed", 0, "directed">,
+        // Each unordered pair once; the partner's end follows by the
+        // exchange contract.
+        I32EnumAttrCase<"Unique", 1, "unique">
+      ]> {
+  let cppNamespace = "::mdir::md_alg";
+}
+
+def MDAlg_Combine
+    : I32EnumAttr<"Combine", "how md_alg.traverse_pairs adds to its "
+                  "destinations", [
+        // Additions at both ends, in any order.
+        I32EnumAttrCase<"Atomic", 0, "atomic">,
+        // Each owner adds its row and stores once.
+        I32EnumAttrCase<"Owner", 1, "owner">,
+        // Reserved.
+        I32EnumAttrCase<"Privatized", 2, "privatized">
       ]> {
   let cppNamespace = "::mdir::md_alg";
 }
@@ -640,7 +666,7 @@ def MDAlg_BinMembersOp : MDAlg_Op<"bin_members", [
 }
 
 def MDAlg_YieldOp : MDAlg_Op<"yield", [
-    Pure, Terminator, HasParent<"BinMembersOp">
+    Pure, Terminator, ParentOneOf<["BinMembersOp", "TraversePairsOp"]>
   ]> {
   let summary = "The values that an item of md_alg.bin_members contributes";
   let arguments = (ins Variadic<AnyType>:$values);
@@ -910,6 +936,148 @@ def MDAlg_GridReadOp : MDAlg_Op<"grid_read", [
   let assemblyFormat = [{
     $grid `[` $base `+` $z `]` (`if` $active^)? attr-dict `:` type($grid) `,`
     type($base)
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Traversals
+//===----------------------------------------------------------------------===//
+
+def MDAlg_TraversePairsOp : MDAlg_Op<"traverse_pairs", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Visits the pairs of a list of groups of neighbors, with a "
+                "declared visit order and combination";
+  let description = [{
+    For each entry `(i, j)` of the list with `r_ij^2 < cutoff^2`, runs the
+    region with `r^2`, the displacement `d = x_i - x_j` in the type of the
+    region's first argument, and for each buffer of `ins` its values at `i`
+    and at `j`. The region yields one value `k_a` for each destination in
+    `outs`, then one value `k_S` for each initial value in `reduce`. Then
+    `a_i += k_a`, `a_j += s_a k_a` with `s_a` the sign of the exchange
+    contract of `a` (`unique`), and `S += 2 w_S k_S`. A destination with
+    `overwrite` starts from zero. The results are the initial values plus
+    the sums (D[md-alg-traverse]).
+
+    The positions are moved into the frame of the entry's group by the
+    shift of its place in their stored type, then converted to the type of
+    the region's first argument; the entry's own shift is added in that
+    type. Both lowerings do exactly this, so that they differ only in the
+    order of the sums.
+
+    The op declares what the loop needs, and its verifier checks it:
+    - `directed` or `unique`: the multiplicity of the visit;
+    - `visit`: `unordered`, or `stable` where a value is `fixed_order`;
+    - `combine`: `atomic` (additions at both ends, in any order), `owner`
+      (each owner adds its row and stores once), `privatized` (reserved);
+    - `algebra`: one entry, `any_order`, `any_order_exact`, or
+      `fixed_order`, for each destination and then each sum (D301);
+    - `exchange`: one entry, `symmetric`, `antisymmetric`, or `none`, for
+      each value.
+    The region writes nothing: every write is the op's, through `combine`.
+    The requirement that follows from the declarations must be met by the
+    contract of the list (D413).
+
+    *The list has two forms.* The structure form takes `structure %nl`, a
+    structure of groups whose type carries the contract; `inner` reads the
+    inner list of a dual list (D114). The pipeline emits only this form
+    (`convert-md-exec-to-md-alg`). The buffer form takes `lists(...)`, the
+    buffers of the layout of the groups (D89, docs/neighbor-groups.md):
+    `entries`, `masks`, `counts`, `units`, `ordinals`, `places` (the
+    particle at each place, -1 at an empty one), and `shifts`, and with
+    `inner` the inner list's `entries`, `masks`, `counts`, the active
+    units, and their number; and `sizes(%places, %units)`. Its
+    `contract(...)` and `reach(...)` are a precondition that the user
+    asserts about the buffers, not a guarantee the IR checks. It is for the
+    serial oracle and the tests: groups have no structure on the host.
+
+    *The execution group,* which the result does not depend on (D406):
+    `scratch`, `scatter` (the table of a block, D291), `frames` (the loop
+    takes the frames that the pruning of its refresh left, D268), and
+    `prune(groups G, reach R)` (the loop prunes for its refresh from `G`
+    groups on, D284). The SIMT lowering is called in place by
+    `convert-md-exec-to-gpu` (the maintainer's ruling on #887; #888 frees
+    it).
+
+    ```mlir
+    %u = md_alg.traverse_pairs structure %nl : !mdrt.neighbors<@atoms,
+           unique, minimum, removed, stable(group, search)> inner
+         positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
+         outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+         scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
+         unique visit unordered combine atomic
+         algebra ["any_order", "any_order"]
+         exchange ["antisymmetric", "symmetric"]
+         cutoff(9.0) weights [0.5] {
+    ^bb0(%r2: f32, %d: vector<3xf32>):
+      ...
+      md_alg.yield %kf, %ku : vector<3xf32>, f64
+    } -> f64
+    ```
+  }];
+  let arguments = (ins
+    Optional<MDRT_NeighborsType>:$neighbors,
+    UnitAttr:$inner,
+    Variadic<AnyMemRef>:$lists,
+    Variadic<Index>:$sizes,
+    OptionalAttr<TypeAttr>:$contract,
+    OptionalAttr<F64Attr>:$reach,
+    AnyMemRef:$positions,
+    AnyType:$cell,
+    Variadic<AnyMemRef>:$ins,
+    Variadic<AnyMemRef>:$outs,
+    Variadic<AnyType>:$reduce,
+    Variadic<AnyMemRef>:$scratch,
+    MDAlg_Multiplicity:$multiplicity,
+    MDAlg_Visit:$visit,
+    MDAlg_Combine:$combine,
+    StrArrayAttr:$algebra,
+    StrArrayAttr:$exchange,
+    F64Attr:$cutoff,
+    OptionalAttr<DenseF64ArrayAttr>:$weights,
+    OptionalAttr<DenseBoolArrayAttr>:$overwrite,
+    OptionalAttr<AnyAttr>:$scatter,
+    UnitAttr:$frames,
+    OptionalAttr<I64Attr>:$pruneGroups,
+    OptionalAttr<F64Attr>:$pruneReach
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    (`structure` $neighbors^ `:` qualified(type($neighbors)))?
+    (`lists` `(` $lists^ `:` type($lists) `)` `sizes` `(` $sizes `)`)?
+    (`inner` $inner^)?
+    (`contract` `(` $contract^ `)`)? (`reach` `(` $reach^ `)`)?
+    `positions` `(` $positions `:` type($positions) `)`
+    `cell` `(` $cell `:` qualified(type($cell)) `)`
+    (`ins` `(` $ins^ `:` type($ins) `)`)?
+    (`outs` `(` $outs^ `:` type($outs) `)`)?
+    (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    $multiplicity `visit` $visit `combine` $combine
+    `algebra` $algebra `exchange` $exchange
+    `cutoff` `(` $cutoff `)` (`weights` $weights^)?
+    (`overwrite` $overwrite^)?
+    (`scatter` `(` $scatter^ `)`)? (`frames` $frames^)?
+    (`prune` `(` $pruneGroups^ `,` $pruneReach `)`)?
+    $kernel attr-dict (`->` type($results)^)?
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+  let extraClassDeclaration = [{
+    /// Whether the op takes the buffers of the layout (the buffer form).
+    bool isBufferForm() { return !getNeighbors(); }
+    /// Whether destination `index` starts from zero.
+    bool overwrites(unsigned index) {
+      auto flags = getOverwrite();
+      return flags && (*flags)[index];
+    }
+    /// The exchange contract of value `index`: a destination, then a sum.
+    ::llvm::StringRef getExchangeOf(unsigned index);
+    /// The number of buffers of the buffer form: 7, and 5 more with
+    /// `inner`.
+    unsigned getNumListBuffers() { return getInner() ? 12 : 7; }
   }];
 }
 

@@ -54,7 +54,10 @@ struct Obligation {
 
 class Coverage {
 public:
-  explicit Coverage(PairForOp loop) : loop(loop) {}
+  Coverage(Operation *op, Value neighbors, Value centers, double cutoff,
+           Images images)
+      : op(op), neighbors(neighbors), centers(centers), cutoff(cutoff),
+        images(images) {}
   LogicalResult prove();
 
 private:
@@ -70,7 +73,10 @@ private:
     work.push_back({neighbors, invariantCenter(centers), boundary.str()});
   }
 
-  PairForOp loop;
+  Operation *op;
+  Value neighbors, centers;
+  double cutoff;
+  Images images;
   SmallVector<Obligation> work;
   llvm::DenseSet<std::pair<Value, Value>> seen;
   unsigned facts = 0;
@@ -78,7 +84,7 @@ private:
 
 LogicalResult Coverage::unsupported(Operation *boundary,
                                      StringRef description) {
-  auto diagnostic = loop.emitOpError()
+  auto diagnostic = op->emitOpError()
                     << "cannot prove neighbor coverage across " << description
                     << " boundary";
   if (auto name = boundary->getAttrOfType<StringAttr>(
@@ -88,26 +94,26 @@ LogicalResult Coverage::unsupported(Operation *boundary,
   return failure();
 }
 
-LogicalResult Coverage::fact(const Obligation &request, double cutoff,
-                              Value centers, Images images) {
+LogicalResult Coverage::fact(const Obligation &request, double built,
+                              Value builtCenters, Images builtImages) {
   std::string error;
   llvm::raw_string_ostream message(error);
-  double required = loop.getCutoff().convertToDouble();
-  if (required > cutoff)
+  double required = cutoff;
+  if (required > built)
     message << "the cutoff, " << required
             << ", exceeds the cutoff that the neighbor structure was built "
-               "with, " << cutoff;
-  else if (invariantCenter(centers) != request.centers)
+               "with, " << built;
+  else if (invariantCenter(builtCenters) != request.centers)
     message << "the centers of the loop are not those of the neighbor structure";
-  else if (images != loop.getImages())
-    message << "the loop takes images(" << stringifyImages(loop.getImages())
+  else if (builtImages != images)
+    message << "the loop takes images(" << stringifyImages(images)
             << "), but the neighbor structure holds images("
-            << stringifyImages(images) << ")";
+            << stringifyImages(builtImages) << ")";
   else {
     ++facts;
     return success();
   }
-  auto diagnostic = loop.emitOpError() << error;
+  auto diagnostic = op->emitOpError() << error;
   if (!request.boundary.empty())
     diagnostic << " (through " << request.boundary << " boundary)";
   return failure();
@@ -215,7 +221,7 @@ LogicalResult Coverage::crossFunction(const Obligation &request,
 }
 
 LogicalResult Coverage::prove() {
-  append(loop.getNeighbors(), loop.getCenters(), "");
+  append(neighbors, centers, "");
   for (unsigned cursor = 0; cursor != work.size(); ++cursor) {
     // Appending obligations may reallocate work, so do not retain a reference.
     Obligation request = work[cursor];
@@ -261,7 +267,7 @@ LogicalResult Coverage::prove() {
         return failure();
       continue;
     }
-    return unsupported(owner ? owner : loop.getOperation(),
+    return unsupported(owner ? owner : op,
                        owner ? owner->getName().getStringRef()
                              : StringRef("unrecognized SSA"));
   }
@@ -269,12 +275,20 @@ LogicalResult Coverage::prove() {
   // Revisiting an obligation closes only that anchored induction; no
   // unknown producer or recursive function is accepted as a cycle seed.
   if (facts == 0)
-    return unsupported(loop, "unanchored structured loop");
+    return unsupported(op, "unanchored structured loop");
   return success();
 }
 
 } // namespace
 
 LogicalResult mdir::md_exec::verifyNeighborCoverage(PairForOp loop) {
-  return Coverage(loop).prove();
+  return Coverage(loop, loop.getNeighbors(), loop.getCenters(),
+                  loop.getCutoff().convertToDouble(), loop.getImages())
+      .prove();
+}
+
+LogicalResult mdir::md_exec::verifyNeighborCoverage(Operation *op,
+                                                    Value neighbors,
+                                                    double cutoff) {
+  return Coverage(op, neighbors, Value(), cutoff, Images::Minimum).prove();
 }

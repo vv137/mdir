@@ -348,6 +348,40 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
   ];
 }
 
+def ConvertMDExecToMDAlg : Pass<"convert-md-exec-to-md-alg", "::mlir::ModuleOp"> {
+  let summary = "Turns the loops over pairs over groups into md_alg.traverse_pairs";
+  let description = [{
+    Each `md_exec.pair_for` in the storage form that takes each pair once,
+    over a structure of groups, becomes `md_alg.traverse_pairs` in its
+    structure form: the list is the structure, whose type carries its
+    contract (D413), with `inner` where its refresh keeps it dual (D114).
+    The op declares the visit (`stable` where a value is `fixed_order`),
+    the combination (`atomic`), the algebra of each value (D301), and the
+    exchange contracts, and it keeps the loop's region. The pass fills its
+    execution group: `frames`, where the loop follows its refresh at the
+    same positions and in the same cell with nothing between that may
+    write the positions (D268), and, with `fuse-pruning`, `prune(G, R)` on
+    the first such loop that takes the refresh's result, which then prunes
+    for the refresh from `G` groups with the reach `R` (D284).
+    `convert-md-exec-to-gpu` lowers the op where it stands
+    (D[md-alg-traverse]).
+  }];
+  let options = [
+    Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
+           "Whether the first loop over pairs after a refresh of a dual "
+           "list of groups, at the same positions and in the same cell, "
+           "prunes the inner list in its own kernel, a warp a group, on the "
+           "steps where the refresh prunes (MDIR_FUSED_PRUNE, "
+           "D284)">,
+    Option<"fusePruningGroups", "fuse-pruning-groups", "int64_t",
+           /*default=*/"0",
+           "With fuse-pruning: the least number of groups of the last build "
+           "for which the loop prunes; below it the refresh prunes "
+           "(D284)">
+  ];
+  let dependentDialects = ["::mdir::md_alg::MDAlgDialect"];
+}
+
 def ConvertMDExecToGPU
     : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Converts md_exec loops in the storage form to GPU kernels";
@@ -455,17 +489,13 @@ def ConvertMDExecToGPU
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
            "(MDIR_CHECK_PRUNING, D268)">,
-    Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
-           "Whether the first loop over pairs after a refresh of a dual "
-           "list of groups, at the same positions and in the same cell, "
-           "prunes the inner list in its own kernel, a warp a group, on the "
-           "steps where the refresh prunes (MDIR_FUSED_PRUNE, "
-           "D284)">,
-    Option<"fusePruningGroups", "fuse-pruning-groups", "int64_t",
-           /*default=*/"0",
-           "With fuse-pruning: the least number of groups of the last build "
-           "for which the loop prunes; below it the refresh prunes "
-           "(D284)">,
+    Option<"traverseOracle", "traverse-oracle", "std::string",
+           /*default=*/"\"simt\"",
+           "How md_alg.traverse_pairs is lowered: 'simt', its schedule; "
+           "'serial', 'serial-reversed', or 'serial-magnitudes', its serial "
+           "definition on the host over copies of its buffers, in order, in "
+           "reverse, or with the magnitudes of its terms, for the contract "
+           "test (MDIR_TRAVERSE_ORACLE, D[md-alg-traverse])">,
     Option<"singlePassGroupScan", "single-pass-group-scan", "bool",
            /*default=*/"false",
            "Use the decoupled look-back scan for the three counting sorts "

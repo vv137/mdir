@@ -11,6 +11,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mdir/Dialect/MDAlg/MDAlgDialect.h"
+#include "mdir/Dialect/MDRT/MDRTTypes.h"
 #include "mdir/Dialect/MDAlg/MDAlgEnums.h.inc"
 
 namespace mdir::md_alg {

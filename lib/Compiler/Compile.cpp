@@ -264,6 +264,18 @@ static std::string getHostPairsOptions() {
 /// from the groups of `getFusedPruningGroups` for the architecture of
 /// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
 /// number of groups.
+/// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
+/// (`serial`, `serial-reversed`, `serial-magnitudes`), for the contract test
+/// of D[md-alg-traverse]; by default its SIMT schedule. The serial
+/// definition does not prune in the loop, so the oracle turns the pruning
+/// in the loop off (getFusedPruningOptions).
+static std::string getTraverseOracleOption() {
+  const char *value = std::getenv("MDIR_TRAVERSE_ORACLE");
+  if (!value || !*value)
+    return "";
+  return std::string("traverse-oracle=") + value + " ";
+}
+
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   // The groups from which the pruning in the loop took no more time a step
   // than the pruning of the refresh. On an RTX 4090 (sm_89), water boxes of
@@ -275,7 +287,8 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   if (gpuOptions.contains("cubin-chip=sm_12"))
     groups = 20480;
   llvm::StringRef value = mdir::compiler::getFusedPruningSetting();
-  if (value == "off")
+  const char *oracle = std::getenv("MDIR_TRAVERSE_ORACLE");
+  if (value == "off" || (oracle && *oracle))
     return "";
   return "fuse-pruning=true fuse-pruning-groups=" +
          std::to_string(value == "always" ? 0 : groups) + " ";
@@ -355,6 +368,15 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : getStageBodiesPass())
+       // The loops over pairs over groups become md_alg.traverse_pairs,
+       // with the pruning of a dual list in the loop that follows its
+       // refresh (D284) as an execution choice of the op
+       // (D[md-alg-traverse]).
+       << "convert-md-exec-to-md-alg"
+       << (getFusedPruningOptions(gpuOptions).empty()
+               ? std::string()
+               : "{" + getFusedPruningOptions(gpuOptions) + "}")
+       << ","
        << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
@@ -381,9 +403,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
-       // The pruning of a dual list in the loop over pairs that follows
-       // its refresh (D284).
-       << getFusedPruningOptions(gpuOptions)
+       // The serial definition of md_alg.traverse_pairs on the host in
+       // place of its schedule, for the contract test
+       // (D[md-alg-traverse]).
+       << getTraverseOracleOption()
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The collection ops of md_alg that the lowering left (the matrix

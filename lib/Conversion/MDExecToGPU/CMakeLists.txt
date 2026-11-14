@@ -27,6 +27,7 @@ configure_file(
 
 add_mlir_conversion_library(MDIRMDExecToGPU
   MDExecToGPU.cpp
+  MDExecToMDAlg.cpp
   StageBodies.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
