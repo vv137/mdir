@@ -802,6 +802,17 @@ the spatial order is written into an argument, and the groups build's
 orders are read by `md_alg.bin_item`, which hands its user the place. The
 decision gives the lattice, the rules, and their tests.
 
+The first experiment of transformations at that place
+(D[md-alg-groups-transforms], #869) has a negative result and is not
+merged. In key fusion, the scatter of a counting sort recomputes the key
+from the key region in place of a store and a load. It gave the same
+output as the removal of the key buffer, but the step was 0.3 to 0.6%
+slower on an RTX 5090: one i32 load became three f64 loads and the wrap.
+Sort elision is blocked on both of the groups' sorts, whose order their
+readers observe, and the sorts within bins take at most 1.5% of a step.
+The decision gives the measurements, and commit a8ab5427 of #873 holds
+the code.
+
 The warp-level helpers are not ops (#861): the templates write the
 upstream ops of the warp compaction; the groups build calls the typed
 emitters (`emitWarpBallot`, `emitWarpRank`, `emitWarpCount`,
@@ -914,6 +925,9 @@ emitters of Section 5 (D301).
   tests the shared collection analysis, and
   `Driver/md-alg-collections-gpu.test` the analysis on the programs of
   `main` (D409).
+- `Integration/md-alg-members-contract-gpu.test` runs `md_alg.bin_members`
+  by its SIMT lowering on a device, a thread a bin, against its serial
+  definition, to the bit (D[md-alg-groups-transforms]).
 - `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
   verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
   the two lowerings, and `simt-invalid.mlir` the refusal of an op without

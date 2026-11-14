@@ -1,0 +1,58 @@
+# The contract test of md_alg.bin_members (D409), whose SIMT lowering had
+# not run on a device before: the cases of Inputs/md-alg/members-contract.mlir
+# run once by the serial definitions on the host (convert-md-alg-to-scf,
+# the bins one after another) and once by the SIMT lowering on a device
+# (convert-md-alg-to-gpu, a thread a bin, concurrently), and the outputs
+# compared to the bit. The visits are those of md-alg-members.test: each
+# bin in any order with a sum, an exclusive or, a maximum and a minimum, a
+# slot of each item and a counter that threads of other bins write at the
+# same time; each bin in order by the item with a sum of floats (compared
+# by its bits); and every bin at once. The cases: no items, one, 20 in 7
+# bins, 129 in 129, 1,025 in 1,000, 3,000 in 50, all 3,000 in one bin,
+# 5,000 in 3, and 40,000 in 4,000 (32 blocks of visits), a tenth of the
+# items without a bin but where it says none. Every buffer the visits
+# write has an element past those they may write, which keeps its mark.
+#
+# REQUIRES: cuda
+#
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/helpers.mlir \
+# RUN:     %S/Inputs/md-alg/members-visits-host.mlir \
+# RUN:     %S/Inputs/md-alg/members-contract.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.serial
+# RUN: cat %S/Inputs/md-alg/device.mlir %S/Inputs/md-alg/helpers.mlir \
+# RUN:     %S/Inputs/md-alg/members-visits-device.mlir \
+# RUN:     %S/Inputs/md-alg/members-contract.mlir \
+# RUN: | mdir-opt --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm > %t.simt.mlir
+# RUN: mlir-runner %t.simt.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda > %t.simt
+# RUN: diff %t.serial %t.simt
+# RUN: FileCheck %s < %t.simt
+#
+# The case of 20 items in 7 bins, as md-alg-members.test works it out: the
+# order; each bin's sum, exclusive or, maximum, and minimum; the slots; the
+# 17 items counted; and the sum of every bin's items (190 less 3, 11, 12).
+# CHECK:      ( 21, {{.*}} )( 1, 10, 19, 6, 14, 17, 9, 13, 2, 8, 5, 18, 0, 15, 16, 4, 7, -7, -7, -7, -7 )
+# CHECK-NEXT: ( 28, {{.*}} )( 30, 36, 19, 1, 37, 11, 17, 6, 22, 60, 13, 9, 10, 30, 8, 2, 23, 57, 18, 5, 31, 29, 16, 0, 11, 25, 7, 4 )
+# CHECK-NEXT: ( 21, {{.*}} )( 5, 0, 3, -7, 6, 4, 1, 6, 3, 2, 0, -7, -7, 2, 1, 5, 5, 1, 4, 0, -7 )
+# CHECK-NEXT: ( 1, {{.*}} )( 17 )
+# CHECK-NEXT: ( 14, {{.*}} )
+# CHECK-NEXT: ( 2, {{.*}} )( 164, -7 )
+#
+# Under compute-sanitizer (with -Dsanitize=1): memcheck and racecheck, for
+# the slots and the counter that threads write at once.
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool memcheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.simt.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=MEM %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool racecheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.simt.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE %}
+# MEM: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
