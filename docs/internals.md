@@ -106,6 +106,13 @@ with the cell (orthorhombic or triclinic) and the scan as its parameters
 (D404); the pass `add-groups-build` adds it to a module, for
 tests, and `test/Conversion/MDExecToGPU/groups-build.mlir` pins what each
 variant holds. Detail: [device-primitives.md, Section 4.2](device-primitives.md#42-how-the-sites-call-them).
+After `convert-md-alg-to-gpu`, `md-exec-release-dead-storage`
+(`lib/Dialect/MDExec/Transforms/ReleaseDeadStorage.cpp`) reads the
+liveness of the storage (`StorageLiveness`, D412) with `kills=proven` and
+releases, before the loop over steps, each buffer that no point after its
+last use in the setup touches or needs; the test
+`test/Dialect/MDExec/release-dead-storage.mlir` holds one function for each
+condition that keeps a buffer (D[md-exec-release-dead]).
 
 **Op interfaces.** A pass that must handle several ops reads an interface,
 not a list of ops. `DerivativeOpInterface` and `AdjointOpInterface`

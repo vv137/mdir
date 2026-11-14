@@ -1,0 +1,3 @@
+### Changed
+
+- **The buffers of the storage that the loop over steps never uses are released after the setup** (D[md-exec-release-dead], #885). A pass, `md-exec-release-dead-storage`, after `convert-md-alg-to-gpu`, frees each `gpu.alloc` of the host function that no point after its last use in the setup touches or needs, by the liveness of D412 with `kills=proven`. Buffers that are pinned, carried, read after the loop, or given to a function that may keep them are kept. The peak device memory in use falls by 38.5 MB at STMV (2.64%) and 3.0 MB at JAC (9.38%). The peak with the runtime's pool falls by 8.5 MB and 0.19 MB (0.56% and 0.57%): the pool reuses a freed block only for a request of its size. The kernels and the trajectories are unchanged.
