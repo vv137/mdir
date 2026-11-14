@@ -30,3 +30,82 @@
 # RETRY-NEXT: a request refused once, after the trim: live 1, live bytes 8192, idle 0, idle bytes 0, driver blocks 1
 # RETRY-NEXT: after the trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 # RETRY-NEXT: device blocks retry passed
+#
+# The best fit with splitting and coalescing (D[device-pool-split]). Each
+# scenario fails on a pool that does not do what its comment says.
+#
+# A request is served from a larger idle arena, cut at its size rounded up
+# to 256 bytes: the second piece starts 1024 bytes after the first, and
+# the rest stays idle. Freed, the pieces merge into the arena again.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda split | FileCheck %s --check-prefix=SPLIT
+# SPLIT: taken from the arena: True True
+# SPLIT-NEXT: two pieces of one arena: live 2, live bytes 1300, idle 1, idle bytes 1047040, driver blocks 1
+# SPLIT-NEXT: both freed: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# SPLIT-NEXT: closed and trimmed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+#
+# A rest of fewer than 256 bytes is not cut off: the request takes the
+# whole piece, and no idle piece is left.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda tail | FileCheck %s --check-prefix=TAIL
+# TAIL: the whole arena taken: True
+# TAIL-NEXT: a rest of 200 bytes not cut off: live 1, live bytes 4096, idle 0, idle bytes 0, driver blocks 1
+# TAIL-NEXT: freed: live 0, live bytes 0, idle 1, idle bytes 4296, driver blocks 1
+#
+# The smallest idle piece that holds the request is taken, not the first
+# or the last in the list, nor the largest.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda best | FileCheck %s --check-prefix=BEST
+# BEST: three idle arenas: live 0, live bytes 0, idle 3, idle bytes 114688, driver blocks 3
+# BEST-NEXT: the smallest that holds 10 KiB, of 16, 64, and 32 KiB: 16 KiB
+#
+# A freed piece merges with the idle pieces on both sides, and the arena
+# serves a request of its full size again without the driver.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda coalesce | FileCheck %s --check-prefix=COALESCE
+# COALESCE: the left and the right piece freed: live 1, live bytes 4096, idle 2, idle bytes 1044480, driver blocks 1
+# COALESCE-NEXT: the middle piece freed: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# COALESCE-NEXT: the arena serves its full size again: True
+# COALESCE-NEXT: in use as a whole: live 1, live bytes 1048576, idle 0, idle bytes 0, driver blocks 1
+#
+# Two arenas that the driver placed next to each other do not merge: a
+# request of both takes a third arena.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda arenas | FileCheck %s --check-prefix=ARENAS
+# ARENAS: two arenas next to each other: True
+# ARENAS-NEXT: two neighboring arenas idle: live 0, live bytes 0, idle 2, idle bytes 8192, driver blocks 2
+# ARENAS-NEXT: 8 KiB from neither: True
+# ARENAS-NEXT: a request of both: live 1, live bytes 8192, idle 2, idle bytes 8192, driver blocks 3
+#
+# A trim returns the idle arena, not the one that holds a piece in use,
+# whose idle rest stays; once the piece is freed, a trim returns it.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda trim | FileCheck %s --check-prefix=TRIM
+# TRIM: the piece is from the smaller arena: True
+# TRIM-NEXT: a piece in use, two arenas: live 1, live bytes 4096, idle 2, idle bytes 1110016, driver blocks 2
+# TRIM-NEXT: trimmed 1048576 bytes
+# TRIM-NEXT: after the trim: live 1, live bytes 4096, idle 1, idle bytes 61440, driver blocks 1
+# TRIM-NEXT: trimmed 65536 bytes
+# TRIM-NEXT: after the second trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+#
+# The budget, with pieces: an idle piece of an arena that holds a block in
+# use stays, even past the budget; the arena, once idle as a whole, goes
+# back to the driver as the budget has no room for it.
+# RUN: env MDIR_DEVICE_POOL_BYTES=1048576 %python %S/Inputs/device_blocks.py %mdrt_cuda pieces | FileCheck %s --check-prefix=PIECES
+# PIECES: two pieces of an arena of 1 MiB in use: live 2, live bytes 1044480, idle 1, idle bytes 4096, driver blocks 1
+# PIECES-NEXT: a second arena idle: live 2, live bytes 1044480, idle 2, idle bytes 1044480, driver blocks 2
+# PIECES-NEXT: the large piece freed, past the budget: live 1, live bytes 4096, idle 2, idle bytes 2084864, driver blocks 2
+# PIECES-NEXT: the first arena idle as a whole: live 0, live bytes 0, idle 1, idle bytes 1040384, driver blocks 1
+#
+# A buffer of the runtime that a growth replaces (D312): an arena of its
+# own goes back to the driver; a piece of a larger arena goes back to the
+# pool and merges with its idle neighbor.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda replaced | FileCheck %s --check-prefix=REPLACED
+# REPLACED: a matrix in an arena of its own: live 1, live bytes 1024, idle 0, idle bytes 0, driver blocks 1
+# REPLACED-NEXT: grown: the old rows back to the driver: live 1, live bytes 2048, idle 0, idle bytes 0, driver blocks 1
+# REPLACED-NEXT: a matrix in a piece of an arena: live 3, live bytes 7168, idle 1, idle bytes 1043456, driver blocks 2
+# REPLACED-NEXT: grown: the old rows back to the pool: live 3, live bytes 1286144, idle 1, idle bytes 1044480, driver blocks 3
+#
+# The order of the streams: a piece freed while work on stream A still
+# writes it (held back half a second by a host function), merged with an
+# idle neighbor, and taken whole on stream B after the runtime changes to
+# B, is written on B only after A's work: B's value is the last.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda streams | FileCheck %s --check-prefix=STREAMS
+# STREAMS: the early piece freed while stream A writes it: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# STREAMS-NEXT: the merged arena taken on stream B: True
+# STREAMS-NEXT: the values after both streams: [2]
+# STREAMS-NEXT: closed and trimmed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0

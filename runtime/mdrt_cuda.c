@@ -822,8 +822,8 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    Only a whole arena goes back to the driver: an idle piece of an arena
    that holds a block in use stays in the pool until the arena is idle as a
    whole. A buffer of the runtime that a growth replaces goes back to the
-   driver if its arena is then idle as a whole, and stays in the pool
-   otherwise (D312).
+   driver if it is an arena of its own, and returns to the pool if it is a
+   piece of a larger one (D312).
 
    The registry of the blocks, live and pooled, is what returns them: an
    activation that closes takes back the blocks that it owns, and a block
@@ -955,10 +955,11 @@ static CUresult allocateDevice(CUdeviceptr *pointer, size_t size) {
 }
 /* Puts a freed block in the pool, merged with the idle pieces next to it
    in its arena. An arena that is then idle as a whole goes back to the
-   driver if the budget has no room for it, or if `replaced` (a buffer that
-   a growth replaced, D312); otherwise the piece stays idle. The caller has
-   waited for the work that may use it, or the work after it runs after
-   that work. */
+   driver if the budget has no room for it; otherwise the piece stays idle.
+   A buffer that a growth replaced (`replaced`, D312) goes back at once if
+   it is an arena of its own. The caller has waited for the work that may
+   use it (as it has if `replaced`), or the work after it runs after that
+   work. */
 static void poolBlock(struct Block block, int gone, int replaced);
 /* What the runtime allocates a block for, while it does (null for
    compiled code). */
@@ -1238,6 +1239,11 @@ static void releaseArena(struct Block arena, int gone, int waited) {
 }
 
 static void poolBlock(struct Block block, int gone, int replaced) {
+  if (replaced && block.pointer == block.base &&
+      block.extent == block.baseSize) {
+    releaseArena(block, gone, 1);
+    return;
+  }
   block.owner = NULL;
   block.size = block.extent;
   /* The idle neighbors in the arena: one ends where the block begins, one
@@ -1260,9 +1266,8 @@ static void poolBlock(struct Block block, int gone, int replaced) {
     freeBlocks[i] = freeBlocks[--numFree];
   }
   int whole = block.pointer == block.base && block.extent == block.baseSize;
-  if (whole && (replaced || poolBytes + block.extent > getPoolBudget())) {
-    /* Past the budget, or replaced by a growth, an idle arena goes back to
-       the driver. */
+  if (whole && poolBytes + block.extent > getPoolBudget()) {
+    /* Past the budget, an idle arena goes back to the driver. */
     releaseArena(block, gone, replaced);
     return;
   }
@@ -1282,11 +1287,11 @@ static void poolBlock(struct Block block, int gone, int replaced) {
 /* Returns a buffer of the runtime's structures that a growth replaces to
    the driver, not to the pool (D312): the buffer that replaces it is
    larger, and a later request of the old size is unlikely, so in the pool
-   it would stay for the rest of the run. A piece of an arena that holds
-   other blocks in use cannot go back alone: it stays idle in the pool,
-   where a smaller request may take it, and its arena goes back once it is
-   idle as a whole. The caller has waited for the device, as a growth does,
-   so the free does not wait. */
+   it would stay for the rest of the run. That holds for a buffer that is
+   an arena of its own. A piece of a larger arena cannot go back alone: it
+   returns to the pool, where a smaller request may take it, and its arena
+   follows the budget's rule. The caller has waited for the device, as a
+   growth does, so the free does not wait. */
 static void releaseReplaced(void *pointer) {
   if (!pointer)
     return;
