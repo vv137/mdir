@@ -8,6 +8,7 @@ add_mlir_library(MDIRTestPasses
   TestSegmentWindows.cpp
   TestWarpHelpers.cpp
   TestCollectionAnalysis.cpp
+  TestStorageLiveness.cpp
 
   EXCLUDE_FROM_LIBMLIR
 

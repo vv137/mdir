@@ -352,6 +352,25 @@ device peak of STMV falls from 2.05 to 1.92 GB and that of the
 fourteenfold replica from 23.0 to 21.1 GB, and the fifteenfold (16.0
 million atoms) runs in 22.6 GB.
 
+**The lifetimes of the step's buffers** (D[md-exec-storage-liveness]).
+The fields and parameters that the storage pass allocates before the loop
+over steps are kept to its end: 28% of STMV's peak in use. Two of them
+could share one allocation if no point of the host's code needed both.
+An analysis of liveness over the host's code, with buffers in place of
+the variables of register allocation
+[[Chaitin1982]](../references.md#chaitin1982), finds where each is
+needed. A buffer is live where a later read can reach its value without a
+whole overwrite in between, through views, the loop's carried buffers,
+branches, and the waits of asynchronous launches. Every buffer that the
+loop touches is live through the whole step: the state, which the loop
+carries, and the parameters of the terms, which each step reads and none
+writes. The exception is the reference positions of the lists, which are
+dead from the decision to rebuild to the copy that ends the rebuild. What
+reuse by lifetime could save is therefore only the buffers that the loop
+never touches, the setup's copies and intermediates: 2.6% of STMV's peak
+and 8.0% of JAC's. Releasing them after the setup saves as much, so no
+sharing is done.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything
