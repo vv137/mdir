@@ -857,6 +857,36 @@ def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
 // Streams
 //===----------------------------------------------------------------------===//
 
+def MDExec_WeakenNeighborsOp : MDExec_Op<"weaken_neighbors", [Pure]> {
+  let summary = "States less of a neighbor structure than its type does";
+  let description = [{
+    The result is the structure `neighbors` itself, with a type that
+    guarantees less of its lists (D[neighbors-contract],
+    `!mdrt.neighbors`): the same particle set, and on every axis a value
+    that the operand's meets. Nothing of the structure changes. A pass that
+    finds that no consumer needs an order weakens the type first; the sort
+    that gave the order then has no reader (#877).
+
+    ```mlir
+    %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+           to !mdrt.neighbors<@atoms, directed, minimum, masked,
+                              grouped_by(owner)>
+    ```
+
+    The op folds to its operand when the two types are equal. Its verifier
+    refuses a result that states more than the operand, or a value that
+    the operand's does not meet, such as another key.
+  }];
+  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let results = (outs MDRT_NeighborsType:$result);
+  let assemblyFormat = [{
+    $neighbors attr-dict `:` qualified(type($neighbors)) `to`
+    qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
 def MDExec_JoinOp : MDExec_Op<"join"> {
   let summary = "Waits for the op that runs beside the ops before it";
   let description = [{
