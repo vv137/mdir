@@ -8,6 +8,8 @@
 // so that the test of one against the other is a test.
 
 #include "mdir/Conversion/MDAlgLowering.h"
+#include "mdir/Conversion/TraversePairs.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/GatherEmitter.h"
@@ -133,8 +135,10 @@ static LogicalResult expandMembers(Operation *root, bool reverse) {
 static FailureOr<SmallVector<Operation *>> collect(Operation *root) {
   SmallVector<Operation *> ops;
   root->walk([&](Operation *op) {
-    // The bins of a key region are lowered with their sort.
-    if (isa<MDAlgDialect>(op->getDialect()) && !isa<BinOp, NoBinOp>(op))
+    // The bins of a key region are lowered with their sort, and the
+    // region of a traversal with the traversal.
+    if (isa<MDAlgDialect>(op->getDialect()) && !isa<BinOp, NoBinOp>(op) &&
+        !op->getParentOfType<TraversePairsOp>())
       ops.push_back(op);
   });
   for (Operation *op : ops)
@@ -665,6 +669,14 @@ LogicalResult kernels::lowerAlgToSIMT(Operation *root) {
   for (Operation *op : *ops)
     if (failed(checkExecution(op)))
       return failure();
+  // The schedule of a traversal is called where it stands by
+  // convert-md-exec-to-gpu, which holds what it takes (the maintainer's
+  // ruling on #887; #888 frees it).
+  for (Operation *op : *ops)
+    if (isa<TraversePairsOp>(op))
+      return op->emitOpError()
+             << "is lowered for a device by 'convert-md-exec-to-gpu', where "
+                "it stands; its serial definition is 'convert-md-alg-to-scf'";
   // The policy of each op with a determinism aspect, added to the record
   // of the module that the ops are in (D408).
   auto module = dyn_cast<ModuleOp>(root);
@@ -938,6 +950,31 @@ struct Serial {
 };
 } // namespace
 
+/// The serial definition of a traversal in its buffer form
+/// (D[md-alg-traverse]), with the buffers its operands name.
+static SmallVector<Value> lowerTraversal(OpBuilder &builder,
+                                         TraversePairsOp op, bool reverse) {
+  OperandRange lists = op.getLists();
+  kernels::SerialLists serial;
+  serial.groups = {lists[5], lists[2], lists[0], lists[1],
+                   lists[3], lists[4], lists[6]};
+  serial.dual = op.getInner();
+  if (serial.dual) {
+    serial.inner = {lists[7], lists[8], lists[9]};
+    serial.active = lists[10];
+    serial.activeCount = lists[11];
+  }
+  serial.places = op.getSizes()[0];
+  serial.units = op.getSizes()[1];
+  serial.positions = op.getPositions();
+  serial.cell = op.getCell();
+  serial.ins.assign(op.getIns().begin(), op.getIns().end());
+  serial.outs.assign(op.getOuts().begin(), op.getOuts().end());
+  kernels::SerialOptions options;
+  options.reverse = reverse && op.getVisit() == Visit::Unordered;
+  return kernels::emitTraversePairsSerial(builder, op, serial, options);
+}
+
 LogicalResult kernels::lowerAlgToSerial(Operation *root,
                                         bool reverseUnorderedVisits) {
   if (failed(expandMembers(root, reverseUnorderedVisits)))
@@ -945,6 +982,17 @@ LogicalResult kernels::lowerAlgToSerial(Operation *root,
   FailureOr<SmallVector<Operation *>> ops = collect(root);
   if (failed(ops))
     return failure();
+  for (Operation *op : *ops)
+    if (auto traverse = dyn_cast<TraversePairsOp>(op)) {
+      if (!traverse.isBufferForm())
+        return op->emitOpError()
+               << "takes its list as a structure, which has no buffers on "
+                  "the host: its serial definition takes the buffer form";
+      if (!isa<VectorType>(traverse.getCell().getType()))
+        return op->emitOpError()
+               << "takes its cell, in the buffer form, as the vector of its "
+                  "edges (3) or of its edges and tilts (6)";
+    }
   for (Operation *op : *ops) {
     OpBuilder builder(op);
     Serial serial{builder, op->getLoc()};
@@ -955,6 +1003,9 @@ LogicalResult kernels::lowerAlgToSerial(Operation *root,
         .Case([&](SortBinsOp sort) { serial.sort(sort); })
         .Case([&](SortByKeyOp sort) { serial.sortByKey(sort); })
         .Case([&](AppendOp append) { results = serial.append(append); })
+        .Case([&](TraversePairsOp traverse) {
+          results = lowerTraversal(builder, traverse, reverseUnorderedVisits);
+        })
         // The accessors compute one value where they stand; their serial
         // code is that of their emitters.
         .Default([&](Operation *op) { results = emitSIMT(builder, op); });

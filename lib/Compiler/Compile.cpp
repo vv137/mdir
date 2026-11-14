@@ -265,15 +265,18 @@ static std::string getHostPairsOptions() {
 /// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
 /// number of groups.
 /// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
-/// (`serial`, `serial-reversed`, `serial-magnitudes`), for the contract test
-/// of D[md-alg-traverse]; by default its SIMT schedule. The serial
+/// (`simt`, `serial`, `serial-reversed`, `serial-magnitudes`, `omitted`),
+/// for the contract test of D[md-alg-traverse]; by default its SIMT
+/// schedule, with no option. The serial
 /// definition does not prune in the loop, so the oracle turns the pruning
 /// in the loop off (getFusedPruningOptions).
 static std::string getTraverseOracleOption() {
   const char *value = std::getenv("MDIR_TRAVERSE_ORACLE");
   if (!value || !*value)
     return "";
-  return std::string("traverse-oracle=") + value + " ";
+  // The other sums take a fixed order, a row a particle, so that what
+  // differs between two runs of the test is the traversal's alone.
+  return std::string("traverse-oracle=") + value + " tuples-once=false ";
 }
 
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
@@ -287,8 +290,10 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   if (gpuOptions.contains("cubin-chip=sm_12"))
     groups = 20480;
   llvm::StringRef value = mdir::compiler::getFusedPruningSetting();
+  // The serial oracle takes the pruning in the refresh.
   const char *oracle = std::getenv("MDIR_TRAVERSE_ORACLE");
-  if (value == "off" || (oracle && *oracle))
+  if (value == "off" ||
+      (oracle && *oracle && llvm::StringRef(oracle) != "simt"))
     return "";
   return "fuse-pruning=true fuse-pruning-groups=" +
          std::to_string(value == "always" ? 0 : groups) + " ";

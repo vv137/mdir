@@ -147,11 +147,14 @@ struct SerialLists {
 };
 
 /// How the serial definition runs: in the order of the entries or in
-/// reverse (`reverse-unordered-visits`, D409), and with the magnitudes of
-/// the terms in place of the terms, for the bound of a test.
+/// reverse (`reverse-unordered-visits`, D409); with the magnitudes of the
+/// terms in place of the terms, for the bound of a test; or with no term.
 struct SerialOptions {
   bool reverse = false;
   bool magnitudes = false;
+  /// The test's baseline: no pair contributes (what the rest of the
+  /// program gives without the traversal).
+  bool omitted = false;
 };
 
 /// Emits the serial definition of `op` at `builder` over `lists`, and

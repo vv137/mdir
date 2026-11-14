@@ -3822,10 +3822,10 @@ LogicalResult
 Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
                                    const Neighbors &structure) {
   if (traverseOracle != "serial" && traverseOracle != "serial-reversed" &&
-      traverseOracle != "serial-magnitudes")
+      traverseOracle != "serial-magnitudes" && traverseOracle != "omitted")
     return op.emitOpError() << "has no lowering '" << traverseOracle
-                            << "'; 'simt', 'serial', 'serial-reversed', or "
-                               "'serial-magnitudes'";
+                            << "'; 'simt', 'serial', 'serial-reversed', "
+                               "'serial-magnitudes', or 'omitted'";
   if (op.getPruneGroups())
     return op.emitOpError()
            << "prunes for its refresh (D284), which its serial definition "
@@ -3890,6 +3890,7 @@ Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
   kernels::SerialOptions options;
   options.reverse = traverseOracle == "serial-reversed";
   options.magnitudes = traverseOracle == "serial-magnitudes";
+  options.omitted = traverseOracle == "omitted";
   SmallVector<Value> results =
       kernels::emitTraversePairsSerial(builder, op, lists, options);
   for (auto [out, host] : llvm::zip(op.getOuts(), lists.outs))

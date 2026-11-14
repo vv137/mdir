@@ -942,6 +942,17 @@ struct Serial {
   Value toIndex(OpBuilder &at, Value v) {
     return arith::IndexCastOp::create(at, loc, at.getIndexType(), v);
   }
+  /// An scf.if with results of `types` and both branches empty: the
+  /// callers yield in each.
+  scf::IfOp branch(OpBuilder &at, TypeRange types, Value condition) {
+    auto choice = scf::IfOp::create(at, loc, types, condition,
+                                    /*withElseRegion=*/true);
+    for (Block *block : {choice.thenBlock(), choice.elseBlock()})
+      if (!block->empty())
+        block->getTerminator()->erase();
+    return choice;
+  }
+
   Value load(OpBuilder &at, Value buffer, Value index) {
     return memref::LoadOp::create(at, loc, buffer, ValueRange{index});
   }
@@ -1050,8 +1061,7 @@ struct Serial {
     Value within = arith::CmpFOp::create(
         at, loc, arith::CmpFPredicate::OLT, r2,
         createCutoff2(at, loc, computed, op.getCutoff().convertToDouble()));
-    auto test = scf::IfOp::create(at, loc, ValueRange(sums).getTypes(), within,
-                                  /*withElseRegion=*/true);
+    auto test = branch(at, ValueRange(sums).getTypes(), within);
     {
       OpBuilder then = OpBuilder::atBlockEnd(test.thenBlock());
       IRMapping inside;
@@ -1070,6 +1080,8 @@ struct Serial {
         Value value = inside.lookupOrDefault(yield->getOperand(i));
         if (options.magnitudes)
           value = math::AbsFOp::create(then, loc, value);
+        if (options.omitted)
+          value = createZero(then, loc, value.getType());
         if (i < numOuts) {
           addAt(then, i, mine, value);
           bool antisymmetric =
@@ -1186,9 +1198,8 @@ struct Serial {
                           i32(p, 1));
                       Value set = arith::CmpIOp::create(
                           p, loc, arith::CmpIPredicate::ne, bit, i32(p, 0));
-                      auto paired = scf::IfOp::create(
-                          p, loc, ValueRange(sums).getTypes(), set,
-                          /*withElseRegion=*/true);
+                      auto paired =
+                          branch(p, ValueRange(sums).getTypes(), set);
                       OpBuilder then = OpBuilder::atBlockEnd(paired.thenBlock());
                       Value mine = toIndex(
                           then, arith::AddIOp::create(

@@ -1,0 +1,15 @@
+# REQUIRES: python-api, cuda
+# The contract of md_alg.traverse_pairs (D[md-alg-traverse]): its SIMT
+# schedule on a device against its serial definition on the host over the
+# same lists, and the serial definition with its visit reversed, within the
+# bound of the error model of a reordered sum
+# (Inputs/traverse_contract.py): the rhombic dodecahedron of
+# test/Driver/triclinic.test (403 rigid TIP3P waters), with the list of
+# groups, the inner list of a dual list pruned in the refresh, and pruned in
+# the loop (D284); in mixed and double precision.
+# RUN: %mdir_python %S/Inputs/traverse_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro outer Mixed | FileCheck %s -DW=outer -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro dual Mixed | FileCheck %s -DW=dual -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro fused Mixed | FileCheck %s -DW=fused -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro outer Double | FileCheck %s -DW=outer -DP=Double
+# RUN: %mdir_python %S/Inputs/traverse_contract.py dodecahedron %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro dual Double | FileCheck %s -DW=dual -DP=Double
+# CHECK: dodecahedron [[W]] [[P]]: the schedule and the reversed visit keep the serial order's sums within the bound

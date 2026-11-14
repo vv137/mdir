@@ -51,6 +51,14 @@ def MDAlg_Dialect : Dialect {
     not an `md_alg` op requires the full layout, and `md_alg.bin_members`
     the order of its visit (D409).
 
+    The loops over pairs over groups are a consumer of this layer,
+    `md_alg.traverse_pairs`, which `convert-md-exec-to-md-alg` makes from
+    `md_exec.pair_for` and which declares its visit, its combination, and
+    the algebra of each value; its verifier checks them against its region
+    and against the contract of its list (D413). Its serial definition is
+    the oracle; its SIMT schedule is called where the op stands by
+    `convert-md-exec-to-gpu` (D[md-alg-traverse]; #888 frees it).
+
     Each op with an ordering or a floating-point aspect states a
     determinism requirement (`determinism`), separate from the ordering
     contract `order`: `unordered`, `reproducible` (the same bits from run

@@ -41,6 +41,14 @@ requires of the order of a buffer from its meaning: a reader that is
 not an `md_alg` op requires the full layout, and `md_alg.bin_members`
 the order of its visit (D409).
 
+The loops over pairs over groups are a consumer of this layer,
+`md_alg.traverse_pairs`, which `convert-md-exec-to-md-alg` makes from
+`md_exec.pair_for` and which declares its visit, its combination, and
+the algebra of each value; its verifier checks them against its region
+and against the contract of its list (D413). Its serial definition is
+the oracle; its SIMT schedule is called where the op stands by
+`convert-md-exec-to-gpu` (D[md-alg-traverse]; #888 frees it).
+
 Each op with an ordering or a floating-point aspect states a
 determinism requirement (`determinism`), separate from the ordering
 contract `order`: `unordered`, `reproducible` (the same bits from run
@@ -929,6 +937,145 @@ Interfaces: `MDAlg_Deterministic`
 
 
 
+### `md_alg.traverse_pairs` (::mdir::md_alg::TraversePairsOp)
+
+_Visits the pairs of a list of groups of neighbors, with a declared visit order and combination_
+
+Syntax:
+
+```
+operation ::= `md_alg.traverse_pairs` (`structure` $neighbors^ `:` qualified(type($neighbors)))?
+              (`lists` `(` $lists^ `:` type($lists) `)` `sizes` `(` $sizes `)`)?
+              (`inner` $inner^)?
+              (`contract` `(` $contract^ `)`)? (`reach` `(` $reach^ `)`)?
+              `positions` `(` $positions `:` type($positions) `)`
+              `cell` `(` $cell `:` qualified(type($cell)) `)`
+              (`ins` `(` $ins^ `:` type($ins) `)`)?
+              (`outs` `(` $outs^ `:` type($outs) `)`)?
+              (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+              (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+              $multiplicity `visit` $visit `combine` $combine
+              `algebra` $algebra `exchange` $exchange
+              `cutoff` `(` $cutoff `)` (`weights` $weights^)?
+              (`overwrite` $overwrite^)?
+              (`scatter` `(` $scatter^ `)`)? (`frames` $frames^)?
+              (`prune` `(` $pruneGroups^ `,` $pruneReach `)`)?
+              $kernel attr-dict (`->` type($results)^)?
+```
+
+For each entry `(i, j)` of the list with `r_ij^2 < cutoff^2`, runs the
+region with `r^2`, the displacement `d = x_i - x_j` in the type of the
+region's first argument, and for each buffer of `ins` its values at `i`
+and at `j`. The region yields one value `k_a` for each destination in
+`outs`, then one value `k_S` for each initial value in `reduce`. Then
+`a_i += k_a`, `a_j += s_a k_a` with `s_a` the sign of the exchange
+contract of `a` (`unique`), and `S += 2 w_S k_S`. A destination with
+`overwrite` starts from zero. The results are the initial values plus
+the sums (D[md-alg-traverse]).
+
+The positions are moved into the frame of the entry's group by the
+shift of its place in their stored type, then converted to the type of
+the region's first argument; the entry's own shift is added in that
+type. Both lowerings do exactly this, so that they differ only in the
+order of the sums.
+
+The op declares what the loop needs, and its verifier checks it:
+- `directed` or `unique`: the multiplicity of the visit;
+- `visit`: `unordered`, or `stable` where a value is `fixed_order`;
+- `combine`: `atomic` (additions at both ends, in any order), `owner`
+  (each owner adds its row and stores once), `privatized` (reserved);
+- `algebra`: one entry, `any_order`, `any_order_exact`, or
+  `fixed_order`, for each destination and then each sum (D301);
+- `exchange`: one entry, `symmetric`, `antisymmetric`, or `none`, for
+  each value.
+The region writes nothing: every write is the op's, through `combine`.
+The requirement that follows from the declarations must be met by the
+contract of the list (D413).
+
+*The list has two forms.* The structure form takes `structure %nl`, a
+structure of groups whose type carries the contract; `inner` reads the
+inner list of a dual list (D114). The pipeline emits only this form
+(`convert-md-exec-to-md-alg`). The buffer form takes `lists(...)`, the
+buffers of the layout of the groups (D89, docs/neighbor-groups.md):
+`entries`, `masks`, `counts`, `units`, `ordinals`, `places` (the
+particle at each place, -1 at an empty one), and `shifts`, and with
+`inner` the inner list's `entries`, `masks`, `counts`, the active
+units, and their number; and `sizes(%places, %units)`. Its
+`contract(...)` and `reach(...)` are a precondition that the user
+asserts about the buffers, not a guarantee the IR checks. It is for the
+serial oracle and the tests: groups have no structure on the host.
+
+*The execution group,* which the result does not depend on (D406):
+`scratch`, `scatter` (the table of a block, D291), `frames` (the loop
+takes the frames that the pruning of its refresh left, D268), and
+`prune(groups G, reach R)` (the loop prunes for its refresh from `G`
+groups on, D284). The SIMT lowering is called in place by
+`convert-md-exec-to-gpu` (the maintainer's ruling on #887; #888 frees
+it).
+
+```mlir
+%u = md_alg.traverse_pairs structure %nl : !mdrt.neighbors<@atoms,
+       unique, minimum, removed, stable(group, search)> inner
+     positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
+     outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+     scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
+     unique visit unordered combine atomic
+     algebra ["any_order", "any_order"]
+     exchange ["antisymmetric", "symmetric"]
+     cutoff(9.0) weights [0.5] {
+^bb0(%r2: f32, %d: vector<3xf32>):
+  ...
+  md_alg.yield %kf, %ku : vector<3xf32>, f64
+} -> f64
+```
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>inner</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>contract</code></td><td>::mlir::TypeAttr</td><td>any type attribute</td></tr>
+<tr><td><code>reach</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>multiplicity</code></td><td>::mdir::md_alg::MultiplicityAttr</td><td>how often md_alg.traverse_pairs visits a pair</td></tr>
+<tr><td><code>visit</code></td><td>::mdir::md_alg::VisitAttr</td><td>the order in which md_alg.bin_members visits the items of its bins</td></tr>
+<tr><td><code>combine</code></td><td>::mdir::md_alg::CombineAttr</td><td>how md_alg.traverse_pairs adds to its destinations</td></tr>
+<tr><td><code>algebra</code></td><td>::mlir::ArrayAttr</td><td>string array attribute</td></tr>
+<tr><td><code>exchange</code></td><td>::mlir::ArrayAttr</td><td>string array attribute</td></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>weights</code></td><td>::mlir::DenseF64ArrayAttr</td><td>f64 dense array attribute</td></tr>
+<tr><td><code>overwrite</code></td><td>::mlir::DenseBoolArrayAttr</td><td>i1 dense array attribute</td></tr>
+<tr><td><code>scatter</code></td><td>::mlir::Attribute</td><td>any attribute</td></tr>
+<tr><td><code>frames</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
+<tr><td><code>pruneGroups</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>pruneReach</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `neighbors` | A physical neighbor structure |
+| `lists` | variadic of memref of any non-token type values |
+| `sizes` | variadic of index |
+| `positions` | memref of any non-token type values |
+| `cell` | any non-token type |
+| `ins` | variadic of memref of any non-token type values |
+| `outs` | variadic of memref of any non-token type values |
+| `reduce` | variadic of any non-token type |
+| `scratch` | variadic of memref of any non-token type values |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of any non-token type |
+
+
+
 ### `md_alg.wrap` (::mdir::md_alg::WrapOp)
 
 _The sum of two coordinates of a periodic axis, wrapped_
@@ -990,7 +1137,7 @@ Syntax:
 operation ::= `md_alg.yield` ($values^ `:` type($values))? attr-dict
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<BinMembersOp>`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<BinMembersOp, TraversePairsOp>`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
 
@@ -1006,6 +1153,18 @@ Effects: `MemoryEffects::Effect{}`
 
 ## Enums
 
+### Combine
+
+_How md_alg.traverse_pairs adds to its destinations_
+
+#### Cases:
+
+| Symbol | Value | String |
+| :----: | :---: | ------ |
+| Atomic | `0` | atomic |
+| Owner | `1` | owner |
+| Privatized | `2` | privatized |
+
 ### Determinism
 
 _What the bits of an op's results must not depend on_
@@ -1017,6 +1176,17 @@ _What the bits of an op's results must not depend on_
 | Unordered | `0` | unordered |
 | Reproducible | `1` | reproducible |
 | Bitwise | `2` | bitwise |
+
+### Multiplicity
+
+_How often md_alg.traverse_pairs visits a pair_
+
+#### Cases:
+
+| Symbol | Value | String |
+| :----: | :---: | ------ |
+| Directed | `0` | directed |
+| Unique | `1` | unique |
 
 ### Order
 

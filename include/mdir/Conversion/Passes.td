@@ -587,7 +587,8 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
-                           "::mlir::scf::SCFDialect"];
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
 }
 
 def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
