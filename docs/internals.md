@@ -282,7 +282,7 @@ same path in `include/mdir/`; a row names both.
 | `test/Scale` | `amber-suite.test`: short runs of every system of the Amber benchmark suite, when `MDIR_BENCH_DIR` holds it | Anything only large systems reach | [amber/README.md](../scripts/benchmarks/amber/README.md) |
 | `test/Docs` | The link check of all Markdown, the comparison of `docs/dialects/` with TableGen, the anchors after decision numbering | Any Markdown, a heading, or a dialect `.td` file changes | [workflow.md, Reusing a suite](workflow.md#reusing-a-suite) |
 | `test/Lit` | Tests of the test setup and of the repository's scripts (release, changelog, builder equivalence, environment), on the CPU | Changing `lit.cfg.py`, `mdir_lit.py`, a script, `docs/environment.md`, or the rules for test outputs | [workflow.md, Validation](workflow.md#validation) |
-| `test/lib` | Test-only passes linked into `mdir-opt`, such as `--test-md-exec-loop-effects`; not tests | A pass that exists only to expose an analysis to FileCheck | |
+| `test/lib` | Test-only passes linked into `mdir-opt`, such as `--test-md-exec-loop-effects` and `--test-md-exec-print-storage-liveness` (the liveness of the storage in the loop over steps, D[md-exec-storage-liveness]); not tests | A pass that exists only to expose an analysis to FileCheck | |
 
 ### 5.3 `scripts`
 

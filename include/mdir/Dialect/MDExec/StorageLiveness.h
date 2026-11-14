@@ -8,8 +8,9 @@
 // `md-alg-transform-collections`): every buffer is a `gpu.alloc`, every
 // kernel a `gpu.launch` whose body names the buffers it touches, and the
 // host's order of its launches is the order of the code. It is a backward
-// dataflow of liveness over the host's control flow [Aho, Lam, Sethi, and
-// Ullman 2006, Section 9.2.5], with buffers in place of variables: a use is
+// dataflow of liveness over the host's control flow, with buffers in place
+// of the variables of register allocation (Chaitin, SIGPLAN Notices 17(6),
+// 98 (1982)): a use is
 // a launch, a call, or a copy that reads a buffer or a view of it, and a kill
 // is one that overwrites the whole buffer without reading it. Two buffers
 // interfere when one is in use where the other is live; buffers that do not

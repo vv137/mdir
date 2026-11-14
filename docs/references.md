@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-11-13.
+Last updated: 2026-11-14.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -250,6 +250,16 @@ dynamics using stochastic velocity rescaling," *J. Chem. Phys.* **130**,
 
 Used for: the second-order barostat that M1 considered and did not take
 (D50).
+
+### Chaitin1982
+
+G. J. Chaitin, "Register allocation & spilling via graph coloring,"
+*SIGPLAN Notices* **17**(6), 98–101 (1982).
+[doi:10.1145/872726.806984](https://doi.org/10.1145/872726.806984)
+
+Used for: the interference of buffers that are live at one point, and the
+coloring that bounds their sharing of allocations
+(D[md-exec-storage-liveness]).
 
 ### Chodera2007
 

@@ -17,10 +17,10 @@
 //    that does not read it kills. An asynchronous op uses its buffers again
 //    where its token is waited for, and an op on a side stream where the
 //    side stream is joined.
-// 3. The dataflow. Liveness backward over the points to a fixpoint
-//    [Aho, Lam, Sethi, and Ullman 2006, Section 9.2.5], then the occupancy
-//    of each point (live in, live out, or touched there) and the
-//    interference of buffers occupied at one point [Chaitin 1982].
+// 3. The dataflow. Liveness backward over the points to a fixpoint, then
+//    the occupancy of each point (live in, live out, or touched there) and
+//    the interference of buffers occupied at one point, as for the
+//    registers of Chaitin, SIGPLAN Notices 17(6), 98 (1982).
 
 #include "mdir/Dialect/MDExec/StorageLiveness.h"
 
