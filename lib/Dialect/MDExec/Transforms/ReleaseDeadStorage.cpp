@@ -1,5 +1,5 @@
 // The release, before the loop over steps, of the device buffers that the
-// rest of the function never uses (D[md-exec-release-dead], #885).
+// rest of the function never uses (D414, #885).
 //
 // See the description of the pass in Passes.td. The proof is the liveness
 // of the storage (StorageLiveness.h, D412) in the mode `kills=proven`. A

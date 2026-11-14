@@ -748,7 +748,7 @@ is the place of the collection-level transformations (fusion, the elision
 of a sort that no consumer needs, the removal of intermediate buffers);
 `convert-md-alg-to-gpu` then lowers the ops, before
 `md-exec-release-dead-storage`, which releases the storage that the loop
-over steps never uses (D[md-exec-release-dead]), and
+over steps never uses (D414), and
 `check-read-only-arguments`. Two kinds of op are still lowered where
 `convert-md-exec-to-gpu` creates them: the accessors of the templates of
 PME, before their loops over the order are unrolled and canonicalized, and

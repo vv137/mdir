@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-release-dead-storage | FileCheck %s
 
 // The release of the buffers of the storage that the loop over steps and
-// the code after it never use (D[md-exec-release-dead], #885), by the
+// the code after it never use (D414, #885), by the
 // liveness of D412 with kills=proven. Six functions are released, after
 // the op that holds the last occupied point: the first, and the five with
 // an enqueuing call and its wait, an asynchronous fill and its wait, a

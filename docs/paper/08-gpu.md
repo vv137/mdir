@@ -369,7 +369,7 @@ dead from the decision to rebuild to the copy that ends the rebuild. What
 reuse by lifetime could save is therefore only the buffers that the loop
 never touches, the setup's copies and intermediates: 2.6% of STMV's peak
 and 8.0% of JAC's. Releasing them after the setup saves as much, so no
-sharing is done. They are released (D[md-exec-release-dead]): after the
+sharing is done. They are released (D414): after the
 last point of the host's code where a buffer is touched or live, counting
 the waits and joins that complete work on it, if that point comes before
 the loop, and only if no point after it needs the buffer. Liveness alone

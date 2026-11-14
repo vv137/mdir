@@ -394,7 +394,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The buffers of the storage that the loop over steps and the code
        // after it never use are released after their last use in the
        // setup, by the liveness of D412 with `kills=proven`
-       // (D[md-exec-release-dead]).
+       // (D414).
        << "md-exec-release-dead-storage,"
        // The code of the host writes no buffer of the model that the entry
        // takes (D258): proven here, or no compile.

@@ -112,7 +112,7 @@ liveness of the storage (`StorageLiveness`, D412) with `kills=proven` and
 releases, before the loop over steps, each buffer that no point after its
 last use in the setup touches or needs; the test
 `test/Dialect/MDExec/release-dead-storage.mlir` holds one function for each
-condition that keeps a buffer (D[md-exec-release-dead]).
+condition that keeps a buffer (D414).
 
 **Op interfaces.** A pass that must handle several ops reads an interface,
 not a list of ops. `DerivativeOpInterface` and `AdjointOpInterface`

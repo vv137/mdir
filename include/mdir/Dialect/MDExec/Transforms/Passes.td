@@ -1071,7 +1071,7 @@ def ReleaseDeadStorage
     ```
 
     No kernel changes; the host frees the buffer, and the runtime's pool
-    takes the block back (D[md-exec-release-dead]).
+    takes the block back (D414).
   }];
   let dependentDialects = ["::mlir::gpu::GPUDialect",
                            "::mlir::memref::MemRefDialect"];
