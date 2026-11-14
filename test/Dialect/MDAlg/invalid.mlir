@@ -385,10 +385,36 @@ func.func @stage_10(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o:
 
 !d = memref<?xi32, 1>
 func.func private @opaque()
+// Nor are two of them views of one buffer: a cast of the keys as the order (#874).
+func.func @stage_10a(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.cast %k : !d to !d
+  // expected-error @+1 {{takes one buffer for two of its keys, counts, start, cursor, order, and scatter}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %view order stable : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one)
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
 // It does not sort into its order 'by'.
 func.func @stage_11(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
   // expected-error @+1 {{sorts into its order 'by', which it reads}}
   md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable by %o : !d : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one)
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
+// Nor by a view of the order (#874).
+func.func @stage_11a(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.reinterpret_cast %o to offset: [0], sizes: [%n], strides: [1] : !d to memref<?xi32, strided<[1]>, 1>
+  // expected-error @+1 {{sorts into its order 'by', which it reads}}
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable by %view : memref<?xi32, strided<[1]>, 1> : !d
       launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one)
   return
 }
@@ -555,6 +581,24 @@ func.func @stage_18(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o:
   ^bb0(%i: index):
     // expected-error @+1 {{uses a buffer of the 'md_alg.sort_by_key' of its key region}}
     %v = memref.load %c[%i] : !d
+    md_alg.bin %v : i32
+  }
+  return
+}
+
+// -----
+
+!d = memref<?xi32, 1>
+func.func private @opaque()
+// Nor through a view made outside it: a subview of the counts (#874).
+func.func @stage_18a(%n: index, %bins: index, %k: !d, %c: !d, %s: !d, %u: !d, %o: !d, %by: !d, %x: !d, %w3: memref<?x3xf32, 1>, %p: memref<5xi32, 1>, %sums: !d, %wide: memref<?xi64, 1>, %g: index, %b: index, %one: index) {
+  %view = memref.subview %c[0] [4] [1] : !d to memref<4xi32, strided<[1]>, 1>
+  md_alg.sort_by_key %n bins %bins keys %k counts %c start %s cursor %u into %o order stable : !d
+      launch(%g, %b, %one) scan reduce_then_scan scratch %sums : !d launch(%g, %b, %one) sort insertion launch(%g, %b, %one) key {
+  ^bb0(%i: index):
+    %c0 = arith.constant 0 : index
+    // expected-error @+1 {{uses a buffer of the 'md_alg.sort_by_key' of its key region}}
+    %v = memref.load %view[%c0] : memref<4xi32, strided<[1]>, 1>
     md_alg.bin %v : i32
   }
   return
