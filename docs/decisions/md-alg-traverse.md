@@ -374,8 +374,9 @@ $x \cdot 0$ does not fold in IEEE arithmetic.
 
 ## 9. The same programs
 
-The lowered programs of the branch were compared with those of the base
-(1c11a780) by the method of D406: `mdir emit --stage=lowered` with
+The lowered programs of the branch were compared with those of its base by
+the method of D406, once on 1c11a780 and again after the rebase on
+9c10a859, with the same counts: `mdir emit --stage=lowered` with
 `MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
 MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, through
 `scripts/builder-equivalence/check.py compare --stages lowered`. That
@@ -383,15 +384,14 @@ gives the PTX of every kernel and the host's code.
 
 | Corpus | Variants | Cases | Identical | Of which the same error |
 |---|---|---:|---:|---:|
-| the examples, the tests, the Amber suite, and the cases of the corpus | GPU; the run and the segments; mixed and double; as written, and with `neighbor_structure = "GROUPS"` (`--execution`) | 2,170 | 2,168 | 892 |
+| the examples, the tests, the Amber suite, and the cases of the corpus | GPU; the run and the segments; mixed and double; as written, and with `neighbor_structure = "GROUPS"` (`--execution`) | 2,170 | 2,170 | 892 |
 | the Amber suite, the cases, and the dodecahedron of `test/Driver/triclinic.test` with groups and with a dual list (`pruned_distance = 8.5`) | GPU; the run and the segments; mixed and double; as written, and with `MDIR_FUSED_PRUNE=off` (the pruning in the refresh), `always` (in the loop), and `MDIR_CHECK_PRUNING=1` | 888 | 888 | 64 |
 
 Notes on the table:
-- The two cases of the first run that differ are written in Python. They
-  stopped in both builds with the system's interpreter, which cannot
-  import the package, and their messages differ in the path of the build.
-  The second run takes the interpreter of the build, and they are
-  identical there.
+- The cases written in Python run with the interpreter of the build. With
+  the system's interpreter, which cannot import the package, the first
+  comparison found their two errors different only in the path of the
+  build.
 - With `neighbor_structure = "GROUPS"`, 627 of the 1,085 cases lower a
   program with the groups. The others stop with the same error in both
   builds: their inputs are named in RUN lines that the corpus does not
