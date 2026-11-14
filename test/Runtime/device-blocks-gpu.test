@@ -103,14 +103,14 @@
 # OFF-NEXT: a smaller request after it: live 1, live bytes 1000, idle 0, idle bytes 0, driver blocks 1
 # OFF-NEXT: freed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 #
-# A buffer of the runtime that a growth replaces (D312): an arena of its
-# own goes back to the driver; a piece of a larger arena goes back to the
-# pool and merges with its idle neighbor.
+# A buffer of the runtime that a growth may replace (D312) is an arena of
+# its own: it is not cut from the larger idle piece beside it, and a growth
+# gives it back to the driver.
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda replaced | FileCheck %s --check-prefix=REPLACED
 # REPLACED: a matrix in an arena of its own: live 1, live bytes 1024, idle 0, idle bytes 0, driver blocks 1
 # REPLACED-NEXT: grown: the old rows back to the driver: live 1, live bytes 2048, idle 0, idle bytes 0, driver blocks 1
-# REPLACED-NEXT: a matrix in a piece of an arena: live 3, live bytes 7168, idle 1, idle bytes 1043456, driver blocks 2
-# REPLACED-NEXT: grown: the old rows back to the pool: live 3, live bytes 1286144, idle 1, idle bytes 1044480, driver blocks 3
+# REPLACED-NEXT: a matrix beside a larger idle piece: live 3, live bytes 7168, idle 1, idle bytes 1044480, driver blocks 3
+# REPLACED-NEXT: grown: the old rows back to the driver again: live 3, live bytes 1286144, idle 1, idle bytes 1044480, driver blocks 3
 #
 # The order of the streams: a piece freed while work on stream A still
 # writes it (held back half a second by a host function), merged with an

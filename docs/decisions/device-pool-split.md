@@ -45,11 +45,20 @@ Recorded at its merge.
   retry after the driver refuses a request) waits for the device, then
   returns every wholly idle arena and the plans of cuFFT. The idle pieces
   of an arena that holds a block in use stay.
-- **A buffer that a growth replaces** (D312, amended). A buffer of the
-  runtime's neighbor structures that is an arena of its own goes back to
-  the driver at once, as before. A buffer that is a piece of a larger
-  arena cannot go back alone. It returns to the pool, where a smaller
-  request may take it, and its arena follows the budget's rule.
+- **A buffer that a growth replaces** (D312). The buffers of the
+  runtime's neighbor structures that a growth may replace (the groups'
+  buffers, the rows of a matrix, the slots of the pairs of images) are
+  arenas of their own: such a request takes an idle arena of exactly its
+  size or a new one, never a piece of a larger arena. A growth therefore
+  gives the old buffer back to the driver at once, as before. A first
+  version let them take pieces. A replaced piece then stayed in the pool
+  beside the blocks in use in its arena, and the input of
+  `Driver/pool-retention-gpu.test` held 3 more arenas after 1,000 steps
+  than after 100, against 2 on `main`, past the test's slack of 2. The
+  count was flat from 1,000 to 10,000 steps, twice on both trees, and the
+  extra arena was the old buffer of the one growth after the first 100
+  steps: `main` returned one block more to the driver in the long runs (8
+  against 7), the first version none (4 and 4).
 
 ## 3. The order of the streams
 
@@ -188,7 +197,7 @@ on a pool that breaks the property it names:
 | `trim` | a trim returns the idle arena and keeps the one with a piece in use, then returns it once the piece is freed | a trim of a partly used arena |
 | `pieces` (budget of 1 MiB) | an idle piece of an arena in use stays past the budget; the arena goes back once wholly idle | a piece returned alone |
 | `off` (budget of 0) | a freed arena goes back at once; nothing is kept or split | |
-| `replaced` | a growth returns a buffer that is an arena of its own to the driver, and a piece of a larger arena to the pool | a piece returned to the driver alone (D312) |
+| `replaced` | a buffer that a growth may replace takes an arena of its own, not the larger idle piece beside it, and a growth gives it back to the driver (D312) | a growable buffer cut from a larger piece |
 | `streams` | the order of the streams (Section 3) | a reuse before the work on another stream is done |
 
 The earlier scenarios (`registry`, `budget`, `retry`) pass unchanged.
@@ -202,14 +211,14 @@ every line.
 
 | Mutant | Fails |
 |---|---|
-| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `replaced`, `streams` |
+| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `streams` |
 | no rounding of the cut to 256 bytes | `split` |
 | the event wait of a change of stream skipped | `streams` (values 1 and 2) |
 | a split that leaves a rest below 256 bytes | `tail` |
 | a trim of a partly used arena | `trim` |
 | merging across arenas | `arenas`, `best`, `trim`, `pieces`, and the earlier `registry`, `budget`, `retry` |
 | first fit in place of best fit | `best` |
-| a replaced piece returned to the driver alone | `replaced` |
+| a growable buffer of the runtime cut from a larger piece | `replaced` |
 | the budget applied to a piece of an arena in use | `pieces` |
 
 ## 8. compute-sanitizer

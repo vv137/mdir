@@ -821,9 +821,10 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
 
    Only a whole arena goes back to the driver: an idle piece of an arena
    that holds a block in use stays in the pool until the arena is idle as a
-   whole. A buffer of the runtime that a growth replaces goes back to the
-   driver if it is an arena of its own, and returns to the pool if it is a
-   piece of a larger one (D312).
+   whole. A buffer of the runtime's neighbor structures that a growth may
+   replace is therefore an arena of its own, an idle arena of exactly its
+   size or a new one, and goes back to the driver when a growth replaces
+   it (D312).
 
    The registry of the blocks, live and pooled, is what returns them: an
    activation that closes takes back the blocks that it owns, and a block
@@ -964,6 +965,11 @@ static void poolBlock(struct Block block, int gone, int replaced);
 /* What the runtime allocates a block for, while it does (null for
    compiled code). */
 static const char *allocationTag = NULL;
+/* Whether the block being allocated is a buffer of the runtime's neighbor
+   structures that a growth may replace: it is an arena of its own, an
+   idle arena of exactly its size or a new one, never a piece of a larger
+   arena, so that the growth can give it back to the driver (D312). */
+static int allocationWhole = 0;
 
 /* The bytes asked for by the blocks in use and the bytes of the idle
    pieces of the pool, and the peaks since the program started (D294) of
@@ -1157,6 +1163,8 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     uint64_t extent = freeBlocks[i].extent;
     if (extent < size || (best >= 0 && extent >= freeBlocks[best].extent))
       continue;
+    if (allocationWhole && (extent != size || freeBlocks[i].baseSize != size))
+      continue;
     best = i;
     if (extent == size)
       break;
@@ -1287,11 +1295,9 @@ static void poolBlock(struct Block block, int gone, int replaced) {
 /* Returns a buffer of the runtime's structures that a growth replaces to
    the driver, not to the pool (D312): the buffer that replaces it is
    larger, and a later request of the old size is unlikely, so in the pool
-   it would stay for the rest of the run. That holds for a buffer that is
-   an arena of its own. A piece of a larger arena cannot go back alone: it
-   returns to the pool, where a smaller request may take it, and its arena
-   follows the budget's rule. The caller has waited for the device, as a
-   growth does, so the free does not wait. */
+   it would stay for the rest of the run. Such a buffer is an arena of its
+   own (allocationWhole), so it can go back alone. The caller has waited for
+   the device, as a growth does, so the free does not wait. */
 static void releaseReplaced(void *pointer) {
   if (!pointer)
     return;
@@ -1790,9 +1796,11 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
 
 static void allocateGroup(struct Groups *groups, int which) {
   allocationTag = mdrtGroupsDescriptor(which)->role;
+  allocationWhole = 1;
   groups->data[which] = mgpuMemAlloc(
       (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
       false);
+  allocationWhole = 0;
   allocationTag = NULL;
 }
 
@@ -1927,9 +1935,11 @@ struct Matrix {
 
 static void allocateMatrix(struct Matrix *matrix) {
   allocationTag = "matrix: rows";
+  allocationWhole = 1;
   matrix->data = mgpuMemAlloc(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
       false);
+  allocationWhole = 0;
   allocationTag = NULL;
 }
 
@@ -1991,11 +2001,13 @@ struct Edges {
 
 static void allocateEdges(struct Edges *edges) {
   allocationTag = "edges: candidates";
+  allocationWhole = 1;
   edges->candidates = mgpuMemAlloc(
       (uint64_t)edges->capacity * 4 * sizeof(int32_t), NULL, false);
   allocationTag = "edges: slots";
   edges->slots = mgpuMemAlloc(
       (uint64_t)edges->capacity * 5 * sizeof(int32_t), NULL, false);
+  allocationWhole = 0;
   allocationTag = NULL;
 }
 
