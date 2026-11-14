@@ -12,14 +12,14 @@ func.func @two_ended(%x: !vec, %cell: !md.cell) -> !vec {
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f0 = md_exec.zeros : !vec
   // expected-error @+1 {{cannot take host(lanes(8)): the policy is not (directed, owner_only): the lanes write at the centers alone}}
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(directed, atomic) host(lanes(8)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %d : vector<3xf32>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   return %f : !vec
 }
 
@@ -33,13 +33,13 @@ func.func @width(%x: !vec, %cell: !md.cell) -> !vec {
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f0 = md_exec.zeros : !vec
   // expected-error @+1 {{cannot take host(lanes(3)): the lanes are a power of two from 1 to 64, not 3}}
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(directed, owner_only) host(lanes(3)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %d : vector<3xf32>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   return %f : !vec
 }

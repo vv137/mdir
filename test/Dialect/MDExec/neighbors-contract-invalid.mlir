@@ -14,14 +14,14 @@ md.particle_set @atoms
 func.func @unique_over_directed(%x: !vec, %cell: !md.cell) -> f64 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %u0 = arith.constant 0.0 : f64
   // expected-error@+1 {{takes a neighbor structure that does not meet its requirement: the traversal 'unique' is required, and the structure is 'directed'}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       exchange [symmetric] policy(unique, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !vec -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f64
   return %u : f64
 }
 
@@ -56,8 +56,8 @@ md.particle_set @atoms
 func.func @owner_only_over_ungrouped(%x: !vec, %cell: !md.cell, %f0: !vec) -> !vec {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, masked, none>
   // expected-error@+1 {{the organization 'grouped_by(owner)' is required, and the structure guarantees 'none'}}
   %f = md_exec.pair_for %w, %x, %cell outs(%f0 : !vec) cutoff(1.0)
@@ -120,8 +120,8 @@ md.particle_set @atoms
 func.func @fixed_order_over_grouped(%x: !vec, %cell: !md.cell) -> f64 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
   %u0 = arith.constant 0.0 : f64
   // expected-error@+1 {{the organization 'stable(owner, search)' is required, and the structure guarantees 'grouped_by(owner)'}}
@@ -164,14 +164,14 @@ md.particle_set @atoms
 func.func @images(%x: !vec, %cell: !md.cell) -> f64 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %u0 = arith.constant 0.0 : f64
   // expected-error@+1 {{the images 'explicit' are required, and the structure's are 'minimum'}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       images(explicit) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !vec -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f64
   return %u : f64
 }
 
@@ -244,7 +244,7 @@ func.func @groups_typed_as_matrix(%x: !vec, %cell: !md.cell) {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   // expected-error@+1 {{has the type of a structure that guarantees 'directed, minimum, masked, stable(owner, search)', more than its build does: 'unique, minimum, removed, stable(group, search)'}}
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(groups) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(groups) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -255,7 +255,7 @@ md.particle_set @atoms
 // The same for an empty structure.
 func.func @empty_groups_typed_as_matrix() {
   // expected-error@+1 {{has the type of a structure that guarantees 'directed, minimum, masked, stable(owner, search)', more than its build does: 'unique, minimum, removed, stable(group, search)'}}
-  %nl = md_exec.empty_neighbors kind(groups) width(64) : !mdrt.neighbors<@atoms>
+  %nl = md_exec.empty_neighbors kind(groups) width(64) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -270,7 +270,7 @@ func.func @explicit_typed_as_minimum(%x: !vec, %cell: !md.cell, %n: index) {
   // expected-error@+1 {{has the type of a structure that guarantees 'directed, minimum, masked, stable(owner, search)', more than its build does: 'directed, explicit, masked, stable(owner, search)'}}
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n) cutoff(1.0)
       skin(0.0) kind(matrix) width(64) images(explicit)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -281,10 +281,10 @@ md.particle_set @atoms
 
 // A refresh builds with its images, which its type states.
 func.func @refresh_images(%x: !vec, %cell: !md.cell) {
-  %nl0 = md_exec.empty_neighbors kind(matrix) width(64) : !mdrt.neighbors<@atoms>
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(64) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{builds images(explicit), but its structure's type states 'minimum'}}
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell cutoff(1.0) skin(0.0)
-      cell_width(1.0) images(explicit) policy(always) : !mdrt.neighbors<@atoms>, !vec
+      cell_width(1.0) images(explicit) policy(always) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
   return
 }
 
@@ -297,7 +297,7 @@ func.func @strengthen(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, gr
   // expected-error@+1 {{cannot strengthen 'directed, minimum, masked, grouped_by(owner)' to 'directed, minimum, masked, stable(owner, search)': the result must state less}}
   %w = md_exec.weaken_neighbors %nl
       : !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
-      to !mdrt.neighbors<@atoms>
+      to !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -306,9 +306,9 @@ func.func @strengthen(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, gr
 md.particle_set @atoms
 
 // Nor from masked exclusions to removed ones.
-func.func @strengthen_exclusions(%nl: !mdrt.neighbors<@atoms>) {
+func.func @strengthen_exclusions(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{cannot strengthen 'directed, minimum, masked, stable(owner, search)' to 'directed, minimum, removed, stable(owner, search)'}}
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, removed, stable(owner, search)>
   return
 }
@@ -318,9 +318,9 @@ func.func @strengthen_exclusions(%nl: !mdrt.neighbors<@atoms>) {
 md.particle_set @atoms
 
 // Another key is not weaker: the two are not comparable (D409).
-func.func @other_key(%nl: !mdrt.neighbors<@atoms>) {
+func.func @other_key(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{cannot strengthen 'directed, minimum, masked, stable(owner, search)' to 'directed, minimum, masked, grouped_by(group)'}}
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(group)>
   return
 }
@@ -330,9 +330,9 @@ func.func @other_key(%nl: !mdrt.neighbors<@atoms>) {
 md.particle_set @atoms
 
 // Nor is another traversal.
-func.func @other_traversal(%nl: !mdrt.neighbors<@atoms>) {
+func.func @other_traversal(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{cannot strengthen 'directed, minimum, masked, stable(owner, search)' to 'unique, minimum, masked, none'}}
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, unique, minimum, masked, none>
   return
 }
@@ -342,9 +342,9 @@ func.func @other_traversal(%nl: !mdrt.neighbors<@atoms>) {
 md.particle_set @atoms
 md.particle_set @other
 
-func.func @other_set(%nl: !mdrt.neighbors<@atoms>) {
+func.func @other_set(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{the structure is on @atoms, but the result is on @other}}
-  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+  %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@other, directed, minimum, masked, none>
   return
 }
@@ -355,12 +355,12 @@ md.particle_set @atoms
 
 // The two branches of an scf.if yield one type: a structure of groups and a
 // matrix are not one structure.
-func.func @branches(%c: i1, %a: !mdrt.neighbors<@atoms>,
+func.func @branches(%c: i1, %a: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>,
     %b: !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>) {
-  // expected-error@+1 {{successor operand type #0 '!mdrt.neighbors<@atoms>' should match successor input type #0 '!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>'}}
+  // expected-error@+1 {{successor operand type #0 '!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>' should match successor input type #0 '!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>'}}
   %r = scf.if %c -> !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)> {
     // expected-note@+1 {{region branch point}}
-    scf.yield %a : !mdrt.neighbors<@atoms>
+    scf.yield %a : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   } else {
     scf.yield %b : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   }
@@ -372,12 +372,12 @@ func.func @branches(%c: i1, %a: !mdrt.neighbors<@atoms>,
 md.particle_set @atoms
 
 // The same for the value that a loop carries.
-func.func @carried(%n: index, %a: !mdrt.neighbors<@atoms>,
+func.func @carried(%n: index, %a: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>,
     %b: !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // expected-error@+1 {{successor operand type #0 '!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>' should match successor input type #0 '!mdrt.neighbors<@atoms>'}}
-  %r = scf.for %i = %c0 to %n step %c1 iter_args(%s = %a) -> !mdrt.neighbors<@atoms> {
+  // expected-error@+1 {{successor operand type #0 '!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>' should match successor input type #0 '!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>'}}
+  %r = scf.for %i = %c0 to %n step %c1 iter_args(%s = %a) -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> {
     // expected-note@+1 {{region branch point}}
     scf.yield %b : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   }
@@ -396,6 +396,6 @@ func.func @refresh(%x: !vec, %cell: !md.cell) {
       : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   // expected-error@+1 {{use of value '%nl0' expects different type than prior uses}}
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell cutoff(1.0) skin(0.0)
-      cell_width(1.0) policy(always) : !mdrt.neighbors<@atoms>, !vec
+      cell_width(1.0) policy(always) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
   return
 }

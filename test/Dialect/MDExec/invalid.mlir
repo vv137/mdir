@@ -25,7 +25,7 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) {
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(2.5) skin(0.3) kind(matrix) width(0)
       : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64>
-      -> !mdrt.neighbors<@atoms>
+      -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   md.return
 }
 
@@ -48,14 +48,14 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(8)
       : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64>
-      -> !mdrt.neighbors<@atoms>
+      -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %u0 = arith.constant 0.0 : f64
   // expected-error@+1 {{the cutoff, 1.500000e+00, exceeds the cutoff that the neighbor structure was built with, 1.000000e+00}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -66,13 +66,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{only the policies (directed, owner_only), (directed, atomic), and (unique, atomic) are supported}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       policy(unique, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -85,13 +85,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{the policy (directed, atomic) needs every destination symmetric or antisymmetric and every sum symmetric; value 0 is none}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       policy(directed, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -102,13 +102,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{the policy (unique, atomic) needs every destination symmetric or antisymmetric and every sum symmetric; value 0 is none}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       policy(unique, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -119,13 +119,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{the policy (unique, atomic) needs every destination symmetric or antisymmetric and every sum symmetric; value 0 is antisymmetric}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       exchange [antisymmetric] policy(unique, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -136,13 +136,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{expected 1 weights, one per value in 'reduce', got 2}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       weights [0.5, 0.5] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -153,13 +153,13 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{expected the kernel to have 2 arguments, got 1}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f64):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -170,14 +170,14 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> !md.field<@at
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.0) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f = md_exec.pair_for %nl, %x, %cell
       outs(%f0 : !md.field<@atoms, 3 x f64>) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     // expected-error@+1 {{expected value 0 to have type 'vector<3xf64>', got 'f64'}}
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
       -> !md.field<@atoms, 3 x f64>
   md.return %f : !md.field<@atoms, 3 x f64>
 }
@@ -211,11 +211,11 @@ md.function @f(%v: !md.field<@atoms, 3 x f64>, %q: !md.field<@ions, f64>)
 // -----
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
-               %nl: !mdrt.neighbors<@atoms>) {
+               %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{expected cells of a positive width, got 0.000000e+00}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(0.0) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   md.return
 }
 
@@ -224,7 +224,7 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 md.function @f() {
   // expected-error@+1 {{expected a positive width, got 0}}
   %nl = md_exec.empty_neighbors kind(matrix) width(0)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   md.return
 }
 
@@ -239,14 +239,14 @@ func.func @f( %x: !md.field<@atoms, 3 x f64>,
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(2.5) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{expected kernel argument 1 to have type 'vector<3xf32>', got 'vector<3xf64>'}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64)
       cutoff(2.5) policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf64>):
     %e = arith.extf %r2 : f32 to f64
     md_exec.yield %e : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   return %u : f64
 }
 
@@ -301,14 +301,14 @@ func.func @f( %x: !md.field<@atoms, 3 x f64>,
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(2.5) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{'overwrite' belongs to the storage form; in the value form the destination tells what the loop adds to}}
   %f = md_exec.pair_for %nl, %x, %cell
       outs(%f0 : !md.field<@atoms, 3 x f64>) cutoff(2.5) overwrite [true]
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
       -> !md.field<@atoms, 3 x f64>
   return %f : !md.field<@atoms, 3 x f64>
 }
@@ -320,7 +320,7 @@ md.particle_set @atoms
 func.func @f(%n: index) {
   // expected-error@+1 {{expected the type of a buffer that holds positions, got 'memref<?xi32>'}}
   %nl = md_exec.empty_neighbors size(%n) positions(memref<?xi32>)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -381,33 +381,33 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %f: !md.field<@atoms, 3 x f64>) {
 // -----
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
-               %nl: !mdrt.neighbors<@atoms>, %moved: i1) {
+               %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, %moved: i1) {
   // expected-error@+1 {{'moved' belongs to the policy 'check': with the policy 'always' the structure is built whatever has moved}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(always)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   md.return
 }
 
 // -----
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
-               %nl: !mdrt.neighbors<@atoms>) {
+               %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{expected a positive 'interval' with the policy 'interval'}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(interval)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   md.return
 }
 
 // -----
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
-               %nl: !mdrt.neighbors<@atoms>) {
+               %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{'interval' belongs to the policy 'interval'}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) interval(10) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   md.return
 }
 
@@ -416,30 +416,30 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 md.particle_set @atoms
 
 func.func @f(%x: memref<?x3xf64>, %a: memref<?xf64>, %cell: !md.cell,
-             %nl: !mdrt.neighbors<@atoms>, %moved: i1) {
+             %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, %moved: i1) {
   // expected-error@+1 {{expected no buffers in 'scratch': with 'moved' the op does not test the displacements}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
       scratch(%a, %a : memref<?xf64>, memref<?xf64>) moved(%moved)
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
   return
 }
 
 // -----
 
-md.function @f(%nl: !mdrt.neighbors<@atoms>) {
+md.function @f(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{the structure is on @atoms, but the positions belong to @ions}}
   %ref = md_exec.reference_positions %nl
-      : !mdrt.neighbors<@atoms> -> !md.field<@ions, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@ions, 3 x f64>
   md.return
 }
 
 // -----
 
-md.function @f(%nl: !mdrt.neighbors<@atoms>) {
+md.function @f(%nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
   // expected-error@+1 {{expected a position field with 3 components of f32 or f64, got '!md.field<@atoms, f64>'}}
   %ref = md_exec.reference_positions %nl
-      : !mdrt.neighbors<@atoms> -> !md.field<@atoms, f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@atoms, f64>
   md.return
 }
 
@@ -450,14 +450,14 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(2.5) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(2.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{expected a value in 'reduce' to be f32, f64, or a fixed-size vector of one of them, got 'i1'}}
   %any = md_exec.pair_for %nl, %x, %cell reduce(%no : i1) cutoff(2.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     %yes = arith.constant true
     md_exec.yield %yes : i1
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> i1
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> i1
   md.return
 }
 
@@ -515,14 +515,14 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %u0: f64) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.5) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // expected-error@+1 {{expected 1 exchange contracts, one per value in 'outs' and 'reduce', got 2}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
       exchange [symmetric, symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   return %u : f64
 }
 
@@ -534,14 +534,14 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %u0: f64) -> f64 {
   // Establish coverage so this fixture checks its intended kernel error.
   %coverage_cells = md_exec.build_cells %x, %cell width(1.5) : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
-      cutoff(1.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+      cutoff(1.5) skin(0.0) kind(matrix) width(64) : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // expected-error@+2 {{expected 'none', 'symmetric', or 'antisymmetric', got 'odd'}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
       exchange [odd] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   return %u : f64
 }
 

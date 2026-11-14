@@ -450,7 +450,7 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
     %nl = md_exec.build_neighbors %cells, %x, %cell
             cutoff(2.5) skin(0.3) kind(matrix) width(96)
             : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64>
-            -> !mdrt.neighbors<@atoms>
+            -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
     With `exclude`, the structure leaves out the pairs of an incidence
@@ -471,7 +471,7 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
     %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n)
             cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
             : !mdrt.cells<@dd.d0.local>, !md.field<@dd.d0.local, 3 x f64>
-            -> !mdrt.neighbors<@dd.d0.local>
+            -> !mdrt.neighbors<@dd.d0.local, directed, minimum, masked, stable(owner, search)>
     ```
   }];
   let arguments = (ins
@@ -510,7 +510,7 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
 
     ```mlir
     %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-             : !mdrt.neighbors<@atoms>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
     In the storage form the op allocates the storage of a structure for
@@ -520,7 +520,7 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
 
     ```mlir
     %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
-            kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+            kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
     `exclude` is as for `md_exec.build_neighbors`: every build of the
@@ -578,7 +578,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     ```mlir
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
     ```
 
     In the storage form `positions` is a buffer. The structure is rebuilt
@@ -587,7 +587,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     ```mlir
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-             : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
     ```
 
     With the policy `interval`, the structure is built at the first
@@ -603,7 +603,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
              cutoff(2.5) skin(0.3) cell_width(2.8) interval(10)
              policy(interval)
-             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
     ```
 
     `scratch` holds buffers that the op may use as it likes. What they hold
@@ -621,7 +621,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     ```mlir
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
     ```
 
     With `prune_skin` the structure is a dual list (D114,
@@ -649,7 +649,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
              stale(%stale) cutoff(2.5) skin(0.6) prune_skin(0.2)
              cell_width(2.8) policy(check)
-             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
     ```
 
     `centers` and `images` are as for `md_exec.build_neighbors`. A
@@ -705,7 +705,7 @@ def MDExec_ReferencePositionsOp : MDExec_Op<"reference_positions", [Pure]> {
 
     ```mlir
     %ref = md_exec.reference_positions %nl
-             : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@atoms, 3 x f64>
     ```
 
     A loop over particles tests with them whether the structure is still
@@ -727,7 +727,7 @@ def MDExec_ReferencePositionsOp : MDExec_Op<"reference_positions", [Pure]> {
 
     ```mlir
     %ref = md_exec.reference_positions %nl
-             : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
+             : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> memref<?x3xf64>
     ```
 
     With `pruned`, the positions at which the inner list of a dual list
@@ -756,7 +756,7 @@ def MDExec_ReferenceCellOp : MDExec_Op<"reference_cell", [Pure]> {
     which the test of validity allows for (D80).
 
     ```mlir
-    %cell0 = md_exec.reference_cell %nl : !mdrt.neighbors<@atoms>
+    %cell0 = md_exec.reference_cell %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
     With `pruned`, the cell in which the inner list of a dual list was last
@@ -813,7 +813,7 @@ def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {
     The count of builds starts again from zero.
 
     ```mlir
-    md_exec.reset_neighbors %nl : !mdrt.neighbors<@atoms>
+    md_exec.reset_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
     With `exclude`, the builds from here on leave out the pairs of that
@@ -841,7 +841,7 @@ def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
     form changes where it is.
 
     ```mlir
-    %builds = md_exec.rebuild_count %nl : !mdrt.neighbors<@atoms>
+    %builds = md_exec.rebuild_count %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
   }];
   let arguments = (ins
@@ -868,7 +868,7 @@ def MDExec_WeakenNeighborsOp : MDExec_Op<"weaken_neighbors", [Pure]> {
     that gave the order then has no reader (#877).
 
     ```mlir
-    %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+    %w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
            to !mdrt.neighbors<@atoms, directed, minimum, masked,
                               grouped_by(owner)>
     ```
@@ -1009,7 +1009,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     ^bb0(%r2: f64, %d: vector<3xf64>):
       ...
       md_exec.yield %k_f, %k_u : vector<3xf64>, f64
-    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
         -> !md.field<@atoms, 3 x f64>, f64
     ```
 
@@ -1027,7 +1027,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     ^bb0(%r2: f64, %d: vector<3xf64>):
       ...
       md_exec.yield %k_f, %k_u : vector<3xf64>, f64
-    } : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
+    } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64> -> f64
     ```
 
     `scratch` holds buffers that the loop may use as it likes. What they
@@ -1074,7 +1074,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
            outs(%f0 : !md.field<@dd.d0.local, 3 x f64>) cutoff(2.0)
            exchange [antisymmetric] images(explicit)
            policy(directed, atomic) { ... }
-           : !mdrt.neighbors<@dd.d0.local>, !md.field<@dd.d0.local, 3 x f64>
+           : !mdrt.neighbors<@dd.d0.local, directed, minimum, masked, stable(owner, search)>, !md.field<@dd.d0.local, 3 x f64>
            -> !md.field<@dd.d0.local, 3 x f64>
     ```
 
@@ -1377,7 +1377,7 @@ def MDExec_BuildTripletsOp : MDExec_Op<"build_triplets", [
 
     ```mlir
     %t = md_exec.build_triplets %nl, %x, %cell cutoff(0.43065)
-           : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+           : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
              -> !md.relation<@atoms, 3, reversal>
     ```
 
@@ -1391,7 +1391,7 @@ def MDExec_BuildTripletsOp : MDExec_Op<"build_triplets", [
 
     ```mlir
     %members = md_exec.build_triplets %nl, %x, %cell cutoff(0.43065)
-                 : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+                 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
                    -> memref<?x3xi32>
     ```
   }];
@@ -1427,7 +1427,7 @@ def MDExec_BuildEdgesOp : MDExec_Op<"build_edges", [
 
     ```mlir
     %e = md_exec.build_edges %nl, %x, %cell cutoff(0.7)
-           : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+           : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
              -> !md.edges<@atoms>
     ```
 
@@ -1452,7 +1452,7 @@ def MDExec_BuildEdgesOp : MDExec_Op<"build_edges", [
 
     ```mlir
     %slots, %counts, %offsets, %builds = md_exec.build_edges %nl, %x, %cell
-        cutoff(0.7) : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
+        cutoff(0.7) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64, 1>
         -> memref<?x5xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, i64
     ```
   }];

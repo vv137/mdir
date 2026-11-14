@@ -24,10 +24,10 @@ func.func @mapped_charges(%n: index, %k: index, %cell: !md.cell) {
   %s4 = gpu.alloc (%k) : memref<?xf32, 1>
   %s5 = gpu.alloc (%k) : memref<?xf32, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(!pos)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, !pos
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !pos
   md_exec.particle_for ins(%q0 : !chg) outs(%q : !chg) {
   ^bb0(%qi: f64):
     %half = arith.constant 0.5 : f64
@@ -60,10 +60,10 @@ func.func @independent_field(%n: index, %k: index, %cell: !md.cell) {
   %s4 = gpu.alloc (%k) : memref<?xf32, 1>
   %s5 = gpu.alloc (%k) : memref<?xf32, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(!pos)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, !pos
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !pos
   md_exec.particle_for ins(%q0 : !chg) outs(%other : !chg) {
   ^bb0(%qi: f64):
     %half = arith.constant 0.5 : f64
@@ -97,10 +97,10 @@ func.func @aliased_charges(%n: index, %k: index, %cell: !md.cell) {
   %s4 = gpu.alloc (%k) : memref<?xf32, 1>
   %s5 = gpu.alloc (%k) : memref<?xf32, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(!pos)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, !pos
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !pos
   %view = memref.subview %q[0] [%n] [1] : !chg to memref<?xf64, strided<[1]>, 1>
   md_exec.particle_for ins(%q0 : !chg) outs(%view : memref<?xf64, strided<[1]>, 1>) {
   ^bb0(%qi: f64):
@@ -138,10 +138,10 @@ func.func @unknown_effects(%n: index, %k: index, %cell: !md.cell) {
   %s4 = gpu.alloc (%k) : memref<?xf32, 1>
   %s5 = gpu.alloc (%k) : memref<?xf32, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(!pos)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, !pos
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !pos
   func.call @unknown() : () -> ()
   %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%f : !frc)
       scratch(%s0, %s1, %s2, %s3, %s4, %s5 : memref<?xi64, 1>, memref<?xf32, 1>,

@@ -53,26 +53,26 @@ func.func @carried(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
 func.func @matrix(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, f64, !vec) {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       weights [0.5] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
   } {md_exec.algebra = #md_exec.algebra<fixed_order>}
-    : !mdrt.neighbors<@atoms>, !vec -> f64
+    : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f64
   %g = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(directed, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   %t = md_exec.build_triplets %nl, %x, %cell cutoff(1.0)
-      : !mdrt.neighbors<@atoms>, !vec -> !md.relation<@atoms, 3, reversal>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !md.relation<@atoms, 3, reversal>
   return %f, %u, %g : !vec, f64, !vec
 }
 
@@ -81,8 +81,8 @@ func.func @matrix(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, f64, !vec) {
 // loop over groups with a fixed_order sum passes the type (its order is
 // stable); its lowering refuses it (#877, item 4).
 // CHECK-LABEL: func.func @weakened(
-// CHECK:         md_exec.weaken_neighbors %{{.*}} : !mdrt.neighbors<@atoms> to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
-// CHECK:         md_exec.weaken_neighbors %{{.*}} : !mdrt.neighbors<@atoms> to !mdrt.neighbors<@atoms, directed, minimum, masked, none>
+// CHECK:         md_exec.weaken_neighbors %{{.*}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
+// CHECK:         md_exec.weaken_neighbors %{{.*}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> to !mdrt.neighbors<@atoms, directed, minimum, masked, none>
 // FOLD-LABEL: func.func @weakened(
 // FOLD:         md_exec.weaken_neighbors
 // FOLD:         md_exec.weaken_neighbors
@@ -91,15 +91,15 @@ func.func @matrix(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, f64, !vec) {
 func.func @weakened(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, !vec, f64) {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %grouped = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+      kind(matrix) width(64) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %grouped = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
   %f = md_exec.pair_for %grouped, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
   } : !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>, !vec -> !vec
-  %none = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+  %none = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
       to !mdrt.neighbors<@atoms, directed, minimum, masked, none>
   %g = md_exec.pair_for %none, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(directed, atomic) {

@@ -89,16 +89,16 @@ md.particle_set @atoms
 func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
              %cell: !md.cell) -> (i64, i64) {
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   // expected-error@+1 {{needs storage of its own: the neighbor structure is used after it is refreshed}}
   %nl2 = md_exec.refresh_neighbors %nl1, %y, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
-  %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
-  %b = md_exec.rebuild_count %nl2 : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
+  %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %b = md_exec.rebuild_count %nl2 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return %a, %b : i64, i64
 }
 
@@ -116,13 +116,13 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   %ye = scf.for %step = %c0 to %n step %c1 iter_args(%ya = %y)
       -> (!md.field<@atoms, 3 x f64>) {
-    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
+    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     %g0 = md_exec.zeros : !md.field<@atoms, 3 x f64>
     // expected-error@+1 {{needs a buffer of its own: the loop writes to a field that it reads from other particles}}
     %g = md_exec.pair_for %nl1, %x, %cell
@@ -132,7 +132,7 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
     ^bb0(%r2: f64, %d: vector<3xf64>, %g1: vector<3xf64>, %g2: vector<3xf64>):
       %s = arith.addf %g1, %g2 : vector<3xf64>
       md_exec.yield %s : vector<3xf64>
-    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
         -> !md.field<@atoms, 3 x f64>
     scf.yield %g : !md.field<@atoms, 3 x f64>
   }
@@ -150,13 +150,13 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   %ye, %ze = scf.for %step = %c0 to %n step %c1 iter_args(%ya = %y, %za = %z)
       -> (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) {
-    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
+    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     // expected-error@+1 {{needs a buffer of its own: the loop yields one field twice}}
     scf.yield %ya, %ya
         : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>

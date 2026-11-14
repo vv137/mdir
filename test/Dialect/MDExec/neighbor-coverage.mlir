@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s | mdir-opt -o /dev/null
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !nlx = !mdrt.neighbors<@atoms, directed, explicit, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms

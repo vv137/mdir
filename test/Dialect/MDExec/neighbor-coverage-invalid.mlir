@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --split-input-file -verify-diagnostics -o /dev/null
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -29,7 +29,7 @@ func.func @initial_cutoff(%x: !vec, %cell: !md.cell, %count: index, %owned: inde
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -85,7 +85,7 @@ func.func @centers_mismatch(%x: !vec, %cell: !md.cell, %count: index, %owned: in
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -113,7 +113,7 @@ func.func @images_mismatch(%x: !vec, %cell: !md.cell, %count: index, %owned: ind
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -141,7 +141,7 @@ func.func @zero_trip(%x: !vec, %cell: !md.cell) {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -169,7 +169,7 @@ func.func @callers(%x: !vec, %cell: !md.cell) {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -187,7 +187,7 @@ func.func @public_argument(%nl: !nl, %x: !vec, %cell: !md.cell) -> f64 {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -205,7 +205,7 @@ func.func private @no_calls(%nl: !nl, %x: !vec, %cell: !md.cell) -> f64 {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -224,7 +224,7 @@ func.func private @recursive(%nl: !nl, %x: !vec, %cell: !md.cell) -> f64 {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -246,7 +246,7 @@ func.func @take_address() {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -276,7 +276,7 @@ func.func @permuted_initial(%x: !vec, %cell: !md.cell, %count: index) {
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 

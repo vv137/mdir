@@ -92,14 +92,14 @@ func.func private @g() attributes {scatter = #md_exec.scatter<tile(0)>}
 // (D291).
 !vec = !md.field<@atoms, 3 x f32>
 md.particle_set @atoms
-func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>,
+func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>,
              %f0: !vec) -> !vec {
   // expected-error@+1 {{cannot take the strategy 'hash' with the conflict 'owner_only': the loop adds only at its centers, each by its own thread}}
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       policy(directed, owner_only) scatter(hash(512, 8, 0)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %d : vector<3xf32>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   return %f : !vec
 }
 
@@ -107,14 +107,14 @@ func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>,
 
 !vec = !md.field<@atoms, 3 x f32>
 md.particle_set @atoms
-func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>,
+func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>,
              %f0: !vec) -> !vec {
   // expected-error@+1 {{cannot take the strategy 'tile': the entries of a list may be anywhere, so the footprint of a block is not bounded}}
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(unique, atomic) scatter(tile(8)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %d : vector<3xf32>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   return %f : !vec
 }
 

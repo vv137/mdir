@@ -25,10 +25,10 @@ md.function @forces(%x: !vec, %cell: !md.cell, %a: f64,
 
   // CHECK: %[[NL:[0-9]+]] = md_exec.build_neighbors %[[CELLS]], %[[XS]], %{{[a-z0-9]+}}
   // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) kind(matrix) width(96)
-  // CHECK-SAME: : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms>
+  // CHECK-SAME: : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64> -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.build_neighbors %cells, %xs, %cell
       cutoff(2.5) skin(0.3) kind(matrix) width(96)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // CHECK: %[[F0:[0-9]+]] = md_exec.zeros : !md.field<@atoms, 3 x f64>
   %f0 = md_exec.zeros : !vec
@@ -49,8 +49,8 @@ md.function @forces(%x: !vec, %cell: !md.cell, %a: f64,
     %kf = arith.mulf %gv, %d : vector<3xf64>
     // CHECK: md_exec.yield %{{[0-9]+}}, %{{[0-9]+}} : vector<3xf64>, f64
     md_exec.yield %kf, %g : vector<3xf64>, f64
-  // CHECK: } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+  // CHECK: } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec, f64
 
   md.return %f, %u : !vec, f64
 }
@@ -65,7 +65,7 @@ md.function @charges(%x: !vec, %cell: !md.cell, %q: !real) -> f64 {
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(64)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // CHECK: md_exec.pair_for %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
   // CHECK-SAME: ins(%{{[a-z0-9]+}} : !md.field<@atoms, f64>)
   // CHECK-SAME: reduce(
@@ -78,7 +78,7 @@ md.function @charges(%x: !vec, %cell: !md.cell, %q: !real) -> f64 {
     %r  = math.sqrt %r2 : f64
     %k  = arith.divf %qq, %r : f64
     md_exec.yield %k : f64
-  } : !mdrt.neighbors<@atoms>, !vec -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f64
   md.return %u : f64
 }
 
@@ -126,19 +126,19 @@ md.function @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> (!vec, f64) {
 //
 // CHECK-LABEL: md.function @refresh(
 md.function @refresh(%x: !vec, %cell: !md.cell) -> i64 {
-  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // CHECK: %[[NL1:[0-9]+]] = md_exec.refresh_neighbors %[[NL0]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
   // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) cell_width(2.800000e+00) policy(check)
-  // CHECK-SAME: : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  // CHECK-SAME: : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64>
   %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, !vec
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
 
-  // CHECK: %[[BUILDS:[0-9]+]] = md_exec.rebuild_count %[[NL1]] : !mdrt.neighbors<@atoms>
-  %builds = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
+  // CHECK: %[[BUILDS:[0-9]+]] = md_exec.rebuild_count %[[NL1]] : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %builds = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   md.return %builds : i64
 }
 
@@ -165,11 +165,11 @@ func.func @order_storage(%x: memref<?x3xf32>, %cell: !md.cell,
 // the refresh.
 //
 // CHECK-LABEL: func.func @moved(
-func.func @moved(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>)
-    -> !mdrt.neighbors<@atoms> {
-  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+func.func @moved(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>)
+    -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> {
+  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@atoms, 3 x f64>
   %ref = md_exec.reference_positions %nl
-      : !mdrt.neighbors<@atoms> -> !vec
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !vec
 
   %no = arith.constant false
   // CHECK: %[[MOVED:[0-9]+]] = md_exec.particle_for
@@ -191,8 +191,8 @@ func.func @moved(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>)
   // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) cell_width(2.800000e+00) policy(check)
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, !vec
-  return %nl1 : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
+  return %nl1 : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 }
 
 // The same in the storage form.
@@ -200,10 +200,10 @@ func.func @moved(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>)
 // CHECK-LABEL: func.func @moved_storage(
 func.func @moved_storage(%x: memref<?x3xf32>, %cell: !md.cell, %n: index) {
   %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
-      kind(matrix) width(96) : !mdrt.neighbors<@atoms>
-  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[0-9]+}} : !mdrt.neighbors<@atoms> -> memref<?x3xf32>
+      kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[0-9]+}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> memref<?x3xf32>
   %ref = md_exec.reference_positions %nl
-      : !mdrt.neighbors<@atoms> -> memref<?x3xf32>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> memref<?x3xf32>
 
   %no = arith.constant false
   // CHECK: %[[MOVED:[0-9]+]] = md_exec.particle_for
@@ -221,10 +221,10 @@ func.func @moved_storage(%x: memref<?x3xf32>, %cell: !md.cell, %n: index) {
   } -> i1
 
   // CHECK: md_exec.refresh_neighbors %{{[0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} moved(%[[MOVED]])
-  // CHECK-SAME: policy(check) : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+  // CHECK-SAME: policy(check) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32>
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32>
   return
 }
 
@@ -238,24 +238,24 @@ func.func @single(%buffer: memref<?x3xf32>, %cell: !md.cell)
   %x = mdrt.from_buffer %buffer
       : memref<?x3xf32> to !md.field<@atoms, 3 x f32>
   %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f32>
   %f0 = md_exec.zeros : !md.field<@atoms, 3 x f32>
   %u0 = arith.constant 0.0 : f64
 
   // CHECK: md_exec.pair_for %{{[0-9]+}}, %[[X]], %{{[a-z0-9]+}}
   // CHECK-SAME: outs(%{{[0-9]+}} : !md.field<@atoms, 3 x f32>) reduce(%{{[a-z0-9_]+}} : f64)
   // CHECK-NEXT: ^bb0(%{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: vector<3xf32>):
-  // CHECK: } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
+  // CHECK: } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
   %f, %u = md_exec.pair_for %nl, %x, %cell
       outs(%f0 : !md.field<@atoms, 3 x f32>) reduce(%u0 : f64)
       cutoff(2.5) weights [0.5] policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     %e = arith.extf %r2 : f32 to f64
     md_exec.yield %d, %e : vector<3xf32>, f64
-  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32>
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f32>
       -> !md.field<@atoms, 3 x f32>, f64
   return %f, %u : !md.field<@atoms, 3 x f32>, f64
 }
@@ -279,20 +279,20 @@ func.func @stored_in_single(%buffer: memref<?x3xf32>) -> memref<?x3xf32> {
 // CHECK-LABEL: func.func @storage(
 func.func @storage(%x: memref<?x3xf32>, %v: memref<?x3xf32>,
                    %f: memref<?x3xf32>, %cell: !md.cell, %n: index) -> f64 {
-  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf32>) kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf32>) kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
-      kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // CHECK: %[[NL:[0-9]+]] = md_exec.refresh_neighbors %[[NL0]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
-  // CHECK-SAME: policy(always) : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+  // CHECK-SAME: policy(always) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(always)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32>
 
   // CHECK: %[[U:[0-9]+]] = md_exec.pair_for %[[NL]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
   // CHECK-SAME: outs(%{{[a-z0-9]+}} : memref<?x3xf32>) reduce(%{{[a-z0-9_]+}} : f64)
   // CHECK-SAME: cutoff(2.500000e+00) weights [5.000000e-01] overwrite [true] policy(directed, owner_only) {
-  // CHECK: } : !mdrt.neighbors<@atoms>, memref<?x3xf32> -> f64
+  // CHECK: } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32> -> f64
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.pair_for %nl, %x, %cell outs(%f : memref<?x3xf32>)
       reduce(%u0 : f64) cutoff(2.5) weights [0.5] overwrite [true]
@@ -300,7 +300,7 @@ func.func @storage(%x: memref<?x3xf32>, %v: memref<?x3xf32>,
   ^bb0(%r2: f32, %d: vector<3xf32>):
     %e = arith.extf %r2 : f32 to f64
     md_exec.yield %d, %e : vector<3xf32>, f64
-  } : !mdrt.neighbors<@atoms>, memref<?x3xf32> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32> -> f64
 
   // CHECK: md_exec.particle_for ins(%{{[a-z0-9]+}}, %{{[a-z0-9]+}} : memref<?x3xf32>, memref<?x3xf32>) outs(%{{[a-z0-9]+}} : memref<?x3xf32>) {
   md_exec.particle_for ins(%v, %f : memref<?x3xf32>, memref<?x3xf32>)

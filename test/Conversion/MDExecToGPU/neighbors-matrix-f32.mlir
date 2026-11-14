@@ -15,10 +15,10 @@ md.particle_set @atoms
 // CHECK:         call @mdrt_gpu_build_neighbors_matrix_f32(
 func.func @build(%x: memref<?x3xf32, 1>, %cell: !md.cell, %n: index) {
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32, 1>)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf32, 1>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32, 1>
   return
 }
 

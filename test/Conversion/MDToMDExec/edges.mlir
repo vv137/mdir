@@ -36,7 +36,7 @@ func.func private @model(memref<?x3xf64> {mdrt.read_only},
 // CHECK:         %[[NL:[0-9]+]] = md_exec.build_neighbors %{{[0-9]+}}, %[[X:[a-z0-9]+]], %[[C:[0-9]+]]
 // CHECK-SAME:      cutoff(0.69999999999999996) skin(5.000000e-02) kind(matrix)
 // CHECK-NEXT:    %[[E:[0-9]+]] = md_exec.build_edges %[[NL]], %[[X]], %[[C]] cutoff(0.69999999999999996)
-// CHECK-SAME:      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.edges<@atoms>
+// CHECK-SAME:      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> !md.edges<@atoms>
 // CHECK:         mdrt.host_call @model(%[[X]], %[[E]]) outs(%{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>) {in_place}
 //
 // The edges keep their structure a matrix, whose rows hold every candidate

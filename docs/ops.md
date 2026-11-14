@@ -1269,7 +1269,7 @@ placeholders here, pending the `mdrt` ABI.
            : !vec -> !mdrt.cells<@atoms>
 %nl    = md_exec.build_neighbors %cells, %x, %cell
            cutoff(2.5) skin(0.3) kind(matrix) width(96)
-           : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+           : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 ```
 
 `width` is the number of neighbors that the structure holds per particle
@@ -1296,13 +1296,13 @@ it is used:
 
 ```mlir
 %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-         : !mdrt.neighbors<@atoms>
+         : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 scf.for ... iter_args(..., %nl = %nl0) {
   ...
   %nl1 = md_exec.refresh_neighbors %nl, %x1, %cell
            cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-           : !mdrt.neighbors<@atoms>, !vec
+           : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
   ...
   scf.yield ..., %nl1
 }
@@ -1347,7 +1347,7 @@ decides this (Section 10.5, D330).
 itself, unless it is given the result as `moved`:
 
 ```mlir
-%ref   = md_exec.reference_positions %nl : !mdrt.neighbors<@atoms> -> !vec
+%ref   = md_exec.reference_positions %nl : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !vec
 %moved = md_exec.particle_for ins(%x1, %ref : !vec, !vec)
            reduce(%false : i1) {
 ^bb0(%x_i: vector<3xf64>, %ref_i: vector<3xf64>):
@@ -1356,7 +1356,7 @@ itself, unless it is given the result as `moved`:
 } -> i1
 %nl1   = md_exec.refresh_neighbors %nl, %x1, %cell moved(%moved)
            cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-           : !mdrt.neighbors<@atoms>, !vec
+           : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
 ```
 
 `md_exec.reference_positions` returns `x_ref`. For a structure that has not
@@ -1380,7 +1380,7 @@ equality. Public, recursive, address-taken, indirect, or unrecognized
 boundaries are refused with the boundary named. A private function without
 known call sites has no proof. IR fixtures must supply construction or
 closed call-site evidence rather than an unconstrained neighbor argument.
-The type remains `!mdrt.neighbors<@set>`; current-state freshness is a separate obligation, tested by a refresh at run time (D80), and no open issue tracks a proof of it in the IR.
+The type remains `!mdrt.neighbors<@set, directed, minimum, masked, stable(owner, search)>`; current-state freshness is a separate obligation, tested by a refresh at run time (D80), and no open issue tracks a proof of it in the IR.
 The strict `md_dist.covered` halo-source check remains unchanged.
 
 ```mlir
@@ -1394,7 +1394,7 @@ The strict `md_dist.covered` halo-source check remains unchanged.
 ^bb0(%r2: f64, %d: vector<3xf64>):
   ...
   md_exec.yield %k_f, %k_u : vector<3xf64>, f64
-} : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec, f64
 ```
 
 | Clause | Meaning |
@@ -1495,7 +1495,7 @@ buffers. An op takes fields only or buffers only.
 %f, %u = md_exec.pair_for %nl, %x, %cell
            outs(%f0 : !vec) reduce(%u0 : f64)
            cutoff(2.5) weights [0.5] policy(directed, owner_only) { ... }
-         : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+         : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec, f64
 
 // Storage form
 %u = md_exec.pair_for %nl, %x, %cell
@@ -1503,7 +1503,7 @@ buffers. An op takes fields only or buffers only.
        reduce(%u0 : f64)
        cutoff(2.5) weights [0.5] overwrite [true]
        policy(directed, owner_only) { ... }
-     : !mdrt.neighbors<@atoms>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>> -> f64
+     : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>> -> f64
 ```
 
 The layout's affine map is the identity: it changes neither an address nor

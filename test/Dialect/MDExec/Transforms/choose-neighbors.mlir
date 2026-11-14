@@ -7,7 +7,7 @@
 // RUN: | FileCheck %s --check-prefix=DUAL
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl  = !mdrt.neighbors<@atoms>
+!nl  = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 md.particle_set @atoms
 
@@ -87,7 +87,7 @@ func.func @matrix(%x: !vec, %cell: !md.cell) -> (f64, f64) {
 //
 // DUAL-LABEL: func.func @dual(
 // DUAL-DAG:     %[[G0:[a-z0-9]+]] = md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
-// DUAL-DAG:     %[[M0:[a-z0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>{{$}}
+// DUAL-DAG:     %[[M0:[a-z0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>{{$}}
 // DUAL:         scf.for {{.*}} iter_args(%[[G:[a-z0-9]+]] = %[[G0]], %[[M:[a-z0-9]+]] = %[[M0]]
 // DUAL:           md_exec.reference_positions %[[G]] pruned
 // DUAL:           md_exec.reference_cell %[[G]] pruned
@@ -134,9 +134,9 @@ func.func @dual(%x: !vec, %cell: !md.cell, %n: index) -> (f64, f64) {
 // the pass cannot give the groups' type to the scf.if (D[neighbors-contract]).
 //
 // CHECK-LABEL: func.func @escapes(
-// CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+// CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 // CHECK:         md_exec.pair_for {{.*}} policy(directed, owner_only)
-// CHECK:         scf.if {{.*}} -> (!mdrt.neighbors<@atoms>)
+// CHECK:         scf.if {{.*}} -> (!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>)
 func.func @escapes(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

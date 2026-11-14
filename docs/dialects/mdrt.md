@@ -508,10 +508,9 @@ choices, such as the kind of the structure, its width, or the order of
 the places of a build of groups, are attributes of the build, not part
 of the type.
 
-Without the four words, the type states what a matrix guarantees:
+The four words are always spelled. A matrix:
 
 ```mlir
-!mdrt.neighbors<@atoms>
 !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 ```
 

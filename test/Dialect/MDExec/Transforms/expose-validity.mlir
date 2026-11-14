@@ -3,7 +3,7 @@
 // RUN: | FileCheck %s --check-prefix=FUSED
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl  = !mdrt.neighbors<@atoms>
+!nl  = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 md.particle_set @atoms
 
@@ -42,9 +42,9 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %n: index) -> !vec {
       md_exec.yield %xn : vector<3xf64>
     } -> !vec
 
-    // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %[[NA]] : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+    // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %[[NA]] : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@atoms, 3 x f64>
     // CHECK:      %[[EDGES:[0-9]+]] = md_exec.cell_edges %[[CELL]] : vector<3xf64>
-    // CHECK:      %[[CELL0:[0-9]+]] = md_exec.reference_cell %[[NA]] : !mdrt.neighbors<@atoms>
+    // CHECK:      %[[CELL0:[0-9]+]] = md_exec.reference_cell %[[NA]] : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     // CHECK:      %[[EDGES0:[0-9]+]] = md_exec.cell_edges %[[CELL0]] : vector<3xf64>
     // CHECK:      %[[M:[0-9]+]] = arith.divf %[[EDGES]], %[[EDGES0]] : vector<3xf64>
     // CHECK:      %[[LEAST:[0-9]+]] = vector.reduction <minnumf>, %[[M]]
@@ -97,7 +97,7 @@ func.func @left_alone(%x: !vec, %cell: !md.cell, %nl: !nl, %moved: i1,
   // CHECK:      md_exec.refresh_neighbors
   // CHECK-SAME:   policy(always)
   // CHECK:      md_exec.refresh_neighbors
-  // CHECK-SAME:   policy(check) : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  // CHECK-SAME:   policy(check) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check) : !nl, !vec
   %nl2 = md_exec.refresh_neighbors %nl1, %x, %cell
@@ -116,12 +116,12 @@ func.func @left_alone(%x: !vec, %cell: !md.cell, %nl: !nl, %moved: i1,
 //
 // CHECK-LABEL: func.func @dual(
 func.func @dual(%x: !vec, %cell: !md.cell, %nl: !nl) -> !nl {
-  // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms>
-  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // CHECK:      %[[R:[a-z0-9_]+]] = arith.constant 1.750000e+00 : f64
   // CHECK:      %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%{{[a-z0-9]+}}, %[[REF]] :
-  // CHECK:      %[[PREF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms>
-  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[PREF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // CHECK:      %[[RIN:[a-z0-9_]+]] = arith.constant 1.600000e+00 : f64
   // CHECK:      %[[STALE:[0-9]+]] = md_exec.particle_for ins(%{{[a-z0-9]+}}, %[[PREF]] :
   // CHECK:      md_exec.refresh_neighbors %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} moved(%[[MOVED]]) stale(%[[STALE]])

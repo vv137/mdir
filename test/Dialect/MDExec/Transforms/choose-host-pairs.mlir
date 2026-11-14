@@ -53,7 +53,7 @@
 !vec64 = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f32>
 !type = !md.field<@atoms, i32>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !nlx = !mdrt.neighbors<@atoms, directed, explicit, masked, stable(owner, search)>
 md.particle_set @atoms
 

@@ -76,10 +76,10 @@ func.func @excluding(%x: !vec, %cell: !md.cell,
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.2) kind(matrix) width(32)
       exclude(%e : !mdrt.incidence<@atoms, 2, @bonds>)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // CHECK: md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf64>) kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : memref<?xi32>)
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
       kind(matrix) width(32) exclude(%m : memref<?xi32>)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
