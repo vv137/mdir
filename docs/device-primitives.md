@@ -803,7 +803,7 @@ orders are read by `md_alg.bin_item`, which hands its user the place. The
 decision gives the lattice, the rules, and their tests.
 
 The first experiment of transformations at that place
-(D[md-alg-groups-transforms], #869) has a negative result and is not
+(D410, #869) has a negative result and is not
 merged. In key fusion, the scatter of a counting sort recomputes the key
 from the key region in place of a store and a load. It gave the same
 output as the removal of the key buffer, but the step was 0.3 to 0.6%
@@ -927,7 +927,7 @@ emitters of Section 5 (D301).
   `main` (D409).
 - `Integration/md-alg-members-contract-gpu.test` runs `md_alg.bin_members`
   by its SIMT lowering on a device, a thread a bin, against its serial
-  definition, to the bit (D[md-alg-groups-transforms]).
+  definition, to the bit (D410).
 - `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
   verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
   the two lowerings, and `simt-invalid.mlir` the refusal of an op without

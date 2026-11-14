@@ -1,6 +1,6 @@
 ### Added
 
-- A device contract test of `md_alg.bin_members` (D[md-alg-groups-transforms], #869), whose SIMT lowering had not run on a device: the SIMT lowering, a thread a bin, against the serial one, to the bit.
+- A device contract test of `md_alg.bin_members` (D410, #869), whose SIMT lowering had not run on a device: the SIMT lowering, a thread a bin, against the serial one, to the bit.
 
 ### Changed
 
