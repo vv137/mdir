@@ -40,13 +40,29 @@ flow, with buffers in place of the variables of register allocation
   with the effects of every op in its body. An effect reads a buffer,
   writes it, or touches it in a way the analysis cannot tell. A call to a
   function of the module takes the callee's effects on its arguments. A
-  call to an external function may read and write each buffer it is given,
-  during the call. A raw pointer of a buffer in the host's code pins the
+  call to an external function may read and write each buffer it is
+  given, and how long it uses it depends on the function (below). A raw
+  pointer of a buffer in the host's code pins the
   buffer, which is then live everywhere; so does a return of it or a token
   never waited for. An asynchronous op uses its buffers again at every
   wait that its token reaches. An op on a side stream (between
   `mdrtSideBegin` and `mdrtSideEnd`) uses them again at the next
   `mdrtSideJoin`.
+- **External functions.** The runtime's functions use a buffer they are
+  given in one of three ways, and the analysis knows each function that
+  the programs give a buffer of this owner:
+  - **During the call.** The buffer is used at the call.
+  - **In work it enqueues and does not wait for.** The function enqueues
+    a kernel, a copy, or a set on a stream and returns. The buffer is in
+    use until the next wait after the call, a `gpu.wait` without a token,
+    in its block or in a block around it. In a forked region it is in use
+    until the side stream's join instead. A later launch on the same
+    stream is ordered after that work, but a host access, a release, or a
+    reuse by the pool is not. With no later wait, the buffer is pinned.
+  - **It may keep the pointer** and use it in a later call (a plan, a
+    cache, a structure that holds a reference). The buffer is pinned. This
+    is the rule for every external function that the analysis does not
+    know.
 - **Kills.** A kill is a write of the whole buffer by an op that reads
   none of it. Only a view that keeps the whole extent (the buffer, a cast,
   a change of memory space) can kill, and only when it views exactly one
@@ -58,6 +74,25 @@ flow, with buffers in place of the variables of register allocation
   - `kills=stores` (the default): also a launch, or a call, that writes the
     buffer and reads none of it. That the kernel writes every element is
     assumed, not proven, so the bound of this mode is an upper bound.
+
+The external functions that receive a buffer of this owner in the four
+programs, directly or through a function of the module (all in
+`runtime/mdrt_cuda.c`):
+
+| Function | Enqueues work? On which stream | Keeps the pointer? | Kind | Where it is decided |
+|---|---|---|---|---|
+| `mdrtCudaFFTForward3DF32`, `mdrtCudaFFTBackward3DF32` (and the f64 `mdrtCudaFFTForward3D`, `mdrtCudaFFTBackward3D`) | yes: `cufftExecR2C`/`C2R` on the plan's stream, which `getFFTPlan` sets with `cufftSetStream` to `mgpuStreamCreate()` when the plan is made, the shared stream or, inside a forked region, the side stream | no: the plan caches a size and a workspace of its own, not the grids | enqueues | `_mlir_ciface_mdrtCudaFFTForward3DF32` and its siblings, `getFFTPlan` |
+| `mdrtDeviceTuplesOrderEnd` | yes: `cuMemcpyDtoDAsync` from the identities into the store's copy, on the shared stream, when the order changed | no | enqueues | `_mlir_ciface_mdrtDeviceTuplesOrderEnd` |
+| `mdrtDeviceTuplesOrderKept` | no access to the buffer: it reads only its size; the memsets it enqueues are of the store's own buffers, and the memref it returns is the store's | no | during the call | `_mlir_ciface_mdrtDeviceTuplesOrderKept` |
+
+The FFTs receive PME's grids. The two functions of the tuples receive the
+order of the particles (`%memref_126` at STMV), which the setup alone
+uses. The flags of the device go to `mdrtFlagStart` and `mdrtFlagTake` as
+raw pointers, but they are the runtime's buffers, not this owner's. A
+`gpu.wait` without a token lowers to `mgpuStreamSynchronize`, which makes
+the host wait only under `MDRT_WAIT`. The rule takes the IR's waits as
+the points where the program states that its work is complete, which is
+conservative for reuse by later work on the same stream.
 
 A buffer is live at a point if a use is reachable from it without a kill.
 The rule is conservative in one place. The loop's yield swaps its
@@ -210,11 +245,14 @@ branch that rebuilds. On the other branch they are live. At STMV they are
 the 51.2 MB (25.6 MB proven) between the bound of the step and the bound
 at the peak.
 
-**Outside this owner.** With `kills=stores`, three of PME's buffers are
-dead at the build too: the real grid, the spline weights of the
-particles, and a small table of the convolution (73.8 MB at STMV). The
-complex grid is not: the forward FFT, an external function, writes it,
-and that is not a kill. A buffer dead at the build can share only with
+**Outside this owner.** With `kills=stores`, some of PME's buffers are
+dead at the build too. At the build of the inner loop, three are dead:
+the real grid, the spline weights of the particles, and a small table of
+the convolution (73.8 MB at STMV). At the builds of the two peeled steps,
+the real grid is live: the transforms before each of them in the body
+enqueue work on it, and the next wait comes after the build. There only 25.6 MB
+is dead. The complex grid is never dead: the forward FFT, an external
+function, writes it, and that is not a kill. A buffer dead at the build can share only with
 what lives there: the build's collections (81.3 MB at STMV, #879) and the
 runtime's lists. Neither belongs to the storage of `md_exec`.
 
@@ -270,7 +308,7 @@ Three buffers match no block:
   dead at the build when the step writes it only after the build. Using that room would also need an allocation per
   step, or sharing with the build.
 - **Across owners.** The storage dead at the build
-  (89.6 MB at STMV, with PME's grids another 73.8 MB) could share only
+  (89.6 MB at STMV, with PME's buffers another 25.6 to 73.8 MB) could share only
   with the build's collections. That is a sharing across layers, on one
   branch, which neither this owner nor the `md_alg` slot can decide
   alone.
@@ -294,6 +332,12 @@ Three buffers match no block:
   - a write through a subview, a write in one branch, and a store that
     `kills=proven` does not prove must not end a life;
   - a raw pointer in the host's code must pin its buffer;
+  - an external function that enqueues work on its buffers (a transform
+    of cuFFT) must keep them in use until the next wait (`@enqueued`), or
+    until the join when it is called in a forked region
+    (`@enqueued_forked`);
+  - an external function that the analysis does not know may keep its
+    argument, which must pin it (`@kept`);
   - a callee that writes its argument whole must kill it at the call, and
     one that reads it must use it there.
 - **Mutations.** Two mutations of the analysis were run locally and not
@@ -304,6 +348,19 @@ Three buffers match no block:
   - **Completions ignored.** Ignoring the waits of tokens makes it fail at
     `@memset`, whose fills are asynchronous, and `@async` loses its
     interference.
+- **The rule for external functions.** Under the first rule, which used
+  a buffer given to an external function only at the call, `@enqueued`
+  and `@kept` fail. `@enqueued_forked` passes under both rules, because
+  the side stream's join already completed the forked region's ops.
+- **The numbers under that rule.** The storage of `md_exec` keeps every
+  bound of Section 2 in both modes, in all four programs. Only buffers
+  outside this owner, or outside the loop, change:
+  - PME's real grid at STMV is now live at the builds of the peeled steps
+    (Section 3), and the FFT's grids on the dodecahedron and JAC are live
+    from the transform to a wait after the loop;
+  - the order of the particles is live at the setup's builds;
+  - the storage live at the first setup build of STMV rises from
+    149,051,000 to 153,319,380 bytes, but that build is not the peak.
 - **No program changes.** On six programs, at the base 79a91c24 before
   the rebase (which brings only `main`'s commits), `mdir emit --stage=lowered`
   with `MDIR_GPU_BINARY=ptx`, `MDIR_COMPILE_CACHE=off`, and

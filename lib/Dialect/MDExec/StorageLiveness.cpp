@@ -46,12 +46,18 @@ namespace {
 /// buffer.
 struct Effects {
   llvm::BitVector read, write, unknown, release, partialWrite, provenWrite;
+  /// Buffers that an external function gives to work it enqueues and does
+  /// not wait for: in use until the next wait, or the join of a side
+  /// stream.
+  llvm::BitVector enqueued;
   /// Escapes: the buffer is live everywhere.
   llvm::DenseMap<unsigned, std::string> pins;
+  /// The external functions that are given the buffer, by name.
+  llvm::DenseMap<unsigned, llvm::SmallVector<std::string, 2>> externals;
 
   explicit Effects(unsigned n = 0)
       : read(n), write(n), unknown(n), release(n), partialWrite(n),
-        provenWrite(n) {}
+        provenWrite(n), enqueued(n) {}
   llvm::BitVector touched() const {
     llvm::BitVector t = read;
     t |= write;
@@ -85,6 +91,37 @@ static bool isShape(Operation *op) {
 static bool isStreamCall(Operation *op, StringRef name) {
   auto call = dyn_cast<func::CallOp>(op);
   return call && call.getCallee() == name;
+}
+
+/// How an external function uses a buffer it is given. The functions of the
+/// runtime that the programs give a buffer of the storage are listed, with
+/// the place in runtime/mdrt_cuda.c that decides it; any other external
+/// function may keep the pointer, which pins the buffer.
+enum class ExternalUse {
+  /// Only during the call.
+  Call,
+  /// In work that it enqueues on a stream and does not wait for.
+  Enqueues,
+  /// It may keep the pointer and use it in a later call.
+  Keeps,
+};
+
+static ExternalUse externalUse(StringRef name) {
+  // The transforms of cuFFT (_mlir_ciface_mdrtCudaFFT*3D*): cufftExec* on
+  // the plan's stream, which getFFTPlan sets to mgpuStreamCreate() when the
+  // plan is made, and return; a plan keeps no pointer of its grids.
+  // mdrtDeviceTuplesOrderEnd: cuMemcpyDtoDAsync from the identities on the
+  // shared stream, kept by no one.
+  if (llvm::is_contained({"mdrtCudaFFTForward3D", "mdrtCudaFFTBackward3D",
+                          "mdrtCudaFFTForward3DF32", "mdrtCudaFFTBackward3DF32",
+                          "mdrtDeviceTuplesOrderEnd"},
+                         name))
+    return ExternalUse::Enqueues;
+  // mdrtDeviceTuplesOrderKept reads only the size of the identities; the
+  // memref it returns is the store's own buffer.
+  if (name == "mdrtDeviceTuplesOrderKept")
+    return ExternalUse::Call;
+  return ExternalUse::Keeps;
 }
 
 static bool isStructural(Operation *op) {
@@ -210,6 +247,8 @@ private:
   /// The buffers each op uses again: an asynchronous op's at its wait, a
   /// side stream's at its join.
   llvm::DenseMap<Operation *, llvm::BitVector> completions;
+  /// The ops between a side stream's begin and its end.
+  llvm::DenseSet<Operation *> onSide;
   /// The summaries of the functions of the module, by their arguments.
   llvm::DenseMap<Operation *, Effects> summaries;
   llvm::DenseSet<Operation *> summarizing;
@@ -328,8 +367,13 @@ const Effects &StorageLivenessBuilder::summarize(func::FuncOp callee) {
     all.release |= e.release;
     all.partialWrite |= e.partialWrite;
     all.provenWrite |= e.provenWrite;
+    all.enqueued |= e.enqueued;
     for (auto &[i, why] : e.pins)
       all.pins.try_emplace(i, "in @" + callee.getSymName().str() + ": " + why);
+    for (auto &[i, names] : e.externals)
+      for (const std::string &name : names)
+        if (!llvm::is_contained(all.externals[i], name))
+          all.externals[i].push_back(name);
     // An asynchronous op of the callee: its buffers stay in use until a
     // wait in the callee; a token that leaves it pins them.
     if (auto async = dyn_cast<gpu::AsyncOpInterface>(op);
@@ -383,14 +427,39 @@ Effects StorageLivenessBuilder::effectsOf(Operation *point, const Aliases &a,
             e.provenWrite |= *bits;
           if (auto pinIt = s.pins.find(i); pinIt != s.pins.end())
             pin(e, a, v, pinIt->second);
+          if (bits && s.enqueued[i])
+            e.enqueued |= *bits;
+          if (auto ext = s.externals.find(i); bits && ext != s.externals.end())
+            for (unsigned b : bits->set_bits())
+              for (const std::string &name : ext->second)
+                if (!llvm::is_contained(e.externals[b], name))
+                  e.externals[b].push_back(name);
         }
         return;
       }
       // An external function: it may read and write each buffer it is
-      // given, during the call.
+      // given; during the call, in work it enqueues, or, for a function the
+      // analysis does not know, whenever it likes (pinned).
+      std::string calleeName =
+          callee ? callee.getSymName().str() : std::string("?");
+      ExternalUse use = externalUse(calleeName);
       for (Value v : call.getArgOperands())
-        if (isMemRef(v))
+        if (isMemRef(v)) {
           addEffect(e, a, v, false, false, true, false, op);
+          if (use == ExternalUse::Keeps)
+            pin(e, a, v, "given to @" + calleeName + ", which may keep it");
+          if (const llvm::BitVector *bits = a.lookup(v);
+              bits && use == ExternalUse::Enqueues)
+            e.enqueued |= *bits;
+          if (const llvm::BitVector *bits = a.lookup(v))
+            for (unsigned i : bits->set_bits()) {
+              auto &names = e.externals[i];
+              std::string name =
+                  callee ? callee.getSymName().str() : std::string("?");
+              if (!llvm::is_contained(names, name))
+                names.push_back(name);
+            }
+        }
       return;
     }
     if (isa<gpu::LaunchFuncOp>(op)) {
@@ -498,6 +567,7 @@ void StorageLivenessBuilder::findCompletions(Region &body) {
         completions.try_emplace(&op, n).first->second |= pending;
         pending.reset();
       } else if (side) {
+        op.walk([&](Operation *inner) { onSide.insert(inner); });
         op.walk([&](Operation *inner) {
           if (auto it = effects.find(inner); it != effects.end())
             pending |= it->second.touched();
@@ -519,6 +589,28 @@ void StorageLivenessBuilder::findCompletions(Region &body) {
     }
     for (unsigned i : pending.set_bits())
       pinReasons.try_emplace(i, "a side stream never joined");
+  });
+  // Work that an external function enqueued: in use until the next wait
+  // (a gpu.wait without a token) after the call, in its block or in the
+  // blocks around it. In a forked region, the side stream's join completes
+  // it instead (above).
+  body.walk([&](Operation *op) {
+    auto it = effects.find(op);
+    if (it == effects.end() || it->second.enqueued.none() ||
+        onSide.contains(op))
+      return;
+    for (Operation *at = op; at && at != r.function.getOperation();
+         at = at->getParentOp())
+      for (Operation *next = at->getNextNode(); next;
+           next = next->getNextNode())
+        if (auto wait = dyn_cast<gpu::WaitOp>(next);
+            wait && !wait.getAsyncToken()) {
+          completions.try_emplace(next, n).first->second |=
+              it->second.enqueued;
+          return;
+        }
+    for (unsigned i : it->second.enqueued.set_bits())
+      pinReasons.try_emplace(i, "work enqueued with no later wait");
   });
 }
 
@@ -675,9 +767,18 @@ void StorageLivenessBuilder::run() {
     pinned.set(i);
     r.buffers[i].pinned = why;
   }
-  for (auto &[op, e] : effects)
+  for (auto &[op, e] : effects) {
     for (unsigned i : e.release.set_bits())
       r.buffers[i].released = true;
+    for (auto &[i, names] : e.externals)
+      for (const std::string &name : names)
+        if (!llvm::is_contained(r.buffers[i].externals, name))
+          r.buffers[i].externals.push_back(name);
+  }
+  // In the order of the names, so that the print does not depend on the
+  // order of a hash table.
+  for (StorageBuffer &b : r.buffers)
+    llvm::sort(b.externals);
 
   unsigned entry = addPoint(r.function, -1);
   buildBlock(body, entry, /*inStep=*/false);
@@ -892,6 +993,12 @@ void StorageLiveness::print(llvm::raw_ostream &os, AsmState &state,
       os << " released";
     if (alloc.getMemref().use_empty())
       os << " unused";
+    if (!b.externals.empty()) {
+      os << " external(";
+      llvm::interleaveComma(b.externals, os,
+                            [&](const std::string &n) { os << "@" << n; });
+      os << ")";
+    }
     if (!b.pinned.empty())
       os << " pinned(" << b.pinned << ")";
     os << "\n";

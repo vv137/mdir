@@ -3,13 +3,16 @@
 
 // The liveness of the storage of md_exec within the loop over steps
 // (D[md-exec-storage-liveness], #880). Each function is one rule, with the
-// bug it must catch: a buffer read after the loop, carried by the loop,
+// bug it must catch. A buffer must interfere with one whose life lies
+// inside its own when it is read after the loop, carried by the loop,
 // used by an asynchronous launch until its wait or by a side stream until
-// its join, or reached through a view, must interfere with a buffer whose
-// life lies inside its own; a write that is partial, conditional, or not
-// proven (kills=proven) must not end a life. The points of a step are
-// numbered from the loop's head (0); each launch, call, copy, fill, or wait
-// that touches a buffer is one point.
+// its join, given to an external function that enqueues work on it (until
+// the next wait, or the join in a forked region), or reached through a
+// view. A write that is partial, conditional, or not proven
+// (kills=proven) must not end a life. An external function that the
+// analysis does not know may keep its argument, which pins it. The points
+// of a step are numbered from the loop's head (0); each launch, call, copy,
+// fill, or wait that touches a buffer is one point.
 
 // Two scratch buffers of one step whose uses do not overlap.
 // CHECK-LABEL: storage liveness of @disjoint (kills=stores): 2 buffers, 5 points in the step
@@ -577,6 +580,132 @@ func.func @unused(%out: memref<4xf32, 1>, %n: index, %c: i1) {
   return
 }
 
+// An external function that enqueues work on its buffers and returns (a
+// transform of cuFFT) uses them until the next wait: A and C interfere
+// with B, whose life lies between the call and the wait.
+// CHECK-LABEL: storage liveness of @enqueued (kills=stores): 3 buffers, 7 points in the step
+// CHECK-NEXT: s0 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(1-6) first 1 last 6 external(@mdrtCudaFFTForward3DF32){{$}}
+// CHECK-NEXT: s1 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(3-4) first 3 last 4{{$}}
+// CHECK-NEXT: s2 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(0-6) first 2 last 6 carried external(@mdrtCudaFFTForward3DF32){{$}}
+// CHECK-NEXT: s0 interferes in the step with s1 s2{{$}}
+// CHECK-NEXT: s1 interferes in the step with s0 s2{{$}}
+// CHECK-NEXT: s2 interferes in the step with s0 s1{{$}}
+func.func @enqueued(%out: memref<4xf32, 1>, %n: index, %c: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f = arith.constant 1.0 : f32
+  %A = gpu.alloc () : memref<4xf32, 1>
+  %B = gpu.alloc () : memref<4xf32, 1>
+  %C = gpu.alloc () : memref<4xf32, 1>
+  scf.for %i = %c0 to %n step %c1 {
+    %Av = memref.cast %A : memref<4xf32, 1> to memref<?xf32, 1>
+    %Cv = memref.cast %C : memref<4xf32, 1> to memref<?xf32, 1>
+    %k = arith.constant 1 : i64
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %A[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @mdrtCudaFFTForward3DF32(%Av, %Cv, %k, %k, %k) : (memref<?xf32, 1>, memref<?xf32, 1>, i64, i64, i64) -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %B[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %B[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %C[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    %t0 = gpu.wait async
+    gpu.wait [%t0]
+  }
+  return
+}
+
+// The same call in a forked region uses its buffers until the join: A
+// interferes with B, used on the shared stream before the join.
+// CHECK-LABEL: storage liveness of @enqueued_forked (kills=stores): 3 buffers, 7 points in the step
+// CHECK-NEXT: s0 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(1-5) first 1 last 5 external(@mdrtCudaFFTForward3DF32){{$}}
+// CHECK-NEXT: s1 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(3-4) first 3 last 4{{$}}
+// CHECK-NEXT: s2 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(0-6) first 2 last 6 carried external(@mdrtCudaFFTForward3DF32){{$}}
+// CHECK-NEXT: s0 interferes in the step with s1 s2{{$}}
+// CHECK-NEXT: s1 interferes in the step with s0 s2{{$}}
+// CHECK-NEXT: s2 interferes in the step with s0 s1{{$}}
+func.func @enqueued_forked(%out: memref<4xf32, 1>, %n: index, %c: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f = arith.constant 1.0 : f32
+  %A = gpu.alloc () : memref<4xf32, 1>
+  %B = gpu.alloc () : memref<4xf32, 1>
+  %C = gpu.alloc () : memref<4xf32, 1>
+  scf.for %i = %c0 to %n step %c1 {
+    %Av = memref.cast %A : memref<4xf32, 1> to memref<?xf32, 1>
+    %Cv = memref.cast %C : memref<4xf32, 1> to memref<?xf32, 1>
+    %k = arith.constant 1 : i64
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %A[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @mdrtSideBegin() : () -> ()
+    func.call @mdrtCudaFFTForward3DF32(%Av, %Cv, %k, %k, %k) : (memref<?xf32, 1>, memref<?xf32, 1>, i64, i64, i64) -> ()
+    func.call @mdrtSideEnd() : () -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %B[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %B[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @mdrtSideJoin() : () -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %C[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+  }
+  return
+}
+
+// An external function the analysis does not know may keep the pointer it
+// is given and use it in a later call: A is pinned.
+// CHECK-LABEL: storage liveness of @kept (kills=stores): 2 buffers, 5 points in the step
+// CHECK-NEXT: s0 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(0-4) first 1 last 2 carried external(@keep_buffer) pinned(given to @keep_buffer, which may keep it){{$}}
+// CHECK-NEXT: s1 {{%[a-z_0-9]+}} : memref<4xf32, 1> step(3-4) first 3 last 4{{$}}
+// CHECK-NEXT: s0 interferes in the step with s1{{$}}
+// CHECK-NEXT: s1 interferes in the step with s0{{$}}
+func.func @kept(%out: memref<4xf32, 1>, %n: index, %c: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f = arith.constant 1.0 : f32
+  %A = gpu.alloc () : memref<4xf32, 1>
+  %B = gpu.alloc () : memref<4xf32, 1>
+  scf.for %i = %c0 to %n step %c1 {
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %A[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    func.call @keep_buffer(%A) : (memref<4xf32, 1>) -> ()
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %B[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %B[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+  }
+  return
+}
+
+func.func private @mdrtCudaFFTForward3DF32(memref<?xf32, 1>, memref<?xf32, 1>, i64, i64, i64)
+func.func private @keep_buffer(memref<4xf32, 1>)
 func.func private @fill(%x: memref<4xf32, 1>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

@@ -52,6 +52,9 @@ struct StorageBuffer {
   /// Live at every point: the reason (a raw pointer that leaves the host
   /// code, a token never waited for, a return, ...), or empty.
   std::string pinned;
+  /// The external functions that are given it, directly or through a
+  /// function of the module, by name.
+  llvm::SmallVector<std::string, 2> externals;
   /// A `gpu.dealloc` of it, or of a view of it, in the function.
   bool released = false;
   /// Live where the loop over steps begins an iteration: its value at the
