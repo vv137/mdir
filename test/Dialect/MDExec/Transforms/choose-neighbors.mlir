@@ -15,11 +15,15 @@ md.particle_set @atoms
 // every loop over it has a contract for each value: an antisymmetric
 // destination and a symmetric sum. Its loops take each pair once (D89).
 //
+// Every value of the structure takes the type of groups (D[neighbors-contract]).
+//
 // CHECK-LABEL: func.func @groups(
-// CHECK:         md_exec.empty_neighbors kind(groups)
-// CHECK:         scf.for
-// CHECK:           md_exec.refresh_neighbors
+// CHECK:         md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+// CHECK:         scf.for {{.*}} -> (!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, f64)
+// CHECK:           md_exec.refresh_neighbors {{.*}} : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, !md.field<@atoms, 3 x f64>
 // CHECK:           md_exec.pair_for {{.*}} policy(unique, atomic)
+// CHECK:           } : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
+// CHECK:           scf.yield {{.*}} : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, f64
 // MATRIX-LABEL: func.func @groups(
 // MATRIX:         md_exec.empty_neighbors kind(matrix)
 // MATRIX:         md_exec.pair_for {{.*}} policy(directed, owner_only)
@@ -82,12 +86,12 @@ func.func @matrix(%x: !vec, %cell: !md.cell) -> (f64, f64) {
 // build (D245).
 //
 // DUAL-LABEL: func.func @dual(
-// DUAL-DAG:     %[[G0:[a-z0-9]+]] = md_exec.empty_neighbors kind(groups)
-// DUAL-DAG:     %[[M0:[a-z0-9]+]] = md_exec.empty_neighbors kind(matrix)
+// DUAL-DAG:     %[[G0:[a-z0-9]+]] = md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+// DUAL-DAG:     %[[M0:[a-z0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>{{$}}
 // DUAL:         scf.for {{.*}} iter_args(%[[G:[a-z0-9]+]] = %[[G0]], %[[M:[a-z0-9]+]] = %[[M0]]
 // DUAL:           md_exec.reference_positions %[[G]] pruned
 // DUAL:           md_exec.reference_cell %[[G]] pruned
-// DUAL:           md_exec.refresh_neighbors %[[G]], {{.*}} stale({{.*}}) cutoff({{.*}} prune_skin(1.000000e-01)
+// DUAL:           md_exec.refresh_neighbors %[[G]], {{.*}} stale({{.*}}) cutoff({{.*}} prune_skin(1.000000e-01) {{.*}} : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>,
 // DUAL-NOT:       pruned
 // DUAL:           md_exec.refresh_neighbors %[[M]], {{.*}} moved(%{{[0-9]+}}) cutoff(
 // DUAL-NOT:       prune_skin
@@ -123,4 +127,37 @@ func.func @dual(%x: !vec, %cell: !md.cell, %n: index) -> (f64, f64) {
     scf.yield %s1, %t1, %p1, %q1 : !nl, !nl, f64, f64
   }
   return %a, %b : f64, f64
+}
+
+// A structure that reaches an op whose types the pass does not follow, here
+// the results of an scf.if, keeps the matrix: its values have one type, and
+// the pass cannot give the groups' type to the scf.if (D[neighbors-contract]).
+//
+// CHECK-LABEL: func.func @escapes(
+// CHECK:         md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+// CHECK:         md_exec.pair_for {{.*}} policy(directed, owner_only)
+// CHECK:         scf.if {{.*}} -> (!mdrt.neighbors<@atoms>)
+func.func @escapes(%x: !vec, %cell: !md.cell, %n: index, %c: i1) -> (f64, i64) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %u0 = arith.constant 0.0 : f64
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(96) : !nl
+  %nl, %e = scf.for %i = %c0 to %n step %c1 iter_args(%s = %nl0, %t = %u0)
+      -> (!nl, f64) {
+    %s1 = md_exec.refresh_neighbors %s, %x, %cell
+        cutoff(2.5) skin(0.3) cell_width(2.8) policy(check) : !nl, !vec
+    %u = md_exec.pair_for %s1, %x, %cell reduce(%u0 : f64) cutoff(2.5)
+        weights [0.5] exchange [symmetric] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+    scf.yield %s1, %u : !nl, f64
+  }
+  %chosen = scf.if %c -> !nl {
+    scf.yield %nl : !nl
+  } else {
+    scf.yield %nl0 : !nl
+  }
+  %builds = md_exec.rebuild_count %chosen : !nl
+  return %e, %builds : f64, i64
 }

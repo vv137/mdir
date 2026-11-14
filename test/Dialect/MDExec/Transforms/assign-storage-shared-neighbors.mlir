@@ -117,7 +117,7 @@ func.func @shapes(%x: !vec, %cell: !md.cell) -> (i64, i64, i64) {
   %nb = md_exec.rebuild_count %b : !mdrt.neighbors<@atoms>
   %c = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(groups) width(64)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %nc = md_exec.rebuild_count %c : !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+  %nc = md_exec.rebuild_count %c : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   return %na, %nb, %nc : i64, i64, i64
 }

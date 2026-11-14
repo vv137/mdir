@@ -19,7 +19,7 @@ md.function @value(%x: !md.field<@local, 3 x f64>, %cell: !md.cell,
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n)
           cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
           : !mdrt.cells<@local>, !md.field<@local, 3 x f64>
-          -> !mdrt.neighbors<@local>
+          -> !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>
   %f0 = md_exec.zeros : !md.field<@local, 3 x f64>
   %f = md_exec.pair_for %nl, %x, %cell centers(%n)
          outs(%f0 : !md.field<@local, 3 x f64>) cutoff(2.0)
@@ -27,7 +27,7 @@ md.function @value(%x: !md.field<@local, 3 x f64>, %cell: !md.cell,
          policy(directed, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@local>, !md.field<@local, 3 x f64>
+  } : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>, !md.field<@local, 3 x f64>
       -> !md.field<@local, 3 x f64>
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.pair_for %nl, %x, %cell centers(%n) reduce(%u0 : f64)
@@ -35,7 +35,7 @@ md.function @value(%x: !md.field<@local, 3 x f64>, %cell: !md.cell,
          policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@local>, !md.field<@local, 3 x f64> -> f64
+  } : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>, !md.field<@local, 3 x f64> -> f64
   md.return %f, %u : !md.field<@local, 3 x f64>, f64
 }
 
@@ -44,9 +44,9 @@ md.function @value(%x: !md.field<@local, 3 x f64>, %cell: !md.cell,
 func.func @storage(%x: memref<?x3xf64>, %cell: !md.cell, %n: index,
                    %size: index) {
   %nl = md_exec.empty_neighbors size(%size) positions(memref<?x3xf64>)
-          kind(matrix) width(64) : !mdrt.neighbors<@local>
+          kind(matrix) width(64) : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell centers(%n)
            cutoff(2.0) skin(0.0) cell_width(0.67) images(explicit)
-           policy(always) : !mdrt.neighbors<@local>, memref<?x3xf64>
+           policy(always) : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>, memref<?x3xf64>
   return
 }

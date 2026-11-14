@@ -2,6 +2,7 @@
 
 !vec = !md.field<@atoms, 3 x f64>
 !nl = !mdrt.neighbors<@atoms>
+!nlx = !mdrt.neighbors<@atoms, directed, explicit, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 
@@ -38,37 +39,37 @@ func.func @identity_centers(%x: !vec, %cell: !md.cell, %count: index, %owned: in
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !cells
   %initial = md_exec.build_neighbors %cells, %x, %cell centers(%owned)
       cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
-      : !cells, !vec -> !nl
+      : !cells, !vec -> !nlx
   %final:2 = scf.for %i = %c0 to %count step %c1
-      iter_args(%neighbors = %initial, %centers = %owned) -> (!nl, index) {
+      iter_args(%neighbors = %initial, %centers = %owned) -> (!nlx, index) {
     %value = md_exec.pair_for %neighbors, %x, %cell centers(%centers)
         reduce(%zero : f64) cutoff(1.5) images(explicit) policy(directed, owner_only) {
     ^bb0(%r2: f64, %d: vector<3xf64>):
       md_exec.yield %r2 : f64
-    } : !nl, !vec -> f64
-    scf.yield %neighbors, %centers : !nl, index
+    } : !nlx, !vec -> f64
+    scf.yield %neighbors, %centers : !nlx, index
   }
   %value = md_exec.pair_for %final#0, %x, %cell centers(%final#1)
       reduce(%zero : f64) cutoff(1.5) images(explicit) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !nl, !vec -> f64
+  } : !nlx, !vec -> f64
   return %value : f64
 }
 
 // Every call site must establish the fact, with exact center substitution.
-func.func private @consume(%neighbors: !nl, %x: !vec, %cell: !md.cell, %centers: index) -> f64 {
+func.func private @consume(%neighbors: !nlx, %x: !vec, %cell: !md.cell, %centers: index) -> f64 {
   %zero = arith.constant 0.0 : f64
   %value = md_exec.pair_for %neighbors, %x, %cell centers(%centers)
       reduce(%zero : f64) cutoff(1.5) images(explicit) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !nl, !vec -> f64
+  } : !nlx, !vec -> f64
   return %value : f64
 }
 
-func.func private @forward(%neighbors: !nl, %x: !vec, %cell: !md.cell, %centers: index) -> f64 {
-  %value = func.call @consume(%neighbors, %x, %cell, %centers) : (!nl, !vec, !md.cell, index) -> f64
+func.func private @forward(%neighbors: !nlx, %x: !vec, %cell: !md.cell, %centers: index) -> f64 {
+  %value = func.call @consume(%neighbors, %x, %cell, %centers) : (!nlx, !vec, !md.cell, index) -> f64
   return %value : f64
 }
 
@@ -76,8 +77,8 @@ func.func @first_call(%x: !vec, %cell: !md.cell, %owned: index) -> f64 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !cells
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%owned)
       cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
-      : !cells, !vec -> !nl
-  %value = func.call @forward(%nl, %x, %cell, %owned) : (!nl, !vec, !md.cell, index) -> f64
+      : !cells, !vec -> !nlx
+  %value = func.call @forward(%nl, %x, %cell, %owned) : (!nlx, !vec, !md.cell, index) -> f64
   return %value : f64
 }
 
@@ -85,8 +86,8 @@ func.func @second_call(%x: !vec, %cell: !md.cell, %owned: index) -> f64 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !cells
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%owned)
       cutoff(2.5) skin(0.0) kind(matrix) width(64) images(explicit)
-      : !cells, !vec -> !nl
-  %value = func.call @forward(%nl, %x, %cell, %owned) : (!nl, !vec, !md.cell, index) -> f64
+      : !cells, !vec -> !nlx
+  %value = func.call @forward(%nl, %x, %cell, %owned) : (!nlx, !vec, !md.cell, index) -> f64
   return %value : f64
 }
 

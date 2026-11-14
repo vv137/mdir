@@ -54,6 +54,7 @@
 !real = !md.field<@atoms, f32>
 !type = !md.field<@atoms, i32>
 !nl = !mdrt.neighbors<@atoms>
+!nlx = !mdrt.neighbors<@atoms, directed, explicit, masked, stable(owner, search)>
 md.particle_set @atoms
 
 // OFF-NOT: host(
@@ -200,7 +201,7 @@ func.func @domain(%x: !vec, %cell: !md.cell, %n: index) -> (f32, f32, f32, f32) 
       : !mdrt.cells<@atoms>, !vec -> !nl
   %imaged = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(48) images(explicit)
-      : !mdrt.cells<@atoms>, !vec -> !nl
+      : !mdrt.cells<@atoms>, !vec -> !nlx
   %z = arith.constant 0.0 : f32
   %a = md_exec.pair_for %centered, %x, %cell centers(%n) reduce(%z : f32)
       cutoff(1.0) exchange [symmetric] policy(directed, owner_only) {
@@ -211,7 +212,7 @@ func.func @domain(%x: !vec, %cell: !md.cell, %n: index) -> (f32, f32, f32, f32) 
       exchange [symmetric] images(explicit) policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %r2 : f32
-  } : !nl, !vec -> f32
+  } : !nlx, !vec -> f32
   %c = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
       exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):

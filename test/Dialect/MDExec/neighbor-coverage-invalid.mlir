@@ -57,7 +57,7 @@ func.func @yielded_cutoff(%x: !vec, %cell: !md.cell, %count: index, %owned: inde
 // -----
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, explicit, masked, stable(owner, search)>
 !cells = !mdrt.cells<@atoms>
 md.particle_set @atoms
 

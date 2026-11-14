@@ -80,14 +80,14 @@ md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index,
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n)
           cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
           : !mdrt.cells<@local>, !md.field<@local, 3 x f64>
-          -> !mdrt.neighbors<@local>
+          -> !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>
   %u0 = arith.constant 0.0 : f64
   // expected-error@+1 {{the centers of the loop are not those of the neighbor structure}}
   %u = md_exec.pair_for %nl, %x, %cell centers(%m) reduce(%u0 : f64)
          cutoff(2.0) images(explicit) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@local>, !md.field<@local, 3 x f64> -> f64
+  } : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>, !md.field<@local, 3 x f64> -> f64
   md.return %u : f64
 }
 
@@ -95,7 +95,8 @@ md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index,
 
 md.particle_set @local
 
-// A loop takes the images that its structure holds.
+// A loop takes the images that its structure holds: the type states them
+// (D[neighbors-contract]).
 md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index)
     -> f64 {
   %cells = md_exec.build_cells %x, %cell width(0.67)
@@ -103,13 +104,13 @@ md.function @f(%x: !md.field<@local, 3 x f64>, %cell: !md.cell, %n: index)
   %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n)
           cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
           : !mdrt.cells<@local>, !md.field<@local, 3 x f64>
-          -> !mdrt.neighbors<@local>
+          -> !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>
   %u0 = arith.constant 0.0 : f64
-  // expected-error@+1 {{the loop takes images(minimum), but the neighbor structure holds images(explicit)}}
+  // expected-error@+1 {{takes a neighbor structure that does not meet its requirement: the images 'minimum' are required, and the structure's are 'explicit'}}
   %u = md_exec.pair_for %nl, %x, %cell centers(%n) reduce(%u0 : f64)
          cutoff(2.0) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
-  } : !mdrt.neighbors<@local>, !md.field<@local, 3 x f64> -> f64
+  } : !mdrt.neighbors<@local, directed, explicit, masked, stable(owner, search)>, !md.field<@local, 3 x f64> -> f64
   md.return %u : f64
 }

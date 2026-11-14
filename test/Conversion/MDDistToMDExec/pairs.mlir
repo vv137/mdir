@@ -30,7 +30,7 @@ md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
 // CHECK: %[[X0:.*]] = mdrt.from_buffer %{{.*}} : memref<?x3xf64> to !md.field<@dd.d0.local, 3 x f64>
 // CHECK: %[[C0:.*]] = md_exec.build_cells %[[X0]]
 // CHECK: %[[N0:.*]] = md_exec.build_neighbors %[[C0]], %[[X0]], %{{.*}} centers(%[[O0:.*]]) cutoff(2.000000e+00) skin(0.000000e+00) kind(matrix) width(64) images(explicit)
-// CHECK: md_exec.build_neighbors {{.*}} -> !mdrt.neighbors<@dd.d1.local>
+// CHECK: md_exec.build_neighbors {{.*}} -> !mdrt.neighbors<@dd.d1.local, directed, explicit, masked, stable(owner, search)>
 // The energy: a sum of weight 1/2 over each domain.
 // CHECK: md_exec.pair_for %[[N0]], %[[X0]], %{{.*}} centers(%[[O0]]) reduce(%{{.*}} : f64) cutoff(2.000000e+00) weights [5.000000e-01] exchange [symmetric] images(explicit) policy(directed, owner_only)
 // CHECK: md_exec.pair_for {{.*}}policy(directed, owner_only)
