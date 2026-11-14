@@ -152,8 +152,8 @@ rest of the saving would need one of these:
   as a growth of the runtime's structures is released (D312);
 - a pool that serves a request from a larger block (D411's slack).
 
-Both are changes of the runtime's pool, outside this decision (open
-item).
+Both are changes of the runtime's pool, outside this decision; the second
+is #890.
 
 ## 3. The same kernels, the same trajectories
 
@@ -217,13 +217,13 @@ item).
   - after the join of a side stream;
   - after a loop of the setup that holds the last use;
   - after a branch of the setup that holds it.
-- **Mutations** (local, not committed):
-  - **Releasing under `kills=stores`** changes no release: the test
-    passes, and the four programs give the same IR to the byte. The
-    occupancy that decides includes every access, whatever the kill mode
-    (Section 1). The requirement of #885 that this mutation fail a test
-    cannot be met by this rule. This is stated as an open item.
-  - **A rule that reads the liveness alone**: the last occupied point
+- **Mutations** (local, not committed). The maintainer ruled
+  (2026-11-14) that the proof is occupancy, in which the kill mode plays no
+  part, and that #885's mutation, a release under `kills=stores` instead of
+  `kills=proven`, is replaced by a release by liveness alone. Under the
+  rule by occupancy, switching the mode changes no release: the test
+  passes, and the four programs give the same IR to the byte.
+  - **The mutation of record, a release by liveness alone**: the last occupied point
     before the loop, the accesses after it ignored, and no check of a read
     after the loop. Under `kills=stores` it fails at
     `@overwritten_after_loop` and `@filled_after_loop`. Under
@@ -244,11 +244,15 @@ item).
     today: the analysis makes such a buffer occupied in the step, and the
     last occupied point then falls in the loop.
 
-## 5. Open
+## 5. Rulings and what follows
 
-- **The pool.** At STMV, 25.7 MB of the 38.5 MB released stays idle in
-  the pool for the run. It reaches the driver's footprint only with a
-  release to the driver, or a pool that splits blocks (Section 2).
-- **The mutation of #885.** "Releasing under `stores` must fail a test"
-  holds for a rule that reads the liveness alone, not for the rule by
-  occupancy, which does not depend on the kill mode (Section 4).
+The maintainer ruled on two items (2026-11-14):
+- **The proof is occupancy** (Sections 1 and 4). The kill mode does not
+  enter it, and the mutation that the tests must catch is the release by
+  liveness alone.
+- **The pool.** Until #890, the peak with the pool falls by 0.56% at STMV
+  (8.5 MB of the 38.5 MB released). The pool gives a freed block only to
+  a request of its size, and most released blocks match none: 25.7 MB
+  stays idle for the run (Section 2). #890, a pool that serves a request
+  from a larger freed block, also recovers D411's slack, and makes this
+  saving reach the footprint.
