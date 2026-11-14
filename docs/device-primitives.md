@@ -1001,6 +1001,14 @@ and frees it after its sort, since the op takes the scratch as an operand.
 The maintainer accepted both on 2026-11-13, without a timing (the
 decision, D407; #865).
 
+The always-legal transformations at the slot (D[md-alg-canonical],
+#876) were not added. On the programs of `main`, no fold has a constant
+input, no collection is dead or computed twice, and reuse by lifetime
+applies only in the groups build (0.64% of STMV's peak). The decision
+breaks down the peak device memory by owner. The largest always-legal
+saving in use is placing the groups build's second phase after its first
+(2.35% at STMV), in the build's host code.
+
 ### 4.6 Measured effect
 
 None is expected, since the programs are the same. The Amber suite was run
