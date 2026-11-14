@@ -45,16 +45,21 @@ Recorded at its merge.
   retry after the driver refuses a request) waits for the device, then
   returns every wholly idle arena and the plans of cuFFT. The idle pieces
   of an arena that holds a block in use stay.
-- **A buffer that a growth replaces** (D312). The buffers of the
-  runtime's neighbor structures that a growth may replace (the groups'
-  buffers, the rows of a matrix, the slots of the pairs of images) are
-  arenas of their own: such a request takes an idle arena of exactly its
-  size or a new one, never a piece of a larger arena. A growth therefore
-  gives the old buffer back to the driver at once, as before. A first
-  version let them take pieces, and a replaced piece then stayed in the
-  pool beside the blocks in use in its arena: on the input of
-  `Driver/pool-retention-gpu.test` it returned 4 blocks to the driver
-  where `main` returns 7 and 8.
+- **A buffer that a growth replaces** (D312, amended). A buffer of the
+  runtime's neighbor structures that is an arena of its own goes back to
+  the driver at once, as before. A buffer that is a piece of a larger
+  arena cannot go back alone. It returns to the pool, where a smaller
+  request may take it, and its arena follows the budget's rule.
+- **Measured against the rule of D312 unchanged.** A variant made these
+  buffers arenas of their own: such a request took an idle arena of
+  exactly its size or a new one, never a piece, so that a growth always
+  gave the old buffer back. It held more, as the buffers of the groups
+  could not use the idle pieces. On D411's four programs its peak with the
+  pool was 995,656, 3,162,836, 30,678,656, and 1,442,513,008 bytes,
+  against 985,452, 3,162,836, 30,062,108, and 1,426,518,020 for the rule
+  above. At STMV that is 16.0 MB more, a slack of 25.1 MB against 9.1. On
+  the input of `Driver/pool-retention-gpu.test` it held 75 and 78 arenas
+  against 70 and 73 (Section 2a). It was not kept.
 
 ## 2a. The test of the pool's growth with the run
 
@@ -68,9 +73,11 @@ once, and then stay, three runs each on an RTX 4090:
 | Steps | 100 | 300 | 1,000 | 3,000 | 10,000 |
 |---|---:|---:|---:|---:|---:|
 | `main`, blocks | 95 | 97 | 97 | 97 | 97 |
-| this change, arenas | 75 | 78 | 78 | 78 | 78 |
+| this change, arenas | 70 | 73 | 73 | 73 | 73 |
+| the variant of D312 unchanged (Section 2), arenas | 75 | 78 | 78 | 78 | 78 |
 
-From 100 steps, this change is past the slack by one (3 against 2). The
+From 100 steps, this change and the variant are past the slack by one (3
+against 2). The
 short run is now of 1,000 steps, after the rise. Both trees then hold
 the same count in the short and the long run (3,000 steps), and the
 slack of 2 stays. The defect that the test guards against (D312) left

@@ -31,9 +31,9 @@ The pool's best fit with splitting and coalescing (D[device-pool-split]):
             that becomes idle as a whole, not the idle pieces of one in use
   off       (MDIR_DEVICE_POOL_BYTES=0) no block is kept: every freed arena
             goes back to the driver, so nothing is split
-  replaced  a buffer of the runtime that a growth may replace is an arena of
-            its own, never a piece of a larger idle arena, and goes back to
-            the driver when a growth replaces it (D312)
+  replaced  a buffer of the runtime that a growth replaces goes back to the
+            driver if it is an arena of its own, and to the pool if it is
+            a piece of a larger one (D312)
   streams   a piece freed while work on stream A still writes it, merged
             with an idle neighbor, and taken on stream B after the runtime
             changes to B, is written on B only after A's work
@@ -230,9 +230,9 @@ elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
         base = idle_arena(MIB)
         keep = allocate(4096)
         handle = lib.mdrtMatrixCreate(256, 1)
-        show("a matrix beside a larger idle piece")
+        show("a matrix in a piece of an arena")
         lib.mdrtMatrixGrow(handle, 1000)
-        show("grown: the old rows back to the driver again")
+        show("grown: the old rows back to the pool")
     elif scenario == "streams":
         import time
         lib.mgpuStreamCreate.restype = ctypes.c_void_p
