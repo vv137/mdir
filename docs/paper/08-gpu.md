@@ -644,7 +644,7 @@ recorded with the run.
 
 Every transformation at that place reads one analysis of the
 collections, instead of judging legality on its own
-(D[md-alg-analysis], #866). For each buffer that an op produces, the
+(D409, #866). For each buffer that an op produces, the
 analysis records:
 
 - its ordering;

@@ -499,7 +499,7 @@ def MDAlgTransformCollections
     (ordering, access pattern, cardinality, effects, lifetime, and the
     determinism requirement of each op). None is implemented: the pass
     verifies the `md_alg` ops, runs that analysis (`CollectionAnalysis`,
-    D[md-alg-analysis]; `-debug-only=md-alg-collections` prints it), and
+    D409; `-debug-only=md-alg-collections` prints it), and
     changes nothing.
   }];
 }
@@ -546,7 +546,7 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
     oracle of `convert-md-alg-to-gpu`. `md_alg.bin_members` becomes the
     loop over its places in order, or in reverse under
     `reverse-unordered-visits` where its visit is `unordered`: a test that
-    such a region does not depend on the order (D[md-alg-analysis]).
+    such a region does not depend on the order (D409).
   }];
   let options = [
     Option<"reverseUnorderedVisits", "reverse-unordered-visits", "bool",

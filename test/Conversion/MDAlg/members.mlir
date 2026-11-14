@@ -1,4 +1,4 @@
-// Both lowerings of md_alg.bin_members (D[md-alg-analysis]): the loop over
+// Both lowerings of md_alg.bin_members (D409): the loop over
 // the places of its bins, from start[from] to start[to], the item of each
 // place through the load of md_alg.bin_item, the region inlined with the
 // item for its argument, and the values combined in order. The SIMT

@@ -1,4 +1,4 @@
-// The refusals of the verifier of md_alg.bin_members (D[md-alg-analysis]),
+// The refusals of the verifier of md_alg.bin_members (D409),
 // one case each: an unordered visit combines only in forms whose value does
 // not depend on the order (integer combiners, slots of the item, additions
 // to counters), and reads no side output.

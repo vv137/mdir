@@ -1,4 +1,4 @@
-// The shared analysis of the collections of md_alg (D[md-alg-analysis],
+// The shared analysis of the collections of md_alg (D409,
 // #866): for each buffer that an md_alg op produces, its ordering, access
 // pattern, cardinality, effects and aliases, lifetime, and determinism
 // requirement, and the order that its consumers require, propagated back
@@ -7,7 +7,7 @@
 // its own. Stage A of the maintainer's item 3: on memrefs, through the
 // effects that the ops declare.
 //
-// See docs/decisions/md-alg-analysis.md for the lattice and the
+// See docs/decisions/D409.md for the lattice and the
 // conservative rules.
 
 #ifndef MDIR_DIALECT_MDALG_COLLECTIONANALYSIS_H

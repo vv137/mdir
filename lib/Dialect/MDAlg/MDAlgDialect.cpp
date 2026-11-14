@@ -201,7 +201,7 @@ static int64_t binsOnEveryPath(Block &block) {
 /// counter of `adds` (D407), and no op uses a buffer of `own`. With
 /// `strict`, a buffer of `writes` or `adds` is used only as the target of
 /// such a write, so that no item reads what another wrote
-/// (D[md-alg-analysis]). `noun` and `name` name the region and its op in
+/// (D409). `noun` and `name` name the region and its op in
 /// the messages.
 static LogicalResult verifySideOutputs(Region &region, Value item,
                                        ArrayRef<Value> own, ValueRange writes,
@@ -550,7 +550,7 @@ StringRef AppendOp::getFreeResults() {
 }
 
 //===----------------------------------------------------------------------===//
-// md_alg.bin_members (D[md-alg-analysis])
+// md_alg.bin_members (D409)
 //===----------------------------------------------------------------------===//
 
 /// Whether `name` combines integers (exactly, commutatively, associatively)

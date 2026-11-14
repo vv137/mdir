@@ -1,4 +1,4 @@
-// The cases of md_alg.bin_members (D[md-alg-analysis]) on the host, after
+// The cases of md_alg.bin_members (D409) on the host, after
 // host.mlir and helpers.mlir: a counting sort of `n` items into `bins`
 // bins (a tenth without a bin), then, for each bin, a visit of its items
 // in any order that sums them, takes the exclusive or of three times each,

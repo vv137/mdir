@@ -1,4 +1,4 @@
-// The shared analysis of the collections of md_alg (D[md-alg-analysis],
+// The shared analysis of the collections of md_alg (D409,
 // #866), printed by the test pass: the order that each consumer requires,
 // joined over the consumers and compared with what each producer
 // guarantees, and the verdict on each sort. A sort is redundant only when

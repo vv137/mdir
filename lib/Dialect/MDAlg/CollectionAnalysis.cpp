@@ -1,4 +1,4 @@
-// The shared analysis of the collections of md_alg (D[md-alg-analysis]);
+// The shared analysis of the collections of md_alg (D409);
 // see include/mdir/Dialect/MDAlg/CollectionAnalysis.h.
 //
 // Stage A works on memrefs: a producer writes a buffer, and its consumers

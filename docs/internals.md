@@ -91,7 +91,7 @@ collections that they will read (`CollectionAnalysis`,
 `lib/Dialect/MDAlg/CollectionAnalysis.cpp`: what each consumer requires
 of the order of each buffer, joined back to its producer, with the
 conservative rule that any use that is not a declared `md_alg` reader
-requires the full layout; D[md-alg-analysis]; printed by
+requires the full layout; D409; printed by
 `mdir-opt --test-md-alg-print-collections`), and `convert-md-alg-to-gpu`
 (`kernels::lowerAlgToSIMT`,
 `lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with

@@ -1,4 +1,4 @@
-// md_alg.bin_members (D[md-alg-analysis]): a reader of the bins of a
+// md_alg.bin_members (D409): a reader of the bins of a
 // counting sort that states the order of its visit, in its three visits,
 // with side outputs (a slot of the item, an addition to a counter),
 // reductions, and a determinism requirement, in the custom and the generic

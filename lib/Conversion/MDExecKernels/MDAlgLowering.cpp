@@ -77,7 +77,7 @@ static Value combine(OpBuilder &b, Location loc, StringRef name, Value acc,
 
 /// Each md_alg.bin_members under `root` (verified) replaced with the loop
 /// over the places of its bins through md_alg.bin_span and md_alg.bin_item,
-/// which both lowerings share (D[md-alg-analysis]): in order, or in reverse
+/// which both lowerings share (D409): in order, or in reverse
 /// where `reverse` and the visit is `unordered`.
 static LogicalResult expandMembers(Operation *root, bool reverse) {
   SmallVector<BinMembersOp> ops;
@@ -980,7 +980,7 @@ public:
 
 /// The place of the collection-level transformations (D408):
 /// none yet; the ops are verified, and the shared analysis of the
-/// collections (D[md-alg-analysis]) runs, which the transformations will
+/// collections (D409) runs, which the transformations will
 /// read. It changes nothing.
 class MDAlgTransformCollections
     : public mdir::impl::MDAlgTransformCollectionsBase<

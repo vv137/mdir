@@ -1,4 +1,4 @@
-# md_alg.bin_members (D[md-alg-analysis]) by its serial definition on the
+# md_alg.bin_members (D409) by its serial definition on the
 # host, on the cases of Inputs/md-alg/members.mlir: counting sorts of no
 # items, 20 in 7 bins, 1,025 in 1,000, and 3,000 in 50 (a tenth of the items
 # without a bin), each bin visited in any order (a sum, an exclusive or,

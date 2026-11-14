@@ -1,6 +1,6 @@
 ### Added
 
-- **The shared analysis of the `md_alg` collections** (D[md-alg-analysis], #866, part 2). For each buffer that an `md_alg` op produces, the analysis records:
+- **The shared analysis of the `md_alg` collections** (D409, #866, part 2). For each buffer that an `md_alg` op produces, the analysis records:
   - its ordering;
   - its access pattern (streamed, gathered, or random);
   - its cardinality (exact, bound, or run-time);

@@ -1,5 +1,5 @@
 // A test pass that prints the shared analysis of the collections of md_alg
-// (D[md-alg-analysis], #866): for each collection, its root, aliases,
+// (D409, #866): for each collection, its root, aliases,
 // escape, guarantee, uses with what each requires, the joined requirement,
 // access, cardinality, lifetime, and determinism, and the verdict on each
 // sort. It changes nothing.

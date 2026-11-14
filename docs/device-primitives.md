@@ -716,7 +716,7 @@ caller gives them, as it gave them to the emitters.
 | `md_alg.grid_read` | `grid[base + z]`; with `active` false, `grid[base]`; the result type is the grid's | per item | `emitGridGather` |
 | `md_alg.sort_by_key` | a counting sort of $n$ items into bins: the key of each item by a region (one `md_alg.bin` or `md_alg.no_bin` on every path; side outputs a slot of the item or an addition to a counter, declared) or given; the counts (cleared by the op, or by the caller with `cleared`), their exclusive sums, the scatter, and the order within the bins | `order stable`: ascending by the item or by `by[item]`, bitwise; `order unordered`: the bins as multisets, no sort; the keys, counts, start, cursor, and side outputs bitwise | the key kernel, then the strategies of the scan and of the sort above |
 | `md_alg.bin_span`, `md_alg.bin_item` | the run of bins `[from, to)` of a counting sort's start, and an item of its order | per item | loads |
-| `md_alg.bin_members` | the items of the bins `[from, to)`, visited in a stated order (`unordered`, `sorted`, `stable` by a key) by a region whose values are combined; under `unordered`, integer combiners, slots of the item, and additions to counters alone (D[md-alg-analysis]) | the results of the serial definition in every order of an `unordered` visit, in the stated order otherwise | the loop through `bin_span` and `bin_item` |
+| `md_alg.bin_members` | the items of the bins `[from, to)`, visited in a stated order (`unordered`, `sorted`, `stable` by a key) by a region whose values are combined; under `unordered`, integer combiners, slots of the item, and additions to counters alone (D409) | the results of the serial definition in every order of an `unordered` visit, in the stated order otherwise | the loop through `bin_span` and `bin_item` |
 | `md_alg.append` | entries appended to a list held in blocks taken from a pool counter, named by owner and ordinal, below a capacity; a batch (a warp's lanes) as its items one by one | the entries of a list in the order of its appends, the counts and the counter (the full demand) bitwise; the numbers of the blocks free; nothing written at or past the capacity | the warp compaction of the groups build, the blocks taken by the first lane |
 | `md_alg.grid_plan` | the counts of cells along edges, $\min(\max(\lfloor L/w \rfloor, \ell), m)$ with `maxnumf` and `minnumf`, the width given or $w = (o\,V/n)^{1/3}$ from an occupancy $o$ | bitwise (one lowering, on the host) | — |
 
@@ -768,7 +768,7 @@ lowering meets `unordered` alone. The policy each op was lowered with is
 recorded in the module (`mdir.alg_policy`), the log
 (`MDIR: md_alg policy:`), and the manifest (`effective.md_alg_policy`).
 
-**The shared collection analysis (D[md-alg-analysis], #866).**
+**The shared collection analysis (D409, #866).**
 `md-alg-transform-collections` runs one analysis
 (`CollectionAnalysis`, `include/mdir/Dialect/MDAlg/CollectionAnalysis.h`),
 which every collection-level transformation is to read. It works on the
@@ -913,7 +913,7 @@ emitters of Section 5 (D301).
   20 items are worked out in the test. `Dialect/MDAlg/collections.mlir`
   tests the shared collection analysis, and
   `Driver/md-alg-collections-gpu.test` the analysis on the programs of
-  `main` (D[md-alg-analysis]).
+  `main` (D409).
 - `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
   verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
   the two lowerings, and `simt-invalid.mlir` the refusal of an op without
@@ -967,7 +967,7 @@ mixed and double precision, with the three-launch scan and with
 moved: each op is lowered by the emitter its call was expanded by, at the
 same place.
 
-The shared collection analysis (D[md-alg-analysis]), which the slot
+The shared collection analysis (D409), which the slot
 pass now runs, and the expansion of `md_alg.bin_members` in both
 lowerings left the lowered programs byte-identical to those of the base
 (00712731). The programs were nine: the dodecahedron with groups in

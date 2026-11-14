@@ -1,4 +1,4 @@
-# The shared analysis of the collections (D[md-alg-analysis], #866) on the
+# The shared analysis of the collections (D409, #866) on the
 # programs of `main`, at the place of the collection-level transformations:
 # the IR of the rhombic dodecahedron with groups and with the matrix,
 # stopped after md-alg-transform-collections, printed by the test pass.

@@ -39,7 +39,7 @@ PME and the counting sort of the device's ragged rows are lowered where
 they are created (D408, #866). The analysis takes what each consumer
 requires of the order of a buffer from its meaning: a reader that is
 not an `md_alg` op requires the full layout, and `md_alg.bin_members`
-the order of its visit (D[md-alg-analysis]).
+the order of its visit (D409).
 
 Each op with an ordering or a floating-point aspect states a
 determinism requirement (`determinism`), separate from the ordering
@@ -253,7 +253,7 @@ region yields, by the `combine` of each (`addi`, `muli`, `andi`, `ori`,
 `maxnumf`, `minnumf` on floats).
 
 The op states the order of its visit, `visit`, which is what it requires
-of the order of its items (D[md-alg-analysis]):
+of the order of its items (D409):
 - `unordered`: any order. The region may combine its results only in
   forms whose value does not depend on the order: the combiners on
   integers, which are exact, commutative, and associative; a write to a
