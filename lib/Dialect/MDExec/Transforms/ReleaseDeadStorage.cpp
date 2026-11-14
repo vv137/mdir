@@ -18,6 +18,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -47,6 +48,16 @@ static Operation *findRelease(const StorageLiveness &liveness,
     return nullptr;
   // Occupied at no point of the step.
   if (buffer.stepOccupied.any())
+    return nullptr;
+  // Only copied into, never read: the canonicalization of `gpu.memcpy`
+  // removes such copies, and then the allocation (a table copied to the
+  // device that no kernel reads). A release, a use of its own, would keep
+  // both.
+  Value memref = alloc.getMemref();
+  if (llvm::all_of(memref.getUsers(), [&](Operation *user) {
+        auto copy = dyn_cast<gpu::MemcpyOp>(user);
+        return copy && copy.getDst() == memref;
+      }))
     return nullptr;
   int last = buffer.occupied.find_last();
   if (last < 0)

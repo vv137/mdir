@@ -678,6 +678,34 @@ func.func @setup_branch(%out: memref<4xf32, 1>, %n: index, %c: i1) {
   return
 }
 
+// Only copied into, never read: kept, for the canonicalization of the
+// copies, which removes the copy and then the allocation.
+// CHECK-LABEL: func.func @copied_only
+// CHECK-NOT: gpu.dealloc
+// CHECK: return
+func.func @copied_only(%out: memref<4xf32, 1>, %n: index, %c: i1, %h: memref<4xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %f = arith.constant 1.0 : f32
+  %A = gpu.alloc () : memref<4xf32, 1>
+  %B = gpu.alloc () : memref<4xf32, 1>
+  %t0 = gpu.wait async
+  %t = gpu.memcpy async [%t0] %A, %h : memref<4xf32, 1>, memref<4xf32>
+  gpu.wait [%t]
+  scf.for %i = %c0 to %n step %c1 {
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      memref.store %f, %B[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+    gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1) threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+      %v = memref.load %B[%c0] : memref<4xf32, 1>
+      memref.store %v, %out[%c0] : memref<4xf32, 1>
+      gpu.terminator
+    }
+  }
+  return
+}
+
 // Released by the code already: not released again.
 // CHECK-LABEL: func.func @released
 // CHECK: gpu.dealloc
