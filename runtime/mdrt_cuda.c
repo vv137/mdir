@@ -1125,8 +1125,24 @@ static void *growList(void *list, size_t *room, size_t size) {
   return grown;
 }
 
+/* Stops the run if a block of the pool is allocated or freed on a stream
+   other than the runtime's first one: while the second stream of
+   mdrtSideBegin is current, or with a stream named that is not the first.
+   The pool hands a freed piece to the next request without waiting, which
+   is sound only because both are issued on the first stream, in order
+   (D87, premise P4; D[device-pool-split]). The lowering passes no stream. */
+static void checkPoolStream(CUstream stream, const char *what) {
+  if (!onSide && (!stream || stream == sharedStream))
+    return;
+  fprintf(stderr,
+          "mdrt: %s of a block of device memory on a stream other than the "
+          "runtime's first stream%s; the pool orders the reuse of its blocks "
+          "by the first stream alone\n",
+          what, onSide ? " (between mdrtSideBegin and mdrtSideEnd)" : "");
+  abort();
+}
+
 void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
-  (void)stream;
   enter();
   CUdeviceptr pointer = 0;
   if (size == 0)
@@ -1146,6 +1162,7 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     end(ALLOCATE, start);
     return (void *)pointer;
   }
+  checkPoolStream(stream, "an allocation");
   watchDeviceMemory();
   struct Block block = {.size = size,
                         .owner = currentActivation,
@@ -1202,9 +1219,9 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
 }
 
 void mgpuMemFree(void *pointer, CUstream stream) {
-  (void)stream;
   if (!pointer)
     return;
+  checkPoolStream(stream, "a free");
   double start = begin();
   CUdeviceptr address = (CUdeviceptr)pointer;
   for (int i = numLive; i-- != 0;) {

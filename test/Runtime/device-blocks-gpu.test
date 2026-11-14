@@ -121,3 +121,24 @@
 # STREAMS-NEXT: the merged arena taken on stream B: True
 # STREAMS-NEXT: the values after both streams: [2]
 # STREAMS-NEXT: closed and trimmed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+#
+# The pool orders the reuse of its blocks by the runtime's first stream
+# alone (D87, premise P4): an allocation or a free on the second stream,
+# or with another stream named, stops the run, in every build.
+# RUN: not --crash %python %S/Inputs/device_blocks.py %mdrt_cuda side-alloc 2>&1 | FileCheck %s --check-prefix=SIDE-ALLOC
+# SIDE-ALLOC: allocating on the second stream
+# SIDE-ALLOC-NEXT: mdrt: an allocation of a block of device memory on a stream other than the runtime's first stream (between mdrtSideBegin and mdrtSideEnd); the pool orders the reuse of its blocks by the first stream alone
+# SIDE-ALLOC-NOT: not refused
+# RUN: not --crash %python %S/Inputs/device_blocks.py %mdrt_cuda side-free 2>&1 | FileCheck %s --check-prefix=SIDE-FREE
+# SIDE-FREE: freeing on the second stream
+# SIDE-FREE-NEXT: mdrt: a free of a block of device memory on a stream other than the runtime's first stream (between mdrtSideBegin and mdrtSideEnd)
+# SIDE-FREE-NOT: not refused
+# RUN: not --crash %python %S/Inputs/device_blocks.py %mdrt_cuda other-stream 2>&1 | FileCheck %s --check-prefix=OTHER
+# OTHER: allocating with another stream named
+# OTHER-NEXT: mdrt: an allocation of a block of device memory on a stream other than the runtime's first stream; the pool
+# OTHER-NOT: not refused
+# The first stream named, and an allocation after the second stream has
+# ended, are accepted.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda stream-ok | FileCheck %s --check-prefix=STREAM-OK
+# STREAM-OK: the first stream named, and after the second stream: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+# STREAM-OK-NEXT: not refused

@@ -67,22 +67,40 @@ Recorded at its merge.
 holds (taken less returned) after a short and a long run of the
 dipeptide with groups, with a slack of 2. Its short run was of 100
 steps. That run ends before the run's peak in use, which is reached
-between steps 100 and 300 (1.0 and 1.1 MiB). The blocks held rise there
-once, and then stay, three runs each on an RTX 4090:
+between steps 100 and 200 (1.0 and 1.1 MiB). The blocks held rise there
+once, and then stay (RTX 4090; three runs at each length, five at 200
+and 3,000):
 
-| Steps | 100 | 300 | 1,000 | 3,000 | 10,000 |
-|---|---:|---:|---:|---:|---:|
-| `main`, blocks | 95 | 97 | 97 | 97 | 97 |
-| this change, arenas | 70 | 73 | 73 | 73 | 73 |
-| the variant of D312 unchanged (above), arenas | 75 | 78 | 78 | 78 | 78 |
+| Steps | 100 | 200 | 300 | 1,000 | 3,000 | 10,000 |
+|---|---:|---:|---:|---:|---:|---:|
+| `main`, blocks | 95 | 97 | 97 | 97 | 97 | 97 |
+| this change, arenas | 70 | 73 | 73 | 73 | 73 | 73 |
+| the variant of D312 unchanged (above), arenas | 75 | | 78 | 78 | 78 | 78 |
 
-From 100 steps, this change and the variant are past the slack by one (3
-against 2). The short run is now of 1,000 steps, after the rise. Both
-trees then hold the same count in the short and the long run (3,000
-steps), and the slack of 2 stays. The defect that the test guards against (D312) left
-blocks in the pool at each build, and grew with the run past 1,000
-steps (783 MiB at STMV after 1,000 steps, more after). It was not run
-again here.
+From 100 steps, this change is past the slack by one (3 against 2). The
+short run is now of 200 steps, after the rise, and the slack of 2 stays:
+`main` and this change hold the same count at 200 and 3,000 steps, 5 of
+5 runs each.
+
+**The test still catches the defect of D312** (#471). D312's lowering
+was undone in a tree of its own: the buffers that a loop over the groups
+gathers into, and the frames of a pruning check, sized by the places
+that a build occupied instead of the room of the places. The host's code
+then differs from this change's at those allocations.
+
+| Tree | 100 | 200 | 300 | 1,000 | 3,000 | The changed test |
+|---|---:|---:|---:|---:|---:|---|
+| the lowering undone, the pool of `main` | 96 | 98 | 101 | 104 | 104 | fails, 3 of 3 (6 more) |
+| the lowering undone, this pool limited to exact sizes | 96 | 98 | 101 | 101 | 104 to 107 | fails, 3 of 3 (6 or 9 more) |
+| the lowering undone, this pool | 70 | 73 | 73 | 73 | 73 | passes |
+
+A short run of 1,000 steps, as a first version of this change had it,
+would have missed the defect on the pool of `main` (104 and 104). With
+the pool that splits, the defect no longer grows the pool: the changing
+sizes are served from larger pieces. A buffer that a growth replaces,
+kept out of the pool and never freed, did not grow it either (73, 76,
+and 76 at 100, 1,000, and 3,000 steps): the growths of this input come
+before step 200.
 
 ## 3. The order of the streams
 
@@ -100,6 +118,15 @@ The premises:
   lowered code.
 - The second stream of D87 allocates and frees nothing (premise P4,
   checked by the lowering).
+- **The runtime checks both, in every build.** An allocation or a free
+  of a block of the pool stops the run with a message when the second
+  stream is current (between `mdrtSideBegin` and `mdrtSideEnd`), or when
+  the call names a stream that is not the runtime's first
+  (`checkPoolStream`). A later change that broke the premises would
+  otherwise reuse a piece too early, silently. The negative tests
+  (`side-alloc`, `side-free`, `other-stream`) make each call and expect
+  the message and the abort; `stream-ok` names the first stream, and
+  allocates after the second stream has ended, and is accepted.
 - A buffer that a step uses is not freed before its last use is issued
   (D412, D414).
 
@@ -223,6 +250,8 @@ on a pool that breaks the property it names:
 | `off` (budget of 0) | a freed arena goes back at once; nothing is kept or split | |
 | `replaced` | a growth returns a buffer that is an arena of its own to the driver, and a piece of a larger arena to the pool | a piece returned to the driver alone (D312) |
 | `streams` | the order of the streams (Section 3) | a reuse before the work on another stream is done |
+| `side-alloc`, `side-free`, `other-stream` | an allocation or a free on the second stream, or with another stream named, stops the run with its message | each a call against P4 |
+| `stream-ok` | the first stream named, and a request after the second stream has ended, are accepted | |
 
 The earlier scenarios (`registry`, `budget`, `retry`) pass unchanged.
 `test/Sanitizer/device-blocks-gpu.test` runs six of the scenarios under

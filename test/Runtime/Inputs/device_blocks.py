@@ -34,6 +34,12 @@ The pool's best fit with splitting and coalescing (D[device-pool-split]):
   replaced  a buffer of the runtime that a growth replaces goes back to the
             driver if it is an arena of its own, and to the pool if it is
             a piece of a larger one (D312)
+  side-alloc, side-free, other-stream
+            an allocation or a free of a block of the pool on the second
+            stream (between mdrtSideBegin and mdrtSideEnd), or with a stream
+            named that is not the runtime's first: the runtime stops the run
+  stream-ok an allocation and a free with the runtime's first stream named,
+            and after the second stream has ended: accepted
   streams   a piece freed while work on stream A still writes it, merged
             with an idle neighbor, and taken on stream B after the runtime
             changes to B, is written on B only after A's work
@@ -117,6 +123,34 @@ elif scenario == "retry":
     close(a)
     lib.mdrtDeviceTrim()
     show("after the trim")
+elif scenario in ("side-alloc", "side-free", "other-stream", "stream-ok"):
+    lib.mgpuStreamCreate.restype = ctypes.c_void_p
+    first = lib.mgpuStreamCreate()
+    if scenario == "side-alloc":
+        lib.mdrtSideBegin()
+        print("allocating on the second stream", flush=True)
+        lib.mgpuMemAlloc(4096, None, False)
+    elif scenario == "side-free":
+        pointer = lib.mgpuMemAlloc(4096, None, False)
+        lib.mdrtSideBegin()
+        print("freeing on the second stream", flush=True)
+        lib.mgpuMemFree(pointer, None)
+    elif scenario == "other-stream":
+        other = ctypes.c_void_p()
+        assert ctypes.CDLL("libcuda.so.1").cuStreamCreate(ctypes.byref(other), 1) == 0
+        print("allocating with another stream named", flush=True)
+        lib.mgpuMemAlloc(4096, other, False)
+    else:
+        pointer = lib.mgpuMemAlloc(4096, first, False)
+        lib.mgpuMemFree(pointer, first)
+        lib.mdrtSideBegin()
+        lib.mdrtSideEnd()
+        lib.mdrtSideJoin()
+        pointer = lib.mgpuMemAlloc(4096, None, False)
+        lib.mgpuMemFree(pointer, None)
+        lib.mdrtDeviceTrim()
+        show("the first stream named, and after the second stream")
+    print("not refused", flush=True)
 elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
                   "pieces", "off", "replaced", "streams"):
     def allocate(size):
