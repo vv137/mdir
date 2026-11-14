@@ -68,7 +68,7 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:      %[[ORDER:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // The rows of the matrix grow when a build finds them too narrow.
   //
@@ -79,7 +79,7 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64, 1>
 
   // The minimum image takes one over the edge lengths, computed once on
   // the host.
@@ -153,7 +153,7 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d, %r2 : vector<3xf64>, f64
-  } : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1> -> f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64, 1> -> f64
   return %u : f64
 }
 
@@ -226,9 +226,9 @@ func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
 func.func @validity(%x: memref<?x3xf64, 1>, %v: memref<?x3xf64, 1>,
                     %cell: !md.cell, %n: index) {
   %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %ref = md_exec.reference_positions %nl
-      : !mdrt.neighbors<@atoms> -> memref<?x3xf64, 1>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> memref<?x3xf64, 1>
   %no = arith.constant false
   %moved = md_exec.particle_for
       ins(%x, %v, %ref
@@ -245,7 +245,7 @@ func.func @validity(%x: memref<?x3xf64, 1>, %v: memref<?x3xf64, 1>,
   } -> i1
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64, 1>
   return
 }
 

@@ -4,6 +4,7 @@
 #include "mdir/Dialect/MDExec/HostPairs.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/NeighborContract.h"
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mlir/IR/Builders.h"
@@ -18,6 +19,7 @@ using mdir::md::RelationType;
 using mdir::mdrt::CellsType;
 using mdir::mdrt::IncidenceType;
 using mdir::mdrt::NeighborsType;
+using Contract = mdir::mdrt::NeighborsContract;
 using mdir::mdrt::PermutationType;
 
 #include "mdir/Dialect/MDExec/MDExecEnums.cpp.inc"
@@ -738,6 +740,9 @@ LogicalResult BuildNeighborsOp::verify() {
       return emitOpError() << "a structure with 'centers' or "
                               "'images(explicit)' leaves out no pairs";
   }
+  if (failed(verifyGuarantee(getOperation(), neighbors,
+                             getBuildGuarantee(getKind(), getImages()))))
+    return failure();
   return verifyExcluded(getOperation(), getExcluded(),
                         neighbors.getParticleSet());
 }
@@ -755,7 +760,31 @@ LogicalResult EmptyNeighborsOp::verify() {
     return emitOpError() << "expected the type of a buffer that holds "
                             "positions, got "
                          << *getPositions();
+  // An empty structure takes the images of the builds that refresh it:
+  // either images, with the kind's guarantee otherwise.
+  Contract guaranteed = getBuildGuarantee(getKind(), Images::Minimum);
+  guaranteed.images =
+      cast<NeighborsType>(getResult().getType()).getContract().images;
+  return verifyGuarantee(getOperation(), getResult().getType(), guaranteed);
+}
+
+LogicalResult WeakenNeighborsOp::verify() {
+  auto from = cast<NeighborsType>(getNeighbors().getType());
+  auto to = cast<NeighborsType>(getResult().getType());
+  if (from.getParticleSet() != to.getParticleSet())
+    return emitOpError() << "the structure is on " << from.getParticleSet()
+                         << ", but the result is on " << to.getParticleSet();
+  if (!from.getContract().meets(to.getContract()))
+    return emitOpError() << "cannot strengthen '" << from.getContract().str()
+                         << "' to '" << to.getContract().str()
+                         << "': the result must state less";
   return success();
+}
+
+OpFoldResult WeakenNeighborsOp::fold(FoldAdaptor) {
+  if (getNeighbors().getType() == getResult().getType())
+    return getNeighbors();
+  return {};
 }
 
 void EmptyNeighborsOp::getEffects(
@@ -832,6 +861,18 @@ LogicalResult RefreshNeighborsOp::verify() {
     return emitOpError() << "a structure with 'centers' or "
                             "'images(explicit)' is refreshed with the "
                             "policy 'always' and without 'prune_skin'";
+
+  // A refresh builds with its images, which its type states
+  // (D[neighbors-contract]).
+  Contract::Images images = getImages() == Images::Explicit
+                                ? Contract::Images::Explicit
+                                : Contract::Images::Minimum;
+  if (neighbors.getContract().images != images)
+    return emitOpError() << "builds images(" << stringifyImages(getImages())
+                         << "), but its structure's type states '"
+                         << mdir::mdrt::stringify(
+                                neighbors.getContract().images)
+                         << "'";
 
   if (getMoved()) {
     if (getPolicy() != RebuildPolicy::Check)
@@ -1133,6 +1174,11 @@ LogicalResult PairForOp::verify() {
                            << overwrite->size();
   }
 
+  // What the loop requires of the lists (D[neighbors-contract]).
+  if (failed(verifyRequirement(getOperation(), getNeighbors(),
+                               getRequirement(*this))))
+    return failure();
+
   // Construction coverage must be proved even across SSA boundaries.
   if (failed(verifyNeighborCoverage(*this)))
     return failure();
@@ -1281,6 +1327,10 @@ LogicalResult BuildTripletsOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
+  // The rows of a matrix (D[neighbors-contract]).
+  if (failed(verifyRequirement(getOperation(), getNeighbors(),
+                               getRowsRequirement())))
+    return failure();
   double cutoff = getCutoff().convertToDouble();
   if (!(cutoff > 0.0))
     return emitOpError() << "expected a positive cutoff, got " << cutoff;
@@ -1323,6 +1373,10 @@ LogicalResult BuildEdgesOp::verify() {
   auto neighbors = cast<NeighborsType>(getNeighbors().getType());
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
+    return failure();
+  // The rows of a matrix (D[neighbors-contract]).
+  if (failed(verifyRequirement(getOperation(), getNeighbors(),
+                               getRowsRequirement())))
     return failure();
   double cutoff = getCutoff().convertToDouble();
   if (!(cutoff > 0.0))

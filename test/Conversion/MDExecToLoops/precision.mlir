@@ -23,7 +23,7 @@ func.func @mixed(%x: !positions, %cell: !md.cell) -> (!forces, f64) {
       : !positions -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(2.5) skin(0.3) kind(matrix) width(96)
-      : !mdrt.cells<@atoms>, !positions -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !positions -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // The difference of the positions is taken in f64, then the minimum
   // image and the squared length in f32, the type of the kernel.
@@ -53,7 +53,7 @@ func.func @mixed(%x: !positions, %cell: !md.cell) -> (!forces, f64) {
     %k = arith.mulf %s, %d : vector<3xf32>
     %e = arith.extf %r2 : f32 to f64
     md_exec.yield %k, %e : vector<3xf32>, f64
-  } : !mdrt.neighbors<@atoms>, !positions -> !forces, f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !positions -> !forces, f64
   return %f, %u : !forces, f64
 }
 
@@ -68,10 +68,10 @@ func.func @single(%x0: !single, %cell: !md.cell, %steps: index) -> !single {
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf32>
   // CHECK:      scf.for
   %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %x, %nl = scf.for %step = %c0 to %steps step %c1
       iter_args(%xa = %x0, %nla = %nl0)
-      -> (!single, !mdrt.neighbors<@atoms>) {
+      -> (!single, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
     // The test of the displacement since the last build.
     //
     // CHECK:        memref.load %[[REFERENCE]][
@@ -82,13 +82,13 @@ func.func @single(%x0: !single, %cell: !md.cell, %steps: index) -> !single {
     // CHECK-SAME:       : (memref<?x3xf32>, vector<3xf32>, f32, f32, memref<?xi32>, memref<?x?xi32>) -> index
     %nlb = md_exec.refresh_neighbors %nla, %xa, %cell
         cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-        : !mdrt.neighbors<@atoms>, !single
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !single
     %e = md_exec.empty : !single
     %xb = md_exec.particle_for ins(%xa : !single) outs(%e : !single) {
     ^bb0(%x_i: vector<3xf32>):
       md_exec.yield %x_i : vector<3xf32>
     } -> !single
-    scf.yield %xb, %nlb : !single, !mdrt.neighbors<@atoms>
+    scf.yield %xb, %nlb : !single, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   }
   return %x : !single
 }

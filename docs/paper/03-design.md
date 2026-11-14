@@ -1679,7 +1679,7 @@ repository.*
 | Program | A step: kicks, drifts, constraints, couplings, around the requests | `dyn.program`, `dyn.kick`, `dyn.drift`, `dyn.step` | `include/mdir/Dialect/Dyn` |
 | Entry | The schedule of a run: loops over segments, frames, energies, periods, and steps, with the calls to the host for the outputs | `func.func @mdir_run`, `mdrt.host_call @mdrtWriteEnergies(...)` | `Builder::emitEntry`; the callbacks in `lib/Driver/Output.cpp` |
 | Loop | A sum or a map lowered to an iteration over a set with a pattern of access | `md_exec.particle_for`, `md_exec.pair_for`, `md_exec.tuple_for`, `md_exec.reciprocal` | `lib/Conversion/MDToMDExec`; passes in `lib/Dialect/MDExec/Transforms` (Section 3.4) |
-| Neighbor structure | The pairs within the reach, the matrix or the groups of 16, with its test of validity | `md_exec.build_neighbors`, `md_exec.refresh_neighbors`, `!mdrt.neighbors<@atoms>` | Section 4; `runtime/mdrt_cuda.c` |
+| Neighbor structure | The pairs within the reach, the matrix or the groups of 16, with its test of validity | `md_exec.build_neighbors`, `md_exec.refresh_neighbors`, `!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>` | Section 4; `runtime/mdrt_cuda.c` |
 | Storage | The buffers of fields, the scratch of reductions, the cells of results read by the host | `memref`s with set-bearing identity layouts after `md-exec-assign-storage`, plain `memref`s after CPU/GPU conversion | `lib/Dialect/MDExec/Transforms/AssignStorage.cpp`, `lib/Dialect/MDExec/StorageSet.cpp` |
 | Kernel of a device | A loop lowered to a launch, its sums reduced in blocks | `gpu.launch` | `lib/Conversion/MDExecToGPU` (Section 8) |
 

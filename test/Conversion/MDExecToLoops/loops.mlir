@@ -97,7 +97,7 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
   // The destination is a field of zeros, so the loop stores the sum and
   // does not read the buffer.
@@ -129,7 +129,7 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   // CHECK:      return %[[OUT]]
   return %f : !vec
 }

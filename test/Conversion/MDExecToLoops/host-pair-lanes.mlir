@@ -19,7 +19,7 @@ func.func @lj(%x: !vec, %q: !real, %cell: !md.cell) -> (!vec, f64) {
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) =
   // CHECK:        %[[REST:[0-9]+]] = arith.remui %{{[0-9]+}}, %[[FOUR:[a-z0-9_]+]] : index
   // CHECK:        %[[FULL:[0-9]+]] = arith.subi %{{[0-9]+}}, %[[REST]] : index
@@ -74,6 +74,6 @@ func.func @lj(%x: !vec, %q: !real, %cell: !md.cell) -> (!vec, f64) {
     %fd = arith.mulf %b, %d : vector<3xf32>
     %wide = arith.extf %e : f32 to f64
     md_exec.yield %fd, %wide : vector<3xf32>, f64
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec, f64
   return %f, %u : !vec, f64
 }

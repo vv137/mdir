@@ -13,7 +13,7 @@
 // CHECK-NOT:     md_exec.empty_neighbors
 // CHECK:         md_exec.refresh_neighbors %[[NL]], {{.*}} policy(always)
 // CHECK:         md_exec.rebuild_count
-// CHECK:         md_exec.reset_neighbors %[[NL]] : !mdrt.neighbors<@atoms>
+// CHECK:         md_exec.reset_neighbors %[[NL]] : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 // CHECK:         scf.for
 // CHECK:           md_exec.refresh_neighbors %[[NL]], {{.*}} policy(check)
 // CHECK-NOT:     md_exec.empty_neighbors
@@ -37,18 +37,18 @@ func.func @start_and_steps(%x: !vec, %cell: !md.cell, %n: index)
       : !vec -> !mdrt.cells<@atoms>
   %start = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %first = md_exec.rebuild_count %start : !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %first = md_exec.rebuild_count %start : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nle = scf.for %step = %c0 to %n step %c1
-      iter_args(%na = %nl0) -> (!mdrt.neighbors<@atoms>) {
+      iter_args(%na = %nl0) -> (!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
     %nb = md_exec.refresh_neighbors %na, %x, %cell
         cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-        : !mdrt.neighbors<@atoms>, !vec
-    scf.yield %nb : !mdrt.neighbors<@atoms>
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
+    scf.yield %nb : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   }
-  %last = md_exec.rebuild_count %nle : !mdrt.neighbors<@atoms>
+  %last = md_exec.rebuild_count %nle : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return %first, %last : i64, i64
 }
 
@@ -73,18 +73,18 @@ func.func @overlap(%x: !vec, %cell: !md.cell, %n: index) -> (i64, i64) {
       : !vec -> !mdrt.cells<@atoms>
   %start = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nle = scf.for %step = %c0 to %n step %c1
-      iter_args(%na = %nl0) -> (!mdrt.neighbors<@atoms>) {
+      iter_args(%na = %nl0) -> (!mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
     %nb = md_exec.refresh_neighbors %na, %x, %cell
         cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-        : !mdrt.neighbors<@atoms>, !vec
-    scf.yield %nb : !mdrt.neighbors<@atoms>
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
+    scf.yield %nb : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   }
-  %first = md_exec.rebuild_count %start : !mdrt.neighbors<@atoms>
-  %last = md_exec.rebuild_count %nle : !mdrt.neighbors<@atoms>
+  %first = md_exec.rebuild_count %start : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %last = md_exec.rebuild_count %nle : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return %first, %last : i64, i64
 }
 
@@ -109,15 +109,15 @@ func.func @shapes(%x: !vec, %cell: !md.cell) -> (i64, i64, i64) {
       : !vec -> !mdrt.cells<@atoms>
   %a = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(matrix) width(48)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %na = md_exec.rebuild_count %a : !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %na = md_exec.rebuild_count %a : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %b = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(matrix) width(64)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %nb = md_exec.rebuild_count %b : !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
+  %nb = md_exec.rebuild_count %b : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %c = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.5) skin(0.25) kind(groups) width(64)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  %nc = md_exec.rebuild_count %c : !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+  %nc = md_exec.rebuild_count %c : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   return %na, %nb, %nc : i64, i64, i64
 }

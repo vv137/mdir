@@ -32,7 +32,7 @@ md.function @energy(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]] : f64
   // CHECK-NEXT:   %[[K:[0-9]+]] = arith.divf %[[A]], %[[R]] : f64
   // CHECK-NEXT:   md_exec.yield %[[K]] : f64
-  // CHECK-NEXT: } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  // CHECK-NEXT: } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> f64
   // CHECK-NOT:  md.sum_relation
   %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
   ^bb0(%r: f64, %d: vector<3xf64>):

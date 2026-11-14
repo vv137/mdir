@@ -20,6 +20,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/NeighborContract.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1479,8 +1480,11 @@ LogicalResult Lowering::lowerNeighborhoodExec(NeighborhoodOp op) {
         relation.cell,
         APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
     Value structure = md_exec::BuildNeighborsOp::create(
-        b, loc, mdrt::NeighborsType::get(context, set), cells, positions,
-        relation.cell, /*excluded=*/Value(), nOwned, APFloat(cutoff),
+        b, loc,
+        md_exec::getBuildType(set, md_exec::NeighborKind::Matrix,
+                              md_exec::Images::Explicit),
+        cells, positions, relation.cell, /*excluded=*/Value(), nOwned,
+        APFloat(cutoff),
         APFloat(skin), md_exec::NeighborKind::Matrix,
         static_cast<uint64_t>(width), md_exec::Images::Explicit);
     relation.positions.push_back(positions);

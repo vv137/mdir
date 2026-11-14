@@ -122,6 +122,6 @@ func.func @f(%e: !mdrt.incidence<@atoms, 3, @angles>) {
   // expected-error@+1 {{expected the excluded pairs to have 2 members, got 3}}
   %nl = md_exec.empty_neighbors kind(matrix) width(32)
       exclude(%e : !mdrt.incidence<@atoms, 3, @angles>)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }

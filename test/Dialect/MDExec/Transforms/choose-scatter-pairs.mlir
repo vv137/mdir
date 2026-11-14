@@ -35,7 +35,7 @@
 
 !vec = !md.field<@atoms, 3 x f32>
 !real = !md.field<@atoms, f32>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
 md.particle_set @atoms
 
 // The forces of a loop over groups, and EAM's density.
@@ -82,15 +82,18 @@ func.func @none(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, f64) {
   // Real construction evidence for the pair loops below (#572).
   %coverage_cells = md_exec.build_cells %x, %cell width(1.0)
       : !vec -> !mdrt.cells<@atoms>
+  %m = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
       cutoff(1.0) skin(0.0) kind(groups) width(64)
       : !mdrt.cells<@atoms>, !vec -> !nl
 
-  %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
+  %f = md_exec.pair_for %m, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %d : vector<3xf32>
-  } : !nl, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       exchange [symmetric] policy(unique, atomic) {

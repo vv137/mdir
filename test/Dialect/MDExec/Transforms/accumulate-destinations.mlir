@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-accumulate-destinations | FileCheck %s
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl  = !mdrt.neighbors<@atoms>
+!nl  = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !inc = !mdrt.incidence<@atoms, 2, @bonds>
 
 md.particle_set @atoms

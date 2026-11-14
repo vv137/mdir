@@ -406,3 +406,98 @@ LogicalResult TemplateConvertOp::verify() {
                          << ", which are not of the same shape";
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// NeighborsType (D[neighbors-contract])
+//===----------------------------------------------------------------------===//
+
+/// Parses one of `words`, the values of an axis in their order, into its
+/// index.
+static ParseResult parseWord(AsmParser &parser, StringRef axis,
+                             ArrayRef<StringRef> words, unsigned &index) {
+  SMLoc loc = parser.getCurrentLocation();
+  StringRef word;
+  if (parser.parseKeyword(&word))
+    return failure();
+  for (unsigned i = 0, e = words.size(); i != e; ++i)
+    if (word == words[i]) {
+      index = i;
+      return success();
+    }
+  InFlightDiagnostic diagnostic = parser.emitError(loc)
+                                  << "expected the " << axis << " ";
+  llvm::interleave(
+      words, [&](StringRef w) { diagnostic << "'" << w << "'"; },
+      [&] { diagnostic << " or "; });
+  return diagnostic << ", got '" << word << "'";
+}
+
+Type NeighborsType::parse(AsmParser &parser) {
+  using Contract = NeighborsContract;
+  FlatSymbolRefAttr particleSet;
+  if (parser.parseLess() || parser.parseAttribute(particleSet))
+    return Type();
+  // The guarantee is always spelled (the maintainer's ruling 1 on #882): a
+  // bare type would claim one silently.
+  Contract contract;
+  {
+    unsigned traversal, images, exclusions, organization;
+    if (parser.parseComma() ||
+        parseWord(parser, "traversal", {"directed", "unique"}, traversal) ||
+        parser.parseComma() ||
+        parseWord(parser, "images", {"minimum", "explicit"}, images) ||
+        parser.parseComma() ||
+        parseWord(parser, "exclusions", {"masked", "removed"}, exclusions) ||
+        parser.parseComma() ||
+        parseWord(parser, "organization",
+                  {"none", "grouped_by", "sorted_within", "stable"},
+                  organization))
+      return Type();
+    contract.traversal = static_cast<Contract::Traversal>(traversal);
+    contract.images = static_cast<Contract::Images>(images);
+    contract.exclusions = static_cast<Contract::Exclusions>(exclusions);
+    auto kind = static_cast<Contract::Organization>(organization);
+    unsigned group = 0, order = 0;
+    if (kind != Contract::Organization::None) {
+      if (parser.parseLParen() ||
+          parseWord(parser, "group", {"owner", "group"}, group))
+        return Type();
+      ++group;
+      if (kind != Contract::Organization::GroupedBy &&
+          (parser.parseComma() ||
+           parseWord(parser, "key", {"item", "search"}, order)))
+        return Type();
+      if (kind != Contract::Organization::GroupedBy)
+        ++order;
+      if (parser.parseRParen())
+        return Type();
+    }
+    contract = Contract::withOrganization(
+        contract, kind, static_cast<Contract::Group>(group),
+        static_cast<Contract::Order>(order));
+  }
+  if (parser.parseGreater())
+    return Type();
+  return parser.getChecked<NeighborsType>(parser.getContext(), particleSet,
+                                          contract);
+}
+
+void NeighborsType::print(AsmPrinter &printer) const {
+  printer << "<";
+  printer.printAttributeWithoutType(getParticleSet());
+  printer << ", ";
+  getContract().print(printer.getStream());
+  printer << ">";
+}
+
+LogicalResult
+NeighborsType::verify(function_ref<InFlightDiagnostic()> emitError,
+                      FlatSymbolRefAttr particleSet,
+                      NeighborsContract contract) {
+  if (!particleSet)
+    return emitError() << "expected the particle set of the structure";
+  if (!contract.isNormalized())
+    return emitError() << "expected a normalized organization, got '"
+                       << contract.str() << "'";
+  return success();
+}

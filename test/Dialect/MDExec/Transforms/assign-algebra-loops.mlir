@@ -8,7 +8,7 @@
 // RUN: | FileCheck %s --check-prefix=DET
 
 !vec = !md.field<@atoms, 3 x f32>
-!nl = !mdrt.neighbors<@atoms>
+!nl = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !bonds = !mdrt.incidence<@atoms, 2, @bonds>
 md.particle_set @atoms
 md.tuple_set @bonds on(@atoms) arity(2) orientation(ordered)

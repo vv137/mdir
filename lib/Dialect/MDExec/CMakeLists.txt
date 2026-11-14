@@ -5,6 +5,7 @@ add_mlir_dialect_library(MDIRMDExec
   Independence.cpp
   LoopEffects.cpp
   MDExecOps.cpp
+  NeighborContract.cpp
   NeighborCoverage.cpp
   ProfileMap.cpp
   Scatter.cpp

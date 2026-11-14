@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-narrow-sums | FileCheck %s
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl  = !mdrt.neighbors<@atoms>
+!nl  = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 md.particle_set @atoms
 
@@ -15,7 +15,7 @@ md.particle_set @atoms
 // CHECK:           %[[N:[0-9]+]] = vector.from_elements %{{.*}} : vector<3xf32>
 // CHECK:           %[[W:[0-9]+]] = arith.extf %[[N]] : vector<3xf32> to vector<3xf64>
 // CHECK:           md_exec.yield %[[W]] : vector<3xf64>
-// CHECK:         } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> vector<3xf64>
+// CHECK:         } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> vector<3xf64>
 // CHECK:         %[[F:[0-9]+]] = vector.from_elements %{{.*}} : vector<9xf64>
 // CHECK:         vector.extract %[[F]][0]
 func.func @trace(%x: !vec, %cell: !md.cell) -> f64 {

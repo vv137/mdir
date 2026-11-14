@@ -207,6 +207,13 @@ Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
 *IEEE Trans. Parallel Distrib. Syst.* **24**(11), 2273–2282 (2013).
 [doi:10.1109/TPDS.2012.319](https://doi.org/10.1109/TPDS.2012.319)
 
+### Graefe1993
+
+G. Graefe, W. J. McKenna, "The Volcano optimizer generator: extensibility
+and efficient search," in *Proceedings of IEEE 9th International
+Conference on Data Engineering* (IEEE, 1993), pp. 209–218.
+[doi:10.1109/ICDE.1993.344061](https://doi.org/10.1109/ICDE.1993.344061)
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate

@@ -2,7 +2,7 @@
 
 !vec  = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>
-!nl   = !mdrt.neighbors<@atoms>
+!nl   = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 md.particle_set @atoms
 
@@ -163,20 +163,20 @@ func.func @storage(%x: memref<?x3xf64>, %f: memref<?x3xf64>,
   %coverage_zero = arith.constant 0 : index
   %coverage_count = memref.dim %x, %coverage_zero : memref<?x3xf64>
   %coverage_empty = md_exec.empty_neighbors size(%coverage_count)
-      positions(memref<?x3xf64>) kind(matrix) width(64) : !mdrt.neighbors<@atoms>
+      positions(memref<?x3xf64>) kind(matrix) width(64) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %nl = md_exec.refresh_neighbors %coverage_empty, %x, %cell
       cutoff(2.5) skin(0.0) cell_width(2.5) policy(always)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
 
   md_exec.pair_for %nl, %x, %cell outs(%f : memref<?x3xf64>)
       cutoff(2.5) overwrite [true] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
   md_exec.pair_for %nl, %x, %cell outs(%g : memref<?x3xf64>)
       cutoff(2.5) overwrite [true] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf64>
   return
 }

@@ -45,10 +45,10 @@ md.particle_set @atoms
 // MIXED-NEXT:      %[[K:.*]] = arith.mulf %[[S]], %[[D]] : vector<3xf32>
 // MIXED-NEXT:      %[[WIDE:.*]] = arith.extf %[[A]] : f32 to f64
 // MIXED-NEXT:      md_exec.yield %[[K]], %[[WIDE]] : vector<3xf32>, f64
-// MIXED-NEXT:    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
+// MIXED-NEXT:    } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
 // UNCONVERTED-LABEL:    func.func @forces
 // UNCONVERTED-NOT:      md_exec.particle_for
-// UNCONVERTED:          } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>, f64
+// UNCONVERTED:          } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>, f64
 // DOUBLE:        md_exec.pair_for
 // DOUBLE-NEXT:   ^bb0(%{{.*}}: f64, %{{.*}}: vector<3xf64>):
 // DOUBLE-NOT:    arith.truncf
@@ -70,7 +70,7 @@ func.func @forces(%positions: memref<?x3xf64>, %cell: !md.cell, %eps: f64)
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(2.5) skin(0.3) kind(matrix) width(96)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f0 = md_exec.zeros : !vec
   %u0 = arith.constant 0.0 : f64
   %f, %u = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec)
@@ -83,7 +83,7 @@ func.func @forces(%positions: memref<?x3xf64>, %cell: !md.cell, %eps: f64)
     %s = vector.broadcast %b : f64 to vector<3xf64>
     %k = arith.mulf %s, %d : vector<3xf64>
     md_exec.yield %k, %a : vector<3xf64>, f64
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec, f64
   return %u, %f : f64, !vec
 }
 
@@ -95,13 +95,13 @@ func.func @forces(%positions: memref<?x3xf64>, %cell: !md.cell, %eps: f64)
 // MIXED-NOT:     md_exec.particle_for
 // MIXED:         md_exec.pair_for %{{.*}}, %{{.*}}, %{{.*}} outs(
 // MIXED-NEXT:    ^bb0(%{{.*}}: f32, %{{.*}}: vector<3xf32>):
-// MIXED:         } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>
+// MIXED:         } : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>
 func.func @groups(%positions: memref<?x3xf64>, %cell: !md.cell) -> !vec {
   %x = mdrt.from_buffer %positions : memref<?x3xf64> to !vec
-  %nl0 = md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms>
+  %nl0 = md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-      : !mdrt.neighbors<@atoms>, !vec
+      : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, !vec
   %f0 = md_exec.zeros : !vec
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(2.5)
       exchange [antisymmetric] policy(unique, atomic) {
@@ -109,7 +109,7 @@ func.func @groups(%positions: memref<?x3xf64>, %cell: !md.cell) -> !vec {
     %g = vector.broadcast %r2 : f64 to vector<3xf64>
     %k = arith.mulf %g, %d : vector<3xf64>
     md_exec.yield %k : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>, !vec -> !vec
   return %f : !vec
 }
 
@@ -148,12 +148,12 @@ func.func @kick(%velocities: memref<?x3xf64>, %f: !vec,
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %v, %cell
       cutoff(2.5) skin(0.3) kind(matrix) width(96)
-      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %f1 = md_exec.pair_for %nl, %v, %cell outs(%f : !vec)
       cutoff(2.5) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %d : vector<3xf64>
-  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> !vec
 
   %v0 = md_exec.empty : !vec
   %v1 = md_exec.particle_for ins(%v, %f1, %m : !vec, !vec, !real)
@@ -179,22 +179,22 @@ func.func @kick(%velocities: memref<?x3xf64>, %f: !vec,
 // MIXED-SAME:    -> (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>)
 // SINGLE-SAME:   (%{{.*}}: !md.field<@atoms, 3 x f32>, %{{.*}}: !md.field<@atoms, 3 x f32>, %{{.*}}: !md.field<@atoms, i32>,
 // SINGLE-SAME:   -> (!md.field<@atoms, 3 x f32>, !md.field<@atoms, 3 x f32>)
-// SINGLE:        scf.for {{.*}} -> (!md.field<@atoms, 3 x f32>, !md.field<@atoms, 3 x f32>, !mdrt.neighbors<@atoms>)
+// SINGLE:        scf.for {{.*}} -> (!md.field<@atoms, 3 x f32>, !md.field<@atoms, 3 x f32>, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>)
 // SINGLE:          md_exec.empty : !md.field<@atoms, 3 x f32>
 // SINGLE:          %[[DT:.*]] = arith.truncf %{{.*}} : f64 to f32
 // SINGLE:          md_exec.particle_for ins(%{{.*}}, %{{.*}}, %{{.*}} : !md.field<@atoms, 3 x f32>, !md.field<@atoms, 3 x f32>, !md.field<@atoms, i32>)
 // SINGLE-NEXT:     ^bb0(%{{.*}}: vector<3xf32>, %{{.*}}: vector<3xf32>, %{{.*}}: i32):
 // SINGLE:            vector.broadcast %[[DT]] : f32 to vector<3xf32>
-// SINGLE:          md_exec.refresh_neighbors %{{.*}}, %{{.*}}, %{{.*}} cutoff({{.*}}) skin({{.*}}) cell_width({{.*}}) policy(check) : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32>
+// SINGLE:          md_exec.refresh_neighbors %{{.*}}, %{{.*}}, %{{.*}} cutoff({{.*}}) skin({{.*}}) cell_width({{.*}}) policy(check) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !md.field<@atoms, 3 x f32>
 func.func @carried(%x0: !vec, %v0: !vec, %kinds: !kinds, %cell: !md.cell,
                    %dt: f64, %steps: index) -> (!vec, !vec) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %x, %v, %nl = scf.for %step = %c0 to %steps step %c1
       iter_args(%xa = %x0, %va = %v0, %nla = %nl0)
-      -> (!vec, !vec, !mdrt.neighbors<@atoms>) {
+      -> (!vec, !vec, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
     %e = md_exec.empty : !vec
     %xb = md_exec.particle_for ins(%xa, %va, %kinds : !vec, !vec, !kinds)
         outs(%e : !vec) {
@@ -206,12 +206,12 @@ func.func @carried(%x0: !vec, %v0: !vec, %kinds: !kinds, %cell: !md.cell,
     } -> !vec
     %nlb = md_exec.refresh_neighbors %nla, %xb, %cell
         cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
-        : !mdrt.neighbors<@atoms>, !vec
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
     %vb = md_exec.particle_for ins(%va : !vec) outs(%e : !vec) {
     ^bb0(%v_i: vector<3xf64>):
       md_exec.yield %v_i : vector<3xf64>
     } -> !vec
-    scf.yield %xb, %vb, %nlb : !vec, !vec, !mdrt.neighbors<@atoms>
+    scf.yield %xb, %vb, %nlb : !vec, !vec, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   }
   return %x, %v : !vec, !vec
 }
@@ -221,7 +221,7 @@ func.func @carried(%x0: !vec, %v0: !vec, %kinds: !kinds, %cell: !md.cell,
 // says so. The result of the test has no floating-point type.
 //
 // CHECK-LABEL: func.func @validity(
-// CHECK:         %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f32>
+// CHECK:         %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !md.field<@atoms, 3 x f32>
 // CHECK:         md_exec.particle_for ins(%{{[a-z0-9]+}}, %{{[0-9]+}}, %[[REF]] :
 // CHECK-SAME:      reduce(%{{[a-z0-9_]+}} : i1)
 // CHECK-NEXT:    ^bb0(%{{[a-z0-9]+}}: vector<3xf32>, %{{[a-z0-9]+}}: vector<3xf32>, %{{[a-z0-9]+}}: vector<3xf32>):
@@ -239,11 +239,11 @@ func.func @validity(%xb: memref<?x3xf32>, %vb: memref<?x3xf32>,
   %x = mdrt.from_buffer %xb : memref<?x3xf32> to !vec
   %v = mdrt.from_buffer %vb : memref<?x3xf32> to !vec
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %xe, %nle = scf.for %step = %c0 to %n step %c1
-      iter_args(%xa = %x, %na = %nl0) -> (!vec, !mdrt.neighbors<@atoms>) {
+      iter_args(%xa = %x, %na = %nl0) -> (!vec, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>) {
     %ref = md_exec.reference_positions %na
-        : !mdrt.neighbors<@atoms> -> !vec
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)> -> !vec
     %e = md_exec.empty : !vec
     %no = arith.constant false
     %x1, %moved = md_exec.particle_for ins(%xa, %v, %ref : !vec, !vec, !vec)
@@ -259,8 +259,8 @@ func.func @validity(%xb: memref<?x3xf32>, %vb: memref<?x3xf32>,
     } -> !vec, i1
     %nb = md_exec.refresh_neighbors %na, %x1, %cell moved(%moved)
         cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-        : !mdrt.neighbors<@atoms>, !vec
-    scf.yield %x1, %nb : !vec, !mdrt.neighbors<@atoms>
+        : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec
+    scf.yield %x1, %nb : !vec, !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   }
   %out = mdrt.to_buffer %xe : !vec to memref<?x3xf32>
   return %out : memref<?x3xf32>

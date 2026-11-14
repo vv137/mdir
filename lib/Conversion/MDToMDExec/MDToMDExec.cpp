@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/NeighborContract.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -121,7 +122,10 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
     builder.setInsertionPoint(op);
   }
   Value structure = md_exec::BuildNeighborsOp::create(
-      builder, loc, mdrt::NeighborsType::get(context, particleSet), cells,
+      builder, loc,
+      md_exec::getBuildType(particleSet, md_exec::NeighborKind::Matrix,
+                            md_exec::Images::Minimum),
+      cells,
       op.getPositions(), op.getCell(), excluded, /*centers=*/Value(),
       APFloat(cutoff), APFloat(skin), md_exec::NeighborKind::Matrix,
       static_cast<uint64_t>(width), md_exec::Images::Minimum);

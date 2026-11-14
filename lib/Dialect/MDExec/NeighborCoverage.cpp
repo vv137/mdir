@@ -233,6 +233,11 @@ LogicalResult Coverage::prove() {
         return failure();
       continue;
     }
+    // A cast of the type is the same structure (D[neighbors-contract]).
+    if (auto weaken = request.neighbors.getDefiningOp<WeakenNeighborsOp>()) {
+      append(weaken.getNeighbors(), request.centers, request.boundary);
+      continue;
+    }
     if (auto argument = dyn_cast<BlockArgument>(request.neighbors)) {
       Operation *owner = argument.getOwner()->getParentOp();
       if (auto forOp = dyn_cast<scf::ForOp>(owner)) {

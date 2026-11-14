@@ -27,7 +27,7 @@ md.particle_set @atoms
 func.func @f() {
   // expected-error@+1 {{is not in the storage form; run 'md-exec-assign-storage' first}}
   %nl = md_exec.empty_neighbors kind(matrix) width(48)
-      : !mdrt.neighbors<@atoms>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   return
 }
 
@@ -38,11 +38,11 @@ md.particle_set @atoms
 // The storage was allocated for positions of another type.
 func.func @f(%x: memref<?x3xf32>, %cell: !md.cell, %n: index) {
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
-      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   // expected-error@+1 {{the storage of the neighbor structure is for positions that are stored in 'memref<?x3xf64>', but these are stored in 'memref<?x3xf32>'}}
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
-      : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+      : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, memref<?x3xf32>
   return
 }
 

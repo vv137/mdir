@@ -347,6 +347,12 @@ def ChooseNeighbors
     `md_exec.empty_neighbors`); a loop over a structure whose beginnings
     cannot be found keeps the matrix, and so do those beginnings.
 
+    The values of a structure that becomes groups take the type of groups
+    (D[neighbors-contract]): the beginnings, the refreshes, the values that
+    an `scf.for` carries, and the results of an `scf.if` that chooses it. A
+    structure that reaches a call, a return, or another op whose types the
+    pass does not follow keeps the matrix, with all its beginnings.
+
     Structures of groups are built on a device only: the pass runs on
     programs for a device.
 

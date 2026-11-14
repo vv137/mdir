@@ -6,6 +6,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/NeighborContract.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/MapVector.h"
@@ -64,6 +65,90 @@ bool allowsUnique(PairForOp loop) {
   }
   return true;
 }
+
+/// The values that are one structure: a refresh's operand and result; the
+/// initial value, the iteration argument, the yielded value, and the result
+/// of a loop that carries it; and the result of an scf.if with the values
+/// that its branches yield. They have one type, which states the
+/// guarantee of the structure (D[neighbors-contract]).
+class Webs {
+public:
+  explicit Webs(Operation *root) {
+    root->walk([&](Operation *op) {
+      for (Value result : op->getResults())
+        add(result);
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          for (BlockArgument argument : block.getArguments())
+            add(argument);
+    });
+    for (Value value : values) {
+      if (auto refresh = value.getDefiningOp<RefreshNeighborsOp>())
+        join(value, refresh.getNeighbors());
+      if (auto loop = value.getDefiningOp<scf::ForOp>()) {
+        unsigned index = cast<OpResult>(value).getResultNumber();
+        join(value, loop.getInitArgs()[index]);
+        join(value, loop.getRegionIterArgs()[index]);
+        join(value, loop.getYieldedValues()[index]);
+      }
+      // The two branches of an scf.if yield one type.
+      if (auto branch = value.getDefiningOp<scf::IfOp>()) {
+        unsigned index = cast<OpResult>(value).getResultNumber();
+        join(value, branch.thenYield().getOperand(index));
+        if (!branch.getElseRegion().empty())
+          join(value, branch.elseYield().getOperand(index));
+      }
+    }
+  }
+
+  /// The representative of the structure of `value`.
+  Value find(Value value) {
+    Value parent = parents.lookup(value);
+    if (!parent || parent == value)
+      return value;
+    Value root = find(parent);
+    parents[value] = root;
+    return root;
+  }
+
+  /// Returns true if `value` has a use whose type is fixed elsewhere: a
+  /// call or a return, whose function's signature fixes it, or any op
+  /// that does not carry, choose, refresh, or read a structure.
+  static bool escapes(Value value) {
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      if (isa<PairForOp, ReferencePositionsOp, ReferenceCellOp,
+              ResetNeighborsOp, RebuildCountOp, BuildTripletsOp,
+              BuildEdgesOp>(user))
+        continue;
+      if (auto refresh = dyn_cast<RefreshNeighborsOp>(user))
+        if (&use == &refresh.getNeighborsMutable())
+          continue;
+      if (auto loop = dyn_cast<scf::ForOp>(user))
+        if (use.getOperandNumber() >= loop.getNumControlOperands())
+          continue;
+      if (isa<scf::YieldOp>(user) &&
+          isa<scf::ForOp, scf::IfOp>(user->getParentOp()))
+        continue;
+      return true;
+    }
+    return false;
+  }
+
+  llvm::SetVector<Value> values;
+
+private:
+  void add(Value value) {
+    if (isa<mdrt::NeighborsType>(value.getType()))
+      values.insert(value);
+  }
+  void join(Value a, Value b) {
+    Value ra = find(a), rb = find(b);
+    if (ra != rb)
+      parents[ra] = rb;
+  }
+  llvm::DenseMap<Value, Value> parents;
+};
 
 class ChooseNeighbors : public impl::ChooseNeighborsBase<ChooseNeighbors> {
 public:
@@ -127,10 +212,48 @@ public:
         if (!allowsUnique(loop) || domainRows)
           keep.insert(beginning);
       }
-    // Every beginning of a loop must have the same kind.
+    // The values of one structure have one type (D[neighbors-contract]):
+    // the beginnings of a structure that escapes, or that has a beginning
+    // no loop over pairs takes, stay matrices with the rest of it.
+    Webs webs(getOperation());
+    llvm::MapVector<Value, llvm::SetVector<Operation *>> beginningsOf;
+    llvm::DenseSet<Value> escaping;
+    for (Value value : webs.values) {
+      Value web = webs.find(value);
+      Operation *op = value.getDefiningOp();
+      if (isa_and_nonnull<EmptyNeighborsOp, BuildNeighborsOp>(op))
+        beginningsOf[web].insert(op);
+      else
+        beginningsOf[web];
+      // A value made by any other op, or an argument of any other block
+      // than the body of a loop that carries it, has a type that its op
+      // or its block fixes.
+      auto argument = dyn_cast<BlockArgument>(value);
+      bool carried =
+          argument && argument.getArgNumber() != 0 &&
+          isa<scf::ForOp>(argument.getOwner()->getParentOp()) &&
+          argument.getOwner() ==
+              cast<scf::ForOp>(argument.getOwner()->getParentOp()).getBody();
+      bool made = op && isa<EmptyNeighborsOp, BuildNeighborsOp,
+                            RefreshNeighborsOp, scf::ForOp, scf::IfOp>(op);
+      if (Webs::escapes(value) || !(carried || made))
+        escaping.insert(web);
+    }
+    for (auto &[web, beginnings] : beginningsOf)
+      if (escaping.contains(web) ||
+          llvm::any_of(beginnings,
+                       [&](Operation *op) { return !loops.count(op); }))
+        keep.insert(beginnings.begin(), beginnings.end());
+    // Every beginning of a loop, and of a structure, must have the same
+    // kind.
     for (bool changed = true; changed;) {
       changed = false;
       for (auto &[loop, beginnings] : found)
+        if (llvm::any_of(beginnings,
+                         [&](Operation *op) { return keep.contains(op); }))
+          for (Operation *beginning : beginnings)
+            changed |= keep.insert(beginning).second;
+      for (auto &[web, beginnings] : beginningsOf)
         if (llvm::any_of(beginnings,
                          [&](Operation *op) { return keep.contains(op); }))
           for (Operation *beginning : beginnings)
@@ -150,6 +273,17 @@ public:
         loop.setTraversal(Traversal::Unique);
         loop.setConflict(Conflict::Atomic);
       }
+    }
+    // The values of each structure of groups take its type.
+    for (Value value : webs.values) {
+      auto beginnings = beginningsOf.find(webs.find(value));
+      if (beginnings == beginningsOf.end() || beginnings->second.empty() ||
+          keep.contains(beginnings->second.front()) ||
+          !loops.count(beginnings->second.front()))
+        continue;
+      auto type = cast<mdrt::NeighborsType>(value.getType());
+      value.setType(getBuildType(type.getParticleSet(), NeighborKind::Groups,
+                                 Images::Minimum));
     }
     keepOneList([&](Value structure) {
       llvm::SetVector<Operation *> beginnings;

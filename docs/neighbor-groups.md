@@ -1035,6 +1035,22 @@ is counted rather than estimated.
 - A pass, `md-exec-choose-neighbors` (option `kind=groups`), chooses the
   kind of each structure and the policy of its loops on a device (the kind
   stays `matrix` on the CPU).
+- The type of a structure states what its build guarantees
+  (D[neighbors-contract]): `!mdrt.neighbors<@atoms, unique, minimum,
+  removed, stable(group, search)>` for groups and their dual list. That
+  is each pair once (I1), in the frame of its group (I4), with no bit for
+  an excluded pair, and the list of each group in the order of its search
+  (I2, I5). The matrix is `directed, minimum, masked, stable(owner,
+  search)`. The four words are always spelled. `md-exec-choose-neighbors` gives the
+  type to every value of a structure that it turns into groups, across the
+  loops that carry it and the `scf.if` ops that choose it. A structure
+  passed to a call or returned keeps the matrix: the function's signature
+  fixes its type. Each loop over pairs
+  states what it requires: its traversal and images, `grouped_by(owner)`
+  under `owner_only`, and the order of the search for a `fixed_order`
+  sum. The verifier refuses a loop whose requirement the type does not
+  meet. The kind, the width, and the order of the places stay attributes
+  of the build: they are cost choices.
 
 ### 10.1 Coverage across IR boundaries (D357, #572)
 
@@ -1052,8 +1068,13 @@ loop reads, is a separate obligation: a refresh tests it at run time (D80,
 Section 7.1), and no open issue tracks a proof of it in the IR.
 
 [D357](decisions/D357.md) compares this query with a contract in the
-neighbor type. Provenance was chosen: the type and printing remain
-unchanged, and unresolved required facts are errors. Identity forwarding
+neighbor type. Provenance was chosen for coverage: the cutoff and the
+exact centers are SSA facts and values, which a type cannot hold, and
+unresolved required facts are errors. The layout contract of
+D[neighbors-contract] is in the type instead: it is a closed lattice that
+the build fixes, with no SSA subjects. The type also carries the images,
+so the verifier refuses a loop whose images are not its structure's
+before the query runs. Identity forwarding
 of center subjects is checked, while body expressions, other loop forms,
 function results, and CFG block arguments remain unrecognized boundaries
 where the query has no proof. Private functions need at least one known

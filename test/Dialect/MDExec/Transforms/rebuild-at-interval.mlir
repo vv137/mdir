@@ -3,7 +3,7 @@
 // RUN: | FileCheck %s --check-prefix=NONE
 
 !vec = !md.field<@atoms, 3 x f64>
-!nl  = !mdrt.neighbors<@atoms>
+!nl  = !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 
 md.particle_set @atoms
 

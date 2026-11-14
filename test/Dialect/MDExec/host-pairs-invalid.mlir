@@ -13,14 +13,14 @@ md.particle_set @atoms
 func.func @zero(%x: !vec, %cell: !md.cell) -> f32 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %z = arith.constant 0.0 : f32
   // expected-error @+1 {{cannot take host(lanes(0)): the lanes are a power of two from 1 to 64, not 0}}
   %e = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
       exchange [symmetric] policy(directed, owner_only) host(lanes(0)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %r2 : f32
-  } : !mdrt.neighbors<@atoms>, !vec -> f32
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f32
   return %e : f32
 }
 
@@ -32,14 +32,14 @@ md.particle_set @atoms
 func.func @wide(%x: !vec, %cell: !md.cell) -> f32 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %z = arith.constant 0.0 : f32
   // expected-error @+1 {{cannot take host(lanes(128)): the lanes are a power of two from 1 to 64, not 128}}
   %e = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
       exchange [symmetric] policy(directed, owner_only) host(lanes(128)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %r2 : f32
-  } : !mdrt.neighbors<@atoms>, !vec -> f32
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f32
   return %e : f32
 }
 
@@ -53,14 +53,14 @@ md.particle_set @atoms
 func.func @integer(%x: !vec, %cell: !md.cell) -> f32 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %z = arith.constant 0.0 : f32
   // expected-error @+1 {{expected kernel argument 0 to have type 'f64', got 'i32'}}
   %e = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
       exchange [symmetric] policy(directed, owner_only) host(lanes(8)) {
   ^bb0(%r2: i32, %d: vector<3xf32>):
     md_exec.yield %z : f32
-  } : !mdrt.neighbors<@atoms>, !vec -> f32
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f32
   return %e : f32
 }
 
@@ -75,13 +75,13 @@ md.particle_set @atoms
 func.func @device(%x: !vec, %cell: !md.cell) -> f32 {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell cutoff(1.0) skin(0.0)
-      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      kind(matrix) width(48) : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
   %z = arith.constant 0.0 : f32
   %e = md_exec.pair_for %nl, %x, %cell reduce(%z : f32) cutoff(1.0)
       exchange [symmetric] policy(directed, owner_only) host(lanes(8)) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
     md_exec.yield %r2 : f32
-  } : !mdrt.neighbors<@atoms>, !vec -> f32
+  } : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>, !vec -> f32
   return %e : f32
 }
 
