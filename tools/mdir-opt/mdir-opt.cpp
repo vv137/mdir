@@ -29,6 +29,7 @@ void registerTestTranspose();
 void registerTestSegmentWindows();
 void registerTestWarpHelpers();
 void registerTestPrintCollections();
+void registerTestPrintStorageLiveness();
 } // namespace test
 } // namespace mdir
 
@@ -45,6 +46,7 @@ int main(int argc, char **argv) {
   mdir::test::registerTestSegmentWindows();
   mdir::test::registerTestWarpHelpers();
   mdir::test::registerTestPrintCollections();
+  mdir::test::registerTestPrintStorageLiveness();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
