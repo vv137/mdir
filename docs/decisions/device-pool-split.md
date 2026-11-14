@@ -4,8 +4,6 @@ Recorded at its merge.
 
 **The runtime's pool of device memory is a best-fit allocator with splitting and immediate coalescing [[Wilson1995]](../references.md#wilson1995), over the allocations that it takes from the driver. A request takes the smallest idle piece that holds it, cut at its size rounded up to 256 bytes. A freed piece merges at once with the idle pieces next to it in its own driver allocation. Only a wholly idle allocation goes back to the driver.** Issue #890, after D411 (#876) and D414 (#885).
 
-The validation is in progress; its sections follow.
-
 ## 1. The rule
 
 - **Arenas.** A request that no idle piece can hold takes an allocation
@@ -87,7 +85,7 @@ part of the merged piece, and no event per piece is needed.
 
 A pool that handed the piece out with no order between the streams lets
 A's late write land last. The mutant that skips the event wait of the
-change of stream fails the test (Section 5).
+change of stream fails the test: the values are 1 and 2 (Section 7).
 
 ## 4. The accounts
 
@@ -151,3 +149,132 @@ and the blocks that D414 releases after the setup and that no later
 request matched: 25.7 MB of them at STMV (D414, Section 2). These now
 serve smaller requests. The idle bytes at the peak with the pool fall
 from 92.6 MB to 11.8 MB at STMV.
+
+## 6. The same kernels, the same trajectories
+
+- **The kernels and the host's code.** `mdir emit --stage=lowered` with
+  D406's settings (`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89
+  MDIR_COMPILE_CACHE=off MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`) on
+  D414's ten programs: the four of Section 5 in mixed and in double
+  precision, FactorIX NVE with the groups, and JAC NVE with the matrix.
+  The lowered module of `main` and of this change is the same to the
+  byte for every program, its 131 to 408 `gpu.binary` ops (the PTX of
+  the kernels) and its host's code alike. The change is in the runtime
+  alone.
+- **The trajectories.** The five checkpoints were run in the
+  deterministic mode with the compile cache off, `main` and this change
+  alternated in one job on an RTX 4090: JAC NVE, Factor IX NPT, and
+  Cellulose NVE of the Amber suite (200 steps each), the ala3
+  minimization, and argon (200 steps, on the GPU). Every dataset of the
+  final checkpoint is identical to the bit, 5 of 5: the positions,
+  velocities, box, forces where written, and the fingerprints. The
+  addresses of the buffers differ, since requests are now served from
+  pieces of larger arenas (Section 5, the splits), and no result changes.
+
+## 7. Tests and mutations
+
+`test/Runtime/device-blocks-gpu.test` drives the pool through the
+runtime's functions (`Inputs/device_blocks.py`). Every piece that a
+scenario takes is checked to be aligned to 256 bytes. Each scenario fails
+on a pool that breaks the property it names:
+
+| Scenario | Checks | Refusal it tests |
+|---|---|---|
+| `split` | a request served from a larger idle arena, the next piece 1,024 bytes after a request of 1,000 bytes | |
+| `tail` | a rest of 200 bytes is not cut off: the request takes the whole piece | a split below the alignment |
+| `best` | of idle arenas of 16, 64, and 32 KiB, a request of 10 KiB takes the 16 KiB one | a piece that is not the best fit |
+| `coalesce` | a freed piece merges with the idle pieces on both sides, and the arena serves a request of its full size without the driver | |
+| `arenas` | two arenas that the driver placed next to each other never merge; a request of both takes a third | merging across arenas |
+| `trim` | a trim returns the idle arena and keeps the one with a piece in use, then returns it once the piece is freed | a trim of a partly used arena |
+| `pieces` (budget of 1 MiB) | an idle piece of an arena in use stays past the budget; the arena goes back once wholly idle | a piece returned alone |
+| `off` (budget of 0) | a freed arena goes back at once; nothing is kept or split | |
+| `replaced` | a growth returns a buffer that is an arena of its own to the driver, and a piece of a larger arena to the pool | a piece returned to the driver alone (D312) |
+| `streams` | the order of the streams (Section 3) | a reuse before the work on another stream is done |
+
+The earlier scenarios (`registry`, `budget`, `retry`) pass unchanged.
+`test/Sanitizer/device-blocks-gpu.test` runs six of the scenarios under
+memcheck with the check of leaks, and `streams` under racecheck.
+
+**Mutations** (local, not committed). Each mutant was built as the
+runtime's library alone and run against every RUN line of the test, on
+an RTX 4090. The library built from this change in the same way passes
+every line.
+
+| Mutant | Fails |
+|---|---|
+| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `replaced`, `streams` |
+| no rounding of the cut to 256 bytes | `split` |
+| the event wait of a change of stream skipped | `streams` (values 1 and 2) |
+| a split that leaves a rest below 256 bytes | `tail` |
+| a trim of a partly used arena | `trim` |
+| merging across arenas | `arenas`, `best`, `trim`, `pieces`, and the earlier `registry`, `budget`, `retry` |
+| first fit in place of best fit | `best` |
+| a replaced piece returned to the driver alone | `replaced` |
+| the budget applied to a piece of an arena in use | `pieces` |
+
+## 8. compute-sanitizer
+
+- **The tier** (`lit -Dsanitize=1 test/Sanitizer`, with the interpreters
+  of PyTorch and h5py): 24 passed, 1 unsupported (JAX is not installed),
+  on an RTX 4090. The job held the device for 4.8 minutes.
+- **D411's four programs, with the default pool**, on an RTX 4090:
+  memcheck on all four (STMV for 25 steps, the others for 200), 0 errors;
+  racecheck on the dodecahedra and JAC (200 steps), 0 hazards. racecheck
+  of STMV had not finished its first step after 20 minutes and was
+  stopped; its kernels are those of JAC's kinds, and this change touches
+  no kernel. The job held the device for 29 minutes, 20 of them in that
+  run.
+- memcheck sees an access beyond a driver allocation, not beyond a piece
+  of one. An access past a buffer's end would have been past its own
+  allocation on `main`, where D414's runs with the pool off found none.
+
+## 9. Timing
+
+**How it was measured.** The rules of the timing protocol: JAC NVE with
+the groups (100,000 steps, a row of the log every 1,000) and STMV with
+the groups (20,000 steps, a row every 200), mixed precision, on RTX 4090s
+with `gpu-run --idle`, in six jobs. Each run's rate is the mean of its
+windows after the first quarter. The mean after half of the windows
+differs from it by at most 0.07% at JAC and 0.19% at STMV, so the rate is
+stationary there; the mean of all the windows differs by up to 0.22% and
+0.62%, as the card warms at the start of a run. The trees ran in alternating orders, ABBA and BAAB, so a drift of
+the card through a job cancels. Two further jobs with ABAB orders, run
+first, put every branch run after a `main` run and are not counted; they
+gave the same sign.
+
+| Job | JAC `main` (ms/step) | JAC branch / `main` | STMV `main` (ms/step) | STMV branch / `main` | spread of `main`'s runs, JAC / STMV |
+|---|---:|---:|---:|---:|---:|
+| 1 | 0.1384 | 1.0019 | 4.0302 | 1.0016 | 0.51% / 0.18% |
+| 2 | 0.1356 | 1.0012 | 3.9984 | 1.0017 | 0.15% / 0.33% |
+| 3 | 0.1382 | 1.0024 | 4.0301 | 1.0015 | 0.43% / 0.18% |
+| 4 | 0.1351 | 1.0017 | 3.9884 | 1.0043 | 0.15% / 0.03% |
+| 5 | 0.1383 | 1.0026 | 4.0276 | 1.0017 | 0.29% / 0.17% |
+| 6 | 0.1337 | 1.0013 | 3.9683 | 1.0012 | 0.07% / 0.26% |
+
+**The result.** The branch is slower by 0.12 to 0.26% at JAC and by 0.12
+to 0.43% at STMV, 0.2% on average for both. That is within the spread of
+`main`'s own runs in a job (up to 0.51%) and well within the spread
+between cards (3.5% at JAC, 1.6% at STMV), but it has the same sign in
+every job, so it is a real cost and not noise.
+
+**Where it comes from.**
+- **Not the pool's own work.** With `MDRT_PROFILE`, the step's calls of
+  `mgpuMemAlloc` and `mgpuMemFree` (counted together, from runs of
+  2,000 and 4,000 steps) are 12.3 a step at JAC and 15.5 at STMV, on
+  both trees. Their host time is 0.6 µs a step at JAC against 0.4 on
+  `main`, and 0.9 to 1.0 µs at STMV against 0.55, about 50 ns a call. No
+  driver call is made in the step: the arenas that the driver holds are
+  the same after 2,000 and 4,000 steps (71 at STMV), and the requests
+  split from a larger piece grow by 1.8 a step.
+- **The placement of the buffers.** Jobs 3 and 4 also ran this change
+  with the fit limited to pieces of exactly the request's size, the same
+  code with the addresses of `main`. It ran at 0.9991 and 1.0014 of
+  `main` at STMV and 1.0011 and 1.0009 at JAC. Jobs 5 and 6 ran it with
+  the cuts at 2 MiB instead of 256 bytes: 1.0024 and 1.0009 at STMV,
+  1.0039 and 1.0028 at JAC, so the alignment of the pieces is not the
+  cause. The time of each kernel (STMV, 2,000 steps, `MDRT_WAIT`, ABBA)
+  shows the spreading of PME's charges 1.7% slower on the branch (210.6
+  and 210.8 µs a call against 206.9 and 207.4), about 3.5 µs of the
+  step. The other kernels differ within the spread of `main`'s runs.
+  Which buffers of the spreading sit where, and why that costs, is not
+  found.
