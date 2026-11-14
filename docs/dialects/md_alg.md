@@ -849,7 +849,10 @@ declares, so that the result does not depend on the order of the items:
   (`memref.extract_aligned_pointer_as_index`) plus a constant, which
   sum in any order to the same integers.
 Every other write is refused. The region runs once for each item, in no
-fixed order and concurrently.
+fixed order and concurrently. A side output is none of the op's own
+buffers nor its `by`, nor another side output, nor a view of one
+(`memref.memory_space_cast`, `cast`, `subview`, `reinterpret_cast`,
+as for `md_alg.bin_members`; #871).
 
 *Contract:* every lowering gives the serial lowering's `keys`,
 `counts`, `start`, `cursor`, and side outputs bitwise, and its `out`
