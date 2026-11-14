@@ -60,7 +60,10 @@ The release is a `gpu.dealloc` of the buffer cast to the default memory
 space, as the lowering's own releases are written. It lowers to
 `mgpuMemFree`, which puts the block in the runtime's pool without
 waiting. Later work on the shared stream is ordered after the work that
-used the block.
+used the block. That later work includes a launch, and a copy between
+buffers of the device, which `mgpuMemcpy` enqueues on the stream
+(`cuMemcpyAsync`); a copy from the host waits for the stream. The
+groups build's own releases rely on the same order.
 
 ### Why this place
 
@@ -207,12 +210,13 @@ item).
   - shared with the host, and unused;
   - only copied into.
 
-  Five functions must be released, each at its place:
+  Six functions must be released, each at its place:
   - after the last launch of the setup;
   - after the wait that follows an enqueuing call, not at the call;
   - after the wait of an asynchronous fill;
   - after the join of a side stream;
-  - after a loop and after a branch of the setup that hold the last use.
+  - after a loop of the setup that holds the last use;
+  - after a branch of the setup that holds it.
 - **Mutations** (local, not committed):
   - **Releasing under `kills=stores`** changes no release: the test
     passes, and the four programs give the same IR to the byte. The
