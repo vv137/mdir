@@ -65,7 +65,10 @@
 # COALESCE-NEXT: in use as a whole: live 1, live bytes 1048576, idle 0, idle bytes 0, driver blocks 1
 #
 # Two arenas that the driver placed next to each other do not merge: a
-# request of both takes a third arena.
+# request of both takes a third arena. The first line checks the premise,
+# that the driver places two of 64 allocations of 4 KiB next to each other,
+# as it suballocates small requests; if it fails on a device, the driver
+# placed them otherwise, and the test needs another way to make neighbors.
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda arenas | FileCheck %s --check-prefix=ARENAS
 # ARENAS: two arenas next to each other: True
 # ARENAS-NEXT: two neighboring arenas idle: live 0, live bytes 0, idle 2, idle bytes 8192, driver blocks 2
@@ -90,6 +93,15 @@
 # PIECES-NEXT: a second arena idle: live 2, live bytes 1044480, idle 2, idle bytes 1044480, driver blocks 2
 # PIECES-NEXT: the large piece freed, past the budget: live 1, live bytes 4096, idle 2, idle bytes 2084864, driver blocks 2
 # PIECES-NEXT: the first arena idle as a whole: live 0, live bytes 0, idle 1, idle bytes 1040384, driver blocks 1
+#
+# With the pool off (a budget of 0 bytes, as D414's memcheck uses it), a
+# freed arena goes back to the driver at once and a later request takes a
+# new one: no piece is ever split, and an access after a free is an access
+# to memory that the driver has freed.
+# RUN: env MDIR_DEVICE_POOL_BYTES=0 %python %S/Inputs/device_blocks.py %mdrt_cuda off | FileCheck %s --check-prefix=OFF
+# OFF: an arena freed with the pool off: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+# OFF-NEXT: a smaller request after it: live 1, live bytes 1000, idle 0, idle bytes 0, driver blocks 1
+# OFF-NEXT: freed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 #
 # A buffer of the runtime that a growth replaces (D312): an arena of its
 # own goes back to the driver; a piece of a larger arena goes back to the

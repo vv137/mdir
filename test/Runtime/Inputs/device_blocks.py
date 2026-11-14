@@ -29,6 +29,8 @@ The pool's best fit with splitting and coalescing (D[device-pool-split]):
             in use
   pieces    (MDIR_DEVICE_POOL_BYTES=1048576) the budget returns an arena
             that becomes idle as a whole, not the idle pieces of one in use
+  off       (MDIR_DEVICE_POOL_BYTES=0) no block is kept: every freed arena
+            goes back to the driver, so nothing is split
   replaced  a buffer of the runtime that a growth replaces goes back to the
             driver if it is an arena of its own, and to the pool if it is
             a piece of a larger one (D312)
@@ -116,7 +118,7 @@ elif scenario == "retry":
     lib.mdrtDeviceTrim()
     show("after the trim")
 elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
-                  "pieces", "replaced", "streams"):
+                  "pieces", "off", "replaced", "streams"):
     def allocate(size):
         pointer = lib.mgpuMemAlloc(size, None, False)
         assert pointer and pointer % 256 == 0, (size, pointer)
@@ -213,6 +215,13 @@ elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
         show("the large piece freed, past the budget")
         free(small)
         show("the first arena idle as a whole")
+    elif scenario == "off":
+        base = idle_arena(MIB)
+        show("an arena freed with the pool off")
+        small = allocate(1000)
+        show("a smaller request after it")
+        free(small)
+        show("freed")
     elif scenario == "replaced":
         handle = lib.mdrtMatrixCreate(256, 1)
         show("a matrix in an arena of its own")
