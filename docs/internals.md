@@ -85,8 +85,14 @@ collection algorithm as an op of `md_alg` (`md_alg.scan`,
 [device-primitives.md](device-primitives.md#42-how-the-sites-call-them)),
 whose verifier checks it. `convert-md-exec-to-gpu` leaves the ops of the
 neighbor matrix's template and of the groups build in the module; the
-empty pass `md-alg-transform-collections` holds the place of the
-collection-level transformations, and `convert-md-alg-to-gpu`
+pass `md-alg-transform-collections` holds the place of the
+collection-level transformations and runs the shared analysis of the
+collections that they will read (`CollectionAnalysis`,
+`lib/Dialect/MDAlg/CollectionAnalysis.cpp`: what each consumer requires
+of the order of each buffer, joined back to its producer, with the
+conservative rule that any use that is not a declared `md_alg` reader
+requires the full layout; D[md-alg-analysis]; printed by
+`mdir-opt --test-md-alg-print-collections`), and `convert-md-alg-to-gpu`
 (`kernels::lowerAlgToSIMT`,
 `lib/Conversion/MDExecKernels/MDAlgLowering.cpp`) replaces each op with
 its emitter's code and records its policy in `mdir.alg_policy`, which

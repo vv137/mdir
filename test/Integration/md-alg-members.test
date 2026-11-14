@@ -1,0 +1,62 @@
+# md_alg.bin_members (D[md-alg-analysis]) by its serial definition on the
+# host, on the cases of Inputs/md-alg/members.mlir: counting sorts of no
+# items, 20 in 7 bins, 1,025 in 1,000, and 3,000 in 50 (a tenth of the items
+# without a bin), each bin visited in any order (a sum, an exclusive or,
+# a maximum and a minimum, a slot of each item, a counter), every bin at
+# once, and each bin in order by the item (a sum of floats).
+#
+# The test that the meaning of an unordered visit holds: the same cases
+# with the items of every unordered visit taken in reverse
+# (reverse-unordered-visits) give the same output, byte for byte. A region
+# whose result depends on the order of its items would differ; the
+# verifier refuses the forms that could (members-invalid.mlir). Both
+# lowerings expand the op into the loop over its places through
+# md_alg.bin_span and md_alg.bin_item, whose own values
+# md-alg-accessors.test checks.
+#
+# RUN: cat %S/Inputs/md-alg/host.mlir %S/Inputs/md-alg/helpers.mlir \
+# RUN:     %S/Inputs/md-alg/members.mlir > %t.mlir
+# RUN: mdir-opt %t.mlir --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.forward
+# RUN: mdir-opt %t.mlir --convert-md-alg-to-scf=reverse-unordered-visits=true \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.reverse
+# RUN: diff %t.forward %t.reverse
+# RUN: FileCheck %s < %t.forward
+#
+# 20 items in 7 bins: the keys (-1 without a bin), the order of the sort;
+# for each bin the sum, the exclusive or of three times each item, the
+# maximum, and the minimum (bin 0 holds 1, 10, 19: 30, 3 ^ 30 ^ 57 = 36, 19,
+# 1); the bin in the slot of each item (-7 for none); the 17 items counted;
+# the sum of every bin's items (190 less 3, 11, 12); and each bin's sum of
+# a tenth of its items, in order.
+# CHECK:      ( 21, {{.*}} )( 5, 0, 3, -1, 6, 4, 1, 6, 3, 2, 0, -1, -1, 2, 1, 5, 5, 1, 4, 0, 0 )
+# CHECK-NEXT: ( 21, {{.*}} )( 1, 10, 19, 6, 14, 17, 9, 13, 2, 8, 5, 18, 0, 15, 16, 4, 7, -7, -7, -7, -7 )
+# CHECK-NEXT: ( 28, {{.*}} )( 30, 36, 19, 1, 37, 11, 17, 6, 22, 60, 13, 9, 10, 30, 8, 2, 23, 57, 18, 5, 31, 29, 16, 0, 11, 25, 7, 4 )
+# CHECK-NEXT: ( 20, {{.*}} )( 5, 0, 3, -7, 6, 4, 1, 6, 3, 2, 0, -7, -7, 2, 1, 5, 5, 1, 4, 0 )
+# CHECK-NEXT: ( 1, {{.*}} )( 17 )
+# CHECK-NEXT: 164
+# CHECK-NEXT: 3
+# CHECK-NEXT: 3.7
+# CHECK-NEXT: 2.2
+# CHECK-NEXT: 1
+# CHECK-NEXT: 2.3
+# CHECK-NEXT: 3.1
+# CHECK-NEXT: 1.1
+#
+# The option reverses: the serial code of an unordered visit takes its
+# places from the last, end - 1 - (p - begin); an ordered visit keeps its
+# order.
+# RUN: mdir-opt %t.mlir --convert-md-alg-to-scf=reverse-unordered-visits=true \
+# RUN: | FileCheck %s --check-prefix=REVERSE
+# REVERSE-LABEL: func.func @members_case
+# REVERSE: scf.for %[[P:[^ ]*]] = %[[B:[^ ]*]] to %[[E:[^ ]*]] step %{{[^ ]*}} iter_args({{.*}}) -> (i32, i32, i32, i32) {
+# REVERSE-NEXT: %[[S:.*]] = arith.addi %[[E]], %[[B]] : index
+# REVERSE-NEXT: %[[L:.*]] = arith.subi %[[S]], %{{.*}} : index
+# REVERSE-NEXT: %[[Q:.*]] = arith.subi %[[L]], %[[P]] : index
+# REVERSE-NEXT: memref.load %{{.*}}[%[[Q]]]
+# REVERSE: scf.for %[[P2:[^ ]*]] = {{.*}} -> (f64) {
+# REVERSE-NEXT: memref.load %{{.*}}[%[[P2]]]

@@ -1,0 +1,398 @@
+# D[md-alg-analysis]
+
+Recorded at its merge.
+
+**One analysis of the collections of `md_alg` is shared by every later collection-level transformation. For each collection that an `md_alg` op produces, it records the ordering, access pattern, cardinality, effects and aliases, lifetime, and determinism requirement. It propagates the order that the consumers require back to the producer as a small value: membership, grouped by a key, sorted within a group by a key, stable, or the full layout. A sort is found redundant only when every consumer's order requirement is met without it and every consumer combines exactly or requires only `unordered`. Any use that is not a declared `md_alg` reader requires the full layout. A new reader, `md_alg.bin_members`, states the order in which it visits the items of bins, and its verifier makes that statement true. The analysis changes no IR, and the PTX stays that of the base.** Issue #866 (part 2, stage A of the maintainer's item 3), part of #558.
+
+Prior systems keep the collection-level form so that fusion and the
+removal of intermediate buffers can be judged on it
+[[Steuwer2017]](../references.md#steuwer2017),
+[[Henriksen2017]](../references.md#henriksen2017). D408 kept the ops in
+the module up to `md-alg-transform-collections`. This step gives that
+place one analysis, which every transformation queries instead of judging
+legality on its own (the maintainer's item 1 on #866). It works on the
+memrefs of today (stage A). The ops declare the effect of each operand,
+and the analysis follows producers to consumers through them. Nothing is
+transformed. Issue #869, the first experiment on the groups build, reads
+the analysis.
+
+## The collections
+
+A collection is a buffer that an `md_alg` op writes. It is named by the op
+and by the role of the operand:
+
+| Producer | Collections | Guarantees of its order |
+|---|---|---|
+| `scan` | `start`, `cursor` | `layout` (every element fixed) |
+| `scatter_to_bins` | `out` | `grouped_by(G)`, where `G` is the `start` of the scan whose cursor it takes |
+| | `cursor` | `layout` |
+| `sort_bins` | `items` in place, or `out` | `stable(G, K)`: `G` is its `start`, `K` its `by` or the item |
+| `sort_by_key` | `out` | `order stable`: `stable(G, K)`; `order unordered`: `grouped_by(G)` |
+| | `keys` (with a key region), `counts`, `start`, `cursor`, `writes`, `adds` | `layout` |
+| `append` | `into`, `units`, `ordinals` | `membership`: the numbers of the blocks are free |
+| | the pool | `layout` |
+| `bin_members` | `writes`, `adds` | `layout` |
+
+A buffer is followed through the views that the analysis follows (below)
+to its root. The root is an allocation of the function, an argument of
+the function, or a value whose origin the analysis cannot see. Every use
+of every alias of the root after the producer is a use of the
+collection. Where the producer stands in a loop, every use counts,
+including those before it.
+
+For each collection the analysis records:
+
+- **ordering**: what the producer guarantees, what each consumer
+  requires, and the join of the requirements;
+- **access pattern** of each reader:
+  - *streamed*: an `md_alg` op that reads the collection in index order,
+    such as a scan of counts, a sort of bins, or a visit of bins;
+  - *gathered*: an accessor at a place that another collection gives,
+    such as `bin_item`, `bin_span`, or `ragged_entry`;
+  - *random*: any other read, by index arithmetic;
+- **cardinality**:
+  - *exact*: a constant, or a buffer of static size;
+  - *bound*: at most an index value of the op, for example the `n` items
+    of a counting sort's order, of which those without a bin are absent;
+  - *run-time*: an index value, for example the `bins + 1` offsets, or
+    the size of the buffer;
+- **effects and aliases**: the producer's declared effect, the other
+  readers and writers with their effects (`MemoryEffectOpInterface`), the
+  aliases, and the reason the buffer escapes, if it does;
+- **lifetime**: the allocation, the producer, the last use, and the
+  release, by the position of each op in a pre-order walk of the function
+  (the host's order of its launches). A use in a loop extends to the end
+  of the loop;
+- **determinism**: the producer's requirement (`getRequiredDeterminism`,
+  D408).
+
+Ordering and determinism are separate axes (the maintainer's item 1).
+The order is what a consumer can observe of the positions. Determinism is
+what it can observe of the bits from run to run.
+
+## The order requirement
+
+A requirement on a collection of items in bins is one of:
+
+| Requirement | Meaning |
+|---|---|
+| `membership` | which items are in the collection |
+| `grouped_by(G)` | the items of each group of `G` are contiguous, at the places that the offsets of `G` give |
+| `sorted_within(G, K)` | and, within each group, ascending by the key `K`; ties in any order |
+| `stable(G, K)` | and ties in the order of the items: every position fixed |
+| `layout` | every element of the buffer, inside the bins or not, through every alias: what a reader by index arithmetic sees |
+
+The key identities are part of the value. A group `G` is named by the
+root of the offsets (the `start`) that define it. A sort key `K` is named
+by the root of its `by` buffer, or by `item` for the item itself.
+`grouped_by(cell)` and `grouped_by(class)` are different values. Sorting
+by the item is a total order, so `sorted_within(G, item)` is written
+`stable(G, item)`. Without that normalization, two equal requirements
+would compare as different.
+
+The values form a lattice, ordered by strength. Two values are comparable
+only if their keys agree:
+
+$$\mathrm{none} \sqsubset \mathrm{membership} \sqsubset \mathrm{grouped}(G) \sqsubset \mathrm{sorted}(G, K) \sqsubset \mathrm{stable}(G, K) \sqsubset \mathrm{layout}$$
+
+`none` is the bottom: no consumer. `layout` is the top. A requirement
+$r$ is *met* by a guarantee $g$ when $r \sqsubseteq g$. The requirement
+of a collection is the join over its consumers:
+
+- if one value meets the other, the join is the stronger of the two;
+- otherwise the join is `layout`. Values with different keys, such as
+  `grouped_by(G_1)` and `grouped_by(G_2)` or `sorted_within(G, K_1)` and
+  `sorted_within(G, K_2)`, join to `layout`. No requirement short of the
+  layout states both, and the analysis does not know whether one key
+  refines the other.
+
+Stage B gives `sort_by_key` and `append` logical results. The same
+lattice then becomes the lattice element of a sparse backward dataflow
+analysis over those results.
+
+### What each consumer requires
+
+| Consumer | Requires of the collection it reads | Combines exactly |
+|---|---|---|
+| `bin_members` reading `items`, `visit unordered` | `grouped_by(G)`, where `G` is the root of its `start` | yes: the verifier admits integer combiners alone |
+| `bin_members`, `visit sorted` | `sorted_within(G, K)`, or `stable(G, item)` without `by` | where its combiners are integer, or its determinism is `unordered` |
+| `bin_members`, `visit stable` | `stable(G, K)` | the same |
+| `bin_members` reading `start` or `by` | `layout` (read at a place) | yes |
+| `sort_bins` reading `items` by the item, or with `keys` (`stable_rank`) | `grouped_by(G)`: it orders each bin itself, and items of equal value are indistinguishable | yes |
+| `sort_bins` reading `items` with `by` | `layout`: ties keep the order it reads, and the analysis does not name that order | yes |
+| `bin_item` | `layout`: it hands its user the item at a place | yes |
+| the other operands that an `md_alg` op reads (`counts` of a scan, `keys` of a scatter, `by`, `bin_span`'s `start`, the accessors) | `layout` | yes |
+| an `md_alg` op writing its declared output | nothing | yes |
+| `memref.dim` | nothing (the shape) | yes |
+| a release (`gpu.dealloc`, `memref.dealloc`) | nothing (the end of the lifetime) | yes |
+| anything else | `layout` (the rules below) | no |
+
+`bin_item` keeps `layout`, though it is an `md_alg` accessor. A
+declaration that it observes less could not be checked: nothing stops the
+code after it from using the place. That is why the reader that states
+less is a new op whose region cannot use the place (below; the
+maintainer's review of the design, #870).
+
+## The verdict on a sort
+
+The sorts are `sort_by_key` with `order stable`, and `sort_bins`. For
+each, the analysis writes what its result would be without it:
+
+- `grouped_by(G)` for a counting sort;
+- the guarantee of the input for a sort of bins: what the last producer
+  of the items before it guarantees, or `membership` if there is none.
+
+**A sort is redundant** only when:
+
+1. the join of its consumers' requirements on its result is met by what
+   the result would be without it; and
+2. every consumer combines exactly (integers, or the slots of single
+   items) or requires only `unordered`, and the result does not escape.
+
+The second condition is the determinism axis (the maintainer's review,
+item 2). A consumer that needs only membership could still sum floats
+over the members. Under `reproducible` or `bitwise` it would then need a
+fixed order, and removing the sort would change its result. With the
+verifier's rule that an `unordered` visit combines integers alone, the
+condition holds by construction for that visit. It is still in the
+analysis, so that stage B cannot lose it.
+
+The verdict also says whether the sort is *sufficient*: whether its own
+guarantee meets the requirement. A requirement of `layout` is met by the
+program as it is, with the sort. A key that does not match is not met
+with the sort either, and the verdict says so.
+
+## The conservative rules
+
+An unknown use never makes a sort look redundant. Each rule has a
+negative test in `test/Dialect/MDAlg/collections.mlir`:
+
+1. A read by any op that is not an `md_alg` op requires `layout`. This
+   covers a `memref.load` in a launch, a pair kernel that reads a row by
+   index arithmetic, and a read through a followed view (a subview).
+   Tests: `@raw_consumer`, `@views`, `@loop`.
+2. A write by an op that is not an `md_alg` op writing its declared
+   output requires `layout`. Test: `@raw_writer`.
+3. The buffer escapes and requires `layout` when:
+   - its root is an argument of the function (`@escape_argument`);
+   - an alias is an operand of a call (`@escape_call`);
+   - an alias is returned (`@escape_return`);
+   - an alias is stored to memory, or its address is taken
+     (`extract_aligned_pointer_as_index`, `extract_strided_metadata`)
+     (`@escape_address`);
+   - an alias is forwarded by an op that is not a followed view
+     (`@escape_unfollowed_view`, an `expand_shape`).
+4. An op with no `MemoryEffectOpInterface` escapes (`@escape_unknown_effects`).
+5. Keys are compared by root. Two different roots are different keys,
+   even where the buffers hold the same values (`@key_mismatch`, `@join`).
+6. A use before the producer counts where the producer stands in a loop
+   (`@loop`).
+
+### The views that the analysis follows
+
+The analysis follows only these views to the root:
+
+- `memref.memory_space_cast`
+- `memref.cast`
+- `memref.subview`
+- `memref.reinterpret_cast`
+
+The uses of a followed view are classified like the uses of the root. A
+subview read by `memref.load` is still a read by index arithmetic, so it
+requires `layout`.
+
+### What counts as an escape
+
+Every other op that takes the buffer and gives a value is an escape:
+
+- `memref.expand_shape`, `memref.collapse_shape`, `memref.view`,
+  `memref.transpose`;
+- `memref.extract_aligned_pointer_as_index`,
+  `memref.extract_strided_metadata`;
+- `func.call` and any other call;
+- `func.return`, `gpu.return`, and any other return;
+- `memref.store` of the buffer itself;
+- unregistered ops and ops without `MemoryEffectOpInterface`.
+
+## `md_alg.bin_members`
+
+```mlir
+%sum, %high = md_alg.bin_members %start[%from, %to] items %order
+    visit unordered writes(%mark : memref<?xi32, 1>)
+    init(%c0_i32, %c0_i32 : i32, i32) combine ["addi", "maxsi"]
+    : memref<?xi32, 1>, memref<?xi32, 1> {
+^bb0(%item: index):
+  ...
+  md_alg.yield %a, %b : i32, i32
+} -> i32, i32
+```
+
+The op visits the items of the bins `[from, to)` of a counting sort's
+order. It runs its region once for each item, with the item as the
+argument. Its results are the `init` values, combined item by item with
+the values that the region yields. Each value has a combiner:
+
+- on integers: `addi`, `muli`, `andi`, `ori`, `xori`, `maxsi`, `minsi`,
+  `maxui`, `minui`;
+- on floats: `addf`, `mulf`, `maxnumf`, `minnumf`.
+
+The op states the order of its visit, `visit`, and that order is what it
+requires of the order of its items:
+
+- `unordered`: any order;
+- `sorted`: ascending by `by[item]`, or by the item;
+- `stable`: also ties in the order of the items.
+
+Its requirement follows from its meaning (the maintainer's review, item
+1). The region's arguments do not include the place. Under every visit,
+the region writes only:
+
+- a slot of its item in a buffer of `writes` (the first index the item
+  times a constant other than zero plus a constant, the others
+  constants);
+- an addition to a counter of `adds`, as in the key region of
+  `sort_by_key` (D407).
+
+The region reads no buffer of `writes` or `adds`, and no buffer of the op
+(`start`, `items`, `by`): it uses a side output only as the target of an
+admitted write, so a view of one made in the region is refused. A side
+output may not be, or view, a buffer that the op reads or another side
+output. The verifier follows the same views as the analysis to compare
+them. `sort_by_key` compares the values alone, so a view of one of its
+buffers passes as a side output (#871, outside this step). Under `unordered`, the combiners are integer
+combiners, which are exact, commutative, and associative. The verifier
+refuses anything else, with one case for each refusal in
+`test/Dialect/MDAlg/members-invalid.mlir`. The checks of the side outputs
+are shared with `sort_by_key`. Its messages, and the forms it admits, are
+unchanged.
+
+**The test that the op's meaning holds:** the serial lowering takes the
+option `reverse-unordered-visits`, which visits the members of every
+`unordered` visit from the last place to the first.
+`test/Integration/md-alg-members.test` runs the cases of
+`Inputs/md-alg/members.mlir` in order and in reverse, and the outputs are
+identical, byte for byte. The cases are counting sorts of no items, 20 in
+7 bins, 1,025 in 1,000, and 3,000 in 50, with a tenth of the items
+without a bin. Each bin is visited with a sum, an exclusive or, a maximum
+and a minimum, a slot of each item, and a counter; every bin is visited
+at once; and each bin is visited in order by the item with a sum of
+floats. The values of the case of 20 items are worked out in the test. A
+region whose result depends on the order of its items would give a
+different output.
+
+Both lowerings expand the op where it stands into the loop over the
+places, `start[from]` to `start[to]`, through `md_alg.bin_span` and
+`md_alg.bin_item` (`test/Conversion/MDAlg/members.mlir`, in a kernel).
+The SIMT lowering is therefore the accessors' own code, and the op
+records no policy. It has no user on `main`; #869 gives it its first.
+
+## The programs of `main`
+
+`test/Driver/md-alg-collections-gpu.test` prints the analysis at the slot
+of the rhombic dodecahedron with groups and with the matrix. It records
+that **no sort is redundant**, and what blocks each:
+
+| Sort | Blocked by |
+|---|---|
+| `mdrt_gpu_matrix_sort`, the stable rank into a buffer of its own | a kernel reads the buffer by index (rule 1); the scatter before it writes its order into an argument (rule 3) |
+| `mdrt_gpu_spatial_order`, the counting sort by the numbers of the input | its order is an argument of the function (rule 3) |
+| the groups build's counting sort of particles by column and z-bin | its order is local and read by `bin_item` alone (`layout`) |
+| the groups build's counting sort of places by cell of the search grid | the same |
+
+The users of the groups build's two orders form groups of consecutive
+particles in z, so the order is observed. A `bin_members` reader in their
+place would have to state `stable`, and the sorts would stay. The result
+is the right one, not only a conservative one.
+
+## The slot pass
+
+`md-alg-transform-collections` verifies the ops, runs the analysis
+(`getAnalysis<CollectionAnalysis>`), and changes nothing. It prints the
+facts under `-debug-only=md-alg-collections` in a build with assertions.
+The test pass `test-md-alg-print-collections` (`mdir-opt`) prints them
+everywhere.
+
+## The same programs
+
+The lowered programs (`mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`: the PTX of every kernel and
+the host's code) of the branch were compared with those of the base
+(00712731), by the method of D406. They are identical, byte for byte, on
+9 programs:
+
+| Program | Kernels |
+|---|---:|
+| the rhombic dodecahedron with groups, mixed | 154 |
+| the same with `single-pass-group-scan=true` | 151 |
+| the dodecahedron with groups, double | 153 |
+| the same with the single-pass scan | 150 |
+| the dodecahedron with the matrix, mixed | 125 |
+| the dodecahedron with the matrix, double | 124 |
+| JAC NVE with groups and the dual list | 338 |
+| the same with the single-pass scan | 335 |
+| JAC NVE with the matrix (no dual list) | 275 |
+
+The slot pass now runs code, and the lowerings expand `bin_members`
+first. No program of `main` has that op, so the expansion finds nothing.
+
+## Tests
+
+- `test/Dialect/MDAlg/collections.mlir`: the analysis on hand-written IR.
+  It covers:
+  - a reader of `unordered` integer combinations, where the sort is
+    redundant, with every fact of the collection;
+  - a raw reader, where the sort is not redundant;
+  - the views;
+  - each escape;
+  - a raw writer;
+  - the kinds `sorted_within`, `stable`, and `sorted` by the item
+    normalized to `stable`;
+  - keys that do not match, by key and by group;
+  - two readers whose requirements join, to the stronger and to
+    `layout`;
+  - a float combination under `bitwise`, where the sort is not
+    redundant, and the same under `unordered`, where it is;
+  - a producer in a loop;
+  - the guarantees and cardinalities of a scan, a scatter, and an
+    append.
+- `test/Dialect/MDAlg/members.mlir` and `members-invalid.mlir`: the
+  forms of `bin_members`, and one case for each refusal.
+- `test/Conversion/MDAlg/members.mlir`: both lowerings, and the reverse.
+- `test/Integration/md-alg-members.test`: the serial definition in order
+  and in reverse.
+- `test/Driver/md-alg-collections-gpu.test`: the programs of `main` at
+  the slot.
+
+The tests fail on realistic bugs. Each mutation below was applied alone,
+the tests were run, and the mutation was reverted:
+
+| Mutation | Caught by |
+|---|---|
+| a read by index arithmetic treated as a reader of membership that combines exactly | `collections.mlir` (`@raw_consumer`, `@views`, `@loop`); the real-IR test, whose matrix sort becomes "redundant" |
+| the key identity ignored (any group and key meet any other) | `collections.mlir` (`@key_mismatch`, `@join`) |
+| the determinism axis ignored (redundant on order alone) | `collections.mlir` (`@float_combination`) |
+| an argument of the function not treated as an escape | `collections.mlir` (`@escape_argument`); the real-IR test, whose spatial order becomes "redundant" |
+
+## Sanitizer and suite
+
+No device code changes: the SIMT lowering of `bin_members` is the code of
+the existing accessors, and no program of `main` has the op. The
+sanitizer tier was not run.
+
+## Lines
+
+The code, without the tests and the documents, gained 1,395 lines and
+lost 74:
+
+- the analysis (`CollectionAnalysis.h`, 188; `CollectionAnalysis.cpp`,
+  715);
+- `bin_members`: its definition and the dialect's description
+  (`MDAlgOps.td`), and its verifier with the side-output checks shared
+  with `sort_by_key` (`MDAlgDialect.cpp`, +195 −62);
+- the expansion of `bin_members` in both lowerings, the option, and the
+  slot pass's query (`MDAlgLowering.cpp`, `Passes.td`,
+  `MDAlgLowering.h`);
+- the test pass (38).
+
+The tests gained 1,147 lines.

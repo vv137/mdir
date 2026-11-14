@@ -41,10 +41,14 @@ def MDAlg_Dialect : Dialect {
     the kernels and in the build of the groups of neighbors. Those of the
     neighbor matrix's template and of the groups build stay in the module
     after it, for the collection-level transformations
-    (`md-alg-transform-collections`, empty), and `convert-md-alg-to-gpu`
-    lowers them; the accessors of the templates of PME and the counting
-    sort of the device's ragged rows are lowered where they are created
-    (D408, #866).
+    (`md-alg-transform-collections`, which runs the shared analysis of
+    the collections and transforms nothing yet), and
+    `convert-md-alg-to-gpu` lowers them; the accessors of the templates of
+    PME and the counting sort of the device's ragged rows are lowered where
+    they are created (D408, #866). The analysis takes what each consumer
+    requires of the order of a buffer from its meaning: a reader that is
+    not an `md_alg` op requires the full layout, and `md_alg.bin_members`
+    the order of its visit (D[md-alg-analysis]).
 
     Each op with an ordering or a floating-point aspect states a
     determinism requirement (`determinism`), separate from the ordering
@@ -99,6 +103,20 @@ def MDAlg_Order
         I32EnumAttrCase<"Stable", 0, "stable">,
         // Not fixed: compared as multisets after a canonical sort.
         I32EnumAttrCase<"Unordered", 1, "unordered">
+      ]> {
+  let cppNamespace = "::mdir::md_alg";
+}
+
+def MDAlg_Visit
+    : I32EnumAttr<"Visit", "the order in which md_alg.bin_members visits "
+                  "the items of its bins", [
+        // Any order: the region combines only in forms that do not depend
+        // on it.
+        I32EnumAttrCase<"Unordered", 0, "unordered">,
+        // Ascending by the key; ties in any order.
+        I32EnumAttrCase<"Sorted", 1, "sorted">,
+        // Ascending by the key, ties in the order of the items.
+        I32EnumAttrCase<"Stable", 2, "stable">
       ]> {
   let cppNamespace = "::mdir::md_alg";
 }
@@ -518,6 +536,107 @@ def MDAlg_BinItemOp : MDAlg_Op<"bin_item"> {
   );
   let results = (outs I32:$item);
   let assemblyFormat = "$out `[` $place `]` attr-dict `:` type($out)";
+}
+
+def MDAlg_BinMembersOp : MDAlg_Op<"bin_members", [
+    AttrSizedOperandSegments, MDAlg_Deterministic
+  ]> {
+  let summary = "The items of a run of bins of a counting sort, visited in a "
+                "stated order";
+  let description = [{
+    Visits the items of the bins `[from, to)` of the order `items` of a
+    counting sort whose start is `start` (`items[start[from],
+    start[to])`), running the region `body` once for each item, with the
+    item (as an index) for its argument. The region ends in
+    `md_alg.yield`, one value for each `init`; the results are the `init`
+    combined, item by item in the order of the visit, with the values the
+    region yields, by the `combine` of each (`addi`, `muli`, `andi`, `ori`,
+    `xori`, `maxsi`, `minsi`, `maxui`, `minui` on integers; `addf`, `mulf`,
+    `maxnumf`, `minnumf` on floats).
+
+    The op states the order of its visit, `visit`, which is what it requires
+    of the order of its items (D[md-alg-analysis]):
+    - `unordered`: any order. The region may combine its results only in
+      forms whose value does not depend on the order: the combiners on
+      integers, which are exact, commutative, and associative; a write to a
+      slot of its item in a buffer of `writes` (a `memref.store` whose first
+      index is the item, or the item times a constant other than zero plus a
+      constant, and whose other indices are constants); and an addition to
+      a counter of `adds`, as the key region of `md_alg.sort_by_key` (D407).
+      It reads no buffer of `writes` or `adds`, nor `items`, `start`, or
+      `by`. The verifier refuses anything else.
+    - `sorted`: ascending by `by[item]`, or by the item without `by`; ties
+      in any order. A sort by the item is total, so it is `stable` (the
+      analysis writes it so).
+    - `stable`: ascending by `by[item]`, or by the item, and ties in the
+      order of the items.
+    The region's writes are restricted in the same way under every visit;
+    an ordered visit may also combine floats.
+
+    The order is a precondition on `items`, which the op does not sort:
+    every lowering visits the places of the bins in turn. The serial
+    lowering visits them in reverse under its option
+    `reverse-unordered-visits`, for a test that the region of an
+    `unordered` visit does not depend on the order.
+
+    *Contract:* per run of bins: the results and the side outputs of an
+    `unordered` visit are those of the serial definition in every order of
+    the items; those of an ordered visit, those of the serial definition
+    in that order. *Determinism:* every tier; `bitwise` by default.
+
+    *Execution:* both lowerings are the loop over the places through
+    `md_alg.bin_span` and `md_alg.bin_item`, where the op stands.
+
+    ```mlir
+    %sum, %high = md_alg.bin_members %start[%from, %to] items %order
+        visit unordered writes(%mark : memref<?xi32, 1>)
+        init(%c0_i32, %c0_i32 : i32, i32) combine ["addi", "maxsi"]
+        : memref<?xi32, 1>, memref<?xi32, 1> {
+    ^bb0(%item: index):
+      ...
+      md_alg.yield %a, %b : i32, i32
+    } -> i32, i32
+    ```
+  }];
+  let arguments = (ins
+    Arg<MDAlg_I32Buffer, "", [MemRead]>:$start,
+    Index:$from,
+    Index:$to,
+    Arg<MDAlg_I32Buffer, "", [MemRead]>:$items,
+    MDAlg_Visit:$visit,
+    Arg<Optional<MDAlg_I32Buffer>, "", [MemRead]>:$by,
+    Arg<Variadic<AnyMemRef>, "", [MemRead, MemWrite]>:$writes,
+    Arg<Variadic<AnyMemRef>, "", [MemRead, MemWrite]>:$adds,
+    Variadic<AnyTypeOf<[AnyInteger, Index, F32, F64]>>:$init,
+    OptionalAttr<StrArrayAttr>:$combine,
+    OptionalAttr<MDAlg_Determinism>:$determinism
+  );
+  let results = (outs Variadic<AnyTypeOf<[AnyInteger, Index, F32, F64]>>:$results);
+  let regions = (region SizedRegion<1>:$body);
+  let assemblyFormat = [{
+    $start `[` $from `,` $to `]` `items` $items `visit` $visit
+    (`by` $by^ `:` type($by))?
+    (`writes` `(` $writes^ `:` type($writes) `)`)?
+    (`adds` `(` $adds^ `:` type($adds) `)`)?
+    (`init` `(` $init^ `:` type($init) `)` `combine` $combine)?
+    (`determinism` $determinism^)?
+    attr-dict `:` type($start) `,` type($items) $body
+    (`->` type($results)^)?
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+  let extraClassDeclaration = [{
+    /// Whether every combiner is exact (on integers).
+    bool combinesExactly();
+  }];
+}
+
+def MDAlg_YieldOp : MDAlg_Op<"yield", [
+    Pure, Terminator, HasParent<"BinMembersOp">
+  ]> {
+  let summary = "The values that an item of md_alg.bin_members contributes";
+  let arguments = (ins Variadic<AnyType>:$values);
+  let assemblyFormat = "($values^ `:` type($values))? attr-dict";
 }
 
 def MDAlg_AppendOp : MDAlg_Op<"append", [AttrSizedOperandSegments,

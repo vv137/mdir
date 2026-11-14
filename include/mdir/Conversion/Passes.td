@@ -498,7 +498,9 @@ def MDAlgTransformCollections
     buffers, each reading one shared analysis of the collections
     (ordering, access pattern, cardinality, effects, lifetime, and the
     determinism requirement of each op). None is implemented: the pass
-    verifies the `md_alg` ops and changes nothing.
+    verifies the `md_alg` ops, runs that analysis (`CollectionAnalysis`,
+    D[md-alg-analysis]; `-debug-only=md-alg-collections` prints it), and
+    changes nothing.
   }];
 }
 
@@ -541,8 +543,17 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
     of the items, each bin sorted by exchanges with the item before. The
     execution parameters of an op are ignored. The buffers may be in any
     memory that the thread reads; the tests run it on the host, as the
-    oracle of `convert-md-alg-to-gpu`.
+    oracle of `convert-md-alg-to-gpu`. `md_alg.bin_members` becomes the
+    loop over its places in order, or in reverse under
+    `reverse-unordered-visits` where its visit is `unordered`: a test that
+    such a region does not depend on the order (D[md-alg-analysis]).
   }];
+  let options = [
+    Option<"reverseUnorderedVisits", "reverse-unordered-visits", "bool",
+           /*default=*/"false",
+           "Visit the items of an unordered md_alg.bin_members in reverse "
+           "(for the tests)">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",

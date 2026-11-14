@@ -1,0 +1,101 @@
+# The shared analysis of the collections (D[md-alg-analysis], #866) on the
+# programs of `main`, at the place of the collection-level transformations:
+# the IR of the rhombic dodecahedron with groups and with the matrix,
+# stopped after md-alg-transform-collections, printed by the test pass.
+# No sort of these programs is redundant; for each, what blocks it, which
+# is where #869 starts:
+#
+# - mdrt_gpu_matrix_sort, the stable rank into a buffer of its own: a
+#   kernel reads that buffer by index (rule 1). The scatter before it
+#   writes its order into an argument of the function (rule 3).
+# - mdrt_gpu_spatial_order, the counting sort by the numbers of the input:
+#   its order is an argument of the function, read by the caller (rule 3).
+# - The groups build's two counting sorts (particles by column and z-bin;
+#   places by cell of the search grid): their orders are local, read by
+#   md_alg.bin_item alone, which hands its user the item at a place and so
+#   requires the layout. Their users form groups of consecutive particles
+#   in z, so the order is observed: no declared reader (md_alg.bin_members)
+#   would state less.
+#
+# The slot pass runs the same analysis and changes nothing.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/md-alg-passes-gpu.test | sed '1d;$d' > %t/groups.toml
+# RUN: sed 's/^neighbor_structure = "GROUPS"/neighbor_structure = "MATRIX"/' %t/groups.toml > %t/matrix.toml
+# RUN: cd %t && mdir emit groups.toml --stage=pipeline | sed 's/,convert-md-alg-to-gpu,.*//' > groups.slot
+# RUN: cd %t && mdir emit matrix.toml --stage=pipeline | sed 's/,convert-md-alg-to-gpu,.*//' > matrix.slot
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat groups.slot)" mdir emit groups.toml --stage=lowered' > groups.slot.mlir
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat matrix.slot)" mdir emit matrix.toml --stage=lowered' > matrix.slot.mlir
+# RUN: mdir-opt %t/groups.slot.mlir --test-md-alg-print-collections -o /dev/null > %t/groups.facts
+# RUN: mdir-opt %t/matrix.slot.mlir --test-md-alg-print-collections -o /dev/null > %t/matrix.facts
+# RUN: FileCheck %s --check-prefixes=COMMON,GROUPS < %t/groups.facts
+# RUN: FileCheck %s --check-prefix=COMMON < %t/matrix.facts
+# No sort is redundant, in either program; four sorts in the one, two in
+# the other.
+# RUN: not grep ': redundant:' %t/groups.facts %t/matrix.facts
+# RUN: grep -c '^  sort ' %t/groups.facts | FileCheck %s --check-prefix=FOUR
+# RUN: grep -c '^  sort ' %t/matrix.facts | FileCheck %s --check-prefix=TWO
+# FOUR: 4
+# TWO: 2
+
+# The matrix sort: the scatter's order is an argument; the stable rank's,
+# local, is read by index in the kernel that follows.
+# COMMON-LABEL: md_alg collections of @mdrt_gpu_matrix_sort
+# COMMON:      collection out of md_alg.scatter_to_bins at {{[0-9]+}}: %[[SCATTERED:[^ ]+]]
+# COMMON-NEXT:   root: %[[SCATTERED]], not allocated here, aliases 0
+# COMMON-NEXT:   escapes: an argument of the function
+# COMMON-NEXT:   guarantees: grouped_by(%[[CELLS:[^)]+]])
+# COMMON-NEXT:   use: md_alg.sort_bins at {{[0-9]+}}: read, requires grouped_by(%[[CELLS]]), streamed (orders each bin itself)
+# COMMON-NEXT:   use: memref.store at {{[0-9]+}}: write, requires layout (a write by index)
+# COMMON-NEXT:   requires: layout
+# COMMON:        determinism: unordered
+# COMMON:      collection out of md_alg.sort_bins at {{[0-9]+}}: %[[RANKED:[^ ]+]]
+# COMMON-NEXT:   root: %[[RANKED]], allocated at {{[0-9]+}}, aliases 1
+# COMMON-NEXT:   escapes: no
+# COMMON-NEXT:   guarantees: stable(%[[CELLS]], item)
+# COMMON-NEXT:   use: memref.load at {{[0-9]+}}: read, requires layout, random (a read by index)
+# COMMON-NEXT:   use: gpu.dealloc at {{[0-9]+}}: release
+# COMMON-NEXT:   requires: layout
+# COMMON-NEXT:   access: random
+# COMMON-NEXT:   cardinality: run-time
+# COMMON-NEXT:   lifetime: produced at {{[0-9]+}}, last use at {{[0-9]+}}, released at {{[0-9]+}}
+# COMMON-NEXT:   determinism: bitwise
+# COMMON-NEXT: sort md_alg.sort_bins at {{[0-9]+}}: not redundant: requires layout, without the sort grouped_by(%[[CELLS]]), with it stable(%[[CELLS]], item); the order is not met without it; a consumer does not combine exactly
+
+# The spatial order: into an argument.
+# COMMON-LABEL: md_alg collections of @mdrt_gpu_spatial_order
+# COMMON:      collection out of md_alg.sort_by_key at {{[0-9]+}}: %[[SPATIAL:[^ ]+]]
+# COMMON-NEXT:   root: %[[SPATIAL]], not allocated here, aliases 0
+# COMMON-NEXT:   escapes: an argument of the function
+# COMMON-NEXT:   guarantees: stable(%[[SS:[^,]+]], %[[NUMBERS:[^)]+]])
+# COMMON-NEXT:   requires: layout
+# COMMON:      sort md_alg.sort_by_key at {{[0-9]+}}: not redundant: requires layout, without the sort grouped_by(%[[SS]]), with it stable(%[[SS]], %[[NUMBERS]]); the order is not met without it; a consumer does not combine exactly
+
+# The groups build: each order local, read by md_alg.bin_item alone, and
+# released.
+# GROUPS-LABEL: md_alg collections of @mdrt_gpu_build_neighbors_groups_triclinic
+# GROUPS:      collection out of md_alg.sort_by_key at {{[0-9]+}}: %[[COLUMNS:[^ ]+]]
+# GROUPS-NEXT:   root: %[[COLUMNS]], allocated at {{[0-9]+}}, aliases 1
+# GROUPS-NEXT:   escapes: no
+# GROUPS-NEXT:   guarantees: stable(%[[CS:[^,]+]], item)
+# GROUPS-NEXT:   use: md_alg.bin_item at {{[0-9]+}}: read, requires layout, gathered (reads the item at a place)
+# GROUPS-NEXT:   use: md_alg.bin_item at {{[0-9]+}}: read, requires layout, gathered (reads the item at a place)
+# GROUPS-NEXT:   use: gpu.dealloc at {{[0-9]+}}: release
+# GROUPS-NEXT:   requires: layout
+# GROUPS-NEXT:   access: gathered
+# GROUPS-NEXT:   cardinality: bound %{{.*}}
+# GROUPS-NEXT:   lifetime: produced at {{[0-9]+}}, last use at {{[0-9]+}}, released at {{[0-9]+}}
+# GROUPS-NEXT:   determinism: bitwise
+# GROUPS-NEXT: sort md_alg.sort_by_key at {{[0-9]+}}: not redundant: requires layout, without the sort grouped_by(%[[CS]]), with it stable(%[[CS]], item); the order is not met without it{{$}}
+# GROUPS:      collection out of md_alg.sort_by_key at {{[0-9]+}}: %[[CELLORDER:[^ ]+]]
+# GROUPS-NEXT:   root: %[[CELLORDER]], allocated at {{[0-9]+}}, aliases 1
+# GROUPS-NEXT:   escapes: no
+# GROUPS-NEXT:   guarantees: stable(%[[GS:[^,]+]], item)
+# GROUPS-NEXT:   use: md_alg.bin_item at {{[0-9]+}}: read, requires layout, gathered (reads the item at a place)
+# GROUPS-NEXT:   use: md_alg.bin_item at {{[0-9]+}}: read, requires layout, gathered (reads the item at a place)
+# GROUPS-NEXT:   use: gpu.dealloc at {{[0-9]+}}: release
+# GROUPS-NEXT:   requires: layout
+# GROUPS:      sort md_alg.sort_by_key at {{[0-9]+}}: not redundant: requires layout, without the sort grouped_by(%[[GS]]), with it stable(%[[GS]], item); the order is not met without it{{$}}

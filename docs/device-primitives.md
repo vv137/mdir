@@ -716,6 +716,7 @@ caller gives them, as it gave them to the emitters.
 | `md_alg.grid_read` | `grid[base + z]`; with `active` false, `grid[base]`; the result type is the grid's | per item | `emitGridGather` |
 | `md_alg.sort_by_key` | a counting sort of $n$ items into bins: the key of each item by a region (one `md_alg.bin` or `md_alg.no_bin` on every path; side outputs a slot of the item or an addition to a counter, declared) or given; the counts (cleared by the op, or by the caller with `cleared`), their exclusive sums, the scatter, and the order within the bins | `order stable`: ascending by the item or by `by[item]`, bitwise; `order unordered`: the bins as multisets, no sort; the keys, counts, start, cursor, and side outputs bitwise | the key kernel, then the strategies of the scan and of the sort above |
 | `md_alg.bin_span`, `md_alg.bin_item` | the run of bins `[from, to)` of a counting sort's start, and an item of its order | per item | loads |
+| `md_alg.bin_members` | the items of the bins `[from, to)`, visited in a stated order (`unordered`, `sorted`, `stable` by a key) by a region whose values are combined; under `unordered`, integer combiners, slots of the item, and additions to counters alone (D[md-alg-analysis]) | the results of the serial definition in every order of an `unordered` visit, in the stated order otherwise | the loop through `bin_span` and `bin_item` |
 | `md_alg.append` | entries appended to a list held in blocks taken from a pool counter, named by owner and ordinal, below a capacity; a batch (a warp's lanes) as its items one by one | the entries of a list in the order of its appends, the counts and the counter (the full demand) bitwise; the numbers of the blocks free; nothing written at or past the capacity | the warp compaction of the groups build, the blocks taken by the first lane |
 | `md_alg.grid_plan` | the counts of cells along edges, $\min(\max(\lfloor L/w \rfloor, \ell), m)$ with `maxnumf` and `minnumf`, the width given or $w = (o\,V/n)^{1/3}$ from an occupancy $o$ | bitwise (one lowering, on the host) | — |
 
@@ -766,6 +767,40 @@ admit at most `reproducible`, are `unordered` by default, and their SIMT
 lowering meets `unordered` alone. The policy each op was lowered with is
 recorded in the module (`mdir.alg_policy`), the log
 (`MDIR: md_alg policy:`), and the manifest (`effective.md_alg_policy`).
+
+**The shared collection analysis (D[md-alg-analysis], #866).**
+`md-alg-transform-collections` runs one analysis
+(`CollectionAnalysis`, `include/mdir/Dialect/MDAlg/CollectionAnalysis.h`),
+which every collection-level transformation is to read. It works on the
+memrefs, through the effects that the ops declare. For each buffer that
+an `md_alg` op writes, it records:
+
+- the order that the producer guarantees;
+- the order that each consumer requires;
+- the access (streamed, gathered, random);
+- the cardinality (exact, bound, run-time);
+- the aliases through the followed views (`memory_space_cast`, `cast`,
+  `subview`, `reinterpret_cast`) and the reason the buffer escapes;
+- the lifetime, in the host's order of the function;
+- the producer's determinism requirement.
+
+A requirement is a value of a lattice whose keys are part of it:
+`membership` < `grouped_by(G)` < `sorted_within(G, K)` <
+`stable(G, K)` < `layout`. `G` is the root of the offsets and `K` the
+root of the key buffer or the item, and keys that differ join to
+`layout`. Only two kinds of reader require less than the layout:
+
+- `md_alg.bin_members`, a reader that states the order of its visit and
+  whose verifier keeps an `unordered` visit to exact combinations;
+- a sort within bins, which orders each bin itself.
+
+Every other use (a load, a call, an escape) requires the layout. A sort
+is redundant only when the join over its consumers is met without it and
+every consumer combines exactly or requires `unordered`. On the programs
+of `main` none is: the matrix sort's order is read by index in a kernel,
+the spatial order is written into an argument, and the groups build's
+orders are read by `md_alg.bin_item`, which hands its user the place. The
+decision gives the lattice, the rules, and their tests.
 
 The warp-level helpers are not ops (#861): the templates write the
 upstream ops of the warp compaction; the groups build calls the typed
@@ -870,6 +905,15 @@ emitters of Section 5 (D301).
   `emitWarpCount`, `emitWarpScan` over 32 lanes, over segments of 16, and
   with a lane compared signed and unsigned) through the test pass
   `test-md-alg-warp-helpers`, against values worked out by hand.
+- `Integration/md-alg-members.test` runs `md_alg.bin_members` by its
+  serial definition on counting sorts of no items, 20 in 7 bins, 1,025 in
+  1,000, and 3,000 in 50. It runs each case once in order and once with
+  every `unordered` visit reversed (`reverse-unordered-visits`), and the
+  two outputs must be the same, byte for byte. The values of the case of
+  20 items are worked out in the test. `Dialect/MDAlg/collections.mlir`
+  tests the shared collection analysis, and
+  `Driver/md-alg-collections-gpu.test` the analysis on the programs of
+  `main` (D[md-alg-analysis]).
 - `Dialect/MDAlg/invalid.mlir` holds a case for each rule of the
   verifiers, `Conversion/MDAlg/simt.mlir` and `serial.mlir` the code of
   the two lowerings, and `simt-invalid.mlir` the refusal of an op without
@@ -922,6 +966,14 @@ mixed and double precision, with the three-launch scan and with
 `single-pass-group-scan=true`. Unlike D296's step, not even a constant
 moved: each op is lowered by the emitter its call was expanded by, at the
 same place.
+
+The shared collection analysis (D[md-alg-analysis]), which the slot
+pass now runs, and the expansion of `md_alg.bin_members` in both
+lowerings left the lowered programs byte-identical to those of the base
+(00712731). The programs were nine: the dodecahedron with groups in
+mixed and double precision, each with the three-launch and with the
+single-pass scan; the dodecahedron with the matrix in both precisions;
+and JAC NVE with groups, with both scans, and with the matrix.
 
 The move of the hand-written stages to the stage ops (D407)
 left the 16 programs of those 60 with the matrix or the prolate kernel

@@ -642,6 +642,41 @@ definition on every target; its verifier refuses a requirement that its
 contract rules out, and the policy that each op is lowered with is
 recorded with the run.
 
+Every transformation at that place reads one analysis of the
+collections, instead of judging legality on its own
+(D[md-alg-analysis], #866). For each buffer that an op produces, the
+analysis records:
+
+- its ordering;
+- how each consumer reads it;
+- its size, exact or bounded;
+- its aliases and escapes;
+- its lifetime;
+- its determinism requirement.
+
+The order that the consumers require is propagated back to the
+producer. A requirement is a small value that names its keys: the items
+present; the items grouped by named offsets; also sorted within a group
+by a named key; also with ties in the order of the items; or the whole
+layout of the buffer. A grouping by cells and a grouping by classes are
+different requirements, and two requirements with different keys
+combine to the layout.
+
+A reader of bins can require less than the layout only if its meaning
+allows it, and its verifier enforces that meaning. The reader states the
+order in which it visits the items. If that order is free, the reader
+combines only integers, which are exact, and writes only the slot of
+each item. A test visits the items in reverse and compares the results.
+
+Every other use, such as a load by index, a call, or a buffer that
+leaves the function, requires the layout. A sort is redundant only when
+its consumers' requirements are met without it, and every consumer
+either combines exactly or allows any order of its bits. The second
+condition keeps the determinism axis: a consumer that needs only the
+members could still sum floats over them. On the programs of today no
+sort is redundant. Their orders are read by index or leave the function,
+and the groups build forms its groups from consecutive items.
+
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 
 D360 retains packed scalar buffers between same-block
