@@ -56,15 +56,17 @@ grouping key.
 ## The type
 
 ```mlir
-!mdrt.neighbors<@atoms>
 !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
 !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
 !mdrt.neighbors<@dd.d0.local, directed, explicit, masked, stable(owner, search)>
 ```
 
-The first two are the same type. Without the four words, the type states
-what a matrix guarantees, and the printer omits them when they equal that
-(question 1 on the PR).
+The four words are always spelled, and always printed (the maintainer's
+ruling 1 on #882). A bare type that meant the matrix's guarantee would be
+an unchecked claim: a new build that emitted it would get that guarantee
+silently. The tests, the op descriptions, and the documents spelled the
+bare type 378 times; a commit of its own rewrites each to the matrix's
+guarantee, the type it parsed to, and changes nothing else.
 
 The four words are positional. The axes are ordered by strength, and a
 guarantee $g$ meets a requirement $r$ when $r \sqsubseteq g$ on every axis:
@@ -164,7 +166,8 @@ it is a closed lattice that the build fixes and that has no SSA subjects.
 ## The cast
 
 ```mlir
-%w = md_exec.weaken_neighbors %nl : !mdrt.neighbors<@atoms>
+%w = md_exec.weaken_neighbors %nl
+       : !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
        to !mdrt.neighbors<@atoms, directed, minimum, masked, grouped_by(owner)>
 ```
 
@@ -227,7 +230,7 @@ binary (`LLVMIRToISATimeInMs`). They have 85 to 315 kernels each.
 ## Tests
 
 - `test/Dialect/MDRT/neighbors-type.mlir` and `neighbors-type-invalid.mlir`
-  cover the spellings, the default, the normalization of `sorted_within`,
+  cover the spellings, the refusal of the bare type, the normalization of `sorted_within`,
   and one case for each refusal of the parser.
 - `test/Dialect/MDExec/neighbors-contract-invalid.mlir` has one case for
   each refusal. Each case is a realistic bug:
@@ -279,12 +282,13 @@ The mutation was then reverted.
 
 ## Open
 
-- **The default spelling, the keys, and the cast's name** are questions on
-  the PR (needs-decision).
+- **Ruled on #882** (the maintainer, 2026-11-14): the parameter is
+  mandatory; the keys are the total ones above; the cast is
+  `md_exec.weaken_neighbors`; `!mdrt.incidence` takes its contract later.
 - **`!mdrt.incidence`**, the ragged rows, takes a contract of its own when
   its consumer moves to `md_alg` (#877, item 3).
-- **A key with ties for sort elision.** `sorted_within(owner, cell)` is
-  what the device matrix would guarantee without its sort of each cell by
-  index. It needs one rule of refinement: `stable(G, search)` meets
-  `sorted_within(G, cell)`. It comes with the first elision.
+- **A key with ties for sort elision** comes with the first elision
+  (ruling 2). `sorted_within(owner, cell)` is what the device matrix would
+  guarantee without its sort of each cell by index. It needs one rule of
+  refinement: `stable(G, search)` meets `sorted_within(G, cell)`.
 - **`centers`** stays an SSA fact of D357's query, outside the type.

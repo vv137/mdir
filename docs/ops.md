@@ -1380,7 +1380,7 @@ equality. Public, recursive, address-taken, indirect, or unrecognized
 boundaries are refused with the boundary named. A private function without
 known call sites has no proof. IR fixtures must supply construction or
 closed call-site evidence rather than an unconstrained neighbor argument.
-The type remains `!mdrt.neighbors<@set, directed, minimum, masked, stable(owner, search)>`; current-state freshness is a separate obligation, tested by a refresh at run time (D80), and no open issue tracks a proof of it in the IR.
+The type states the layout of the lists (D[neighbors-contract]), not the coverage; current-state freshness is a separate obligation, tested by a refresh at run time (D80), and no open issue tracks a proof of it in the IR.
 The strict `md_dist.covered` halo-source check remains unchanged.
 
 ```mlir

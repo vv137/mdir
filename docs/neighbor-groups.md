@@ -1040,8 +1040,8 @@ is counted rather than estimated.
   removed, stable(group, search)>` for groups and their dual list. That
   is each pair once (I1), in the frame of its group (I4), with no bit for
   an excluded pair, and the list of each group in the order of its search
-  (I2, I5). `!mdrt.neighbors<@atoms>`, the matrix, is `directed, minimum,
-  masked, stable(owner, search)`. `md-exec-choose-neighbors` gives the
+  (I2, I5). The matrix is `directed, minimum, masked, stable(owner,
+  search)`. The four words are always spelled. `md-exec-choose-neighbors` gives the
   type to every value of a structure that it turns into groups. A
   structure whose values reach an op whose types the pass does not
   follow, such as an `scf.if`, keeps the matrix. Each loop over pairs
