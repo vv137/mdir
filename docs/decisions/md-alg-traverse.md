@@ -374,15 +374,141 @@ $x \cdot 0$ does not fold in IEEE arithmetic.
 
 ## 9. The same programs
 
-@@IDENTITY@@
+The lowered programs of the branch were compared with those of the base
+(1c11a780) by the method of D406: `mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off
+MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, through
+`scripts/builder-equivalence/check.py compare --stages lowered`. That
+gives the PTX of every kernel and the host's code.
+
+| Corpus | Variants | Cases | Identical | Of which the same error |
+|---|---|---:|---:|---:|
+| the examples, the tests, the Amber suite, and the cases of the corpus | GPU; the run and the segments; mixed and double; as written, and with `neighbor_structure = "GROUPS"` (`--execution`) | 2,170 | 2,168 | 892 |
+| the Amber suite, the cases, and the dodecahedron of `test/Driver/triclinic.test` with groups and with a dual list (`pruned_distance = 8.5`) | GPU; the run and the segments; mixed and double; as written, and with `MDIR_FUSED_PRUNE=off` (the pruning in the refresh), `always` (in the loop), and `MDIR_CHECK_PRUNING=1` | 888 | 888 | 64 |
+
+Notes on the table:
+- The two cases of the first run that differ are written in Python. They
+  stopped in both builds with the system's interpreter, which cannot
+  import the package, and their messages differ in the path of the build.
+  The second run takes the interpreter of the build, and they are
+  identical there.
+- With `neighbor_structure = "GROUPS"`, 627 of the 1,085 cases lower a
+  program with the groups. The others stop with the same error in both
+  builds: their inputs are named in RUN lines that the corpus does not
+  run, or the groups are refused there, as for the CPU or the
+  deterministic mode.
+- The Amber suite's controls take the groups and the dual list as
+  written.
+
+`md_dist` is lowered by `mdir-opt`, not by `mdir run`. The two programs of
+D413 were lowered by `convert-md-dist-to-md-exec` and the device pipeline,
+then by `--gpu-lower-to-nvvm-pipeline`:
+- `test/Integration/dist-eam-exec.mlir`;
+- `test/Integration/dist-lj-exec.mlir`.
+
+Each ran on 1×2×3 domains, in double and mixed precision, with the matrix
+and with `md-exec-choose-neighbors=kind=groups`. The branch's pipeline puts
+`convert-md-exec-to-md-alg` before the device pass. The 8 outputs are
+identical to those of the base, apart from the compile time that MLIR
+records in each binary. They have 630 to 814 launches each.
+
+**What the comparison caught.** In an earlier commit of the branch the
+converter ran the analyses of the frames and of the pruning in the loop
+(D268, D284). It ran them before the big pass moves the reciprocal sums
+before the refreshes (D113), and the analyses of the big pass did not know
+the traversal. On FactorIX two kernels changed:
+- a loop over pairs lost its pruning in the loop;
+- the fused integration kernel wrote the forces that the next loop
+  overwrites.
+
+The step was 3.5% slower. Section 2 records the fix. The programs of the
+dodecahedron and of JAC had been identical.
 
 ## 10. The serial definition against the device
 
-@@CONTRACT@@
+`test/Integration/Inputs/traverse_contract.py` evaluates the energy, the
+virial, and the forces at the start of a run on an RTX 4090. The runs are
+in five modes:
+- the schedule;
+- the serial definition;
+- the serial definition with its visit reversed;
+- the magnitudes of the terms;
+- no term.
+
+Coulomb is by a plain cutoff, so that no reciprocal sum spreads with
+atomics. The loops over tuples take a row a particle (the oracle sets
+`tuples-once=false`). What differs between two runs is then the
+traversal's alone.
+
+For each component $X$, the magnitude is
+$M = X_\mathrm{magnitudes} - X_\mathrm{omitted} = \sum_k\lvert t_k\rvert$.
+Two orders of a sum of $n$ terms differ by at most
+$2\gamma_{n-1}M$, with $\gamma_m = mu/(1-mu)$ (D406). The test holds the
+schedule and the reversed visit to the serial order within
+$2\gamma_{n-1}M + 4u\max M$, with these values:
+- $n = 1024$. The particles within the reach of one, at most 0.11 per
+  cubic angstrom over a sphere of 11 Å, are 613, and they bound the terms
+  of a force. A lane's sums over its units bound those of an energy.
+- $u = 2^{-24}$ in mixed precision and $2^{-53}$ in double.
+
+The test fails if the traversal contributes nothing, or if the magnitudes
+do not bound the sums. The largest difference, as a fraction of its
+bound:
+
+| System | List | Precision | Schedule | Reversed visit |
+|---|---|---|---:|---:|
+| dodecahedron (1,209 atoms) | groups | mixed | 0.0087 | 0.0038 |
+| | | double | 0.0045 | 0.0050 |
+| | dual, pruned in the refresh | mixed | 0.0081 | 0.0038 |
+| | | double | 0.0046 | 0.0050 |
+| | dual, pruned in the loop (D284) | mixed | 0.0087 | 0.0038 |
+| | | double | 0.0045 | 0.0050 |
+| JAC (23,558 atoms) | groups | mixed | 8.6e-5 | 6.6e-5 |
+| | | double | 6.1e-4 | 1.2e-3 |
+| | dual, pruned in the refresh | mixed | 8.7e-5 | 7.4e-5 |
+| | | double | 6.6e-4 | 1.3e-3 |
+| | dual, pruned in the loop | mixed | 8.5e-5 | 7.4e-5 |
+| | | double | 7.2e-4 | 1.4e-3 |
+
+The worst component is a force in mixed precision, and in double on JAC
+the virial.
+
+**A mutation that must fail.** The serial definition was changed to ignore
+the sign of an antisymmetric destination, and the case of the dodecahedron
+was run. The schedule then differed from the serial definition by
+$1.3\times10^4$ times the bound (force 960, $3.3\times10^5$ against 25).
+The reversed visit, which has the same mutation, stayed within its bound,
+at 0.0033 of it. The mutation was reverted.
 
 ## 11. The sanitizer and the timing
 
-@@SANITIZER@@
+**The sanitizer tier** (`lit -Dsanitize=1 test/Sanitizer`, RTX 4090):
+23 passed and 2 were unsupported (JAX and the frame batches). The tests
+include `fused-prune-gpu.test` (the pruning in the loop, under memcheck,
+racecheck, and initcheck), `group-scatter-gpu.test` (the table of a block
+on groups), `groups-empty-gpu.test`, and `triclinic-gpu.test`. The run held
+the device for 181 s.
+
+**Timing** by the timing protocol, on RTX 4090s:
+- two jobs, each with `--idle`;
+- in each job, three rounds of the base (1c11a780) and the branch,
+  interleaved;
+- JAC NVE (100,000 steps) and FactorIX NVE (50,000 steps), with groups and
+  the dual list, as the Amber suite sets them;
+- the rate of the second half of each run, as `mdir run` reports it.
+
+The rates in ns/day, the mean of the three rounds:
+
+| System | Job | Base | Branch | Branch / base |
+|---|---|---:|---:|---:|
+| JAC | 1 | 1268.0 | 1266.8 | 0.999 |
+| JAC | 2 | 1255.9 | 1256.1 | 1.000 |
+| FactorIX | 1 | 563.8 | 563.7 | 1.000 |
+| FactorIX | 2 | 558.2 | 558.4 | 1.000 |
+
+Within a job the rounds spread by up to 0.6%, and the two jobs differ by
+1% (their clocks were 2,775 and 2,745 MHz at most). No slowdown is beyond
+the spread. The programs are identical, so this is a guard.
 
 ## Tests
 
@@ -405,4 +531,17 @@ $x \cdot 0$ does not fold in IEEE arithmetic.
   of the corpus with keys of `[execution]` set as well, such as
   `neighbor_structure=GROUPS`.
 
-@@LINES@@
+## Lines
+
+The code, without the tests and the documents, gained 2,463 lines and
+lost 971:
+- the op, its verifier, and its effects (`MDAlgOps.td`, 178;
+  `MDAlgDialect.cpp`, 244);
+- the converter (`MDExecToMDAlg.cpp`, 118);
+- the interface (`TraversePairs.h`, 169);
+- the lowerings (`TraversePairs.cpp`, 1,254). About 830 of these are the
+  schedule and the kernel, moved; about 330 are the serial definition;
+- `MDExecToGPU.cpp` (+319 −536: the old path removed, the host interface,
+  the oracle in place, and the analysis over the traversals);
+- `MDExecKernels.cpp` (−386, the kernel moved);
+- D357's query over any consumer (`NeighborCoverage.cpp`).
