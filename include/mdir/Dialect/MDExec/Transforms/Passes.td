@@ -1035,4 +1035,46 @@ def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def ReleaseDeadStorage
+    : Pass<"md-exec-release-dead-storage", "::mlir::ModuleOp"> {
+  let summary = "Releases, before the loop over steps, the device buffers "
+                "that the rest of the function never uses";
+  let description = [{
+    Runs on the host code as `convert-md-exec-to-gpu` and
+    `convert-md-alg-to-gpu` leave it. For each function with a loop over
+    steps, it reads the liveness of the storage (`StorageLiveness`, D412) in
+    the mode `kills=proven` and releases each `gpu.alloc` before the loop
+    whose buffer no point after a place before the loop occupies: none
+    touches it, none has it live, and no wait or join completes work on it.
+    The `gpu.dealloc` goes after the op of the function's body that holds
+    the buffer's last occupied point. A buffer that is pinned (a raw
+    pointer, a return, a token never waited for, an external function that
+    may keep it), carried by the loop, read after it, already released, or
+    not used at all keeps its storage to the end, as before.
+
+    Before:
+
+    ```mlir
+    %a = gpu.alloc (%n) : memref<?xf64, 1>
+    gpu.launch ... { ... %a ... }
+    scf.for %i = %c0 to %steps step %c1 { ... }
+    ```
+
+    After, if the loop and the code after it never use `%a`:
+
+    ```mlir
+    %a = gpu.alloc (%n) : memref<?xf64, 1>
+    gpu.launch ... { ... %a ... }
+    %p = memref.memory_space_cast %a : memref<?xf64, 1> to memref<?xf64>
+    gpu.dealloc %p : memref<?xf64>
+    scf.for %i = %c0 to %steps step %c1 { ... }
+    ```
+
+    No kernel changes; the host frees the buffer, and the runtime's pool
+    takes the block back (D[md-exec-release-dead]).
+  }];
+  let dependentDialects = ["::mlir::gpu::GPUDialect",
+                           "::mlir::memref::MemRefDialect"];
+}
+
 #endif // MDIR_DIALECT_MDEXEC_TRANSFORMS_PASSES_TD

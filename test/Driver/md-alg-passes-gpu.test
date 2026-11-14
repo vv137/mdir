@@ -37,7 +37,7 @@
 # RUN: %python %S/Inputs/manifest_schema.py %S/../../docs/run-manifest.schema.json %t/run.json %t/single.json | FileCheck %s --check-prefix=SCHEMA
 # RUN: %python %S/Inputs/md_alg_policy.py %t/run.json %t/single.json | FileCheck %s --check-prefix=MANIFEST
 
-# ORDER: convert-md-exec-to-gpu{{[{][^}]*[}]}},md-alg-transform-collections,convert-md-alg-to-gpu,check-read-only-arguments,
+# ORDER: convert-md-exec-to-gpu{{[{][^}]*[}]}},md-alg-transform-collections,convert-md-alg-to-gpu,md-exec-release-dead-storage,check-read-only-arguments,
 
 # The matrix template's ops, which a program of groups takes too, and the
 # groups build's counting sorts, grid plans, and appends.
