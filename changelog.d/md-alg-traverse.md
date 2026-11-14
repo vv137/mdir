@@ -1,0 +1,3 @@
+### Changed
+
+- **A loop over pairs over groups is a target-neutral `md_alg` op** (D[md-alg-traverse], #886, step 2 of #877). The new pass `convert-md-exec-to-md-alg` turns each loop over pairs over a structure of groups into `md_alg.traverse_pairs`. The op declares its visit order, the combination of each destination, and its algebra, and its verifier checks them against the region and the contract of the list (D413). Its serial lowering is the oracle. Its SIMT lowering is the schedule of the groups, moved out of `convert-md-exec-to-gpu`, and every program's lowered code stays byte-identical. The options of the fused pruning move to the new pass. *(Design under review; the entry is completed with the implementation.)*
