@@ -1,8 +1,10 @@
 # D[md-alg-traverse]
 
-Recorded at its merge. **Design for review; nothing is implemented yet.**
+Recorded at its merge.
 
 **A loop over pairs over groups becomes one target-neutral op, `md_alg.traverse_pairs`. A new pass, `convert-md-exec-to-md-alg`, makes it from each `md_exec.pair_for` over a structure of groups. The op keeps the loop's region and declares what the loop needs: the visit order, the combination of each destination, and its algebra (D301). Its verifier checks two things: the region writes nothing, so every write goes through the declared combination; and the requirement that follows from the declarations is met by the contract of the list (D413). The serial lowering is the plain loop over the entries, and it is the oracle. The SIMT lowering is today's schedule of `lowerGroupPairFor` and `emitGroupPairKernel`, moved into the `md_alg` lowering library as a pattern. For the bytes to stay those of `main`, that pattern is called where the op stands, in program order, until four couplings to the big pass are removed (Section 7; open question 1). The old path for groups is removed in the same PR. The design leaves room for the rigid-water template of #795: lists of units, segments of class pairs, constants of a template, and sites formed in the kernel (Section 9).** Issue #886, step 2 of #877 (the maintainer's rulings of 2026-11-14), part of #558.
+
+Status: the design, for review on the pull request; nothing is implemented yet.
 
 ## 1. What the groups path reads today
 
