@@ -677,6 +677,16 @@ members could still sum floats over them. On the programs of today no
 sort is redundant. Their orders are read by index or leave the function,
 and the groups build forms its groups from consecutive items.
 
+The transformations that need no such requirement are always legal:
+folding, the removal of dead or repeated collections, and one allocation
+for two buffers whose lifetimes do not overlap. They find almost nothing
+on these programs (D[md-alg-canonical], #876). No op has a constant
+input. No collection is dead or computed twice. The one reuse by
+lifetime is in the groups build, where it saves 0.64% of the peak device
+memory of the largest system. Of that peak, 56% is the lists of the
+groups and 28% the fields of the step, at layers below and above
+`md_alg`.
+
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
 
 D360 retains packed scalar buffers between same-block
