@@ -71,10 +71,9 @@ def MDRT_NeighborsType : MDRT_Type<"Neighbors", "neighbors"> {
     the places of a build of groups, are attributes of the build, not part
     of the type.
 
-    Without the four words, the type states what a matrix guarantees:
+    The four words are always spelled. A matrix:
 
     ```mlir
-    !mdrt.neighbors<@atoms>
     !mdrt.neighbors<@atoms, directed, minimum, masked, stable(owner, search)>
     ```
 
@@ -88,12 +87,6 @@ def MDRT_NeighborsType : MDRT_Type<"Neighbors", "neighbors"> {
     "::mlir::FlatSymbolRefAttr":$particleSet,
     "::mdir::mdrt::NeighborsContract":$contract
   );
-  let builders = [
-    TypeBuilder<(ins "::mlir::FlatSymbolRefAttr":$particleSet), [{
-      return $_get($_ctxt, particleSet,
-                   ::mdir::mdrt::NeighborsContract::matrix());
-    }]>
-  ];
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
 }

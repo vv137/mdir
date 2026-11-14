@@ -2,6 +2,13 @@
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics
 
+// The guarantee is always spelled (the maintainer's ruling 1 on #882): a
+// bare type would claim one silently.
+// expected-error@+1 {{expected ','}}
+func.func private @f(!mdrt.neighbors<@atoms>)
+
+// -----
+
 // expected-error@+1 {{expected the traversal 'directed' or 'unique', got 'both'}}
 func.func private @f(!mdrt.neighbors<@atoms, both, minimum, masked, none>)
 

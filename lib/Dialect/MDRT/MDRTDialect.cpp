@@ -437,10 +437,13 @@ Type NeighborsType::parse(AsmParser &parser) {
   FlatSymbolRefAttr particleSet;
   if (parser.parseLess() || parser.parseAttribute(particleSet))
     return Type();
-  Contract contract = Contract::matrix();
-  if (succeeded(parser.parseOptionalComma())) {
+  // The guarantee is always spelled (the maintainer's ruling 1 on #882): a
+  // bare type would claim one silently.
+  Contract contract;
+  {
     unsigned traversal, images, exclusions, organization;
-    if (parseWord(parser, "traversal", {"directed", "unique"}, traversal) ||
+    if (parser.parseComma() ||
+        parseWord(parser, "traversal", {"directed", "unique"}, traversal) ||
         parser.parseComma() ||
         parseWord(parser, "images", {"minimum", "explicit"}, images) ||
         parser.parseComma() ||
@@ -482,10 +485,8 @@ Type NeighborsType::parse(AsmParser &parser) {
 void NeighborsType::print(AsmPrinter &printer) const {
   printer << "<";
   printer.printAttributeWithoutType(getParticleSet());
-  if (getContract() != NeighborsContract::matrix()) {
-    printer << ", ";
-    getContract().print(printer.getStream());
-  }
+  printer << ", ";
+  getContract().print(printer.getStream());
   printer << ">";
 }
 
