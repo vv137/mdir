@@ -51,14 +51,32 @@ Recorded at its merge.
   arenas of their own: such a request takes an idle arena of exactly its
   size or a new one, never a piece of a larger arena. A growth therefore
   gives the old buffer back to the driver at once, as before. A first
-  version let them take pieces. A replaced piece then stayed in the pool
-  beside the blocks in use in its arena, and the input of
-  `Driver/pool-retention-gpu.test` held 3 more arenas after 1,000 steps
-  than after 100, against 2 on `main`, past the test's slack of 2. The
-  count was flat from 1,000 to 10,000 steps, twice on both trees, and the
-  extra arena was the old buffer of the one growth after the first 100
-  steps: `main` returned one block more to the driver in the long runs (8
-  against 7), the first version none (4 and 4).
+  version let them take pieces, and a replaced piece then stayed in the
+  pool beside the blocks in use in its arena: on the input of
+  `Driver/pool-retention-gpu.test` it returned 4 blocks to the driver
+  where `main` returns 7 and 8.
+
+## 2a. The test of the pool's growth with the run
+
+`Driver/pool-retention-gpu.test` compares the blocks that the driver
+holds (taken less returned) after a short and a long run of the
+dipeptide with groups, with a slack of 2. Its short run was of 100
+steps. That run ends before the run's peak in use, which is reached
+between steps 100 and 300 (1.0 and 1.1 MiB). The blocks held rise there
+once, and then stay, three runs each on an RTX 4090:
+
+| Steps | 100 | 300 | 1,000 | 3,000 | 10,000 |
+|---|---:|---:|---:|---:|---:|
+| `main`, blocks | 95 | 97 | 97 | 97 | 97 |
+| this change, arenas | 75 | 78 | 78 | 78 | 78 |
+
+From 100 steps, this change is past the slack by one (3 against 2). The
+short run is now of 1,000 steps, after the rise. Both trees then hold
+the same count in the short and the long run (3,000 steps), and the
+slack of 2 stays. The defect that the test guards against (D312) left
+blocks in the pool at each build, and grew with the run past 1,000
+steps (783 MiB at STMV after 1,000 steps, more after). It was not run
+again here.
 
 ## 3. The order of the streams
 
