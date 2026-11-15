@@ -7,10 +7,12 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
+#include <map>
 
 using namespace mlir;
 using namespace mdir;
@@ -829,6 +831,220 @@ static bool fuseOnce(Block &block) {
   return false;
 }
 
+//===----------------------------------------------------------------------===//
+// Loops over a list of units (D[md-alg-segments])
+//===----------------------------------------------------------------------===//
+
+static bool haveSameDomain(SegmentForOp a, SegmentForOp b) {
+  return a.getList() == b.getList() && a.getPositions() == b.getPositions() &&
+         a.getCell() == b.getCell() && a.getCutoffAttr() == b.getCutoffAttr();
+}
+
+/// Replaces `first` and `second` with one loop, placed where `second` is.
+/// Its destinations are those of `first`, then those of `second`, and so
+/// are its sums. A segment that both visit takes the site pairs of both:
+/// a pair in both is one slice of the two masks. The slices stay
+/// separable, so each keeps its own cutoff.
+static void fuse(SegmentForOp first, SegmentForOp second) {
+  OpBuilder builder(second);
+  Location loc = second.getLoc();
+  MLIRContext *context = second.getContext();
+  unsigned o1 = first.getOuts().size(), o2 = second.getOuts().size();
+  unsigned r1 = first.getReduce().size();
+  // The value of the fused loop that a value of each loop is.
+  auto ofFirst = [&](unsigned a) { return a < o1 ? a : a + o2; };
+  auto ofSecond = [&](unsigned b) {
+    return b < o2 ? o1 + b : o1 + o2 + r1 + (b - o2);
+  };
+
+  SmallVector<Value> ins(first.getIns());
+  for (Value field : second.getIns())
+    if (!llvm::is_contained(ins, field))
+      ins.push_back(field);
+  SmallVector<Value> outs(first.getOuts());
+  llvm::append_range(outs, second.getOuts());
+  SmallVector<Value> reduce(first.getReduce());
+  llvm::append_range(reduce, second.getReduce());
+  SmallVector<Type> results;
+  for (unsigned i = 0; i != o1; ++i)
+    results.push_back(first.getResult(i).getType());
+  for (unsigned i = 0; i != o2; ++i)
+    results.push_back(second.getResult(i).getType());
+  for (Value value : reduce)
+    results.push_back(value.getType());
+  SmallVector<double> weights;
+  auto appendSegmentWeights = [&](SegmentForOp loop) {
+    if (auto given = loop.getWeights())
+      weights.append(given->begin(), given->end());
+    else
+      weights.append(loop.getReduce().size(), 1.0);
+  };
+  appendSegmentWeights(first);
+  appendSegmentWeights(second);
+  SmallVector<Attribute> exchange;
+  for (unsigned i = 0; i != o1; ++i)
+    exchange.push_back((*first.getExchange())[i]);
+  for (unsigned i = 0; i != o2; ++i)
+    exchange.push_back((*second.getExchange())[i]);
+  for (unsigned i = o1, e = o1 + r1; i != e; ++i)
+    exchange.push_back((*first.getExchange())[i]);
+  for (unsigned i = o2, e = o2 + second.getReduce().size(); i != e; ++i)
+    exchange.push_back((*second.getExchange())[i]);
+
+  // The segments of both, in increasing s(f, g).
+  struct Part {
+    SegmentForOp loop;
+    unsigned index;
+  };
+  std::map<unsigned, SmallVector<Part, 2>> segments;
+  for (SegmentForOp loop : {first, second})
+    for (unsigned index = 0, e = loop.getKernels().size(); index != e;
+         ++index) {
+      auto [f, g] = loop.getSegmentKinds(index);
+      segments[mdrt::SegmentedPairsType::getSegmentIndex(f, g)].push_back(
+          {loop, index});
+    }
+  mdrt::SegmentedPairsType type = first.getListType();
+  // The merged tables, first: the site pairs of each part, in order of
+  // first appearance, each with its values from each part.
+  SmallVector<Attribute> kinds, tables;
+  SmallVector<SmallVector<mdrt::SitePair>> merged;
+  for (auto &[number, parts] : segments) {
+    auto [f, g] = parts.front().loop.getSegmentKinds(parts.front().index);
+    SmallVector<mdrt::SitePair> table;
+    for (Part part : parts)
+      for (const mdrt::SitePair &pair :
+           mdrt::getSitePairs(part.loop.getSites(), part.index)) {
+        auto found = llvm::find_if(table, [&](const mdrt::SitePair &known) {
+          return known.p == pair.p && known.q == pair.q;
+        });
+        unsigned at = found - table.begin();
+        if (found == table.end())
+          table.push_back({pair.p, pair.q, {}});
+        for (unsigned value : pair.values)
+          table[at].values.push_back(part.loop == first ? ofFirst(value)
+                                                        : ofSecond(value));
+      }
+    for (mdrt::SitePair &pair : table)
+      llvm::sort(pair.values);
+    kinds.push_back(mdrt::getSegmentAttr(context, f, g));
+    tables.push_back(mdrt::getSitesAttr(context, table));
+    merged.push_back(table);
+  }
+
+  auto fused = SegmentForOp::create(
+      builder, loc, results, first.getList(), first.getPositions(),
+      first.getCell(), ins, outs, reduce, /*scratch=*/ValueRange(),
+      first.getCutoffAttr(),
+      reduce.empty() ? DenseF64ArrayAttr()
+                     : builder.getDenseF64ArrayAttr(weights),
+      builder.getArrayAttr(exchange), /*overwrite=*/DenseBoolArrayAttr(),
+      builder.getArrayAttr(kinds), builder.getArrayAttr(tables),
+      segments.size());
+
+  unsigned index = 0;
+  for (auto &[number, parts] : segments) {
+    auto [f, g] = parts.front().loop.getSegmentKinds(parts.front().index);
+    unsigned members = type.getNumMembers(f) + type.getNumMembers(g);
+    SmallVector<mdrt::SitePair> &table = merged[index];
+    Block *block = new Block();
+    fused.getKernels()[index++].push_back(block);
+    Block &any = parts.front().loop.getKernels()[parts.front().index].front();
+    Type real = any.getArgument(0).getType();
+    Type vector = VectorType::get({3}, real);
+    for (unsigned m = 0, e = table.size(); m != e; ++m) {
+      block->addArgument(real, loc);
+      block->addArgument(vector, loc);
+    }
+    unsigned base = block->getNumArguments();
+    for (Value field : ins)
+      for (unsigned k = 0; k != members; ++k)
+        block->addArgument(getKernelValueType(field.getType()), loc);
+    OpBuilder body = OpBuilder::atBlockEnd(block);
+    auto at = [&](const mdrt::SitePair &pair) {
+      unsigned position = 0;
+      while (table[position].p != pair.p || table[position].q != pair.q)
+        ++position;
+      return position;
+    };
+    // Each part's yields, by fused value, for each site pair of the table.
+    SmallVector<llvm::DenseMap<unsigned, Value>> yielded(table.size());
+    for (Part part : parts) {
+      Block &source = part.loop.getKernels()[part.index].front();
+      SmallVector<mdrt::SitePair> pairs =
+          mdrt::getSitePairs(part.loop.getSites(), part.index);
+      IRMapping mapping;
+      for (unsigned m = 0, e = pairs.size(); m != e; ++m) {
+        unsigned position = at(pairs[m]);
+        mapping.map(source.getArgument(2 * m), block->getArgument(2 * position));
+        mapping.map(source.getArgument(2 * m + 1),
+                    block->getArgument(2 * position + 1));
+      }
+      for (auto [i, field] : llvm::enumerate(part.loop.getIns())) {
+        unsigned fieldIndex = llvm::find(ins, field) - ins.begin();
+        for (unsigned k = 0; k != members; ++k)
+          mapping.map(source.getArgument(2 * pairs.size() + i * members + k),
+                      block->getArgument(base + fieldIndex * members + k));
+      }
+      for (Operation &nested : source.without_terminator())
+        body.clone(nested, mapping);
+      Operation *terminator = source.getTerminator();
+      unsigned operand = 0;
+      for (const mdrt::SitePair &pair : pairs)
+        for (unsigned value : pair.values)
+          yielded[at(pair)][part.loop == first ? ofFirst(value)
+                                               : ofSecond(value)] =
+              mapping.lookupOrDefault(terminator->getOperand(operand++));
+    }
+    SmallVector<Value> values;
+    for (unsigned m = 0, e = table.size(); m != e; ++m)
+      for (unsigned value : table[m].values)
+        values.push_back(yielded[m].lookup(value));
+    YieldOp::create(body, loc, values);
+  }
+  for (unsigned i = 0; i != o1; ++i)
+    first.getResult(i).replaceAllUsesWith(fused.getResult(i));
+  for (unsigned i = 0; i != o2; ++i)
+    second.getResult(i).replaceAllUsesWith(fused.getResult(o1 + i));
+  for (unsigned i = 0; i != r1; ++i)
+    first.getResult(o1 + i).replaceAllUsesWith(fused.getResult(o1 + o2 + i));
+  for (unsigned i = 0, e = second.getReduce().size(); i != e; ++i)
+    second.getResult(o2 + i).replaceAllUsesWith(
+        fused.getResult(o1 + o2 + r1 + i));
+  first.erase();
+  second.erase();
+}
+
+/// Fuses two loops over a list of units of `block`, if two can be fused.
+static bool fuseSegmentLoopsOnce(Block &block) {
+  SmallVector<SegmentForOp> loops;
+  for (Operation &op : block)
+    if (auto loop = dyn_cast<SegmentForOp>(&op))
+      if (!loop.isStorageForm())
+        loops.push_back(loop);
+  for (unsigned i = 0, e = loops.size(); i != e; ++i) {
+    for (unsigned j = i + 1; j != e; ++j) {
+      SegmentForOp first = loops[i];
+      SegmentForOp second = loops[j];
+      if (!haveSameDomain(first, second) || uses(second, first))
+        continue;
+      if (!usersComeAfter(first, second)) {
+        SmallVector<Operation *> moved;
+        if (canMoveAfter(second, first, moved)) {
+          second->moveAfter(first);
+          for (Operation *op : moved)
+            op->moveBefore(second);
+        } else if (!deferUsers(first, second)) {
+          continue;
+        }
+      }
+      fuse(first, second);
+      return true;
+    }
+  }
+  return false;
+}
+
 namespace mdir {
 namespace md_exec {
 
@@ -849,6 +1065,8 @@ public:
     });
     for (Block *block : blocks) {
       while (fuseOnce(*block))
+        ;
+      while (fuseSegmentLoopsOnce(*block))
         ;
       while (fuseTupleLoopsOnce(*block))
         ;

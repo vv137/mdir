@@ -5,6 +5,7 @@
 
 #include "mdir/Dialect/MDAlg/MDAlgDialect.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -22,6 +23,15 @@ using namespace mdir::md_alg;
 #include "mdir/Dialect/MDAlg/MDAlgDialect.cpp.inc"
 #include "mdir/Dialect/MDAlg/MDAlgEnums.cpp.inc"
 #include "mdir/Dialect/MDAlg/MDAlgInterfaces.cpp.inc"
+
+static ParseResult
+parseTraverseRegions(OpAsmParser &parser, Region &kernel, ArrayAttr &segments,
+                     ArrayAttr &sites,
+                     SmallVectorImpl<std::unique_ptr<Region>> &regions);
+static void printTraverseRegions(OpAsmPrinter &printer, Operation *op,
+                                 Region &kernel, ArrayAttr segments,
+                                 ArrayAttr sites,
+                                 MutableArrayRef<Region> regions);
 
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDAlg/MDAlgOps.cpp.inc"
@@ -678,6 +688,35 @@ StringRef BinMembersOp::getFreeResults() { return ""; }
 // md_alg.traverse_pairs (D415)
 //===----------------------------------------------------------------------===//
 
+/// The region of the op over groups, or the regions of its segments
+/// (D[md-alg-segments]).
+static ParseResult
+parseTraverseRegions(OpAsmParser &parser, Region &kernel, ArrayAttr &segments,
+                     ArrayAttr &sites,
+                     SmallVectorImpl<std::unique_ptr<Region>> &regions) {
+  OptionalParseResult single = parser.parseOptionalRegion(kernel, {});
+  if (single.has_value())
+    return *single;
+  if (mdir::mdrt::parseSegmentRegions(parser, segments, sites, regions))
+    return failure();
+  if (regions.empty())
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected a region, or the regions of segments";
+  return success();
+}
+
+static void printTraverseRegions(OpAsmPrinter &printer, Operation *op,
+                                 Region &kernel, ArrayAttr segments,
+                                 ArrayAttr sites,
+                                 MutableArrayRef<Region> regions) {
+  if (!segments) {
+    printer.printRegion(kernel, /*printEntryBlockArgs=*/true,
+                        /*printBlockTerminators=*/true);
+    return;
+  }
+  mdir::mdrt::printSegmentRegions(printer, op, segments, sites, regions);
+}
+
 StringRef TraversePairsOp::getExchangeOf(unsigned index) {
   return cast<StringAttr>(getExchange()[index]).getValue();
 }
@@ -731,7 +770,8 @@ LogicalResult TraversePairsOp::verify() {
       return emitOpError() << "takes two sizes, the places and the units, in "
                               "its buffer form";
     auto contract = getContractAttr();
-    if (!contract || !isa<mdir::mdrt::NeighborsType>(contract.getValue()))
+    if (!contract || !isa<mdir::mdrt::NeighborsType,
+                          mdir::mdrt::SegmentedPairsType>(contract.getValue()))
       return emitOpError()
              << "states the contract of its buffers, a neighbor structure's "
                 "type, in its buffer form";
@@ -746,6 +786,32 @@ LogicalResult TraversePairsOp::verify() {
              getReach()) {
     return emitOpError() << "takes its list as a structure or as buffers, not "
                             "both";
+  }
+
+  // V1 of D[md-alg-segments]: the regions of segments over a list of units,
+  // and one region over groups.
+  bool segmented = isa<mdir::mdrt::SegmentedPairsType>(getListType());
+  if (segmented != isSegmented())
+    return emitOpError()
+           << (segmented ? "takes a list of units, whose segments each take "
+                           "a region: 'segment(f, g) sites [...]'"
+                         : "takes the regions of segments, which a list of "
+                           "units has, not a structure of groups");
+  if (segmented != getKernel().empty())
+    return emitOpError() << (segmented ? "takes no single region over a list "
+                                         "of units"
+                                       : "takes one region over groups");
+  if (!segmented && (getSitesAttr() || getRotateAttr()))
+    return emitOpError() << "takes sites and a rotation only with segments";
+  if (segmented) {
+    // V13: the execution group of a schedule of segments.
+    if (getScatterAttr())
+      return emitOpError() << "takes no table of a block (scatter) with "
+                              "segments: its table assumes one place a lane";
+    if (std::optional<int64_t> rotate = getRotate())
+      if (*rotate < 1 || *rotate > 16 || (*rotate & (*rotate - 1)))
+        return emitOpError() << "rotates the partners through " << *rotate
+                             << " lanes: a power of 2 up to 16";
   }
 
   // The declarations.
@@ -821,14 +887,32 @@ LogicalResult TraversePairsOp::verify() {
                 "once, which fixes no order";
   }
 
-  // What the declarations require of the list, and what it guarantees.
-  auto type = cast<mdir::mdrt::NeighborsType>(
-      buffers ? getContractAttr().getValue() : getNeighbors().getType());
-  if (std::optional<std::string> reason =
-          type.getContract().whyNot(getTraversalRequirement(*this)))
-    return emitOpError() << "takes a list that does not meet its "
-                            "requirement: "
-                         << *reason;
+  // What the declarations require of the list, and what it guarantees:
+  // for a list of units, each segment that the op visits (V9).
+  if (auto units = dyn_cast<mdir::mdrt::SegmentedPairsType>(getListType())) {
+    mdir::mdrt::NeighborsContract required = getTraversalRequirement(*this);
+    for (unsigned index = 0, e = getSegmentsAttr().size(); index != e;
+         ++index) {
+      auto kinds = dyn_cast<DenseI64ArrayAttr>(getSegmentsAttr()[index]);
+      if (!kinds || kinds.size() != 2 || kinds[1] < 0 || kinds[1] > kinds[0] ||
+          kinds[0] > static_cast<int64_t>(units.getNumKinds()))
+        continue; // the region verifier names it
+      unsigned s = mdir::mdrt::SegmentedPairsType::getSegmentIndex(kinds[0],
+                                                                   kinds[1]);
+      if (std::optional<std::string> reason =
+              units.getSegments()[s].whyNot(required))
+        return emitOpError() << "takes a list whose segment(" << kinds[0]
+                             << ", " << kinds[1]
+                             << ") does not meet its requirement: " << *reason;
+    }
+  } else {
+    auto type = cast<mdir::mdrt::NeighborsType>(getListType());
+    if (std::optional<std::string> reason =
+            type.getContract().whyNot(getTraversalRequirement(*this)))
+      return emitOpError() << "takes a list that does not meet its "
+                              "requirement: "
+                           << *reason;
+  }
 
   // A destination is no buffer that the op reads.
   SmallVector<Value> read = {getPositions()};
@@ -846,26 +930,12 @@ LogicalResult TraversePairsOp::verify() {
   return success();
 }
 
-LogicalResult TraversePairsOp::verifyRegions() {
-  Block &block = getKernel().front();
-  unsigned expected = 2 + 2 * getIns().size();
-  if (block.getNumArguments() != expected)
-    return emitOpError() << "takes a region of " << expected
-                         << " arguments: r^2, the displacement, and two "
-                            "values for each buffer of 'ins'";
-  auto yield = block.empty() ? YieldOp() : dyn_cast<YieldOp>(block.back());
-  if (!yield)
-    return emitOpError() << "ends its region in 'md_alg.yield'";
-  unsigned values = getOuts().size() + getReduce().size();
-  if (yield.getValues().size() != values)
-    return emitOpError() << "yields " << yield.getValues().size()
-                         << " values, not one per destination and sum ("
-                         << values << ")";
-  // The region writes nothing: every write is the op's, through its
-  // combination. It uses no destination, nor a view of one.
-  WalkResult result = getKernel().walk([&](Operation *nested) {
+/// Rules 1 and 2 of D415 on `region`: it writes nothing and uses no
+/// destination.
+static LogicalResult verifyNoWrites(TraversePairsOp op, Region &region) {
+  WalkResult result = region.walk([&](Operation *nested) {
     for (Value operand : nested->getOperands())
-      if (viewsAnyOf(getOuts(), operand)) {
+      if (viewsAnyOf(op.getOuts(), operand)) {
         nested->emitOpError()
             << "uses a destination of 'md_alg.traverse_pairs' in its region, "
                "which reads or writes it outside the combination";
@@ -892,6 +962,50 @@ LogicalResult TraversePairsOp::verifyRegions() {
     return WalkResult::advance();
   });
   return failure(result.wasInterrupted());
+}
+
+LogicalResult TraversePairsOp::verifyRegions() {
+  if (auto units = dyn_cast<mdir::mdrt::SegmentedPairsType>(getListType())) {
+    // V2 to V7 of D[md-alg-segments], then V8: D415's rules over each.
+    mdir::mdrt::SegmentSignature signature;
+    for (Value buffer : getIns())
+      signature.fields.push_back(getElementTypeOrSelf(buffer.getType()));
+    for (Value out : getOuts()) {
+      auto type = cast<MemRefType>(out.getType());
+      Type element = type.getElementType();
+      signature.values.push_back(
+          type.getRank() == 1 ? element
+                              : VectorType::get({type.getDimSize(1)}, element));
+    }
+    for (Value value : getReduce())
+      signature.values.push_back(value.getType());
+    signature.terminator = YieldOp::getOperationName();
+    if (failed(mdir::mdrt::verifySegmentRegions(
+            getOperation(), units, getSegmentsAttr(), getSitesAttr(),
+            getSegmentKernels(), signature)))
+      return failure();
+    for (Region &region : getSegmentKernels())
+      if (failed(verifyNoWrites(*this, region)))
+        return failure();
+    return success();
+  }
+  Block &block = getKernel().front();
+  unsigned expected = 2 + 2 * getIns().size();
+  if (block.getNumArguments() != expected)
+    return emitOpError() << "takes a region of " << expected
+                         << " arguments: r^2, the displacement, and two "
+                            "values for each buffer of 'ins'";
+  auto yield = block.empty() ? YieldOp() : dyn_cast<YieldOp>(block.back());
+  if (!yield)
+    return emitOpError() << "ends its region in 'md_alg.yield'";
+  unsigned values = getOuts().size() + getReduce().size();
+  if (yield.getValues().size() != values)
+    return emitOpError() << "yields " << yield.getValues().size()
+                         << " values, not one per destination and sum ("
+                         << values << ")";
+  // The region writes nothing: every write is the op's, through its
+  // combination. It uses no destination, nor a view of one.
+  return verifyNoWrites(*this, getKernel());
 }
 
 void TraversePairsOp::getEffects(

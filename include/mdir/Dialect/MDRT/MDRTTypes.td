@@ -91,6 +91,65 @@ def MDRT_NeighborsType : MDRT_Type<"Neighbors", "neighbors"> {
   let genVerifyDecl = 1;
 }
 
+def MDRT_SegmentedPairsType : MDRT_Type<"SegmentedPairs", "segmented_pairs"> {
+  let summary = "A neighbor structure over units, in the segments of rigid "
+                "kinds (D[md-alg-segments])";
+  let description = [{
+    A list over units: the copies of `K` rigid kinds of D403, and the rest
+    of the particles, kind `K`, one unit each. Segment
+    `s(f, g) = f(f+1)/2 + g`, `g <= f <= K`, holds the pairs of a unit of
+    kind `f` with a unit of kind `g` (rule R3 of D405). All the segments are
+    in one structure, and one refresh renews them together.
+
+    The type states the taken kinds, each a `#md.rigid_kind` (its frame,
+    its sites, their weights, and the radius about the anchor that covers a
+    copy), and one contract of D413 for each segment, in the order of `s`.
+    The cutoff, the skin, the reaches, and the radius of the anchors of the
+    rest are facts of the build, not of the type (D357).
+
+    ```mlir
+    !mdrt.segmented_pairs<@atoms,
+        kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [],
+                              extent = 0.1>],
+        segments [(0, 0) unique, minimum, removed, grouped_by(group),
+                  (1, 0) unique, minimum, removed, grouped_by(group),
+                  (1, 1) unique, minimum, removed, grouped_by(group)]>
+    ```
+
+    With no kind, `kinds []`, the one segment `(0, 0)` holds pairs of
+    particles, as a structure of groups does.
+  }];
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$particleSet,
+    "::mlir::ArrayAttr":$kinds,
+    ArrayRefParameter<"::mdir::mdrt::NeighborsContract">:$segments
+  );
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// The number of taken kinds, K.
+    unsigned getNumKinds() const { return getKinds().size(); }
+    /// The number of segments, (K+1)(K+2)/2.
+    unsigned getNumSegments() const {
+      unsigned k = getNumKinds();
+      return (k + 1) * (k + 2) / 2;
+    }
+    /// The index of segment (f, g), g <= f.
+    static unsigned getSegmentIndex(unsigned f, unsigned g) {
+      return f * (f + 1) / 2 + g;
+    }
+    /// The kind of a taken kind `f < K`; null for the rest.
+    ::mdir::md::RigidKindAttr getKind(unsigned f) const;
+    /// The members (frame atoms) and places (frame atoms and sites) of a
+    /// unit of kind `f`: 1 and 1 for the rest.
+    unsigned getNumMembers(unsigned f) const;
+    unsigned getNumPlaces(unsigned f) const;
+    /// The weights of place `p` of kind `f` over its members, in frame
+    /// order: a unit vector for a frame atom, the site's weights for a site.
+    ::llvm::SmallVector<double> getPlaceWeights(unsigned f, unsigned p) const;
+  }];
+}
+
 def MDRT_IncidenceType : MDRT_Type<"Incidence", "incidence"> {
   let summary = "For every particle, the tuples that it is a member of";
   let description = [{

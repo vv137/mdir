@@ -53,6 +53,70 @@ private:
     for (md_exec::PairForOp loop : loops)
       if (failed(convert(loop)))
         return failure();
+    SmallVector<md_exec::SegmentForOp> segmented;
+    function.walk(
+        [&](md_exec::SegmentForOp loop) { segmented.push_back(loop); });
+    for (md_exec::SegmentForOp loop : segmented)
+      if (failed(convert(loop)))
+        return failure();
+    return success();
+  }
+
+  /// A loop over a list of units: the regions of its segments move as they
+  /// are, each pair once, added at both ends (D[md-alg-segments]).
+  LogicalResult convert(md_exec::SegmentForOp loop) {
+    if (!loop.isStorageForm())
+      return loop.emitOpError()
+             << "is not in the storage form; run 'md-exec-assign-storage' "
+                "first";
+    std::optional<SmallVector<md_exec::Algebra>> algebras =
+        md_exec::algebra::getAlgebras(loop);
+    if (!algebras)
+      return loop.emitOpError() << md_exec::algebra::getMissingMessage();
+    OpBuilder builder(loop);
+    SmallVector<Attribute> algebra, exchange;
+    bool ordered = false;
+    for (md_exec::Algebra value : *algebras) {
+      algebra.push_back(builder.getStringAttr(md_exec::stringifyAlgebra(value)));
+      ordered |= value == md_exec::Algebra::FixedOrder;
+    }
+    unsigned values = loop.getOuts().size() + loop.getReduce().size();
+    for (unsigned i = 0; i != values; ++i)
+      exchange.push_back(
+          builder.getStringAttr(md::stringifyExchange(loop.getExchange(i))));
+    auto refresh =
+        loop.getList().getDefiningOp<md_exec::RefreshSegmentedPairsOp>();
+    bool inner = refresh && refresh.getPruneSkin().convertToDouble() <
+                                refresh.getSkin().convertToDouble();
+    MLIRContext *context = loop.getContext();
+    unsigned regions = loop.getKernels().size();
+    auto op = md_alg::TraversePairsOp::create(
+        builder, loop.getLoc(), loop->getResultTypes(), loop.getList(),
+        inner ? builder.getUnitAttr() : UnitAttr(), /*lists=*/ValueRange(),
+        /*sizes=*/ValueRange(), /*contract=*/TypeAttr(), /*reach=*/FloatAttr(),
+        loop.getPositions(), loop.getCellMutable().get(), loop.getIns(),
+        loop.getOuts(), loop.getReduce(), loop.getScratch(),
+        md_alg::MultiplicityAttr::get(context, md_alg::Multiplicity::Unique),
+        md_alg::VisitAttr::get(context, ordered ? md_alg::Visit::Stable
+                                                : md_alg::Visit::Unordered),
+        md_alg::CombineAttr::get(context, md_alg::Combine::Atomic),
+        builder.getArrayAttr(algebra), builder.getArrayAttr(exchange),
+        loop.getCutoffAttr(), loop.getWeightsAttr(), loop.getOverwriteAttr(),
+        /*scatter=*/Attribute(), /*frames=*/UnitAttr(),
+        /*pruneGroups=*/IntegerAttr(), /*pruneReach=*/FloatAttr(),
+        loop.getSegmentsAttr(), loop.getSitesAttr(), /*rotate=*/IntegerAttr(),
+        regions);
+    for (unsigned index = 0; index != regions; ++index) {
+      Region &region = op.getSegmentKernels()[index];
+      region.takeBody(loop.getKernels()[index]);
+      Operation *terminator = region.front().getTerminator();
+      OpBuilder end(terminator);
+      md_alg::YieldOp::create(end, terminator->getLoc(),
+                              terminator->getOperands());
+      terminator->erase();
+    }
+    loop->replaceAllUsesWith(op->getResults());
+    loop->erase();
     return success();
   }
 
@@ -100,7 +164,9 @@ private:
         builder.getArrayAttr(algebra), builder.getArrayAttr(exchange),
         loop.getCutoffAttr(), loop.getWeightsAttr(), loop.getOverwriteAttr(),
         loop.getScatterAttr(), /*frames=*/UnitAttr(),
-        /*pruneGroups=*/IntegerAttr(), /*pruneReach=*/FloatAttr());
+        /*pruneGroups=*/IntegerAttr(), /*pruneReach=*/FloatAttr(),
+        /*segments=*/ArrayAttr(), /*sites=*/ArrayAttr(),
+        /*rotate=*/IntegerAttr(), /*segmentKernelsCount=*/0);
     // The region moves as it is, its terminator made md_alg's.
     op.getKernel().takeBody(loop.getKernel());
     Block &body = op.getKernel().front();

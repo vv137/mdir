@@ -8,6 +8,7 @@ add_mlir_dialect_library(MDIRMDExec
   NeighborContract.cpp
   NeighborCoverage.cpp
   ProfileMap.cpp
+  SegmentedPairs.cpp
   Scatter.cpp
   StorageLiveness.cpp
   StorageSet.cpp

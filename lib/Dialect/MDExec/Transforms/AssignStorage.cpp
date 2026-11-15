@@ -158,6 +158,10 @@ private:
                                    unsigned position);
   LogicalResult convertPairFor(PairForOp op, Scope &scope,
                                unsigned position);
+  /// The lists of units and the loops over them (D[md-alg-segments]).
+  LogicalResult convertSegmentedList(Operation *op, Scope &scope);
+  LogicalResult convertSegmentFor(SegmentForOp op, Scope &scope,
+                                  unsigned position);
   LogicalResult convertTupleFor(TupleForOp op, Scope &scope,
                                 unsigned position);
   LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
@@ -968,6 +972,152 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
   for (Value buffer : scratch)
     scope.release(buffer);
 
+  unsigned numOuts = outs.size();
+  for (unsigned i = 0; i != numOuts; ++i) {
+    buffers[op.getResult(i)] = outs[i];
+    scope.owned.insert(outs[i]);
+  }
+  for (unsigned i = numOuts, e = op.getNumResults(); i != e; ++i)
+    mapping.map(op.getResult(i), loop.getResult(i - numOuts));
+  return success();
+}
+
+/// The membership of a list of units, its kinds, exclusions, and anchors,
+/// as the buffers of their members.
+LogicalResult Assignment::convertSegmentedList(Operation *op, Scope &scope) {
+  OpBuilder &builder = scope.builder;
+  auto members = [&](ValueRange relations, SmallVectorImpl<Value> &buffers)
+      -> LogicalResult {
+    for (Value relation : relations) {
+      Value buffer = mapping.lookupOrNull(relation);
+      if (!buffer)
+        return op->emitOpError() << "takes a relation that has no buffer of "
+                                    "members";
+      buffers.push_back(buffer);
+    }
+    return success();
+  };
+  auto optional = [&](Value relation, Value &buffer) -> LogicalResult {
+    if (!relation)
+      return success();
+    SmallVector<Value, 1> found;
+    if (failed(members(relation, found)))
+      return failure();
+    buffer = found.front();
+    return success();
+  };
+  if (auto refresh = dyn_cast<RefreshSegmentedPairsOp>(op)) {
+    Value positions;
+    if (failed(getBuffer(refresh.getPositions(), scope, positions)))
+      return failure();
+    Value list = mapping.lookupOrNull(refresh.getList());
+    if (!list)
+      return op->emitOpError() << "refreshes a list that has no storage";
+    auto next = RefreshSegmentedPairsOp::create(
+        builder, op->getLoc(), refresh.getResult().getType(), list, positions,
+        mapping.lookup(refresh.getCell()), refresh.getCutoffAttr(),
+        refresh.getSkinAttr(), refresh.getPruneSkinAttr());
+    mapping.map(refresh.getResult(), next.getResult());
+    return success();
+  }
+  auto list = [&](auto source) -> LogicalResult {
+    Value universe, excluded, anchored;
+    SmallVector<Value> kinds;
+    if (failed(getBuffer(source.getUniverse(), scope, universe)) ||
+        failed(members(source.getKinds(), kinds)) ||
+        failed(optional(source.getExcluded(), excluded)) ||
+        failed(optional(source.getAnchored(), anchored)))
+      return failure();
+    Value result;
+    if constexpr (std::is_same_v<decltype(source), BuildSegmentedPairsOp>) {
+      Value positions;
+      if (failed(getBuffer(source.getPositions(), scope, positions)))
+        return failure();
+      result = BuildSegmentedPairsOp::create(
+          builder, op->getLoc(), source.getResult().getType(), universe,
+          kinds, excluded, anchored, positions,
+          mapping.lookup(source.getCell()), source.getCutoffAttr(),
+          source.getSkinAttr(), source.getRadiusAttr());
+    } else {
+      result = EmptySegmentedPairsOp::create(
+          builder, op->getLoc(), source.getResult().getType(), universe,
+          kinds, excluded, anchored, source.getCutoffAttr(),
+          source.getSkinAttr(), source.getRadiusAttr());
+    }
+    mapping.map(source.getResult(), result);
+    return success();
+  };
+  if (auto build = dyn_cast<BuildSegmentedPairsOp>(op))
+    return list(build);
+  return list(cast<EmptySegmentedPairsOp>(op));
+}
+
+LogicalResult Assignment::convertSegmentFor(SegmentForOp op, Scope &scope,
+                                            unsigned position) {
+  Value list = mapping.lookupOrNull(op.getList());
+  if (!list)
+    return op.emitOpError() << "the list of units has no storage";
+  Value positions;
+  if (failed(getBuffer(op.getPositions(), scope, positions)))
+    return failure();
+  SmallVector<Value> ins;
+  for (Value field : op.getIns()) {
+    Value buffer;
+    if (failed(getBuffer(field, scope, buffer)))
+      return failure();
+    ins.push_back(buffer);
+  }
+  SmallVector<Value> readFields(op.getIns().begin(), op.getIns().end());
+  readFields.push_back(op.getPositions());
+  // The loop adds at both ends of each pair, so it does not write every
+  // value of a destination once: it adds to a buffer that holds the
+  // destination, zeros included (as pair_for under (unique, atomic)).
+  SmallVector<Value> outs;
+  for (Value destination : op.getOuts()) {
+    Value buffer;
+    bool accumulates;
+    if (failed(chooseDestination(op, destination, readFields,
+                                 /*inPlace=*/false, scope, position, buffer,
+                                 accumulates)))
+      return failure();
+    if (!accumulates)
+      fillZeros(scope.builder, op.getLoc(), buffer,
+                cast<md::FieldType>(destination.getType()));
+    outs.push_back(buffer);
+  }
+  SmallVector<Value> reduce;
+  SmallVector<Type> resultTypes;
+  for (Value value : op.getReduce()) {
+    reduce.push_back(mapping.lookup(value));
+    resultTypes.push_back(value.getType());
+  }
+  SmallVector<Value> scratch;
+  if (failed(getScratch(op, resultTypes, op.getPositions().getType(), scope,
+                        scratch)))
+    return failure();
+  OpBuilder &builder = scope.builder;
+  unsigned regions = op.getKernels().size();
+  auto loop = SegmentForOp::create(
+      builder, op.getLoc(), resultTypes, list, positions,
+      mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
+      op.getCutoffAttr(), op.getWeightsAttr(), op.getExchangeAttr(),
+      /*overwrite=*/DenseBoolArrayAttr(), op.getSegmentsAttr(),
+      op.getSitesAttr(), regions);
+  algebra::carry(op, loop);
+  for (unsigned index = 0; index != regions; ++index) {
+    Block &source = op.getKernels()[index].front();
+    Block *block = new Block();
+    loop.getKernels()[index].push_back(block);
+    IRMapping local = mapping;
+    for (BlockArgument argument : source.getArguments())
+      local.map(argument,
+                block->addArgument(argument.getType(), argument.getLoc()));
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    for (Operation &nested : source)
+      kernel.clone(nested, local);
+  }
+  for (Value buffer : scratch)
+    scope.release(buffer);
   unsigned numOuts = outs.size();
   for (unsigned i = 0; i != numOuts; ++i) {
     buffers[op.getResult(i)] = outs[i];
@@ -2245,6 +2395,11 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertPairFor(loop, scope, position);
   if (auto loop = dyn_cast<TupleForOp>(op))
     return convertTupleFor(loop, scope, position);
+  if (isa<BuildSegmentedPairsOp, EmptySegmentedPairsOp,
+          RefreshSegmentedPairsOp>(op))
+    return convertSegmentedList(op, scope);
+  if (auto loop = dyn_cast<SegmentForOp>(op))
+    return convertSegmentFor(loop, scope, position);
   if (auto build = dyn_cast<BuildIncidenceOp>(op))
     return convertBuildIncidence(build, scope);
   if (auto triplets = dyn_cast<BuildTripletsOp>(op))

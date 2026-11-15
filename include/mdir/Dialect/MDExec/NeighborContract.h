@@ -12,6 +12,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/NeighborsContract.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
 
 namespace mdir {
 namespace md_exec {
@@ -55,7 +56,25 @@ mlir::LogicalResult verifyRequirement(mlir::Operation *op,
                                       mlir::Value neighbors,
                                       const mdrt::NeighborsContract &required);
 
-/// Refuses on `op` a result type that states more than `guaranteed`.
+/// What a build of a list of units guarantees for each of its segments
+/// (D[md-alg-segments]): `unique, minimum, removed, grouped_by(group)`.
+mdrt::NeighborsContract getSegmentGuarantee();
+
+/// The type of a list of units on `particleSet` over the taken `kinds`,
+/// with that guarantee for every segment.
+mdrt::SegmentedPairsType getSegmentedBuildType(mlir::FlatSymbolRefAttr particleSet,
+                                               mlir::ArrayAttr kinds);
+
+/// What a loop over a list of units requires of each segment it visits:
+/// each pair once, the minimum image, no excluded pair, and, where a value
+/// states `fixed_order`, `stable(group, search)`.
+mdrt::NeighborsContract getSegmentRequirement(mlir::Operation *loop);
+
+/// What the regions of `loop` take and yield.
+mdrt::SegmentSignature getSegmentSignature(SegmentForOp loop);
+
+/// Refuses on `op` a result type that states more than `guaranteed`; for
+/// a list of units, in any of its segments.
 mlir::LogicalResult verifyGuarantee(mlir::Operation *op, mlir::Type result,
                                     const mdrt::NeighborsContract &guaranteed);
 

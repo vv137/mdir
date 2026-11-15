@@ -22,7 +22,8 @@ static Type getElement(Type type) {
 }
 
 bool algebra::reduces(Operation *op) {
-  return isa<ParticleForOp, PairForOp, TupleForOp, ScatterAddOp, ReciprocalOp,
+  return isa<ParticleForOp, PairForOp, TupleForOp, SegmentForOp, ScatterAddOp,
+             ReciprocalOp,
              md_dist::AllReduceOp, md_dist::HaloSumOp>(op);
 }
 
@@ -48,6 +49,10 @@ SmallVector<Type> algebra::getReducedTypes(Operation *op) {
         add(loop.getReduce());
       })
       .Case([&](TupleForOp loop) {
+        add(loop.getOuts());
+        add(loop.getReduce());
+      })
+      .Case([&](SegmentForOp loop) {
         add(loop.getOuts());
         add(loop.getReduce());
       })
@@ -122,6 +127,9 @@ algebra::getDestinationAlgebras(Operation *op) {
   unsigned count = llvm::TypeSwitch<Operation *, unsigned>(op)
                        .Case([](PairForOp loop) { return loop.getOuts().size(); })
                        .Case([](TupleForOp loop) {
+                         return loop.getOuts().size();
+                       })
+                       .Case([](SegmentForOp loop) {
                          return loop.getOuts().size();
                        })
                        .Case([](ScatterAddOp) { return 1u; })

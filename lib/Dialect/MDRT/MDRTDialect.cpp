@@ -432,51 +432,56 @@ static ParseResult parseWord(AsmParser &parser, StringRef axis,
   return diagnostic << ", got '" << word << "'";
 }
 
-Type NeighborsType::parse(AsmParser &parser) {
+/// Parses the four words of a contract of D413, after the comma that
+/// precedes them.
+static ParseResult parseContract(AsmParser &parser,
+                                 NeighborsContract &contract) {
   using Contract = NeighborsContract;
+  unsigned traversal, images, exclusions, organization;
+  if (parseWord(parser, "traversal", {"directed", "unique"}, traversal) ||
+      parser.parseComma() ||
+      parseWord(parser, "images", {"minimum", "explicit"}, images) ||
+      parser.parseComma() ||
+      parseWord(parser, "exclusions", {"masked", "removed"}, exclusions) ||
+      parser.parseComma() ||
+      parseWord(parser, "organization",
+                {"none", "grouped_by", "sorted_within", "stable"},
+                organization))
+    return failure();
+  contract.traversal = static_cast<Contract::Traversal>(traversal);
+  contract.images = static_cast<Contract::Images>(images);
+  contract.exclusions = static_cast<Contract::Exclusions>(exclusions);
+  auto kind = static_cast<Contract::Organization>(organization);
+  unsigned group = 0, order = 0;
+  if (kind != Contract::Organization::None) {
+    if (parser.parseLParen() ||
+        parseWord(parser, "group", {"owner", "group"}, group))
+      return failure();
+    ++group;
+    if (kind != Contract::Organization::GroupedBy &&
+        (parser.parseComma() ||
+         parseWord(parser, "key", {"item", "search"}, order)))
+      return failure();
+    if (kind != Contract::Organization::GroupedBy)
+      ++order;
+    if (parser.parseRParen())
+      return failure();
+  }
+  contract = Contract::withOrganization(contract, kind,
+                                        static_cast<Contract::Group>(group),
+                                        static_cast<Contract::Order>(order));
+  return success();
+}
+
+Type NeighborsType::parse(AsmParser &parser) {
   FlatSymbolRefAttr particleSet;
   if (parser.parseLess() || parser.parseAttribute(particleSet))
     return Type();
   // The guarantee is always spelled (the maintainer's ruling 1 on #882): a
   // bare type would claim one silently.
-  Contract contract;
-  {
-    unsigned traversal, images, exclusions, organization;
-    if (parser.parseComma() ||
-        parseWord(parser, "traversal", {"directed", "unique"}, traversal) ||
-        parser.parseComma() ||
-        parseWord(parser, "images", {"minimum", "explicit"}, images) ||
-        parser.parseComma() ||
-        parseWord(parser, "exclusions", {"masked", "removed"}, exclusions) ||
-        parser.parseComma() ||
-        parseWord(parser, "organization",
-                  {"none", "grouped_by", "sorted_within", "stable"},
-                  organization))
-      return Type();
-    contract.traversal = static_cast<Contract::Traversal>(traversal);
-    contract.images = static_cast<Contract::Images>(images);
-    contract.exclusions = static_cast<Contract::Exclusions>(exclusions);
-    auto kind = static_cast<Contract::Organization>(organization);
-    unsigned group = 0, order = 0;
-    if (kind != Contract::Organization::None) {
-      if (parser.parseLParen() ||
-          parseWord(parser, "group", {"owner", "group"}, group))
-        return Type();
-      ++group;
-      if (kind != Contract::Organization::GroupedBy &&
-          (parser.parseComma() ||
-           parseWord(parser, "key", {"item", "search"}, order)))
-        return Type();
-      if (kind != Contract::Organization::GroupedBy)
-        ++order;
-      if (parser.parseRParen())
-        return Type();
-    }
-    contract = Contract::withOrganization(
-        contract, kind, static_cast<Contract::Group>(group),
-        static_cast<Contract::Order>(order));
-  }
-  if (parser.parseGreater())
+  NeighborsContract contract;
+  if (parser.parseComma() || parseContract(parser, contract) ||
+      parser.parseGreater())
     return Type();
   return parser.getChecked<NeighborsType>(parser.getContext(), particleSet,
                                           contract);
@@ -500,4 +505,117 @@ NeighborsType::verify(function_ref<InFlightDiagnostic()> emitError,
     return emitError() << "expected a normalized organization, got '"
                        << contract.str() << "'";
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// SegmentedPairsType (D[md-alg-segments])
+//===----------------------------------------------------------------------===//
+
+Type SegmentedPairsType::parse(AsmParser &parser) {
+  FlatSymbolRefAttr particleSet;
+  ArrayAttr kinds;
+  if (parser.parseLess() || parser.parseAttribute(particleSet) ||
+      parser.parseComma() || parser.parseKeyword("kinds") ||
+      parser.parseAttribute(kinds) || parser.parseComma() ||
+      parser.parseKeyword("segments") || parser.parseLSquare())
+    return Type();
+  // Each segment is named by its kinds, (f, g), in the order of s(f, g),
+  // and then its contract.
+  SmallVector<NeighborsContract> segments;
+  unsigned expected = 0;
+  auto parseSegment = [&]() -> ParseResult {
+    SMLoc loc = parser.getCurrentLocation();
+    unsigned f, g;
+    if (parser.parseLParen() || parser.parseInteger(f) ||
+        parser.parseComma() || parser.parseInteger(g) || parser.parseRParen())
+      return failure();
+    if (g > f || getSegmentIndex(f, g) != expected)
+      return parser.emitError(loc)
+             << "expected segment " << expected
+             << " in the order of s(f, g) = f(f+1)/2 + g, got (" << f << ", "
+             << g << ")";
+    ++expected;
+    NeighborsContract contract;
+    if (parseContract(parser, contract))
+      return failure();
+    segments.push_back(contract);
+    return success();
+  };
+  if (parser.parseCommaSeparatedList(parseSegment) || parser.parseRSquare() ||
+      parser.parseGreater())
+    return Type();
+  return parser.getChecked<SegmentedPairsType>(parser.getContext(),
+                                               particleSet, kinds, segments);
+}
+
+void SegmentedPairsType::print(AsmPrinter &printer) const {
+  printer << "<";
+  printer.printAttributeWithoutType(getParticleSet());
+  printer << ", kinds ";
+  printer.printAttribute(getKinds());
+  printer << ", segments [";
+  unsigned s = 0;
+  for (unsigned f = 0; f <= getNumKinds(); ++f)
+    for (unsigned g = 0; g <= f; ++g, ++s) {
+      if (s)
+        printer << ", ";
+      printer << "(" << f << ", " << g << ") ";
+      getSegments()[s].print(printer.getStream());
+    }
+  printer << "]>";
+}
+
+LogicalResult SegmentedPairsType::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr particleSet,
+    ArrayAttr kinds, ArrayRef<NeighborsContract> segments) {
+  if (!particleSet)
+    return emitError() << "expected the particle set of the structure";
+  if (!kinds)
+    return emitError() << "expected the taken kinds";
+  for (Attribute kind : kinds)
+    if (!isa<mdir::md::RigidKindAttr>(kind))
+      return emitError() << "expected each taken kind to be a "
+                            "'#md.rigid_kind', got "
+                         << kind;
+  unsigned k = kinds.size();
+  if (segments.size() != (k + 1) * (k + 2) / 2)
+    return emitError() << "expected " << (k + 1) * (k + 2) / 2
+                       << " segments for " << k << " taken kinds, got "
+                       << segments.size();
+  for (const NeighborsContract &contract : segments)
+    if (!contract.isNormalized())
+      return emitError() << "expected a normalized organization, got '"
+                         << contract.str() << "'";
+  return success();
+}
+
+mdir::md::RigidKindAttr SegmentedPairsType::getKind(unsigned f) const {
+  if (f >= getNumKinds())
+    return mdir::md::RigidKindAttr();
+  return cast<mdir::md::RigidKindAttr>(getKinds()[f]);
+}
+
+unsigned SegmentedPairsType::getNumMembers(unsigned f) const {
+  mdir::md::RigidKindAttr kind = getKind(f);
+  return kind ? kind.getFrame().size() : 1;
+}
+
+unsigned SegmentedPairsType::getNumPlaces(unsigned f) const {
+  mdir::md::RigidKindAttr kind = getKind(f);
+  return kind ? kind.getSize() : 1;
+}
+
+SmallVector<double> SegmentedPairsType::getPlaceWeights(unsigned f,
+                                                        unsigned p) const {
+  mdir::md::RigidKindAttr kind = getKind(f);
+  if (!kind)
+    return {1.0};
+  unsigned m = kind.getFrame().size();
+  SmallVector<double> weights(m, 0.0);
+  if (std::optional<unsigned> index = kind.getFrameIndex(p)) {
+    weights[*index] = 1.0;
+    return weights;
+  }
+  llvm::copy(kind.getSiteWeights(p), weights.begin());
+  return weights;
 }

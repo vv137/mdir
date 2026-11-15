@@ -9,6 +9,12 @@
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDSegmentWindow.h"
+#include "mlir/IR/Matchers.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
+#include "mdir/Dialect/MDExec/NeighborContract.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/NeighborContract.h"
@@ -48,6 +54,8 @@ private:
   LogicalResult convertKick(dyn::KickOp op);
   LogicalResult convertTriplets(md::TripletsOp op);
   LogicalResult convertEdges(md::EdgesOp op);
+  template <typename OpTy>
+  LogicalResult convertSegmentWindow(OpTy op, bool gather);
 
   /// The incidence structure of `relation`, a relation of a tuple set or
   /// of triplets. It is built once, where the relation is defined.
@@ -96,6 +104,14 @@ private:
   /// The incidence structure that was built for a relation of a tuple set.
   llvm::DenseMap<Value, Value> incidences;
   SmallVector<Operation *> converted;
+  /// The list of units built for the segments of an md.kind_pairs at
+  /// positions, a cell, and a cutoff (D[md-alg-segments]).
+  struct SegmentList {
+    Value positions, cell;
+    double cutoff;
+    Value list;
+  };
+  llvm::DenseMap<Operation *, SmallVector<SegmentList, 1>> segmentLists;
 };
 
 } // namespace
@@ -240,6 +256,179 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
   for (unsigned i = 1, e = source.getNumArguments(); i != e; ++i)
     mapping.map(source.getArgument(i), target->getArgument(i));
   copyKernel(source, target, mapping);
+
+  op->replaceAllUsesWith(loop->getResults());
+  converted.push_back(op);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// The segments of rigid kinds (D405, D[md-alg-segments])
+//===----------------------------------------------------------------------===//
+
+/// Whether `value` is a constant zero vector.
+static bool isZeroVector(Value value) {
+  DenseFPElementsAttr zero;
+  return matchPattern(value, m_Constant(&zero)) && zero.isSplat() &&
+         zero.getSplatValue<APFloat>().isZero();
+}
+
+/// A window of a segment becomes a loop over the list of units with one
+/// region, whose slices are the window's site pairs. The window's verifier
+/// proved each yielded displacement to be d_0 + c_p - c_q: the pair (p, q)
+/// goes into the table, the displacement becomes an argument of the region,
+/// and the arithmetic of the placement, which the loop owns by the kinds'
+/// weights, is left behind. A slice that reads the window's geometry other
+/// than through its displacement is refused.
+template <typename OpTy>
+LogicalResult Converter::convertSegmentWindow(OpTy op, bool gather) {
+  auto pairs = op.getRelation().template getDefiningOp<md::KindPairsOp>();
+  if (!pairs)
+    return op.emitOpError() << "expected a segment of 'md.kind_pairs'";
+  Location loc = op.getLoc();
+  MLIRContext *context = builder.getContext();
+  double cutoff = op.getCutoff().convertToDouble();
+  unsigned f = op.getF(), g = op.getG();
+  md::SegmentShape shape = md::getSegmentShape(op.getOperation());
+  Block &body = op.getKernel().front();
+  Operation *terminator = body.getTerminator();
+  unsigned coordinates = shape.getNumCoordinates();
+  bool siteForces = gather && op.getSiteForces();
+  unsigned slots = gather ? shape.getNumSlots(siteForces) : 1;
+  unsigned M = terminator->getNumOperands() / (slots + 1);
+
+  // The list of the segments, built once for each md.kind_pairs, positions,
+  // cell, and cutoff.
+  builder.setInsertionPoint(op);
+  Value list;
+  for (const SegmentList &known : segmentLists[pairs])
+    if (known.positions == op.getPositions() && known.cell == op.getCell() &&
+        known.cutoff == cutoff)
+      list = known.list;
+  if (!list) {
+    auto set = cast<md::RelationType>(op.getRelation().getType())
+                   .getParticleSet();
+    mdrt::SegmentedPairsType type =
+        md_exec::getSegmentedBuildType(set, pairs.getDescriptors());
+    list = md_exec::BuildSegmentedPairsOp::create(
+        builder, loc, type, pairs.getUniverse(), pairs.getKinds(),
+        pairs.getExcluded(), pairs.getAnchored(), op.getPositions(),
+        op.getCell(), builder.getF64FloatAttr(cutoff),
+        builder.getF64FloatAttr(skin), pairs.getRadiusAttr());
+    segmentLists[pairs].push_back(
+        {op.getPositions(), op.getCell(), cutoff, list});
+  }
+
+  // The table of site pairs, and the value of each slice.
+  SmallVector<mdrt::SitePair> table;
+  SmallVector<Value> sliceValues, displacements;
+  unsigned sizeA = shape.a.getSize(), membersA = shape.a.getFrameSize();
+  for (unsigned m = 0; m != M; ++m) {
+    Value displacement = terminator->getOperand(M * slots + m);
+    std::optional<std::array<unsigned, 2>> places =
+        md::getSegmentWindowSites(displacement, body, shape);
+    if (!places)
+      return op.emitOpError() << "yields a displacement that is not of the "
+                                 "form d_0 + c_p - c_q";
+    unsigned p = (*places)[0], q = (*places)[1] - sizeA;
+    table.push_back({p, q, {0}});
+    displacements.push_back(displacement);
+    if (!gather) {
+      sliceValues.push_back(terminator->getOperand(m));
+      continue;
+    }
+    // A force of a site pair is one antisymmetric pair of slots: +F at
+    // place p and -F at place q, every other slot zero.
+    // Without site forces the slots are the frame atoms, in frame order.
+    auto frameIndex = [](const md::SegmentSide &side, unsigned place) {
+      return side.kind ? *side.kind.getFrameIndex(place) : 0u;
+    };
+    unsigned own = siteForces ? p : frameIndex(shape.a, p);
+    unsigned partner =
+        siteForces ? sizeA + q : membersA + frameIndex(shape.b, q);
+    ValueRange forces = terminator->getOperands().slice(m * slots, slots);
+    auto negation = forces[partner].getDefiningOp<arith::NegFOp>();
+    bool pairwise = negation && negation.getOperand() == forces[own];
+    for (unsigned slot = 0; slot != slots && pairwise; ++slot)
+      if (slot != own && slot != partner)
+        pairwise = isZeroVector(forces[slot]);
+    if (!pairwise)
+      return op.emitOpError()
+             << "yields forces of the site pair (" << p << ", " << q
+             << ") that are not +F at its first place and -F at its second: "
+                "the loop over units takes the radial forces of a pair term";
+    sliceValues.push_back(forces[own]);
+  }
+
+  // The slices, cloned in the order of the body, each with its displacement
+  // as an argument.
+  SmallVector<Value> outs, reduce;
+  SmallVector<Type> resultTypes = {op.getResult().getType()};
+  DenseF64ArrayAttr weights;
+  if (gather) {
+    outs.push_back(md_exec::ZerosOp::create(builder, loc, resultTypes[0]));
+  } else {
+    reduce.push_back(createZero(loc, resultTypes[0]));
+    weights = builder.getDenseF64ArrayAttr({0.5});
+  }
+  md::Exchange exchange =
+      gather ? md::Exchange::Antisymmetric : md::Exchange::Symmetric;
+  auto loop = md_exec::SegmentForOp::create(
+      builder, loc, resultTypes, list, op.getPositions(), op.getCell(),
+      op.getGathered(), outs, reduce, /*scratch=*/ValueRange(),
+      op.getCutoffAttr(), weights,
+      builder.getArrayAttr({md::ExchangeAttr::get(context, exchange)}),
+      /*overwrite=*/DenseBoolArrayAttr(),
+      builder.getArrayAttr({mdrt::getSegmentAttr(context, f, g)}),
+      builder.getArrayAttr({mdrt::getSitesAttr(context, table)}),
+      /*kernelsCount=*/1);
+  Block *target = new Block();
+  loop.getKernels()[0].push_back(target);
+  Type real = builder.getF64Type();
+  Type vector = VectorType::get({3}, real);
+  SmallVector<Value> distances;
+  for (unsigned m = 0; m != M; ++m) {
+    target->addArgument(real, loc);
+    distances.push_back(target->addArgument(vector, loc));
+  }
+  IRMapping mapping;
+  unsigned arity = shape.getArity();
+  for (unsigned i = 0, e = op.getGathered().size(); i != e; ++i)
+    for (unsigned k = 0; k != arity; ++k)
+      mapping.map(body.getArgument(coordinates + i * arity + k),
+                  target->addArgument(
+                      body.getArgument(coordinates + i * arity + k).getType(),
+                      loc));
+  for (unsigned m = 0; m != M; ++m)
+    mapping.map(displacements[m], distances[m]);
+  // The ops that the slices need, in the order of the body.
+  llvm::SetVector<Operation *> needed;
+  SmallVector<Value> work(sliceValues);
+  llvm::DenseSet<Value> leaves(displacements.begin(), displacements.end());
+  while (!work.empty()) {
+    Value value = work.pop_back_val();
+    if (leaves.contains(value))
+      continue;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      if (argument.getOwner() == &body && argument.getArgNumber() < coordinates)
+        return op.emitOpError()
+               << "has a site pair whose contribution reads the window's "
+                  "geometry other than through its displacement";
+      continue;
+    }
+    Operation *definition = value.getDefiningOp();
+    if (definition->getBlock() != &body || !needed.insert(definition))
+      continue;
+    llvm::append_range(work, definition->getOperands());
+  }
+  OpBuilder kernel = OpBuilder::atBlockEnd(target);
+  for (Operation &nested : body.without_terminator())
+    if (needed.contains(&nested))
+      kernel.clone(nested, mapping);
+  SmallVector<Value> yielded;
+  for (Value value : sliceValues)
+    yielded.push_back(mapping.lookupOrDefault(value));
+  md_exec::YieldOp::create(kernel, terminator->getLoc(), yielded);
 
   op->replaceAllUsesWith(loop->getResults());
   converted.push_back(op);
@@ -490,6 +679,14 @@ LogicalResult Converter::convert(Operation *op) {
     return convertTriplets(triplets);
   if (auto edges = dyn_cast<md::EdgesOp>(op))
     return convertEdges(edges);
+  if (isa<md::KindPairsOp>(op)) {
+    converted.push_back(op);
+    return success();
+  }
+  if (auto window = dyn_cast<md::SumSegmentWindowOp>(op))
+    return convertSegmentWindow(window, /*gather=*/false);
+  if (auto window = dyn_cast<md::GatherSegmentWindowOp>(op))
+    return convertSegmentWindow(window, /*gather=*/true);
 
   if (auto sum = dyn_cast<md::SumRelationOp>(op)) {
     if (sum.getTruncation() != md::Truncation::None)
