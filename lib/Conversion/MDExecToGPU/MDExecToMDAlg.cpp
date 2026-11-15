@@ -63,7 +63,7 @@ private:
   }
 
   /// A loop over a list of units: the regions of its segments move as they
-  /// are, each pair once, added at both ends (D[md-alg-segments]).
+  /// are, each pair once, added at both ends (D417).
   LogicalResult convert(md_exec::SegmentForOp loop) {
     if (!loop.isStorageForm())
       return loop.emitOpError()

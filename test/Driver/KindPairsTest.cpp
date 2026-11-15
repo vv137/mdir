@@ -12,7 +12,7 @@
 // prints a module of them; with --entry, of @energy and a function that
 // evaluates its energy, forces, and virial; with --func-entry that function
 // is a func.func, which the passes of md_exec take after md-inline
-// (D[md-alg-segments]). `refuse` prints the reason that
+// (D417). `refuse` prints the reason that
 // the plan is refused, or fails.
 #include "../../lib/Driver/KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"

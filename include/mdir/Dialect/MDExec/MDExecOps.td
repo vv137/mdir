@@ -547,7 +547,7 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
 }
 
 //===----------------------------------------------------------------------===//
-// Lists of units in the segments of rigid kinds (D[md-alg-segments])
+// Lists of units in the segments of rigid kinds (D417)
 //===----------------------------------------------------------------------===//
 
 class MDExec_SegmentedListOp<string mnemonic, list<Trait> traits = []>
@@ -565,7 +565,7 @@ class MDExec_SegmentedListOp<string mnemonic, list<Trait> traits = []>
     Segment `s(f, g)` is built with the reach
     `R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
     `radius` for the rest (0 without `anchor`), so that every pair of sites
-    within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+    within the cutoff has an entry (D417, Section 1). The list
     may hold more entries; the loops over it test the cutoff of each pair of
     sites. The type may state no more than the build guarantees, for every
     segment: `unique, minimum, removed, grouped_by(group)`.
@@ -686,7 +686,7 @@ def MDExec_SegmentForOp : MDExec_Op<"segment_for", [
     and the displacement `d`, then for each field of `ins` its value at the
     `m_f` members of `i` and the `m_g` members of `j`. It yields, site pair
     by site pair, the values of each mask in increasing order
-    (D[md-alg-segments], Section 4).
+    (D417, Section 4).
 
     ```mlir
     %f, %u = md_exec.segment_for %l, %x, %cell outs(%f0 : !md.field<@atoms, 3 x f64>)

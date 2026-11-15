@@ -1,5 +1,5 @@
 """The serial definition of md_alg.traverse_pairs over the segments of a
-list of units (D[md-alg-segments]) against the f64 oracle of D405.
+list of units (D417) against the f64 oracle of D405.
 
     segments_serial.py emit  SYSTEM.top SYSTEM.gro PROGRAM.mlir KINDS OUT.mlir [--periodic]
     segments_serial.py check SYSTEM.top SYSTEM.gro KINDS VALUES.txt

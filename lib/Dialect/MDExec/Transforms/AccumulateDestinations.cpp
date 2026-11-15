@@ -226,7 +226,7 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
     zeros->erase();
 }
 
-/// The same for a loop over a list of units (D[md-alg-segments]): each site
+/// The same for a loop over a list of units (D417): each site
 /// pair that yields to `from` yields to `into` instead, and one that yields
 /// to both yields their sum.
 static void mergeOuts(SegmentForOp loop, unsigned into, unsigned from) {

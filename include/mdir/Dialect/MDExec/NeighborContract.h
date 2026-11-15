@@ -57,7 +57,7 @@ mlir::LogicalResult verifyRequirement(mlir::Operation *op,
                                       const mdrt::NeighborsContract &required);
 
 /// What a build of a list of units guarantees for each of its segments
-/// (D[md-alg-segments]): `unique, minimum, removed, grouped_by(group)`.
+/// (D417): `unique, minimum, removed, grouped_by(group)`.
 mdrt::NeighborsContract getSegmentGuarantee();
 
 /// The type of a list of units on `particleSet` over the taken `kinds`,

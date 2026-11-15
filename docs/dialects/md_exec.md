@@ -339,7 +339,7 @@ candidates, and it keeps its own entries.
 Segment `s(f, g)` is built with the reach
 `R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
 `radius` for the rest (0 without `anchor`), so that every pair of sites
-within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+within the cutoff has an entry (D417, Section 1). The list
 may hold more entries; the loops over it test the cutoff of each pair of
 sites. The type may state no more than the build guarantees, for every
 segment: `unique, minimum, removed, grouped_by(group)`.
@@ -381,7 +381,7 @@ Effects: `MemoryEffects::Effect{}`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 
 
 
@@ -638,7 +638,7 @@ candidates, and it keeps its own entries.
 Segment `s(f, g)` is built with the reach
 `R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
 `radius` for the rest (0 without `anchor`), so that every pair of sites
-within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+within the cutoff has an entry (D417, Section 1). The list
 may hold more entries; the loops over it test the cutoff of each pair of
 sites. The type may state no more than the build guarantees, for every
 segment: `unique, minimum, removed, grouped_by(group)`.
@@ -678,7 +678,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 
 
 
@@ -1673,7 +1673,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `list` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `list` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
 
@@ -1681,7 +1681,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Result | Description |
 | :----: | ----------- |
-| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 
 
 
@@ -1868,7 +1868,7 @@ The region of a segment takes, for each of its `M` site pairs, `r^2`
 and the displacement `d`, then for each field of `ins` its value at the
 `m_f` members of `i` and the `m_g` members of `j`. It yields, site pair
 by site pair, the values of each mask in increasing order
-(D[md-alg-segments], Section 4).
+(D417, Section 4).
 
 ```mlir
 %f, %u = md_exec.segment_for %l, %x, %cell outs(%f0 : !md.field<@atoms, 3 x f64>)
@@ -1905,7 +1905,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `list` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `list` | A neighbor structure over units, in the segments of rigid kinds (D417) |
 | `positions` | A per-particle field or buffer of a field |
 | `cell` | A simulation cell |
 | `ins` | variadic of A per-particle field or buffer of a field |

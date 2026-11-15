@@ -1,5 +1,5 @@
 # The serial definition of md_alg.traverse_pairs over the segments of a
-# list of units (D[md-alg-segments], Section 6) against the f64 oracle of
+# list of units (D417, Section 6) against the f64 oracle of
 # D405 (Inputs/segments_serial.py, which states the bound of each
 # component). The system of four kinds of D405 (kind_pairs_mixture.py):
 # the generator writes the segment windows, md-differentiate their forces

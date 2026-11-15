@@ -1,4 +1,4 @@
-// The regions of the segments of a list of units (D[md-alg-segments]).
+// The regions of the segments of a list of units (D417).
 
 #include "mdir/Dialect/MDRT/SegmentRegions.h"
 

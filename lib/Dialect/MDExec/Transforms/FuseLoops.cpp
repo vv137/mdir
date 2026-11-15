@@ -832,7 +832,7 @@ static bool fuseOnce(Block &block) {
 }
 
 //===----------------------------------------------------------------------===//
-// Loops over a list of units (D[md-alg-segments])
+// Loops over a list of units (D417)
 //===----------------------------------------------------------------------===//
 
 static bool haveSameDomain(SegmentForOp a, SegmentForOp b) {

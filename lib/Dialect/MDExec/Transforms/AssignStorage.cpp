@@ -158,7 +158,7 @@ private:
                                    unsigned position);
   LogicalResult convertPairFor(PairForOp op, Scope &scope,
                                unsigned position);
-  /// The lists of units and the loops over them (D[md-alg-segments]).
+  /// The lists of units and the loops over them (D417).
   LogicalResult convertSegmentedList(Operation *op, Scope &scope);
   LogicalResult convertSegmentFor(SegmentForOp op, Scope &scope,
                                   unsigned position);

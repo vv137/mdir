@@ -1,5 +1,5 @@
 // The lists of units in the segments of rigid kinds, and the loop over them
-// (D[md-alg-segments]).
+// (D417).
 
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"

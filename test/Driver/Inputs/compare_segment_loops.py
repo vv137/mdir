@@ -1,4 +1,4 @@
-"""Compare the loops over a list of units with those of #795 (D[md-alg-segments]).
+"""Compare the loops over a list of units with those of #795 (D417).
 
     compare_segment_loops.py REFERENCE.mlir CONVERTED.mlir [FUNCTION ...]
 

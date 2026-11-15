@@ -1024,7 +1024,7 @@ def MDAlg_TraversePairsOp : MDAlg_Op<"traverse_pairs", [
     } -> f64
     ```
 
-    *Segments* (D[md-alg-segments]). Over a list of units,
+    *Segments* (D417). Over a list of units,
     `!mdrt.segmented_pairs`, the op takes no single region but one for each
     segment `s(f, g)` that it visits, in increasing `s(f, g)`:
     `segment(f, g) sites [(p, q) [a, ...], ...] { ... }`. The table names,

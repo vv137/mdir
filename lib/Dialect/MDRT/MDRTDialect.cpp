@@ -508,7 +508,7 @@ NeighborsType::verify(function_ref<InFlightDiagnostic()> emitError,
 }
 
 //===----------------------------------------------------------------------===//
-// SegmentedPairsType (D[md-alg-segments])
+// SegmentedPairsType (D417)
 //===----------------------------------------------------------------------===//
 
 Type SegmentedPairsType::parse(AsmParser &parser) {

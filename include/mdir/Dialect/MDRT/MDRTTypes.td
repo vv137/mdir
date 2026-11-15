@@ -93,7 +93,7 @@ def MDRT_NeighborsType : MDRT_Type<"Neighbors", "neighbors"> {
 
 def MDRT_SegmentedPairsType : MDRT_Type<"SegmentedPairs", "segmented_pairs"> {
   let summary = "A neighbor structure over units, in the segments of rigid "
-                "kinds (D[md-alg-segments])";
+                "kinds (D417)";
   let description = [{
     A list over units: the copies of `K` rigid kinds of D403, and the rest
     of the particles, kind `K`, one unit each. Segment

@@ -1,4 +1,4 @@
-// convert-md-to-md-exec (D[md-alg-segments]): the windows of the segments
+// convert-md-to-md-exec (D417): the windows of the segments
 // of D405 become loops over a list of units. The md.kind_pairs gives one
 // list, built once for its positions, cell, and cutoff; each window gives
 // a md_exec.segment_for with one region, whose table names the site pair of

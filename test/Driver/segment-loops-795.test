@@ -1,5 +1,5 @@
 # The loops over a list of units that convert-md-to-md-exec makes from the
-# segment windows of D405 (D[md-alg-segments], slice S1) against the loops
+# segment windows of D405 (D417, slice S1) against the loops
 # of #795 at 004a0735 (Inputs/kind-pairs/*-795.loops). For each loop the
 # segment, the kind of value, and, site pair by site pair, the expression of
 # its contribution are the same (compare_segment_loops.py): the energies,

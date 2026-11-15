@@ -1,4 +1,4 @@
-// The list of units and the loops over its segments (D[md-alg-segments]):
+// The list of units and the loops over its segments (D417):
 // the type, the ops of md_exec, and md_alg.traverse_pairs over segments in
 // its structure and buffer forms, printed and parsed again, in the custom
 // and the generic form. The groups' form of D415 is unchanged

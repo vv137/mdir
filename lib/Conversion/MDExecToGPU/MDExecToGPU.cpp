@@ -3882,7 +3882,7 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
   if (op.isSegmented())
     return op.emitOpError()
            << "visits the segments of a list of units, whose SIMT schedule "
-              "this pass does not lower yet (D[md-alg-segments], slice S3)";
+              "this pass does not lower yet (D417, slice S3)";
   // The loops over a matrix stay md_exec.pair_for in this step.
   if (op.getMultiplicity() != md_alg::Multiplicity::Unique)
     return op.emitOpError()
@@ -7787,12 +7787,12 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   }
 
   // The lists of units and the loops over them are lowered on a device by
-  // later slices of D[md-alg-segments] (S2, S3).
+  // later slices of D417 (S2, S3).
   if (isa<md_exec::BuildSegmentedPairsOp, md_exec::EmptySegmentedPairsOp,
           md_exec::RefreshSegmentedPairsOp, md_exec::SegmentForOp>(op))
     return op->emitOpError()
            << "is an op of a list of units, which this pass does not lower "
-              "yet (D[md-alg-segments], slices S2 and S3)";
+              "yet (D417, slices S2 and S3)";
 
   if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())

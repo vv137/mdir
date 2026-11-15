@@ -1031,7 +1031,7 @@ it).
 } -> f64
 ```
 
-*Segments* (D[md-alg-segments]). Over a list of units,
+*Segments* (D417). Over a list of units,
 `!mdrt.segmented_pairs`, the op takes no single region but one for each
 segment `s(f, g)` that it visits, in increasing `s(f, g)`:
 `segment(f, g) sites [(p, q) [a, ...], ...] { ... }`. The table names,
@@ -1102,7 +1102,7 @@ Interfaces: `MemoryEffectOpInterface`
 
 | Operand | Description |
 | :-----: | ----------- |
-| `neighbors` | A physical neighbor structure or A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `neighbors` | A physical neighbor structure or A neighbor structure over units, in the segments of rigid kinds (D417) |
 | `lists` | variadic of memref of any non-token type values |
 | `sizes` | variadic of index |
 | `positions` | memref of any non-token type values |

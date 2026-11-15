@@ -1,5 +1,5 @@
 // The serial definition of md_alg.traverse_pairs over the segments of a
-// list of units (D[md-alg-segments], Sections 4.3 and 6): the oracle of the
+// list of units (D417, Sections 4.3 and 6): the oracle of the
 // SIMT schedule of the segments. It is written in the order of the
 // definition:
 //

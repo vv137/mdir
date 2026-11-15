@@ -689,7 +689,7 @@ StringRef BinMembersOp::getFreeResults() { return ""; }
 //===----------------------------------------------------------------------===//
 
 /// The region of the op over groups, or the regions of its segments
-/// (D[md-alg-segments]).
+/// (D417).
 static ParseResult
 parseTraverseRegions(OpAsmParser &parser, Region &kernel, ArrayAttr &segments,
                      ArrayAttr &sites,
@@ -788,7 +788,7 @@ LogicalResult TraversePairsOp::verify() {
                             "both";
   }
 
-  // V1 of D[md-alg-segments]: the regions of segments over a list of units,
+  // V1 of D417: the regions of segments over a list of units,
   // and one region over groups.
   bool segmented = isa<mdir::mdrt::SegmentedPairsType>(getListType());
   if (segmented != isSegmented())
@@ -966,7 +966,7 @@ static LogicalResult verifyNoWrites(TraversePairsOp op, Region &region) {
 
 LogicalResult TraversePairsOp::verifyRegions() {
   if (auto units = dyn_cast<mdir::mdrt::SegmentedPairsType>(getListType())) {
-    // V2 to V7 of D[md-alg-segments], then V8: D415's rules over each.
+    // V2 to V7 of D417, then V8: D415's rules over each.
     mdir::mdrt::SegmentSignature signature;
     for (Value buffer : getIns())
       signature.fields.push_back(getElementTypeOrSelf(buffer.getType()));

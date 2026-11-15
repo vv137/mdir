@@ -105,7 +105,7 @@ private:
   llvm::DenseMap<Value, Value> incidences;
   SmallVector<Operation *> converted;
   /// The list of units built for the segments of an md.kind_pairs at
-  /// positions, a cell, and a cutoff (D[md-alg-segments]).
+  /// positions, a cell, and a cutoff (D417).
   struct SegmentList {
     Value positions, cell;
     double cutoff;
@@ -263,7 +263,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
 }
 
 //===----------------------------------------------------------------------===//
-// The segments of rigid kinds (D405, D[md-alg-segments])
+// The segments of rigid kinds (D405, D417)
 //===----------------------------------------------------------------------===//
 
 /// Whether `value` is a constant zero vector.

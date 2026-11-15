@@ -551,7 +551,7 @@ Syntax:
 
 ### SegmentedPairsType
 
-_A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments])_
+_A neighbor structure over units, in the segments of rigid kinds (D417)_
 
 A list over units: the copies of `K` rigid kinds of D403, and the rest
 of the particles, kind `K`, one unit each. Segment

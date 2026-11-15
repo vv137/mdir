@@ -762,7 +762,7 @@ after the ops reaches its kernels. #888 frees it. Over a list of units
 in the segments of rigid kinds, `!mdrt.segmented_pairs`, the op takes one
 region for each segment it visits, with a table of the site pairs of its
 slices, and forms the sites by the kinds' weights
-([decisions/md-alg-segments.md](decisions/md-alg-segments.md)). Its serial
+([D417](decisions/D417.md)). Its serial
 definition is in `TraverseSegments.cpp`; `convert-md-exec-to-gpu` refuses
 it, and the lists of units, until their build (slice S2) and their SIMT
 schedule (slice S3) land. The arithmetic that

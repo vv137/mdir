@@ -200,7 +200,7 @@ private:
                      unsigned perField, ValueRange parameters,
                      function_ref<Type(unsigned)> yieldType);
   /// The same for the regions of a loop over a list of units
-  /// (D[md-alg-segments]).
+  /// (D417).
   void rewriteSegmentLoop(SegmentForOp loop);
   /// Gives the destinations of `loop` that hold no field yet the type of
   /// its results, and its sums the accumulator type.

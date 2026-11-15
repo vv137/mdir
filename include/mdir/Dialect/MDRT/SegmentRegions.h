@@ -1,4 +1,4 @@
-// The regions of the segments of a list of units (D[md-alg-segments]):
+// The regions of the segments of a list of units (D417):
 // their syntax and their checks, shared by md_exec.segment_for and
 // md_alg.traverse_pairs.
 //
@@ -69,7 +69,7 @@ getSegmentArgumentTypes(mlir::Type real, unsigned pairs, unsigned members,
                         unsigned partners, const SegmentSignature &signature);
 
 /// Checks the regions of `op` against the list `type` (rules V2 to V7 of
-/// D[md-alg-segments], Section 5): the segments, their tables and masks,
+/// D417, Section 5): the segments, their tables and masks,
 /// the arguments, the yields, and that the slice of a site pair reads no
 /// argument of another.
 mlir::LogicalResult verifySegmentRegions(mlir::Operation *op,

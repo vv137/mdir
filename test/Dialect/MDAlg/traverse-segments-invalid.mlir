@@ -1,5 +1,5 @@
 // The refusals of the verifier of md_alg.traverse_pairs over the segments of
-// a list of units (D[md-alg-segments], Section 5, rules V1 to V13), one case
+// a list of units (D417, Section 5, rules V1 to V13), one case
 // each. Each case is the same valid op, a list of units of one kind of four
 // places (a frame of three and one site) and the rest, with one change.
 // D415's refusals are in traverse-invalid.mlir.

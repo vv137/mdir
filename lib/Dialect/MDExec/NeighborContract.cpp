@@ -75,7 +75,7 @@ LogicalResult md_exec::verifyRequirement(Operation *op, Value neighbors,
 LogicalResult md_exec::verifyGuarantee(Operation *op, Type result,
                                        const Contract &guaranteed) {
   if (auto segmented = dyn_cast<mdrt::SegmentedPairsType>(result)) {
-    // Each segment of a list of units (D[md-alg-segments]).
+    // Each segment of a list of units (D417).
     for (auto [s, contract] : llvm::enumerate(segmented.getSegments()))
       if (!guaranteed.meets(contract))
         return op->emitOpError()

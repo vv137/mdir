@@ -1,5 +1,5 @@
 // The refusals of the ops of md_exec over a list of units
-// (D[md-alg-segments]): the builds state no more than they guarantee, take
+// (D417): the builds state no more than they guarantee, take
 // the kinds of their type, and their anchors with a radius; the loop adds at
 // both ends, needs each segment it visits to meet its requirement, and its
 // regions follow the rules of md_alg.traverse_pairs (shared, one case here).
