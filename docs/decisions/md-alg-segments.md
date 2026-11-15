@@ -178,7 +178,7 @@ The groups form of D415 parses, prints, verifies, and lowers as it does on `main
   - `members`, for each unit of a taken kind, its $m_f$ particles, by kind.
 
   That makes 9 buffers, or 14 with `inner`. The buffer form also takes `contract(<type>)` and `reach([R_s, ...])`, one reach for each segment. These are preconditions that the writer asserts (D415, ruling 2).
-- **The op-level declarations** are shared by every segment: the multiplicity, `visit`, `combine`, `algebra`, `exchange`, `cutoff`, `weights`, and `overwrite`. The destinations and the sums are the same across segments, so their algebra and exchange are too. The requirement that follows from the declarations is checked against each segment's contract separately (Section 5). D415 wrote "a visit and a requirement each". Here the requirement is per segment and the visit is shared, because no segment can need another visit while they write the same destinations. An open question asks the maintainer to confirm this.
+- **The op-level declarations** are shared by every segment: the multiplicity, `visit`, `combine`, `algebra`, `exchange`, `cutoff`, `weights`, and `overwrite`. The destinations and the sums are the same across segments, so their algebra and exchange are too. The requirement that follows from the declarations is checked against each segment's contract separately (Section 5). D415 wrote "a visit and a requirement each". Here the requirement is per segment and the visit is shared, because no segment can need another visit while they write the same destinations. The maintainer ruled so (Section 9, ruling 3).
 - **`segment(f, g)`** opens a segment's region. A segment that the op does not name is not visited. For example, OPC's Lennard-Jones term alone visits all three segments, but with one site pair in $(0, 0)$. A segment that has no site pair is not written, and it emits no code.
 - **`sites [(p, q) [a, ...], ...]`** is the segment's table of site pairs. For each slice, it gives the place $p$ of kind $f$, the place $q$ of kind $g$, and the values $a$ (destinations, then sums) that the slice yields. That list is the mask of its nonzero terms. Each site pair appears at most once. The constants of a slice (its charge product and its Lennard-Jones coefficients) are in the slice as `arith.constant`s, where D405's generator put them, cloned from the general nonbonded kernel.
 - **The region's arguments** are, for each of the $M$ site pairs, its $r^2$ and its displacement $\mathbf d$ in one float type $T$, the type of the site arithmetic. Then come the values of each field of `ins` at the members: the $m_f$ members of the unit of $f$, then the $m_g$ of the unit of $g$. For a unit of the rest that is one value.
@@ -213,7 +213,7 @@ This design takes (a), for four reasons:
 - D415 says "`md_exec.template_for` converts one body to one region".
 - Form (b) would need a pass that factors $M$ slices into one region with constant arguments, and nobody has written it.
 
-What (a) keeps of (b) is that the lowering clones, for each site pair, only the slice of its mask. "Clone only the masked slices" is then exact, and no folding of $x \cdot 0$ is relied on. The Lennard-Jones coefficients of a taken kind are `md.lookup`s at constant indices in D405's bodies. Folding them to constants is item E3 of #795's mechanism table. It needs the table to be fixed for the run, which ruling 6 of #795 makes true on this route. It is an open question where E3 is done.
+What (a) keeps of (b) is that the lowering clones, for each site pair, only the slice of its mask. "Clone only the masked slices" is then exact, and no folding of $x \cdot 0$ is relied on. The Lennard-Jones coefficients of a taken kind are `md.lookup`s at constant indices in D405's bodies. Folding them to constants is item E3 of #795's mechanism table. It needs the table to be fixed for the run, which ruling 6 of #795 makes true on this route. E3 is done in S3 (Section 9, ruling 4).
 
 ## 5. The verifier
 
@@ -282,7 +282,7 @@ No runtime flag selects either. Every groups program therefore keeps its bytes b
 - the packed frames of the units, in f32 (#795's activation-owned views, which survive the growth of the arena);
 - the count of work records on the device, over which the launch strides, so that no readback is needed.
 
-Fusing the pruning into the evaluation is D284's existing mechanism, which D415 already calls in place. It is not the fusion of a build into its consumer that #888 must precede. An open question asks the maintainer to confirm this.
+Fusing the pruning into the evaluation is D284's existing mechanism, which D415 already calls in place. It is not the fusion of a build into its consumer that #888 must precede. The maintainer ruled so (Section 9, ruling 6).
 
 ## 7. From #795's branch to the new homes
 
@@ -296,7 +296,7 @@ The branch at 004a0735, against `main` at 7508da8f. A slice is named where the c
 | `md.template_pairs`, `md.sum_template_window`, `md.gather_template_window`, `MDTemplatePairs.cpp`, `MDTemplateWindow.cpp`, `Transforms/TemplateWindows.cpp`, the derivative in `Differentiate.cpp` | **Dropped**: D405's `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window`, `SegmentWindows.cpp` | merged |
 | `alpha` on every op | **Dropped**: the weights of `#md.rigid_kind`. D405's weight is one unit in the last place from #795's $\alpha$ | merged |
 | `lib/Driver/TermNonbonded.cpp` (+108): the route in the nonbonded term | `TermNonbonded.cpp`, calling `buildKindPairsTerm` | S4b |
-| `Control.{h,cpp}`: the key `water.template` | `Control.cpp`; the key's name is an open question | S4b |
+| `Control.{h,cpp}`: the key `water.template` | `Control.cpp`: the key `[performance] rigid_units` (Section 9, ruling 7), with no alias | S4b |
 | `ConstraintIR.{h,cpp}`, `BuilderDynamics.cpp`, `BuilderSchedule.cpp`, `Fingerprint.cpp`, `Compiler/Simulation.{h,cpp}`, `Compile.cpp`, `Skins.cpp`, `tools/mdir/Run.cpp` (the route's records, skins, and diagnostics) | The same files | S4a (`ConstraintIR`), S4b (the rest) |
 | `MDRTTypes.td`: `!mdrt.segmented_pairs` without parameters | The type of Section 2, with its kinds and contracts | S1 |
 | `MDExecOps.td`: `build_`, `empty_`, `refresh_segmented_pairs` | The same ops, general over $K$, without `alpha` and `extent` | S1 |
@@ -428,12 +428,11 @@ The reviewer's recommendations on the questions of this section were accepted:
 4. **E3 is done in S3**, as a row of the mechanism table with its PTX check. The coefficients are fixed only on the route.
 5. **Two schedules through S3.** S5 makes the groups schedule the instance $K = 0$, with D415's bytes as its gate. S5 comes after S3. Whether it comes before or after S4 is decided at S3.
 6. **#888 is not needed before S3.** The pruning in the loop is D284's mechanism, which D415 already calls in place.
-7. **The key's name** is still open. The reviewer proposed `[performance] rigid_units = "AUTO" | "ON" | "OFF"`, in place of `water.template`, for the maintainer to confirm:
+7. **The key is `[performance] rigid_units = "AUTO" | "ON" | "OFF"`**, in place of `water.template`, with no alias (the maintainer confirmed it on #893):
    - it names the mechanism and no molecule, so a second rigid kind needs no new key;
-   - its values and meaning are those ruled on #795, an execution choice of the "same accuracy" class (#790);
-   - no alias is kept for `water.template`.
+   - its values and meaning are those ruled on #795, an execution choice of the "same accuracy" class (#790).
 
-   It matters only in S4b.
+   It comes with S4b.
 8. **The organization is `grouped_by(group)`** unless S2 proves the order fixed.
 9. **The stop rule of S2 and S3 is as written**: slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers, on the same kind of device. The prototype is compared only under the same geometry and conditions.
 10. **The transpose is compared with #795 by numbers**, within the error model, with D405's weights.
