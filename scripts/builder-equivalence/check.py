@@ -53,7 +53,7 @@ each --env NAME=VALUE[,NAME=VALUE] one more case with those variables, beside
 the case without them (#739), and each --execution KEY=VALUE[,KEY=VALUE] one
 more with those keys set in [execution] as strings, such as
 neighbor_structure=GROUPS for every program with the groups
-(D[md-alg-traverse]). The label of a case in the report and in a
+(D415). The label of a case in the report and in a
 file of hashes is its target, kind, precision, and variables, for example
 "gpu segments mixed env:MDIR_PME_SPREAD=tiles4"; without the two options it
 is the label of before. A case runs in a

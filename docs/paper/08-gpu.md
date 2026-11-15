@@ -739,7 +739,7 @@ reader. Cost choices, such as the kind of the structure and the order of
 the places, stay with the build, so that a change of the cost model does
 not change a type.
 
-The consumer itself then moves into `md_alg` (D[md-alg-traverse]). A loop
+The consumer itself then moves into `md_alg` (D415). A loop
 over pairs over groups becomes one op, `md_alg.traverse_pairs`, that keeps
 the loop's kernel as its region and declares what the loop needs: whether
 it visits each pair once, whether its visit is ordered, how its

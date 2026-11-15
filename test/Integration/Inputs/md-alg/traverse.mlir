@@ -1,5 +1,5 @@
 // A list of groups written by hand for the serial definition of
-// md_alg.traverse_pairs (D[md-alg-traverse]): one group of 16 places, three
+// md_alg.traverse_pairs (D415): one group of 16 places, three
 // of them holding particles 0, 1, and 2, in a cubic cell of edge 4.
 // Block 0 of the group's list holds three entries:
 // - place 1, bit 0: the pair of places 0 and 1, shift 0;

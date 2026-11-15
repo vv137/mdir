@@ -158,7 +158,7 @@ BufferAliases::getRoots(Value value) {
             continue;
           }
           // md_alg.traverse_pairs reads a structure as the loop over pairs
-          // it was made from (D[md-alg-traverse]).
+          // it was made from (D415).
           if (!isa<PairForOp, BuildTripletsOp, BuildEdgesOp,
                    ReferencePositionsOp, ReferenceCellOp, RebuildCountOp,
                    md_alg::TraversePairsOp>(user)) {

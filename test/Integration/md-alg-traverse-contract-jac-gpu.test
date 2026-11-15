@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda, amber-suite
-# The contract of md_alg.traverse_pairs (D[md-alg-traverse]) on JAC of the
+# The contract of md_alg.traverse_pairs (D415) on JAC of the
 # Amber suite (23,558 atoms), as md-alg-traverse-contract-gpu.test on the
 # dodecahedron: the list of groups, the dual list pruned in the refresh and
 # in the loop (D284), in mixed precision, and the list in double.

@@ -1,4 +1,4 @@
-// The lowerings of md_alg.traverse_pairs (D[md-alg-traverse]): the SIMT
+// The lowerings of md_alg.traverse_pairs (D415): the SIMT
 // schedule of the groups of neighbors (D89, docs/neighbor-groups.md),
 // called in place by convert-md-exec-to-gpu through `TraverseHost` (the
 // maintainer's ruling on #887; #888 frees it), and the serial loop over

@@ -266,7 +266,7 @@ static std::string getHostPairsOptions() {
 /// number of groups.
 /// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
 /// (`simt`, `serial`, `serial-reversed`, `serial-magnitudes`, `omitted`),
-/// for the contract test of D[md-alg-traverse]; by default its SIMT
+/// for the contract test of D415; by default its SIMT
 /// schedule, with no option. The serial
 /// definition does not prune in the loop, so the oracle turns the pruning
 /// in the loop off (getFusedPruningOptions).
@@ -374,7 +374,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : getStageBodiesPass())
        // The loops over pairs over groups become md_alg.traverse_pairs
-       // (D[md-alg-traverse]).
+       // (D415).
        << "convert-md-exec-to-md-alg,"
        << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
@@ -407,7 +407,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << getFusedPruningOptions(gpuOptions)
        // The serial definition of md_alg.traverse_pairs on the host in
        // place of its schedule, for the contract test
-       // (D[md-alg-traverse]).
+       // (D415).
        << getTraverseOracleOption()
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"

@@ -675,7 +675,7 @@ Determinism BinMembersOp::getDeterminismDefault() {
 StringRef BinMembersOp::getFreeResults() { return ""; }
 
 //===----------------------------------------------------------------------===//
-// md_alg.traverse_pairs (D[md-alg-traverse])
+// md_alg.traverse_pairs (D415)
 //===----------------------------------------------------------------------===//
 
 StringRef TraversePairsOp::getExchangeOf(unsigned index) {

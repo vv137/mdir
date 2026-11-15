@@ -361,7 +361,7 @@ def ConvertMDExecToMDAlg : Pass<"convert-md-exec-to-md-alg", "::mlir::ModuleOp">
     block (D291). `convert-md-exec-to-gpu` sets the rest of its execution
     group, `frames` (D268) and `prune(G, R)` (D284), after it moves the
     reciprocal sums (D113), and lowers the op where it stands
-    (D[md-alg-traverse]).
+    (D415).
   }];
   let dependentDialects = ["::mdir::md_alg::MDAlgDialect"];
 }
@@ -490,7 +490,7 @@ def ConvertMDExecToGPU
            "'serial', 'serial-reversed', or 'serial-magnitudes', its serial "
            "definition on the host over copies of its buffers, in order, in "
            "reverse, or with the magnitudes of its terms, for the contract "
-           "test (MDIR_TRAVERSE_ORACLE, D[md-alg-traverse])">,
+           "test (MDIR_TRAVERSE_ORACLE, D415)">,
     Option<"singlePassGroupScan", "single-pass-group-scan", "bool",
            /*default=*/"false",
            "Use the decoupled look-back scan for the three counting sorts "

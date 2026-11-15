@@ -47,7 +47,7 @@ The loops over pairs over groups are a consumer of this layer,
 the algebra of each value; its verifier checks them against its region
 and against the contract of its list (D413). Its serial definition is
 the oracle; its SIMT schedule is called where the op stands by
-`convert-md-exec-to-gpu` (D[md-alg-traverse]; #888 frees it).
+`convert-md-exec-to-gpu` (D415; #888 frees it).
 
 Each op with an ordering or a floating-point aspect states a
 determinism requirement (`determinism`), separate from the ordering
@@ -971,7 +971,7 @@ and at `j`. The region yields one value `k_a` for each destination in
 `a_i += k_a`, `a_j += s_a k_a` with `s_a` the sign of the exchange
 contract of `a` (`unique`), and `S += 2 w_S k_S`. A destination with
 `overwrite` starts from zero. The results are the initial values plus
-the sums (D[md-alg-traverse]).
+the sums (D415).
 
 The positions are moved into the frame of the entry's group by the
 shift of its place in their stored type, then converted to the type of

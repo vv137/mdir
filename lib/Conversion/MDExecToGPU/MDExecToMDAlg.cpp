@@ -1,5 +1,5 @@
 // convert-md-exec-to-md-alg: the loops over pairs over groups become
-// md_alg.traverse_pairs (D[md-alg-traverse], #886, step 2 of #877). The
+// md_alg.traverse_pairs (D415, #886, step 2 of #877). The
 // facts of md_exec that the lowering needs are stated on the op as the IR
 // moves down: the visit and the combination from the policy and the
 // algebra (D301), the contract in the type of the list (D413), and the

@@ -1440,7 +1440,7 @@ Languages and Systems* **19**, 942–991 (1997).
 
 Used for: why a consumer's requirement is declared and checked, not
 inferred from its code: an inference from code is the conservative guess
-that the declaration replaces (D[md-alg-traverse], #877).
+that the declaration replaces (D415, #877).
 
 ### Roe2013
 

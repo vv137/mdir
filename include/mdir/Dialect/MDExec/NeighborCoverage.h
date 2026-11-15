@@ -18,7 +18,7 @@ mlir::LogicalResult verifyNeighborCoverage(PairForOp loop);
 
 /// The same for another consumer of a structure, `op`, which takes
 /// `neighbors` with `cutoff`, no centers, and the minimum image: the
-/// traversal of md_alg (D[md-alg-traverse]).
+/// traversal of md_alg (D415).
 mlir::LogicalResult verifyNeighborCoverage(mlir::Operation *op,
                                            mlir::Value neighbors,
                                            double cutoff);

@@ -522,7 +522,7 @@ $R$ has none.
 
 **The schedule** (the SIMT lowering of `md_alg.traverse_pairs`,
 `lib/Conversion/MDExecKernels/TraversePairs.cpp`, which
-`convert-md-exec-to-gpu` calls where the op stands; D[md-alg-traverse]).
+`convert-md-exec-to-gpu` calls where the op stands; D415).
 `convert-md-exec-to-md-alg` turns each loop that takes each pair once into
 that op, which declares its visit, its combination, and the algebra of
 each value, and whose serial definition is the oracle of the schedule. A warp takes a block of a

@@ -1,5 +1,5 @@
 # The refusals of the lowering of md_alg.traverse_pairs
-# (D[md-alg-traverse]), each a realistic bug of a pipeline or of a
+# (D415), each a realistic bug of a pipeline or of a
 # hand-written op. The program is that of
 # ../MDExecToMDAlg/convert.mlir: a dual list of groups and two loops over it.
 #

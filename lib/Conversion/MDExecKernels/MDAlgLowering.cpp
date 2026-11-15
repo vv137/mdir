@@ -951,7 +951,7 @@ struct Serial {
 } // namespace
 
 /// The serial definition of a traversal in its buffer form
-/// (D[md-alg-traverse]), with the buffers its operands name.
+/// (D415), with the buffers its operands name.
 static SmallVector<Value> lowerTraversal(OpBuilder &builder,
                                          TraversePairsOp op, bool reverse) {
   OperandRange lists = op.getLists();

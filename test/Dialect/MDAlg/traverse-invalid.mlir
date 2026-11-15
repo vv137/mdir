@@ -1,4 +1,4 @@
-// The refusals of the verifier of md_alg.traverse_pairs (D[md-alg-traverse]),
+// The refusals of the verifier of md_alg.traverse_pairs (D415),
 // one case each, each a realistic bug: a write outside the declared
 // combination, a read of a destination, owner registers over a list that is
 // not grouped by owner, a visit weaker than the algebra needs or than the list

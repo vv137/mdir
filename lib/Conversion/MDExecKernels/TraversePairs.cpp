@@ -1,4 +1,4 @@
-// The lowerings of md_alg.traverse_pairs (D[md-alg-traverse]); see
+// The lowerings of md_alg.traverse_pairs (D415); see
 // include/mdir/Conversion/TraversePairs.h. The SIMT schedule is that of
 // the loops over pairs over groups before the op existed, moved here from
 // convert-md-exec-to-gpu with its code unchanged, so that every program

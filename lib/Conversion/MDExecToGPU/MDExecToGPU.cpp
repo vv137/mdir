@@ -248,7 +248,7 @@ public:
   /// D268).
   bool checkPruning = false;
   /// How a loop over pairs over groups (md_alg.traverse_pairs) is lowered:
-  /// by its SIMT schedule, or, for the contract test of D[md-alg-traverse],
+  /// by its SIMT schedule, or, for the contract test of D415,
   /// by its serial definition on the host over copies of its buffers, in
   /// order, in reverse, or with the magnitudes of the terms.
   std::string traverseOracle = "simt";
@@ -308,7 +308,7 @@ private:
   /// an atomic of the device or the table of a block.
   LogicalResult lowerScatterAdd(md_exec::ScatterAddOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
-  /// Lowers a loop over pairs over groups (D[md-alg-traverse]) where it
+  /// Lowers a loop over pairs over groups (D415) where it
   /// stands: its SIMT schedule through the host of TraversePairs.h, or its
   /// serial definition with `traverseOracle`.
   LogicalResult lowerTraversePairs(md_alg::TraversePairsOp op);
@@ -3720,7 +3720,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 }
 
 //===----------------------------------------------------------------------===//
-// Loops over pairs over groups (md_alg.traverse_pairs, D[md-alg-traverse])
+// Loops over pairs over groups (md_alg.traverse_pairs, D415)
 //===----------------------------------------------------------------------===//
 
 void Lowering::findSharedFrames(func::FuncOp function,

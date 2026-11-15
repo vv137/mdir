@@ -1,4 +1,4 @@
-// convert-md-exec-to-md-alg (D[md-alg-traverse]): each loop over pairs over
+// convert-md-exec-to-md-alg (D415): each loop over pairs over
 // groups becomes md_alg.traverse_pairs in its structure form, with the
 // visit, the combination, the algebra, and the exchange contracts of the
 // loop, and its region, whose terminator becomes md_alg's. Of a dual list

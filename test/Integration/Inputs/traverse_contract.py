@@ -1,4 +1,4 @@
-"""The contract of md_alg.traverse_pairs (D[md-alg-traverse]): its SIMT
+"""The contract of md_alg.traverse_pairs (D415): its SIMT
 schedule on a device against its serial definition, which
 convert-md-exec-to-gpu runs on the host over copies of the same lists
 (MDIR_TRAVERSE_ORACLE).

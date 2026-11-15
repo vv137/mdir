@@ -1,4 +1,4 @@
-// md_alg.traverse_pairs (D[md-alg-traverse]): the structure form, which
+// md_alg.traverse_pairs (D415): the structure form, which
 // the pipeline emits, with the inner list of a dual list and the execution
 // group; and the buffer form, for the serial oracle and the tests, with
 // its stated contract and reach. Both round-trip, in the custom and the
