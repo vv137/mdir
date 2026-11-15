@@ -44,6 +44,9 @@ ALLOWED = [
     ("test/Driver/Inputs/kind-pairs/*.windows", "138.93545755023302",
      "the constant in the reference windows of #795, which MDIR's builder "
      "wrote and the comparison of D405 checks"),
+    ("test/Driver/Inputs/kind-pairs/*.loops", "138.93545755023302",
+     "the constant in the reference loops of #795, which MDIR's builder "
+     "wrote and the comparison of D[md-alg-segments] checks"),
     ("test/Driver/charged.toml", "332.0637130741",
      "a pattern of FileCheck that checks the constant MDIR writes"),
     ("scripts/validation/charmm/run.py", "138.935458",
