@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**The design, before any code is ported, for the neighbor and GPU-lowering layers of #795 on `md_alg`. A list over units is a new type, `!mdrt.segmented_pairs`. Its parameters are the taken rigid kinds of D403 and one D413 contract for each segment $s(f, g)$ of rule R3 (D405). `md_alg.traverse_pairs` takes it in a segmented form, with one region for each segment that it visits. Each region holds the segment's site pairs, one slice of the yields for each, as the generator of D405 writes them. A table on the region names each slice's pair of places and the values it contributes to. The op owns the placement of sites by the kinds' weights $\mathsf W$, the cutoff of each site pair, and the transpose $\mathsf W^{\mathsf T}$ of the forces (rule A). The groups of D415 are the degenerate instance: no kind, one segment, units that are particles. That form parses, verifies, and lowers as today, so every groups program keeps D415's bytes. The producer is a family of `md_exec` ops whose lowering is #795's search, moved, with its collection stages as `md_alg` ops. Coverage is D357's query, with a covering reach for each segment. The SIMT lowering is #795's warp-cooperative schedule, a second pattern of the same op chosen by the type of its list. The serial definition is the oracle. The work lands in four slices, each with its own gates.** Issue #892, the first slice of re-landing #795 on the layer of #877 (the maintainer's parking ruling on #795, 2026-11-14), after D415.
+**The design, before any code is ported, for the neighbor and GPU-lowering layers of #795 on `md_alg`. A list over units is a new type, `!mdrt.segmented_pairs`. Its parameters are the taken rigid kinds of D403 and one D413 contract for each segment $s(f, g)$ of rule R3 (D405). `md_alg.traverse_pairs` takes it in a segmented form, with one region for each segment that it visits. Each region holds the segment's site pairs, one slice of the yields for each, as the generator of D405 writes them. A table on the region names each slice's pair of places and the values it contributes to. The op owns the placement of sites by the kinds' weights $\mathsf W$, the cutoff of each site pair, and the transpose $\mathsf W^{\mathsf T}$ of the forces (rule A). The groups of D415 are the degenerate instance: no kind, one segment, units that are particles. That form parses, verifies, and lowers as today, so every groups program keeps D415's bytes. The producer is a family of `md_exec` ops, with its collection stages as `md_alg` ops. Its lowering is #795's search, moved, unless the measurement that opens S2 finds the groups build over units as fast. Coverage is D357's query, with a covering reach for each segment. The SIMT lowering is #795's warp-cooperative schedule, a second pattern of the same op chosen by the type of its list. The serial definition is the oracle. The work lands in six slices, S1 to S5 with S4 cut in two, each with its own gates. The last, S5, makes the groups the instance $K = 0$ of one segmented schedule, with D415's bytes as its gate.** Issue #892, the first slice of re-landing #795 on the layer of #877 (the maintainer's parking ruling on #795, 2026-11-14), after D415.
 
 Status: design for review. No code changes in this PR.
 
@@ -112,7 +112,7 @@ The ops' own check is D413's: a result type may state no more than the build gua
 
 **The traversal in `md_exec`.** #795's `md_exec.template_for` becomes `md_exec.segment_for`. It takes one region for each segment it visits, with the segment's table of site pairs (Section 4). `convert-md-to-md-exec` makes it from `md.sum_segment_window` and `md.gather_segment_window` (D405). The windows' verifier proves that each yielded displacement is $\mathbf d_0 + \mathbf c_p - \mathbf c_q$ for a place $p$ of $f$ and a place $q$ of $g$. The conversion records that pair as the slice's entry in the table. It replaces the displacement by a block argument of the site pair and drops the arithmetic of the placement, which the op now owns through the kinds' weights. The conversion therefore proves nothing new: it reads the proof that D405's verifier already made. `md-exec-fuse-loops` (#795) merges the loops of the energy, the forces, and the virial over one list. It takes the union of their tables, and each site pair's mask becomes the values it contributes to. `convert-md-exec-to-md-alg` makes `md_alg.traverse_pairs` from each `segment_for`, one to one, as D415 makes it from `pair_for`.
 
-**Its lowering, and what is `md_alg` in it.** `convert-md-exec-to-gpu` lowers the build and the refresh of a segmented list, as it lowers those of the groups (D404, D408). The emitter is #795's search, moved out of `MDExecToGPU.cpp` into `lib/Conversion/MDExecKernels/SegmentsBuild.cpp`. Its stages that are collection algorithms are `md_alg` ops, which survive until `convert-md-alg-to-gpu` (D408):
+**Its lowering, and what is `md_alg` in it.** `convert-md-exec-to-gpu` lowers the build and the refresh of a segmented list, as it lowers those of the groups (D404, D408). The emitter is #795's search, moved out of `MDExecToGPU.cpp` into `lib/Conversion/MDExecKernels/SegmentsBuild.cpp`, unless the first step of S2 finds the groups build over units as fast (Section 8). The table below assumes #795's search. Its stages that are collection algorithms are `md_alg` ops, which survive until `convert-md-alg-to-gpu` (D408):
 
 | Stage of #795 | `md_alg` op |
 |---|---|
@@ -275,7 +275,7 @@ The lowering is chosen at compile time by the type of the list:
 - A `!mdrt.neighbors` list takes `lowerTraversePairsSIMT` of D415, unchanged.
 - A `!mdrt.segmented_pairs` list takes the segmented schedule.
 
-No runtime flag selects either. Every groups program therefore keeps its bytes by construction, and the gate checks it. One emitter with parameters for both, whose $K = 0$ instance gives D415's bytes, would be a later slice with its own bytes gate (an open question).
+No runtime flag selects either. Every groups program therefore keeps its bytes by construction, and the gate checks it. Slice S5 makes them one emitter with parameters, whose $K = 0$ instance gives D415's bytes (Section 8). Until then the two schedules stand.
 
 **Where it runs.** As for D415, `convert-md-exec-to-gpu` calls it in place, through `TraverseHost` (D415's ruling 1). The interface gains:
 - the list's segment ranges and table of members;
@@ -291,13 +291,13 @@ The branch at 004a0735, against `main` at 7508da8f. A slice is named where the c
 | On the branch | New home | Slice |
 |---|---|---|
 | `lib/Driver/WaterTemplate.cpp`, `include/mdir/Driver/WaterTemplate.h`: the match by chemistry (O, H, H, one form of extra point) | **Dropped**: D403's recognition of rigid kinds (`RigidGroups.cpp`) replaces it | merged |
-| The same file: the route's preconditions, reasons, counts, and `AUTO`/`ON`/`OFF` | `lib/Driver/`, as conditions of the consumer on D403's kinds | S4 |
+| The same file: the route's preconditions, reasons, counts, and `AUTO`/`ON`/`OFF` | `lib/Driver/`, as conditions of the consumer on D403's kinds | S4b |
 | `lib/Driver/WaterTemplateIR.{h,cpp}`: three hand-written window builders | **Dropped**: D405's `KindPairsIR.cpp` (`buildSegment`) | merged |
 | `md.template_pairs`, `md.sum_template_window`, `md.gather_template_window`, `MDTemplatePairs.cpp`, `MDTemplateWindow.cpp`, `Transforms/TemplateWindows.cpp`, the derivative in `Differentiate.cpp` | **Dropped**: D405's `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window`, `SegmentWindows.cpp` | merged |
 | `alpha` on every op | **Dropped**: the weights of `#md.rigid_kind`. D405's weight is one unit in the last place from #795's $\alpha$ | merged |
-| `lib/Driver/TermNonbonded.cpp` (+108): the route in the nonbonded term | `TermNonbonded.cpp`, calling `buildKindPairsTerm` | S4 |
-| `Control.{h,cpp}`: the key `water.template` | `Control.cpp`; the key's name is an open question | S4 |
-| `ConstraintIR.{h,cpp}`, `BuilderDynamics.cpp`, `BuilderSchedule.cpp`, `Fingerprint.cpp`, `Compiler/Simulation.{h,cpp}`, `Compile.cpp`, `Skins.cpp`, `tools/mdir/Run.cpp` (the route's records, skins, and diagnostics) | The same files | S4 |
+| `lib/Driver/TermNonbonded.cpp` (+108): the route in the nonbonded term | `TermNonbonded.cpp`, calling `buildKindPairsTerm` | S4b |
+| `Control.{h,cpp}`: the key `water.template` | `Control.cpp`; the key's name is an open question | S4b |
+| `ConstraintIR.{h,cpp}`, `BuilderDynamics.cpp`, `BuilderSchedule.cpp`, `Fingerprint.cpp`, `Compiler/Simulation.{h,cpp}`, `Compile.cpp`, `Skins.cpp`, `tools/mdir/Run.cpp` (the route's records, skins, and diagnostics) | The same files | S4a (`ConstraintIR`), S4b (the rest) |
 | `MDRTTypes.td`: `!mdrt.segmented_pairs` without parameters | The type of Section 2, with its kinds and contracts | S1 |
 | `MDExecOps.td`: `build_`, `empty_`, `refresh_segmented_pairs` | The same ops, general over $K$, without `alpha` and `extent` | S1 |
 | `MDExecOps.td`: `md_exec.template_for` (three tagged bodies, `pairs` counts, `md.template_site_forces`) | `md_exec.segment_for`: a region for each segment visited, with its table of site pairs | S1 |
@@ -314,13 +314,13 @@ The branch at 004a0735, against `main` at 7508da8f. A slice is named where the c
 | `NeighborCoverage.cpp` | Its segmented case | S2 |
 | `TemplatePruneKernels.cpp` | The pruning of a refresh, in S2. The pruning in the loop, as `prune(G, R)`, in S3 | S2, S3 |
 | `TemplateWindowKernels.cpp` (`emitTemplateClassUnit`, `emitTemplateWindowContributions`, `mapTemplateSiteOffsets`), `TemplateWorkKernels.cpp`, `Lowering::lowerTemplateFor` | `lowerTraversePairsSegmentsSIMT` in `TraversePairs.cpp`. `mapTemplateSiteOffsets` becomes the op's own formation of $\mathbf c_p$ from $\mathsf W$ | S3 |
-| `emitPackTemplateFrame`, `emitPrepareTemplateFrame`, `emitTemplateLocalGeometry`, `emitRetainedTemplateFrame` | Their formation of positions is the precision points of Section 4.3, written once for both lowerings. Their packing goes with the writer | S1, S4 |
+| `emitPackTemplateFrame`, `emitPrepareTemplateFrame`, `emitTemplateLocalGeometry`, `emitRetainedTemplateFrame` | Their formation of positions is the precision points of Section 4.3, written once for both lowerings. Their packing goes with the writer | S1, S4a |
 | `MDExecKernels.cpp` (+79), `MDExecKernels.h` | Whatever the schedule shares, with D415's bytes kept for the groups | S3 |
-| `Lowering::planTemplateWriters`, `templateFlagStores`, `deferTemplateFlag`, `recordTemplateConstraintEpoch`, `prepareTemplateWriter`, `launchTemplatePublication`, `emitSetTemplateValidity`, `appendTemplateValidity`, `lowerTemplateParticleFor`; `TemplateValidityKernels.cpp`, `TemplateWriterKernels.cpp`, `TemplateFrameKernels.cpp`, `TemplateParticleKernels.cpp` | Outside `md_alg` (Section 3): the validity in the integrator, the writer, U3's late flags, and rule B for written forces | S4 |
-| `emitTemplateExtentSquared` | The check of the extents, with the convex rule of Section 3 | S4 |
+| `Lowering::planTemplateWriters`, `templateFlagStores`, `deferTemplateFlag`, `recordTemplateConstraintEpoch`, `prepareTemplateWriter`, `launchTemplatePublication`, `emitSetTemplateValidity`, `appendTemplateValidity`, `lowerTemplateParticleFor`; `TemplateValidityKernels.cpp`, `TemplateWriterKernels.cpp`, `TemplateFrameKernels.cpp`, `TemplateParticleKernels.cpp` | Outside `md_alg` (Section 3): the validity in the integrator, the writer, U3's late flags, and rule B for written forces | S4a |
+| `emitTemplateExtentSquared` | The check of the extents, with the convex rule of Section 3 | S4a |
 | The experiments measured and discarded (cooperative SW rows, image-specialized paths, R2, the S0 guard) | Not on the head; not ported | — |
-| The tests of the branch (`test/Driver/water-template-*`, `test/Integration/water-template-*` and their Python oracles, `test/Sanitizer/water-template-*`, `test/lib/Dialect/MD/TestTemplate*.cpp`) | With the code they test, in its slice, renamed to the general terms | S1–S4 |
-| The paper's Section 4.7 and the extra point in Section 6.1; `docs/neighbor-groups.md`, `docs/device-primitives.md`, `docs/primitives-map.md`, `docs/dialects/*.md` | With each slice. The derivation is kept, and the words follow R1–R5 | S1–S4 |
+| The tests of the branch (`test/Driver/water-template-*`, `test/Integration/water-template-*` and their Python oracles, `test/Sanitizer/water-template-*`, `test/lib/Dialect/MD/TestTemplate*.cpp`) | With the code they test, in its slice, renamed to the general terms | S1–S5 |
+| The paper's Section 4.7 and the extra point in Section 6.1; `docs/neighbor-groups.md`, `docs/device-primitives.md`, `docs/primitives-map.md`, `docs/dialects/*.md` | With each slice. The derivation is kept, and the words follow R1–R5 | S1–S5 |
 
 ## 8. The slices and their gates
 
@@ -340,16 +340,31 @@ No run reads any of it. Gates:
 - a mutation that must fail: the transpose with its weights exchanged;
 - the corpus identical to `main`'s by D406's method, with the groups variants included.
 
-**S2. The producer and its coverage.** This slice adds the build and the refresh, lowered on the device, the runtime's arena, and the segmented coverage query. Gates:
+**S2. The producer and its coverage.** This slice adds the build and the refresh, lowered on the device, the runtime's arena, and the segmented coverage query. It is the first integration on the device. #795's search, measured again on the RTX 5090, was 20 to 25 times slower than the prototype's. So the gate of performance per kernel starts here, not in S3.
+
+*Its first step, before the search is ported, is the measurement ruled on 2026-11-13.* It runs on #795's fixtures and six systems:
+- the groups build's grid and queue (D404's emitter over units);
+- against #795's column spans (D1, W1).
+
+For each, it gives the registers, the instructions, and the time per call of every kernel, the entries, and the extra fraction. The result decides the alternative of Section 10, "the segmented build as the groups build of D404 over units":
+- If the groups build over units is within the spread of #795's search, the producer takes the groups build, with its stages generalized over units. The emitter is then one, and its $K = 0$ instance keeps D404's bytes.
+- Otherwise the producer takes #795's search, moved, as Section 3 states, and the numbers are recorded as the reason.
+
+Either way, the result is reported on the PR before the port, as a `needs-decision` if the maintainer must choose.
+
+Gates:
 - #795's exact integer oracles of the search, the compaction, and the pruning, moved;
 - an independent f64 all-pairs check of coverage over all near images, on the dodecahedron in TIP3P under NPT and on alanine dipeptide in OPC and in TIP3P. It runs just before a pruning, just before a build, and just after one. At 1.5 cutoffs it must report pairs without an entry;
-- the superset check against the general builder, with the fraction of extra entries reported;
+- the superset check against the general builder;
+- **the entries, on #795's six systems** (ruled on #795, 2026-11-12): the fraction of extra entries, and the growth of the list against #795's at 745c9f12;
+- **the performance of each kernel** of the build, of the refresh, and of the pruning of a refresh: its registers, its instructions, and its time per call. These sit next to #795's at 745c9f12 and next to `main`'s groups build on the same systems. The timing protocol applies as in S3, on one kind of device;
+- **the stop rule of S3** (below), applied to these kernels. A preliminary timing far from #795's stops the work and is a `needs-decision`, not information;
 - the stop of the reach against the cell;
 - a negative case of the coverage query;
 - the sanitizer tier on the new kernels, with the time it held the device;
 - the corpus identical.
 
-**S3. The SIMT schedule.** This slice adds the segmented SIMT lowering, called in place. Gates:
+**S3. The SIMT schedule.** This slice adds the segmented SIMT lowering, called in place, as a second schedule chosen by the list's type. The gate of performance needs #795's schedule as it was, so it is not yet merged with D415's. Gates:
 - **The contract** of Section 6 in D415's five modes, on ubiquitin and on the dodecahedron, with OPC and with TIP3P, in mixed precision, with the largest difference as a fraction of its bound. The mutation of D415 (the sign of an antisymmetric destination ignored) must fail.
 - **The mechanism table, row by row**, each a structural check of the PTX:
   - the shuffles of the rotation;
@@ -363,15 +378,45 @@ No run reads any of it. Gates:
   - `main` and the change interleaved;
   - the trimmed mean of the stationary rate;
   - the clocks checked.
-- **The stop rule.** If the evaluation per call of any system is slower than #795's at 745c9f12 on the same kind of device by more than the spread of the protocol's rounds, the work stops. The PR then takes `needs-decision` with the numbers, and this is not an FYI.
+
+  On the RTX 4090, #795's evaluation fell in every window over 50,000 steps, so its rate there was not stationary. Jobs on that device are long enough that the rate of the trimmed windows is stationary by the protocol's test. A run that does not become stationary is reported as such, and is not cut short.
+- **The stop rule.** The work stops if, on any system, either of these holds on the same kind of device:
+  - the evaluation per call is slower than #795's at 745c9f12 by more than the spread of the protocol's rounds;
+  - a kernel takes more registers than #795's at 745c9f12.
+
+  The registers are compared per device: on the RTX 4090, #795's OPC evaluation takes 128 against the rule of at most 96 of U9 and U10. Both counts are reported. When the rule stops the work, the PR takes `needs-decision` with the numbers, and this is not an FYI. The prototype's times are compared only under the same geometry and conditions.
 - **The sanitizer tier.**
 - **The bytes of every groups program**, by D406's method.
 
-**S4. The route.** This slice adds the driver's selection, the key, the refusals, the validity in the integrator, the writer, the check of the extents, and `mdir check`'s report. Gates:
-- #795's validation table, moved: the physical fixtures against the CPU f64 oracle and general double, the anchors and the triclinic cell, the short trajectories (both integrators, NVE and NPT), the reach's stop, and the control's refusals;
+**S4a. Validity, the writer, and the extents.** This slice adds:
+- the validity in the integrator: one mobility group of reference points, with the least half-margin of the segments;
+- the writer of the packed f32 frames (D95), with U3's late flags;
+- the check of the extents after each position constraint, by the convex rule of Section 3.
+
+Before it, the route can be reached only by `mdir-opt` programs and the tests. Gates:
+- the short trajectories of #795, template against general, for both integrators, NVE and NPT, under their declared bounds;
+- the check of the extents, with its probes (the convex case and a site outside the hull);
+- the coverage check of S2 along those trajectories;
+- the bytes of every program without a taken kind;
+- the sanitizer tier on the new kernels.
+
+**S4b. The route, the key, and `mdir check`.** This slice adds the driver's selection on D403's kinds, the key, the refusals, the records of the route, and `mdir check`'s report. Gates:
+- #795's validation table, moved: the physical fixtures against the CPU f64 oracle and general double, the anchors and the triclinic cell, the reach's stop, and the control's refusals;
 - `OFF`, and every program without a taken kind, identical to `main`, with the corpus and the checkpoints;
 - end-to-end timings on #795's six systems and the Amber suite against `main`, with `AUTO` general until its rule is measured;
 - the full suite at the final head.
+
+**S5. One schedule.** The rule for shared emitters (the maintainer, 2026-11-12) is that the shared mechanism is general, and that the groups are its instance of one segment, proved by identical PTX. Without this slice the end state would have two hand-written schedules. So S5 makes D415's groups schedule the instance $K = 0$ of the segmented schedule, with one segment of particles and one site pair:
+- `lowerTraversePairsSIMT` and `lowerTraversePairsSegmentsSIMT` become one emitter, with the shape, the table, and the rotation as its parameters;
+- the dispatch by type is removed.
+
+If the first step of S2 has not already made the build one emitter, S5 does the same for the build. Its $K = 0$ instance must give D404's bytes. Gates:
+- **the bytes of every groups program**, by D406's method, as in D415's Section 9: the examples, the tests, the Amber suite, and the cases of the corpus, in both precisions, with and without the dual list and the pruning in the loop. A difference is reported with its reason and timed by the protocol, never accepted silently;
+- the segmented programs equal to S3's in their PTX, or, where they differ, S3's stop rule against S3's head;
+- the contract of S3, again;
+- the sanitizer tier.
+
+Whether S5 comes right after S3 or after S4b is question 5.
 
 ## 9. Open questions for the maintainer
 
@@ -379,11 +424,11 @@ No run reads any of it. Gates:
 2. **The kinds in the type**, as chosen, or a reference from the list to its `md.kind_pairs` with a provenance check, as D357 does for the cutoff?
 3. **The visit**: one for the op and the requirement per segment, as chosen, or a visit per segment, as D415's words have it?
 4. **E3**, the Lennard-Jones coefficients of a taken kind folded from `md.lookup` at constant indices: in the conversion of S1, or as its own measured correction in S3?
-5. **One emitter or two**: the segmented schedule dispatched by the type, leaving D415's code untouched, as chosen. Or one schedule with parameters, whose $K = 0$ instance must give D415's bytes, as a later slice?
+5. **When S5 comes.** The two schedules stand, dispatched by the type, through S3, whose gate needs #795's schedule as it was. S5 then makes the groups the instance $K = 0$ of the segmented schedule. Should S5 come right after S3, or after S4b?
 6. **#888 before S3?** This design holds that the pruning in the loop is D284's existing mechanism, and not the fusion of a build into its consumer that #888 must precede. So S3 calls the schedule in place, as D415 does.
 7. **The name of the key**: `water.template`, ruled on #795, or a name that follows the rule "general rules, not templates"?
 8. **The organization**: `grouped_by(group)` for every segment unless S2 proves the order fixed, as chosen?
-9. **The stop rule of S3**: "slower than #795 at 745c9f12 by more than the spread of the rounds". Is that threshold right, and is #795's head the reference, rather than the prototype's times?
+9. **The stop rule of S2 and S3**: "slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers than #795's, on the same kind of device". Is that threshold right, and is #795's head the reference, rather than the prototype's times?
 10. **The reference of the transpose**: D405's weights, one unit in the last place from #795's $\alpha$. S3 compares with #795 by numbers, not bytes. Is that acceptable?
 
 ## 10. Alternatives not taken
@@ -391,4 +436,4 @@ No run reads any of it. Gates:
 - **A region of one site pair, form (b)** (Section 4.3).
 - **Extending `!mdrt.neighbors` with kinds and segments.** It would make the groups the $K = 0$ value of one type. But every consumer of a matrix would then have to refuse segments one by one.
 - **A new organization key `segment` in D409's lattice.** The list of contracts by segment says the same in the type, without changing the lattice.
-- **The segmented build as the groups build of D404 over units.** The groups build searches by cells. #795's searches (D1, W1) are among the mechanisms that are requirements. One meaning with two lowerings (D406) keeps both, and D404's bytes.
+- **The segmented build as the groups build of D404 over units.** This alternative is not decided here. The first step of S2 decides it, by the measurement ruled on 2026-11-13: the groups build's grid and queue against #795's column spans, on #795's fixtures. Until then, Section 3 assumes #795's search, because its searches (D1, W1) are among the mechanisms that are requirements. If the measurement favors the groups build, the producer takes it, as one emitter whose $K = 0$ instance keeps D404's bytes.
