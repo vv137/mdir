@@ -40,7 +40,7 @@
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda split | FileCheck %s --check-prefix=SPLIT
 # SPLIT: taken from the arena: True True
 # SPLIT-NEXT: two pieces of one arena: live 2, live bytes 1300, idle 1, idle bytes 1047040, driver blocks 1
-# SPLIT-NEXT: both freed: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# SPLIT-NEXT: both freed: live 0, live bytes 0, idle 3, idle bytes 1048576, driver blocks 1
 # SPLIT-NEXT: closed and trimmed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 #
 # A rest of fewer than 256 bytes is not cut off: the request takes the
@@ -56,13 +56,28 @@
 # BEST: three idle arenas: live 0, live bytes 0, idle 3, idle bytes 114688, driver blocks 3
 # BEST-NEXT: the smallest that holds 10 KiB, of 16, 64, and 32 KiB: 16 KiB
 #
-# A freed piece merges with the idle pieces on both sides, and the arena
-# serves a request of its full size again without the driver.
+# Freed pieces stay unmerged (coalescing is deferred) until a request
+# finds no idle piece that holds it: then the middle piece merges with the
+# idle pieces on both sides, and the arena serves a request of its full
+# size again without the driver.
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda coalesce | FileCheck %s --check-prefix=COALESCE
-# COALESCE: the left and the right piece freed: live 1, live bytes 4096, idle 2, idle bytes 1044480, driver blocks 1
-# COALESCE-NEXT: the middle piece freed: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# COALESCE: the left and the right piece freed: live 1, live bytes 4096, idle 3, idle bytes 1044480, driver blocks 1
+# COALESCE-NEXT: the middle piece freed: live 0, live bytes 0, idle 4, idle bytes 1048576, driver blocks 1
 # COALESCE-NEXT: the arena serves its full size again: True
 # COALESCE-NEXT: in use as a whole: live 1, live bytes 1048576, idle 0, idle bytes 0, driver blocks 1
+#
+# A request takes the idle piece that last held a block of its size, even
+# where another idle piece of the same extent comes later in the list,
+# which the best fit alone would take: the step's recurring requests keep
+# their pieces. Freed, the pieces stay unmerged.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda exact | FileCheck %s --check-prefix=EXACT
+# EXACT: two idle pieces of 4096 bytes: live 2, live bytes 8192, idle 3, idle bytes 1040384, driver blocks 1
+# EXACT-NEXT: 4000 bytes take the piece that held 4000: True False
+# EXACT-NEXT: all freed, unmerged: live 0, live bytes 0, idle 5, idle bytes 1048576, driver blocks 1
+#
+# The blocks of an activation that closes merge with their idle neighbors.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda close | FileCheck %s --check-prefix=CLOSE
+# CLOSE: an activation of three pieces closed: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
 #
 # Two arenas that the driver placed next to each other do not merge: a
 # request of both takes a third arena. The first line checks the premise,
@@ -113,11 +128,12 @@
 # REPLACED-NEXT: grown: the old rows back to the pool: live 3, live bytes 1286144, idle 1, idle bytes 1044480, driver blocks 3
 #
 # The order of the streams: a piece freed while work on stream A still
-# writes it (held back half a second by a host function), merged with an
-# idle neighbor, and taken whole on stream B after the runtime changes to
-# B, is written on B only after A's work: B's value is the last.
+# writes it (held back half a second by a host function), merged with its
+# idle neighbors when a request of the whole arena finds no piece that
+# holds it, and taken whole on stream B after the runtime changes to B, is
+# written on B only after A's work: B's value is the last.
 # RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda streams | FileCheck %s --check-prefix=STREAMS
-# STREAMS: the early piece freed while stream A writes it: live 0, live bytes 0, idle 1, idle bytes 1048576, driver blocks 1
+# STREAMS: the early piece freed while stream A writes it: live 0, live bytes 0, idle 3, idle bytes 1048576, driver blocks 1
 # STREAMS-NEXT: the merged arena taken on stream B: True
 # STREAMS-NEXT: the values after both streams: [2]
 # STREAMS-NEXT: closed and trimmed: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0

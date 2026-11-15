@@ -21,8 +21,13 @@ The pool's best fit with splitting and coalescing (D[device-pool-split]):
   tail      a rest of fewer than 256 bytes is not cut off: the request
             takes the whole piece
   best      the smallest idle piece that holds a request is taken
-  coalesce  a freed piece merges with both idle neighbors, and the arena,
-            idle as a whole again, serves a request of its full size
+  coalesce  freed pieces stay unmerged until a request finds no piece that
+            holds it; then a piece merges with both idle neighbors, and the
+            arena, idle as a whole again, serves a request of its full size
+  exact     a request takes the piece that last held a block of its size,
+            not another piece of the same extent
+  close     the blocks of an activation that closes merge with their idle
+            neighbors
   arenas    pieces of two arenas never merge, even where the driver placed
             the arenas next to each other
   trim      a trim returns the idle arenas, not one that holds a block
@@ -152,7 +157,7 @@ elif scenario in ("side-alloc", "side-free", "other-stream", "stream-ok"):
         show("the first stream named, and after the second stream")
     print("not refused", flush=True)
 elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
-                  "pieces", "off", "replaced", "streams"):
+                  "pieces", "off", "replaced", "streams", "exact", "close"):
     def allocate(size):
         pointer = lib.mgpuMemAlloc(size, None, False)
         assert pointer and pointer % 256 == 0, (size, pointer)
@@ -210,6 +215,21 @@ elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
         print("the arena serves its full size again:", whole == base)
         show("in use as a whole")
         free(whole)
+    elif scenario == "exact":
+        base = idle_arena(MIB)
+        first = allocate(4000)
+        guard = allocate(4096)
+        other = allocate(4096)
+        guard2 = allocate(4096)
+        free(first)
+        free(other)
+        show("two idle pieces of 4096 bytes")
+        again = allocate(4000)
+        print("4000 bytes take the piece that held 4000:", again == first, again == other)
+        free(again)
+        free(guard)
+        free(guard2)
+        show("all freed, unmerged")
     elif scenario == "arenas":
         # Arenas of 4 KiB until two lie next to each other.
         held = [allocate(4096) for _ in range(64)]
@@ -249,6 +269,15 @@ elif scenario in ("split", "tail", "best", "coalesce", "arenas", "trim",
         show("the large piece freed, past the budget")
         free(small)
         show("the first arena idle as a whole")
+    elif scenario == "close":
+        base = idle_arena(MIB)
+        inner = lib.mdrtDeviceActivationOpen()
+        lib.mdrtDeviceActivationEnter(inner)
+        pieces = [allocate(4096) for _ in range(3)]
+        lib.mdrtDeviceActivationLeave()
+        lib.mdrtDeviceActivationClose(inner)
+        lib.mdrtDeviceActivationEnter(a)
+        show("an activation of three pieces closed")
     elif scenario == "off":
         base = idle_arena(MIB)
         show("an arena freed with the pool off")

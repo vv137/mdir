@@ -966,7 +966,7 @@ and 1518 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
 API only: loading of modules, launches that skip empty grids, one stream
 in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a best-fit caching allocator that splits
-and coalesces and whose frees do not wait, plans of cuFFT, growable buffers for neighbor structures, and the
+and coalesces, deferred, and whose frees do not wait, plans of cuFFT, growable buffers for neighbor structures, and the
 records of what each activation of a Python simulation allocated). The
 driver registers callbacks for the log, the trajectory (DCD, XTC, or
 H5MD without loss; below), and

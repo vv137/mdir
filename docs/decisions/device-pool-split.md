@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**The runtime's pool of device memory is a best-fit allocator with splitting and immediate coalescing [[Wilson1995]](../references.md#wilson1995), over the allocations that it takes from the driver. A request takes the smallest idle piece that holds it, cut at its size rounded up to 256 bytes. A freed piece merges at once with the idle pieces next to it in its own driver allocation. Only a wholly idle allocation goes back to the driver.** Issue #890, after D411 (#876) and D414 (#885).
+**The runtime's pool of device memory is a best-fit allocator with splitting and deferred coalescing [[Wilson1995]](../references.md#wilson1995), over the allocations that it takes from the driver. A request takes first the idle piece that last held a block of exactly its size, so the requests that recur at every step keep their pieces. Otherwise it takes the smallest idle piece that holds it, cut at its size rounded up to 256 bytes. Freed pieces merge with their idle neighbors in their own driver allocation only when a request finds no piece that holds it, at a trim, when an activation closes, and when the idle pieces pass the budget. Only a wholly idle allocation goes back to the driver. The maintainer chose this form over immediate coalescing on 2026-11-15 (Section 10): it saves 5.21% of STMV's peak with the pool against 5.53%, and runs at `main`'s rate at STMV where the other was 0.2% slower.** Issue #890, after D411 (#876) and D414 (#885).
 
 ## 1. The rule
 
@@ -10,22 +10,34 @@ Recorded at its merge.
   of its own size from the driver (`cuMemAlloc`), as before. That
   allocation is an *arena*. No other driver call is added, and the
   step's requests are served from the pool without one.
-- **Best fit.** A request of $s$ bytes takes the idle piece of the
-  smallest extent $e \ge s$. Among pieces of one extent it takes the last
-  in the list of idle pieces. A piece of exactly $s$ bytes is therefore
-  taken first, as the pool took before it split.
+- **The piece of the same size first.** An idle piece remembers the
+  bytes asked for by the block that it last held, until it is merged or
+  cut. A request of $s$ bytes takes first such a piece of $s$ bytes, the
+  last in the list of idle pieces, whole. A request that recurs at every
+  step therefore takes back the piece that it freed, as the pool did
+  before it split, and keeps its address.
+- **Best fit.** Otherwise a request takes the idle piece of the smallest
+  extent $e \ge s$. Among pieces of one extent it takes the last in the
+  list. If no idle piece holds the request, the idle pieces are merged
+  (below) and the best fit is sought again; only then does the request
+  take a new arena.
 - **Splitting.** Let $u$ be $s$ rounded up to a multiple of $A = 256$
   bytes. If $e - u \ge A$, the request takes the first $u$ bytes and the
   rest stays idle. Otherwise the request takes the whole piece, and its
   last $e - s$ bytes are padding. The driver aligns an allocation to at
   least 256 bytes, and every cut is at a multiple of $A$ from the start
   of the arena, so every piece is aligned to $A$.
-- **Coalescing.** A freed piece merges at once with the idle piece that
-  ends where it begins and the one that begins where it ends, if they are
-  in its arena. It never merges with a piece of another arena, even one
-  that the driver placed right after it: the driver frees an allocation
-  only whole. Two idle pieces of one arena are therefore never next to
-  each other.
+- **Coalescing, deferred.** A freed piece stays as it is. The idle
+  pieces are merged, each with the idle piece that ends where it begins
+  and the one that begins where it ends in its arena, at four points:
+  - a request that no idle piece holds;
+  - a trim;
+  - the close of an activation;
+  - a free that takes the idle pieces past the budget.
+  A piece never merges with a piece of another arena, even one that the
+  driver placed right after it: the driver frees an allocation only
+  whole. After a merge no two idle pieces of one arena are next to each
+  other. A piece that merges with none keeps the size it remembers.
 - **Return to the driver.** Only a whole arena goes back. An idle piece
   of an arena that still holds a block in use stays in the pool until
   the whole arena is idle.
@@ -33,8 +45,11 @@ Recorded at its merge.
 ## 2. What goes back to the driver
 
 - **The budget** (`MDIR_DEVICE_POOL_BYTES`, half of the device by
-  default). An arena that becomes wholly idle goes back to the driver if
-  the idle pieces, it included, would exceed the budget. Let $S$ be the
+  default). An arena found wholly idle goes back to the driver if the idle
+  pieces, it included, would exceed the budget. It is found so when a
+  freed block is an arena of its own, or when a merge joins its pieces; a
+  free that takes the idle pieces past the budget merges them, so an
+  arena whose pieces are all idle is found then. Let $S$ be the
   bytes of the wholly idle arenas that the pool keeps. Each was kept when
   the idle bytes, which include it, were within the budget, and no arena
   joins $S$ otherwise. So $S$ never exceeds the budget. Once no block is
@@ -42,8 +57,9 @@ Recorded at its merge.
   block of an arena is in use, its idle pieces cannot go back, and they
   may take the idle bytes past the budget.
 - **A trim** (`mdir.trim_device_memory()`, `mdrtDeviceTrim`, and the
-  retry after the driver refuses a request) waits for the device, then
-  returns every wholly idle arena and the plans of cuFFT. The idle pieces
+  retry after the driver refuses a request) waits for the device, merges
+  the idle pieces, and returns every wholly idle arena and the plans of
+  cuFFT. The idle pieces
   of an arena that holds a block in use stay.
 - **A buffer that a growth replaces** (D312, amended). A buffer of the
   runtime's neighbor structures that is an arena of its own goes back to
@@ -57,7 +73,7 @@ Recorded at its merge.
   could not use the idle pieces. On D411's four programs its peak with the
   pool was 995,656, 3,162,836, 30,678,656, and 1,442,513,008 bytes,
   against 985,452, 3,162,836, 30,062,108, and 1,426,518,020 for the rule
-  above. At STMV that is 16.0 MB more, a slack of 25.1 MB against 9.1. On
+  above with immediate coalescing (Section 10). At STMV that is 16.0 MB more, a slack of 25.1 MB against 9.1. On
   the input of `Driver/pool-retention-gpu.test` it held 75 and 78 arenas
   against 70 and 73 (below). It was not kept.
 
@@ -74,13 +90,15 @@ and 3,000):
 | Steps | 100 | 200 | 300 | 1,000 | 3,000 | 10,000 |
 |---|---:|---:|---:|---:|---:|---:|
 | `main`, blocks | 95 | 97 | 97 | 97 | 97 | 97 |
-| this change, arenas | 70 | 73 | 73 | 73 | 73 | 73 |
+| immediate coalescing (Section 10), arenas | 70 | 73 | 73 | 73 | 73 | 73 |
+| this change, arenas | | 73 | | | 73 | |
 | the variant of D312 unchanged (above), arenas | 75 | | 78 | 78 | 78 | 78 |
 
-From 100 steps, this change is past the slack by one (3 against 2). The
-short run is now of 200 steps, after the rise, and the slack of 2 stays:
-`main` and this change hold the same count at 200 and 3,000 steps, 5 of
-5 runs each.
+From 100 steps, the pool with immediate coalescing is past the slack by
+one (3 against 2). The short run is now of 200 steps, after the rise, and
+the slack of 2 stays: `main`, the pool with immediate coalescing, and
+this change hold the same count at 200 and 3,000 steps, 5 of 5 runs
+each.
 
 **The test still catches the defect of D312** (#471). D312's lowering
 was undone in a tree of its own: the buffers that a loop over the groups
@@ -92,7 +110,11 @@ then differs from this change's at those allocations.
 |---|---:|---:|---:|---:|---:|---|
 | the lowering undone, the pool of `main` | 96 | 98 | 101 | 104 | 104 | fails, 3 of 3 (6 more) |
 | the lowering undone, this pool limited to exact sizes | 96 | 98 | 101 | 101 | 104 to 107 | fails, 3 of 3 (6 or 9 more) |
-| the lowering undone, this pool | 70 | 73 | 73 | 73 | 73 | passes |
+| the lowering undone, the pool with immediate coalescing | 70 | 73 | 73 | 73 | 73 | passes |
+| the lowering undone, this pool | | 73 | | | 73 | passes, 3 of 3 |
+
+The rows of the pool limited to exact sizes were measured with both
+forms of the pool, with the same counts at 200 and 3,000 steps.
 
 A short run of 1,000 steps, as a first version of this change had it,
 would have missed the defect on the pool of `main` (104 and 104). With
@@ -138,10 +160,10 @@ part of the merged piece, and no event per piece is needed.
 1. On stream A, a host function that sleeps half a second holds back a
    write of 1 to the first half of an arena. That half is then freed.
    The other half was freed before, with no work pending.
-2. The two halves merge into the whole arena.
-3. The runtime changes to stream B. A request of the whole arena takes
-   the merged piece, and B writes 2 to all of it.
-4. After both streams, every value is 2.
+2. The runtime changes to stream B. A request of the whole arena finds no
+   idle piece that holds it, so the pieces merge into the whole arena,
+   which the request takes. B writes 2 to all of it.
+3. After both streams, every value is 2.
 
 A pool that handed the piece out with no order between the streams lets
 A's late write land last. The mutant that skips the event wait of the
@@ -159,8 +181,8 @@ change of stream fails the test: the values are 1 and 2 (Section 7).
 - **The breakdown** (`MDIR_DEVICE_MEMORY=2`) lists the blocks in use and
   the idle pieces at each peak, and adds a line of the padding at the
   peak with the pool. The summary adds the requests split from a larger
-  piece. `mdrtDeviceMemoryCounts` counts the idle pieces ("idle") and
-  the arenas ("driver blocks").
+  piece. `mdrtDeviceMemoryCounts` counts the idle pieces, merged or not
+  ("idle"), and the arenas ("driver blocks").
 
 ## 5. Peak device memory
 
@@ -175,15 +197,15 @@ numbers are those of D414's change (#885, in `main` since) to the byte.
 |---|---:|---:|---:|---:|
 | peak in use, both | 933,696 | 3,120,456 | 28,768,536 | 1,417,374,424 |
 | peak with the pool, `main` | 1,147,080 | 3,254,356 | 32,743,444 | 1,509,967,188 |
-| peak with the pool, this change | 985,452 | 3,162,836 | 30,062,108 | 1,426,518,020 |
-| **saved with the pool** | **161,628 (14.09%)** | **91,520 (2.81%)** | **2,681,336 (8.19%)** | **83,449,168 (5.53%)** |
+| peak with the pool, this change | 994,728 | 3,191,852 | 30,484,020 | 1,431,321,304 |
+| **saved with the pool** | **152,352 (13.28%)** | **62,504 (1.92%)** | **2,259,424 (6.90%)** | **78,645,884 (5.21%)** |
 | slack, `main` (with the pool − in use) | 213,384 (18.60%) | 133,900 (4.11%) | 3,974,908 (12.14%) | 92,592,764 (6.13%) |
-| slack, this change | 51,756 (5.25%) | 42,380 (1.34%) | 1,293,572 (4.30%) | 9,143,596 (0.64%) |
-| of which idle pieces | 66,104 | 57,868 | 1,420,212 | 11,816,360 |
-| of which padding | 1,492 | 352 | 2,360 | 3,444 |
-| requests split from a larger piece | 941 | 271 | 792 | 437 |
-| arenas the driver holds at the end, `main` / this change | 64 / 37 | 49 / 38 | 105 / 63 | 110 / 71 |
-| the driver's use of the device at its most, `main` / this change (MiB) | 407.1 / 407.1 | 411.1 / 411.1 | 451.1 / 449.1 | 2,303.1 / 2,205.1 |
+| slack, this change | 61,032 (6.14%) | 71,396 (2.24%) | 1,715,484 (5.63%) | 13,946,880 (0.97%) |
+| of which idle pieces | 99,900 | 87,052 | 1,842,184 | 26,992,380 |
+| of which padding | 1,548 | 184 | 2,300 | 2,836 |
+| requests split from a larger piece | 41 | 11 | 63 | 313 |
+| arenas the driver holds at the end, `main` / this change | 64 / 39 | 49 / 39 | 105 / 66 | 110 / 70 |
+| the driver's use of the device at its most, `main` / this change (MiB) | 407.1 / 407.1 | 411.1 / 411.1 | 451.1 / 449.1 | 2,303.1 / 2,209.1 |
 
 The percentages of the slack are of the peak with the pool of the same
 column. The slack of a column can be smaller than its idle pieces: at the
@@ -192,15 +214,16 @@ peak with the pool the bytes in use are below the peak in use.
 **The slack that is left.** The peak with the pool is reached at a
 request that takes a new arena. The request takes one only if no idle
 piece holds it. So every idle piece at that peak is smaller than the
-request that set it. At STMV the idle pieces at that peak are six of
-1.07 to 3.20 MB and smaller ones of 1.31 MB in all. Two idle pieces of
-one arena are never next to each other, so each of these lies between
+request that set it, and the request merged the idle pieces before it
+took one. At STMV the idle pieces at that peak are seven of 1.26 to 10.56
+MB and smaller ones of 2.70 MB in all. After the merge no two idle pieces
+of one arena are next to each other, so each of these lies between
 blocks in use, or between a block in use and the end of its arena. It
 can serve only a smaller request, or merge once a neighbor is freed. The
 padding is at most 255 bytes a piece in use.
 
 **The driver's use of the device** moves in steps of 2 MiB. It falls by
-98 MiB at STMV and by 2 MiB at JAC, and the dodecahedra stay within one
+94 MiB at STMV and by 2 MiB at JAC, and the dodecahedra stay within one
 step.
 
 **Where the saving comes from.** On `main` the slack is the setup's
@@ -208,7 +231,7 @@ buffers of the device tuples, the per-step buffers of other sizes (D411),
 and the blocks that D414 releases after the setup and that no later
 request matched: 25.7 MB of them at STMV (D414, Section 2). These now
 serve smaller requests. The idle bytes at the peak with the pool fall
-from 92.6 MB to 11.8 MB at STMV.
+from 92.6 MB to 27.0 MB at STMV.
 
 ## 6. The same kernels, the same trajectories
 
@@ -230,6 +253,8 @@ from 92.6 MB to 11.8 MB at STMV.
   velocities, box, forces where written, and the fingerprints. The
   addresses of the buffers differ, since requests are now served from
   pieces of larger arenas (Section 5, the splits), and no result changes.
+  The checkpoints were run for both forms of the pool, (a) and this
+  change, with the branch's own tree; both gave 5 of 5.
 
 ## 7. Tests and mutations
 
@@ -240,13 +265,15 @@ on a pool that breaks the property it names:
 
 | Scenario | Checks | Refusal it tests |
 |---|---|---|
-| `split` | a request served from a larger idle arena, the next piece 1,024 bytes after a request of 1,000 bytes | |
+| `split` | a request served from a larger idle arena, the next piece 1,024 bytes after a request of 1,000 bytes; freed, the pieces stay unmerged | |
 | `tail` | a rest of 200 bytes is not cut off: the request takes the whole piece | a split below the alignment |
 | `best` | of idle arenas of 16, 64, and 32 KiB, a request of 10 KiB takes the 16 KiB one | a piece that is not the best fit |
-| `coalesce` | a freed piece merges with the idle pieces on both sides, and the arena serves a request of its full size without the driver | |
+| `exact` | a request of 4,000 bytes takes the piece that held 4,000, not a later piece of the same extent; freed pieces stay unmerged | a best fit that ignores the size remembered; a merge at the free |
+| `coalesce` | freed pieces stay unmerged; a request of the whole arena merges the middle piece with both neighbors and is served without the driver | |
+| `close` | the blocks of an activation that closes merge with their idle neighbors | |
 | `arenas` | two arenas that the driver placed next to each other never merge; a request of both takes a third | merging across arenas |
-| `trim` | a trim returns the idle arena and keeps the one with a piece in use, then returns it once the piece is freed | a trim of a partly used arena |
-| `pieces` (budget of 1 MiB) | an idle piece of an arena in use stays past the budget; the arena goes back once wholly idle | a piece returned alone |
+| `trim` | a trim merges, returns the idle arena, and keeps the one with a piece in use, then returns it once the piece is freed | a trim of a partly used arena |
+| `pieces` (budget of 1 MiB) | an idle piece of an arena in use stays past the budget; a free past the budget merges, and the arena then wholly idle goes back | a piece returned alone |
 | `off` (budget of 0) | a freed arena goes back at once; nothing is kept or split | |
 | `replaced` | a growth returns a buffer that is an arena of its own to the driver, and a piece of a larger arena to the pool | a piece returned to the driver alone (D312) |
 | `streams` | the order of the streams (Section 3) | a reuse before the work on another stream is done |
@@ -264,33 +291,45 @@ every line.
 
 | Mutant | Fails |
 |---|---|
-| no coalescing | `split`, `coalesce`, `trim`, `pieces`, `replaced`, `streams` |
-| no rounding of the cut to 256 bytes | `split` |
+| no coalescing | `split`, `coalesce`, `close`, `trim`, `pieces`, `replaced`, `streams` |
+| coalescing at once, at each free | `split`, `coalesce`, `exact`, `streams` |
+| no merge when no piece holds a request | `coalesce`, `replaced`, `streams` |
+| no merge before a trim | `trim` |
+| no merge at the close of an activation | `close` |
+| no merge at a free past the budget | `pieces` |
+| the piece of the same size not taken first | `exact` |
+| no rounding of the cut to 256 bytes | `split`, `exact` |
 | the event wait of a change of stream skipped | `streams` (values 1 and 2) |
 | a split that leaves a rest below 256 bytes | `tail` |
 | a trim of a partly used arena | `trim` |
-| merging across arenas | `arenas`, `best`, `trim`, `pieces`, and the earlier `registry`, `budget`, `retry` |
+| merging across arenas | `arenas`, `pieces`, and the earlier `registry`, `budget`, `retry` |
 | first fit in place of best fit | `best` |
 | a replaced piece returned to the driver alone | `replaced` |
 | the budget applied to a piece of an arena in use | `pieces` |
 
 ## 8. compute-sanitizer
 
+For this change, on an RTX 4090:
 - **The tier** (`lit -Dsanitize=1 test/Sanitizer`, with the interpreters
-  of PyTorch and h5py): 24 passed, 1 unsupported (JAX is not installed),
-  on an RTX 4090. The job held the device for 4.8 minutes.
-- **D411's four programs, with the default pool**, on an RTX 4090:
-  memcheck on all four (STMV for 25 steps, the others for 200), 0 errors;
-  racecheck on the dodecahedra and JAC (200 steps), 0 hazards. racecheck
-  of STMV had not finished its first step after 20 minutes and was
-  stopped; its kernels are those of JAC's kinds, and this change touches
-  no kernel. The job held the device for 29 minutes, 20 of them in that
-  run.
+  of PyTorch and h5py): 24 passed, 1 unsupported (JAX is not installed).
+  The job held the device for 4.4 minutes.
+- **D411's four programs, with the default pool:** memcheck on all four
+  (STMV for 25 steps, the others for 200), 0 errors; racecheck on the
+  dodecahedra and JAC (200 steps), 0 hazards. The job held the device for
+  5.3 minutes.
+- racecheck of STMV was not run. For the first form it had not finished
+  its first step after 20 minutes; its kernels are those of JAC's kinds,
+  and this change touches no kernel. The first form passed the same tier
+  and the same runs (4.8 and 29 minutes of the device).
 - memcheck sees an access beyond a driver allocation, not beyond a piece
   of one. An access past a buffer's end would have been past its own
   allocation on `main`, where D414's runs with the pool off found none.
 
-## 9. Timing
+## 9. Timing of the first form, with immediate coalescing
+
+The first form of this change merged a freed piece at once with its idle
+neighbors and had no rule of the same size first (option (a) of Section
+10). Its timing led to the ruling.
 
 **How it was measured.** The rules of the timing protocol: JAC NVE with
 the groups (100,000 steps, a row of the log every 1,000) and STMV with
@@ -299,8 +338,9 @@ with `gpu-run --idle`, in six jobs. Each run's rate is the mean of its
 windows after the first quarter. The mean after half of the windows
 differs from it by at most 0.07% at JAC and 0.19% at STMV, so the rate is
 stationary there; the mean of all the windows differs by up to 0.22% and
-0.62%, as the card warms at the start of a run. The trees ran in alternating orders, ABBA and BAAB, so a drift of
-the card through a job cancels. Two further jobs with ABAB orders, run
+0.62%, as the card warms at the start of a run. The trees ran in
+alternating orders, ABBA and BAAB, so a drift of the card through a job
+cancels. Two further jobs with ABAB orders, run
 first, put every branch run after a `main` run and are not counted; they
 gave the same sign.
 
@@ -325,7 +365,7 @@ every job, so it is a real cost and not noise.
   2,000 and 4,000 steps) are 12.3 a step at JAC and 15.5 at STMV, on
   both trees. Their host time is 0.6 µs a step at JAC against 0.4 on
   `main`, and 0.85 to 1.05 µs at STMV against 0.55: 50 to 70 ns a call
-against 35, beside steps of 135 µs and 4 ms. No
+  against 35, beside steps of 135 µs and 4 ms. No
   driver call is made in the step: the arenas that the driver holds are
   the same after 2,000 and 4,000 steps (71 at STMV), and the requests
   split from a larger piece grow by 1.8 a step.
@@ -341,3 +381,52 @@ against 35, beside steps of 135 µs and 4 ms. No
   step. The other kernels differ within the spread of `main`'s runs.
   Which buffers of the spreading sit where, and why that costs, is not
   found.
+
+## 10. The ruling: the piece of the same size first, coalescing deferred
+
+The review of the first form (Section 9) put the trade to the maintainer
+with three options: (a) accept it, +0.2% a step for −5.5% of STMV's peak
+with the pool; (b) measure a pool that serves an exact-size idle piece
+first and splits only otherwise; (c) find first the buffer whose placement
+slows the spreading. Two forms of (b) were measured, on separate trees,
+by the same protocol:
+- **v1:** the piece of the same size first, coalescing at once. It gave
+  the same peaks and the same 437 splits at STMV as (a): merged at once
+  with a neighbor, a freed piece loses its size, so the rule seldom
+  applies.
+- **v2:** the piece of the same size first, coalescing deferred, as in
+  Section 1. This change is v2; it adds the merges at the close of an
+  activation and at a free past the budget, which are off the step's
+  path, and gives the same peaks to the byte.
+
+**Peak with the pool** (bytes; saving against `main`):
+
+| | Dodecahedron, groups | Dodecahedron, matrix | JAC, groups | STMV, groups |
+|---|---:|---:|---:|---:|
+| `main` | 1,147,080 | 3,254,356 | 32,743,444 | 1,509,967,188 |
+| (a) and v1 | 985,452 (−14.09%) | 3,162,836 (−2.81%) | 30,062,108 (−8.19%) | 1,426,518,020 (−5.53%) |
+| v2, this change | 994,728 (−13.28%) | 3,191,852 (−1.92%) | 30,484,020 (−6.90%) | 1,431,321,304 (−5.21%) |
+| slack, (a) / v2 | 5.25% / 6.14% | 1.34% / 2.24% | 4.30% / 5.63% | 0.64% / 0.97% |
+| splits at STMV, (a) / v2 | | | | 437 / 313 |
+
+**Timing** (RTX 4090, `gpu-run --idle`, four jobs with ABBA and BAAB
+orders; each value is the tree's time a step divided by `main`'s in the
+same job; (a) here includes the check of the stream of Section 3; the
+spread of `main`'s own runs in a job was up to 0.4%):
+
+| Job | JAC (a) | JAC v1 | JAC v2 | STMV (a) | STMV v1 | STMV v2 |
+|---|---:|---:|---:|---:|---:|---:|
+| 7 | 1.0027 | 1.0032 | 1.0029 | 1.0029 | 1.0031 | 1.0023 |
+| 8 | 1.0011 | 1.0004 | 1.0000 | 1.0028 | 1.0022 | 0.9987 |
+| 9 | 1.0028 | | 1.0016 | 1.0020 | | 1.0006 |
+| 10 | 1.0013 | | 0.9998 | 1.0018 | | 1.0000 |
+| mean | 1.0020 | | 1.0011 | 1.0024 | | 1.0004 |
+
+v2 runs at `main`'s rate at STMV (+0.04% on average, of both signs) and
+0.1% slower at JAC, against 0.2% for (a) at both. It gives up 4.8 MB of
+STMV's saving (78.6 MB against 83.4) and 0.4 MB of JAC's.
+
+**The ruling** (the maintainer, 2026-11-15): option (b), v2. The step's
+recurring requests keep their pieces and their addresses, and the pool
+splits and merges only where a request would otherwise take new memory
+from the driver.

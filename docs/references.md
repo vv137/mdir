@@ -1861,7 +1861,7 @@ pp. 1–116.
 [doi:10.1007/3-540-60368-9_19](https://doi.org/10.1007/3-540-60368-9_19)
 
 Used for: the runtime's pool of device memory (D[device-pool-split]): a
-best-fit allocator with splitting and immediate coalescing of free
+best-fit allocator with splitting and deferred coalescing of free
 neighbors, over the allocations that it takes from the driver.
 
 ### Xiao2001
