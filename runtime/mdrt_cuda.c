@@ -801,23 +801,26 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    Freeing memory with the driver would wait for the device, and a build of
    a neighbor structure frees a dozen blocks.
 
-   The pool is a best-fit allocator with splitting and immediate
+   The pool is a best-fit allocator with splitting and deferred
    coalescing (Wilson, Johnstone, Neely and Boles, "Dynamic storage
    allocation: a survey and critical review", IWMM 1995, LNCS 986), over
    the allocations that it takes from the driver. A request that no idle
    piece can hold takes an allocation of its own size from the driver, an
-   arena, which is then cut into pieces. A request is served from the
-   smallest idle piece that holds it, so a piece of exactly its size is
-   taken first, as the pool took before it split. The piece is cut at the
-   request's size rounded up to POOL_ALIGNMENT bytes when the rest is at
-   least that much; otherwise the request takes it whole. A freed piece is
-   merged with the idle pieces next to it in its own arena, never with
-   another arena, even one that the driver placed right after it. Every
-   byte of a merged piece was freed by work issued before the request that
-   takes it, so the order of the stream covers each part. The sizes that
-   compiled code asks for at every step do not follow the builds: a buffer
-   indexed by the places of the groups takes the room of the places, not
-   the number that a build occupied (D312).
+   arena, which is then cut into pieces. A request takes first an idle
+   piece that last held a block of exactly its size, unmerged and uncut
+   since, so that the requests that recur at every step keep their pieces
+   (and the addresses that the pool gave them before it split). Otherwise
+   it takes the smallest idle piece that holds it, cut at its size rounded
+   up to POOL_ALIGNMENT bytes when the rest is at least that much, or whole
+   otherwise. A freed piece stays as it is. The idle pieces are merged with
+   their idle neighbors in their own arena, never across arenas, even ones
+   that the driver placed next to each other, only when a request finds no
+   idle piece that holds it, at a trim, and when an activation closes.
+   Every byte of a merged piece was freed by work issued before the request
+   that takes it, so the order of the stream covers each part. The sizes
+   that compiled code asks for at every step do not follow the builds: a
+   buffer indexed by the places of the groups takes the room of the places,
+   not the number that a build occupied (D312).
 
    Only a whole arena goes back to the driver: an idle piece of an arena
    that holds a block in use stays in the pool until the arena is idle as a
@@ -833,8 +836,10 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    and never reclaimed. If it cannot grow, the block is given back to the
    driver and the run stops. The idle pieces of the pool are bounded in
    bytes (MDIR_DEVICE_POOL_BYTES, by default half of the device): an arena
-   that becomes idle as a whole when the idle pieces would exceed the
-   budget goes back to the driver, so the idle arenas never exceed it. A
+   found idle as a whole (a freed block that is an arena of its own, or
+   pieces merged) when the idle pieces would exceed the budget goes back to
+   the driver, so the idle arenas never exceed it; a free that takes the
+   idle pieces past the budget merges them first. A
    request that the driver refuses for want of memory releases the idle
    arenas of the pool and the plans of cuFFT (trimIdle) and is made once
    more; and an embedding program may release them itself
@@ -877,6 +882,9 @@ struct Block {
   /* The arena: the allocation of the driver that holds the piece. */
   CUdeviceptr base;
   uint64_t baseSize;
+  /* Of an idle piece: the bytes asked for by the block that it last held,
+     if it has not been merged or cut since; 0 otherwise. */
+  uint64_t asked;
 };
 /* The alignment of the pieces of an arena: the driver aligns an
    allocation to at least 256 bytes, and the code may rely on that. */
@@ -1131,6 +1139,7 @@ static void *growList(void *list, size_t *room, size_t size) {
    The pool hands a freed piece to the next request without waiting, which
    is sound only because both are issued on the first stream, in order
    (D87, premise P4; D[device-pool-split]). The lowering passes no stream. */
+static void mergeIdle(void);
 static void checkPoolStream(CUstream stream, const char *what) {
   if (!onSide && (!stream || stream == sharedStream))
     return;
@@ -1167,16 +1176,30 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   struct Block block = {.size = size,
                         .owner = currentActivation,
                         .tag = allocationTag};
-  /* The best fit: the smallest idle piece that holds the request; among
-     pieces of one extent, the last in the list. */
+  /* First an idle piece that last held a block of exactly this size and
+     has not been merged or cut since, the last such in the list: a request
+     that recurs at every step takes the piece it freed, as the pool took
+     before it split. Otherwise the best fit, the smallest idle piece that
+     holds the request (among pieces of one extent, the last in the list);
+     if none does, the idle pieces are merged with their idle neighbors and
+     the best fit is sought again. */
   int best = -1;
-  for (int i = numFree; i-- != 0;) {
-    uint64_t extent = freeBlocks[i].extent;
-    if (extent < size || (best >= 0 && extent >= freeBlocks[best].extent))
-      continue;
-    best = i;
-    if (extent == size)
+  for (int i = numFree; i-- != 0;)
+    if (freeBlocks[i].asked == size) {
+      best = i;
       break;
+    }
+  for (int pass = 0; best < 0 && pass != 2 && numFree; ++pass) {
+    if (pass)
+      mergeIdle();
+    for (int i = numFree; i-- != 0;) {
+      uint64_t extent = freeBlocks[i].extent;
+      if (extent < size || (best >= 0 && extent >= freeBlocks[best].extent))
+        continue;
+      best = i;
+      if (extent == size)
+        break;
+    }
   }
   ++numAllocations;
   if (best >= 0) {
@@ -1185,12 +1208,13 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     poolBytes -= piece.extent;
     uint64_t used =
         (size + POOL_ALIGNMENT - 1) & ~(uint64_t)(POOL_ALIGNMENT - 1);
-    if (piece.extent >= used + POOL_ALIGNMENT) {
+    if (piece.asked != size && piece.extent >= used + POOL_ALIGNMENT) {
       /* The rest stays idle; the list has the room of the piece taken. */
       struct Block rest = piece;
       rest.pointer += used;
       rest.extent -= used;
       rest.size = rest.extent;
+      rest.asked = 0;
       freeBlocks[numFree++] = rest;
       poolBytes += rest.extent;
       piece.extent = used;
@@ -1255,19 +1279,17 @@ static void releaseArena(struct Block arena, int gone, int waited) {
   ++numToDriver;
 }
 
-static void poolBlock(struct Block block, int gone, int replaced) {
-  if (replaced && block.pointer == block.base &&
-      block.extent == block.baseSize) {
-    releaseArena(block, gone, 1);
-    return;
-  }
+/* Adds an idle piece to the list. With `merge`, it is merged first with
+   the idle pieces next to it in its arena. An arena that is idle as a whole
+   goes back to the driver if the budget has no room for it. */
+static void addIdle(struct Block block, int gone, int replaced, int merge) {
   block.owner = NULL;
   block.size = block.extent;
   /* The idle neighbors in the arena: one ends where the block begins, one
-     begins where it ends. Two idle pieces are never next to each other, so
-     one pass over the list finds both. The merged piece keeps the tag of
-     its larger part. */
-  for (int i = numFree; i-- != 0;) {
+     begins where it ends. Merged pieces are never next to each other, so
+     one pass over the list finds both of a piece being merged. The merged
+     piece keeps the tag of its larger part. */
+  for (int i = numFree; merge && i-- != 0;) {
     struct Block other = freeBlocks[i];
     if (other.base != block.base)
       continue;
@@ -1279,6 +1301,7 @@ static void poolBlock(struct Block block, int gone, int replaced) {
       block.tag = other.tag;
     block.extent += other.extent;
     block.size = block.extent;
+    block.asked = 0;
     poolBytes -= other.extent;
     freeBlocks[i] = freeBlocks[--numFree];
   }
@@ -1299,6 +1322,46 @@ static void poolBlock(struct Block block, int gone, int replaced) {
   }
   freeBlocks[numFree++] = block;
   poolBytes += block.extent;
+}
+
+/* A freed block keeps its piece as it is, unmerged, so that the next
+   request of its size takes it again: coalescing is deferred until a
+   request finds no idle piece that holds it, a trim, the close of an
+   activation, or a free that takes the idle pieces past the budget
+   (mergeIdle), where an arena that the merge finds idle as a whole goes
+   back to the driver. */
+static void poolBlock(struct Block block, int gone, int replaced) {
+  if (replaced && block.pointer == block.base &&
+      block.extent == block.baseSize) {
+    releaseArena(block, gone, 1);
+    return;
+  }
+  block.asked = block.size;
+  addIdle(block, gone, replaced, 0);
+  if (!gone && poolBytes > getPoolBudget())
+    mergeIdle();
+}
+
+/* Merges every idle piece with its idle neighbors in its arena, and returns
+   an arena that is then idle as a whole to the driver if the budget has no
+   room for it: the idle pieces are taken out of the list and added again,
+   merged. A piece that merges with none keeps its size asked. The work that
+   may still use a returned arena is waited for first (releaseArena). */
+static void mergeIdle(void) {
+  int count = numFree;
+  if (!count)
+    return;
+  struct Block *pieces = malloc((size_t)count * sizeof(struct Block));
+  if (!pieces) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  memcpy(pieces, freeBlocks, (size_t)count * sizeof(struct Block));
+  numFree = 0;
+  poolBytes = 0;
+  for (int i = 0; i != count; ++i)
+    addIdle(pieces[i], 0, 0, 1);
+  free(pieces);
 }
 
 /* Returns a buffer of the runtime's structures that a growth replaces to
@@ -1634,6 +1697,7 @@ static uint64_t trimIdle(void) {
   if (isDriverGone())
     return 0;
   finish();
+  mergeIdle();
   /* Only an arena that is idle as a whole goes back; the idle pieces of an
      arena that holds a block in use stay. */
   uint64_t released = fftPlanBytes;
@@ -2124,6 +2188,10 @@ void mdrtDeviceActivationClose(void *activation) {
     liveBytes -= block.size;
     poolBlock(block, gone, 0);
   }
+  /* The blocks of the activation merge with their idle neighbors, so that
+     the arenas idle as a whole follow the budget. */
+  if (!gone)
+    mergeIdle();
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
   /* The copies of the constants of the bodies that the activation made. */
