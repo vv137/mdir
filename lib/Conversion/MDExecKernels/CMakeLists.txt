@@ -5,6 +5,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   HostPairLanes.cpp
   MDAlgLowering.cpp
   MDExecKernels.cpp
+  TraversePairs.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
   ScatterEmitter.cpp

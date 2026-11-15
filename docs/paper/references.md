@@ -588,6 +588,13 @@ M. Reinecke, "pocketfft," a library of fast Fourier transforms in C,
 Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 [gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
 
+### Rinard1997
+
+M. C. Rinard, P. C. Diniz, "Commutativity analysis: a new analysis
+technique for parallelizing compilers," *ACM Trans. Program. Lang. Syst.*
+**19**(6), 942–991 (1997).
+[doi:10.1145/267959.269969](https://doi.org/10.1145/267959.269969)
+
 ### Ryckaert1977
 
 J.-P. Ryckaert, G. Ciccotti, H. J. C. Berendsen, "Numerical integration

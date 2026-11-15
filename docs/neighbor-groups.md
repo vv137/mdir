@@ -520,8 +520,12 @@ the cutoff once: a pair within $r_c$ is within $R$ at the build while the
 structure is valid (Section 7.1), so it has a bit, and a pair farther than
 $R$ has none.
 
-**The schedule** (`emitGroupPairKernel`, `lib/Conversion/MDExecKernels/`;
-`lowerGroupPairFor`, `convert-md-exec-to-gpu`). A warp takes a block of a
+**The schedule** (the SIMT lowering of `md_alg.traverse_pairs`,
+`lib/Conversion/MDExecKernels/TraversePairs.cpp`, which
+`convert-md-exec-to-gpu` calls where the op stands; D[md-alg-traverse]).
+`convert-md-exec-to-md-alg` turns each loop that takes each pair once into
+that op, which declares its visit, its combination, and the algebra of
+each value, and whose serial definition is the oracle of the schedule. A warp takes a block of a
 group $g$, up to 64 entries in at most two rounds of 32. Lanes $u$ and
 $u + 16$ hold member $u$, at place $16g+u$, with its position in its frame
 and its fields. In a round, lane $\ell$ loads entry $32\cdot\text{round} +

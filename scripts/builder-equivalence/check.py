@@ -50,7 +50,10 @@ the start and the loop over the parts). Both by default; a build of
 before `--segments` takes `--kinds run`. --precisions (none by default) makes each one
 a case in each precision given, set in [execution] as the target is, and
 each --env NAME=VALUE[,NAME=VALUE] one more case with those variables, beside
-the case without them (#739). The label of a case in the report and in a
+the case without them (#739), and each --execution KEY=VALUE[,KEY=VALUE] one
+more with those keys set in [execution] as strings, such as
+neighbor_structure=GROUPS for every program with the groups
+(D[md-alg-traverse]). The label of a case in the report and in a
 file of hashes is its target, kind, precision, and variables, for example
 "gpu segments mixed env:MDIR_PME_SPREAD=tiles4"; without the two options it
 is the label of before. A case runs in a
@@ -439,8 +442,9 @@ class Variant:
     before, "cpu" or "gpu segments", so that older files of hashes still
     apply."""
 
-    def __init__(self, target, kind="run", precision=None, env=()):
+    def __init__(self, target, kind="run", precision=None, env=(), settings=()):
         self.target, self.kind, self.precision, self.env = target, kind, precision, tuple(env)
+        self.settings = tuple(settings)
 
     def label(self):
         words = [self.target]
@@ -450,6 +454,8 @@ class Variant:
             words.append(self.precision)
         if self.env:
             words.append("env:" + ",".join(f"{name}={value}" for name, value in self.env))
+        if self.settings:
+            words.append("execution:" + ",".join(f"{key}={value}" for key, value in self.settings))
         return " ".join(words)
 
 
@@ -495,6 +501,8 @@ def outputs(mdir, printer, case, variant, stages, forms, scratch, index, python=
         text = with_target(source_text(case), target)
         if variant.precision:
             text = with_execution(text, "precision", f'"{variant.precision.upper()}"')
+        for key, value in variant.settings:
+            text = with_execution(text, key, f'"{value}"')
         with open(os.path.join(directory, control), "w", encoding="utf-8",
                   errors="surrogateescape") as file:
             file.write(text)
@@ -632,6 +640,10 @@ def main():
                         help="single, mixed, double: each case in each, set in [execution]")
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE[,NAME=VALUE]",
                         help="a set of environment variables: each case with it as well")
+    parser.add_argument("--execution", action="append", default=[],
+                        metavar="KEY=VALUE[,KEY=VALUE]",
+                        help="a set of keys of [execution], each a string: each case with "
+                             "it as well (for example neighbor_structure=GROUPS)")
     parser.add_argument("--python", help="the interpreter of the cases written in Python")
     parser.add_argument("--instances", action="store_true",
                         help="count the cases whose lowered program holds each template instance")
@@ -669,6 +681,12 @@ def main():
         if not pairs or any("=" not in pair or not pair.split("=", 1)[0] for pair in pairs):
             parser.error(f"--env takes NAME=VALUE[,NAME=VALUE], not '{value}'")
         environments.append(tuple(tuple(pair.split("=", 1)) for pair in pairs))
+    settings = [()]
+    for value in args.execution:
+        pairs = [pair for pair in value.split(",") if pair]
+        if not pairs or any("=" not in pair or not pair.split("=", 1)[0] for pair in pairs):
+            parser.error(f"--execution takes KEY=VALUE[,KEY=VALUE], not '{value}'")
+        settings.append(tuple(tuple(pair.split("=", 1)) for pair in pairs))
     if args.instances and "lowered" not in stages:
         parser.error("--instances needs the lowered stage (--stages lowered)")
     for value, allowed in ((targets, {"cpu", "gpu"}), (kinds, {"run", "segments"}),
@@ -696,10 +714,12 @@ def main():
         # A case of the program of segments is named "<target> segments";
         # a precision and a set of variables add to the name (Variant). A
         # case written in Python has the program of a run alone.
-        work = [(i, case, Variant(target, kind, precision, env))
+        work = [(i, case, Variant(target, kind, precision, env, setting))
                 for i, case in enumerate(cases) for target in targets for kind in kinds
                 for precision in (precisions or [None]) for env in environments
-                if not (kind == "segments" and case.relative.endswith(".py"))]
+                for setting in settings
+                if not (kind == "segments" and case.relative.endswith(".py"))
+                and not (setting and case.relative.endswith(".py"))]
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             results = list(pool.map(
                 lambda item: [outputs(mdir, printer, item[1], item[2], stages, forms,

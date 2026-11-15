@@ -1,0 +1,76 @@
+# The refusals of the lowering of md_alg.traverse_pairs
+# (D[md-alg-traverse]), each a realistic bug of a pipeline or of a
+# hand-written op. The program is that of
+# ../MDExecToMDAlg/convert.mlir: a dual list of groups and two loops over it.
+#
+# RUN: mdir-opt %S/../MDExecToMDAlg/convert.mlir --md-exec-expose-validity \
+# RUN:     --md-exec-choose-neighbors --md-exec-assign-algebra \
+# RUN:     --md-exec-assign-storage=memory=device > %t.exec.mlir
+# RUN: mdir-opt %t.exec.mlir --convert-md-exec-to-md-alg > %t.alg.mlir
+#
+# A pipeline that leaves out the converter: the big pass no longer lowers a
+# loop over groups.
+# RUN: not mdir-opt %t.exec.mlir --convert-md-exec-to-gpu 2>&1 \
+# RUN: | FileCheck %s --check-prefix=UNCONVERTED
+# UNCONVERTED: 'md_exec.pair_for' op takes each pair once over groups, which 'convert-md-exec-to-md-alg' turns into 'md_alg.traverse_pairs' before this pass
+#
+# The buffer form in the pipeline: its contract is a precondition that its
+# writer asserts, which the pipeline takes from the type instead.
+# RUN: not mdir-opt %S/Inputs/traverse-buffers.mlir --convert-md-exec-to-gpu 2>&1 \
+# RUN: | FileCheck %s --check-prefix=BUFFERS
+# BUFFERS: 'md_alg.traverse_pairs' op takes its list as buffers, a form for the serial oracle and the tests; the pipeline takes the structure form, whose contract is in the type
+#
+# A cutoff beyond the reach that the structure was built for (D357).
+# RUN: sed 's/cutoff(2.500000e+00) weights/cutoff(3.000000e+00) weights/' %t.alg.mlir \
+# RUN: | not mdir-opt --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=COVERAGE
+# COVERAGE: 'md_alg.traverse_pairs' op the cutoff, 3.000000e+00, exceeds the cutoff that the neighbor structure was built with, 2.500000e+00
+#
+# The outer list of a dual list, which the loops take through the inner one.
+# RUN: sed 's/ inner positions/ positions/' %t.alg.mlir \
+# RUN: | not mdir-opt --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=OUTER
+# OUTER: 'md_alg.traverse_pairs' op reads the outer list of a dual list, which the loops take through the inner list
+#
+# A stable visit, which the schedule of the groups does not give.
+# RUN: sed 's/visit unordered/visit stable/' %t.alg.mlir \
+# RUN: | not mdir-opt --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=STABLE
+# STABLE: 'md_alg.traverse_pairs' op visits its entries stably, which the schedule of the groups does not: its rotation and its atomics fix no tree
+#
+# A block that is not whole warps.
+# RUN: not mdir-opt %t.alg.mlir --convert-md-exec-to-gpu=block-size=48 2>&1 \
+# RUN: | FileCheck %s --check-prefix=BLOCK
+# BLOCK: runs a warp for each unit of work, which needs blocks of whole warps, not 48 threads
+#
+# The serial oracle where the loop prunes for its refresh (D284).
+# RUN: not mdir-opt %t.alg.mlir \
+# RUN:     --convert-md-exec-to-gpu="fuse-pruning=true fuse-pruning-groups=7 traverse-oracle=serial" 2>&1 \
+# RUN: | FileCheck %s --check-prefix=ORACLE
+# ORACLE: 'md_alg.traverse_pairs' op prunes for its refresh (D284), which its serial definition does not: the oracle takes the pruning in the refresh
+#
+# An oracle that does not exist.
+# RUN: not mdir-opt %t.alg.mlir --convert-md-exec-to-gpu=traverse-oracle=fast 2>&1 \
+# RUN: | FileCheck %s --check-prefix=NAME
+# NAME: has no lowering 'fast'
+#
+# The SIMT pattern on its own, and the serial definition of the structure
+# form, which has no buffers on the host.
+# RUN: not mdir-opt %t.alg.mlir --convert-md-alg-to-gpu 2>&1 \
+# RUN: | FileCheck %s --check-prefix=ALONE
+# ALONE: 'md_alg.traverse_pairs' op is lowered for a device by 'convert-md-exec-to-gpu', where it stands
+# RUN: not mdir-opt %t.alg.mlir --convert-md-alg-to-scf 2>&1 \
+# RUN: | FileCheck %s --check-prefix=SERIAL
+# SERIAL: 'md_alg.traverse_pairs' op takes its list as a structure, which has no buffers on the host
+#
+# The serial definition of the buffer form takes the cell as the vector of
+# its edges, or of its edges and tilts, not as `!md.cell`.
+# RUN: not mdir-opt %S/Inputs/traverse-cell.mlir --convert-md-alg-to-scf 2>&1 \
+# RUN: | FileCheck %s --check-prefix=CELL
+# CELL: 'md_alg.traverse_pairs' op takes its cell, in the buffer form, as the vector of its edges (3) or of its edges and tilts (6)
+#
+# A traversal written by hand that visits each pair in both orders, over a
+# matrix, which the verifier admits: the loops over a matrix stay
+# md_exec.pair_for in this step. The schedule of the groups therefore sees
+# only `unique` and `atomic` (an assertion), and a `unique` type is always a
+# structure of groups (D413; an assertion too).
+# RUN: not mdir-opt %S/Inputs/traverse-directed.mlir --convert-md-exec-to-gpu 2>&1 \
+# RUN: | FileCheck %s --check-prefix=DIRECTED
+# DIRECTED: 'md_alg.traverse_pairs' op visits each pair in both orders, which only the loops over a matrix do: they stay 'md_exec.pair_for'

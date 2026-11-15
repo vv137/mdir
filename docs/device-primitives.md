@@ -753,7 +753,12 @@ over steps never uses (D414), and
 `convert-md-exec-to-gpu` creates them: the accessors of the templates of
 PME, before their loops over the order are unrolled and canonicalized, and
 the counting sort of the device's ragged rows, whose launches the
-function's lowering names in order (D354). The arithmetic that
+function's lowering names in order (D354). The loop over pairs over
+groups, `md_alg.traverse_pairs`, which `convert-md-exec-to-md-alg` makes
+before it, is lowered where it stands as well (D[md-alg-traverse]): its
+kernels are named in that order, the runtime's getters it calls lie
+between its launches in the host code, and the work that the pass does
+after the ops reaches its kernels. #888 frees it. The arithmetic that
 `convert-md-exec-to-gpu` finishes in its kernels (contraction, explicit
 fused multiply-adds, the approximate reciprocal) covers the key regions of
 the `sort_by_key` ops too, whose bodies become the key kernels.

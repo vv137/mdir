@@ -13,9 +13,12 @@
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
+#include "mdir/Conversion/TraversePairs.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDAlg/MDAlgDialect.h"
+#include "mdir/Dialect/MDAlg/MDAlgOps.h"
+#include "mdir/Dialect/MDExec/NeighborCoverage.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -179,39 +182,10 @@ struct Neighbors {
   Value edgeSerial;
 };
 
-/// The inner list of a dual list of groups (D114), as the runtime holds it:
-/// each block of the outer list pruned into the same block, its entries at
-/// the front, and their number.
-struct InnerLists {
-  Value entries, masks, counts;
-};
-
-/// The buffers of a structure of groups, as the runtime holds them now.
-struct GroupBuffers {
-  Value order, counts, entries, masks, units, ordinals, shifts;
-};
-
-/// What the pruning of a dual list keeps besides the inner list
-/// (D268): the block of each group's list by its number in the
-/// list, a row of the blocks of the longest list for each group, made at
-/// each build; the units of work that hold entries of the inner list (the
-/// active units), in the order of the blocks, and their number; and the
-/// counts of the active units in runs of 32 and of 1024 blocks.
-struct PruneBuffers {
-  Value blockOf, activeUnits, activeCount, runSums, wideSums;
-};
-
-/// What the kernels of a pruning take, made on the host: the buffers, the
-/// frames of the places, the groups and the blocks of the longest list, the
-/// square of the widened reach and the cell in f32, and the blocks of the
-/// outer list with their runs of 32 and 1024.
-struct PruneContext {
-  GroupBuffers buffers;
-  InnerLists inner;
-  PruneBuffers prune;
-  Value placed, groups, stride, reach2, box32, blocks, runs, wideRuns;
-  bool triclinic = false;
-};
+using kernels::GroupBuffers;
+using kernels::InnerLists;
+using kernels::PruneBuffers;
+using kernels::PruneContext;
 
 /// Where the global sums and maxima of a loop arrive: numbers on the
 /// device, and the buffer of the host that they are copied to.
@@ -228,6 +202,17 @@ struct Cell {
 struct Flag {
   Value device;
 };
+
+/// The loop over pairs over groups that prunes for the refresh `refresh`
+/// (D284), as convert-md-exec-to-md-alg marked it, or null.
+static md_alg::TraversePairsOp
+getFusedPruning(md_exec::RefreshNeighborsOp refresh) {
+  for (Operation *user : refresh.getResult().getUsers())
+    if (auto loop = dyn_cast<md_alg::TraversePairsOp>(user))
+      if (loop.getPruneGroups())
+        return loop;
+  return {};
+}
 
 class Lowering {
 public:
@@ -262,6 +247,11 @@ public:
   /// which stops the run if they differ (`check-pruning`,
   /// D268).
   bool checkPruning = false;
+  /// How a loop over pairs over groups (md_alg.traverse_pairs) is lowered:
+  /// by its SIMT schedule, or, for the contract test of D[md-alg-traverse],
+  /// by its serial definition on the host over copies of its buffers, in
+  /// order, in reverse, or with the magnitudes of the terms.
+  std::string traverseOracle = "simt";
   /// Whether the first loop over pairs after a refresh of a dual list, at
   /// the same positions and in the same cell, prunes the inner list in its
   /// own kernel, a warp a group, where the refresh prunes, from
@@ -318,8 +308,21 @@ private:
   /// an atomic of the device or the table of a block.
   LogicalResult lowerScatterAdd(md_exec::ScatterAddOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
-  LogicalResult lowerGroupPairFor(md_exec::PairForOp op,
-                                  const Neighbors &structure);
+  /// Lowers a loop over pairs over groups (D[md-alg-traverse]) where it
+  /// stands: its SIMT schedule through the host of TraversePairs.h, or its
+  /// serial definition with `traverseOracle`.
+  LogicalResult lowerTraversePairs(md_alg::TraversePairsOp op);
+  LogicalResult lowerTraversePairsSerial(md_alg::TraversePairsOp op,
+                                         const Neighbors &structure);
+  friend class GroupsHost;
+  /// Sets the execution choices of each md_alg.traverse_pairs of
+  /// `function` that need md_exec's view of the program, after the moves
+  /// of the reciprocal sums (D113): `frames`, where the loop follows its
+  /// refresh at the same positions and in the same cell with nothing
+  /// between that may write the positions (D268); and with `fusePruning`,
+  /// `prune(G, R)` on the first such loop that takes the refresh's result
+  /// (D284).
+  void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
   /// The buffers of the structure of groups `handle`, as they are where
   /// `builder` is.
   GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc,
@@ -392,10 +395,10 @@ private:
   void emitActiveUnits(OpBuilder &builder, Location loc,
                        const PruneContext &ctx);
   /// Whether a loop over pairs prunes for its refresh, on the host: from
-  /// `fusePruningGroups` groups of the last build of `structure`
-  /// (D284). The refresh and the loop decide by this one test.
+  /// `groups` groups of the last build of `structure` (D284). The
+  /// refresh and the loop decide by this one test.
   Value takesFusedPruning(OpBuilder &builder, Location loc,
-                          const Neighbors &structure);
+                          const Neighbors &structure, int64_t groups);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
   Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
@@ -756,20 +759,6 @@ private:
 
   /// The ops that have been lowered, in the order of the program.
   SmallVector<Operation *> lowered;
-  /// The loops over pairs of groups that follow a refresh of their dual
-  /// list at the same positions and in the same cell, with nothing between
-  /// that may write the positions (findSharedFrames, D268).
-  llvm::DenseSet<Operation *> sharesPrunedFrames;
-  void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
-  /// The refreshes of dual lists whose pruning the first loop over pairs
-  /// that takes their result does (D284), with that loop: the
-  /// loops of sharesPrunedFrames that are the first users of the refresh.
-  /// The refresh then moves the positions into their frames, and the loop
-  /// prunes and computes in one kernel where the refresh pruned.
-  llvm::DenseMap<Operation *, Operation *> prunedInLoop;
-  /// The reach of the inner list of each refresh of prunedInLoop.
-  llvm::DenseMap<Operation *, double> prunedInLoopReach;
-  void findPrunedInLoop();
 };
 
 } // namespace
@@ -1488,6 +1477,9 @@ void Lowering::findCenterFusions(func::FuncOp function) {
       if (auto pair = dyn_cast<md_exec::PairForOp>(op)) {
         llvm::append_range(writes, pair.getOuts());
         llvm::append_range(writes, pair.getScratch());
+      } else if (auto pair = dyn_cast<md_alg::TraversePairsOp>(op)) {
+        llvm::append_range(writes, pair.getOuts());
+        llvm::append_range(writes, pair.getScratch());
       } else if (auto particle = dyn_cast<md_exec::ParticleForOp>(op)) {
         llvm::append_range(writes, particle.getOuts());
         llvm::append_range(writes, particle.getScratch());
@@ -2040,68 +2032,6 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
   return success();
 }
 
-void Lowering::findSharedFrames(func::FuncOp function,
-                                md_exec::BufferAliases &aliases) {
-  function.walk([&](md_exec::PairForOp pair) {
-    if (pair.getTraversal() != md_exec::Traversal::Unique)
-      return;
-    auto refresh =
-        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
-    if (!refresh || !refresh.getPruneSkin() ||
-        refresh->getBlock() != pair->getBlock() ||
-        refresh.getPositions() != pair.getPositions() ||
-        refresh.getCellMutable().get() != pair.getCellMutable().get())
-      return;
-    Value positions = pair.getPositions();
-    for (Operation *crossed = refresh->getNextNode(); crossed != pair;
-         crossed = crossed->getNextNode()) {
-      // An op whose effects are not all declared, or that may write or
-      // free the positions, ends the sharing.
-      std::optional<SmallVector<MemoryEffects::EffectInstance>> effects =
-          getEffectsRecursively(crossed);
-      if (!effects)
-        return;
-      for (const MemoryEffects::EffectInstance &effect : *effects) {
-        if (!isa<MemoryEffects::Write, MemoryEffects::Free>(
-                effect.getEffect()))
-          continue;
-        Value value = effect.getValue();
-        if (!value || aliases.mayAlias(value, positions))
-          return;
-      }
-    }
-    sharesPrunedFrames.insert(pair.getOperation());
-  });
-}
-
-void Lowering::findPrunedInLoop() {
-  // A loop of sharesPrunedFrames follows its refresh at the same positions
-  // and in the same cell, with nothing between that may write the
-  // positions. It prunes for the refresh if it is also the first op that
-  // takes the refresh's result: nothing reads the inner list before the
-  // loop writes it (D284).
-  for (Operation *op : sharesPrunedFrames) {
-    auto pair = cast<md_exec::PairForOp>(op);
-    auto refresh =
-        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
-    if (!refresh.getStale())
-      continue;
-    Value result = refresh.getResult();
-    bool first = true;
-    for (Operation *crossed = refresh->getNextNode(); first && crossed != pair;
-         crossed = crossed->getNextNode())
-      crossed->walk([&](Operation *inner) {
-        first &= !llvm::is_contained(inner->getOperands(), result);
-      });
-    if (!first)
-      continue;
-    prunedInLoop[refresh.getOperation()] = pair.getOperation();
-    prunedInLoopReach[refresh.getOperation()] =
-        refresh.getCutoff().convertToDouble() +
-        refresh.getPruneSkin()->convertToDouble();
-  }
-}
-
 void Lowering::findRows(func::FuncOp function) {
   // A loop over tuples with a flag is lowered alone
   // (D278).
@@ -2274,6 +2204,8 @@ static bool overwritesAll(Operation *op, Value buffer) {
   if (auto loop = dyn_cast<md_exec::TupleForOp>(op))
     return overwrites(loop);
   if (auto loop = dyn_cast<md_exec::PairForOp>(op))
+    return overwrites(loop);
+  if (auto loop = dyn_cast<md_alg::TraversePairsOp>(op))
     return overwrites(loop);
   if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op))
     return reciprocal.getOut() == buffer &&
@@ -3665,7 +3597,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
                       : "takes each pair in both orders, which a structure "
                         "of groups does not give");
   if (unique)
-    return lowerGroupPairFor(op, structure);
+    return op.emitOpError()
+           << "takes each pair once over groups, which "
+              "'convert-md-exec-to-md-alg' turns into "
+              "'md_alg.traverse_pairs' before this pass";
   // The rows of a domain (D290): the rows of the centers alone, and
   // with (directed, atomic) the values at the neighbors as well, which a
   // destination that the loop overwrote would lose.
@@ -3784,431 +3719,278 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
-LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
-                                          const Neighbors &structure) {
+//===----------------------------------------------------------------------===//
+// Loops over pairs over groups (md_alg.traverse_pairs, D[md-alg-traverse])
+//===----------------------------------------------------------------------===//
+
+void Lowering::findSharedFrames(func::FuncOp function,
+                                md_exec::BufferAliases &aliases) {
+  MLIRContext *context = function.getContext();
+  SmallVector<md_alg::TraversePairsOp> shares;
+  function.walk([&](md_alg::TraversePairsOp pair) {
+    pair.setFrames(false);
+    pair.removePruneGroupsAttr();
+    pair.removePruneReachAttr();
+    if (pair.isBufferForm())
+      return;
+    auto refresh =
+        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    if (!refresh || !refresh.getPruneSkin() ||
+        refresh->getBlock() != pair->getBlock() ||
+        refresh.getPositions() != pair.getPositions() ||
+        refresh.getCellMutable().get() != pair.getCell())
+      return;
+    Value positions = pair.getPositions();
+    for (Operation *crossed = refresh->getNextNode(); crossed != pair;
+         crossed = crossed->getNextNode()) {
+      // An op whose effects are not all declared, or that may write or
+      // free the positions, ends the sharing.
+      std::optional<SmallVector<MemoryEffects::EffectInstance>> effects =
+          getEffectsRecursively(crossed);
+      if (!effects)
+        return;
+      for (const MemoryEffects::EffectInstance &effect : *effects) {
+        if (!isa<MemoryEffects::Write, MemoryEffects::Free>(
+                effect.getEffect()))
+          continue;
+        Value value = effect.getValue();
+        if (!value || aliases.mayAlias(value, positions))
+          return;
+      }
+    }
+    shares.push_back(pair);
+  });
+  for (md_alg::TraversePairsOp pair : shares)
+    pair.setFrames(true);
+  if (!fusePruning)
+    return;
+  // A loop that shares the frames prunes for its refresh if it is also the
+  // first op that takes the refresh's result: nothing reads the inner
+  // list before the loop writes it.
+  for (md_alg::TraversePairsOp pair : shares) {
+    auto refresh =
+        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    if (!refresh.getStale())
+      continue;
+    Value result = refresh.getResult();
+    bool first = true;
+    for (Operation *crossed = refresh->getNextNode();
+         first && crossed != pair.getOperation();
+         crossed = crossed->getNextNode())
+      crossed->walk([&](Operation *inner) {
+        first &= !llvm::is_contained(inner->getOperands(), result);
+      });
+    if (!first)
+      continue;
+    pair.setPruneGroupsAttr(
+        IntegerAttr::get(IntegerType::get(context, 64), fusePruningGroups));
+    pair.setPruneReachAttr(FloatAttr::get(
+        Float64Type::get(context), refresh.getCutoff().convertToDouble() +
+                                       refresh.getPruneSkin()->convertToDouble()));
+  }
+}
+
+namespace {
+/// What the SIMT schedule of md_alg.traverse_pairs takes from this pass
+/// (TraversePairs.h): the pass calls the schedule in place, in the order of
+/// the program, so that the names of the kernels, the order of the host's
+/// code, and the work after the ops are those of the loop before the op
+/// existed (the maintainer's ruling on #887; #888 frees it).
+class GroupsHost final : public kernels::TraverseHost {
+public:
+  GroupsHost(Lowering &lowering, md_alg::TraversePairsOp op,
+             const Neighbors &structure)
+      : lowering(lowering), op(op), structure(structure) {}
+
+  int64_t getBlockSize() override { return lowering.blockSize; }
+  void bringIn(gpu::LaunchOp launch) override { lowering.bringIn(launch); }
+  void launchOver(OpBuilder &builder, Location loc, Value count,
+                  function_ref<void(OpBuilder &, Value)> body) override {
+    lowering.launchOver(builder, loc, count, body);
+  }
+  Value createDeviceBuffer(OpBuilder &builder, Location loc, MemRefType type,
+                           ValueRange sizes) override {
+    return ::createDeviceBuffer(builder, loc, type, sizes);
+  }
+  Value getSizes() override { return structure.sizes; }
+  bool isDual() override { return structure.dual; }
+  Value getPrunedNow() override { return structure.prunedNow; }
+  GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc) override {
+    return lowering.getGroupsBuffers(builder, loc, structure.handle);
+  }
+  InnerLists getInnerLists(OpBuilder &builder, Location loc) override {
+    return lowering.getInnerLists(builder, loc, structure.handle);
+  }
+  PruneBuffers getPruneBuffers(OpBuilder &builder, Location loc) override {
+    return lowering.getPruneBuffers(builder, loc, structure.handle);
+  }
+  Value getGroupsPlaced(OpBuilder &builder, Location loc) override {
+    return lowering.getGroupsPlaced(builder, loc, structure.handle);
+  }
+  Value takesFusedPruning(OpBuilder &builder, Location loc,
+                          int64_t groups) override {
+    return lowering.takesFusedPruning(builder, loc, structure, groups);
+  }
+  void countFusedPruning(OpBuilder &builder, Location loc) override {
+    func::CallOp::create(builder, loc,
+                         lowering.getOrDeclare("mdrtCountFusedPrune",
+                                               builder.getFunctionType({}, {})),
+                         ValueRange());
+  }
+  PruneContext getPruneContext(OpBuilder &builder, Location loc, Value box,
+                               double reach) override {
+    return lowering.getPruneContext(builder, loc, structure, box, reach);
+  }
+  Value emitPruneGroup(OpBuilder &b, Location loc, const PruneContext &ctx,
+                       Value group, Value lane) override {
+    return lowering.emitPruneGroup(b, loc, ctx, group, lane);
+  }
+  void emitActiveUnits(OpBuilder &builder, Location loc,
+                       const PruneContext &ctx) override {
+    lowering.emitActiveUnits(builder, loc, ctx);
+  }
+  void emitFusedPruningCheck(OpBuilder &builder, Location loc, Value positions,
+                             Value cell) override {
+    if (!lowering.checkPruning)
+      return;
+    auto refresh =
+        op.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    lowering.emitPruneCheck(builder, loc, structure, positions, cell,
+                            refresh.getCutoff().convertToDouble());
+  }
+  LogicalResult finishSums(Operation *loop, OpBuilder &builder,
+                           ValueRange reduce, ValueRange scratch,
+                           Value count) override {
+    return lowering.finishSums(loop, builder, reduce, scratch, count);
+  }
+
+private:
+  Lowering &lowering;
+  md_alg::TraversePairsOp op;
+  const Neighbors &structure;
+};
+} // namespace
+
+LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
+  // The kernels keep the names of the loops over pairs (D354).
+  purpose = "pair_for";
+  if (op.isBufferForm())
+    return op.emitOpError()
+           << "takes its list as buffers, a form for the serial oracle and "
+              "the tests; the pipeline takes the structure form, whose "
+              "contract is in the type";
+  // The loops over a matrix stay md_exec.pair_for in this step.
+  if (op.getMultiplicity() != md_alg::Multiplicity::Unique)
+    return op.emitOpError()
+           << "visits each pair in both orders, which only the loops over a "
+              "matrix do: they stay 'md_exec.pair_for'";
+  if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
+    return failure();
+  Neighbors structure;
+  if (failed(getNeighbors(op, op.getNeighbors(), structure)))
+    return failure();
+  // A `unique` type is a structure of groups: no other build may state it
+  // (D413), and the verifier compared the op with the type.
+  assert(structure.groups && "a unique traversal over a matrix");
+  if (op.getInner() != structure.dual)
+    return op.emitOpError()
+           << (op.getInner() ? "reads the inner list of a structure that its "
+                               "refresh does not keep dual"
+                             : "reads the outer list of a dual list, which "
+                               "the loops take through the inner list");
+  // The cutoff is within the reach that the structure was built for
+  // (D357), whatever made the op.
+  if (failed(md_exec::verifyNeighborCoverage(op, op.getNeighbors(),
+                                             op.getCutoff().convertToDouble())))
+    return failure();
+  if (traverseOracle != "simt")
+    return lowerTraversePairsSerial(op, structure);
+  GroupsHost host(*this, op, structure);
+  return kernels::lowerTraversePairsSIMT(op, host);
+}
+
+LogicalResult
+Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
+                                   const Neighbors &structure) {
+  if (traverseOracle != "serial" && traverseOracle != "serial-reversed" &&
+      traverseOracle != "serial-magnitudes" && traverseOracle != "omitted")
+    return op.emitOpError() << "has no lowering '" << traverseOracle
+                            << "'; 'simt', 'serial', 'serial-reversed', "
+                               "'serial-magnitudes', or 'omitted'";
+  if (op.getPruneGroups())
+    return op.emitOpError()
+           << "prunes for its refresh (D284), which its serial definition "
+              "does not: the oracle takes the pruning in the refresh";
   Location loc = op.getLoc();
   OpBuilder builder(op);
-  // The atomic additions make the sums depend on the order of the threads;
-  // the deterministic mode needs them in fixed point (D89), which is to
-  // come.
-  // Its destinations take atomics, and its global sums the partial sums of
-  // warps over units of lists built with atomics: every value it reduces
-  // must allow reordering (D301).
-  if (!everythingAllowsReorder(op))
-    return op.emitOpError()
-           << "takes each pair once with atomic additions in floating "
-              "point, which the deterministic mode does not allow";
-  if (blockSize % 32 != 0)
-    return op.emitOpError() << "runs a warp for each unit of work, which "
-                               "needs blocks of whole warps, not "
-                            << blockSize << " threads";
-
-  Value positions = op.getPositions();
-  Value size = createSize(builder, loc, positions);
-  Type real = cast<MemRefType>(positions.getType()).getElementType();
-  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
-  Value inverse = createInverse(builder, loc, box);
-
-  // The loop adds to its destinations: one that it would overwrite is
-  // cleared first.
-  for (auto [i, out] : llvm::enumerate(op.getOuts())) {
-    if (!op.overwrites(i))
-      continue;
-    Value destination = out;
-    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
-      Type element = getElementTypeOrSelf(destination.getType());
-      auto type = cast<MemRefType>(destination.getType());
-      Type value = type.getRank() == 1
-                       ? element
-                       : VectorType::get({type.getDimSize(1)}, element);
-      storeElement(body, loc, createZero(body, loc, value), destination,
-                   particle);
-    });
-  }
-
-  // The buffers of the structure as the runtime holds them now.
+  SmallVector<Value> copies;
+  auto toHost = [&](Value device) -> Value {
+    auto type = cast<MemRefType>(device.getType());
+    SmallVector<Value> sizes;
+    for (int64_t k = 0, e = type.getRank(); k != e; ++k)
+      if (type.isDynamicDim(k))
+        sizes.push_back(memref::DimOp::create(builder, loc, device,
+                                              createIndex(builder, loc, k)));
+    Value host = memref::AllocOp::create(
+        builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
+        sizes);
+    createTransfer(builder, loc, host, device);
+    copies.push_back(host);
+    return host;
+  };
+  kernels::SerialLists lists;
   GroupBuffers buffers = getGroupsBuffers(builder, loc, structure.handle);
-
-  // The positions and the fields that the kernel reads, in the order of
-  // the places of the last build; an empty place takes those of the
-  // particle 0, which no pair reads. A position is moved by whole cells to
-  // the frame of its group (the shift of its place, ten bits an axis from
-  // -512), so that the kernel takes no minimum image (D95). The positions
-  // come as they are stored, unwrapped and in f64 in mixed precision: the
-  // shift is added there, and the sum converted to the type of the kernel,
-  // so that a position in the frame is as exact however far the particle
-  // has gone.
-  Type computed = op.getKernel().front().getArgument(0).getType();
-  Value places = arith::IndexCastOp::create(
-      builder, loc, builder.getIndexType(),
-      memref::LoadOp::create(builder, loc, structure.sizes,
-                             ValueRange{createIndex(builder, loc, 0)}));
-  // Where the loop follows a refresh of a dual list at the same positions
-  // and in the same cell (sharesPrunedFrames), and computes in f32, a
-  // pruning of that refresh has left the positions in the frames as the
-  // loop takes them, to the bit: the loop takes them as they are then
-  // (D268).
-  Value sharedFrames, pruned;
-  {
-    auto stored = cast<MemRefType>(positions.getType());
-    MemRefType framed =
-        MemRefType::get(stored.getShape(), computed, stored.getLayout(),
-                        stored.getMemorySpace());
-    if (structure.dual && structure.prunedNow && computed.isF32() &&
-        sharesPrunedFrames.contains(op.getOperation())) {
-      Value frames = getGroupsPlaced(builder, loc, structure.handle);
-      if (frames.getType() == framed) {
-        sharedFrames = frames;
-        pruned = memref::LoadOp::create(builder, loc, structure.prunedNow,
-                                        ValueRange{});
-      }
-    }
-  }
-  // The kernel below takes it as a number.
-  Value pruned32 =
-      pruned ? Value(arith::ExtUIOp::create(builder, loc, builder.getI32Type(),
-                                            pruned))
-             : Value();
-  SmallVector<Value> sources = {positions};
-  llvm::append_range(sources, op.getIns());
-  // The buffers take the room of the structure's places, not the number
-  // of places that this build occupied (D312): that number
-  // changes at nearly every build, and the runtime's pool reuses a block
-  // only for a request of the same size, so a buffer sized by it left a
-  // block in the pool for each new number. The room changes only when the
-  // structure grows.
-  Value room = memref::DimOp::create(builder, loc, buffers.order,
-                                     createIndex(builder, loc, 0));
-  SmallVector<Value> targets;
-  for (auto [index, source] : llvm::enumerate(sources)) {
-    auto type = cast<MemRefType>(source.getType());
-    if (index == 0)
-      type = MemRefType::get(type.getShape(), computed, type.getLayout(),
-                             type.getMemorySpace());
-    targets.push_back(
-        createDeviceBuffer(builder, loc, type, ValueRange{room}));
-  }
-  launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
-    Value at = memref::LoadOp::create(body, loc, buffers.order,
-                                      ValueRange{place});
-    Value empty = arith::CmpIOp::create(
-        body, loc, arith::CmpIPredicate::slt, at,
-        arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                  body.getI32IntegerAttr(0)));
-    Value particle = arith::SelectOp::create(
-        body, loc, empty, createIndex(body, loc, 0),
-        arith::IndexCastOp::create(body, loc, body.getIndexType(), at));
-    Value packed = memref::LoadOp::create(body, loc, buffers.shifts,
-                                          ValueRange{place});
-    auto positionType = cast<MemRefType>(sources.front().getType());
-    Type element = positionType.getElementType();
-    SmallVector<Value> cells;
-    for (int64_t k = 0; k != 3; ++k) {
-      Value bits = arith::AndIOp::create(
-          body, loc,
-          arith::ShRUIOp::create(
-              body, loc, packed,
-              arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                        body.getI32IntegerAttr(10 * k))),
-          arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                    body.getI32IntegerAttr(1023)));
-      Value count = arith::SubIOp::create(
-          body, loc, bits,
-          arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                    body.getI32IntegerAttr(512)));
-      cells.push_back(arith::SIToFPOp::create(body, loc, element, count));
-    }
-    Value shift = emitLatticeShift(
-        body, loc,
-        vector::FromElementsOp::create(body, loc,
-                                       VectorType::get({3}, element), cells),
-        convertReal(body, loc, box, element));
-    for (auto [index, pair] : llvm::enumerate(llvm::zip(sources, targets))) {
-      auto [source, target] = pair;
-      auto store = [&, source = source, target = target](OpBuilder &at) {
-        Value value = loadElement(at, loc, source, particle);
-        if (index == 0)
-          value = convertReal(
-              at, loc, arith::AddFOp::create(at, loc, value, shift),
-              computed);
-        storeElement(at, loc, value, target, place);
-      };
-      if (index != 0 || !pruned32) {
-        store(body);
-        continue;
-      }
-      scf::IfOp::create(
-          body, loc,
-          arith::CmpIOp::create(
-              body, loc, arith::CmpIPredicate::eq, pruned32,
-              arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                        body.getI32IntegerAttr(0))),
-          [&](OpBuilder &then, Location) {
-            store(then);
-            scf::YieldOp::create(then, loc);
-          });
-    }
-  });
-  PairLayout layout;
-  layout.order = buffers.order;
-  layout.positions = targets.front();
-  if (sharedFrames) {
-    Type type = targets.front().getType();
-    auto choice = scf::IfOp::create(builder, loc, TypeRange{type}, pruned,
-                                    /*withElseRegion=*/true);
-    OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
-    scf::YieldOp::create(then, loc, sharedFrames);
-    OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
-    scf::YieldOp::create(otherwise, loc, targets.front());
-    layout.positions = choice.getResult(0);
-  }
-  layout.ins.assign(targets.begin() + 1, targets.end());
-  kernels::GroupLists lists{buffers.entries, buffers.masks, buffers.counts,
-                            buffers.units, buffers.ordinals, buffers.order};
-  // A dual list: the inner list, in the blocks of the outer one (D114),
-  // through the units that hold entries of it (D268).
-  Value activeUnits, activeCount;
+  lists.groups = {toHost(buffers.order),   toHost(buffers.counts),
+                  toHost(buffers.entries), toHost(buffers.masks),
+                  toHost(buffers.units),   toHost(buffers.ordinals),
+                  toHost(buffers.shifts)};
+  lists.dual = structure.dual;
   if (structure.dual) {
     InnerLists inner = getInnerLists(builder, loc, structure.handle);
-    lists.entries = inner.entries;
-    lists.masks = inner.masks;
-    lists.blockCounts = inner.counts;
+    lists.inner = {toHost(inner.entries), toHost(inner.masks),
+                   toHost(inner.counts)};
     PruneBuffers prune = getPruneBuffers(builder, loc, structure.handle);
-    activeUnits = prune.activeUnits;
-    activeCount = prune.activeCount;
+    lists.active = toHost(prune.activeUnits);
+    lists.activeCount = toHost(prune.activeCount);
   }
-
-  // A warp for each unit of work, as many warps as particles at most: the
-  // sums of the warps go to the scratch of the particles. A warp takes the
-  // units w, w + warps, ...
-  Operation *yield = op.getKernel().front().getTerminator();
-  unsigned numOuts = op.getOuts().size();
-  Value one = createIndex(builder, loc, 1);
-  Value warp32 = createIndex(builder, loc, 32);
-  Value block = createIndex(builder, loc, blockSize);
-  // The table of a block for the values at the particles
-  // (`scatter(hash(S, P, L))`, D291), its precondition checked again
-  // with the chooser's function (Scatter.h).
-  md_exec::ScatterAttr scatter = op.getScatterAttr();
-  bool hashed = scatter && scatter.isHash();
-  SmallVector<Value> outs(op.getOuts());
-  SmallVector<md_exec::scatter::Destination> destinations;
-  if (hashed)
-    if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
-            scatter.getSlots(), op.getOuts().getTypes(),
-            md_exec::algebra::getDestinationAlgebras(op), &destinations))
-      return op.emitOpError()
-             << "takes the strategy 'hash', whose precondition does not "
-                "hold: "
-             << *refused;
-  using WarpBody =
-      function_ref<SmallVector<Value>(OpBuilder &, Value, Value, AddToMember)>;
-  // A loop of `count` units of work, `body` emitting each: returns the
-  // number of warps whose sums are in the scratch. With `tabled`, what the
-  // warps of a block add to the particles goes to the table of the block,
-  // flushed once after the loop.
-  auto emitWarps = [&](OpBuilder &at, Value count,
-                       function_ref<Value(OpBuilder &, Value)> first,
-                       WarpBody body, bool tabled) -> Value {
-    Value warps = arith::MaxUIOp::create(
-        at, loc, arith::MinUIOp::create(at, loc, count, size), one);
-    Value threads = arith::MulIOp::create(at, loc, warps, warp32);
-    Value grid = createGroups(at, loc, threads, blockSize);
-    SmallVector<Type> attributions;
-    if (tabled)
-      attributions = kernels::getHashAttributions(context, scatter.getSlots(),
-                                                  destinations);
-    auto launch = gpu::LaunchOp::create(
-        at, loc, grid, one, one, block, one, one,
-        /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
-        /*asyncDependencies=*/{}, /*workgroupAttributions=*/attributions);
-    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-    std::optional<kernels::BlockHashTable> table;
-    if (tabled) {
-      table.emplace(kernel, loc, scatter.getSlots(), scatter.getProbes(),
-                    launch.getWorkgroupAttributionBBArgs(), outs, destinations,
-                    launch.getThreadIds().x, block);
-      table->emitClear(kernel);
-    }
-    Value thread = arith::AddIOp::create(
-        kernel, loc,
-        arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
-        launch.getThreadIds().x);
-    Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
-    Value lane = arith::RemUIOp::create(kernel, loc, thread, warp32);
-    Value valid = arith::CmpIOp::create(kernel, loc,
-                                        arith::CmpIPredicate::ult, warp, warps);
-    Value end = first(kernel, count);
-    Value start = arith::SelectOp::create(kernel, loc, valid, warp, end);
-    SmallVector<Value> initial;
-    for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
-      initial.push_back(
-          createZero(kernel, loc, yield->getOperand(i).getType()));
-    auto add = [&](OpBuilder &b, unsigned out, Value member, Value value) {
-      table->add(b, outs[out], member, value);
-    };
-    auto loop = scf::ForOp::create(
-        kernel, loc, start, end, warps, initial,
-        [&](OpBuilder &b, Location, Value unit, ValueRange sums) {
-          SmallVector<Value> contributions =
-              body(b, unit, lane, tabled ? AddToMember(add) : AddToMember());
-          SmallVector<Value> next;
-          for (auto [sum, contribution] : llvm::zip(sums, contributions))
-            next.push_back(arith::AddFOp::create(b, loc, sum, contribution));
-          scf::YieldOp::create(b, loc, next);
-        });
-    SmallVector<Value> totals(loop.getResults());
-    for (Value &total : totals)
-      total = kernels::emitWarpReduce(kernel, loc, total,
-                                      kernels::Combiner::Add);
-    if (!totals.empty()) {
-      Value leader = arith::AndIOp::create(
-          kernel, loc, valid,
-          arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
-                                createIndex(kernel, loc, 0)));
-      scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
-        for (auto [index, total] : llvm::enumerate(totals))
-          storeElement(then, loc, total, op.getScratch()[2 * index], warp);
-        scf::YieldOp::create(then, loc);
-      });
-    }
-    if (table)
-      table->emitFlush(kernel);
-    gpu::TerminatorOp::create(kernel, loc);
-    bringIn(launch);
-    return warps;
+  auto size = [&](int64_t which) -> Value {
+    return arith::IndexCastOp::create(
+        builder, loc, builder.getIndexType(),
+        memref::LoadOp::create(builder, loc, structure.sizes,
+                               ValueRange{createIndex(builder, loc, which)}));
   };
-  // The loop with the table where the loop takes it: from `L` units of
-  // work on (the count on the host), both kernels emitted and the host
-  // choosing, as for the tuples (D283).
-  auto emitWarpsChosen = [&](OpBuilder &at, Value count,
-                             function_ref<Value(OpBuilder &, Value)> first,
-                             WarpBody body) -> Value {
-    if (!hashed)
-      return emitWarps(at, count, first, body, false);
-    if (scatter.getLeast() == 0)
-      return emitWarps(at, count, first, body, true);
-    Value many = arith::CmpIOp::create(
-        at, loc, arith::CmpIPredicate::uge, count,
-        createIndex(at, loc, scatter.getLeast()));
-    auto choice = scf::IfOp::create(at, loc, TypeRange{at.getIndexType()},
-                                    many, /*withElseRegion=*/true);
-    OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
-    scf::YieldOp::create(then, loc, emitWarps(then, count, first, body, true));
-    OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
-    scf::YieldOp::create(otherwise, loc,
-                         emitWarps(otherwise, count, first, body, false));
-    return choice.getResult(0);
-  };
-
-  // The loop over the units of work: of a dual list, the warps take the
-  // active units, as many as the last pruning left on the device; the grid
-  // is that of all units.
-  Value units = arith::IndexCastOp::create(
-      builder, loc, builder.getIndexType(),
-      memref::LoadOp::create(builder, loc, structure.sizes,
-                             ValueRange{createIndex(builder, loc, 2)}));
-  auto emitLoop = [&](OpBuilder &at) -> Value {
-    return emitWarpsChosen(
-        at, units,
-        [&](OpBuilder &kernel, Value count) -> Value {
-          if (!activeCount)
-            return count;
-          return arith::IndexCastOp::create(
-              kernel, loc, kernel.getIndexType(),
-              memref::LoadOp::create(kernel, loc, activeCount,
-                                     ValueRange{createIndex(kernel, loc, 0)}));
-        },
-        [&](OpBuilder &body, Value unit, Value lane, AddToMember add) {
-          if (activeUnits)
-            unit = arith::IndexCastOp::create(
-                body, loc, body.getIndexType(),
-                memref::LoadOp::create(body, loc, activeUnits,
-                                       ValueRange{unit}));
-          IRMapping local;
-          return kernels::emitGroupPairKernel(body, op, lists, layout, box,
-                                              inverse, unit, lane, local,
-                                              /*stream=*/nullptr, add);
-        });
-  };
-
-  // The loop that prunes for its refresh (D284): where the
-  // refresh pruned, and from `fusePruningGroups` groups, a warp for each
-  // group prunes the inner list of the group from the outer one as the
-  // refresh would (emitPruneGroup) and then computes the pairs of the
-  // entries it kept, read back from the inner list after a barrier of the
-  // warp, as a stream of the group; the active units of the steps that
-  // follow are listed after.
-  auto refresh = op.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
-  auto fused = refresh ? prunedInLoop.find(refresh.getOperation())
-                       : prunedInLoop.end();
-  Value warps;
-  if (fused != prunedInLoop.end() && fused->second == op.getOperation()) {
-    Value cell = op.getCellMutable().get();
-    double reach = prunedInLoopReach.lookup(refresh.getOperation());
-    Value now = arith::AndIOp::create(
-        builder, loc,
-        memref::LoadOp::create(builder, loc, structure.prunedNow,
-                               ValueRange{}),
-        takesFusedPruning(builder, loc, structure));
-    auto choice = scf::IfOp::create(builder, loc,
-                                    TypeRange{builder.getIndexType()}, now,
-                                    /*withElseRegion=*/true);
-    {
-      OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
-      func::CallOp::create(
-          then, loc,
-          getOrDeclare("mdrtCountFusedPrune", then.getFunctionType({}, {})),
-          ValueRange());
-      PruneContext ctx = getPruneContext(then, loc, structure, cell, reach);
-      // The warp stores the inner list and loads it back through the same
-      // buffers, one argument of the kernel each.
-      ctx.inner = {lists.entries, lists.masks, lists.blockCounts};
-      Value groupWarps = emitWarpsChosen(
-          then, ctx.groups,
-          [&](OpBuilder &, Value count) -> Value { return count; },
-          [&](OpBuilder &body, Value group, Value lane, AddToMember add) {
-            Value kept = emitPruneGroup(
-                body, loc, ctx, group,
-                arith::IndexCastOp::create(body, loc, body.getI32Type(),
-                                           lane));
-            // The entries that other lanes of the warp wrote.
-            NVVM::SyncWarpOp::create(
-                body, loc,
-                arith::ConstantOp::create(body, loc, body.getI32Type(),
-                                          body.getI32IntegerAttr(-1)));
-            kernels::GroupLists inner = lists;
-            kernels::GroupStream stream{ctx.prune.blockOf, ctx.stride, kept};
-            IRMapping local;
-            return kernels::emitGroupPairKernel(body, op, inner, layout, box,
-                                                inverse, group, lane, local,
-                                                &stream, add);
-          });
-      emitActiveUnits(then, loc, ctx);
-      scf::YieldOp::create(then, loc, groupWarps);
-      OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
-      scf::YieldOp::create(otherwise, loc, emitLoop(otherwise));
-    }
-    warps = choice.getResult(0);
-    // The inner list is whole only now: the check of the pruning follows
-    // the loop (D268).
-    if (checkPruning)
-      emitPruneCheck(builder, loc, structure, positions, cell,
-                     refresh.getCutoff().convertToDouble());
-  } else {
-    warps = emitLoop(builder);
-  }
-
-  // The buffers are freed once the loop has read them.
-  for (Value target : targets) {
-    auto type = cast<MemRefType>(target.getType());
-    Value plain = memref::MemorySpaceCastOp::create(
-        builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
-        target);
-    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
-                           /*asyncDependencies=*/ValueRange(), plain);
-  }
-  return finishSums(op, builder, op.getReduce(), op.getScratch(), warps);
+  lists.places = size(0);
+  lists.units = size(2);
+  lists.positions = toHost(op.getPositions());
+  Type real = cast<MemRefType>(op.getPositions().getType()).getElementType();
+  lists.cell = convertReal(builder, loc, op.getCell(), real);
+  for (Value in : op.getIns())
+    lists.ins.push_back(toHost(in));
+  for (Value out : op.getOuts())
+    lists.outs.push_back(toHost(out));
+  // The tables that the region reads, from outside it.
+  llvm::SetVector<Value> captured;
+  op.getKernel().walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands())
+      if (isDeviceType(operand.getType()) &&
+          !op.getKernel().isAncestor(operand.getParentRegion()))
+        captured.insert(operand);
+  });
+  for (Value value : captured)
+    lists.captures.push_back({value, toHost(value)});
+  kernels::SerialOptions options;
+  options.reverse = traverseOracle == "serial-reversed";
+  options.magnitudes = traverseOracle == "serial-magnitudes";
+  options.omitted = traverseOracle == "omitted";
+  SmallVector<Value> results =
+      kernels::emitTraversePairsSerial(builder, op, lists, options);
+  for (auto [out, host] : llvm::zip(op.getOuts(), lists.outs))
+    createTransfer(builder, loc, out, host);
+  for (Value host : copies)
+    memref::DeallocOp::create(builder, loc, host);
+  for (auto [result, value] : llvm::zip(op.getResults(), results))
+    result.replaceAllUsesWith(value);
+  return success();
 }
 
 void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
@@ -6717,11 +6499,12 @@ std::pair<Value, Value> Lowering::getGroupsShape(OpBuilder &builder,
 }
 
 Value Lowering::takesFusedPruning(OpBuilder &builder, Location loc,
-                                  const Neighbors &structure) {
+                                  const Neighbors &structure,
+                                  int64_t least) {
   Value groups = getGroupsShape(builder, loc, structure).first;
   return arith::CmpIOp::create(
       builder, loc, arith::CmpIPredicate::uge, groups,
-      createIndex(builder, loc, fusePruningGroups));
+      createIndex(builder, loc, least));
 }
 
 void Lowering::emitGroupsBlockIndex(OpBuilder &builder, Location loc,
@@ -7780,14 +7563,16 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     // (D284), the refresh moves the positions into their frames
     // and leaves the rest to the loop, from the groups at which the loop
     // takes it.
-    bool fused = prunedInLoop.contains(op.getOperation());
+    md_alg::TraversePairsOp fusedLoop = getFusedPruning(op);
+    bool fused = static_cast<bool>(fusedLoop);
     auto emitPrune = [&](OpBuilder &at) {
       if (!fused) {
         emitGroupsPrune(at, loc, structure, positions, box, inner);
         return;
       }
       auto choice = scf::IfOp::create(
-          at, loc, takesFusedPruning(at, loc, structure),
+          at, loc,
+          takesFusedPruning(at, loc, structure, *fusedLoop.getPruneGroups()),
           /*withElseRegion=*/true);
       OpBuilder inLoop(choice.thenBlock()->getTerminator());
       emitPruneFrames(inLoop, loc, structure, positions, box);
@@ -8115,6 +7900,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
     if (failed(appliesBatchedStage(loop) ? lowerStagedPairFor(loop)
                                          : lowerPairFor(loop)))
+      return failure();
+  } else if (auto loop = dyn_cast<md_alg::TraversePairsOp>(op)) {
+    if (failed(lowerTraversePairs(loop)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::TupleForOp>(op)) {
     if (failed(lowerTupleFor(loop)))
@@ -8820,9 +8608,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       reciprocal->moveBefore(refresh);
   });
 
+  // The execution choices of the loops over pairs over groups that need
+  // the order of the program after the moves above (D268, D284).
   findSharedFrames(function, aliases);
-  if (fusePruning)
-    findPrunedInLoop();
 
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
@@ -8831,8 +8619,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   findOnceRuns(function);
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
-    if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
-            parent))
+    if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp,
+            md_alg::TraversePairsOp>(parent))
       continue;
     if (inOnceRuns.contains(op)) {
       auto run = onceRuns.find(op);
@@ -8872,7 +8660,6 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       return failure();
   }
   rows.clear();
-  sharesPrunedFrames.clear();
   integrations.clear();
   inRows.clear();
   onceRuns.clear();
@@ -9084,6 +8871,7 @@ public:
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
+    lowering.traverseOracle = traverseOracle;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     lowering.singlePassGroupScan = singlePassGroupScan;

@@ -375,7 +375,8 @@ config.substitutions.append(
 # transformations, as in the pipeline of mdir (D408).
 md_exec_gpu_lowering = (
     " --md-exec-assign-algebra --md-exec-assign-storage=memory=device"
-    " --convert-md-exec-to-gpu --md-alg-transform-collections"
+    " --convert-md-exec-to-md-alg --convert-md-exec-to-gpu"
+    " --md-alg-transform-collections"
     " --convert-md-alg-to-gpu"
 )
 config.substitutions.append(

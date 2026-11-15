@@ -7,8 +7,10 @@ add_mlir_dialect_library(MDIRMDAlg
 
   DEPENDS
   MDIRMDAlgIncGen
+  MDIRMDRTIncGen
 
   LINK_LIBS PUBLIC
+  MDIRMDRT
   MLIRArithDialect
   MLIRCallInterfaces
   MLIRFunctionInterfaces

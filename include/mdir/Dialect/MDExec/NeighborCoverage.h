@@ -3,6 +3,8 @@
 #ifndef MDIR_DIALECT_MDEXEC_NEIGHBORCOVERAGE_H
 #define MDIR_DIALECT_MDEXEC_NEIGHBORCOVERAGE_H
 
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 
 namespace mdir::md_exec {
@@ -13,6 +15,13 @@ class PairForOp;
 /// site of a private function. Unknown boundaries are diagnosed. This is
 /// construction coverage, not current-state freshness (#571).
 mlir::LogicalResult verifyNeighborCoverage(PairForOp loop);
+
+/// The same for another consumer of a structure, `op`, which takes
+/// `neighbors` with `cutoff`, no centers, and the minimum image: the
+/// traversal of md_alg (D[md-alg-traverse]).
+mlir::LogicalResult verifyNeighborCoverage(mlir::Operation *op,
+                                           mlir::Value neighbors,
+                                           double cutoff);
 
 } // namespace mdir::md_exec
 

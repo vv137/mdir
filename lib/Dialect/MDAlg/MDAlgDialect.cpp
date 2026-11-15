@@ -673,3 +673,247 @@ Determinism BinMembersOp::getDeterminismDefault() {
   return Determinism::Bitwise;
 }
 StringRef BinMembersOp::getFreeResults() { return ""; }
+
+//===----------------------------------------------------------------------===//
+// md_alg.traverse_pairs (D[md-alg-traverse])
+//===----------------------------------------------------------------------===//
+
+StringRef TraversePairsOp::getExchangeOf(unsigned index) {
+  return cast<StringAttr>(getExchange()[index]).getValue();
+}
+
+/// What the declarations of `op` require of its list (D413), as
+/// `md_exec::getRequirement` computes it for `md_exec.pair_for`.
+static mdir::mdrt::NeighborsContract getTraversalRequirement(
+    TraversePairsOp op) {
+  using Contract = mdir::mdrt::NeighborsContract;
+  bool unique = op.getMultiplicity() == Multiplicity::Unique;
+  Contract required;
+  required.traversal =
+      unique ? Contract::Traversal::Unique : Contract::Traversal::Directed;
+  required.images = Contract::Images::Minimum;
+  required.exclusions =
+      unique ? Contract::Exclusions::Removed : Contract::Exclusions::Masked;
+  if (op.getCombine() == Combine::Owner)
+    required = Contract::withOrganization(
+        required, Contract::Organization::GroupedBy, Contract::Group::Owner,
+        Contract::Order::None);
+  if (op.getVisit() == Visit::Stable) {
+    Contract ordered = Contract::withOrganization(
+        required, Contract::Organization::Stable,
+        unique ? Contract::Group::Group : Contract::Group::Owner,
+        Contract::Order::Search);
+    if (std::optional<Contract> joined =
+            Contract::joinOrganization(required, ordered))
+      required = *joined;
+    else
+      required = ordered;
+  }
+  return required;
+}
+
+LogicalResult TraversePairsOp::verify() {
+  // The two forms of the list.
+  bool buffers = isBufferForm();
+  if (buffers) {
+    if (getLists().size() != getNumListBuffers())
+      return emitOpError() << "takes " << getNumListBuffers()
+                           << " buffers of the layout of the groups in its "
+                              "buffer form, not "
+                           << getLists().size();
+    for (Value list : getLists()) {
+      auto type = cast<MemRefType>(list.getType());
+      if (type.getRank() != 1 || !type.getElementType().isInteger(32))
+        return emitOpError()
+               << "takes rank-1 buffers of i32 for the layout of the groups";
+    }
+    if (getSizes().size() != 2)
+      return emitOpError() << "takes two sizes, the places and the units, in "
+                              "its buffer form";
+    auto contract = getContractAttr();
+    if (!contract || !isa<mdir::mdrt::NeighborsType>(contract.getValue()))
+      return emitOpError()
+             << "states the contract of its buffers, a neighbor structure's "
+                "type, in its buffer form";
+    if (!getReach())
+      return emitOpError() << "states the reach of its buffers in its buffer "
+                              "form";
+    if (getCutoff().convertToDouble() > getReach()->convertToDouble())
+      return emitOpError() << "has a cutoff, " << getCutoff().convertToDouble()
+                           << ", beyond the reach of its list, "
+                           << getReach()->convertToDouble();
+  } else if (!getLists().empty() || !getSizes().empty() || getContractAttr() ||
+             getReach()) {
+    return emitOpError() << "takes its list as a structure or as buffers, not "
+                            "both";
+  }
+
+  // The declarations.
+  unsigned numOuts = getOuts().size();
+  unsigned numValues = numOuts + getReduce().size();
+  if (getAlgebra().size() != numValues)
+    return emitOpError() << "expected " << numValues
+                         << " algebra entries, one per destination and sum, "
+                            "got "
+                         << getAlgebra().size();
+  if (getExchange().size() != numValues)
+    return emitOpError() << "expected " << numValues
+                         << " exchange contracts, one per destination and "
+                            "sum, got "
+                         << getExchange().size();
+  if (auto weights = getWeights())
+    if (weights->size() != getReduce().size())
+      return emitOpError() << "expected " << getReduce().size()
+                           << " weights, one per sum, got "
+                           << weights->size();
+  if (auto overwrite = getOverwrite())
+    if (overwrite->size() != numOuts)
+      return emitOpError() << "expected " << numOuts
+                           << " overwrite flags, one per destination, got "
+                           << overwrite->size();
+  if (!(getCutoff().convertToDouble() > 0.0))
+    return emitOpError() << "expected a positive cutoff";
+
+  bool unique = getMultiplicity() == Multiplicity::Unique;
+  bool atomic = getCombine() == Combine::Atomic;
+  if (getCombine() == Combine::Privatized)
+    return emitOpError() << "takes the combination 'privatized', which is "
+                            "reserved";
+  if (getCombine() == Combine::Owner && unique)
+    return emitOpError() << "adds each owner's row in its registers, which a "
+                            "visit of each pair once does not give: the "
+                            "partner's end is not the owner's row";
+  if (getVisit() == Visit::Sorted)
+    return emitOpError() << "visits 'unordered' or 'stable', not 'sorted'";
+
+  for (unsigned i = 0; i != numValues; ++i) {
+    StringRef algebra = cast<StringAttr>(getAlgebra()[i]).getValue();
+    if (algebra != "any_order" && algebra != "any_order_exact" &&
+        algebra != "fixed_order")
+      return emitOpError() << "has an unknown algebra '" << algebra << "'";
+    StringRef exchange = getExchangeOf(i);
+    if (exchange != "none" && exchange != "symmetric" &&
+        exchange != "antisymmetric")
+      return emitOpError() << "has an unknown exchange contract '" << exchange
+                           << "'";
+    if ((unique || atomic) &&
+        !(exchange == "symmetric" ||
+          (i < numOuts && exchange == "antisymmetric")))
+      return emitOpError()
+             << "adds at both ends of a pair, which needs every destination "
+                "symmetric or antisymmetric and every sum symmetric; value "
+             << i << " is " << exchange;
+    if (algebra != "fixed_order")
+      continue;
+    if (getVisit() != Visit::Stable)
+      return emitOpError()
+             << "visits 'unordered', which value " << i
+             << ", 'fixed_order', does not allow: it needs a stable visit";
+    if (atomic && i < numOuts)
+      return emitOpError()
+             << "adds destination " << i
+             << ", 'fixed_order', by the combination 'atomic', whose order "
+                "the threads decide";
+    if (unique && i >= numOuts)
+      return emitOpError()
+             << "sums value " << i
+             << ", 'fixed_order', over the units of a visit of each pair "
+                "once, which fixes no order";
+  }
+
+  // What the declarations require of the list, and what it guarantees.
+  auto type = cast<mdir::mdrt::NeighborsType>(
+      buffers ? getContractAttr().getValue() : getNeighbors().getType());
+  if (std::optional<std::string> reason =
+          type.getContract().whyNot(getTraversalRequirement(*this)))
+    return emitOpError() << "takes a list that does not meet its "
+                            "requirement: "
+                         << *reason;
+
+  // A destination is no buffer that the op reads.
+  SmallVector<Value> read = {getPositions()};
+  llvm::append_range(read, getIns());
+  llvm::append_range(read, getLists());
+  for (auto [index, out] : llvm::enumerate(getOuts())) {
+    if (viewsAnyOf(read, out))
+      return emitOpError() << "has destination " << index
+                           << ", which is or views a buffer that the op reads";
+    for (auto [other, second] : llvm::enumerate(getOuts()))
+      if (other > index && viewedRoot(second) == viewedRoot(out))
+        return emitOpError() << "has destinations " << index << " and "
+                             << other << ", which are one buffer";
+  }
+  return success();
+}
+
+LogicalResult TraversePairsOp::verifyRegions() {
+  Block &block = getKernel().front();
+  unsigned expected = 2 + 2 * getIns().size();
+  if (block.getNumArguments() != expected)
+    return emitOpError() << "takes a region of " << expected
+                         << " arguments: r^2, the displacement, and two "
+                            "values for each buffer of 'ins'";
+  auto yield = block.empty() ? YieldOp() : dyn_cast<YieldOp>(block.back());
+  if (!yield)
+    return emitOpError() << "ends its region in 'md_alg.yield'";
+  unsigned values = getOuts().size() + getReduce().size();
+  if (yield.getValues().size() != values)
+    return emitOpError() << "yields " << yield.getValues().size()
+                         << " values, not one per destination and sum ("
+                         << values << ")";
+  // The region writes nothing: every write is the op's, through its
+  // combination. It uses no destination, nor a view of one.
+  WalkResult result = getKernel().walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands())
+      if (viewsAnyOf(getOuts(), operand)) {
+        nested->emitOpError()
+            << "uses a destination of 'md_alg.traverse_pairs' in its region, "
+               "which reads or writes it outside the combination";
+        return WalkResult::interrupt();
+      }
+    if (auto memory = dyn_cast<MemoryEffectOpInterface>(nested)) {
+      if (memory.hasEffect<MemoryEffects::Write>() ||
+          memory.hasEffect<MemoryEffects::Free>() ||
+          memory.hasEffect<MemoryEffects::Allocate>()) {
+        nested->emitOpError()
+            << "writes memory in the region of 'md_alg.traverse_pairs', "
+               "whose writes are the op's, through its combination";
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    if (!nested->hasTrait<OpTrait::HasRecursiveMemoryEffects>() &&
+        !isPure(nested) && nested->getNumRegions() == 0) {
+      nested->emitOpError()
+          << "has effects that the verifier of 'md_alg.traverse_pairs' "
+             "cannot see; its region may not write";
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
+
+void TraversePairsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  auto add = [&](MemoryEffects::Effect *effect, OpOperand &operand) {
+    effects.emplace_back(effect, &operand, /*stage=*/0,
+                         /*effectOnFullRegion=*/true,
+                         SideEffects::DefaultResource::get());
+  };
+  for (OpOperand &operand : getNeighborsMutable())
+    add(MemoryEffects::Read::get(), operand);
+  for (OpOperand &operand : getListsMutable())
+    add(MemoryEffects::Read::get(), operand);
+  add(MemoryEffects::Read::get(), getPositionsMutable());
+  for (OpOperand &operand : getInsMutable())
+    add(MemoryEffects::Read::get(), operand);
+  for (auto [index, operand] : llvm::enumerate(getOutsMutable())) {
+    if (!overwrites(index))
+      add(MemoryEffects::Read::get(), operand);
+    add(MemoryEffects::Write::get(), operand);
+  }
+  for (OpOperand &operand : getScratchMutable())
+    add(MemoryEffects::Write::get(), operand);
+}

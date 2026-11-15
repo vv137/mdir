@@ -1,0 +1,55 @@
+# The serial definition of md_alg.traverse_pairs (D[md-alg-traverse]) on
+# the host, on a list of groups written by hand
+# (Inputs/md-alg/traverse.mlir), in order and with the visit reversed
+# (reverse-unordered-visits). The values are worked out: the pairs (0, 1)
+# with d = (-0.5, 0, 0), r^2 = 0.25, and (0, 2) through the entry's shift,
+# d = (0.1, 0, 0), r^2 = 0.01; the pair (1, 2) is beyond the cutoff. The
+# destination, antisymmetric, takes d at the first particle and -d at the
+# second, and starts from zero (overwrite): f_0 = (-0.4, 0, 0),
+# f_1 = (0.5, 0, 0), f_2 = (-0.1, 0, 0). The sum, symmetric, with the weight
+# 0.5 of each pair taken in both orders: 2 (0.5) (0.25 + 0.01) = 0.26. The
+# inner list keeps the pair (0, 1) alone.
+#
+# RUN: mdir-opt %S/Inputs/md-alg/traverse.mlir --convert-md-alg-to-scf \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.forward
+# RUN: mdir-opt %S/Inputs/md-alg/traverse.mlir \
+# RUN:     --convert-md-alg-to-scf=reverse-unordered-visits=true \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils > %t.reverse
+# RUN: FileCheck %s < %t.forward
+# RUN: FileCheck %s < %t.reverse
+#
+# CHECK:      {{^}}-0.4
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0.5
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}-0.1
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0.26
+# CHECK-NEXT: {{^}}-0.5
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0.5
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0
+# CHECK-NEXT: {{^}}0.25
+#
+# The option reverses the loops of an unordered visit: each takes its steps
+# from the last, first + last - 1 - k.
+# RUN: mdir-opt %S/Inputs/md-alg/traverse.mlir \
+# RUN:     --convert-md-alg-to-scf=reverse-unordered-visits=true \
+# RUN: | FileCheck %s --check-prefix=REVERSE
+# REVERSE-LABEL: func.func @main
+# REVERSE: scf.for %[[K:[^ ]*]] = %[[B:[^ ]*]] to %[[E:[^ ]*]] step %[[S:[^ ]*]] iter_args
+# REVERSE-DAG: %[[U:[0-9]+]] = arith.addi %[[K]], %[[S]] : index
+# REVERSE-DAG: %[[T:[0-9]+]] = arith.addi %[[B]], %[[E]] : index
+# REVERSE: arith.subi %[[T]], %[[U]] : index

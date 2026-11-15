@@ -348,6 +348,24 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
   ];
 }
 
+def ConvertMDExecToMDAlg : Pass<"convert-md-exec-to-md-alg", "::mlir::ModuleOp"> {
+  let summary = "Turns the loops over pairs over groups into md_alg.traverse_pairs";
+  let description = [{
+    Each `md_exec.pair_for` in the storage form that takes each pair once,
+    over a structure of groups, becomes `md_alg.traverse_pairs` in its
+    structure form: the list is the structure, whose type carries its
+    contract (D413), with `inner` where its refresh keeps it dual (D114).
+    The op declares the visit (`stable` where a value is `fixed_order`),
+    the combination (`atomic`), the algebra of each value (D301), and the
+    exchange contracts, and it keeps the loop's region and the table of a
+    block (D291). `convert-md-exec-to-gpu` sets the rest of its execution
+    group, `frames` (D268) and `prune(G, R)` (D284), after it moves the
+    reciprocal sums (D113), and lowers the op where it stands
+    (D[md-alg-traverse]).
+  }];
+  let dependentDialects = ["::mdir::md_alg::MDAlgDialect"];
+}
+
 def ConvertMDExecToGPU
     : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Converts md_exec loops in the storage form to GPU kernels";
@@ -466,6 +484,13 @@ def ConvertMDExecToGPU
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
            "(D284)">,
+    Option<"traverseOracle", "traverse-oracle", "std::string",
+           /*default=*/"\"simt\"",
+           "How md_alg.traverse_pairs is lowered: 'simt', its schedule; "
+           "'serial', 'serial-reversed', or 'serial-magnitudes', its serial "
+           "definition on the host over copies of its buffers, in order, in "
+           "reverse, or with the magnitudes of its terms, for the contract "
+           "test (MDIR_TRAVERSE_ORACLE, D[md-alg-traverse])">,
     Option<"singlePassGroupScan", "single-pass-group-scan", "bool",
            /*default=*/"false",
            "Use the decoupled look-back scan for the three counting sorts "
@@ -557,7 +582,8 @@ def ConvertMDAlgToSCF : Pass<"convert-md-alg-to-scf", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
-                           "::mlir::scf::SCFDialect"];
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
 }
 
 def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {

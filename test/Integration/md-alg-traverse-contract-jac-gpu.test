@@ -1,0 +1,10 @@
+# REQUIRES: python-api, cuda, amber-suite
+# The contract of md_alg.traverse_pairs (D[md-alg-traverse]) on JAC of the
+# Amber suite (23,558 atoms), as md-alg-traverse-contract-gpu.test on the
+# dodecahedron: the list of groups, the dual list pruned in the refresh and
+# in the loop (D284), in mixed precision, and the list in double.
+# RUN: %mdir_python %S/Inputs/traverse_contract.py jac %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/prmtop %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/inpcrd outer Mixed | FileCheck %s -DW=outer -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py jac %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/prmtop %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/inpcrd dual Mixed | FileCheck %s -DW=dual -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py jac %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/prmtop %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/inpcrd fused Mixed | FileCheck %s -DW=fused -DP=Mixed
+# RUN: %mdir_python %S/Inputs/traverse_contract.py jac %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/prmtop %amber_suite/Amber24_Benchmark_Suite/PME/JAC_production_NVE/inpcrd outer Double | FileCheck %s -DW=outer -DP=Double
+# CHECK: jac [[W]] [[P]]: the schedule and the reversed visit keep the serial order's sums within the bound
