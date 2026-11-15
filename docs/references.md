@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-11-14.
+Last updated: 2026-11-15.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -1861,6 +1861,19 @@ Used for: particle mesh Ewald for the dispersion with force fields whose
 pairs do not follow the geometric rule (D162): the grid sums the geometric
 C6, and the direct terms give each pair within the cutoff its own
 Lennard-Jones.
+
+### Wilson1995
+
+P. R. Wilson, M. S. Johnstone, M. Neely, D. Boles, "Dynamic storage
+allocation: A survey and critical review," in *Memory Management*
+(International Workshop IWMM 95, Kinross, UK, 1995), Lecture Notes in
+Computer Science, Vol. 986 (Springer, Berlin, Heidelberg, 1995),
+pp. 1–116.
+[doi:10.1007/3-540-60368-9_19](https://doi.org/10.1007/3-540-60368-9_19)
+
+Used for: the runtime's pool of device memory (D[device-pool-split]): a
+best-fit allocator with splitting and deferred coalescing of free
+neighbors, over the allocations that it takes from the driver.
 
 ### Xiao2001
 

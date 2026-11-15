@@ -10,3 +10,21 @@
 # BUDGET: device blocks budget passed
 # RUN: env MDRT_FAIL_ALLOCATION=101 %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda retry | FileCheck %s --check-prefix=RETRY
 # RETRY: device blocks retry passed
+#
+# The best fit with splitting and coalescing (D[device-pool-split]): no
+# access beyond a piece or to a returned arena, and no leak. racecheck on
+# the order of the streams.
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda split | FileCheck %s --check-prefix=SPLIT
+# SPLIT: device blocks split passed
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda coalesce | FileCheck %s --check-prefix=COALESCE
+# COALESCE: device blocks coalesce passed
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda trim | FileCheck %s --check-prefix=TRIM
+# TRIM: device blocks trim passed
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda replaced | FileCheck %s --check-prefix=REPLACED
+# REPLACED: device blocks replaced passed
+# RUN: env MDIR_DEVICE_POOL_BYTES=1048576 %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda pieces | FileCheck %s --check-prefix=PIECES
+# PIECES: device blocks pieces passed
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda streams | FileCheck %s --check-prefix=STREAMS
+# STREAMS: the values after both streams: [2]
+# STREAMS: device blocks streams passed
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda streams | FileCheck %s --check-prefix=STREAMS

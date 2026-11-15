@@ -238,11 +238,32 @@ explicit token does not by itself make a copy asynchronous to the host or
 license a read of an unfinished destination; moving waits or removing the
 runtime-wide synchronization requires a separate proof and measurement.
 
-**A pool of device memory.** The runtime keeps freed blocks and hands one
-of the same size to the next allocation without a call to the driver;
-buffers that a step allocates and frees cost a lookup. A block is reused
-only for a request of its own size, so the sizes that a step asks for must
-not follow the builds of the neighbor structure (D312): the
+**A pool of device memory.** The runtime keeps freed blocks and hands them
+to later allocations without a call to the driver; buffers that a step
+allocates and frees cost a lookup. The pool is a best-fit allocator with
+splitting and deferred coalescing [[Wilson1995]](references.md#wilson1995)
+over the allocations that it takes from the driver (D[device-pool-split]).
+A request takes first the idle piece that last held a block of its size,
+so the requests that recur at every step keep their pieces and addresses.
+Otherwise it takes the smallest idle piece that holds it, cut at its size
+rounded up to 256 bytes, the alignment of the driver's allocations. Idle
+pieces merge with their idle neighbors in their own allocation, never
+across allocations, only when a request finds none that holds it, at a
+trim, when a simulation's activation closes, and past the budget; only a
+wholly idle allocation goes back to the driver. Merging at every free
+kept 4.8 MB less at STMV but made the step 0.2% slower there, as the
+recurring buffers moved; deferred, the step runs at the rate it had.
+Every freed byte is handed only to work issued after its free, on the one
+stream or on a stream that the runtime changed to since, which waits for
+an event recorded on the old one; a merged piece therefore needs no event
+of its own. Until then a block was reused only for a request of its own
+size, and the pool kept, at its peak, 92.6 MB beyond the bytes in use at
+STMV (6.1% of that peak) and 4.0 MB at JAC (12%): the setup's buffers, and
+the blocks released after it (D414 below), matched no later request. With
+splitting it keeps 13.9 MB and 1.7 MB, idle pieces each smaller than the
+request that took new memory at the peak, beside blocks in use in their
+allocation. The sizes that a step asks for were made not to
+follow the builds of the neighbor structure (D312): the
 buffers that a loop over the groups gathers its positions and fields into
 take the room of the structure's places, which changes only when it
 grows, and not the number of places that the last build occupied, which
@@ -376,8 +397,9 @@ the loop, and only if no point after it needs the buffer. Liveness alone
 is not enough: a buffer overwritten whole after the loop is dead before
 the write, but its storage is still used there. The peak in use of STMV
 falls by 38.5 MB, 2.64%, and that of JAC by 9.4%. The peak with the pool
-falls by only 0.56% at STMV, since the pool keeps a freed block for a
-request of its own size and most released blocks match none.
+fell by only 0.56% at STMV while the pool kept a freed block for a request
+of its own size alone, as most released blocks matched none; the pool that
+splits (above) takes it 5.2% lower.
 
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
