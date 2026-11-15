@@ -74,6 +74,16 @@ LogicalResult md_exec::verifyRequirement(Operation *op, Value neighbors,
 
 LogicalResult md_exec::verifyGuarantee(Operation *op, Type result,
                                        const Contract &guaranteed) {
+  if (auto segmented = dyn_cast<mdrt::SegmentedPairsType>(result)) {
+    // Each segment of a list of units (D[md-alg-segments]).
+    for (auto [s, contract] : llvm::enumerate(segmented.getSegments()))
+      if (!guaranteed.meets(contract))
+        return op->emitOpError()
+               << "has the type of a list whose segment " << s
+               << " guarantees '" << contract.str()
+               << "', more than its build does: '" << guaranteed.str() << "'";
+    return success();
+  }
   auto type = cast<mdrt::NeighborsType>(result);
   if (!guaranteed.meets(type.getContract()))
     return op->emitOpError()

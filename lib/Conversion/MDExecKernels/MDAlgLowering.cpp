@@ -964,6 +964,11 @@ static SmallVector<Value> lowerTraversal(OpBuilder &builder,
     serial.active = lists[10];
     serial.activeCount = lists[11];
   }
+  if (op.isSegmented()) {
+    unsigned base = serial.dual ? 12 : 7;
+    serial.segments = lists[base];
+    serial.members = lists[base + 1];
+  }
   serial.places = op.getSizes()[0];
   serial.units = op.getSizes()[1];
   serial.positions = op.getPositions();
@@ -988,6 +993,11 @@ LogicalResult kernels::lowerAlgToSerial(Operation *root,
         return op->emitOpError()
                << "takes its list as a structure, which has no buffers on "
                   "the host: its serial definition takes the buffer form";
+      if (traverse.isSegmented() && traverse.getPruneGroups())
+        return op->emitOpError()
+               << "prunes in the loop over segments, which the serial "
+                  "definition does not: the pruning is the SIMT schedule's "
+                  "(D284, slice S3)";
       if (!isa<VectorType>(traverse.getCell().getType()))
         return op->emitOpError()
                << "takes its cell, in the buffer form, as the vector of its "

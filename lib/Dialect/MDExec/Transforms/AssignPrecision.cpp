@@ -191,6 +191,22 @@ private:
                    unsigned perField, ValueRange parameters = {},
                    unsigned perOut = 1);
 
+  /// Gives the region of a kernel the type `arithmetic`: it takes
+  /// `numGeometry` arguments of its own, then `perField` for each field in
+  /// `ins`, then one for each of `parameters`; yield `i` takes the type
+  /// `yieldType(i)`.
+  void rewriteKernel(Region &region, OpBuilder &before, Location loc,
+                     Type arithmetic, unsigned numGeometry, ValueRange ins,
+                     unsigned perField, ValueRange parameters,
+                     function_ref<Type(unsigned)> yieldType);
+  /// The same for the regions of a loop over a list of units
+  /// (D[md-alg-segments]).
+  void rewriteSegmentLoop(SegmentForOp loop);
+  /// Gives the destinations of `loop` that hold no field yet the type of
+  /// its results, and its sums the accumulator type.
+  template <typename OpTy>
+  void rewriteValues(OpTy loop, OpBuilder &before, Location loc);
+
   void markBoundary(Value field, Type element, Operation *op) {
     boundaries.push_back({field, element, op});
   }
@@ -218,6 +234,7 @@ private:
   SmallVector<PairForOp> pairLoops;
   SmallVector<TupleForOp> tupleLoops;
   SmallVector<ParticleForOp> particleLoops;
+  SmallVector<SegmentForOp> segmentLoops;
   func::ReturnOp firstReturn;
 };
 
@@ -254,6 +271,8 @@ static bool isDestinationUse(OpOperand &use) {
   if (auto loop = dyn_cast<PairForOp>(use.getOwner()))
     return isOut(loop.getOuts());
   if (auto loop = dyn_cast<TupleForOp>(use.getOwner()))
+    return isOut(loop.getOuts());
+  if (auto loop = dyn_cast<SegmentForOp>(use.getOwner()))
     return isOut(loop.getOuts());
   if (auto loop = dyn_cast<ParticleForOp>(use.getOwner()))
     return isOut(loop.getOuts());
@@ -389,6 +408,22 @@ LogicalResult Assigner::collect(Operation *op) {
       if (isRealField(field.getType()))
         find(field);
     tupleLoops.push_back(loop);
+    return success();
+  }
+  if (auto loop = dyn_cast<SegmentForOp>(op)) {
+    if (failed(checkForm(loop)))
+      return failure();
+    positions.push_back(loop.getPositions());
+    collectLoop(loop, forces);
+    segmentLoops.push_back(loop);
+    return success();
+  }
+  if (auto build = dyn_cast<BuildSegmentedPairsOp>(op)) {
+    positions.push_back(build.getPositions());
+    return success();
+  }
+  if (auto refresh = dyn_cast<RefreshSegmentedPairsOp>(op)) {
+    positions.push_back(refresh.getPositions());
     return success();
   }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
@@ -544,6 +579,19 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
   Location loc = loop.getLoc();
   OpBuilder before(loop);
   unsigned numOuts = loop.getOuts().size();
+  rewriteValues(loop, before, loc);
+  rewriteKernel(loop.getKernel(), before, loc, arithmetic, numGeometry,
+                loop.getIns(), perField, parameters, [&](unsigned i) {
+                  unsigned result = i < numOuts * perOut
+                                        ? i / perOut
+                                        : i - numOuts * (perOut - 1);
+                  return loop.getResult(result).getType();
+                });
+}
+
+template <typename OpTy>
+void Assigner::rewriteValues(OpTy loop, OpBuilder &before, Location loc) {
+  unsigned numOuts = loop.getOuts().size();
   unsigned numReduce = loop.getReduce().size();
 
   // A destination that holds no field yet takes the type of the result.
@@ -582,9 +630,35 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
     Value converted = createCast(after, loc, result, outside);
     result.replaceAllUsesExcept(converted, converted.getDefiningOp());
   }
+}
 
+void Assigner::rewriteSegmentLoop(SegmentForOp loop) {
+  Location loc = loop.getLoc();
+  OpBuilder before(loop);
+  rewriteValues(loop, before, loc);
+  mdrt::SegmentedPairsType type = loop.getListType();
+  for (unsigned index = 0, e = loop.getKernels().size(); index != e; ++index) {
+    auto [f, g] = loop.getSegmentKinds(index);
+    SmallVector<SmallVector<int64_t>> pairs = loop.getSitePairs(index);
+    SmallVector<unsigned> values;
+    for (const SmallVector<int64_t> &pair : pairs)
+      for (int64_t value : ArrayRef<int64_t>(pair).drop_front(2))
+        values.push_back(value);
+    rewriteKernel(loop.getKernels()[index], before, loc, policy.kernel,
+                  /*numGeometry=*/2 * pairs.size(), loop.getIns(),
+                  /*perField=*/type.getNumMembers(f) + type.getNumMembers(g),
+                  /*parameters=*/ValueRange(), [&](unsigned i) {
+                    return loop.getResult(values[i]).getType();
+                  });
+  }
+}
+
+void Assigner::rewriteKernel(Region &region, OpBuilder &before, Location loc,
+                             Type arithmetic, unsigned numGeometry,
+                             ValueRange ins, unsigned perField,
+                             ValueRange parameters,
+                             function_ref<Type(unsigned)> yieldType) {
   // Every floating-point value of the kernel gets the arithmetic type.
-  Region &region = loop.getKernel();
   Block &kernel = region.front();
   for (BlockArgument argument : kernel.getArguments())
     argument.setType(withReal(argument.getType(), arithmetic));
@@ -638,7 +712,7 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
       argument.replaceAllUsesExcept(converted, converted.getDefiningOp());
     }
   };
-  for (Value field : loop.getIns())
+  for (Value field : ins)
     takeStored(field, perField);
   for (Value field : parameters)
     takeStored(field, 1);
@@ -647,9 +721,7 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
   Operation *yield = kernel.getTerminator();
   OpBuilder exit(yield);
   for (unsigned i = 0, e = yield->getNumOperands(); i != e; ++i) {
-    unsigned result = i < numOuts * perOut ? i / perOut
-                                           : i - numOuts * (perOut - 1);
-    Type expected = loop.getResult(result).getType();
+    Type expected = yieldType(i);
     if (auto field = dyn_cast<FieldType>(expected))
       expected = field.getKernelValueType();
     yield->setOperand(i,
@@ -671,6 +743,8 @@ void Assigner::apply() {
                 /*perOut=*/loop.getArity());
   for (ParticleForOp loop : particleLoops)
     rewriteLoop(loop, policy.integrator, /*numGeometry=*/0, /*perField=*/1);
+  for (SegmentForOp loop : segmentLoops)
+    rewriteSegmentLoop(loop);
 
   // The signature follows the arguments and the returned values.
   FunctionType type = function.getFunctionType();

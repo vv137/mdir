@@ -1,0 +1,70 @@
+# The loops over a list of units that convert-md-to-md-exec makes from the
+# segment windows of D405 (D[md-alg-segments], slice S1) against the loops
+# of #795 at 004a0735 (Inputs/kind-pairs/*-795.loops). For each loop the
+# segment, the kind of value, and, site pair by site pair, the expression of
+# its contribution are the same (compare_segment_loops.py): the energies,
+# the strains, and the forces at the first place of each site pair. The
+# places (p, q) of each entry of the table are those that #795's placement
+# of the displacement names, evaluated from its body. The
+# placement of the sites, #795's alpha(h1 + h2) with alpha one unit in the
+# last place from D405's weight, is the loop's now, not the region's, so the
+# comparison needs no replacement of a constant.
+#
+# RUN: rm -rf %t && mkdir -p %t/tip3p %t/opc
+# RUN: %python %S/Inputs/kind_pairs_tip3p.py %S/Inputs/triclinic %t/tip3p --solutes
+# RUN: mdir emit --stage=module %t/tip3p/control.toml > %t/tip3p.mlir
+# RUN: mdir-kind-pairs-test generate %t/tip3p/control.toml %t/tip3p.mlir 1 0.09582 > %t/tip3p-terms.mlir
+# RUN: mdir-opt %t/tip3p-terms.mlir --convert-md-to-md-exec=skin=0.1 > %t/tip3p-terms-exec.mlir
+# RUN: %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/tip3p-795.loops %t/tip3p-terms-exec.mlir term_lj term_coulomb | FileCheck %s --check-prefix=TIP3P-TERMS
+# RUN: mdir-kind-pairs-test generate %t/tip3p/control.toml %t/tip3p.mlir 1 0.09582 --entry > %t/tip3p-entry.mlir
+# RUN: mdir-opt %t/tip3p-entry.mlir --md-differentiate --convert-md-to-md-exec=skin=0.1 > %t/tip3p-entry-exec.mlir
+# RUN: %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/tip3p-795.loops %t/tip3p-entry-exec.mlir energy energy.energy_forces_virial | FileCheck %s --check-prefix=TIP3P
+#
+# TIP3P-TERMS: @term_lj energy segment(0, 0): 1 site pairs, the same expressions
+# TIP3P-TERMS: @term_coulomb energy segment(0, 0): 9 site pairs, the same expressions
+# TIP3P-TERMS: identical: 6 loops
+# TIP3P: @energy.energy_forces_virial energy segment(0, 0): 9 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial energy segment(1, 0): 3 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial energy segment(1, 1): 1 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial force segment(0, 0): 9 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial force segment(1, 0): 3 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial force segment(1, 1): 1 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial strain segment(0, 0): 9 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial strain segment(1, 0): 3 site pairs, the same expressions
+# TIP3P: @energy.energy_forces_virial strain segment(1, 1): 1 site pairs, the same expressions
+# TIP3P: identical: 12 loops
+#
+# OPC, whose fourth place is the site formed from the frame.
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/opc
+# RUN: sed -e 's/TOPOLOGY/three.prmtop/' -e 's/COORDINATES/three.inpcrd/' %S/Inputs/kind-pairs/opc-run.toml > %t/opc/run.toml
+# RUN: mdir emit --stage=module %t/opc/run.toml > %t/opc.mlir
+# RUN: mdir-kind-pairs-test generate %t/opc/run.toml %t/opc.mlir 1 0.087343313000000005 > %t/opc-terms.mlir
+# RUN: mdir-opt %t/opc-terms.mlir --convert-md-to-md-exec=skin=0.1 > %t/opc-terms-exec.mlir
+# RUN: %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/opc-795.loops %t/opc-terms-exec.mlir term_lj term_coulomb | FileCheck %s --check-prefix=OPC-TERMS
+# RUN: mdir-kind-pairs-test generate %t/opc/run.toml %t/opc.mlir 1 0.087343313000000005 --entry > %t/opc-entry.mlir
+# RUN: mdir-opt %t/opc-entry.mlir --md-differentiate --convert-md-to-md-exec=skin=0.1 > %t/opc-entry-exec.mlir
+# RUN: %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/opc-795.loops %t/opc-entry-exec.mlir energy energy.energy_forces_virial | FileCheck %s --check-prefix=OPC
+#
+# OPC-TERMS: @term_lj energy segment(0, 0): 1 site pairs, the same expressions
+# OPC-TERMS: @term_coulomb energy segment(0, 0): 9 site pairs, the same expressions
+# OPC-TERMS: identical: 6 loops
+# OPC: @energy.energy_forces_virial energy segment(0, 0): 10 site pairs, the same expressions
+# OPC: @energy.energy_forces_virial energy segment(1, 0): 4 site pairs, the same expressions
+# OPC: @energy.energy_forces_virial force segment(0, 0): 10 site pairs, the same expressions
+# OPC: @energy.energy_forces_virial force segment(1, 0): 4 site pairs, the same expressions
+# OPC: @energy.energy_forces_virial strain segment(0, 0): 10 site pairs, the same expressions
+# OPC: identical: 12 loops
+#
+# The comparison fails where a table names another place: the second place
+# of an energy's site pair (the extra point read as the oxygen), the first
+# of a force's (the oxygen read as the first hydrogen), and the second of a
+# force's.
+# RUN: sed '0,/sites \[(0, 0) \[0\], (1, 1) \[0\], (1, 2) \[0\], (1, 3)/s//sites [(0, 0) [0], (1, 1) [0], (1, 2) [0], (1, 0)/' %t/opc-entry-exec.mlir > %t/opc-wrong-q.mlir
+# RUN: not %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/opc-795.loops %t/opc-wrong-q.mlir energy energy.energy_forces_virial 2>&1 | FileCheck %s --check-prefix=WRONG-Q
+# WRONG-Q: @energy energy segment(0, 0): site pair 3 is (1, 0) in the table and (1, 3) by the placement of #795
+# RUN: sed '/outs(/s/sites \[(0, 0) \[0\], (1, 1)/sites [(1, 0) [0], (1, 1)/' %t/opc-entry-exec.mlir > %t/opc-wrong-p.mlir
+# RUN: not %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/opc-795.loops %t/opc-wrong-p.mlir energy energy.energy_forces_virial 2>&1 | FileCheck %s --check-prefix=WRONG-P
+# WRONG-P: @energy.energy_forces_virial force segment(0, 0): site pair 0 is (1, 0) in the table and (0, 0) by the placement of #795
+# RUN: sed '/outs(/s/sites \[(0, 0) \[0\], (1, 1)/sites [(0, 2) [0], (1, 1)/' %t/opc-entry-exec.mlir > %t/opc-wrong-fq.mlir
+# RUN: not %python %S/Inputs/compare_segment_loops.py %S/Inputs/kind-pairs/opc-795.loops %t/opc-wrong-fq.mlir energy energy.energy_forces_virial 2>&1 | FileCheck %s --check-prefix=WRONG-FQ
+# WRONG-FQ: @energy.energy_forces_virial force segment(0, 0): site pair 0 is (0, 2) in the table and (0, 0) by the placement of #795

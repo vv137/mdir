@@ -1,0 +1,81 @@
+# The serial definition of md_alg.traverse_pairs over the segments of a
+# list of units (D[md-alg-segments], Section 6) against the f64 oracle of
+# D405 (Inputs/segments_serial.py, which states the bound of each
+# component). The system of four kinds of D405 (kind_pairs_mixture.py):
+# the generator writes the segment windows, md-differentiate their forces
+# and virials, convert-md-to-md-exec makes the loops over the list of
+# units, the passes of md_exec fuse them into one loop with one destination,
+# and convert-md-exec-to-md-alg makes the op. The script runs the op in its
+# buffer form, over a list it builds, every pair of units once, and compares
+# the energy, every force component and the virial with the oracle.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../Driver/Inputs/kind_pairs_mixture.py %t
+# RUN: mdir emit --stage=module %t/run.toml > %t/module.mlir
+#
+# K = 2: TIP3P and the water of four sites with the parameters of OPC; then
+# TIP3P and the molecule of three atoms that all have Lennard-Jones.
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 1,2 0.1,0.1 --func-entry > %t/waters.mlir
+# RUN: mdir-opt %t/waters.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/waters-alg.mlir
+# RUN: FileCheck %s --check-prefix=FUSED < %t/waters-alg.mlir
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/waters-alg.mlir SOL,OPC %t/waters-probe.mlir
+# RUN: mdir-opt %t/waters-probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,OPC %t/waters.txt | FileCheck %s --check-prefix=WATERS
+#
+# The loops of the energy, the forces and the virial are one op, with one
+# destination and the six segments of K = 2.
+# FUSED: md_alg.traverse_pairs structure
+# FUSED-SAME: segment(0, 0) sites
+# FUSED: segment(1, 0) sites
+# FUSED: segment(1, 1) sites
+# FUSED: segment(2, 0) sites
+# FUSED: segment(2, 1) sites
+# FUSED: segment(2, 2) sites
+# FUSED-NOT: md_alg.traverse_pairs
+# WATERS: 6 segments, 60 tuples, 82 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
+#
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 1,3 0.1,0.15 --func-entry > %t/lj.mlir
+# RUN: mdir-opt %t/lj.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/lj-alg.mlir
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/lj-alg.mlir SOL,LJ3 %t/lj-probe.mlir
+# RUN: mdir-opt %t/lj-probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/lj.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,LJ3 %t/lj.txt | FileCheck %s --check-prefix=LJ
+# LJ: 6 segments, 79 tuples, 82 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
+#
+# K = 1: each kind alone, the others the rest. The water of four sites
+# forms its site from the weights; its site is a particle of the rest when
+# the kind is not taken.
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 2 0.1 --func-entry > %t/opc.mlir
+# RUN: mdir-opt %t/opc.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/opc-alg.mlir
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/opc-alg.mlir OPC %t/opc-probe.mlir
+# RUN: mdir-opt %t/opc-probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/opc.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro OPC %t/opc.txt | FileCheck %s --check-prefix=OPC
+# OPC: 3 segments, 138 tuples, 82 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
+#
+# RUN: mdir-kind-pairs-test generate %t/run.toml %t/module.mlir 1 0.1 --func-entry > %t/tip3p.mlir
+# RUN: mdir-opt %t/tip3p.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/tip3p-alg.mlir
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/tip3p-alg.mlir SOL %t/tip3p-probe.mlir
+# RUN: mdir-opt %t/tip3p-probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/tip3p.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL %t/tip3p.txt | FileCheck %s --check-prefix=TIP3P
+# TIP3P: 3 segments, 135 tuples, 82 components within the bound, largest error {{0\.[0-9]+|[0-9.e-]+}} of it
+#
+# The visit reversed (reverse-unordered-visits) is within the bound too.
+# RUN: mdir-opt %t/waters-probe.mlir --convert-md-alg-to-scf=reverse-unordered-visits=true | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters-reversed.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,OPC %t/waters-reversed.txt | FileCheck %s --check-prefix=WATERS
+#
+# Units that straddle the faces of the cell, and pairs that cross them: the
+# system is moved so that its middle is at a corner, each unit stored whole
+# with its anchor wrapped into the cell, the places shifted into the frames
+# of their groups and the entries by the difference of those frames
+# (segments_serial.py, --periodic). The places' and the entries' shifts are
+# then decoded by the definition, and the oracle is the same.
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/waters-alg.mlir SOL,OPC %t/waters-periodic.mlir --periodic
+# RUN: mdir-opt %t/waters-periodic.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters-periodic.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,OPC %t/waters-periodic.txt --periodic | FileCheck %s --check-prefix=WATERS
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/opc-alg.mlir OPC %t/opc-periodic.mlir --periodic
+# RUN: mdir-opt %t/opc-periodic.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/opc-periodic.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro OPC %t/opc-periodic.txt --periodic | FileCheck %s --check-prefix=OPC
+#
+# The serial definition does not prune in the loop (D284): the pruning is
+# the SIMT schedule's.
+# RUN: not mdir-opt %S/Inputs/md-alg/segments-prune.mlir --convert-md-alg-to-scf 2>&1 | FileCheck %s --check-prefix=PRUNE
+# PRUNE: prunes in the loop over segments, which the serial definition does not

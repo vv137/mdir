@@ -1,0 +1,527 @@
+# D[md-alg-segments]
+
+Recorded at its merge.
+
+**The design, before any code is ported, for the neighbor and GPU-lowering layers of #795 on `md_alg`. A list over units is a new type, `!mdrt.segmented_pairs`. Its parameters are the taken rigid kinds of D403 and one D413 contract for each segment $s(f, g)$ of rule R3 (D405). `md_alg.traverse_pairs` takes it in a segmented form, with one region for each segment that it visits. Each region holds the segment's site pairs, one slice of the yields for each, as the generator of D405 writes them. A table on the region names each slice's pair of places and the values it contributes to. The op owns the placement of sites by the kinds' weights $\mathsf W$, the cutoff of each site pair, and the transpose $\mathsf W^{\mathsf T}$ of the forces (rule A). The groups of D415 are the degenerate instance: no kind, one segment, units that are particles. That form parses, verifies, and lowers as today, so every groups program keeps D415's bytes. The producer is a family of `md_exec` ops, with its collection stages as `md_alg` ops. Its lowering is #795's search, moved, unless the measurement that opens S2 finds the groups build over units as fast. Coverage is D357's query, with a covering reach for each segment. The SIMT lowering is #795's warp-cooperative schedule, a second pattern of the same op chosen by the type of its list. The serial definition is the oracle. The work lands in six slices, S1 to S5 with S4 cut in two, each with its own gates. The last, S5, makes the groups the instance $K = 0$ of one segmented schedule, with D415's bytes as its gate.** Issue #892, the first slice of re-landing #795 on the layer of #877 (the maintainer's parking ruling on #795, 2026-11-14), after D415.
+
+Status: design accepted on #893 (Section 9). S1 is implemented on this branch.
+
+## 0. What binds this design
+
+- **D415, Section 8**, the direction that the maintainer agreed (D415's ruling 4):
+  - lists of units, whose entries are a superset filtered by the cutoff of site pairs;
+  - the segments in one buffer, with one D413 contract each;
+  - the parameters of a template as constants, with zero terms not emitted;
+  - sites formed in the kernel by a unit shape.
+- **General rules, not templates** (the maintainer, 2026-11-12). Each piece below is one of the rules R1 to R5, and none of them names water:
+  - R1: rigid groups, D403;
+  - R2: sites as constant-weight combinations, formed inline by the consumer;
+  - R3: segments of kind pairs from the pair term, D405;
+  - R4: schedule parameters per device;
+  - R5: validity from the extent of the group.
+
+  The mechanism takes any number of kinds $K$. The enabling condition is $K \le 2$, and $K = 3$ is refused with D405's reason. An unused option emits no code.
+- **The superset ruling** (on #795, 2026-11-11):
+  - The entries are a superset of the general path's.
+  - The reaches of validity stay exact, and numerical padding is never credited as skin.
+  - The search contract is "coverage plus a counted f32 margin", with f64 only where it is needed.
+- **The prototype's mechanisms are requirements**, with a per-kernel gate of performance from the first integration:
+  - the rotation of partners by shuffles;
+  - constants;
+  - zero terms not emitted;
+  - the extra point formed in the kernel;
+  - the search mechanisms of #795's mechanism table.
+
+  A large gap in a preliminary timing stops the work and is a `needs-decision`.
+- **Re-slice, do not rewrite.** The behavior and the validation of #795 are kept. #795 stops getting new algorithms.
+- **Identical output.** Every program without a taken kind keeps `main`'s output. A better variant is reported as an explicit exception and never taken silently.
+
+## 1. Units, shapes, and segments
+
+**Kinds and the rest (R1, R3).** A consumer takes $K$ rigid kinds of D403, numbered $0, \dots, K-1$. The particles of no taken kind are the rest, kind $K$. Segment $s(f, g) = f(f+1)/2 + g$, with $g \le f \le K$, holds the pairs of a unit of kind $f$ with a unit of kind $g$. There are $(K+1)(K+2)/2$ segments. When a segment involves the rest, the rest is $f$ (D405). For $K = 1$ the segments 0, 1, and 2 are #795's WW, SW, and SS.
+
+**Two meanings of "unit" must not be mixed.** #795 holds both:
+
+| | A unit of a taken kind $f < K$ | A unit of the rest, kind $K$ |
+|---|---|---|
+| What the list holds (a place of a group, a partner of an entry) | one copy of the kind: its $m_f$ frame atoms | one particle |
+| Its reference point, for the search, the pruning, and the test of validity | its anchor, the first frame atom | its anchor (#799): the heavy atom that the constraints hold it to, or itself |
+| Its covering radius $e$ | the kind's `extent` ($r_\mathrm m$ of #795) | $\rho$ for every unit of the rest, or 0 without anchored members (#795, Section 2) |
+| Its shape in the traversal | $m_f$ members, $n_f$ places, weights $\mathsf W_f$ | $m = n = 1$, $\mathsf W = (1)$ |
+
+A member of a solute unit is therefore its own place of a group and its own partner of entries, with its own masks, exclusions, and 1–4 pairs. Its anchor selects its candidates only (#795: "a unit only selects candidates"). An entry names a particle of the rest by its place, as a groups entry does. It names a copy of a kind by its unit. Its partner's members come from the unit's row of a table of members.
+
+**The shape of a kind (R2).** The shape of kind $f$ follows from `#md.rigid_kind` and adds no number of its own:
+- $m_f = \lvert\mathrm{frame}\rvert$ members and $n_f = m_f + \lvert\mathrm{sites}\rvert$ places.
+- $\mathsf W_f \in \mathbb R^{n_f \times m_f}$, whose row of a frame place is a unit vector and whose row of a site holds its weights. Each row sums to 1, which `#md.rigid_kind` already checks.
+
+With the frame offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$ of the members from the anchor, place $p$ is at
+
+$$\mathbf x_p = \mathbf x_0 + \mathbf c_p, \qquad \mathbf c_p = \sum_{k \ge 1} (\mathsf W_f)_{pk}\,\mathbf h_k .$$
+
+A force $\mathbf F_p$ on place $p$ reaches member $k$ as $(\mathsf W_f)_{pk}\mathbf F_p$. This is rule A, $\mathsf W^{\mathsf T}\mathbf F$, the exact derivative of the energy that the kernel evaluates. For OPC $m = 3$ and $n = 4$, and the row of the extra point is $(1 - 2w, w, w)$ with D405's $w = 0.14772060947071208$. The groups are the shape $m = n = 1$.
+
+**The covering reach of a segment (R5).** Let $e_f$ and $e_g$ be the covering radii of the two kinds. If every place of a unit lies within its radius of its reference point, the triangle inequality gives, for every site pair,
+
+$$\lVert \mathbf x_p - \mathbf x_q \rVert \ge \lVert \mathbf a_i - \mathbf a_j \rVert - e_f - e_g .$$
+
+So the list of segment $s$ is a list over reference points, built with the reach $R_s = R + e_f + e_g$, where $R = r_c + \text{skin}$. The theorem of validity of D80 applies to it with the cutoff $r_c + e_f + e_g$. The skin of a segment is exactly $R_s - (r_c + e_f + e_g) = R - r_c$. The f32 margin of the search widens the set of entries (below) and is not part of this skin. The groups have $e = 0$ and $R_s = R$.
+
+## 2. The type `!mdrt.segmented_pairs`
+
+```mlir
+!sp = !mdrt.segmented_pairs<@atoms,
+    kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3],
+                          weights = [0.70455878105857583, 0.14772060947071208,
+                                     0.14772060947071208],
+                          extent = 0.087343313000000005>],
+    segments [(0, 0) unique, minimum, removed, grouped_by(group),
+              (1, 0) unique, minimum, removed, grouped_by(group),
+              (1, 1) unique, minimum, removed, grouped_by(group)]>
+```
+
+- **`kinds`** are the $K$ taken kinds, in the consumer's order, each the `#md.rigid_kind` of D405. They are facts of the topology, not costs: the traversal needs the shapes, and the build needs the extents. With the kinds in the type, a traversal and its build agree on them by type equality, through every refresh, carried value, and `scf.if`. This is D413's argument for the contract, and no dataflow walk is needed. The rest's anchors and their radius $\rho$ are SSA relations and an attribute of the build, as on #795. The coverage query reads them (Section 3).
+- **`segments`** lists one D413 contract for each $(f, g)$, $(K+1)(K+2)/2$ of them, in the order of $s$. Each contract has four words, always spelled, with D413's lattice on each axis. A build guarantees, for every segment:
+  - **traversal `unique`.** For $f = g$, each unordered pair of distinct units once. For $f \ne g$, each pair of a unit of $f$ and a unit of $g$ once, with the unit of $f$ first. Both ends are written in both cases, so the meaning is that of `unique`.
+  - **images `minimum`.** An entry carries the shift into the frame of its group (I4 of D413). The route's precondition makes this the true statement: the covering reach is below half the least face width of the cell (the maintainer's tier 2 of 2026-11-11). The build checks the precondition at every build and stops the run when it fails, naming both lengths, as #795 does. A build therefore never states `minimum` for a cell where a pair could have two images within $R_s$.
+  - **exclusions `removed`.** No bit is set for an excluded pair. For a segment of two taken kinds this holds by the facts of D405: a taken kind has no exclusion outside its molecule. For $(K, K)$ the build clears the masks of excluded pairs as D89 does.
+  - **organization `grouped_by(group)`.** The entries of a group's row are contiguous in the segment. `stable(group, search)` is stated only if slice S2 proves that the order of its compaction is fixed. The consumers of this design need only `none` (`(unique, atomic)` with `any_order`, D413), so the weaker statement loses nothing.
+
+  D415's "`grouped_by(class)` across them" is this list of contracts by segment. It is not a new key of D409's lattice. One buffer of records that never straddle two segments is a fact of the layout, shared by the build and the schedule, as D89's sizes are.
+- **Not in the type:** the cutoff, the skin, the reaches, $\rho$, the size of a group, the size of a record, and the grid. The first four are SSA facts of the build, proved by D357's provenance. The rest are costs (D413).
+
+`!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>`, the groups, is the instance $K = 0$: one segment, $(0, 0)$, of particles. The two types stay distinct, so no consumer of `!mdrt.neighbors` (the loops over a matrix, `build_triplets`, `build_edges`) can be given a segmented list by mistake. The traversal and the coverage query treat the groups type as $K = 0$.
+
+## 3. The producer
+
+**The ops (`md_exec`).** #795's `build_segmented_pairs`, `empty_segmented_pairs`, and `refresh_segmented_pairs` are made general over $K$:
+- The kinds are variadic operands, the tuple relations of `md.kind_pairs`. Their descriptors are in the result type.
+- `alpha` and `extent` leave the ops for the type's kinds.
+- `exclude`, `anchor`, and `radius` stay, and so do `cutoff`, `skin`, and `prune_skin` (D114).
+- A refresh takes `prune_skin` as `refresh_neighbors` does; its policies come with S2, which lowers it.
+
+```mlir
+%l0 = md_exec.empty_segmented_pairs %universe kinds(%opc : !rel3)
+        exclude(%x : !excl) anchor(%a : !anch) radius(0.10901)
+        cutoff(0.9) skin(0.1) : !univ -> !sp
+%l1 = md_exec.refresh_segmented_pairs %l, %pos, %cell
+        cutoff(0.9) skin(0.1) prune_skin(0.05) : !sp, !vec
+```
+
+The ops' own check is D413's: a result type may state no more than the build guarantees, which is the four words above for every segment. The ops check what the IR holds of the kinds: one kind operand for each kind of the type, each a relation whose arity is its descriptor's number of places. That a relation's copies are those of its descriptor is not in its type: `convert-md-to-md-exec` takes both from one `md.kind_pairs`, its kind operands and its descriptors.
+
+**The traversal in `md_exec`.** #795's `md_exec.template_for` becomes `md_exec.segment_for`. It takes one region for each segment it visits, with the segment's table of site pairs (Section 4). `convert-md-to-md-exec` makes it from `md.sum_segment_window` and `md.gather_segment_window` (D405). The windows' verifier proves that each yielded displacement is $\mathbf d_0 + \mathbf c_p - \mathbf c_q$ for a place $p$ of $f$ and a place $q$ of $g$. The conversion records that pair as the slice's entry in the table. It replaces the displacement by a block argument of the site pair and drops the arithmetic of the placement, which the op now owns through the kinds' weights. The conversion therefore proves nothing new: it reads the proof that D405's verifier already made. `md-exec-fuse-loops` (#795) merges the loops of the energy, the forces, and the virial over one list. It takes the union of their tables, and each site pair's mask becomes the values it contributes to. `convert-md-exec-to-md-alg` makes `md_alg.traverse_pairs` from each `segment_for`, one to one, as D415 makes it from `pair_for`.
+
+**Its lowering, and what is `md_alg` in it.** `convert-md-exec-to-gpu` lowers the build and the refresh of a segmented list, as it lowers those of the groups (D404, D408). The emitter is #795's search, moved out of `MDExecToGPU.cpp` into `lib/Conversion/MDExecKernels/SegmentsBuild.cpp`, unless the first step of S2 finds the groups build over units as fast (Section 8). The table below assumes #795's search. Its stages that are collection algorithms are `md_alg` ops, which survive until `convert-md-alg-to-gpu` (D408):
+
+| Stage of #795 | `md_alg` op |
+|---|---|
+| The column grid of each kind (`emitTemplateColumnGrid`), sized by the one plan of #817 | `md_alg.grid_plan` |
+| The one joint stable counting order of the units of every kind, by column key with fixed ties (`emitTemplateSpatialOrder`) | `md_alg.sort_by_key` (D407) |
+| The wrapping of the reference points into fractions | `md_alg.wrap` |
+| The staging chunks of entries, appended in a pool of blocks with a capacity | `md_alg.append` |
+| The compaction of the rows by segment and the re-chunking of a row's survivors into full records after the pruning (U10) | `md_alg.scan` |
+
+The candidate searches stay kernels of the emitter, as `GroupsBuild::emitLists` does for the groups. They are not collection ops yet. The searches of each class are the direct scans of D1, with the certified f32 decisions of W1.
+
+The search is built on the superset ruling:
+- It accepts a pair whenever the interval $[Q_{32} - E, Q_{32} + E]$ of its counted f32 error $E$ reaches below $R_s^2$.
+- The literal f64 predicate in the shell of uncertainty is dropped, and with it its registers.
+- f64 stays in the reference fractions, the wrap, the cell, the epochs, and the reaches of validity, as in #795's table of precision.
+
+**Coverage (D357).** `verifyNeighborCoverage(op, list, cutoff)` gains a segmented case. It walks the list's provenance to its build or refresh, as it does today. Then, for each segment $s(f, g)$ that the traversal visits, it requires that the consumer's cutoff plus $e_f + e_g$ be at most the reach $R_s$ that the build was made for. $e$ comes from the type's kinds or from the build's $\rho$. The build forms $R_s$ in one order of additions, shared with the pruning and the theorem of validity (#795, U1). The query names the segment that fails.
+
+**Outside `md_alg`, and why.** These stay where #795 put them, each for a reason:
+
+| Part | Why it is not `md_alg` |
+|---|---|
+| The refresh's decision and the flags of the displacement tests: one mobility group of reference points, the least half-margin of the segments | Host state of the list, and reductions fused into the loop that writes the positions (D80, `md-exec-expose-validity`) |
+| The writer, the f32 frames packed by unit (D95), and the members' points | Part of the integration kernels (R1 and R2 of #795's mechanism table) |
+| The check of the extents after each position constraint (R5) | Part of the constraint kernel. The general rule: a site whose weights all lie in $[0, 1]$ lies in the convex hull of the frame, so the frame atoms' extents cover it. Any other site's extent is tested explicitly. This is #795's $\alpha \le 1/2$ shortcut, made general and decided at compile time |
+| The runtime's arena: one allocation with the segments' outer and inner ranges, growth, and the slab of metadata (`mdrt_template_pairs.h`, `TemplatePairsABI.h`) | Allocation and host state |
+| The selection of the route, its preconditions and refusals, and the counts of `mdir check` | The driver (R1 consumer conditions on D403's kinds) |
+| The reciprocal sum, and the placement and spreading of the stored extra point | Other terms. #738 forms the site there |
+
+## 4. The op
+
+### 4.1 The degenerate form: unchanged
+
+The groups form of D415 parses, prints, verifies, and lowers as it does on `main` at 7508da8f. Its region takes `(r2, d, ins at i, ins at j)` and yields one value for each destination and each sum. No `segment` clause exists in it. `test/Dialect/MDAlg/traverse.mlir` and `traverse-invalid.mlir` stay as they are. In the terms of this design, that form is one segment $(0, 0)$ of particles with one site pair $(0, 0)$, whose mask is every value. The segmented form below reduces to it exactly when $K = 0$, but the op does not print it so.
+
+### 4.2 The segmented form
+
+```mlir
+%u, %w = md_alg.traverse_pairs structure %l : !sp inner
+     positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
+     ins(%q, %t : memref<?xf32, 1>, memref<?xi32, 1>)
+     outs(%f : memref<?x3xf32, 1>) reduce(%u0, %w0 : f64, vector<9xf64>)
+     scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
+     unique visit unordered combine atomic
+     algebra ["any_order", "any_order", "any_order"]
+     exchange ["antisymmetric", "symmetric", "symmetric"]
+     cutoff(0.9) weights [0.5, 0.5] overwrite [true]
+     frames prune(4096, 1.0) rotate(16)
+  segment(0, 0) sites [(0, 0) [0, 1, 2], (1, 1) [0, 1, 2], (1, 2) [0, 1, 2], ...] {
+  ^bb0(%r2_0: f32, %d_0: vector<3xf32>, %r2_1: f32, %d_1: vector<3xf32>, ...,
+       %q_i0: f32, %q_i1: f32, %q_i2: f32, %q_j0: f32, %q_j1: f32, %q_j2: f32,
+       %t_i0: i32, ...):
+    ...                                    // slice of site pair 0, then 1, ...
+    md_alg.yield %k00, %e00, %v00, %k10, %e10, %v10, ...
+  }
+  segment(1, 0) sites [...] { ... }
+  segment(1, 1) sites [(0, 0) [0, 1, 2]] { ... }   // the rest with itself
+  -> f64, vector<9xf64>
+```
+
+- **The list.** The list is `structure %l : !mdrt.segmented_pairs<...>`, with `inner` for the inner list of a dual list (D114), as in D415. The buffer form gains two buffers:
+  - `segments`, the $(K+1)(K+2)/2 + 1$ offsets of each segment's rows in `units`;
+  - `members`, for each unit of a taken kind, its $m_f$ particles, by kind.
+
+  That makes 9 buffers, or 14 with `inner`. A group is the row of several segments, so `counts` holds the entries of each unit of work, at most 64, and `units` its group; a place of a taken kind holds the position of its unit's first member in `members`, and the members of a unit are stored whole about its anchor. The buffer form also takes `contract(<type>)` and `reach(R)`, the reach of the sites; a segment's reach over the reference points, $R_s = R + e_f + e_g$, follows. These are preconditions that the writer asserts (D415, ruling 2).
+- **The op-level declarations** are shared by every segment: the multiplicity, `visit`, `combine`, `algebra`, `exchange`, `cutoff`, `weights`, and `overwrite`. The destinations and the sums are the same across segments, so their algebra and exchange are too. The requirement that follows from the declarations is checked against each segment's contract separately (Section 5). D415 wrote "a visit and a requirement each". Here the requirement is per segment and the visit is shared, because no segment can need another visit while they write the same destinations. The maintainer ruled so (Section 9, ruling 3).
+- **`segment(f, g)`** opens a segment's region. A segment that the op does not name is not visited. For example, OPC's Lennard-Jones term alone visits all three segments, but with one site pair in $(0, 0)$. A segment that has no site pair is not written, and it emits no code.
+- **`sites [(p, q) [a, ...], ...]`** is the segment's table of site pairs. For each slice, it gives the place $p$ of kind $f$, the place $q$ of kind $g$, and the values $a$ (destinations, then sums) that the slice yields. That list is the mask of its nonzero terms. Each site pair appears at most once. The constants of a slice (its charge product and its Lennard-Jones coefficients) are in the slice as `arith.constant`s, where D405's generator put them, cloned from the general nonbonded kernel.
+- **The region's arguments** are, for each of the $M$ site pairs, its $r^2$ and its displacement $\mathbf d$ in one float type $T$, the type of the site arithmetic. Then come the values of each field of `ins` at the members: the $m_f$ members of the unit of $f$, then the $m_g$ of the unit of $g$. For a unit of the rest that is one value.
+- **The region's yields** are, for each site pair in the order of the table, the values of its mask in increasing order.
+- **The execution group** (D406, which the result does not depend on) has `scratch`, `frames`, and `prune(G, R)` as in D415, and `rotate(L)`. `rotate(L)` is the width of the half-warp rotation of the SIMT schedule. It is one of the schedule's parameters per device (R4). The convert pass sets it from its options, and it is recorded in the IR, the log, and the manifest (D408). `scatter` (D291) is refused with segments: its table of a block assumes one place for each lane.
+
+### 4.3 Meaning
+
+For each segment $s(f, g)$ that the op names, each entry of its list, each unit $i$ of the entry's group whose bit is set, and the entry's partner $j$:
+
+1. **Positions.** Each member is moved into the frame of its unit's place by the place's shift, in the type it is stored in. The members of a unit are stored whole about its anchor: each member at the image of its bond nearest the anchor. This is a precondition of the list, not a step of the op. The writer of the frames establishes it (S4a, #795's `emitPrepareTemplateFrame`, exact under the route's precondition), the buffer form asserts it, and both lowerings read the members as stored. The anchor's sum is converted to $T$. The offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$ are formed in the stored type and converted to $T$ (#795, `emitPrepareTemplateFrame` and `emitTemplateLocalGeometry`: the shift before the narrowing, D95).
+2. **The anchor displacement.** $\mathbf d_0 = \mathbf a_i - \mathbf a_j$ in $T$, with the entry's shift added in $T$, as in D415.
+3. **The sites.** For each place, the op forms $\mathbf c_p = \sum_k (\mathsf W)_{pk}\mathbf h_k$ in $T$:
+   - It sums the offsets of equal weight before it scales them, as D405 writes $w(\mathbf h_1 + \mathbf h_2)$.
+   - The other offsets follow in increasing $k$.
+   - $\mathbf c$ of the anchor is no value, and $\mathbf c$ of a frame atom is $\mathbf h_k$ itself.
+4. **For each site pair** $m = (p, q)$ of the table:
+   - $\mathbf d_m = (\mathbf d_0 + \mathbf c_p) - \mathbf c_q$, with a missing $\mathbf c$ omitted, so that the groups have $\mathbf d = \mathbf d_0$ exactly;
+   - $r_m^2 = \mathbf d_m \cdot \mathbf d_m$, as D415 computes it;
+   - if $r_m^2 < r_c^2$, slice $m$ of the region runs and yields $k_{m,a}$ for each value $a$ of its mask.
+5. **The combination.** A destination $a$ of place $p$ adds $k_{m,a}$ to a site accumulator of $p$ in unit $i$, and $\sigma_a k_{m,a}$ to one of $q$ in unit $j$ (D415's signs). Member $k$ receives $\sum_p (\mathsf W)_{pk}$ times those accumulators, over a partition of the sum that the meaning leaves free. A sum adds $2 w_S k_{m,S}$ per site pair, as in D415.
+
+When $K = 0$ this is D415's meaning, word for word. The two lowerings differ only in the order of the sums and in the partition of the sums to which $\mathsf W^{\mathsf T}$ is applied. Both are inside the error model of Section 6. The cutoff stays a cutoff of site pairs: a list's extra entries contribute exact zeros. This is why the superset of entries needs nothing new: the op already owns the cutoff test, and it moves from the entry to each site pair (D415, Section 8, item 1).
+
+**Why the region holds the whole molecule pair and not one site pair.** D415's Section 8 could be read in two ways:
+- (a) Each segment's region is the pair of molecules as D405's generator writes it, a slice for each site pair, with the table naming the slices.
+- (b) A region of one site pair, cloned for each pair of the table with the table's constants bound to its arguments.
+
+This design takes (a), for four reasons:
+- D405's generator already writes only the taken site pairs, and for each pair only its parts. For OPC that is 10 of 16 pairs: Lennard-Jones on the oxygens, Coulomb on the 9 charged pairs. So "zero terms not emitted" already holds of the body.
+- D405's identity references (`compare_segment_windows.py`, `kind-pairs-identity.test`) compare exactly such bodies.
+- D415 says "`md_exec.template_for` converts one body to one region".
+- Form (b) would need a pass that factors $M$ slices into one region with constant arguments, and nobody has written it.
+
+What (a) keeps of (b) is that the lowering clones, for each site pair, only the slice of its mask. "Clone only the masked slices" is then exact, and no folding of $x \cdot 0$ is relied on. The Lennard-Jones coefficients of a taken kind are `md.lookup`s at constant indices in D405's bodies. Folding them to constants is item E3 of #795's mechanism table. It needs the table to be fixed for the run, which ruling 6 of #795 makes true on this route. E3 is done in S3 (Section 9, ruling 4).
+
+## 5. The verifier
+
+D415's 33 cases stay. The new rules, each with a negative case that is a valid op with one change, in `test/Dialect/MDAlg/traverse-segments-invalid.mlir`:
+
+| # | Rule | Negative case |
+|---|---|---|
+| V1 | `segment(f, g)` regions only over a segmented list (structure or buffer form); a segmented list only with segment regions | `segment(0, 0)` over `!mdrt.neighbors`; a plain region over `!sp` |
+| V2 | $g \le f \le K$; each segment at most once; in increasing $s(f, g)$ | `segment(0, 1)`; `(1, 0)` twice; `(1, 1)` before `(1, 0)`; `segment(2, 0)` at $K = 1$ |
+| V3 | Each table entry has $p < n_f$ and $q < n_g$; no pair twice; at least one pair | $p = n_f$ (the place after the extra point); `(1, 2)` twice |
+| V4 | Each mask is increasing, within the values, and not empty | the index $N$; an empty mask |
+| V5 | The arguments are $2M$ site-pair arguments of one float type $T$ ($T$ and `vector<3xT>`), then for each field $m_f + m_g$ values of its element type | one site pair in f64 among f32; a field with $n_f$ values (counting the formed site) |
+| V6 | The yields are the masks' values in order, each of its value's type | one value fewer; a force yielded as f64 |
+| V7 | **Separability**: the slice of site pair $m$ uses no $r^2$ or $\mathbf d$ of another site pair | the slice of pair 1 reading `%d_0` |
+| V8 | D415's rules 1–3 (no write, no use of a destination, no destination that the op reads), over every region | a store in the region of `(1, 0)` |
+| V9 | The requirement is met by **each** segment's contract, and the message names the segment | a type whose `(1, 0)` is `directed`; a `(1, 1)` that is `masked` |
+| V10 | D415's rules 5–6 (the visit and the algebra, the exchange), once for the op | `fixed_order` with segments (the deterministic mode stops here, as for the groups) |
+| V11 | The type has $(K+1)(K+2)/2$ segments, each once, in order of $s$; each kind is a valid `#md.rigid_kind` | a type that lacks `(1, 1)`; a kind whose site row sums to 0.99 (D405's own verifier, reached through the type) |
+| V12 | The buffer form: 9 or 14 buffers; the cutoff within the reach of the sites, $r_c \le R$, so that $R_s \ge r_c + e_f + e_g$ in every segment | the buffers of the groups alone (7); a cutoff beyond the reach |
+| V13 | The execution group: `scatter` is refused with segments; `rotate(L)` with $L$ a power of 2 up to 16 | `scatter(...)` with segments; `rotate(12)` |
+
+**The refusals of the lowerings.** Until S2 and S3 land, `convert-md-exec-to-gpu` refuses every op of a list of units and every traversal over its segments, by name (`test/Conversion/MDExecToGPU/traverse-segments-invalid.mlir`). With S3 it refuses, each a case of that test:
+- the segmented buffer form;
+- a segment whose cutoff is beyond the reach that its build was made for (the coverage query of Section 3);
+- the outer list of a dual list;
+- $K > 2$, with D405's message, since the schedule is measured only with six bodies;
+- a site type $T$ other than f32, since the segmented schedule is lowered for the route's mixed precision and the serial definition takes any $T$;
+- a stable visit.
+
+`convert-md-alg-to-scf` refuses the structure form, as in D415, and the pruning in the loop over segments (`prune(G, R)`), which is the SIMT schedule's.
+
+**The generator's condition.** $K \le 2$ stays where D405 put it, in the driver's generator, which refuses $K = 3$ with its reason. The type and the op take any $K$. The mechanism is general and the enabling condition narrow (the maintainer, 2026-11-12).
+
+## 6. The lowerings
+
+**The serial definition** (`emitTraverseSegmentsSerial`, in `lib/Conversion/MDExecKernels/TraverseSegments.cpp`, which `emitTraversePairsSerial` calls for an op over segments) is written apart from the schedule, in the order of the meaning:
+- for each segment;
+- for each unit of its rows, or each active unit of an inner list;
+- for each entry of its block, and each of the 16 places of its group whose bit is set:
+  - the positions and offsets of steps 1 to 3;
+  - each site pair of the table, with its cutoff and its slice;
+  - the accumulators of the places;
+  - at the end of each pair of units, $\mathsf W^{\mathsf T}$ of the pair's accumulators added to the members.
+
+The modes of D415 stay: `serial`, `serial-reversed`, `serial-magnitudes`, and `omitted`. In `serial-magnitudes` a member's term is $\lvert(\mathsf W)_{pk}\rvert\,\lvert k_{m,a}\rvert$, so that the magnitudes bound the products of the transpose too.
+
+**The error model of the contract test.** A member's force is a sum of products $(\mathsf W)_{pk}k_{m,a}$, rounded once each, then summed in an order and under a partition that the two lowerings choose differently. Two such evaluations of $n$ terms differ by at most $2\gamma_{n}M$, where $M$ is the sum of the magnitudes above. This is D415's $2\gamma_{n-1}M$, with one more rounding for the product. The test keeps D415's $+\,4u\max M$. The terms of a frame place have weight 1 and no product. $n$ is bounded as in D415, by the places within the largest reach $R_s$, times $n_f$.
+
+**The SIMT lowering** (`lowerTraversePairsSegmentsSIMT`) is #795's schedule, moved. It comes from `emitTemplateClassUnit`, `emitTemplateWindowContributions`, `emitTemplateWorkUnit`, and `mapTemplateSiteOffsets` (`TemplateWindowKernels.cpp`, `TemplateWorkKernels.cpp`), and from `Lowering::lowerTemplateFor`.
+- **Work.** One launch for all segments. A warp takes one record of 64 entries of one segment, so its segment tag is uniform. Lanes $u$ and $u + 16$ hold unit $16g + u$ of the group of kind $f$.
+- **The rotation.** The partner units' frames, parameters, masks, and force accumulators rotate through the half-warp in $L = 16$ shuffle steps (`rotate(L)`). The offsets $\mathbf c$ of a unit's sites are formed once for the unit of the lane, and once for each partner when it is loaded, before its rotation. They rotate with it: the extra point is formed in the kernel, and the stored site is never loaded.
+- **Constants and zero terms.** For each site pair of the table the schedule clones only its slice, behind its own guard $r_m^2 < r_c^2$. The constants are those of the slice. A site pair that the table does not hold has no instruction.
+- **Writes.** A partner's forces are written once per entry, after its rotation: one atomic addition per member, after $\mathsf W^{\mathsf T}$. The lane's unit is written once per block, its two half-warp copies combined first.
+- **Sums.** The sums take the warp and block reduction of D415, and then `finishSums`.
+- **Pruning.** The pruning in the loop (D284) is `prune(G, R)` of the op, with the records of a row re-chunked into full records after it (U10). Its kernels come from `TemplatePruneKernels.cpp`.
+- **The rest with itself.** A segment of two shapes $m = n = 1$, which is SS for $K = 1$, runs the groups schedule's per-warp body inside the same launch, as #795's SS lanes do. Slice S3 states whether this is the same code as D415's.
+
+The lowering is chosen at compile time by the type of the list:
+- A `!mdrt.neighbors` list takes `lowerTraversePairsSIMT` of D415, unchanged.
+- A `!mdrt.segmented_pairs` list takes the segmented schedule.
+
+No runtime flag selects either. Every groups program therefore keeps its bytes by construction, and the gate checks it. Slice S5 makes them one emitter with parameters, whose $K = 0$ instance gives D415's bytes (Section 8). Until then the two schedules stand.
+
+**Where it runs.** As for D415, `convert-md-exec-to-gpu` calls it in place, through `TraverseHost` (D415's ruling 1). The interface gains:
+- the list's segment ranges and table of members;
+- the packed frames of the units, in f32 (#795's activation-owned views, which survive the growth of the arena);
+- the count of work records on the device, over which the launch strides, so that no readback is needed.
+
+Fusing the pruning into the evaluation is D284's existing mechanism, which D415 already calls in place. It is not the fusion of a build into its consumer that #888 must precede. The maintainer ruled so (Section 9, ruling 6).
+
+## 7. From #795's branch to the new homes
+
+The branch at 004a0735, against `main` at 7508da8f. A slice is named where the code lands. "D403", "D405", and "D404" are homes already merged.
+
+| On the branch | New home | Slice |
+|---|---|---|
+| `lib/Driver/WaterTemplate.cpp`, `include/mdir/Driver/WaterTemplate.h`: the match by chemistry (O, H, H, one form of extra point) | **Dropped**: D403's recognition of rigid kinds (`RigidGroups.cpp`) replaces it | merged |
+| The same file: the route's preconditions, reasons, counts, and `AUTO`/`ON`/`OFF` | `lib/Driver/`, as conditions of the consumer on D403's kinds | S4b |
+| `lib/Driver/WaterTemplateIR.{h,cpp}`: three hand-written window builders | **Dropped**: D405's `KindPairsIR.cpp` (`buildSegment`) | merged |
+| `md.template_pairs`, `md.sum_template_window`, `md.gather_template_window`, `MDTemplatePairs.cpp`, `MDTemplateWindow.cpp`, `Transforms/TemplateWindows.cpp`, the derivative in `Differentiate.cpp` | **Dropped**: D405's `md.kind_pairs`, `md.sum_segment_window`, `md.gather_segment_window`, `SegmentWindows.cpp` | merged |
+| `alpha` on every op | **Dropped**: the weights of `#md.rigid_kind`. D405's weight is one unit in the last place from #795's $\alpha$ | merged |
+| `lib/Driver/TermNonbonded.cpp` (+108): the route in the nonbonded term | `TermNonbonded.cpp`, calling `buildKindPairsTerm` | S4b |
+| `Control.{h,cpp}`: the key `water.template` | `Control.cpp`: the key `[performance] rigid_units` (Section 9, ruling 7), with no alias | S4b |
+| `ConstraintIR.{h,cpp}`, `BuilderDynamics.cpp`, `BuilderSchedule.cpp`, `Fingerprint.cpp`, `Compiler/Simulation.{h,cpp}`, `Compile.cpp`, `Skins.cpp`, `tools/mdir/Run.cpp` (the route's records, skins, and diagnostics) | The same files | S4a (`ConstraintIR`), S4b (the rest) |
+| `MDRTTypes.td`: `!mdrt.segmented_pairs` without parameters | The type of Section 2, with its kinds and contracts | S1 |
+| `MDExecOps.td`: `build_`, `empty_`, `refresh_segmented_pairs` | The same ops, general over $K$, without `alpha` and `extent` | S1 |
+| `MDExecOps.td`: `md_exec.template_for` (three tagged bodies, `pairs` counts, `md.template_site_forces`) | `md_exec.segment_for`: a region for each segment visited, with its table of site pairs | S1 |
+| `lib/Dialect/MDExec/TemplateWindows.cpp` (the verifier of the bodies) | `segment_for`'s verifier, which reads D405's proof | S1 |
+| `PairKernelBody.{td,h,cpp}` and its users in `ExpandRadial.cpp` and `SimplifyDistance.cpp` | Kept: radial tables (D94) on the slices of segments need it. `traverse_pairs` implements it too | S3 |
+| `MDToMDExec.cpp` (+88) | `convert-md-to-md-exec`: segment windows to `segment_for` | S1 |
+| `AccumulateDestinations.cpp`, `AssignPrecision.cpp`, `AssignStorage.cpp`, `FuseLoops.cpp` (md_exec passes) | The same passes, over `segment_for` and the segmented type | S1 |
+| `ReuseTemplatePairs.cpp`, `ReuseNeighbors.cpp` (the build out of the loop over steps) | `md-exec-reuse-neighbors`, over the lists of units | S2 |
+| `Approximate.cpp` | `md-exec-approximate`, over the slices | S3 |
+| — | `convert-md-exec-to-md-alg`: `segment_for` to segmented `traverse_pairs` | S1 |
+| — | The op's segmented form, its verifier, and the serial definition (`TraversePairs.cpp`) | S1 |
+| `Lowering::lowerEmptyTemplatePairs`, `lowerRefreshTemplatePairs`, `getTemplateState`, `templateRuntimeView`, `templatePhysicalReaches` (`MDExecToGPU.cpp`) | The build's host part, kept in `convert-md-exec-to-gpu` as for the groups. The reaches go into the coverage query | S2 |
+| `TemplateSearchKernels.cpp`, `TemplateSearchGeometry.cpp`, `TemplateSearchPreparation.cpp`, `TemplateSpatialKernels.cpp`, `TemplateStageKernels.cpp`, `TemplateBuildKernels.cpp`, `TemplateGroupKernels.cpp`, `TemplateRefreshKernels.cpp`, `SpatialFrameEmitter.cpp`, `SpatialGroupEmitter.cpp` | `SegmentsBuild.cpp`, with its collection stages as `md_alg` ops (Section 3) | S2 |
+| The literal f64 predicate in the search's shell of uncertainty | **Dropped** by the superset ruling. The extra fraction of entries is reported | S2 |
+| `runtime/mdrt_template_pairs.h`, `Runtime/TemplatePairsABI.h`, `TemplateExclusions.h`, `TemplateMembership.h`, `mdrt_cuda.c` | The runtime, unchanged in kind (outside `md_alg`) | S2 |
+| `NeighborCoverage.cpp` | Its segmented case | S2 |
+| `TemplatePruneKernels.cpp` | The pruning of a refresh, in S2. The pruning in the loop, as `prune(G, R)`, in S3 | S2, S3 |
+| `TemplateWindowKernels.cpp` (`emitTemplateClassUnit`, `emitTemplateWindowContributions`, `mapTemplateSiteOffsets`), `TemplateWorkKernels.cpp`, `Lowering::lowerTemplateFor` | `lowerTraversePairsSegmentsSIMT` in `TraversePairs.cpp`. `mapTemplateSiteOffsets` becomes the op's own formation of $\mathbf c_p$ from $\mathsf W$ | S3 |
+| `emitPackTemplateFrame`, `emitPrepareTemplateFrame`, `emitTemplateLocalGeometry`, `emitRetainedTemplateFrame` | Their formation of positions is the precision points of Section 4.3, written once for both lowerings. Their packing goes with the writer | S1, S4a |
+| `MDExecKernels.cpp` (+79), `MDExecKernels.h` | Whatever the schedule shares, with D415's bytes kept for the groups | S3 |
+| `Lowering::planTemplateWriters`, `templateFlagStores`, `deferTemplateFlag`, `recordTemplateConstraintEpoch`, `prepareTemplateWriter`, `launchTemplatePublication`, `emitSetTemplateValidity`, `appendTemplateValidity`, `lowerTemplateParticleFor`; `TemplateValidityKernels.cpp`, `TemplateWriterKernels.cpp`, `TemplateFrameKernels.cpp`, `TemplateParticleKernels.cpp` | Outside `md_alg` (Section 3): the validity in the integrator, the writer, U3's late flags, and rule B for written forces | S4a |
+| `emitTemplateExtentSquared` | The check of the extents, with the convex rule of Section 3 | S4a |
+| The experiments measured and discarded (cooperative SW rows, image-specialized paths, R2, the S0 guard) | Not on the head; not ported | — |
+| The tests of the branch (`test/Driver/water-template-*`, `test/Integration/water-template-*` and their Python oracles, `test/Sanitizer/water-template-*`, `test/lib/Dialect/MD/TestTemplate*.cpp`) | With the code they test, in its slice, renamed to the general terms | S1–S5 |
+| The paper's Section 4.7 and the extra point in Section 6.1; `docs/neighbor-groups.md`, `docs/device-primitives.md`, `docs/primitives-map.md`, `docs/dialects/*.md` | With each slice. The derivation is kept, and the words follow R1–R5 | S1–S5 |
+
+## 8. The slices and their gates
+
+Each slice is a PR of its own, in this order, and each starts only after the one before it has merged.
+
+**S1. The type, the op, and the serial definition.** This slice adds:
+- `!mdrt.segmented_pairs`;
+- the `md_exec` ops of the list, without lowering;
+- `md_exec.segment_for` and its conversion from D405's windows;
+- the md_exec passes;
+- the segmented form of `md_alg.traverse_pairs`, its verifier, its converter, and the serial definition.
+
+No run reads any of it. Gates:
+- one negative case for each rule V1–V13;
+- the converted regions equal to #795's `template_for` bodies at 004a0735 by D405's structural comparison, for OPC and TIP3P, apart from the weight;
+- the serial definition on lists written by hand, at $K = 1$ and $K = 2$, against D405's f64 oracle (`kind-pairs-oracle.test`), with the bound derived from the rounding;
+- a mutation that must fail: the transpose with its weights exchanged;
+- the corpus identical to `main`'s by D406's method, with the groups variants included.
+
+**S2. The producer and its coverage.** This slice adds the build and the refresh, lowered on the device, the runtime's arena, and the segmented coverage query. It is the first integration on the device. #795's search, measured again on the RTX 5090, was 20 to 25 times slower than the prototype's. So the gate of performance per kernel starts here, not in S3.
+
+*Its first step, before the search is ported, is the measurement ruled on 2026-11-13.* It runs on #795's fixtures and six systems:
+- the groups build's grid and queue (D404's emitter over units);
+- against #795's column spans (D1, W1).
+
+For each, it gives the registers, the instructions, and the time per call of every kernel, the entries, and the extra fraction. The result decides the alternative of Section 10, "the segmented build as the groups build of D404 over units":
+- If the groups build over units is within the spread of #795's search, the producer takes the groups build, with its stages generalized over units. The emitter is then one, and its $K = 0$ instance keeps D404's bytes.
+- Otherwise the producer takes #795's search, moved, as Section 3 states, and the numbers are recorded as the reason.
+
+Either way, the result is reported on the PR before the port, as a `needs-decision` if the maintainer must choose.
+
+Gates:
+- #795's exact integer oracles of the search, the compaction, and the pruning, moved;
+- an independent f64 all-pairs check of coverage over all near images, on the dodecahedron in TIP3P under NPT and on alanine dipeptide in OPC and in TIP3P. It runs just before a pruning, just before a build, and just after one. At 1.5 cutoffs it must report pairs without an entry;
+- the superset check against the general builder;
+- **the entries, on #795's six systems** (ruled on #795, 2026-11-12): the fraction of extra entries, and the growth of the list against #795's at 745c9f12;
+- **the performance of each kernel** of the build, of the refresh, and of the pruning of a refresh: its registers, its instructions, and its time per call. These sit next to #795's at 745c9f12 and next to `main`'s groups build on the same systems. The timing protocol applies as in S3, on one kind of device;
+- **the stop rule of S3** (below), applied to these kernels. A preliminary timing far from #795's stops the work and is a `needs-decision`, not information;
+- the stop of the reach against the cell;
+- a negative case of the coverage query;
+- the sanitizer tier on the new kernels, with the time it held the device;
+- the corpus identical.
+
+**S3. The SIMT schedule.** This slice adds the segmented SIMT lowering, called in place, as a second schedule chosen by the list's type. The gate of performance needs #795's schedule as it was, so it is not yet merged with D415's. Gates:
+- **The contract** of Section 6 in D415's five modes, on ubiquitin and on the dodecahedron, with OPC and with TIP3P, in mixed precision, with the largest difference as a fraction of its bound. The mutation of D415 (the sign of an antisymmetric destination ignored) must fail.
+- **The mechanism table, row by row**, each a structural check of the PTX:
+  - the shuffles of the rotation;
+  - no load of a stored extra point;
+  - the constants of a slice inline;
+  - no instruction for a site pair outside the table;
+  - for every kernel, its registers, its instructions, and its time per call, next to #795's at 745c9f12 and the prototype's.
+- **Timing, by the timing protocol, on one kind of device:**
+  - #795's six systems, the evaluation per call and the wall per step;
+  - against #795 at 745c9f12 and against `main`, in at least two jobs;
+  - `main` and the change interleaved;
+  - the trimmed mean of the stationary rate;
+  - the clocks checked.
+
+  On the RTX 4090, #795's evaluation fell in every window over 50,000 steps, so its rate there was not stationary. Jobs on that device are long enough that the rate of the trimmed windows is stationary by the protocol's test. A run that does not become stationary is reported as such, and is not cut short.
+- **The stop rule.** The work stops if, on any system, either of these holds on the same kind of device:
+  - the evaluation per call is slower than #795's at 745c9f12 by more than the spread of the protocol's rounds;
+  - a kernel takes more registers than #795's at 745c9f12.
+
+  The registers are compared per device: on the RTX 4090, #795's OPC evaluation takes 128 against the rule of at most 96 of U9 and U10. Both counts are reported. When the rule stops the work, the PR takes `needs-decision` with the numbers, and this is not an FYI. The prototype's times are compared only under the same geometry and conditions.
+- **The sanitizer tier.**
+- **The bytes of every groups program**, by D406's method.
+
+**S4a. Validity, the writer, and the extents.** This slice adds:
+- the validity in the integrator: one mobility group of reference points, with the least half-margin of the segments;
+- the writer of the packed f32 frames (D95), with U3's late flags;
+- the check of the extents after each position constraint, by the convex rule of Section 3.
+
+Before it, the route can be reached only by `mdir-opt` programs and the tests. Gates:
+- the short trajectories of #795, template against general, for both integrators, NVE and NPT, under their declared bounds;
+- the check of the extents, with its probes (the convex case and a site outside the hull);
+- the coverage check of S2 along those trajectories;
+- the bytes of every program without a taken kind;
+- the sanitizer tier on the new kernels.
+
+**S4b. The route, the key, and `mdir check`.** This slice adds the driver's selection on D403's kinds, the key, the refusals, the records of the route, and `mdir check`'s report. Gates:
+- #795's validation table, moved: the physical fixtures against the CPU f64 oracle and general double, the anchors and the triclinic cell, the reach's stop, and the control's refusals;
+- `OFF`, and every program without a taken kind, identical to `main`, with the corpus and the checkpoints;
+- end-to-end timings on #795's six systems and the Amber suite against `main`, with `AUTO` general until its rule is measured;
+- the full suite at the final head.
+
+**S5. One schedule.** The rule for shared emitters (the maintainer, 2026-11-12) is that the shared mechanism is general, and that the groups are its instance of one segment, proved by identical PTX. Without this slice the end state would have two hand-written schedules. So S5 makes D415's groups schedule the instance $K = 0$ of the segmented schedule, with one segment of particles and one site pair:
+- `lowerTraversePairsSIMT` and `lowerTraversePairsSegmentsSIMT` become one emitter, with the shape, the table, and the rotation as its parameters;
+- the dispatch by type is removed.
+
+If the first step of S2 has not already made the build one emitter, S5 does the same for the build. Its $K = 0$ instance must give D404's bytes. Gates:
+- **the bytes of every groups program**, by D406's method, as in D415's Section 9: the examples, the tests, the Amber suite, and the cases of the corpus, in both precisions, with and without the dual list and the pruning in the loop. A difference is reported with its reason and timed by the protocol, never accepted silently;
+- the segmented programs equal to S3's in their PTX, or, where they differ, S3's stop rule against S3's head;
+- the contract of S3, again;
+- the sanitizer tier.
+
+Whether S5 comes right after S3 or after S4b is question 5.
+
+## 9. The maintainer's ruling (2026-11-15, on #893)
+
+The reviewer's recommendations on the questions of this section were accepted:
+
+1. **The region form is (a)**: the molecule pair, with a table naming its slices (Section 4.3).
+2. **The kinds are in the type** (Section 2).
+3. **One visit for the op**, with the requirement checked per segment.
+4. **E3 is done in S3**, as a row of the mechanism table with its PTX check. The coefficients are fixed only on the route.
+5. **Two schedules through S3.** S5 makes the groups schedule the instance $K = 0$, with D415's bytes as its gate. S5 comes after S3. Whether it comes before or after S4 is decided at S3.
+6. **#888 is not needed before S3.** The pruning in the loop is D284's mechanism, which D415 already calls in place.
+7. **The key is `[performance] rigid_units = "AUTO" | "ON" | "OFF"`**, in place of `water.template`, with no alias (the maintainer confirmed it on #893):
+   - it names the mechanism and no molecule, so a second rigid kind needs no new key;
+   - its values and meaning are those ruled on #795, an execution choice of the "same accuracy" class (#790).
+
+   It comes with S4b.
+8. **The organization is `grouped_by(group)`** unless S2 proves the order fixed.
+9. **The stop rule of S2 and S3 is as written**: slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers, on the same kind of device. The prototype is compared only under the same geometry and conditions.
+10. **The transpose is compared with #795 by numbers**, within the error model, with D405's weights.
+
+## 11. Slice S1, as it landed
+
+S1 is implemented on this branch. No run reads it: the driver does not
+select the route before S4b, and `convert-md-exec-to-gpu` refuses its ops.
+
+**What it adds:**
+- `!mdrt.segmented_pairs` (`MDRTTypes.td`), with its parser, printer, and
+  verifier (the count of segments, normalized contracts, the kinds as
+  `#md.rigid_kind`), and the regions of the segments, their syntax and
+  checks V2 to V7, shared by md_exec and md_alg
+  (`include/mdir/Dialect/MDRT/SegmentRegions.h`);
+- `md_exec.build_segmented_pairs`, `empty_segmented_pairs`,
+  `refresh_segmented_pairs`, and `segment_for`
+  (`lib/Dialect/MDExec/SegmentedPairs.cpp`), each build checking that its
+  type states no more than `unique, minimum, removed, grouped_by(group)`;
+- in `convert-md-to-md-exec`, the windows of the segments of D405 to
+  `segment_for`: the table from the windows' proof, the displacement an
+  argument of the region, the placement left behind; a contribution that
+  reads the window's geometry otherwise, or a force that is not +F and -F
+  at the two places, is refused;
+- the passes of md_exec over `segment_for`: `md-exec-fuse-loops` (one loop
+  for the segments and values of a list, a site pair in two loops one
+  slice of both masks), `md-exec-accumulate-destinations` (two
+  destinations into one), `md-exec-assign-precision` (the regions in the
+  type of the kernels, the fields as they are stored),
+  `md-exec-assign-algebra`, and `md-exec-assign-storage`;
+- the segmented form of `md_alg.traverse_pairs`, its verifier (V1 to V13),
+  `convert-md-exec-to-md-alg` for `segment_for`, and the serial
+  definition (`lib/Conversion/MDExecKernels/TraverseSegments.cpp`), which
+  `convert-md-alg-to-scf` runs on the buffer form;
+- `mdir-kind-pairs-test generate ... --func-entry`, the generator's entry
+  as a `func.func`, which the passes of md_exec take.
+
+**Its gates:**
+
+| Gate | Result |
+|---|---|
+| A negative case for each of V1 to V13 | `test/Dialect/MDAlg/traverse-segments-invalid.mlir`, 35 cases, each hitting its own message: among them $p = n_f$ and an empty table (V3), two segments in two types (V5), the buffer form of groups with regions of segments (V1), 9 buffers with `inner` (V12), a kind that is not a `#md.rigid_kind` (V11), and a rotation on an op over groups (V13); `test/Dialect/MDExec/segments-invalid.mlir`, 8 cases of the ops of md_exec; `test/Conversion/MDToMDExec/segment-windows.mlir`, the 3 refusals of the conversion, one of them a site pair of a site in the frame layout of forces |
+| The converted regions against #795's `template_for` bodies at 004a0735 | `test/Driver/segment-loops-795.test`: for OPC and TIP3P, every loop of `@energy`, `@term_lj`, `@term_coulomb`, and `@energy.energy_forces_virial` (6 and 12 loops), site pair by site pair, the same expressions, and the places $(p, q)$ of each entry of the table those that #795's placement of the displacement names, evaluated from its body. A table that names another second place of an energy, another first place of a force, or another second place of a force fails, each with its message. No constant is replaced: the weight is in the placement, which the region no longer holds |
+| The serial definition against D405's f64 oracle | `test/Integration/md-alg-segments-serial.test`, the system of four kinds of D405 through the whole pipeline to the op, in double precision, every component (energy, 72 forces, 9 virial) within the bound of the oracle plus $2\gamma_T$ times the magnitudes for the order of the sum over the $T$ tuples; also with the units straddling the faces of the cell and the places and entries shifted (`--periodic`, below) |
+| Mutations that must fail | Each tried once and reverted, by editing the line, rebuilding `mdir-opt`, and running the test: the transpose's row of weights read in reverse (`type.getPlaceWeights(unit.kind, p)[k]` read at `row.size() - 1 - k` in `TraverseSegments.cpp`), 30 of the 82 components outside the bound at $K = 2$ for both systems, the largest a force of 42.64 read as -2.38 against a bound of $9\times10^{-12}$; the entry's shift read from bit 17 instead of 16, 76 of 82 outside in the periodic system; the place's shift read in fields of 11 bits instead of 10, 27 of 82 outside; V3 without its $p \ge n_f$ test, and without its empty table, each fails its case in `traverse-segments-invalid.mlir` |
+| The corpus identical to `main`'s (D406's method) | `mdir emit --stage=lowered` with `MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, through `scripts/builder-equivalence/check.py compare --stages lowered`, base 7508da8f: the examples, the tests, the Amber suite, and the cases, on the GPU target, the run and the segments, mixed and double, as written and with `neighbor_structure = "GROUPS"`: 2,170 cases, 2,170 identical, 892 of them the same error in both builds (D415's counts) |
+
+The largest error of the serial definition, as a fraction of its bound:
+
+| Taken kinds | Segments | Tuples | Largest error / bound |
+|---|---|---|---|
+| TIP3P and the four-site water ($K = 2$) | 6 | 60 | 0.02 |
+| TIP3P and the rigid molecule of three Lennard-Jones atoms ($K = 2$) | 6 | 79 | 0.016 |
+| the four-site water ($K = 1$) | 3 | 138 | 0.017 |
+| TIP3P ($K = 1$) | 3 | 135 | 0.011 |
+| TIP3P and the four-site water ($K = 2$), periodic | 6 | 60 | 0.012 |
+| the four-site water ($K = 1$), periodic | 3 | 138 | 0.010 |
+
+In the periodic systems the middle of the system is at a corner of the
+cell, each unit is stored whole with its anchor wrapped into the cell, and
+the places take the shifts of their groups' frames: at $K = 2$, 3 units of
+the taken kinds straddle a face, all 24 particles are moved, and 8 of the 15
+entries carry a nonzero shift; at $K = 1$, 1 unit straddles and 2 of the 16
+entries are shifted. Since the definition forms displacements from
+coordinates up to four cell edges from the origin, the bound of the
+rounding of the displacements takes that scale instead of the largest
+coordinate of the file.
+
+**Left to the later slices.** The passes of md_exec that S1 does not
+extend to the lists of units take effect only on a program that runs: the
+build moved out of the loop over steps into an empty list and its
+refreshes (#795's `ReuseTemplatePairs`, with `md-exec-reuse-neighbors`) and
+the pruning in the loop come with S2, the tests of validity
+(`md-exec-expose-validity`) with S4a, and the radial tables and E3 of the
+slices (`md-exec-simplify-distance`, `md-exec-expand-radial`, through
+#795's `PairKernelBody` interface) with S3, where the mechanism table
+measures them.
+
+The serial test runs in double precision only. In mixed precision the
+pipeline needs the fields that a real program takes from buffers (the
+charges and types), which the generator's entry does not have; the
+contract of S3 runs the serial definition in mixed precision on device
+programs.
+
+## 10. Alternatives not taken
+
+- **A region of one site pair, form (b)** (Section 4.3).
+- **Extending `!mdrt.neighbors` with kinds and segments.** It would make the groups the $K = 0$ value of one type. But every consumer of a matrix would then have to refuse segments one by one.
+- **A new organization key `segment` in D409's lattice.** The list of contracts by segment says the same in the type, without changing the lattice.
+- **The segmented build as the groups build of D404 over units.** This alternative is not decided here. The first step of S2 decides it, by the measurement ruled on 2026-11-13: the groups build's grid and queue against #795's column spans, on #795's fixtures. Until then, Section 3 assumes #795's search, because its searches (D1, W1) are among the mechanisms that are requirements. If the measurement favors the groups build, the producer takes it, as one emitter whose $K = 0$ instance keeps D404's bytes.

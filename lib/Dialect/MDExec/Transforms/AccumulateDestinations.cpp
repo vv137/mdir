@@ -4,7 +4,10 @@
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
+#include "llvm/ADT/DenseMap.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -38,6 +41,10 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
     if (tuple.isStorageForm())
       return std::nullopt;
     outs = tuple.getOuts();
+  } else if (auto segments = dyn_cast<SegmentForOp>(loop)) {
+    if (segments.isStorageForm())
+      return std::nullopt;
+    outs = segments.getOuts();
   } else {
     return std::nullopt;
   }
@@ -52,6 +59,8 @@ static std::optional<Term> getTerm(Value field, Operation *user) {
 static MutableOperandRange getOutsMutable(Operation *loop) {
   if (auto pair = dyn_cast<PairForOp>(loop))
     return pair.getOutsMutable();
+  if (auto segments = dyn_cast<SegmentForOp>(loop))
+    return segments.getOutsMutable();
   return cast<TupleForOp>(loop).getOutsMutable();
 }
 
@@ -217,6 +226,98 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
     zeros->erase();
 }
 
+/// The same for a loop over a list of units (D[md-alg-segments]): each site
+/// pair that yields to `from` yields to `into` instead, and one that yields
+/// to both yields their sum.
+static void mergeOuts(SegmentForOp loop, unsigned into, unsigned from) {
+  OpBuilder builder(loop);
+  Location loc = loop.getLoc();
+  MLIRContext *context = loop.getContext();
+  SmallVector<Value> outs(loop.getOuts().begin(), loop.getOuts().end());
+  Value dropped = outs[from];
+  outs.erase(outs.begin() + from);
+  SmallVector<Type> resultTypes;
+  for (Value value : llvm::concat<Value>(outs, loop.getReduce()))
+    resultTypes.push_back(value.getType());
+  SmallVector<Attribute> exchange(loop.getExchange()->begin(),
+                                  loop.getExchange()->end());
+  exchange.erase(exchange.begin() + from);
+  auto renumber = [&](unsigned value) {
+    if (value == from)
+      return into < from ? into : into - 1;
+    return value > from ? value - 1 : value;
+  };
+  SmallVector<Attribute> tables;
+  for (unsigned index = 0, e = loop.getKernels().size(); index != e; ++index) {
+    SmallVector<mdrt::SitePair> pairs =
+        mdrt::getSitePairs(loop.getSites(), index);
+    for (mdrt::SitePair &pair : pairs) {
+      SmallVector<unsigned, 4> values;
+      for (unsigned value : pair.values)
+        if (!llvm::is_contained(values, renumber(value)))
+          values.push_back(renumber(value));
+      llvm::sort(values);
+      pair.values = values;
+    }
+    tables.push_back(mdrt::getSitesAttr(context, pairs));
+  }
+  auto merged = SegmentForOp::create(
+      builder, loc, resultTypes, loop.getList(), loop.getPositions(),
+      loop.getCell(), loop.getIns(), outs, loop.getReduce(),
+      /*scratch=*/ValueRange(), loop.getCutoffAttr(), loop.getWeightsAttr(),
+      builder.getArrayAttr(exchange), /*overwrite=*/DenseBoolArrayAttr(),
+      loop.getSegmentsAttr(), builder.getArrayAttr(tables),
+      loop.getKernels().size());
+  algebra::carry(loop, merged);
+  if (auto algebras = algebra::getAlgebras(loop)) {
+    algebras->erase(algebras->begin() + from);
+    algebra::setAlgebras(merged, *algebras);
+  }
+  for (unsigned index = 0, e = loop.getKernels().size(); index != e; ++index) {
+    SmallVector<mdrt::SitePair> pairs =
+        mdrt::getSitePairs(loop.getSites(), index);
+    Region &region = merged.getKernels()[index];
+    region.takeBody(loop.getKernels()[index]);
+    Operation *terminator = region.front().getTerminator();
+    OpBuilder end(terminator);
+    SmallVector<Value> yielded;
+    unsigned operand = 0;
+    for (const mdrt::SitePair &pair : pairs) {
+      llvm::DenseMap<unsigned, Value> byValue;
+      SmallVector<unsigned> order;
+      for (unsigned value : pair.values) {
+        Value contribution = terminator->getOperand(operand++);
+        unsigned target = renumber(value);
+        auto [found, inserted] = byValue.try_emplace(target, contribution);
+        if (inserted) {
+          order.push_back(target);
+          continue;
+        }
+        // `into` first, then `from`.
+        Value lhs = value == from ? found->second : contribution;
+        Value rhs = value == from ? contribution : found->second;
+        found->second = arith::AddFOp::create(end, loc, lhs, rhs);
+      }
+      llvm::sort(order);
+      for (unsigned target : order)
+        yielded.push_back(byValue.lookup(target));
+    }
+    YieldOp::create(end, terminator->getLoc(), yielded);
+    terminator->erase();
+  }
+  unsigned numOuts = loop.getOuts().size();
+  for (unsigned i = 0, e = loop.getNumResults(); i != e; ++i) {
+    if (i == from)
+      continue;
+    unsigned target = i < numOuts && i > from ? i - 1 : (i >= numOuts ? i - 1 : i);
+    loop.getResult(i).replaceAllUsesWith(merged.getResult(target));
+  }
+  loop->erase();
+  if (Operation *zeros = dropped.getDefiningOp())
+    if (zeros->use_empty())
+      zeros->erase();
+}
+
 /// Merges two destinations of one loop over tuples that a chain of sums of
 /// `op` adds one after the other, as the forces of the sums over the
 /// centers of groups that one loop gives (D139): the loop gives their sum
@@ -242,6 +343,11 @@ static bool mergeOnce(ParticleForOp op) {
       if (pair && (pair.getOverwrite() ||
                    pair.getExchange(a->out) != pair.getExchange(b->out)))
         continue;
+      auto segments = dyn_cast<SegmentForOp>(a->loop);
+      if (segments && (segments.getOverwrite() ||
+                       segments.getExchange(a->out) !=
+                           segments.getExchange(b->out)))
+        continue;
       // The chain adds argument `after` no longer.
       arith::AddFOp sum = chain.sums[k - 1];
       sum.getResult().replaceAllUsesWith(sum.getLhs());
@@ -250,6 +356,8 @@ static bool mergeOnce(ParticleForOp op) {
       kernel.eraseArgument(after);
       if (pair)
         mergeOuts(pair, a->out, b->out);
+      else if (segments)
+        mergeOuts(segments, a->out, b->out);
       else
         mergeOuts(cast<TupleForOp>(a->loop), a->out, b->out);
       return true;

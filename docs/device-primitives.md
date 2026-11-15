@@ -758,7 +758,14 @@ groups, `md_alg.traverse_pairs`, which `convert-md-exec-to-md-alg` makes
 before it, is lowered where it stands as well (D415): its
 kernels are named in that order, the runtime's getters it calls lie
 between its launches in the host code, and the work that the pass does
-after the ops reaches its kernels. #888 frees it. The arithmetic that
+after the ops reaches its kernels. #888 frees it. Over a list of units
+in the segments of rigid kinds, `!mdrt.segmented_pairs`, the op takes one
+region for each segment it visits, with a table of the site pairs of its
+slices, and forms the sites by the kinds' weights
+([decisions/md-alg-segments.md](decisions/md-alg-segments.md)). Its serial
+definition is in `TraverseSegments.cpp`; `convert-md-exec-to-gpu` refuses
+it, and the lists of units, until their build (slice S2) and their SIMT
+schedule (slice S3) land. The arithmetic that
 `convert-md-exec-to-gpu` finishes in its kernels (contraction, explicit
 fused multiply-adds, the approximate reciprocal) covers the key regions of
 the `sort_by_key` ops too, whose bodies become the key kernels.

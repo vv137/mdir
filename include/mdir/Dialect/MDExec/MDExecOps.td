@@ -546,6 +546,218 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Lists of units in the segments of rigid kinds (D[md-alg-segments])
+//===----------------------------------------------------------------------===//
+
+class MDExec_SegmentedListOp<string mnemonic, list<Trait> traits = []>
+    : MDExec_Op<mnemonic, traits> {
+  code commonDescription = [{
+    The units are the copies of the taken kinds, `kinds`, one relation per
+    kind whose tuples are its copies (`md.kind_pairs`, D405), and every
+    other particle of `universe`, the rest. The descriptors of the kinds
+    are those of the result type, in the same order. `exclude` holds the
+    excluded pairs, which no entry of the segment of the rest with itself
+    stands for. `anchor` holds ordered (member, anchor) pairs of the rest,
+    each member within `radius` of its anchor (#799): its anchor selects its
+    candidates, and it keeps its own entries.
+
+    Segment `s(f, g)` is built with the reach
+    `R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
+    `radius` for the rest (0 without `anchor`), so that every pair of sites
+    within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+    may hold more entries; the loops over it test the cutoff of each pair of
+    sites. The type may state no more than the build guarantees, for every
+    segment: `unique, minimum, removed, grouped_by(group)`.
+  }];
+}
+
+def MDExec_BuildSegmentedPairsOp : MDExec_SegmentedListOp<"build_segmented_pairs", [
+    Pure, AttrSizedOperandSegments]> {
+  let summary = "Builds a list of units in the segments of rigid kinds";
+  let description = commonDescription # [{
+
+    ```mlir
+    %l = md_exec.build_segmented_pairs %types kinds(%opc : !k)
+           at(%x, %cell) cutoff(0.9) skin(0.1)
+           : !md.field<@atoms, i32>, !md.field<@atoms, 3 x f64> -> !sp
+    ```
+  }];
+  let arguments = (ins MDExec_FieldOrBuffer:$universe,
+      Variadic<MDExec_RelationOrMembers>:$kinds,
+      Optional<MDExec_RelationOrMembers>:$excluded,
+      Optional<MDExec_RelationOrMembers>:$anchored,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      F64Attr:$cutoff, F64Attr:$skin, OptionalAttr<F64Attr>:$radius);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $universe (`kinds` `(` $kinds^ `:` qualified(type($kinds)) `)`)?
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+    `at` `(` $positions `,` $cell `)`
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)` attr-dict
+    `:` qualified(type($universe)) `,` qualified(type($positions))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_EmptySegmentedPairsOp : MDExec_SegmentedListOp<"empty_segmented_pairs", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "An unbuilt list of units in the segments of rigid kinds";
+  let description = commonDescription # [{
+
+    The list holds no configuration: its first refresh builds it. Its
+    membership and reaches are those of all its refreshes.
+
+    ```mlir
+    %l0 = md_exec.empty_segmented_pairs %types kinds(%opc : !k)
+            cutoff(0.9) skin(0.1) : !md.field<@atoms, i32> -> !sp
+    ```
+  }];
+  let arguments = (ins MDExec_FieldOrBuffer:$universe,
+      Variadic<MDExec_RelationOrMembers>:$kinds,
+      Optional<MDExec_RelationOrMembers>:$excluded,
+      Optional<MDExec_RelationOrMembers>:$anchored,
+      F64Attr:$cutoff, F64Attr:$skin, OptionalAttr<F64Attr>:$radius);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $universe (`kinds` `(` $kinds^ `:` qualified(type($kinds)) `)`)?
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+    (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)` attr-dict
+    `:` qualified(type($universe)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
+    AllTypesMatch<["list", "result"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "A list of units that is valid for a configuration";
+  let description = [{
+    Returns `list` if it is valid for `positions` in `cell`, and the list
+    built there otherwise, with the reaches of its build. The units'
+    reference points form one mobility group: one displacement test renews
+    every segment (#799). With `prune_skin` below `skin`, the list is dual
+    (D114): the loops take its inner list, pruned with
+    `cutoff + prune_skin`.
+
+    In the storage form `positions` is a buffer, and the list is refreshed
+    where it is.
+
+    ```mlir
+    %l1 = md_exec.refresh_segmented_pairs %l0 at(%x, %cell)
+            cutoff(0.9) skin(0.1) prune_skin(0.05)
+            : !sp, !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let arguments = (ins MDRT_SegmentedPairsType:$list,
+      MDExec_FieldOrBuffer:$positions, MD_CellType:$cell,
+      F64Attr:$cutoff, F64Attr:$skin, F64Attr:$prune_skin);
+  let results = (outs MDRT_SegmentedPairsType:$result);
+  let assemblyFormat = [{
+    $list `at` `(` $positions `,` $cell `)`
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `prune_skin` `(` $prune_skin `)` attr-dict
+    `:` qualified(type($list)) `,` qualified(type($positions))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_SegmentForOp : MDExec_Op<"segment_for", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Runs the regions of the segments over a list of units";
+  let description = [{
+    For each segment `s(f, g)` that the op names, each entry of its list,
+    and each pair `(i, j)` of a unit of kind `f` and a unit of kind `g`
+    that the entry holds: for each pair of places `(p, q)` of the
+    segment's table, `d = x_p(i) - x_q(j)` with the places formed from the
+    members by the weights of their kinds (`x_p = x_0 + sum_k W_pk h_k`),
+    and, where `|d| < cutoff`, the slice of the region of that site pair.
+    The slice yields one value for each destination and sum of its mask. A
+    destination of place `p` adds its value to the place, and `s_a` times it
+    to `q` of `j`, with the sign of its exchange contract; a place's force
+    reaches the members as `W^T` (rule A). A sum adds `2 w` times it.
+
+    The region of a segment takes, for each of its `M` site pairs, `r^2`
+    and the displacement `d`, then for each field of `ins` its value at the
+    `m_f` members of `i` and the `m_g` members of `j`. It yields, site pair
+    by site pair, the values of each mask in increasing order
+    (D[md-alg-segments], Section 4).
+
+    ```mlir
+    %f, %u = md_exec.segment_for %l, %x, %cell outs(%f0 : !md.field<@atoms, 3 x f64>)
+               reduce(%u0 : f64) cutoff(0.9) weights [0.5]
+               exchange [antisymmetric, symmetric]
+      segment(1, 1) sites [(0, 0) [0, 1]] {
+      ^bb0(%r2: f64, %d: vector<3xf64>, %q0: f64, %q1: f64):
+        ...
+        md_exec.yield %k_f, %k_u : vector<3xf64>, f64
+      } : !sp, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
+    ```
+
+    In the storage form the positions and the fields are buffers; the op
+    has results for the values in `reduce` only. `overwrite` and `scratch`
+    are those of `md_exec.pair_for`.
+  }];
+  let arguments = (ins
+    MDRT_SegmentedPairsType:$list,
+    MDExec_FieldOrBuffer:$positions,
+    MD_CellType:$cell,
+    Variadic<MDExec_FieldOrBuffer>:$ins,
+    Variadic<MDExec_FieldOrBuffer>:$outs,
+    Variadic<AnyType>:$reduce,
+    Variadic<MDExec_Scratch>:$scratch,
+    F64Attr:$cutoff,
+    OptionalAttr<DenseF64ArrayAttr>:$weights,
+    OptionalAttr<TypedArrayAttrBase<MD_Exchange,
+                 "exchange contracts">>:$exchange,
+    OptionalAttr<DenseBoolArrayAttr>:$overwrite,
+    ArrayAttr:$segments,
+    ArrayAttr:$sites
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let regions = (region VariadicRegion<SizedRegion<1>>:$kernels);
+  let assemblyFormat = [{
+    $list `,` $positions `,` $cell
+    (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+    (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+    (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    `cutoff` `(` $cutoff `)` (`weights` $weights^)?
+    (`overwrite` $overwrite^)? custom<ExchangeList>($exchange) ``
+    custom<SegmentRegions>($segments, $sites, $kernels) attr-dict
+    `:` qualified(type($list)) `,` qualified(type($positions))
+    (`->` qualified(type($results))^)?
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+    ::mdir::mdrt::SegmentedPairsType getListType() {
+      return ::llvm::cast<::mdir::mdrt::SegmentedPairsType>(getList().getType());
+    }
+    /// The kinds (f, g) of region `index`.
+    std::pair<unsigned, unsigned> getSegmentKinds(unsigned index);
+    /// The site pairs of region `index`: (p, q, then the values it yields).
+    ::llvm::SmallVector<::llvm::SmallVector<int64_t>> getSitePairs(unsigned index);
+    /// The exchange contract of value `index`: a destination, then a sum.
+    ::mdir::md::Exchange getExchange(unsigned index);
+    /// Whether `scratch` is empty or holds two buffers a sum, in the
+    /// storage form; emits the error otherwise.
+    bool scratchMatches();
+    bool overwrites(unsigned index) {
+      auto flags = getOverwrite();
+      return flags && (*flags)[index];
+    }
+  }];
+}
+
 def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     AllTypesMatch<["neighbors", "result"]>, AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
@@ -915,7 +1127,8 @@ def MDExec_JoinOp : MDExec_Op<"join"> {
 
 def MDExec_YieldOp : MDExec_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["PairForOp", "ParticleForOp", "TabulateOp", "TupleForOp"]>
+    ParentOneOf<["PairForOp", "ParticleForOp", "SegmentForOp", "TabulateOp",
+                 "TupleForOp"]>
   ]> {
   let summary = "Yields the contributions of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);

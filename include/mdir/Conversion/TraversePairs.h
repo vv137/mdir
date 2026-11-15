@@ -138,6 +138,11 @@ struct SerialLists {
   InnerLists inner;
   mlir::Value active, activeCount;
   bool dual = false;
+  /// Over the segments of a list of units (D[md-alg-segments]): the
+  /// offsets of each segment's units of work, (K+1)(K+2)/2 + 1 of them, and
+  /// the members of each unit of a taken kind, which its place names by
+  /// the position of its first member.
+  mlir::Value segments, members;
   mlir::Value places, units;
   mlir::Value positions, cell;
   llvm::SmallVector<mlir::Value> ins, outs;
@@ -163,6 +168,13 @@ struct SerialOptions {
 llvm::SmallVector<mlir::Value>
 emitTraversePairsSerial(mlir::OpBuilder &builder, md_alg::TraversePairsOp op,
                         const SerialLists &lists, SerialOptions options = {});
+
+/// The serial definition of `op` over the segments of a list of units
+/// (D[md-alg-segments], Section 6), which emitTraversePairsSerial calls.
+llvm::SmallVector<mlir::Value>
+emitTraverseSegmentsSerial(mlir::OpBuilder &builder,
+                           md_alg::TraversePairsOp op,
+                           const SerialLists &lists, SerialOptions options);
 
 } // namespace mdir::kernels
 

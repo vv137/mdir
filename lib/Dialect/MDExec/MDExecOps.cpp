@@ -108,6 +108,10 @@ static LogicalResult verifyScatter(Operation *op, ScatterAttr scatter,
 }
 
 #define GET_OP_CLASSES
+// The regions of the segments of a list of units (D[md-alg-segments]).
+using mdir::mdrt::parseSegmentRegions;
+using mdir::mdrt::printSegmentRegions;
+
 #include "mdir/Dialect/MDExec/MDExecOps.cpp.inc"
 
 /// Returns true if `type` is a floating-point type of the execution level.

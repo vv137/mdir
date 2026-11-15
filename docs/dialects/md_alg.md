@@ -960,7 +960,9 @@ operation ::= `md_alg.traverse_pairs` (`structure` $neighbors^ `:` qualified(typ
               (`overwrite` $overwrite^)?
               (`scatter` `(` $scatter^ `)`)? (`frames` $frames^)?
               (`prune` `(` $pruneGroups^ `,` $pruneReach `)`)?
-              $kernel attr-dict (`->` type($results)^)?
+              (`rotate` `(` $rotate^ `)`)?
+              custom<TraverseRegions>($kernel, $segments, $sites, $segmentKernels)
+              attr-dict (`->` type($results)^)?
 ```
 
 For each entry `(i, j)` of the list with `r_ij^2 < cutoff^2`, runs the
@@ -1029,6 +1031,45 @@ it).
 } -> f64
 ```
 
+*Segments* (D[md-alg-segments]). Over a list of units,
+`!mdrt.segmented_pairs`, the op takes no single region but one for each
+segment `s(f, g)` that it visits, in increasing `s(f, g)`:
+`segment(f, g) sites [(p, q) [a, ...], ...] { ... }`. The table names,
+for each slice of the region, the place `p` of the unit of kind `f`,
+the place `q` of the unit of kind `g`, and the values `a` that the slice
+yields (its mask). For each entry, each pair `(i, j)` of units it holds,
+and each site pair of the table, the op forms the places from the
+members by the weights `W` of their kinds, `x_p = x_0 + sum_k W_pk h_k`
+in the type of the region, the displacement
+`d = (d_0 + c_p) - c_q`, and, where `r^2 < cutoff^2`, runs the slice
+with `r^2`, `d`, and the values of `ins` at the members of both units. A
+destination of place `p` reaches the members of `i` by `W^T`, and those
+of `j` with the sign of its exchange contract (rule A). The region takes
+`r^2` and `d` for each of its `M` site pairs, then for each buffer of
+`ins` its values at the `m_f` members of `i` and the `m_g` of `j`, and
+yields, site pair by site pair, the values of each mask. The buffer
+form adds `segments` (the offsets of each segment's units of work) and
+`members` (the members of each unit of a taken kind, stored whole about
+its anchor) to the buffers of the groups. Over segments a group is the
+row of several segments, so `counts` holds the entries of each unit of
+work, at most 64, and `units` its group; a place of a taken kind holds
+the position in `members` of its unit's first member. `rotate(L)`, in the execution group, is the width of the
+rotation of the partners of the SIMT schedule (R4).
+
+```mlir
+%u = md_alg.traverse_pairs structure %l : !sp
+     positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
+     outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+     unique visit unordered combine atomic
+     algebra ["any_order", "any_order"]
+     exchange ["antisymmetric", "symmetric"] cutoff(0.9) weights [0.5]
+     segment(1, 1) sites [(0, 0) [0, 1]] {
+^bb0(%r2: f32, %d: vector<3xf32>):
+  ...
+  md_alg.yield %kf, %ku : vector<3xf32>, f64
+} -> f64
+```
+
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
 Interfaces: `MemoryEffectOpInterface`
@@ -1052,13 +1093,16 @@ Interfaces: `MemoryEffectOpInterface`
 <tr><td><code>frames</code></td><td>::mlir::UnitAttr</td><td>unit attribute</td></tr>
 <tr><td><code>pruneGroups</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 <tr><td><code>pruneReach</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>segments</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
+<tr><td><code>sites</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
+<tr><td><code>rotate</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
 </table>
 
 #### Operands:
 
 | Operand | Description |
 | :-----: | ----------- |
-| `neighbors` | A physical neighbor structure |
+| `neighbors` | A physical neighbor structure or A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
 | `lists` | variadic of memref of any non-token type values |
 | `sizes` | variadic of index |
 | `positions` | memref of any non-token type values |
