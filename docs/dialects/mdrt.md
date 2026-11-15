@@ -549,6 +549,42 @@ Syntax:
 | :-------: | :-------: | ----------- |
 | particleSet | `::mlir::FlatSymbolRefAttr` |  |
 
+### SegmentedPairsType
+
+_A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments])_
+
+A list over units: the copies of `K` rigid kinds of D403, and the rest
+of the particles, kind `K`, one unit each. Segment
+`s(f, g) = f(f+1)/2 + g`, `g <= f <= K`, holds the pairs of a unit of
+kind `f` with a unit of kind `g` (rule R3 of D405). All the segments are
+in one structure, and one refresh renews them together.
+
+The type states the taken kinds, each a `#md.rigid_kind` (its frame,
+its sites, their weights, and the radius about the anchor that covers a
+copy), and one contract of D413 for each segment, in the order of `s`.
+The cutoff, the skin, the reaches, and the radius of the anchors of the
+rest are facts of the build, not of the type (D357).
+
+```mlir
+!mdrt.segmented_pairs<@atoms,
+    kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [],
+                          extent = 0.1>],
+    segments [(0, 0) unique, minimum, removed, grouped_by(group),
+              (1, 0) unique, minimum, removed, grouped_by(group),
+              (1, 1) unique, minimum, removed, grouped_by(group)]>
+```
+
+With no kind, `kinds []`, the one segment `(0, 0)` holds pairs of
+particles, as a structure of groups does.
+
+#### Parameters:
+
+| Parameter | C++ type | Description |
+| :-------: | :-------: | ----------- |
+| particleSet | `::mlir::FlatSymbolRefAttr` |  |
+| kinds | `::mlir::ArrayAttr` |  |
+| segments | `::llvm::ArrayRef<::mdir::mdrt::NeighborsContract>` |  |
+
 ## Enums
 
 ### CoordinateKind

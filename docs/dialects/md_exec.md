@@ -311,6 +311,80 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `md_exec.build_segmented_pairs` (::mdir::md_exec::BuildSegmentedPairsOp)
+
+_Builds a list of units in the segments of rigid kinds_
+
+Syntax:
+
+```
+operation ::= `md_exec.build_segmented_pairs` $universe (`kinds` `(` $kinds^ `:` qualified(type($kinds)) `)`)?
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+              `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)` attr-dict
+              `:` qualified(type($universe)) `,` qualified(type($positions))
+              `->` qualified(type($result))
+```
+
+The units are the copies of the taken kinds, `kinds`, one relation per
+kind whose tuples are its copies (`md.kind_pairs`, D405), and every
+other particle of `universe`, the rest. The descriptors of the kinds
+are those of the result type, in the same order. `exclude` holds the
+excluded pairs, which no entry of the segment of the rest with itself
+stands for. `anchor` holds ordered (member, anchor) pairs of the rest,
+each member within `radius` of its anchor (#799): its anchor selects its
+candidates, and it keeps its own entries.
+
+Segment `s(f, g)` is built with the reach
+`R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
+`radius` for the rest (0 without `anchor`), so that every pair of sites
+within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+may hold more entries; the loops over it test the cutoff of each pair of
+sites. The type may state no more than the build guarantees, for every
+segment: `unique, minimum, removed, grouped_by(group)`.
+
+
+```mlir
+%l = md_exec.build_segmented_pairs %types kinds(%opc : !k)
+       at(%x, %cell) cutoff(0.9) skin(0.1)
+       : !md.field<@atoms, i32>, !md.field<@atoms, 3 x f64> -> !sp
+```
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `kinds` | variadic of A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+
+
+
 ### `md_exec.build_triplets` (::mdir::md_exec::BuildTripletsOp)
 
 _Finds the triplets centered on each particle_
@@ -535,6 +609,76 @@ Interfaces: `MemoryEffectOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `result` | A physical neighbor structure |
+
+
+
+### `md_exec.empty_segmented_pairs` (::mdir::md_exec::EmptySegmentedPairsOp)
+
+_An unbuilt list of units in the segments of rigid kinds_
+
+Syntax:
+
+```
+operation ::= `md_exec.empty_segmented_pairs` $universe (`kinds` `(` $kinds^ `:` qualified(type($kinds)) `)`)?
+              (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)?
+              (`anchor` `(` $anchored^ `:` qualified(type($anchored)) `)` `radius` `(` $radius `)`)?
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)` attr-dict
+              `:` qualified(type($universe)) `->` qualified(type($result))
+```
+
+The units are the copies of the taken kinds, `kinds`, one relation per
+kind whose tuples are its copies (`md.kind_pairs`, D405), and every
+other particle of `universe`, the rest. The descriptors of the kinds
+are those of the result type, in the same order. `exclude` holds the
+excluded pairs, which no entry of the segment of the rest with itself
+stands for. `anchor` holds ordered (member, anchor) pairs of the rest,
+each member within `radius` of its anchor (#799): its anchor selects its
+candidates, and it keeps its own entries.
+
+Segment `s(f, g)` is built with the reach
+`R_s = cutoff + skin + e_f + e_g`, where `e` is a kind's `extent`, or
+`radius` for the rest (0 without `anchor`), so that every pair of sites
+within the cutoff has an entry (D[md-alg-segments], Section 1). The list
+may hold more entries; the loops over it test the cutoff of each pair of
+sites. The type may state no more than the build guarantees, for every
+segment: `unique, minimum, removed, grouped_by(group)`.
+
+
+The list holds no configuration: its first refresh builds it. Its
+membership and reaches are those of all its refreshes.
+
+```mlir
+%l0 = md_exec.empty_segmented_pairs %types kinds(%opc : !k)
+        cutoff(0.9) skin(0.1) : !md.field<@atoms, i32> -> !sp
+```
+
+Traits: `AttrSizedOperandSegments`
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>radius</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `universe` | A per-particle field or buffer of a field |
+| `kinds` | variadic of A set of tuples of distinct particles or buffer of the members of tuples |
+| `excluded` | A set of tuples of distinct particles or buffer of the members of tuples |
+| `anchored` | A set of tuples of distinct particles or buffer of the members of tuples |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
 
 
 
@@ -1485,6 +1629,62 @@ Interfaces: `MemoryEffectOpInterface`
 
 
 
+### `md_exec.refresh_segmented_pairs` (::mdir::md_exec::RefreshSegmentedPairsOp)
+
+_A list of units that is valid for a configuration_
+
+Syntax:
+
+```
+operation ::= `md_exec.refresh_segmented_pairs` $list `at` `(` $positions `,` $cell `)`
+              `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+              `prune_skin` `(` $prune_skin `)` attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+```
+
+Returns `list` if it is valid for `positions` in `cell`, and the list
+built there otherwise, with the reaches of its build. The units'
+reference points form one mobility group: one displacement test renews
+every segment (#799). With `prune_skin` below `skin`, the list is dual
+(D114): the loops take its inner list, pruned with
+`cutoff + prune_skin`.
+
+In the storage form `positions` is a buffer, and the list is refreshed
+where it is.
+
+```mlir
+%l1 = md_exec.refresh_segmented_pairs %l0 at(%x, %cell)
+        cutoff(0.9) skin(0.1) prune_skin(0.05)
+        : !sp, !md.field<@atoms, 3 x f64>
+```
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>prune_skin</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+
+
+
 ### `md_exec.renumber` (::mdir::md_exec::RenumberOp)
 
 _The members of tuples in the current order of the particles_
@@ -1631,6 +1831,93 @@ Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | `result` | A per-particle field |
+
+
+
+### `md_exec.segment_for` (::mdir::md_exec::SegmentForOp)
+
+_Runs the regions of the segments over a list of units_
+
+Syntax:
+
+```
+operation ::= `md_exec.segment_for` $list `,` $positions `,` $cell
+              (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+              (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+              (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+              (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+              `cutoff` `(` $cutoff `)` (`weights` $weights^)?
+              (`overwrite` $overwrite^)? custom<ExchangeList>($exchange)
+              custom<SegmentRegions>($segments, $sites, $kernels) attr-dict
+              `:` qualified(type($list)) `,` qualified(type($positions))
+              (`->` qualified(type($results))^)?
+```
+
+For each segment `s(f, g)` that the op names, each entry of its list,
+and each pair `(i, j)` of a unit of kind `f` and a unit of kind `g`
+that the entry holds: for each pair of places `(p, q)` of the
+segment's table, `d = x_p(i) - x_q(j)` with the places formed from the
+members by the weights of their kinds (`x_p = x_0 + sum_k W_pk h_k`),
+and, where `|d| < cutoff`, the slice of the region of that site pair.
+The slice yields one value for each destination and sum of its mask. A
+destination of place `p` adds its value to the place, and `s_a` times it
+to `q` of `j`, with the sign of its exchange contract; a place's force
+reaches the members as `W^T` (rule A). A sum adds `2 w` times it.
+
+The region of a segment takes, for each of its `M` site pairs, `r^2`
+and the displacement `d`, then for each field of `ins` its value at the
+`m_f` members of `i` and the `m_g` members of `j`. It yields, site pair
+by site pair, the values of each mask in increasing order
+(D[md-alg-segments], Section 4).
+
+```mlir
+%f, %u = md_exec.segment_for %l, %x, %cell outs(%f0 : !md.field<@atoms, 3 x f64>)
+           reduce(%u0 : f64) cutoff(0.9) weights [0.5]
+           exchange [antisymmetric, symmetric]
+  segment(1, 1) sites [(0, 0) [0, 1]] {
+  ^bb0(%r2: f64, %d: vector<3xf64>, %q0: f64, %q1: f64):
+    ...
+    md_exec.yield %k_f, %k_u : vector<3xf64>, f64
+  } : !sp, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
+```
+
+In the storage form the positions and the fields are buffers; the op
+has results for the values in `reduce` only. `overwrite` and `scratch`
+are those of `md_exec.pair_for`.
+
+Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>cutoff</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>weights</code></td><td>::mlir::DenseF64ArrayAttr</td><td>f64 dense array attribute</td></tr>
+<tr><td><code>exchange</code></td><td>::mlir::ArrayAttr</td><td>exchange contracts</td></tr>
+<tr><td><code>overwrite</code></td><td>::mlir::DenseBoolArrayAttr</td><td>i1 dense array attribute</td></tr>
+<tr><td><code>segments</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
+<tr><td><code>sites</code></td><td>::mlir::ArrayAttr</td><td>array attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `list` | A neighbor structure over units, in the segments of rigid kinds (D[md-alg-segments]) |
+| `positions` | A per-particle field or buffer of a field |
+| `cell` | A simulation cell |
+| `ins` | variadic of A per-particle field or buffer of a field |
+| `outs` | variadic of A per-particle field or buffer of a field |
+| `reduce` | variadic of any non-token type |
+| `scratch` | variadic of buffer with one value per particle |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of any non-token type |
 
 
 
@@ -1930,7 +2217,7 @@ Syntax:
 operation ::= `md_exec.yield` attr-dict ($values^ `:` type($values))?
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, TabulateOp, TupleForOp>`, `ReturnLike`, `Terminator`
+Traits: `AlwaysSpeculatableImplTrait`, `HasParent<PairForOp, ParticleForOp, SegmentForOp, TabulateOp, TupleForOp>`, `ReturnLike`, `Terminator`
 
 Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `RegionBranchTerminatorOpInterface`
 

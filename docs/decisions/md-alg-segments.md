@@ -98,14 +98,14 @@ So the list of segment $s$ is a list over reference points, built with the reach
 - The kinds are variadic operands, the tuple relations of `md.kind_pairs`. Their descriptors are in the result type.
 - `alpha` and `extent` leave the ops for the type's kinds.
 - `exclude`, `anchor`, and `radius` stay, and so do `cutoff`, `skin`, and `prune_skin` (D114).
-- The `policy` of a refresh is that of `refresh_neighbors`.
+- A refresh takes `prune_skin` as `refresh_neighbors` does; its policies come with S2, which lowers it.
 
 ```mlir
 %l0 = md_exec.empty_segmented_pairs %universe kinds(%opc : !rel3)
         exclude(%x : !excl) anchor(%a : !anch) radius(0.10901)
         cutoff(0.9) skin(0.1) : !univ -> !sp
 %l1 = md_exec.refresh_segmented_pairs %l, %pos, %cell
-        cutoff(0.9) skin(0.1) prune_skin(0.05) policy(check) : !sp, !vec
+        cutoff(0.9) skin(0.1) prune_skin(0.05) : !sp, !vec
 ```
 
 The ops' own check is D413's: a result type may state no more than the build guarantees, which is the four words above for every segment. The ops refuse a type whose kinds are not the descriptors of their kind operands.
@@ -177,7 +177,7 @@ The groups form of D415 parses, prints, verifies, and lowers as it does on `main
   - `segments`, the $(K+1)(K+2)/2 + 1$ offsets of each segment's rows in `units`;
   - `members`, for each unit of a taken kind, its $m_f$ particles, by kind.
 
-  That makes 9 buffers, or 14 with `inner`. The buffer form also takes `contract(<type>)` and `reach([R_s, ...])`, one reach for each segment. These are preconditions that the writer asserts (D415, ruling 2).
+  That makes 9 buffers, or 14 with `inner`. A group is the row of several segments, so `counts` holds the entries of each unit of work, at most 64, and `units` its group; a place of a taken kind holds the position of its unit's first member in `members`, and the members of a unit are stored whole about its anchor. The buffer form also takes `contract(<type>)` and `reach(R)`, the reach of the sites; a segment's reach over the reference points, $R_s = R + e_f + e_g$, follows. These are preconditions that the writer asserts (D415, ruling 2).
 - **The op-level declarations** are shared by every segment: the multiplicity, `visit`, `combine`, `algebra`, `exchange`, `cutoff`, `weights`, and `overwrite`. The destinations and the sums are the same across segments, so their algebra and exchange are too. The requirement that follows from the declarations is checked against each segment's contract separately (Section 5). D415 wrote "a visit and a requirement each". Here the requirement is per segment and the visit is shared, because no segment can need another visit while they write the same destinations. The maintainer ruled so (Section 9, ruling 3).
 - **`segment(f, g)`** opens a segment's region. A segment that the op does not name is not visited. For example, OPC's Lennard-Jones term alone visits all three segments, but with one site pair in $(0, 0)$. A segment that has no site pair is not written, and it emits no code.
 - **`sites [(p, q) [a, ...], ...]`** is the segment's table of site pairs. For each slice, it gives the place $p$ of kind $f$, the place $q$ of kind $g$, and the values $a$ (destinations, then sums) that the slice yields. That list is the mask of its nonzero terms. Each site pair appears at most once. The constants of a slice (its charge product and its Lennard-Jones coefficients) are in the slice as `arith.constant`s, where D405's generator put them, cloned from the general nonbonded kernel.
@@ -232,10 +232,10 @@ D415's 33 cases stay. The new rules, each with a negative case that is a valid o
 | V9 | The requirement is met by **each** segment's contract, and the message names the segment | a type whose `(1, 0)` is `directed`; a `(1, 1)` that is `masked` |
 | V10 | D415's rules 5–6 (the visit and the algebra, the exchange), once for the op | `fixed_order` with segments (the deterministic mode stops here, as for the groups) |
 | V11 | The type has $(K+1)(K+2)/2$ segments, each once, in order of $s$; each kind is a valid `#md.rigid_kind` | a type that lacks `(1, 1)`; a kind whose site row sums to 0.99 (D405's own verifier, reached through the type) |
-| V12 | The buffer form: 9 or 14 buffers; one reach for each segment; each $R_s \ge r_c + e_f + e_g$ | a reach of `(1, 0)` below $r_c + e_0 + e_1$ |
+| V12 | The buffer form: 9 or 14 buffers; the cutoff within the reach of the sites, $r_c \le R$, so that $R_s \ge r_c + e_f + e_g$ in every segment | the buffers of the groups alone (7); a cutoff beyond the reach |
 | V13 | The execution group: `scatter` is refused with segments; `rotate(L)` with $L$ a power of 2 up to 16 | `scatter(...)` with segments; `rotate(12)` |
 
-**The refusals of the lowerings**, each a case in `test/Conversion/MDExecToGPU/traverse-segments-invalid.test`. `convert-md-exec-to-gpu` refuses:
+**The refusals of the lowerings.** Until S2 and S3 land, `convert-md-exec-to-gpu` refuses every op of a list of units and every traversal over its segments, by name (`test/Conversion/MDExecToGPU/traverse-segments-invalid.mlir`). With S3 it refuses, each a case of that test:
 - the segmented buffer form;
 - a segment whose cutoff is beyond the reach that its build was made for (the coverage query of Section 3);
 - the outer list of a dual list;
@@ -256,7 +256,7 @@ D415's 33 cases stay. The new rules, each with a negative case that is a valid o
   - the positions and offsets of steps 1 to 3;
   - each site pair of the table, with its cutoff and its slice;
   - the accumulators of the places;
-  - at the end of each entry, $\mathsf W^{\mathsf T}$ of the entry's accumulators added to the members.
+  - at the end of each pair of units, $\mathsf W^{\mathsf T}$ of the pair's accumulators added to the members.
 
 The modes of D415 stay: `serial`, `serial-reversed`, `serial-magnitudes`, and `omitted`. In `serial-magnitudes` a member's term is $\lvert(\mathsf W)_{pk}\rvert\,\lvert k_{m,a}\rvert$, so that the magnitudes bound the products of the transpose too.
 
@@ -302,9 +302,11 @@ The branch at 004a0735, against `main` at 7508da8f. A slice is named where the c
 | `MDExecOps.td`: `build_`, `empty_`, `refresh_segmented_pairs` | The same ops, general over $K$, without `alpha` and `extent` | S1 |
 | `MDExecOps.td`: `md_exec.template_for` (three tagged bodies, `pairs` counts, `md.template_site_forces`) | `md_exec.segment_for`: a region for each segment visited, with its table of site pairs | S1 |
 | `lib/Dialect/MDExec/TemplateWindows.cpp` (the verifier of the bodies) | `segment_for`'s verifier, which reads D405's proof | S1 |
-| `PairKernelBody.{td,h,cpp}` and its users in `ExpandRadial.cpp` and `SimplifyDistance.cpp` | Kept: radial tables (D94) on the slices of segments need it. `traverse_pairs` implements it too | S1 |
+| `PairKernelBody.{td,h,cpp}` and its users in `ExpandRadial.cpp` and `SimplifyDistance.cpp` | Kept: radial tables (D94) on the slices of segments need it. `traverse_pairs` implements it too | S3 |
 | `MDToMDExec.cpp` (+88) | `convert-md-to-md-exec`: segment windows to `segment_for` | S1 |
-| `AccumulateDestinations.cpp`, `AssignPrecision.cpp`, `AssignStorage.cpp`, `FuseLoops.cpp`, `ReuseTemplatePairs.cpp`, `ReuseNeighbors.cpp`, `Approximate.cpp` (md_exec passes) | The same passes, over `segment_for` and the segmented type | S1 |
+| `AccumulateDestinations.cpp`, `AssignPrecision.cpp`, `AssignStorage.cpp`, `FuseLoops.cpp` (md_exec passes) | The same passes, over `segment_for` and the segmented type | S1 |
+| `ReuseTemplatePairs.cpp`, `ReuseNeighbors.cpp` (the build out of the loop over steps) | `md-exec-reuse-neighbors`, over the lists of units | S2 |
+| `Approximate.cpp` | `md-exec-approximate`, over the slices | S3 |
 | — | `convert-md-exec-to-md-alg`: `segment_for` to segmented `traverse_pairs` | S1 |
 | — | The op's segmented form, its verifier, and the serial definition (`TraversePairs.cpp`) | S1 |
 | `Lowering::lowerEmptyTemplatePairs`, `lowerRefreshTemplatePairs`, `getTemplateState`, `templateRuntimeView`, `templatePhysicalReaches` (`MDExecToGPU.cpp`) | The build's host part, kept in `convert-md-exec-to-gpu` as for the groups. The reaches go into the coverage query | S2 |
@@ -436,6 +438,74 @@ The reviewer's recommendations on the questions of this section were accepted:
 8. **The organization is `grouped_by(group)`** unless S2 proves the order fixed.
 9. **The stop rule of S2 and S3 is as written**: slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers, on the same kind of device. The prototype is compared only under the same geometry and conditions.
 10. **The transpose is compared with #795 by numbers**, within the error model, with D405's weights.
+
+## 11. Slice S1, as it landed
+
+S1 is implemented on this branch. No run reads it: the driver does not
+select the route before S4b, and `convert-md-exec-to-gpu` refuses its ops.
+
+**What it adds:**
+- `!mdrt.segmented_pairs` (`MDRTTypes.td`), with its parser, printer, and
+  verifier (the count of segments, normalized contracts, the kinds as
+  `#md.rigid_kind`), and the regions of the segments, their syntax and
+  checks V2 to V7, shared by md_exec and md_alg
+  (`include/mdir/Dialect/MDRT/SegmentRegions.h`);
+- `md_exec.build_segmented_pairs`, `empty_segmented_pairs`,
+  `refresh_segmented_pairs`, and `segment_for`
+  (`lib/Dialect/MDExec/SegmentedPairs.cpp`), each build checking that its
+  type states no more than `unique, minimum, removed, grouped_by(group)`;
+- in `convert-md-to-md-exec`, the windows of the segments of D405 to
+  `segment_for`: the table from the windows' proof, the displacement an
+  argument of the region, the placement left behind; a contribution that
+  reads the window's geometry otherwise, or a force that is not +F and -F
+  at the two places, is refused;
+- the passes of md_exec over `segment_for`: `md-exec-fuse-loops` (one loop
+  for the segments and values of a list, a site pair in two loops one
+  slice of both masks), `md-exec-accumulate-destinations` (two
+  destinations into one), `md-exec-assign-precision` (the regions in the
+  type of the kernels, the fields as they are stored),
+  `md-exec-assign-algebra`, and `md-exec-assign-storage`;
+- the segmented form of `md_alg.traverse_pairs`, its verifier (V1 to V13),
+  `convert-md-exec-to-md-alg` for `segment_for`, and the serial
+  definition (`lib/Conversion/MDExecKernels/TraverseSegments.cpp`), which
+  `convert-md-alg-to-scf` runs on the buffer form;
+- `mdir-kind-pairs-test generate ... --func-entry`, the generator's entry
+  as a `func.func`, which the passes of md_exec take.
+
+**Its gates:**
+
+| Gate | Result |
+|---|---|
+| A negative case for each of V1 to V13 | `test/Dialect/MDAlg/traverse-segments-invalid.mlir`, 28 cases; `test/Dialect/MDExec/segments-invalid.mlir`, 8 cases of the ops of md_exec; `test/Conversion/MDToMDExec/segment-windows.mlir`, the 2 refusals of the conversion |
+| The converted regions against #795's `template_for` bodies at 004a0735 | `test/Driver/segment-loops-795.test`: for OPC and TIP3P, every loop of `@term_lj`, `@term_coulomb`, and `@energy.energy_forces_virial` (6 and 9 loops), site pair by site pair, the same expressions; a table that names another place fails. No constant is replaced: the weight is in the placement, which the region no longer holds |
+| The serial definition against D405's f64 oracle | `test/Integration/md-alg-segments-serial.test`, the system of four kinds of D405 through the whole pipeline to the op, in double precision, every component (energy, 72 forces, 9 virial) within the bound of the oracle plus $2\gamma_T$ times the magnitudes for the order of the sum over the $T$ tuples |
+| The mutation with the transpose's weights exchanged | tried once: the row of weights of each place read in reverse; 30 of the 82 components outside the bound at $K = 2$ for both systems, the largest a force of 42.64 read as -2.38 against a bound of $9\times10^{-12}$; reverted |
+| The corpus identical to `main`'s (D406's method) | Section 11, below |
+
+The largest error of the serial definition, as a fraction of its bound:
+
+| Taken kinds | Segments | Tuples | Largest error / bound |
+|---|---|---|---|
+| TIP3P and the four-site water ($K = 2$) | 6 | 60 | 0.02 |
+| TIP3P and the rigid molecule of three Lennard-Jones atoms ($K = 2$) | 6 | 79 | 0.016 |
+| the four-site water ($K = 1$) | 3 | 138 | 0.017 |
+| TIP3P ($K = 1$) | 3 | 135 | 0.011 |
+
+**Left to the later slices.** The passes of md_exec that S1 does not
+extend to the lists of units take effect only on a program that runs: the
+build moved out of the loop over steps into an empty list and its
+refreshes (#795's `ReuseTemplatePairs`, with `md-exec-reuse-neighbors`) and
+the pruning in the loop come with S2, the tests of validity
+(`md-exec-expose-validity`) with S4a, and the radial tables and E3 of the
+slices (`md-exec-simplify-distance`, `md-exec-expand-radial`, through
+#795's `PairKernelBody` interface) with S3, where the mechanism table
+measures them.
+
+The serial test runs in double precision only. In mixed precision the
+pipeline needs the fields that a real program takes from buffers (the
+charges and types), which the generator's entry does not have; the
+contract of S3 runs the serial definition in mixed precision on device
+programs.
 
 ## 10. Alternatives not taken
 
