@@ -993,6 +993,11 @@ LogicalResult kernels::lowerAlgToSerial(Operation *root,
         return op->emitOpError()
                << "takes its list as a structure, which has no buffers on "
                   "the host: its serial definition takes the buffer form";
+      if (traverse.isSegmented() && traverse.getPruneGroups())
+        return op->emitOpError()
+               << "prunes in the loop over segments, which the serial "
+                  "definition does not: the pruning is the SIMT schedule's "
+                  "(D284, slice S3)";
       if (!isa<VectorType>(traverse.getCell().getType()))
         return op->emitOpError()
                << "takes its cell, in the buffer form, as the vector of its "

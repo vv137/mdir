@@ -119,3 +119,35 @@ func.func @forces(%x: !x, %h: !md.cell, %types: !i, %kind: !kind) -> !x {
   } : !s00, !x -> !x
   return %f : !x
 }
+
+// -----
+
+// A site pair of a site whose forces are laid out by the frame atoms (no
+// site_forces, as md-differentiate gives a body that is not radial): the
+// site has no slot of its own there.
+md.particle_set @atoms
+md.tuple_set @kind on(@atoms) arity(4) orientation(ordered) disjoint
+md.tuple_set @s00 on(@atoms) arity(6) orientation(ordered)
+md.tuple_set @s10 on(@atoms) arity(4) orientation(ordered)
+md.tuple_set @s11 on(@atoms) arity(2) orientation(unordered)
+!x = !md.field<@atoms, 3 x f64>
+!i = !md.field<@atoms, i32>
+!kind = !md.relation<@atoms, 4, ordered, @kind>
+!s00 = !md.relation<@atoms, 6, ordered, @s00>
+!s10 = !md.relation<@atoms, 4, ordered, @s10>
+!s11 = !md.relation<@atoms, 2, unordered, @s11>
+func.func @forces(%x: !x, %h: !md.cell, %types: !i, %kind: !kind) -> !x {
+  %s00, %s10, %s11 = md.kind_pairs %types, kinds(%kind) [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>] : (!i, !kind) -> (!s00, !s10, !s11)
+  // expected-error @+1 {{yields forces of the site pair (0, 3), which names a site, in the slots of the frame atoms}}
+  %f = md.gather_segment_window %s10, %x, %h segment(1, 0) cutoff(1.0) {
+  ^bb0(%base: vector<3xf64>, %b1: vector<3xf64>, %b2: vector<3xf64>):
+    %c = arith.constant dense<0.25> : vector<3xf64>
+    %s = arith.addf %b1, %b2 : vector<3xf64>
+    %w = arith.mulf %c, %s : vector<3xf64>
+    %d = arith.subf %base, %w : vector<3xf64>
+    %zero = arith.constant dense<0.0> : vector<3xf64>
+    %minus = arith.negf %d : vector<3xf64>
+    md.yield %d, %minus, %zero, %zero, %d : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
+  } : !s10, !x -> !x
+  return %f : !x
+}

@@ -1,7 +1,7 @@
 """The serial definition of md_alg.traverse_pairs over the segments of a
 list of units (D[md-alg-segments]) against the f64 oracle of D405.
 
-    segments_serial.py emit  SYSTEM.top SYSTEM.gro PROGRAM.mlir KINDS OUT.mlir
+    segments_serial.py emit  SYSTEM.top SYSTEM.gro PROGRAM.mlir KINDS OUT.mlir [--periodic]
     segments_serial.py check SYSTEM.top SYSTEM.gro KINDS VALUES.txt
 
 PROGRAM.mlir is a program after convert-md-exec-to-md-alg: its one
@@ -20,12 +20,17 @@ segment (f, g), each group of kind f takes every unit of kind g that comes
 after its own (f = g) or every unit (f != g), 64 entries a unit of work,
 with the bit of each place whose unit pairs with the partner. Pairs of the
 rest within one molecule are excluded (the topology excludes them all).
+With --periodic the units straddle the faces of the cell and the places and
+entries take shifts (build_list); the bound is the same, since the oracle's
+displacements are those of the file, and the members of a unit are stored
+whole about its anchor, the precondition of the buffer form.
 
 The bound of a component is the sum over the tuples of the oracle's own
 bound (the rounding of one tuple's window, D405) plus the reordering of the
 sum over the T tuples, 2 gamma_T times the sum of the magnitudes of their
 contributions, with gamma_T = T eps / (1 - T eps) and eps = 2^-53.
 """
+import math
 import re
 import struct
 import sys
@@ -34,23 +39,49 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[2] / 'Driver' / 'Inputs'))
 from kind_pairs_oracle import EPS, System  # noqa: E402
 
-CELL = 10.0
 GROUP = 16
 BLOCK = 64
 
 
-def build_list(system):
-    """The buffers of the buffer form, and the number of places and units."""
+def read_box(gro):
+    return [float(x) for x in Path(gro).read_text().splitlines()[-1].split()[:3]]
+
+
+def build_list(system, box, periodic):
+    """The buffers of the buffer form, and the positions as stored.
+
+    Without `periodic` the positions are those of the file and every shift
+    is zero. With it, the system is moved so that its middle is at a corner
+    of the cell, and each unit is stored whole, its anchor wrapped into the
+    cell: the units straddle the faces and pairs cross them. The place of a
+    unit u in group G then has the shift n_u + g_G, n_u the cells its anchor
+    was moved by and g_G a lattice vector of the group, so that the places
+    of a group are in its frame; an entry of group G whose partner is in
+    group H has the shift g_G - g_H. Its displacement is that of the file."""
     K = len(system.taken)
     units = [list(system.molecules[name]) for name in system.taken]
     units.append([[p] for p, _ in system.rest])
     home = {p: m for p, m in system.rest}
+    positions = [list(x) for x in system.positions]
+    cells = {}
+    if periodic:
+        middle = [sum(x[k] for x in system.positions) / len(positions) for k in range(3)]
+        moved = [[x[k] - middle[k] for k in range(3)] for x in system.positions]
+        for f in range(K + 1):
+            for unit in units[f]:
+                anchor = moved[unit[0]]
+                n = [math.floor(anchor[k] / box[k]) for k in range(3)]
+                cells[tuple(unit)] = n
+                for p in unit:
+                    positions[p] = [moved[p][k] - n[k] * box[k] for k in range(3)]
     order, members, place_of = [], [], {}
-    groups_of = []
+    groups_of, frame_of = [], {}
     for f in range(K + 1):
         groups = []
         for start in range(0, len(units[f]), GROUP):
-            groups.append(len(order) // GROUP)
+            group = len(order) // GROUP
+            groups.append(group)
+            frame_of[group] = [(group % 3) - 1, ((group // 3) % 3) - 1, 1] if periodic else [0, 0, 0]
             for unit in units[f][start:start + GROUP]:
                 place_of[(f, tuple(unit))] = len(order)
                 if f == K:
@@ -62,8 +93,17 @@ def build_list(system):
             while len(order) % GROUP:
                 order.append(-1)
         groups_of.append(groups)
+    unit_at = {}
+    for f in range(K + 1):
+        for unit in units[f]:
+            unit_at[place_of[(f, tuple(unit))]] = tuple(unit)
+    shifts = []
+    for place in range(len(order)):
+        n = cells.get(unit_at.get(place), [0, 0, 0])
+        g = frame_of[place // GROUP]
+        s = [n[k] + g[k] + 512 for k in range(3)]
+        shifts.append(s[0] | (s[1] << 10) | (s[2] << 20))
     offset = 4  # an entry's shift of zero cells (4 bits an axis, D95)
-    shift_bits = (offset << 16) | (offset << 20) | (offset << 24)
     entries, masks, counts, unit_groups, ordinals, segments = [], [], [], [], [], [0]
     for f in range(K + 1):
         for g in range(f + 1):
@@ -82,7 +122,12 @@ def build_list(system):
                             continue
                         bits |= 1 << lane
                     if bits:
-                        rows.append((place_of[(g, tuple(partner))], bits | shift_bits))
+                        other = place_of[(g, tuple(partner))]
+                        e = [frame_of[group][k] - frame_of[other // GROUP][k] + offset
+                             for k in range(3)]
+                        assert all(0 <= x < 16 for x in e)
+                        shift_bits = (e[0] << 16) | (e[1] << 20) | (e[2] << 24)
+                        rows.append((other, bits | shift_bits))
                 for block in range(0, len(rows), BLOCK):
                     chunk = rows[block:block + BLOCK]
                     entries += [p for p, _ in chunk] + [0] * (BLOCK - len(chunk))
@@ -91,10 +136,13 @@ def build_list(system):
                     unit_groups.append(group)
                     ordinals.append(block // BLOCK)
             segments.append(len(counts))
-    shifts = [512 | (512 << 10) | (512 << 20)] * len(order)
-    return {'entries': entries, 'masks': masks, 'counts': counts,
-            'units': unit_groups, 'ordinals': ordinals, 'places': order,
-            'shifts': shifts, 'segments': segments, 'members': members or [0]}
+    lists = {'entries': entries, 'masks': masks, 'counts': counts,
+             'units': unit_groups, 'ordinals': ordinals, 'places': order,
+             'shifts': shifts, 'segments': segments, 'members': members or [0]}
+    straddling = sum(1 for f in range(K) for unit in units[f]
+                     if len({tuple(math.floor(positions[p][k] / box[k]) for k in range(3))
+                             for p in unit}) > 1)
+    return lists, positions, straddling
 
 
 def extract(program):
@@ -122,11 +170,13 @@ def extract(program):
         i += 1
 
 
-def emit(system, program, out):
+def emit(system, program, out, box, periodic):
     op = extract(program)
     header, regions = op.split(' segment(', 1)
     regions = 'segment(' + regions
-    lists = build_list(system)
+    lists, stored, straddling = build_list(system, box, periodic)
+    if periodic:
+        assert straddling, 'no unit straddles a face of the cell'
     n = len(system.positions)
     lines = ['module {', 'func.func private @printI64(i64)',
              'func.func private @printNewline()', 'func.func @main() {']
@@ -159,19 +209,18 @@ def emit(system, program, out):
     order = ['entries', 'masks', 'counts', 'units', 'ordinals', 'places',
              'shifts', 'segments', 'members']
     names = [buffer('l_' + key, lists[key]) for key in order]
-    positions = buffer('x', [list(p) for p in system.positions], 'f64', 3)
+    positions = buffer('x', stored, 'f64', 3)
     types = buffer('types', system.type_of)
     charges = buffer('charges', system.charge_of, 'f64')
     forces = buffer('f', [[0.0, 0.0, 0.0] for _ in range(n)], 'f64', 3)
     ntypes = len(system.sigma)
     sigma = [[0.5 * (system.sigma[a] + system.sigma[b]) for b in range(ntypes)]
              for a in range(ntypes)]
-    import math
     epsilon = [[math.sqrt(system.epsilon[a] * system.epsilon[b])
                 for b in range(ntypes)] for a in range(ntypes)]
     tables = [buffer('table_sigma', sigma, 'f64', ntypes),
               buffer('table_epsilon', epsilon, 'f64', ntypes)]
-    cell = value(f'arith.constant dense<[{CELL:.1f}, {CELL:.1f}, {CELL:.1f}]> : vector<3xf64>')
+    cell = value(f'arith.constant dense<[{box[0]:.17e}, {box[1]:.17e}, {box[2]:.17e}]> : vector<3xf64>')
     places, nunits = index(len(lists['places'])), index(len(lists['counts']))
 
     # The op in its buffer form.
@@ -295,8 +344,17 @@ def check(system, values):
 
 if __name__ == '__main__':
     if sys.argv[1] == 'emit':
-        _, _, top, gro, program, kinds, out = sys.argv
-        emit(System(top, gro, kinds.split(',')), program, out)
+        periodic = sys.argv[-1] == '--periodic'
+        args = sys.argv[2:-1] if periodic else sys.argv[2:]
+        top, gro, program, kinds, out = args
+        emit(System(top, gro, kinds.split(',')), program, out, read_box(gro), periodic)
     else:
-        _, _, top, gro, kinds, values = sys.argv
-        check(System(top, gro, kinds.split(',')), values)
+        periodic = sys.argv[-1] == '--periodic'
+        top, gro, kinds, values = (sys.argv[2:-1] if periodic else sys.argv[2:])
+        system = System(top, gro, kinds.split(','))
+        if periodic:
+            # The definition forms displacements from coordinates in the
+            # frames of the groups, at most |x| + 3 cells from the origin:
+            # the rounding of the displacements scales with that.
+            system.scale = max(system.scale, 4 * max(read_box(gro)))
+        check(system, values)

@@ -108,7 +108,7 @@ So the list of segment $s$ is a list over reference points, built with the reach
         cutoff(0.9) skin(0.1) prune_skin(0.05) : !sp, !vec
 ```
 
-The ops' own check is D413's: a result type may state no more than the build guarantees, which is the four words above for every segment. The ops refuse a type whose kinds are not the descriptors of their kind operands.
+The ops' own check is D413's: a result type may state no more than the build guarantees, which is the four words above for every segment. The ops check what the IR holds of the kinds: one kind operand for each kind of the type, each a relation whose arity is its descriptor's number of places. That a relation's copies are those of its descriptor is not in its type: `convert-md-to-md-exec` takes both from one `md.kind_pairs`, its kind operands and its descriptors.
 
 **The traversal in `md_exec`.** #795's `md_exec.template_for` becomes `md_exec.segment_for`. It takes one region for each segment it visits, with the segment's table of site pairs (Section 4). `convert-md-to-md-exec` makes it from `md.sum_segment_window` and `md.gather_segment_window` (D405). The windows' verifier proves that each yielded displacement is $\mathbf d_0 + \mathbf c_p - \mathbf c_q$ for a place $p$ of $f$ and a place $q$ of $g$. The conversion records that pair as the slice's entry in the table. It replaces the displacement by a block argument of the site pair and drops the arithmetic of the placement, which the op now owns through the kinds' weights. The conversion therefore proves nothing new: it reads the proof that D405's verifier already made. `md-exec-fuse-loops` (#795) merges the loops of the energy, the forces, and the virial over one list. It takes the union of their tables, and each site pair's mask becomes the values it contributes to. `convert-md-exec-to-md-alg` makes `md_alg.traverse_pairs` from each `segment_for`, one to one, as D415 makes it from `pair_for`.
 
@@ -189,7 +189,7 @@ The groups form of D415 parses, prints, verifies, and lowers as it does on `main
 
 For each segment $s(f, g)$ that the op names, each entry of its list, each unit $i$ of the entry's group whose bit is set, and the entry's partner $j$:
 
-1. **Positions.** Each member is moved into the frame of its unit's place by the place's shift, in the type it is stored in. A unit of a taken kind is first made whole about its anchor: each member takes the image of its bond nearest the anchor, which is exact under the route's precondition. The anchor's sum is converted to $T$. The offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$ are formed in the stored type and converted to $T$ (#795, `emitPrepareTemplateFrame` and `emitTemplateLocalGeometry`: the shift before the narrowing, D95).
+1. **Positions.** Each member is moved into the frame of its unit's place by the place's shift, in the type it is stored in. The members of a unit are stored whole about its anchor: each member at the image of its bond nearest the anchor. This is a precondition of the list, not a step of the op. The writer of the frames establishes it (S4a, #795's `emitPrepareTemplateFrame`, exact under the route's precondition), the buffer form asserts it, and both lowerings read the members as stored. The anchor's sum is converted to $T$. The offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$ are formed in the stored type and converted to $T$ (#795, `emitPrepareTemplateFrame` and `emitTemplateLocalGeometry`: the shift before the narrowing, D95).
 2. **The anchor displacement.** $\mathbf d_0 = \mathbf a_i - \mathbf a_j$ in $T$, with the entry's shift added in $T$, as in D415.
 3. **The sites.** For each place, the op forms $\mathbf c_p = \sum_k (\mathsf W)_{pk}\mathbf h_k$ in $T$:
    - It sums the offsets of equal weight before it scales them, as D405 writes $w(\mathbf h_1 + \mathbf h_2)$.
@@ -243,13 +243,13 @@ D415's 33 cases stay. The new rules, each with a negative case that is a valid o
 - a site type $T$ other than f32, since the segmented schedule is lowered for the route's mixed precision and the serial definition takes any $T$;
 - a stable visit.
 
-`convert-md-alg-to-scf` refuses the structure form, as in D415. The serial oracle refuses `prune`.
+`convert-md-alg-to-scf` refuses the structure form, as in D415, and the pruning in the loop over segments (`prune(G, R)`), which is the SIMT schedule's.
 
 **The generator's condition.** $K \le 2$ stays where D405 put it, in the driver's generator, which refuses $K = 3$ with its reason. The type and the op take any $K$. The mechanism is general and the enabling condition narrow (the maintainer, 2026-11-12).
 
 ## 6. The lowerings
 
-**The serial definition** (`emitTraversePairsSerial`, extended in `lib/Conversion/MDExecKernels/TraversePairs.cpp`) is written apart from the schedule, in the order of the meaning:
+**The serial definition** (`emitTraverseSegmentsSerial`, in `lib/Conversion/MDExecKernels/TraverseSegments.cpp`, which `emitTraversePairsSerial` calls for an op over segments) is written apart from the schedule, in the order of the meaning:
 - for each segment;
 - for each unit of its rows, or each active unit of an inner list;
 - for each entry of its block, and each of the 16 places of its group whose bit is set:
@@ -476,10 +476,10 @@ select the route before S4b, and `convert-md-exec-to-gpu` refuses its ops.
 
 | Gate | Result |
 |---|---|
-| A negative case for each of V1 to V13 | `test/Dialect/MDAlg/traverse-segments-invalid.mlir`, 28 cases; `test/Dialect/MDExec/segments-invalid.mlir`, 8 cases of the ops of md_exec; `test/Conversion/MDToMDExec/segment-windows.mlir`, the 2 refusals of the conversion |
-| The converted regions against #795's `template_for` bodies at 004a0735 | `test/Driver/segment-loops-795.test`: for OPC and TIP3P, every loop of `@term_lj`, `@term_coulomb`, and `@energy.energy_forces_virial` (6 and 9 loops), site pair by site pair, the same expressions; a table that names another place fails. No constant is replaced: the weight is in the placement, which the region no longer holds |
-| The serial definition against D405's f64 oracle | `test/Integration/md-alg-segments-serial.test`, the system of four kinds of D405 through the whole pipeline to the op, in double precision, every component (energy, 72 forces, 9 virial) within the bound of the oracle plus $2\gamma_T$ times the magnitudes for the order of the sum over the $T$ tuples |
-| The mutation with the transpose's weights exchanged | tried once: the row of weights of each place read in reverse; 30 of the 82 components outside the bound at $K = 2$ for both systems, the largest a force of 42.64 read as -2.38 against a bound of $9\times10^{-12}$; reverted |
+| A negative case for each of V1 to V13 | `test/Dialect/MDAlg/traverse-segments-invalid.mlir`, 35 cases, each hitting its own message: among them $p = n_f$ and an empty table (V3), two segments in two types (V5), the buffer form of groups with regions of segments (V1), 9 buffers with `inner` (V12), a kind that is not a `#md.rigid_kind` (V11), and a rotation on an op over groups (V13); `test/Dialect/MDExec/segments-invalid.mlir`, 8 cases of the ops of md_exec; `test/Conversion/MDToMDExec/segment-windows.mlir`, the 3 refusals of the conversion, one of them a site pair of a site in the frame layout of forces |
+| The converted regions against #795's `template_for` bodies at 004a0735 | `test/Driver/segment-loops-795.test`: for OPC and TIP3P, every loop of `@energy`, `@term_lj`, `@term_coulomb`, and `@energy.energy_forces_virial` (6 and 12 loops), site pair by site pair, the same expressions, and the places $(p, q)$ of each entry of the table those that #795's placement of the displacement names, evaluated from its body. A table that names another second place of an energy, another first place of a force, or another second place of a force fails, each with its message. No constant is replaced: the weight is in the placement, which the region no longer holds |
+| The serial definition against D405's f64 oracle | `test/Integration/md-alg-segments-serial.test`, the system of four kinds of D405 through the whole pipeline to the op, in double precision, every component (energy, 72 forces, 9 virial) within the bound of the oracle plus $2\gamma_T$ times the magnitudes for the order of the sum over the $T$ tuples; also with the units straddling the faces of the cell and the places and entries shifted (`--periodic`, below) |
+| Mutations that must fail | Each tried once and reverted, by editing the line, rebuilding `mdir-opt`, and running the test: the transpose's row of weights read in reverse (`type.getPlaceWeights(unit.kind, p)[k]` read at `row.size() - 1 - k` in `TraverseSegments.cpp`), 30 of the 82 components outside the bound at $K = 2$ for both systems, the largest a force of 42.64 read as -2.38 against a bound of $9\times10^{-12}$; the entry's shift read from bit 17 instead of 16, 76 of 82 outside in the periodic system; the place's shift read in fields of 11 bits instead of 10, 27 of 82 outside; V3 without its $p \ge n_f$ test, and without its empty table, each fails its case in `traverse-segments-invalid.mlir` |
 | The corpus identical to `main`'s (D406's method) | `mdir emit --stage=lowered` with `MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 MDIR_COMPILE_CACHE=off MDIR_SKIN_CACHE=off MDIR_SKIN_SEARCH=never`, through `scripts/builder-equivalence/check.py compare --stages lowered`, base 7508da8f: the examples, the tests, the Amber suite, and the cases, on the GPU target, the run and the segments, mixed and double, as written and with `neighbor_structure = "GROUPS"`: 2,170 cases, 2,170 identical, 892 of them the same error in both builds (D415's counts) |
 
 The largest error of the serial definition, as a fraction of its bound:
@@ -490,6 +490,18 @@ The largest error of the serial definition, as a fraction of its bound:
 | TIP3P and the rigid molecule of three Lennard-Jones atoms ($K = 2$) | 6 | 79 | 0.016 |
 | the four-site water ($K = 1$) | 3 | 138 | 0.017 |
 | TIP3P ($K = 1$) | 3 | 135 | 0.011 |
+| TIP3P and the four-site water ($K = 2$), periodic | 6 | 60 | 0.012 |
+| the four-site water ($K = 1$), periodic | 3 | 138 | 0.010 |
+
+In the periodic systems the middle of the system is at a corner of the
+cell, each unit is stored whole with its anchor wrapped into the cell, and
+the places take the shifts of their groups' frames: at $K = 2$, 3 units of
+the taken kinds straddle a face, all 24 particles are moved, and 8 of the 15
+entries carry a nonzero shift; at $K = 1$, 1 unit straddles and 2 of the 16
+entries are shifted. Since the definition forms displacements from
+coordinates up to four cell edges from the origin, the bound of the
+rounding of the displacements takes that scale instead of the largest
+coordinate of the file.
 
 **Left to the later slices.** The passes of md_exec that S1 does not
 extend to the lists of units take effect only on a program that runs: the

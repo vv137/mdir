@@ -197,6 +197,54 @@ func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
 
 // -----
 
+// V3: a place after the last of the first unit (the rest has one place).
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
+  // expected-error @+1 {{has the site pair (1, 0) in segment(1, 0), whose units have 1 and 4 places}}
+  %u = md_alg.traverse_pairs structure %l : !sp
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (1, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// V3: a segment with an empty table.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
+  // expected-error @+1 {{expected at least one site pair in the table of segment(1, 1)}}
+  %u = md_alg.traverse_pairs structure %l : !sp
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (0, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  }
+  segment(1, 1) sites [] {
+  ^bb0(%qi: f32, %qj: f32):
+    md_alg.yield
+  } -> f64
+  return
+}
+
+// -----
+
 // V4: a value the op does not have.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 !x = memref<?x3xf64, 1>
@@ -301,6 +349,34 @@ func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
     %e0 = arith.extf %r0 : f32 to f64
     %e1 = arith.extf %r1 : f32 to f64
     md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// V5: two segments in two types.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
+  // expected-error @+1 {{takes r^2 of segment(1, 1) in 'f64' and of segment(1, 0) in 'f32': the site arithmetic of every segment is in one type}}
+  %u = md_alg.traverse_pairs structure %l : !sp
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (0, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  }
+  segment(1, 1) sites [(0, 0) [0, 1]] {
+  ^bb0(%r0: f64, %d0: vector<3xf64>, %qi: f32, %qj: f32):
+    %e0 = arith.addf %r0, %r0 : f64
+    %w = arith.truncf %d0 : vector<3xf64> to vector<3xf32>
+    md_alg.yield %w, %e0 : vector<3xf32>, f64
   } -> f64
   return
 }
@@ -556,6 +632,33 @@ func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
 
 // -----
 
+// V11: a kind that is not a #md.rigid_kind.
+// expected-error @+1 {{expected each taken kind to be a '#md.rigid_kind', got 3 : i64}}
+!sp = !mdrt.segmented_pairs<@atoms, kinds [3 : i64], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
+  %u = md_alg.traverse_pairs structure %l : !sp
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (0, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  }
+  segment(1, 1) sites [(0, 0) [0, 1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %qi: f32, %qj: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    md_alg.yield %d0, %e0 : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
 // V11: the segments of a type out of order.
 // expected-error @+1 {{expected segment 1 in the order of s(f, g) = f(f+1)/2 + g, got (1, 1)}}
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group)]>
@@ -591,6 +694,60 @@ func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
 func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64, %b: memref<?xi32>, %n: index) {
   // expected-error @+1 {{takes 9 buffers of the layout of the groups in its buffer form, not 7}}
   %u = md_alg.traverse_pairs lists(%b, %b, %b, %b, %b, %b, %b : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%n, %n) contract(!sp) reach(1.0)
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (0, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  }
+  segment(1, 1) sites [(0, 0) [0, 1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %qi: f32, %qj: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    md_alg.yield %d0, %e0 : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// V12: the inner list of the buffer form without its five buffers.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64, %b: memref<?xi32>, %n: index) {
+  // expected-error @+1 {{takes 14 buffers of the layout of the groups in its buffer form, not 9}}
+  %u = md_alg.traverse_pairs lists(%b, %b, %b, %b, %b, %b, %b, %b, %b : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%n, %n) inner contract(!sp) reach(1.0)
+      positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5]
+  segment(1, 0) sites [(0, 3) [0, 1], (0, 0) [1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %r1: f32, %d1: vector<3xf32>, %qi: f32, %qj0: f32, %qj1: f32, %qj2: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    %e1 = arith.extf %r1 : f32 to f64
+    md_alg.yield %d0, %e0, %e1 : vector<3xf32>, f64, f64
+  }
+  segment(1, 1) sites [(0, 0) [0, 1]] {
+  ^bb0(%r0: f32, %d0: vector<3xf32>, %qi: f32, %qj: f32):
+    %e0 = arith.extf %r0 : f32 to f64
+    md_alg.yield %d0, %e0 : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// V1: the regions of segments in the buffer form of a structure of groups.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+!q = memref<?xf32, 1>
+func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64, %b: memref<?xi32>, %n: index) {
+  // expected-error @+1 {{takes the regions of segments, which a list of units has}}
+  %u = md_alg.traverse_pairs lists(%b, %b, %b, %b, %b, %b, %b, %b, %b : memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>, memref<?xi32>) sizes(%n, %n) contract(!mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>) reach(1.0)
       positions(%x : !x) cell(%cell : !md.cell) ins(%q : !q) outs(%f : !f) reduce(%u0 : f64)
       unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]
@@ -685,6 +842,25 @@ func.func @f(%l: !sp, %x: !x, %cell: !md.cell, %q: !q, %f: !f, %u0: f64) {
   ^bb0(%r0: f32, %d0: vector<3xf32>, %qi: f32, %qj: f32):
     %e0 = arith.extf %r0 : f32 to f64
     md_alg.yield %d0, %e0 : vector<3xf32>, f64
+  } -> f64
+  return
+}
+
+// -----
+
+// V13: a rotation, an execution parameter of the segments' schedule, on an op over groups.
+!groups = !mdrt.neighbors<@atoms, unique, minimum, removed, stable(group, search)>
+!x = memref<?x3xf64, 1>
+!f = memref<?x3xf32, 1>
+func.func @f(%g: !groups, %x: !x, %cell: !md.cell, %f: !f, %u0: f64) {
+  // expected-error @+1 {{takes sites and a rotation only with segments}}
+  %u = md_alg.traverse_pairs structure %g : !groups
+      positions(%x : !x) cell(%cell : !md.cell) outs(%f : !f) reduce(%u0 : f64)
+      unique visit unordered combine atomic algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
+      cutoff(0.9) weights [0.5] rotate(16) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_alg.yield %d, %e : vector<3xf32>, f64
   } -> f64
   return
 }

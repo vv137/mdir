@@ -339,7 +339,17 @@ LogicalResult Converter::convertSegmentWindow(OpTy op, bool gather) {
     }
     // A force of a site pair is one antisymmetric pair of slots: +F at
     // place p and -F at place q, every other slot zero.
-    // Without site forces the slots are the frame atoms, in frame order.
+    // Without site forces the slots are the frame atoms, in frame order:
+    // a site pair of a site has no slot of its own there.
+    auto isSite = [](const md::SegmentSide &side, unsigned place) {
+      return side.kind && !side.kind.getFrameIndex(place);
+    };
+    if (!siteForces && (isSite(shape.a, p) || isSite(shape.b, q)))
+      return op.emitOpError()
+             << "yields forces of the site pair (" << p << ", " << q
+             << "), which names a site, in the slots of the frame atoms: the "
+                "loop over units takes the forces of a pair at its places "
+                "('site_forces')";
     auto frameIndex = [](const md::SegmentSide &side, unsigned place) {
       return side.kind ? *side.kind.getFrameIndex(place) : 0u;
     };

@@ -170,6 +170,9 @@ LogicalResult mdir::mdrt::verifySegmentRegions(
   unsigned k = type.getNumKinds();
   unsigned numValues = signature.values.size();
   int64_t previous = -1;
+  // V5: one float type T for the site arithmetic of every segment.
+  Type common;
+  std::pair<int64_t, int64_t> first;
   for (unsigned index = 0, e = regions.size(); index != e; ++index) {
     auto segment = dyn_cast<DenseI64ArrayAttr>(segments[index]);
     if (!segment || segment.size() != 2)
@@ -248,6 +251,16 @@ LogicalResult mdir::mdrt::verifySegmentRegions(
       return op->emitOpError() << "expected the region of segment(" << f
                                << ", " << g
                                << ") to take r^2 first, of a float type";
+    if (!common) {
+      common = real;
+      first = {f, g};
+    } else if (real != common) {
+      return op->emitOpError()
+             << "takes r^2 of segment(" << f << ", " << g << ") in " << real
+             << " and of segment(" << first.first << ", " << first.second
+             << ") in " << common
+             << ": the site arithmetic of every segment is in one type";
+    }
     SmallVector<Type> expected =
         getSegmentArgumentTypes(real, M, mf, mg, signature);
     if (block.getArgumentTypes() != ArrayRef<Type>(expected)) {

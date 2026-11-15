@@ -21,7 +21,9 @@ loop the argument of the region for site pair m. A gathered field's value
 at member k is G<field>.<k> in both. The force of a site pair is #795's
 force at the slot of its first place (the sites' layout, O, H1, H2, E, or
 the frame's), which is the converted loop's one value; the converted
-table's places say which slot. The weight of the site, which #795 has in
+table's places say which slot. The table's places are themselves compared
+with #795's placement: the coefficients of each displacement over the
+frame offsets, evaluated from the body, name the places (p, q). The weight of the site, which #795 has in
 the placement, so not in a contribution, does not enter the comparison.
 """
 import re
@@ -102,6 +104,65 @@ class Canon:
         return [rename(v) for v in values]
 
 
+def placement(body, arguments, ncoord, displacement):
+    """The coefficients of #795's displacement over its window coordinates,
+    C_1 ... C_{n-1} (the frame offsets), evaluated symbolically from the
+    body: additions, subtractions, and products with a constant (a
+    broadcast scalar or a splat)."""
+    env = {}
+    for index, (name, _) in enumerate(arguments[:ncoord]):
+        coefficients = [0.0] * (ncoord - 1)
+        if index:
+            coefficients[index - 1] = 1.0
+        env[name] = ('vector', coefficients)
+    for line in body:
+        match = re.match(r'(%[A-Za-z_0-9]+) = (\S+) (.*?) :', line)
+        if not match:
+            continue
+        result, op, rest = match.groups()
+        operands = VALUE.findall(rest)
+        if op == 'arith.constant':
+            dense = re.match(r'dense<([^>]*)>', rest)
+            if dense:
+                value = float(dense.group(1))
+                env[result] = ('vector', [0.0] * (ncoord - 1)) if value == 0.0 else ('scalar', value)
+            else:
+                try:
+                    env[result] = ('scalar', float(rest))
+                except ValueError:
+                    pass
+        elif op == 'vector.broadcast' and env.get(operands[0], (None,))[0] == 'scalar':
+            env[result] = env[operands[0]]
+        elif op in ('arith.addf', 'arith.subf') and all(
+                env.get(o, (None,))[0] == 'vector' for o in operands[:2]):
+            a, b = env[operands[0]][1], env[operands[1]][1]
+            sign = 1.0 if op == 'arith.addf' else -1.0
+            env[result] = ('vector', [x + sign * y for x, y in zip(a, b)])
+        elif op == 'arith.mulf' and len(operands) == 2:
+            kinds = [env.get(o, (None,))[0] for o in operands]
+            if kinds == ['scalar', 'vector'] or kinds == ['vector', 'scalar']:
+                factor = env[operands[kinds.index('scalar')]][1]
+                vector = env[operands[kinds.index('vector')]][1]
+                env[result] = ('vector', [factor * x for x in vector])
+    found = env.get(displacement)
+    assert found and found[0] == 'vector', f'no placement for {displacement}'
+    return found[1]
+
+
+def place(coefficients):
+    """The place of a water of #795 from its coefficients over its two frame
+    offsets: the oxygen, a hydrogen, or the site alpha (h1 + h2)."""
+    a, b = coefficients
+    if a == 0.0 and b == 0.0:
+        return 0
+    if (a, b) == (1.0, 0.0):
+        return 1
+    if (a, b) == (0.0, 1.0):
+        return 2
+    assert a == b and a > 0.0, coefficients
+    return 3
+
+
 def yielded_values(line):
     return re.match(r'md_exec\.yield (.*?) :', line).group(1).split(', ')
 
@@ -132,10 +193,20 @@ def reference_loop(canon, header, regions):
         else:
             field, member = divmod(index - ncoord, arity)
             names[name] = f'G{field}.{member}'
+    # The site pair of each displacement, from its placement: (p, q).
+    sites = []
+    for value in displacements:
+        c = placement(body, arguments, ncoord, value)
+        if tag == 0:
+            sites.append((place(c[0:2]), place([-x for x in c[2:4]])))
+        elif tag == 1:
+            sites.append((0, place([-x for x in c[0:2]])))
+        else:
+            sites.append((0, 0))
     for m, value in enumerate(displacements):
         names[value] = f'D{m}'
     named = canon.name(names, body, values)
-    return list(SEGMENTS.values())[tag], kind(header), named, count, slots
+    return list(SEGMENTS.values())[tag], kind(header), named, count, slots, sites
 
 
 def converted_loop(canon, header, regions):
@@ -168,13 +239,16 @@ def main():
         if len(a) != len(b):
             raise SystemExit(f'@{function}: {len(a)} and {len(b)} loops')
         for x, y in zip(a, b):
-            segment, what, values, count, slots = reference_loop(canon, *x)
+            segment, what, values, count, slots, sites = reference_loop(canon, *x)
             segment2, what2, values2, table = converted_loop(canon, *y)
             where = f'@{function} {what} segment{segment2}'
             if (segment, what) != (segment2, what2) or count != len(table):
                 raise SystemExit(f'{where}: the loops differ: {segment} {what} {count} '
                                  f'and {segment2} {what2} {len(table)}')
             for m, (p, q) in enumerate(table):
+                if (p, q) != sites[m]:
+                    raise SystemExit(f'{where}: site pair {m} is ({p}, {q}) in the table '
+                                     f'and {sites[m]} by the placement of #795')
                 expected = values[m * slots + p] if what == 'force' else values[m]
                 if expected != values2[m]:
                     raise SystemExit(f'{where}: site pair ({p}, {q}) differs')

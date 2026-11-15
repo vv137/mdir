@@ -1,9 +1,200 @@
-// The md_exec.template_for loops of the functions @term_lj, @term_coulomb,
-// and @energy.energy_forces_virial that #795 (its branch at 004a0735) made
-// for the control of kind-pairs-identity.test with water.template = ON,
-// by mdir emit --stage=module, md-differentiate, and
+// The md_exec.template_for loops of the functions @energy, @term_lj,
+// @term_coulomb, and @energy.energy_forces_virial that #795 (its branch at
+// 004a0735) made for the control of kind-pairs-identity.test with
+// water.template = ON, by mdir emit --stage=module, md-differentiate, and
 // convert-md-to-md-exec{skin=0.1}: the reference of segment-loops-795.test.
 // The rest of the module is left out.
+  md.potential @energy(...)
+    %4 = md_exec.template_for %3, %arg0, %arg1 reduce(%cst : f64) pairs [9, 0, 0] cutoff(9.000000e-01) extent(9.582000e-02) alpha(0.000000e+00) water {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: vector<3xf64>, %arg16: vector<3xf64>):
+      %cst_2 = arith.constant dense<0.000000e+00> : vector<3xf64>
+      %cst_3 = arith.constant dense<0.000000e+00> : vector<3xf64>
+      %c0_i32 = arith.constant 0 : i32
+      %cst_4 = arith.constant -8.340000e-01 : f64
+      %c1_i32 = arith.constant 1 : i32
+      %cst_5 = arith.constant 4.170000e-01 : f64
+      %c1_i32_6 = arith.constant 1 : i32
+      %cst_7 = arith.constant 4.170000e-01 : f64
+      %9 = arith.addf %arg12, %cst_2 : vector<3xf64>
+      %10 = arith.subf %9, %cst_3 : vector<3xf64>
+      %11 = arith.addf %arg12, %cst_2 : vector<3xf64>
+      %12 = arith.subf %11, %arg15 : vector<3xf64>
+      %13 = arith.addf %arg12, %cst_2 : vector<3xf64>
+      %14 = arith.subf %13, %arg16 : vector<3xf64>
+      %15 = arith.addf %arg12, %arg13 : vector<3xf64>
+      %16 = arith.subf %15, %cst_3 : vector<3xf64>
+      %17 = arith.addf %arg12, %arg13 : vector<3xf64>
+      %18 = arith.subf %17, %arg15 : vector<3xf64>
+      %19 = arith.addf %arg12, %arg13 : vector<3xf64>
+      %20 = arith.subf %19, %arg16 : vector<3xf64>
+      %21 = arith.addf %arg12, %arg14 : vector<3xf64>
+      %22 = arith.subf %21, %cst_3 : vector<3xf64>
+      %23 = arith.addf %arg12, %arg14 : vector<3xf64>
+      %24 = arith.subf %23, %arg15 : vector<3xf64>
+      %25 = arith.addf %arg12, %arg14 : vector<3xf64>
+      %26 = arith.subf %25, %arg16 : vector<3xf64>
+      %27 = arith.mulf %10, %10 : vector<3xf64>
+      %28 = vector.reduction <add>, %27 : vector<3xf64> into f64
+      %29 = math.sqrt %28 : f64
+      %30 = md.lookup %arg4[%c0_i32, %c0_i32] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %31 = md.lookup %arg5[%c0_i32, %c0_i32] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %cst_8 = arith.constant 4.000000e+00 : f64
+      %32 = arith.mulf %cst_8, %31 : f64
+      %33 = arith.divf %30, %29 : f64
+      %c6_i32 = arith.constant 6 : i32
+      %34 = math.fpowi %33, %c6_i32 : f64, i32
+      %35 = arith.mulf %34, %34 : f64
+      %36 = arith.subf %35, %34 : f64
+      %37 = arith.mulf %32, %36 : f64
+      %cst_9 = arith.constant 138.93545755023302 : f64
+      %38 = arith.mulf %cst_4, %cst_4 : f64
+      %39 = arith.mulf %cst_9, %38 : f64
+      %40 = arith.divf %39, %29 : f64
+      %41 = arith.addf %37, %40 : f64
+      %42 = arith.mulf %12, %12 : vector<3xf64>
+      %43 = vector.reduction <add>, %42 : vector<3xf64> into f64
+      %44 = math.sqrt %43 : f64
+      %cst_10 = arith.constant 138.93545755023302 : f64
+      %45 = arith.mulf %cst_4, %cst_5 : f64
+      %46 = arith.mulf %cst_10, %45 : f64
+      %47 = arith.divf %46, %44 : f64
+      %48 = arith.mulf %14, %14 : vector<3xf64>
+      %49 = vector.reduction <add>, %48 : vector<3xf64> into f64
+      %50 = math.sqrt %49 : f64
+      %cst_11 = arith.constant 138.93545755023302 : f64
+      %51 = arith.mulf %cst_4, %cst_7 : f64
+      %52 = arith.mulf %cst_11, %51 : f64
+      %53 = arith.divf %52, %50 : f64
+      %54 = arith.mulf %16, %16 : vector<3xf64>
+      %55 = vector.reduction <add>, %54 : vector<3xf64> into f64
+      %56 = math.sqrt %55 : f64
+      %cst_12 = arith.constant 138.93545755023302 : f64
+      %57 = arith.mulf %cst_5, %cst_4 : f64
+      %58 = arith.mulf %cst_12, %57 : f64
+      %59 = arith.divf %58, %56 : f64
+      %60 = arith.mulf %18, %18 : vector<3xf64>
+      %61 = vector.reduction <add>, %60 : vector<3xf64> into f64
+      %62 = math.sqrt %61 : f64
+      %cst_13 = arith.constant 138.93545755023302 : f64
+      %63 = arith.mulf %cst_5, %cst_5 : f64
+      %64 = arith.mulf %cst_13, %63 : f64
+      %65 = arith.divf %64, %62 : f64
+      %66 = arith.mulf %20, %20 : vector<3xf64>
+      %67 = vector.reduction <add>, %66 : vector<3xf64> into f64
+      %68 = math.sqrt %67 : f64
+      %cst_14 = arith.constant 138.93545755023302 : f64
+      %69 = arith.mulf %cst_5, %cst_7 : f64
+      %70 = arith.mulf %cst_14, %69 : f64
+      %71 = arith.divf %70, %68 : f64
+      %72 = arith.mulf %22, %22 : vector<3xf64>
+      %73 = vector.reduction <add>, %72 : vector<3xf64> into f64
+      %74 = math.sqrt %73 : f64
+      %cst_15 = arith.constant 138.93545755023302 : f64
+      %75 = arith.mulf %cst_7, %cst_4 : f64
+      %76 = arith.mulf %cst_15, %75 : f64
+      %77 = arith.divf %76, %74 : f64
+      %78 = arith.mulf %24, %24 : vector<3xf64>
+      %79 = vector.reduction <add>, %78 : vector<3xf64> into f64
+      %80 = math.sqrt %79 : f64
+      %cst_16 = arith.constant 138.93545755023302 : f64
+      %81 = arith.mulf %cst_7, %cst_5 : f64
+      %82 = arith.mulf %cst_16, %81 : f64
+      %83 = arith.divf %82, %80 : f64
+      %84 = arith.mulf %26, %26 : vector<3xf64>
+      %85 = vector.reduction <add>, %84 : vector<3xf64> into f64
+      %86 = math.sqrt %85 : f64
+      %cst_17 = arith.constant 138.93545755023302 : f64
+      %87 = arith.mulf %cst_7, %cst_7 : f64
+      %88 = arith.mulf %cst_17, %87 : f64
+      %89 = arith.divf %88, %86 : f64
+      md_exec.yield %41, %47, %53, %59, %65, %71, %77, %83, %89, %10, %12, %14, %16, %18, %20, %22, %24, %26 : f64, f64, f64, f64, f64, f64, f64, f64, f64, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
+    } mixed {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>):
+      md_exec.yield
+    } atoms {
+    ^bb0(%arg12: vector<3xf64>):
+      md_exec.yield
+    } : !mdrt.segmented_pairs<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+    %5 = md_exec.template_for %3, %arg0, %arg1 ins(%arg3, %arg2 : !md.field<@atoms, i32>, !md.field<@atoms, f64>) reduce(%cst_0 : f64) pairs [0, 3, 0] cutoff(9.000000e-01) extent(9.582000e-02) alpha(0.000000e+00) water {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: vector<3xf64>, %arg16: vector<3xf64>, %arg17: i32, %arg18: i32, %arg19: i32, %arg20: i32, %arg21: i32, %arg22: i32, %arg23: f64, %arg24: f64, %arg25: f64, %arg26: f64, %arg27: f64, %arg28: f64):
+      md_exec.yield
+    } mixed {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: i32, %arg16: i32, %arg17: i32, %arg18: i32, %arg19: f64, %arg20: f64, %arg21: f64, %arg22: f64):
+      %cst_2 = arith.constant dense<0.000000e+00> : vector<3xf64>
+      %9 = arith.subf %arg12, %cst_2 : vector<3xf64>
+      %c0_i32 = arith.constant 0 : i32
+      %cst_3 = arith.constant -8.340000e-01 : f64
+      %10 = arith.subf %arg12, %arg13 : vector<3xf64>
+      %c1_i32 = arith.constant 1 : i32
+      %cst_4 = arith.constant 4.170000e-01 : f64
+      %11 = arith.subf %arg12, %arg14 : vector<3xf64>
+      %c1_i32_5 = arith.constant 1 : i32
+      %cst_6 = arith.constant 4.170000e-01 : f64
+      %12 = arith.mulf %9, %9 : vector<3xf64>
+      %13 = vector.reduction <add>, %12 : vector<3xf64> into f64
+      %14 = math.sqrt %13 : f64
+      %15 = md.lookup %arg4[%arg15, %c0_i32] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %16 = md.lookup %arg5[%arg15, %c0_i32] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %cst_7 = arith.constant 4.000000e+00 : f64
+      %17 = arith.mulf %cst_7, %16 : f64
+      %18 = arith.divf %15, %14 : f64
+      %c6_i32 = arith.constant 6 : i32
+      %19 = math.fpowi %18, %c6_i32 : f64, i32
+      %20 = arith.mulf %19, %19 : f64
+      %21 = arith.subf %20, %19 : f64
+      %22 = arith.mulf %17, %21 : f64
+      %cst_8 = arith.constant 138.93545755023302 : f64
+      %23 = arith.mulf %arg19, %cst_3 : f64
+      %24 = arith.mulf %cst_8, %23 : f64
+      %25 = arith.divf %24, %14 : f64
+      %26 = arith.addf %22, %25 : f64
+      %27 = arith.mulf %10, %10 : vector<3xf64>
+      %28 = vector.reduction <add>, %27 : vector<3xf64> into f64
+      %29 = math.sqrt %28 : f64
+      %cst_9 = arith.constant 138.93545755023302 : f64
+      %30 = arith.mulf %arg19, %cst_4 : f64
+      %31 = arith.mulf %cst_9, %30 : f64
+      %32 = arith.divf %31, %29 : f64
+      %33 = arith.mulf %11, %11 : vector<3xf64>
+      %34 = vector.reduction <add>, %33 : vector<3xf64> into f64
+      %35 = math.sqrt %34 : f64
+      %cst_10 = arith.constant 138.93545755023302 : f64
+      %36 = arith.mulf %arg19, %cst_6 : f64
+      %37 = arith.mulf %cst_10, %36 : f64
+      %38 = arith.divf %37, %35 : f64
+      md_exec.yield %26, %32, %38, %9, %10, %11 : f64, f64, f64, vector<3xf64>, vector<3xf64>, vector<3xf64>
+    } atoms {
+    ^bb0(%arg12: vector<3xf64>, %arg13: i32, %arg14: i32, %arg15: f64, %arg16: f64):
+      md_exec.yield
+    } : !mdrt.segmented_pairs<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+    %7 = md_exec.template_for %3, %arg0, %arg1 ins(%arg3, %arg2 : !md.field<@atoms, i32>, !md.field<@atoms, f64>) reduce(%cst_1 : f64) pairs [0, 0, 1] cutoff(9.000000e-01) extent(9.582000e-02) alpha(0.000000e+00) water {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: vector<3xf64>, %arg16: vector<3xf64>, %arg17: i32, %arg18: i32, %arg19: i32, %arg20: i32, %arg21: i32, %arg22: i32, %arg23: f64, %arg24: f64, %arg25: f64, %arg26: f64, %arg27: f64, %arg28: f64):
+      md_exec.yield
+    } mixed {
+    ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: i32, %arg16: i32, %arg17: i32, %arg18: i32, %arg19: f64, %arg20: f64, %arg21: f64, %arg22: f64):
+      md_exec.yield
+    } atoms {
+    ^bb0(%arg12: vector<3xf64>, %arg13: i32, %arg14: i32, %arg15: f64, %arg16: f64):
+      %9 = arith.mulf %arg12, %arg12 : vector<3xf64>
+      %10 = vector.reduction <add>, %9 : vector<3xf64> into f64
+      %11 = math.sqrt %10 : f64
+      %12 = md.lookup %arg4[%arg13, %arg14] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %13 = md.lookup %arg5[%arg13, %arg14] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+      %cst_2 = arith.constant 4.000000e+00 : f64
+      %14 = arith.mulf %cst_2, %13 : f64
+      %15 = arith.divf %12, %11 : f64
+      %c6_i32 = arith.constant 6 : i32
+      %16 = math.fpowi %15, %c6_i32 : f64, i32
+      %17 = arith.mulf %16, %16 : f64
+      %18 = arith.subf %17, %16 : f64
+      %19 = arith.mulf %14, %18 : f64
+      %cst_3 = arith.constant 138.93545755023302 : f64
+      %20 = arith.mulf %arg15, %arg16 : f64
+      %21 = arith.mulf %cst_3, %20 : f64
+      %22 = arith.divf %21, %11 : f64
+      %23 = arith.addf %19, %22 : f64
+      md_exec.yield %23, %arg12 : f64, vector<3xf64>
+    } : !mdrt.segmented_pairs<@atoms>, !md.field<@atoms, 3 x f64> -> f64
   md.function @energy.energy_forces_virial(...)
     %1 = md_exec.template_for %0, %arg0, %arg1 reduce(%cst : f64) pairs [9, 0, 0] cutoff(9.000000e-01) extent(9.582000e-02) alpha(0.000000e+00) water {
     ^bb0(%arg12: vector<3xf64>, %arg13: vector<3xf64>, %arg14: vector<3xf64>, %arg15: vector<3xf64>, %arg16: vector<3xf64>):

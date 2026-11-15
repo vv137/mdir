@@ -61,3 +61,21 @@
 # The visit reversed (reverse-unordered-visits) is within the bound too.
 # RUN: mdir-opt %t/waters-probe.mlir --convert-md-alg-to-scf=reverse-unordered-visits=true | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters-reversed.txt
 # RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,OPC %t/waters-reversed.txt | FileCheck %s --check-prefix=WATERS
+#
+# Units that straddle the faces of the cell, and pairs that cross them: the
+# system is moved so that its middle is at a corner, each unit stored whole
+# with its anchor wrapped into the cell, the places shifted into the frames
+# of their groups and the entries by the difference of those frames
+# (segments_serial.py, --periodic). The places' and the entries' shifts are
+# then decoded by the definition, and the oracle is the same.
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/waters-alg.mlir SOL,OPC %t/waters-periodic.mlir --periodic
+# RUN: mdir-opt %t/waters-periodic.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/waters-periodic.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro SOL,OPC %t/waters-periodic.txt --periodic | FileCheck %s --check-prefix=WATERS
+# RUN: %python %S/Inputs/segments_serial.py emit %t/system.top %t/system.gro %t/opc-alg.mlir OPC %t/opc-periodic.mlir --periodic
+# RUN: mdir-opt %t/opc-periodic.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/opc-periodic.txt
+# RUN: %python %S/Inputs/segments_serial.py check %t/system.top %t/system.gro OPC %t/opc-periodic.txt --periodic | FileCheck %s --check-prefix=OPC
+#
+# The serial definition does not prune in the loop (D284): the pruning is
+# the SIMT schedule's.
+# RUN: not mdir-opt %S/Inputs/md-alg/segments-prune.mlir --convert-md-alg-to-scf 2>&1 | FileCheck %s --check-prefix=PRUNE
+# PRUNE: prunes in the loop over segments, which the serial definition does not
