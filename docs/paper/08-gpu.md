@@ -242,7 +242,7 @@ runtime-wide synchronization requires a separate proof and measurement.
 to later allocations without a call to the driver; buffers that a step
 allocates and frees cost a lookup. The pool is a best-fit allocator with
 splitting and deferred coalescing [[Wilson1995]](references.md#wilson1995)
-over the allocations that it takes from the driver (D[device-pool-split]).
+over the allocations that it takes from the driver (D416).
 A request takes first the idle piece that last held a block of its size,
 so the requests that recur at every step keep their pieces and addresses.
 Otherwise it takes the smallest idle piece that holds it, cut at its size

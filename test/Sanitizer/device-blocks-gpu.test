@@ -11,7 +11,7 @@
 # RUN: env MDRT_FAIL_ALLOCATION=101 %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda retry | FileCheck %s --check-prefix=RETRY
 # RETRY: device blocks retry passed
 #
-# The best fit with splitting and coalescing (D[device-pool-split]): no
+# The best fit with splitting and coalescing (D416): no
 # access beyond a piece or to a returned arena, and no leak. racecheck on
 # the order of the streams.
 # RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda split | FileCheck %s --check-prefix=SPLIT

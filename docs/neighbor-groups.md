@@ -588,7 +588,7 @@ places that the last build occupied (D312, #471): that number moves by 64
 from one build to the next, and the runtime's pool of device memory (not
 the pool of blocks of the lists) then reused a block only for a request of
 the same size. It now serves a request from a larger idle piece
-(D[device-pool-split]); the room still keeps the sizes of the step fixed.
+(D416); the room still keeps the sizes of the step fixed.
 The room changes only when the structure grows.
 
 **The scatter, measured and refused** (D291). A table of a block for the

@@ -1138,7 +1138,7 @@ static void *growList(void *list, size_t *room, size_t size) {
    mdrtSideBegin is current, or with a stream named that is not the first.
    The pool hands a freed piece to the next request without waiting, which
    is sound only because both are issued on the first stream, in order
-   (D87, premise P4; D[device-pool-split]). The lowering passes no stream. */
+   (D87, premise P4; D416). The lowering passes no stream. */
 static void mergeIdle(void);
 static void checkPoolStream(CUstream stream, const char *what) {
   if (!onSide && (!stream || stream == sharedStream))

@@ -14,7 +14,7 @@ Usage: device_blocks.py LIBMDRT_CUDA SCENARIO
             that the driver refuses once for want of memory: the pool is
             trimmed and the request made again
 
-The pool's best fit with splitting and coalescing (D[device-pool-split]):
+The pool's best fit with splitting and coalescing (D416):
 
   split     a request served from a larger idle arena, cut at its size
             rounded up to 256 bytes; every piece aligned to 256 bytes

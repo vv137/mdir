@@ -31,7 +31,7 @@
 # RETRY-NEXT: after the trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
 # RETRY-NEXT: device blocks retry passed
 #
-# The best fit with splitting and coalescing (D[device-pool-split]). Each
+# The best fit with splitting and coalescing (D416). Each
 # scenario fails on a pool that does not do what its comment says.
 #
 # A request is served from a larger idle arena, cut at its size rounded up
