@@ -1,0 +1,3 @@
+### Added
+
+- **The design of segmented lists of units and of `md_alg.traverse_pairs` over segments**, the first slice of re-landing the rigid-water template of #795 on the `md_alg` layer (D[md-alg-segments], #892). The design states the type `!mdrt.segmented_pairs`, with the rigid kinds of D403 and one D413 contract for each segment of D405, and the op's segmented form, with a table of site pairs, sites formed by the kinds' weights, and the transpose of rule A. It also states the verifier rules with their negative tests, the serial definition and the SIMT schedule, the map from #795's branch, the four slices with their gates, and the open questions. The groups keep their form and their bytes. Execution is unchanged.
