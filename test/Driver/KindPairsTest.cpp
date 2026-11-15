@@ -2,7 +2,7 @@
 // system: the kinds of D403 from its topology, and the pair term's primary
 // kernels from the program that `mdir emit --stage=module` writes for it.
 //
-//   mdir-kind-pairs-test generate RUN.toml MODULE.mlir KINDS EXTENTS [--entry]
+//   mdir-kind-pairs-test generate RUN.toml MODULE.mlir KINDS EXTENTS [--entry | --func-entry]
 //   mdir-kind-pairs-test refuse RUN.toml KINDS EXTENTS
 //
 // KINDS lists the numbers of the kinds that are taken (as `mdir check`
@@ -10,7 +10,9 @@
 // comma-separated. `generate` replaces the primary pair kernel of the
 // potentials @energy, @term_lj, and @term_coulomb by the segments' term and
 // prints a module of them; with --entry, of @energy and a function that
-// evaluates its energy, forces, and virial. `refuse` prints the reason that
+// evaluates its energy, forces, and virial; with --func-entry that function
+// is a func.func, which the passes of md_exec take after md-inline
+// (D[md-alg-segments]). `refuse` prints the reason that
 // the plan is refused, or fails.
 #include "../../lib/Driver/KindPairsIR.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -18,6 +20,7 @@
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/RigidGroups.h"
 #include "mdir/Driver/System.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -112,7 +115,8 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (mode != "generate" || argc < 6) fail("unknown mode " + mode);
-  bool entry = argc > 6 && StringRef(argv[6]) == "--entry";
+  bool funcEntry = argc > 6 && StringRef(argv[6]) == "--func-entry";
+  bool entry = argc > 6 && (StringRef(argv[6]) == "--entry" || funcEntry);
   auto made = plan(argv[2], argv[4], argv[5], groups, system);
   if (!made) fail(llvm::toString(made.takeError()));
   KindPairsPlan &kinds = *made;
@@ -213,12 +217,19 @@ int main(int argc, char **argv) {
     auto types = energy.getFunctionType().getInputs();
     Type positions = types[0];
     Type virial = VectorType::get({9}, at.getF64Type());
-    auto function = md::FunctionOp::create(
-        at, energy.getLoc(), at.getStringAttr("entry"),
-        TypeAttr::get(FunctionType::get(&context, types,
-                                        {at.getF64Type(), positions, virial})),
-        StringAttr(), ArrayAttr(), ArrayAttr());
-    Block *block = function.addEntryBlock();
+    FunctionType signature = FunctionType::get(
+        &context, types, {at.getF64Type(), positions, virial});
+    Block *block;
+    if (funcEntry) {
+      auto function =
+          func::FuncOp::create(at, energy.getLoc(), "entry", signature);
+      block = function.addEntryBlock();
+    } else {
+      auto function = md::FunctionOp::create(
+          at, energy.getLoc(), at.getStringAttr("entry"),
+          TypeAttr::get(signature), StringAttr(), ArrayAttr(), ArrayAttr());
+      block = function.addEntryBlock();
+    }
     at.setInsertionPointToEnd(block);
     auto evaluate = md::EvaluateOp::create(
         at, energy.getLoc(), TypeRange{at.getF64Type(), positions, virial}, "energy",
@@ -226,7 +237,10 @@ int main(int argc, char **argv) {
         ArrayRef<int32_t>{int32_t(md::Request::Energy), int32_t(md::Request::Forces),
                           int32_t(md::Request::Virial)},
         ArrayRef<int64_t>{0, 0, 0});
-    md::ReturnOp::create(at, energy.getLoc(), evaluate.getResults());
+    if (funcEntry)
+      func::ReturnOp::create(at, energy.getLoc(), evaluate.getResults());
+    else
+      md::ReturnOp::create(at, energy.getLoc(), evaluate.getResults());
   }
   if (failed(verify(*module))) fail("the generated module does not verify");
   module->print(llvm::outs());

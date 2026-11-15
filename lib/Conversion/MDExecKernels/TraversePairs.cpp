@@ -1247,5 +1247,7 @@ kernels::emitTraversePairsSerial(OpBuilder &builder,
                                  md_alg::TraversePairsOp op,
                                  const SerialLists &lists,
                                  SerialOptions options) {
+  if (op.isSegmented())
+    return emitTraverseSegmentsSerial(builder, op, lists, options);
   return Serial(builder, op, lists, options).run();
 }
