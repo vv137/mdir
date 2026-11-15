@@ -4,7 +4,7 @@ Recorded at its merge.
 
 **The design, before any code is ported, for the neighbor and GPU-lowering layers of #795 on `md_alg`. A list over units is a new type, `!mdrt.segmented_pairs`. Its parameters are the taken rigid kinds of D403 and one D413 contract for each segment $s(f, g)$ of rule R3 (D405). `md_alg.traverse_pairs` takes it in a segmented form, with one region for each segment that it visits. Each region holds the segment's site pairs, one slice of the yields for each, as the generator of D405 writes them. A table on the region names each slice's pair of places and the values it contributes to. The op owns the placement of sites by the kinds' weights $\mathsf W$, the cutoff of each site pair, and the transpose $\mathsf W^{\mathsf T}$ of the forces (rule A). The groups of D415 are the degenerate instance: no kind, one segment, units that are particles. That form parses, verifies, and lowers as today, so every groups program keeps D415's bytes. The producer is a family of `md_exec` ops, with its collection stages as `md_alg` ops. Its lowering is #795's search, moved, unless the measurement that opens S2 finds the groups build over units as fast. Coverage is D357's query, with a covering reach for each segment. The SIMT lowering is #795's warp-cooperative schedule, a second pattern of the same op chosen by the type of its list. The serial definition is the oracle. The work lands in six slices, S1 to S5 with S4 cut in two, each with its own gates. The last, S5, makes the groups the instance $K = 0$ of one segmented schedule, with D415's bytes as its gate.** Issue #892, the first slice of re-landing #795 on the layer of #877 (the maintainer's parking ruling on #795, 2026-11-14), after D415.
 
-Status: design for review. No code changes in this PR.
+Status: design accepted on #893 (Section 9). S1 is implemented on this branch.
 
 ## 0. What binds this design
 
@@ -418,18 +418,25 @@ If the first step of S2 has not already made the build one emitter, S5 does the 
 
 Whether S5 comes right after S3 or after S4b is question 5.
 
-## 9. Open questions for the maintainer
+## 9. The maintainer's ruling (2026-11-15, on #893)
 
-1. **The form of a region**: (a), the molecule pair with a table that names its slices, as recorded in Section 4.3. D415's words "the table gives each pair its constants" point at (b). This design keeps the constants in the slices, where D405 put them. Is (a) the reading you agreed?
-2. **The kinds in the type**, as chosen, or a reference from the list to its `md.kind_pairs` with a provenance check, as D357 does for the cutoff?
-3. **The visit**: one for the op and the requirement per segment, as chosen, or a visit per segment, as D415's words have it?
-4. **E3**, the Lennard-Jones coefficients of a taken kind folded from `md.lookup` at constant indices: in the conversion of S1, or as its own measured correction in S3?
-5. **When S5 comes.** The two schedules stand, dispatched by the type, through S3, whose gate needs #795's schedule as it was. S5 then makes the groups the instance $K = 0$ of the segmented schedule. Should S5 come right after S3, or after S4b?
-6. **#888 before S3?** This design holds that the pruning in the loop is D284's existing mechanism, and not the fusion of a build into its consumer that #888 must precede. So S3 calls the schedule in place, as D415 does.
-7. **The name of the key**: `water.template`, ruled on #795, or a name that follows the rule "general rules, not templates"?
-8. **The organization**: `grouped_by(group)` for every segment unless S2 proves the order fixed, as chosen?
-9. **The stop rule of S2 and S3**: "slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers than #795's, on the same kind of device". Is that threshold right, and is #795's head the reference, rather than the prototype's times?
-10. **The reference of the transpose**: D405's weights, one unit in the last place from #795's $\alpha$. S3 compares with #795 by numbers, not bytes. Is that acceptable?
+The reviewer's recommendations on the questions of this section were accepted:
+
+1. **The region form is (a)**: the molecule pair, with a table naming its slices (Section 4.3).
+2. **The kinds are in the type** (Section 2).
+3. **One visit for the op**, with the requirement checked per segment.
+4. **E3 is done in S3**, as a row of the mechanism table with its PTX check. The coefficients are fixed only on the route.
+5. **Two schedules through S3.** S5 makes the groups schedule the instance $K = 0$, with D415's bytes as its gate. S5 comes after S3. Whether it comes before or after S4 is decided at S3.
+6. **#888 is not needed before S3.** The pruning in the loop is D284's mechanism, which D415 already calls in place.
+7. **The key's name** is still open. The reviewer proposed `[performance] rigid_units = "AUTO" | "ON" | "OFF"`, in place of `water.template`, for the maintainer to confirm:
+   - it names the mechanism and no molecule, so a second rigid kind needs no new key;
+   - its values and meaning are those ruled on #795, an execution choice of the "same accuracy" class (#790);
+   - no alias is kept for `water.template`.
+
+   It matters only in S4b.
+8. **The organization is `grouped_by(group)`** unless S2 proves the order fixed.
+9. **The stop rule of S2 and S3 is as written**: slower than #795 at 745c9f12 by more than the spread of the rounds, or more registers, on the same kind of device. The prototype is compared only under the same geometry and conditions.
+10. **The transpose is compared with #795 by numbers**, within the error model, with D405's weights.
 
 ## 10. Alternatives not taken
 
