@@ -2682,6 +2682,10 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
         Value segReachF = truncf(segReachW);
         Value offset = cx(rp);
         Value cellOffset = muli(offset, gridCells);
+        // The queue of the warp is the last segment's until here: its
+        // lanes have read what it held.
+        Value everyLane = ci(-1);
+        warpSync(everyLane);
         searchSegment(segReachF, cellOffset, name, slotS);
       });
     }
