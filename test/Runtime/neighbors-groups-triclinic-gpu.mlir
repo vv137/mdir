@@ -697,7 +697,7 @@ func.func @main() {
   // dodecahedra of #795 (13.9 A of c_z = 44.5 A): the range of z of most
   // groups is as wide as the grid of six cells, so that each row of z is
   // visited once for its two periods, in the hull of their windows narrowed
-  // to the slices of the reach (D[groups-triclinic-search]).
+  // to the slices of the reach (D418).
   // CHECK-NEXT: 127147
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}

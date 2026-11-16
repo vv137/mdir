@@ -513,7 +513,7 @@ narrowed to that half-width, and a row with $\Delta_z \ge R'$ is empty.
 Where the range of a group along z is as wide as the grid, a row stands for
 two periods $t_z$; it is visited once, with the hull of the windows of
 both, and, since the center of a window moves linearly with $t_z$, the two
-extremes bound any period between them (D[groups-triclinic-search]). The
+extremes bound any period between them (D418). The
 minimum image is taken in one
 pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, which gives the image
 in the brick (the nearest one within half of the least of $a_x$, $b_y$,
@@ -528,7 +528,7 @@ the center of a box along $z$, $y$, and $x$, so that the theorem holds with
 $L_a$ the diagonal of $H$, and the lists are complete for a reach below
 $\min(a_x, b_y, c_z)$. A group takes only the codes that move along its axes of
 $2(w_{g,a} + R') \ge L_a$: along another axis its box and the reach leave
-only the image of the pass (D[groups-triclinic-search]).
+only the image of the pass (D418).
 
 ### 4.4.5 The loop
 

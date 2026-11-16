@@ -68,7 +68,7 @@
 // periods t_z and t_y. Each cell is then visited once, the window being
 // the whole grid only when the hull is as wide, and the image of a
 // candidate is the one nearest to the center of the box
-// (D[groups-triclinic-search]).
+// (D418).
 // The minimum image is taken in one pass along c, b, and a, and the shifts
 // of the frames and of the entries are lattice vectors n, applied as n H;
 // the shift of an entry takes five bits a lattice vector, (e + 16) in bits
