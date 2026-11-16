@@ -1940,6 +1940,60 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
   result->stride = 1;
 }
 
+/* For the tests of the lists of units (convert-md-exec-to-gpu with
+   dump-segments, D[md-alg-segments-build]): writes the list of `handle`, of
+   `places` places and `records` records, after `builds` builds of it and
+   `prunes` prunings of every list, to dump_<n>.bin in the directory
+   that MDRT_SEGMENTS_DUMP names, n counting the dumps from 0. The file holds
+   six i64 (n, places, records, segments, the builds and the prunings so
+   far), then for each buffer of SEGMENT_ORDER, SHIFTS, RECORD_ENTRIES,
+   RECORD_MASKS, RECORD_GROUPS, RECORD_COUNTS, SEGMENT_OFFSETS,
+   INNER_ENTRIES, INNER_MASKS, INNER_COUNTS, ACTIVE_UNITS and ACTIVE_COUNT
+   its length in i32 (0 where the list has not allocated it) and its
+   values. */
+void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
+                      int64_t builds, int64_t prunes) {
+  const char *dir = getenv("MDRT_SEGMENTS_DUMP");
+  if (!dir)
+    return;
+  static int64_t serial = 0;
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  enter();
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  char path[4096];
+  snprintf(path, sizeof path, "%s/dump_%06lld.bin", dir, (long long)serial);
+  FILE *file = fopen(path, "wb");
+  if (!file) {
+    fprintf(stderr, "mdrt: cannot write %s\n", path);
+    abort();
+  }
+  int64_t header[6] = {serial, places, records, groups->segments,
+                       builds, prunes};
+  fwrite(header, sizeof header, 1, file);
+  struct { int slot; int64_t length; } parts[] = {
+      {GROUPS_SEGMENT_ORDER, places},     {GROUPS_SHIFTS, places},
+      {GROUPS_RECORD_ENTRIES, records * 64}, {GROUPS_RECORD_MASKS, records * 64},
+      {GROUPS_RECORD_GROUPS, records},    {GROUPS_RECORD_COUNTS, records},
+      {GROUPS_SEGMENT_OFFSETS, groups->segments + 1},
+      {GROUPS_INNER_ENTRIES, records * 64}, {GROUPS_INNER_MASKS, records * 64},
+      {GROUPS_INNER_COUNTS, records},     {GROUPS_ACTIVE_UNITS, records},
+      {GROUPS_ACTIVE_COUNT, 1}};
+  for (size_t k = 0; k != sizeof parts / sizeof parts[0]; ++k) {
+    int64_t length = groups->data[parts[k].slot] ? parts[k].length : 0;
+    fwrite(&length, sizeof length, 1, file);
+    if (!length)
+      continue;
+    int32_t *host = malloc((size_t)length * sizeof(int32_t));
+    check(cuMemcpyDtoH(host, (CUdeviceptr)groups->data[parts[k].slot],
+                       (size_t)length * sizeof(int32_t)),
+          "cuMemcpyDtoH");
+    fwrite(host, sizeof(int32_t), (size_t)length, file);
+    free(host);
+  }
+  fclose(file);
+  ++serial;
+}
+
 /* Makes room for `places` places and `blocks` blocks, a quarter more than
    asked, if the structure has less. What the buffers held is lost: the
    caller builds again. */

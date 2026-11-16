@@ -270,6 +270,7 @@ public:
   /// which stops the run if they differ (`check-pruning`,
   /// D268).
   bool checkPruning = false;
+  bool dumpSegments = false;
   /// How a loop over pairs over groups (md_alg.traverse_pairs) is lowered:
   /// by its SIMT schedule, or, for the contract test of D415,
   /// by its serial definition on the host over copies of its buffers, in
@@ -6638,6 +6639,30 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
     emitSegmentsPrune(prune, loc, structure, positions, box, innerReach);
     structure.dual = true;
   }
+  // For the tests: the list as the refresh leaves it.
+  if (dumpSegments) {
+    Type wide = builder.getI64Type();
+    auto size = [&](int64_t which) -> Value {
+      return arith::ExtUIOp::create(
+          builder, loc, wide,
+          memref::LoadOp::create(builder, loc, structure.sizes,
+                                 ValueRange{createIndex(builder, loc, which)}));
+    };
+    Value builds =
+        memref::LoadOp::create(builder, loc, structure.builds, ValueRange{});
+    Value prunes =
+        func::CallOp::create(builder, loc,
+                             getOrDeclare("mdrtGetPruneCount",
+                                          builder.getFunctionType({}, {wide})),
+                             ValueRange())
+            .getResult(0);
+    func::CallOp::create(
+        builder, loc,
+        getOrDeclare("mdrtSegmentsDump",
+                     builder.getFunctionType({wide, wide, wide, wide, wide},
+                                             {})),
+        ValueRange{structure.handle, size(0), size(2), builds, prunes});
+  }
   neighbors[op.getResult()] = structure;
   return success();
 }
@@ -9969,6 +9994,7 @@ public:
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
+    lowering.dumpSegments = dumpSegments;
     lowering.traverseOracle = traverseOracle;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;

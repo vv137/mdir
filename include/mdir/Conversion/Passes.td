@@ -473,6 +473,12 @@ def ConvertMDExecToGPU
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
            "(MDIR_CHECK_PRUNING, D268)">,
+    Option<"dumpSegments", "dump-segments", "bool", /*default=*/"false",
+           "For the tests of the lists of units (D[md-alg-segments-build]): "
+           "each refresh of a list of units writes its records, the order "
+           "and the shifts of its places, its inner records, and its active "
+           "units, through the runtime, to the directory that "
+           "MDRT_SEGMENTS_DUMP names">,
     Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
            "Whether the first loop over pairs after a refresh of a dual "
            "list of groups, at the same positions and in the same cell, "

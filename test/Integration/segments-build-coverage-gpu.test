@@ -1,0 +1,45 @@
+# REQUIRES: cuda
+# The lists of units that the device builds (D[md-alg-segments-build];
+# D417, Section 8, the gate of S2) against every image of every pair of
+# reference points in f64 (Inputs/segments_coverage.py), after the refresh of
+# every frame of a trajectory that a general run of groups writes: just
+# before a pruning, just before a build, and right after one. The inner
+# records of a dual list hold every pair within r_c + e_f + e_g of its
+# segment; right after a build the outer records hold every pair within the
+# covering reach R_s. At 1.5 cutoffs the check reports pairs without an
+# entry, so that it does not pass on nothing.
+#
+# TIP3P in a rhombic dodecahedron under NPT (C-RESCALE at every step, which
+# moves the cell and its tilts), and alanine dipeptide in OPC and in TIP3P
+# under NVT, with anchors and excluded pairs.
+#
+# RUN: rm -rf %t && mkdir -p %t/dodecahedron/dumps %t/dipeptide-opc/dumps %t/dipeptide-tip3p/dumps
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dodecahedron %S/../Driver/Inputs %t/dodecahedron 40
+# RUN: cd %t/dodecahedron && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dodecahedron %S/../Driver/Inputs %t/dodecahedron
+# RUN: mdir-opt %t/dodecahedron/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dodecahedron/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dodecahedron %S/../Driver/Inputs %t/dodecahedron %t/dodecahedron/dumps | FileCheck %s --check-prefix=DODECAHEDRON
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dodecahedron %S/../Driver/Inputs %t/dodecahedron %t/dodecahedron/dumps --scale=1.5 --limit=2 --expect-missing | FileCheck %s --check-prefix=WIDE
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc 60
+# RUN: cd %t/dipeptide-opc && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc
+# RUN: mdir-opt %t/dipeptide-opc/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dipeptide-opc/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc %t/dipeptide-opc/dumps | FileCheck %s --check-prefix=OPC
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p 60
+# RUN: cd %t/dipeptide-tip3p && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p
+# RUN: mdir-opt %t/dipeptide-tip3p/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dipeptide-tip3p/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p %t/dipeptide-tip3p/dumps | FileCheck %s --check-prefix=TIP3P
+#
+# DODECAHEDRON: dodecahedron: 40 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry
+# WIDE: dodecahedron: 2 refreshes checked, {{.*}} cutoff 1.2 nm: {{[1-9][0-9]*}} pairs without an entry
+# OPC: dipeptide-opc: 60 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry
+# TIP3P: dipeptide-tip3p: 60 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry

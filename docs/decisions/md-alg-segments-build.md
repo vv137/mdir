@@ -72,6 +72,10 @@ with $e$ from the type's kinds and from the radius of the list's empty list or b
 
 ## 5. Measurements
 
+Which kernel dominates a build: the list kernel, then the stable sort within the cells of the candidate grid (`md_alg.sort_by_key`, insertion, a thread a cell, D404's own stage).
+- ubq-opc: the list kernel takes 101 µs of 214 µs (72 registers), the sort within the cells 63 µs.
+- charmm-tip3p: the list kernel takes 138 µs of 300 µs, the sort within the cells 77 µs. Its cells are larger, since the reach is 1.5 nm, so they are fewer and hold more places for each thread.
+
 On an RTX 5090, the six systems of #894's step 1 as real unit systems. Each list replays a trajectory of 2000 steps of `main`'s general GROUPS run of the same system, its integrator, cutoff, and skin: the harness refreshes it at every frame, with its own test. The results are in PR #897; they are added here at the gate.
 
 ## 6. Not in this slice
