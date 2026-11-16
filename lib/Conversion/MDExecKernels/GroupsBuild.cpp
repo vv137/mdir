@@ -417,11 +417,40 @@ class GroupsBuild : public Code {
 public:
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass)
       : Code(b, loc), tilted(tilted), singlePass(singlePass) {}
+  /// The build over units of `kinds` taken rigid kinds and the rest
+  /// (D[md-alg-segments-build]).
+  GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
+              unsigned kinds)
+      : Code(b, loc), tilted(tilted), singlePass(singlePass), unitsMode(true),
+        K(kinds), S((kinds + 1) * (kinds + 2) / 2) {}
 
   void emit();
 
 private:
   bool tilted, singlePass;
+  // Over units: K taken kinds, the rest rank 0 and kind f at rank K - f,
+  // and S = (K + 1)(K + 2) / 2 segments.
+  bool unitsMode = false;
+  unsigned K = 0, S = 1;
+  // The units: the reference particle of each unit, the value of `order`
+  // that S1's layout gives its place (the particle of the rest, the slot of
+  // the first member of a taken kind), and the unit of each particle of the
+  // rest; the end of the units of each rank, the covering radius of each
+  // rank, and the places where each rank begins (on the device, K + 2).
+  Value unitRef, unitValue, unitOfParticle, rankPlaces;
+  SmallVector<Value> rankEnd, extentOf, rankNcx64, rankNcy64, rankNcx,
+      rankNcy, colBase;
+  // The records by segment: the last block of each list of a group in a
+  // segment, the translated order, the records in the order of the
+  // segments, and the offsets of the segments.
+  Value lastOf, outOrder, finalEntries, finalMasks, finalUnits, finalCounts,
+      segmentsOut, freachMax, reachMargin, gridCells;
+  /// The rank of a unit (an i32 or index value of its number).
+  Value rankOfUnit(Value u);
+  /// The rank of the group whose first place is `first` (index).
+  Value rankOfPlace(Value first);
+  /// The value at `rank` (an index) among `values`, by selects.
+  Value pick(Value rank, ArrayRef<Value> values);
 
   // The arguments.
   Value x, box, reach, excluded, order, placeOf, entries, masks, counts,
@@ -471,6 +500,9 @@ private:
   void emitBoxes(gpu::LaunchOp op);
   void reduceBox(Values &values);
   void emitLists(gpu::LaunchOp op, bool images);
+  /// Over units: the records in the order of the segments, and the order
+  /// of the places as S1's layout reads it.
+  void emitSegments(Value gridOfCapacity);
 };
 
 //===----------------------------------------------------------------------===//
@@ -734,6 +766,39 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
   dealloc(scratch);
 }
 
+Value GroupsBuild::pick(Value rank, ArrayRef<Value> values) {
+  Value picked = values[0];
+  for (unsigned r = 1; r < values.size(); ++r) {
+    Value at = cx(r);
+    Value here = cmpi(CmpIPredicate::eq, rank, at);
+    picked = select(here, values[r], picked);
+  }
+  return picked;
+}
+
+Value GroupsBuild::rankOfUnit(Value u) {
+  Value unit = u.getType().isIndex() ? u : indexCast(index, u);
+  Value rank = cx(0);
+  for (unsigned r = 0; r < K; ++r) {
+    Value past = cmpi(CmpIPredicate::uge, unit, rankEnd[r]);
+    Value next = cx(r + 1);
+    rank = select(past, next, rank);
+  }
+  return rank;
+}
+
+Value GroupsBuild::rankOfPlace(Value first) {
+  Value first32 = indexCast(i32, first);
+  Value rank = cx(0);
+  for (unsigned r = 1; r <= K; ++r) {
+    Value at = cx(r);
+    Value begins = load(rankPlaces, at);
+    Value past = cmpi(CmpIPredicate::sge, first32, begins);
+    rank = select(past, at, rank);
+  }
+  return rank;
+}
+
 Values GroupsBuild::image(Value dx, Value dy, Value dz) {
   if (tilted)
     return imageTriclinic(dx, dy, dz);
@@ -763,9 +828,16 @@ void GroupsBuild::emitKeys(Value item) {
   Value i1c = cx(1);
   Value i2c = cx(2);
   Value one = ci(1);
-  Value xi = load(x, {item, i0});
-  Value yi = load(x, {item, i1c});
-  Value zi = load(x, {item, i2c});
+  // Over units, the position of a unit is that of its reference particle.
+  Value at = item, rank;
+  if (unitsMode) {
+    Value ref = load(unitRef, item);
+    at = indexCast(index, ref);
+    rank = rankOfUnit(item);
+  }
+  Value xi = load(x, {at, i0});
+  Value yi = load(x, {at, i1c});
+  Value zi = load(x, {at, i2c});
   Value wx, wy, wz;
   if (!tilted) {
     Value x0 = mulf(xi, ilx);
@@ -810,8 +882,16 @@ void GroupsBuild::emitKeys(Value item) {
   Value ux = mulf(wx, ilx);
   Value uy = mulf(wy, ily);
   Value uz = mulf(wz, ilz);
-  Value ncxF = sitofp(f64, ncx64);
-  Value ncyF = sitofp(f64, ncy64);
+  Value keyNcx64 = ncx64, keyNcy64 = ncy64, keyNcx = ncx, keyNcy = ncy;
+  if (unitsMode) {
+    // The columns of the unit's rank.
+    keyNcx64 = pick(rank, rankNcx64);
+    keyNcy64 = pick(rank, rankNcy64);
+    keyNcx = pick(rank, rankNcx);
+    keyNcy = pick(rank, rankNcy);
+  }
+  Value ncxF = sitofp(f64, keyNcx64);
+  Value ncyF = sitofp(f64, keyNcy64);
   Value nzb64 = indexCast(i64, nzb);
   Value nzbF = sitofp(f64, nzb64);
   Value vx = mulf(ux, ncxF);
@@ -823,8 +903,8 @@ void GroupsBuild::emitKeys(Value item) {
   Value kx0 = indexCast(index, kx64);
   Value ky0 = indexCast(index, ky64);
   Value kz0 = indexCast(index, kz64);
-  Value ncx1 = subi(ncx, i1c);
-  Value ncy1 = subi(ncy, i1c);
+  Value ncx1 = subi(keyNcx, i1c);
+  Value ncy1 = subi(keyNcy, i1c);
   Value nzb1 = subi(nzb, i1c);
   // A position far beyond the cell wraps with a large error, of either
   // sign: its cell is clamped on both sides, so that no key falls outside
@@ -835,8 +915,14 @@ void GroupsBuild::emitKeys(Value item) {
   Value kx = maxsi(kx1, i0);
   Value ky = maxsi(ky1, i0);
   Value kz = maxsi(kz1, i0);
-  Value colY = muli(ky, ncx);
+  Value colY = muli(ky, keyNcx);
   Value column = addi(colY, kx);
+  if (unitsMode) {
+    // The columns of the ranks one after another, the rest first: the
+    // chunks, and so the groups, hold one kind.
+    Value base = pick(rank, colBase);
+    column = addi(base, column);
+  }
   Value colZ = muli(column, nzb);
   Value k = addi(colZ, kz);
   // A position that is not a number, or is beyond any cell, has no key and
@@ -1165,6 +1251,11 @@ void GroupsBuild::emitBoxes(gpu::LaunchOp op) {
       real,
       [&] {
         Value qp = indexCast(index, pi);
+        if (unitsMode) {
+          // The reference particle of the unit, as it is kept.
+          Value ref = load(unitRef, qp);
+          qp = indexCast(index, ref);
+        }
         Value pxd = load(x, {qp, c0w});
         Value pyd = load(x, {qp, c1w});
         Value pzd = load(x, {qp, c2w});
@@ -1341,7 +1432,9 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value wx = subf(hix, lox);
     Value wy = subf(hiy, loy);
     Value wz = subf(hiz, loz);
-    Value rx = addf(freach, freach);
+    // Over units, the largest reach of the segments.
+    Value qualReach = unitsMode ? freachMax : freach;
+    Value rx = addf(qualReach, qualReach);
     Value ex = addf(wx, rx);
     Value ey = addf(wy, rx);
     Value ez = addf(wz, rx);
@@ -1358,6 +1451,14 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
   ifThen(realGroup, [&] {
     Value first = muli(g, c16w);
     Value first32 = indexCast(i32, first);
+    // Over units: the rank of the group's kind, and whether it is the rest,
+    // whose pairs alone have excluded pairs (segment (K, K); D405).
+    Value rankG, isRest;
+    if (unitsMode) {
+      rankG = rankOfPlace(first);
+      Value restRank = cx(0);
+      isRest = cmpi(P::eq, rankG, restRank);
+    }
     // The particles of the group relative to the center of its box, in the
     // memory of the block: x, y, z, and 1 or 0 for a real one.
     Value boxLoX = load(boxes, {g, c0w});
@@ -1431,6 +1532,14 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value pie = load(order, pe);
     Value piie = indexCast(index, pie);
     Value reale = cmpi(P::sge, pie, zeroI);
+    if (unitsMode) {
+      // The particle of a unit of the rest; a group of a taken kind has no
+      // excluded pair outside its units.
+      reale = andi(reale, isRest);
+      Value unitE = select(reale, piie, c0w);
+      Value particleE = load(unitValue, unitE);
+      piie = indexCast(index, particleE);
+    }
     Value entryE = cx(4);
     auto row = md_alg::RaggedRowOp::create(b, loc, excluded, piie, entryE,
                                            /*checked=*/true);
@@ -1451,12 +1560,23 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     forLoop(hk, counte, c2w, {}, [&](Value k, ValueRange) -> Values {
       Value partner = call1(kPartner, i32, {excluded, firste, k});
       Value pj = indexCast(index, partner);
-      Value q = load(placeOf, pj);
+      Value placeAt = pj;
+      Value isUnit;
+      if (unitsMode) {
+        // The unit of the partner, a particle of the rest by D405.
+        Value unitP = load(unitOfParticle, pj);
+        isUnit = cmpi(P::sge, unitP, zeroI);
+        Value unitP0 = select(isUnit, unitP, zeroI);
+        placeAt = indexCast(index, unitP0);
+      }
+      Value q = load(placeOf, placeAt);
       Value four = ci(4);
       Value shifted = shli(q, four);
       Value partnerKey = ori(shifted, u16x32);
       Value slot0 = addi(starte, k);
       Value fits = cmpi(P::ult, slot0, c256);
+      if (unitsMode)
+        fits = andi(fits, isUnit);
       ifThen(fits, [&] {
         Value at = addi(pbase, slot0);
         store(partnerKey, partners, at);
@@ -1538,10 +1658,18 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value pmax0 = shrsi(pmaxKey, fourP);
     Value noneMax = ci(-1);
     Value pmax = select(hasPartners, pmax0, noneMax);
-    // The cells of the grid within the reach of the box.
-    Value ecx = addf(hx, freach);
-    Value ecy = addf(hy, freach);
-    Value ecz = addf(hz, freach);
+    // The search of one segment: the cells of the grid within the reach
+    // `segReach` of the box, the candidates among the places from
+    // `cellOffset` on in the grid (none for the groups), into the list
+    // named `listName` (the group for the groups) whose count and last
+    // block are at `slot` (the group). Over units each segment is one
+    // search of the cells of the partners' rank, into records of its own
+    // (D[md-alg-segments-build]).
+    auto searchSegment = [&](Value segReach, Value cellOffset, Value listName,
+                             Value slot) {
+    Value ecx = addf(hx, segReach);
+    Value ecy = addf(hy, segReach);
+    Value ecz = addf(hz, segReach);
     Value loxF = subf(cxb, ecx);
     Value loyF = subf(cyb, ecy);
     Value lozF = subf(czb, ecz);
@@ -1591,7 +1719,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value fx1 = select(wideX, gnx1, c1x0);
     Value fy1 = select(wideY, gny1, c1y0);
     Value fz1 = select(wideZ, gnz1, c1z0);
-    Value reach2 = mulf(freach, freach);
+    Value reach2 = mulf(segReach, segReach);
     // The cells of the grid along z and y, and the square of the reach that
     // narrows the windows of a tilted cell, widened by 2^-12 so that the
     // rounding of a window never takes a candidate that the test of its
@@ -1610,6 +1738,8 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value unitCapacityW = dim(units, c0w);
     Value noneBlock = ci(-1);
     Value g32W = indexCast(i32, g);
+    if (listName)
+      g32W = listName;
     Value fz1p = addi(fz1, oneI);
     Value fy1p = addi(fy1, oneI);
 
@@ -1737,10 +1867,20 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
             // pairs of its particles that the candidate pairs with; the
             // others search the sorted partners for the first at the place
             // q.
+            // Over units, a candidate of a taken kind has no excluded pair
+            // with the group.
+            Value readRows = overflow;
+            if (unitsMode) {
+              Value restEnd = load(rankPlaces, c1w);
+              Value restQ = cmpi(P::slt, q, restEnd);
+              readRows = andi(overflow, restQ);
+            }
             Value mex = ifElse(
-                i32, overflow,
+                i32, readRows,
                 [&]() -> Values {
                   Value sj = load(order, qi);
+                  if (unitsMode)
+                    sj = load(unitValue, indexCast(index, sj));
                   Value sm = forLoop(
                       c0w, c16w, c1w, {m},
                       [&](Value su, ValueRange a) -> Values {
@@ -1754,6 +1894,8 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                             [&]() -> Values {
                               Value sp = addi(first, su);
                               Value si = load(order, sp);
+                              if (unitsMode)
+                                si = load(unitValue, indexCast(index, si));
                               Value sii = indexCast(index, si);
                               Value sentry = cx(4);
                               auto srow = md_alg::RaggedRowOp::create(
@@ -2176,12 +2318,15 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     };
 
     Value cz0 = zeroI, czb0 = noneBlock;
-    if (images) {
+    if (images && !slot) {
       // Each list continues where the list kernel left it.
       cz0 = load(counts, g);
       Value imgC6 = cx(6);
       Value imgBlock0F = load(boxes, {g, imgC6});
       czb0 = bitcast(i32, imgBlock0F);
+    } else if (images) {
+      cz0 = load(counts, slot);
+      czb0 = load(lastOf, slot);
     }
     ResultRange main = forLoop(
         fz0, fz1p, oneI, {cz0, czb0, zeroI},
@@ -2402,6 +2547,10 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                       Value cto = addi(rowStart, toNext);
                       Value cfromI = indexCast(index, cfrom);
                       Value ctoI = indexCast(index, cto);
+                      if (cellOffset) {
+                        cfromI = addi(cfromI, cellOffset);
+                        ctoI = addi(ctoI, cellOffset);
+                      }
                       auto span = md_alg::BinSpanOp::create(b, loc, gstart,
                                                             cfromI, ctoI);
                       Value begin = span.getBegin();
@@ -2438,6 +2587,12 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value countAll = done[0], blockAll = done[1];
     Value lane0 = cmpi(P::eq, lane, c0w);
     ifThen(lane0, [&] {
+      if (slot) {
+        store(countAll, counts, slot);
+        store(blockAll, lastOf, slot);
+        atomicMax(sizesDevice, countAll);
+        return;
+      }
       store(countAll, counts, g);
       // The block that the list ends in, where the kernel of the images
       // continues it (D115), in the column of the box that is free.
@@ -2446,7 +2601,172 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
       store(lastBlockF, boxes, {g, c6Last});
       atomicMax(sizesDevice, countAll);
     });
+    };
+    if (!unitsMode) {
+      searchSegment(freach, Value(), Value(), Value());
+      return;
+    }
+    // Over units: a segment for each rank of the partners from the
+    // group's on, whose places follow the group's. The segment s(f, g) of
+    // the group's kind f = K - rank and the partners' g; its reach
+    // R + e_f + e_g, in that order of the additions (segmentReach), widened
+    // as the groups' reach is.
+    Value kindsK = cx(K);
+    Value kindF = subi(kindsK, rankG);
+    Value kindF1 = addi(kindF, c1w);
+    Value triangle0 = muli(kindF, kindF1);
+    Value triangle = divui(triangle0, c2w);
+    Value eF = pick(rankG, extentOf);
+    Value groupReach = addf(reach, eF);
+    for (unsigned rp = 0; rp <= K; ++rp) {
+      Value partnerRank = cx(rp);
+      Value active = cmpi(P::ule, rankG, partnerRank);
+      ifThen(active, [&] {
+        Value kindG = cx(K - rp);
+        Value s0 = addi(triangle, kindG);
+        Value segCount = cx(S);
+        Value gS = muli(g, segCount);
+        Value slotS = addi(gS, s0);
+        Value name = indexCast(i32, slotS);
+        Value segReachD = addf(groupReach, extentOf[rp]);
+        Value segReachW = addf(segReachD, reachMargin);
+        Value segReachF = truncf(segReachW);
+        Value offset = cx(rp);
+        Value cellOffset = muli(offset, gridCells);
+        searchSegment(segReachF, cellOffset, name, slotS);
+      });
+    }
   });
+}
+
+//===----------------------------------------------------------------------===//
+// The records by segment
+//===----------------------------------------------------------------------===//
+
+// The list kernels take blocks of 64 entries in the order of their atomics,
+// each named by its group and segment, g S + s, and its ordinal in that
+// list. A stable counting sort of the blocks by segment gives the records
+// in the order of the segments: record w is the block of the sort's place
+// w, copied, with its group and its own count; `segments[s]` is the first
+// record of segment s, and `segments[S]` their number.
+void GroupsBuild::emitSegments(Value gridOfCapacity) {
+  using P = CmpIPredicate;
+  Value c2s = cx(2);
+  Value blockCapacity = dim(units, c0);
+  Value segCount = cx(S);
+  Value segCount1 = cx(S + 1);
+  Value segKey = alloc(buffer, blockCapacity);
+  Value segOf = alloc(buffer, segCount);
+  Value segStart = alloc(buffer, segCount1);
+  Value segCursor = alloc(buffer, segCount);
+  Value segSorted = alloc(buffer, blockCapacity);
+  Value gridOfBlocks = call1(kGrid, index, {blockCapacity, block});
+  Value gridOfSegments = call1(kGrid, index, {segCount, block});
+  clear(gridOfSegments, segOf, segCount, 0);
+  sortByKey(blockCapacity, segCount, segKey, segOf, segStart, segCursor,
+            segSorted, {}, {}, gridOfBlocks, gridOfSegments, [&](Value item) {
+              Value taken32 = load(sizesDevice, c2s);
+              Value taken = indexCast(index, taken32);
+              Value used = cmpi(P::ult, item, taken);
+              ifThenElse(
+                  used,
+                  [&] {
+                    Value name = load(units, item);
+                    Value segCount32 = ci(S);
+                    Value seg = remui(name, segCount32);
+                    md_alg::BinOp::create(b, loc, seg);
+                  },
+                  [&] { md_alg::NoBinOp::create(b, loc); });
+            });
+  // A record a warp: its 64 entries a lane two at a time.
+  Value c32r = cx(32);
+  Value recordThreads = muli(blockCapacity, c32r);
+  Value gridOfRecords = call1(kGrid, index, {recordThreads, block});
+  launch(gridOfRecords, block, {}, [&](gpu::LaunchOp op) {
+    Value tx = op.getThreadIds().x;
+    Value base = muli(op.getBlockIds().x, block);
+    Value item = addi(base, tx);
+    Value w = divui(item, c32r);
+    Value lane = remui(item, c32r);
+    Value taken32 = load(sizesDevice, c2s);
+    Value taken = indexCast(index, taken32);
+    Value used = cmpi(P::ult, w, taken);
+    ifThen(used, [&] {
+      Value from32 = md_alg::BinItemOp::create(b, loc, segSorted, w);
+      Value from = indexCast(index, from32);
+      // The count of the record: its list's, less the blocks before it.
+      Value name = load(units, from);
+      Value nameI = indexCast(index, name);
+      Value total = load(counts, nameI);
+      Value ordinal = load(ordinals, from);
+      Value sixtyFour = ci(64);
+      Value before = muli(ordinal, sixtyFour);
+      Value left = subi(total, before);
+      Value own = minsi(left, sixtyFour);
+      Value c64r = cx(64);
+      Value src0 = muli(from, c64r);
+      Value dst0 = muli(w, c64r);
+      Value lane32 = indexCast(i32, lane);
+      for (int64_t half = 0; half < 2; ++half) {
+        Value off = ci(32 * half);
+        Value e32 = addi(lane32, off);
+        Value held = cmpi(P::slt, e32, own);
+        ifThen(held, [&] {
+          Value e = indexCast(index, e32);
+          Value src = addi(src0, e);
+          Value dst = addi(dst0, e);
+          Value entry = load(entries, src);
+          Value mask = load(masks, src);
+          store(entry, finalEntries, dst);
+          store(mask, finalMasks, dst);
+        });
+      }
+      Value c0r = cx(0);
+      Value lead = cmpi(P::eq, lane, c0r);
+      ifThen(lead, [&] {
+        Value segCount32 = ci(S);
+        Value group = divui(name, segCount32);
+        store(group, finalUnits, w);
+        store(own, finalCounts, w);
+      });
+    });
+  });
+  // The first record of each segment.
+  launch(c1, c1, {}, [&](gpu::LaunchOp) {
+    Value zeroS = cx(0);
+    for (unsigned seg = 0; seg <= S; ++seg) {
+      Value at = cx(seg);
+      auto span = md_alg::BinSpanOp::create(b, loc, segStart, zeroS, at);
+      store(span.getEnd(), segmentsOut, at);
+    }
+  });
+  // The order of the places: the particle of a unit of the rest, the slot
+  // of the first member of a unit of a taken kind, -1 for an empty place;
+  // and in `order` the reference particle of the place.
+  launch(gridOfCapacity, block, {}, [&](gpu::LaunchOp op) {
+    perItem(op, capacity, [&](Value item) {
+      Value unit = load(order, item);
+      Value zeroU = ci(0);
+      Value held = cmpi(P::sge, unit, zeroU);
+      Value unit0 = select(held, unit, zeroU);
+      Value unitI = indexCast(index, unit0);
+      Value value = load(unitValue, unitI);
+      Value none = ci(-1);
+      Value out = select(held, value, none);
+      store(out, outOrder, item);
+      // The order of the build becomes the reference particle of each
+      // place, whose positions the pruning takes in the frames of the
+      // groups.
+      Value ref = load(unitRef, unitI);
+      Value refOut = select(held, ref, none);
+      store(refOut, order, item);
+    });
+  });
+  dealloc(segKey);
+  dealloc(segOf);
+  dealloc(segStart);
+  dealloc(segCursor);
+  dealloc(segSorted);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2459,9 +2779,32 @@ void GroupsBuild::emitBuild() {
   SmallVector<Type> inputs = {positions, cell,   f64,    buffer, buffer,
                               buffer,    buffer, buffer, buffer, buffer,
                               buffer,    buffer, hostSizes};
+  if (unitsMode) {
+    // After the reach: the covering radius of each rank and the end of the
+    // units of each rank; after the shifts, the buffers of the units and of
+    // the records by segment.
+    inputs.insert(inputs.begin() + 3, K + 1, f64);
+    inputs.insert(inputs.begin() + 3 + (K + 1), K + 1, index);
+    inputs.insert(inputs.end() - 1, 10, buffer);
+  }
+  std::string name = unitsMode ? kernels::getSegmentsBuildName(tilted, K)
+                               : kernels::getGroupsBuildName(tilted);
   function(
-      kernels::getGroupsBuildName(tilted), b.getFunctionType(inputs, {}),
-      [&](ValueRange a) {
+      name, b.getFunctionType(inputs, {}),
+      [&](ValueRange a0) {
+        SmallVector<Value> a(a0.begin(), a0.end());
+        if (unitsMode) {
+          for (unsigned r = 0; r <= K; ++r)
+            extentOf.push_back(a[3 + r]);
+          for (unsigned r = 0; r <= K; ++r)
+            rankEnd.push_back(a[3 + (K + 1) + r]);
+          a.erase(a.begin() + 3, a.begin() + 3 + 2 * (K + 1));
+          unitRef = a[12], unitValue = a[13], unitOfParticle = a[14],
+          lastOf = a[15], outOrder = a[16], finalEntries = a[17],
+          finalMasks = a[18], finalUnits = a[19], finalCounts = a[20],
+          segmentsOut = a[21];
+          a.erase(a.begin() + 12, a.begin() + 22);
+        }
         x = a[0], box = a[1], reach = a[2], excluded = a[3], order = a[4],
         placeOf = a[5], entries = a[6], masks = a[7], counts = a[8],
         units = a[9], ordinals = a[10], shift = a[11], sizes = a[12];
@@ -2469,9 +2812,14 @@ void GroupsBuild::emitBuild() {
         c1 = cx(1);
         block = cx(128);
         cx(256);
-        n = dim(x, c0);
+        n = unitsMode ? rankEnd[K] : dim(x, c0);
         capacity = dim(order, c0);
-        groupCapacity = dim(counts, c0);
+        if (unitsMode) {
+          Value c16g = cx(16);
+          groupCapacity = divui(capacity, c16g);
+        } else {
+          groupCapacity = dim(counts, c0);
+        }
         dim(units, c0);
         lx = extract(box, 0);
         ly = extract(box, 1);
@@ -2517,6 +2865,19 @@ void GroupsBuild::emitBuild() {
         Value margin = mulf(edges, tiny);
         Value reachWide = addf(reach, margin);
         freach = truncf(reachWide);
+        // Over units, the reach of the cells is the largest of the
+        // segments, R + 2 max e (D417, Section 1).
+        Value cellReach = reach;
+        if (unitsMode) {
+          reachMargin = margin;
+          Value widest = extentOf[0];
+          for (unsigned r = 1; r <= K; ++r)
+            widest = maximumf(widest, extentOf[r]);
+          Value twice = addf(widest, widest);
+          cellReach = addf(reach, twice);
+          Value cellReachWide = addf(cellReach, margin);
+          freachMax = truncf(cellReachWide);
+        }
 
         // The columns: about 64 particles in a cube of their width.
         // At least one column and at most 256 along an edge
@@ -2535,6 +2896,28 @@ void GroupsBuild::emitBuild() {
         ncx = indexCast(index, ncx64);
         ncy = indexCast(index, ncy64);
         columns = muli(ncx, ncy);
+        if (unitsMode) {
+          // A plan of the columns for each rank, of its own units, the
+          // ranks' columns one after another.
+          Value base = cx(0);
+          for (unsigned r = 0; r <= K; ++r) {
+            Value from = r ? rankEnd[r - 1] : c0;
+            Value count = subi(rankEnd[r], from);
+            auto plan = md_alg::GridPlanOp::create(
+                b, loc, TypeRange{i64, i64}, ValueRange{lx, ly},
+                /*width=*/Value(), volume, b.getF64FloatAttr(64.0), count,
+                b.getF64FloatAttr(1.0), b.getF64FloatAttr(256.0),
+                /*determinism=*/nullptr);
+            rankNcx64.push_back(plan.getCounts()[0]);
+            rankNcy64.push_back(plan.getCounts()[1]);
+            rankNcx.push_back(indexCast(index, rankNcx64.back()));
+            rankNcy.push_back(indexCast(index, rankNcy64.back()));
+            colBase.push_back(base);
+            Value own = muli(rankNcx.back(), rankNcy.back());
+            base = addi(base, own);
+          }
+          columns = base;
+        }
         // Bins along z: two for each particle of a column, on average.
         Value n2 = addi(n, n);
         Value nzb0 = divui(n2, columns);
@@ -2547,7 +2930,7 @@ void GroupsBuild::emitBuild() {
         // At most 256 a side, as the columns: wider cells only give more
         // candidates, whose range is clamped to the whole grid.
         Value half = cd(0.5);
-        Value cellSize = mulf(reach, half);
+        Value cellSize = mulf(cellReach, half);
         auto cellPlan = md_alg::GridPlanOp::create(
             b, loc, TypeRange{i64, i64, i64}, ValueRange{lx, ly, lz}, cellSize,
             /*volume=*/Value(), /*occupancy=*/FloatAttr(),
@@ -2564,6 +2947,13 @@ void GroupsBuild::emitBuild() {
         gnz32 = trunci(gz64);
         Value gxy = muli(gnx, gny);
         Value gcells = muli(gxy, gnz);
+        if (unitsMode) {
+          // The cells of each rank: the candidates of a segment are those
+          // of the partners' rank alone.
+          gridCells = gcells;
+          Value ranks = cx(K + 1);
+          gcells = muli(gcells, ranks);
+        }
         Value gcells1 = addi(gcells, c1);
 
         Value gridOfN = call1(kGrid, index, {n, block});
@@ -2583,6 +2973,10 @@ void GroupsBuild::emitBuild() {
         columnChunks = alloc(buffer, columns);
         Value gridOfColumns = call1(kGrid, index, {columns, block});
         sizesDevice = alloc(sizesType, {});
+        if (unitsMode) {
+          Value rankCount = cx(K + 2);
+          rankPlaces = alloc(buffer, rankCount);
+        }
         xp = alloc(placesType, capacity);
         gkey = alloc(buffer, capacity);
         gcount = alloc(buffer, gcells);
@@ -2643,6 +3037,17 @@ void GroupsBuild::emitBuild() {
           store(placesAll, sizesDevice, i0);
           store(none, sizesDevice, i1c);
           store(none, sizesDevice, i2c);
+          if (unitsMode) {
+            // The place where each rank begins, and the end of the places.
+            for (unsigned r = 0; r <= K; ++r) {
+              Value chunk = load(chunkBase, colBase[r]);
+              Value placeR = muli(chunk, sixtyFourI);
+              Value at = cx(r);
+              store(placeR, rankPlaces, at);
+            }
+            Value atEnd = cx(K + 1);
+            store(placesAll, rankPlaces, atEnd);
+          }
         });
         // The order: a warp a chunk of 64 particles. There are at most n /
         // 32 + (one for each column) chunks; the warps beyond the last do
@@ -2719,6 +3124,14 @@ void GroupsBuild::emitBuild() {
                   Value rzy = addi(rz, ky);
                   Value r = muli(rzy, gnx32);
                   Value k = addi(r, kx);
+                  if (unitsMode) {
+                    // The cells of the rank of the place's unit.
+                    Value rank = rankOfUnit(pi);
+                    Value rank32 = indexCast(i32, rank);
+                    Value cells32 = indexCast(i32, gridCells);
+                    Value rankBase = muli(rank32, cells32);
+                    k = addi(k, rankBase);
+                  }
                   md_alg::BinOp::create(b, loc, k);
                 },
                 [&] {
@@ -2753,6 +3166,8 @@ void GroupsBuild::emitBuild() {
                [&](gpu::LaunchOp op) { emitLists(op, /*images=*/false); });
         launch(gridOfLists, block, shared,
                [&](gpu::LaunchOp op) { emitLists(op, /*images=*/true); });
+        if (unitsMode)
+          emitSegments(gridOfCapacity);
 
         // The sizes, to the host.
         Type token = gpu::AsyncTokenType::get(context);
@@ -2764,6 +3179,8 @@ void GroupsBuild::emitBuild() {
         gpu::WaitOp::create(b, loc, Type(), copied);
 
         dealloc(wrapped);
+        if (unitsMode)
+          dealloc(rankPlaces);
         dealloc(sizesDevice);
         dealloc(xp);
         dealloc(gkey);
@@ -2777,12 +3194,22 @@ void GroupsBuild::emitBuild() {
 }
 
 void GroupsBuild::emit() {
-  emitGrid();
-  emitPartner();
-  emitImage();
+  // The helpers once in a module that holds both builds.
+  Operation *module = b.getInsertionBlock()->getParentOp();
+  auto absent = [&](StringRef name) {
+    return !SymbolTable::lookupSymbolIn(module, name);
+  };
+  if (absent(kGrid))
+    emitGrid();
+  if (absent(kPartner))
+    emitPartner();
+  if (absent(kImage))
+    emitImage();
   if (tilted) {
-    emitImageTriclinic();
-    emitOffsetTriclinic();
+    if (absent(kImageTriclinic))
+      emitImageTriclinic();
+    if (absent(kOffsetTriclinic))
+      emitOffsetTriclinic();
   }
   emitBuild();
 }
@@ -2800,6 +3227,17 @@ void kernels::emitGroupsBuild(ModuleOp module, bool triclinic,
   GroupsBuild(b, module.getLoc(), triclinic, singlePassScan).emit();
 }
 
+std::string kernels::getSegmentsBuildName(bool triclinic, unsigned kinds) {
+  return "mdrt_gpu_build_segmented_pairs_k" + std::to_string(kinds) +
+         (triclinic ? "_triclinic" : "");
+}
+
+void kernels::emitSegmentsBuild(ModuleOp module, bool triclinic,
+                                bool singlePassScan, unsigned kinds) {
+  OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
+  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, kinds).emit();
+}
+
 namespace mdir {
 #define GEN_PASS_DEF_ADDGROUPSBUILD
 #include "mdir/Conversion/Passes.h.inc"
@@ -2812,7 +3250,9 @@ public:
   using AddGroupsBuildBase::AddGroupsBuildBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    std::string name = kernels::getGroupsBuildName(triclinic);
+    std::string name = kinds >= 0
+                           ? kernels::getSegmentsBuildName(triclinic, kinds)
+                           : kernels::getGroupsBuildName(triclinic);
     if (auto declared = module.lookupSymbol<func::FuncOp>(name)) {
       if (!declared.isDeclaration()) {
         declared.emitOpError() << "is the build of the groups already";
@@ -2820,7 +3260,10 @@ public:
       }
       declared.erase();
     }
-    kernels::emitGroupsBuild(module, triclinic, singlePassScan);
+    if (kinds >= 0)
+      kernels::emitSegmentsBuild(module, triclinic, singlePassScan, kinds);
+    else
+      kernels::emitGroupsBuild(module, triclinic, singlePassScan);
   }
 };
 } // namespace
