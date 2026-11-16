@@ -170,13 +170,19 @@ def extract(program):
         i += 1
 
 
-def emit(system, program, out, box, periodic):
+def emit(system, program, out, box, periodic, given=None):
+    """With `given`, (lists, stored positions, cell vector): the lists that
+    a device built (segments_forces.py), in place of this script's."""
     op = extract(program)
     header, regions = op.split(' segment(', 1)
     regions = 'segment(' + regions
-    lists, stored, straddling = build_list(system, box, periodic)
-    if periodic:
-        assert straddling, 'no unit straddles a face of the cell'
+    if given:
+        lists, stored, cellvec = given
+    else:
+        lists, stored, straddling = build_list(system, box, periodic)
+        cellvec = box
+        if periodic:
+            assert straddling, 'no unit straddles a face of the cell'
     n = len(system.positions)
     lines = ['module {', 'func.func private @printI64(i64)',
              'func.func private @printNewline()', 'func.func @main() {']
@@ -191,10 +197,33 @@ def emit(system, program, out, box, periodic):
     def index(k):
         return value(f'arith.constant {k} : index')
 
-    def buffer(name, data, element='i32', width=None):
+    globals_ = []
+
+    def buffer(name, data, element='i32', width=None, writable=False):
         size = index(len(data))
         shape = f'?x{width}x{element}' if width else f'?x{element}'
+        if given and not writable and len(data) > 64:
+            # A large buffer as a constant global, its bytes in hexadecimal.
+            import array
+            flat = [x for row in data for x in row] if width else list(data)
+            raw = array.array('i' if element == 'i32' else 'd', flat).tobytes()
+            static = f'{len(data)}x{width}x{element}' if width else f'{len(data)}x{element}'
+            globals_.append(f'memref.global "private" constant @g_{name} : '
+                            f'memref<{static}> = dense<"0x{raw.hex().upper()}">')
+            fixed = value(f'memref.get_global @g_{name} : memref<{static}>')
+            lines.append(f'  %{name} = memref.cast {fixed} : memref<{static}> to memref<{shape}>')
+            return f'%{name}', f'memref<{shape}>'
         lines.append(f'  %{name} = memref.alloc({size}) : memref<{shape}>')
+        if given and writable:
+            zero = value(f'arith.constant 0.0 : {element}')
+            one, first = index(1), index(0)
+            lines.append(f'  scf.for %zi_{name} = {first} to {size} step {one} {{')
+            for c in range(width or 1):
+                at = index(c)
+                lines.append(f'    memref.store {zero}, %{name}[%zi_{name}, {at}] : memref<{shape}>'
+                             if width else f'    memref.store {zero}, %{name}[%zi_{name}] : memref<{shape}>')
+            lines.append('  }')
+            return f'%{name}', f'memref<{shape}>'
         for k, row in enumerate(data):
             at = index(k)
             for c, x in enumerate(row if width else [row]):
@@ -212,7 +241,7 @@ def emit(system, program, out, box, periodic):
     positions = buffer('x', stored, 'f64', 3)
     types = buffer('types', system.type_of)
     charges = buffer('charges', system.charge_of, 'f64')
-    forces = buffer('f', [[0.0, 0.0, 0.0] for _ in range(n)], 'f64', 3)
+    forces = buffer('f', [[0.0, 0.0, 0.0] for _ in range(n)], 'f64', 3, writable=True)
     ntypes = len(system.sigma)
     sigma = [[0.5 * (system.sigma[a] + system.sigma[b]) for b in range(ntypes)]
              for a in range(ntypes)]
@@ -220,7 +249,7 @@ def emit(system, program, out, box, periodic):
                 for b in range(ntypes)] for a in range(ntypes)]
     tables = [buffer('table_sigma', sigma, 'f64', ntypes),
               buffer('table_epsilon', epsilon, 'f64', ntypes)]
-    cell = value(f'arith.constant dense<[{box[0]:.17e}, {box[1]:.17e}, {box[2]:.17e}]> : vector<3xf64>')
+    cell = value(f'arith.constant dense<[{", ".join(f"{v:.17e}" for v in cellvec)}]> : vector<{len(cellvec)}xf64>')
     places, nunits = index(len(lists['places'])), index(len(lists['counts']))
 
     # The op in its buffer form.
@@ -239,7 +268,7 @@ def emit(system, program, out, box, periodic):
                  + ', '.join(t for _, t in names) + f') sizes({places}, {nunits})'
                  + f' contract({contract}) reach(1.0)', new, count=1)
     new = re.sub(r'positions\([^)]*\)', f'positions({positions[0]} : {positions[1]})', new, count=1)
-    new = re.sub(r'cell\([^)]*\)', f'cell({cell} : vector<3xf64>)', new, count=1)
+    new = re.sub(r'cell\([^)]*\)', f'cell({cell} : vector<{len(cellvec)}xf64>)', new, count=1)
     new = re.sub(r'ins\([^)]*\)', f'ins({types[0]}, {charges[0]} : {types[1]}, {charges[1]})', new, count=1)
     new = re.sub(r'outs\([^)]*\)', f'outs({forces[0]} : {forces[1]})', new, count=1)
     new = re.sub(r'reduce\([^)]*\)', f'reduce({", ".join(zeros)} : {", ".join(reduce_types)})', new, count=1)
@@ -288,6 +317,8 @@ def emit(system, program, out, box, periodic):
     for c in range(9):
         show(virial[c])
     lines += ['  return', '}', '}']
+    if globals_:
+        lines[1:1] = globals_
     Path(out).write_text('\n'.join(lines) + '\n')
 
 

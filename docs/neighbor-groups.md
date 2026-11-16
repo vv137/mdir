@@ -445,6 +445,19 @@ octahedron, a dodecahedron (also with a reach in the proportion of a
 solvated one, whose ranges of z span the grid), a hexagonal cell, and a
 cell of D115 against every image of every pair in f64.
 
+## 5.3 Lists of units (D417, D[md-alg-segments-build])
+
+A list of units, `!mdrt.segmented_pairs`, is built by this build with units for particles.
+
+- **The units.** A unit is a copy of a taken rigid kind (D403), at its anchor, or a particle of the rest, at its anchor (#799) or itself. The emitter writes the build under its own name, `mdrt_gpu_build_segmented_pairs_k<K>` (`kernels::emitSegmentsBuild`), so a program of groups keeps its bytes.
+- **The compact order.** It keys each unit by rank (the rest first, then the kinds from $K - 1$ to 0) and by column. The columns of every rank are those of the plan of all the units, cut into cubes of their width along z (`kUnitCubeHeight`), so that a chunk, and so a group, holds the units of one kind and one cube. With the kinds in that order in the places, the rule $q \ge 16g$ visits each segment $s(f, g)$, $g \le f$, from the groups of kind $f$.
+- **The search.** The candidates of each rank are in cells of their own, of half the largest covering reach, ranked a thread a place (StableRank). A group searches the cells of each rank from its own on, with the covering reach $R + e_f + e_g$ of the segment (`md_exec::getSegmentCoveringReach`), into records of that segment. Exclusions apply only in segment $(K, K)$.
+- **The records.** A counting sort of the blocks by segment puts the records in the order of the segments, with their groups and counts, in the runtime's slots of the records (`GroupsABI.h`). The images kernel of D115 continues each list of a group in a segment.
+- **The refresh** tests the units' reference points (one mobility group) and stops the run if the largest covering reach exceeds half the least face width.
+- **The pruning** re-tests a record a warp against its segment's inner reach.
+
+`test/Integration/segments-build-coverage-gpu.test` checks the lists against every image of every pair of reference points in f64, after the refresh of every frame of a trajectory. `test/Integration/segments-build-forces-gpu.test` checks the forces of the serial definition over the device's lists against the general groups build in double. The design and the measurements are in [D[md-alg-segments-build]](decisions/md-alg-segments-build.md).
+
 ## 5.2 How far the lists reach (D242)
 
 **Claim.** The lists hold an entry bit for every image of every pair
@@ -1432,6 +1445,7 @@ drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 | D291 | The table of a block, measured and refused | 6.1 |
 | D294 | A model in stages keeps the matrix | 6.3 |
 | D357 | Coverage across IR boundaries | 10.1 |
+| D[md-alg-segments-build] | The build over units: lists of units in segments | 5.3 |
 
 **Where the sections moved** (2026-11-11). This document had the structure
 in Section 2, the loop in Section 3, what the loop reads in Section 4, the

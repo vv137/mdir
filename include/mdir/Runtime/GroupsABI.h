@@ -5,7 +5,7 @@
 #ifndef MDIR_RUNTIME_GROUPS_ABI_H
 #define MDIR_RUNTIME_GROUPS_ABI_H
 
-#define MDRT_GROUPS_ABI_VERSION 1
+#define MDRT_GROUPS_ABI_VERSION 2
 
 enum MdrtGroupsSlot {
   GROUPS_ORDER = 0,
@@ -24,7 +24,21 @@ enum MdrtGroupsSlot {
   GROUPS_ACTIVE_RUNS = 13,
   GROUPS_ACTIVE_WIDE_RUNS = 14,
   GROUPS_PLACED = 15,
-  GROUPS_BUFFERS = 16
+  /* A list of units (D417, D[md-alg-segments-build]): the count and the
+     last block of each list of a group in a segment (g S + s), the order of
+     the places as the traversal reads it, the records in the order of the
+     segments (entries, masks, groups, counts), and the first record of each
+     segment. Allocated where they are first used, so a structure of
+     groups takes none of them. */
+  GROUPS_SEGMENT_COUNTS = 16,
+  GROUPS_SEGMENT_LAST = 17,
+  GROUPS_SEGMENT_ORDER = 18,
+  GROUPS_RECORD_ENTRIES = 19,
+  GROUPS_RECORD_MASKS = 20,
+  GROUPS_RECORD_GROUPS = 21,
+  GROUPS_RECORD_COUNTS = 22,
+  GROUPS_SEGMENT_OFFSETS = 23,
+  GROUPS_BUFFERS = 24
 };
 
 enum MdrtGroupsElement { MDRT_GROUPS_I32, MDRT_GROUPS_F32 };
@@ -33,7 +47,8 @@ enum MdrtGroupsElement { MDRT_GROUPS_I32, MDRT_GROUPS_F32 };
 enum MdrtGroupsShape {
   MDRT_GROUPS_PLACES, MDRT_GROUPS_GROUPS, MDRT_GROUPS_ENTRIES,
   MDRT_GROUPS_BLOCKS, MDRT_GROUPS_BLOCK_OF, MDRT_GROUPS_SCALAR,
-  MDRT_GROUPS_RUNS, MDRT_GROUPS_WIDE_RUNS, MDRT_GROUPS_PLACED
+  MDRT_GROUPS_RUNS, MDRT_GROUPS_WIDE_RUNS, MDRT_GROUPS_PLACED,
+  MDRT_GROUPS_SEGMENT_LISTS, MDRT_GROUPS_SEGMENTS
 };
 struct MdrtGroupsDescriptor {
   enum MdrtGroupsElement element;
@@ -59,6 +74,14 @@ mdrtGroupsDescriptor(long long slot) {
     {MDRT_GROUPS_I32, MDRT_GROUPS_RUNS, "groups: active runs"},
     {MDRT_GROUPS_I32, MDRT_GROUPS_WIDE_RUNS, "groups: active wide runs"},
     {MDRT_GROUPS_F32, MDRT_GROUPS_PLACED, "groups: placed"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list counts"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENT_LISTS, "units: list last blocks"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_PLACES, "units: order"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record entries"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_ENTRIES, "units: record masks"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record groups"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_BLOCKS, "units: record counts"},
+    {MDRT_GROUPS_I32, MDRT_GROUPS_SEGMENTS, "units: segment offsets"},
   };
   return slot >= 0 && slot < GROUPS_BUFFERS ? &descriptors[slot] : 0;
 }

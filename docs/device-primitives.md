@@ -763,9 +763,11 @@ in the segments of rigid kinds, `!mdrt.segmented_pairs`, the op takes one
 region for each segment it visits, with a table of the site pairs of its
 slices, and forms the sites by the kinds' weights
 ([D417](decisions/D417.md)). Its serial
-definition is in `TraverseSegments.cpp`; `convert-md-exec-to-gpu` refuses
-it, and the lists of units, until their build (slice S2) and their SIMT
-schedule (slice S3) land. The arithmetic that
+definition is in `TraverseSegments.cpp`. `convert-md-exec-to-gpu` lowers
+the lists of units, which the groups build of D404 builds over units
+([neighbor-groups.md](neighbor-groups.md), Section 5.3), and runs the
+serial definition over them with `traverse-oracle=serial`. It refuses the
+SIMT schedule until slice S3 lands. The arithmetic that
 `convert-md-exec-to-gpu` finishes in its kernels (contraction, explicit
 fused multiply-adds, the approximate reciprocal) covers the key regions of
 the `sort_by_key` ops too, whose bodies become the key kernels.

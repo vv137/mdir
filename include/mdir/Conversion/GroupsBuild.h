@@ -35,6 +35,32 @@ std::string getGroupsBuildName(bool triclinic);
 void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
                      bool singlePassScan);
 
+/// The name of the build over the units of `kinds` taken rigid kinds and
+/// the rest (D[md-alg-segments-build]):
+/// `mdrt_gpu_build_segmented_pairs_k<kinds>`, with `_triclinic`.
+std::string getSegmentsBuildName(bool triclinic, unsigned kinds);
+
+/// Appends to `module` the build over units: the groups build of D404 with
+/// units for particles, each at its reference particle, a group of one
+/// kind, a search for each segment s(f, g) with its reach R + e_f + e_g,
+/// and the records in the order of the segments (D417, Sections 1 and 2;
+/// S1's layout). The helpers that the groups' build shares are added only
+/// if the module does not hold them.
+///
+/// Its arguments, after those of the groups' build up to the reach: the
+/// covering reach of each segment in the order of s (getSegmentCoveringReach
+/// of NeighborCoverage.h), and the end of the units of each rank (the rest,
+/// then the kinds from K - 1 to 0); then the excluded pairs, the
+/// order of the places by unit, the place of each unit, the staging
+/// entries and masks, the count of each list (group g, segment s at
+/// g S + s), the blocks' names and ordinals, the shifts of the places, the
+/// reference particle and the value of `order` of each unit, the unit of
+/// each particle of the rest, the last block of each list, the order of
+/// S1's layout, the records' entries, masks, groups, and counts, the
+/// offsets of the segments, and the sizes on the host.
+void emitSegmentsBuild(mlir::ModuleOp module, bool triclinic,
+                       bool singlePassScan, unsigned kinds);
+
 } // namespace kernels
 } // namespace mdir
 

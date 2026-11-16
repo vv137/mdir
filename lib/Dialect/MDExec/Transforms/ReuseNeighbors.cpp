@@ -458,6 +458,103 @@ static bool hasWork(scf::ForOp loop) {
   return !isSegmentLoop(loop) && !findSources(*loop.getBody()).empty();
 }
 
+//===----------------------------------------------------------------------===//
+// Lists of units (D417, D[md-alg-segments-build])
+//===----------------------------------------------------------------------===//
+
+/// Returns true if every operand of `op` but `except` is defined outside
+/// `loop`.
+static bool isInvariantExcept(Operation *op, scf::ForOp loop,
+                              ArrayRef<Value> except) {
+  return llvm::all_of(op->getOperands(), [&](Value operand) {
+    return llvm::is_contained(except, operand) ||
+           isDefinedOutside(operand, loop);
+  });
+}
+
+/// Makes the lists of units that the body of `loop` builds, or starts empty
+/// for a loop within it, values that `loop` carries: an empty list before
+/// the loop, of the same kinds, excluded pairs, anchors, cutoff, and skin,
+/// and in the body a refresh where the build was (with `pruneSkin` below
+/// the skin, a dual one, D114). Returns true if it changed `loop`.
+static bool reuseSegmented(scf::ForOp loop, double pruneSkin) {
+  SmallVector<Operation *> sources;
+  for (Operation &op : *loop.getBody()) {
+    if (auto build = dyn_cast<BuildSegmentedPairsOp>(&op)) {
+      if (isInvariantExcept(build, loop,
+                            {build.getPositions(), build.getCell()}))
+        sources.push_back(build);
+      continue;
+    }
+    // An empty list that only a loop of the body starts from.
+    auto empty = dyn_cast<EmptySegmentedPairsOp>(&op);
+    if (!empty || !empty.getResult().hasOneUse() ||
+        !isInvariantExcept(empty, loop, {}))
+      continue;
+    auto inner = dyn_cast<scf::ForOp>(empty.getResult().use_begin()->getOwner());
+    if (inner && inner->getBlock() == loop.getBody())
+      sources.push_back(empty);
+  }
+  if (sources.empty())
+    return false;
+  OpBuilder builder(loop);
+  Location loc = loop.getLoc();
+  SmallVector<Value> inits(loop.getInitArgs().begin(),
+                           loop.getInitArgs().end());
+  for (Operation *source : sources) {
+    if (auto build = dyn_cast<BuildSegmentedPairsOp>(source))
+      inits.push_back(EmptySegmentedPairsOp::create(
+          builder, build.getLoc(), build.getResult().getType(),
+          build.getUniverse(), build.getKinds(), build.getExcluded(),
+          build.getAnchored(), build.getCutoffAttr(), build.getSkinAttr(),
+          build.getRadiusAttr()));
+    else
+      inits.push_back(builder.clone(*source)->getResult(0));
+  }
+  OperationState state(loc, scf::ForOp::getOperationName());
+  state.addOperands(
+      {loop.getLowerBound(), loop.getUpperBound(), loop.getStep()});
+  state.addOperands(inits);
+  for (Value init : inits)
+    state.addTypes(init.getType());
+  state.addAttributes(loop->getAttrs());
+  state.addRegion();
+  auto replacement = cast<scf::ForOp>(builder.create(state));
+  replacement.getRegion().takeBody(loop.getRegion());
+  Block &moved = *replacement.getBody();
+  SmallVector<Value> yielded(moved.getTerminator()->getOperands().begin(),
+                             moved.getTerminator()->getOperands().end());
+  for (Operation *source : sources) {
+    Value current = moved.addArgument(source->getResult(0).getType(), loc);
+    if (auto build = dyn_cast<BuildSegmentedPairsOp>(source)) {
+      OpBuilder at(build);
+      double skin = build.getSkin().convertToDouble();
+      double prune = pruneSkin > 0.0 && pruneSkin < skin ? pruneSkin : skin;
+      Value refreshed = RefreshSegmentedPairsOp::create(
+          at, build.getLoc(), current.getType(), current,
+          build.getPositions(), build.getCell(), build.getCutoffAttr(),
+          build.getSkinAttr(), at.getF64FloatAttr(prune));
+      build.getResult().replaceAllUsesWith(refreshed);
+      build.erase();
+      yielded.push_back(refreshed);
+      continue;
+    }
+    auto empty = cast<EmptySegmentedPairsOp>(source);
+    auto inner = cast<scf::ForOp>(empty.getResult().use_begin()->getOwner());
+    unsigned position =
+        empty.getResult().use_begin()->getOperandNumber() -
+        inner.getNumControlOperands();
+    empty.getResult().replaceAllUsesWith(current);
+    empty.erase();
+    yielded.push_back(inner.getResult(position));
+  }
+  moved.getTerminator()->setOperands(yielded);
+  for (unsigned i = 0, e = loop.getNumResults(); i != e; ++i)
+    loop.getResult(i).replaceAllUsesWith(replacement.getResult(i));
+  loop.erase();
+  return true;
+}
+
 namespace mdir {
 namespace md_exec {
 
@@ -471,6 +568,7 @@ public:
 
   void runOnOperation() final {
     reuseAll();
+    reuseSegmentedAll();
     removeRepeatedRefreshes(getOperation());
     // The refreshes keep dual lists where the run asks for them (D114).
     if (pruneSkin > 0.0)
@@ -480,6 +578,25 @@ public:
           refresh.setPruneSkinAttr(
               FloatAttr::get(Float64Type::get(&getContext()), pruneSkin));
       });
+  }
+
+  /// The lists of units, out of the loops over steps, innermost loops
+  /// first, one loop at a time.
+  void reuseSegmentedAll() {
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      SmallVector<scf::ForOp> loops;
+      getOperation()->walk([&](scf::ForOp loop) { loops.push_back(loop); });
+      for (scf::ForOp loop : loops) {
+        if (isSegmentLoop(loop))
+          continue;
+        if (reuseSegmented(loop, pruneSkin)) {
+          changed = true;
+          break;
+        }
+      }
+    }
   }
 
   void reuseAll() {

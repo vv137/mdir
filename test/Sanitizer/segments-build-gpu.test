@@ -1,0 +1,20 @@
+# The build of a list of units, its refresh, and its pruning on a device
+# (D[md-alg-segments-build]) under compute-sanitizer: alanine dipeptide in
+# TIP3P, with anchors and excluded pairs, over 12 frames of a general run,
+# whose first build grows the structure and builds again. No access beyond a
+# buffer, no read of memory that nothing has written, and no race in shared
+# memory.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/../Integration/Inputs/segments_coverage.py system dipeptide-tip3p %S/../Driver/Inputs %t 12
+# RUN: cd %t && mdir run control.toml > run.log
+# RUN: %mdir_python %S/../Integration/Inputs/segments_coverage.py emit dipeptide-tip3p %S/../Driver/Inputs %t
+# RUN: mdir-opt %t/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu | mlir-opt %lower_gpu_to_llvm > %t/llvm.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mlir-runner %t/llvm.mlir -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

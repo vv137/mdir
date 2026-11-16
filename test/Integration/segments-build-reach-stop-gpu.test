@@ -1,0 +1,26 @@
+# REQUIRES: cuda
+# The stop of the covering reach against the cell (D[md-alg-segments-build],
+# as #795's): the 403 waters of Inputs/triclinic, whose least face width
+# c_z = 1.8385 nm leaves half of it, 0.919 nm, below the largest covering
+# reach of the list, 0.9 + 2 (0.09582) nm. The first build stops the run
+# with both lengths.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dodecahedron %S/../Driver/Inputs %t 10 --cell
+# RUN: cd %t && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dodecahedron %S/../Driver/Inputs %t
+# RUN: mdir-opt %t/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# CHECK: the covering reach of the list of units, 10.92 Ang (the pair list distance plus twice 0.9582 Ang, the largest covering radius of its units), exceeds half the least face width of the cell, 9.192 Ang; the run has failed (use a larger cell)
+#
+# An excluded pair of a particle of the rest and a water, which the build
+# could not leave out (D405 takes the kinds so that there is none): the
+# lowering counts such pairs on the host and the run stops.
+# RUN: mkdir -p %t/joined
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system growth %S/../Driver/Inputs %t/joined 1
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit growth %S/../Driver/Inputs %t/joined --join-exclusion
+# RUN: mdir-opt %t/joined/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=JOINED
+# JOINED: 1 excluded pairs of the list of units join a taken rigid kind to another molecule; the build would compute them (a kind of D403 has no exclusion outside its copy)

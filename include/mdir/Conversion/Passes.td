@@ -473,6 +473,12 @@ def ConvertMDExecToGPU
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
            "(MDIR_CHECK_PRUNING, D268)">,
+    Option<"dumpSegments", "dump-segments", "bool", /*default=*/"false",
+           "For the tests of the lists of units (D[md-alg-segments-build]): "
+           "each refresh of a list of units writes its records, the order "
+           "and the shifts of its places, its inner records, and its active "
+           "units, through the runtime, to the directory that "
+           "MDRT_SEGMENTS_DUMP names">,
     Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
            "Whether the first loop over pairs after a refresh of a dual "
            "list of groups, at the same positions and in the same cell, "
@@ -598,7 +604,8 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
     `@mdrt_gpu_build_neighbors_groups_triclinic`). A declaration of the
     build in the module, by which a test calls it, is replaced. Its
     collection algorithms and accessors stay `md_alg` ops, for
-    `convert-md-alg-to-gpu`. This is for the tests of the build.
+    `convert-md-alg-to-gpu`. This is for the tests of the build. With
+    `kinds`, it appends the build over units instead.
   }];
   let options = [
     Option<"triclinic", "triclinic", "bool", /*default=*/"false",
@@ -606,7 +613,12 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
     Option<"singlePassScan", "single-pass-scan", "bool",
            /*default=*/"false",
            "The decoupled look-back scan for the three counting sorts "
-           "(D321) in place of the three-launch scan">
+           "(D321) in place of the three-launch scan">,
+    Option<"kinds", "kinds", "int", /*default=*/"-1",
+           "With 0 or more, the build over the units of that many taken "
+           "rigid kinds and the rest (D[md-alg-segments-build]), "
+           "`@mdrt_gpu_build_segmented_pairs_k<kinds>`, in place of the "
+           "groups' build">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

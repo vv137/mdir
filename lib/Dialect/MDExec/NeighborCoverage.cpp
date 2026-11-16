@@ -3,12 +3,14 @@
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/MDRTTypes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/Format.h"
 #include <optional>
 
 using namespace mlir;
@@ -58,11 +60,18 @@ public:
            Images images)
       : op(op), neighbors(neighbors), centers(centers), cutoff(cutoff),
         images(images) {}
+  /// A list of units, of which the consumer visits `segments`.
+  Coverage(Operation *op, Value list, double cutoff,
+           ArrayRef<std::pair<unsigned, unsigned>> segments)
+      : op(op), neighbors(list), cutoff(cutoff), images(Images::Minimum),
+        segments(segments.begin(), segments.end()), segmented(true) {}
   LogicalResult prove();
 
 private:
   LogicalResult fact(const Obligation &request, double cutoff, Value centers,
                       Images images);
+  LogicalResult segmentFact(const Obligation &request, double built,
+                            Value origin);
   LogicalResult unsupported(Operation *boundary, StringRef description);
   LogicalResult crossLoop(const Obligation &request, scf::ForOp forOp,
                            unsigned index);
@@ -80,7 +89,76 @@ private:
   SmallVector<Obligation> work;
   llvm::DenseSet<std::pair<Value, Value>> seen;
   unsigned facts = 0;
+  SmallVector<std::pair<unsigned, unsigned>> segments;
+  bool segmented = false;
 };
+
+/// The op that a list of units began at, through its refreshes and the
+/// values that loops carry: its empty list or its build, which hold the
+/// rest's radius.
+static Operation *getSegmentOrigin(Value list) {
+  llvm::DenseSet<Value> seen;
+  while (list && seen.insert(list).second) {
+    if (auto refresh = list.getDefiningOp<RefreshSegmentedPairsOp>()) {
+      list = refresh.getList();
+      continue;
+    }
+    if (Operation *op = list.getDefiningOp();
+        op && isa<EmptySegmentedPairsOp, BuildSegmentedPairsOp>(op))
+      return op;
+    if (auto argument = dyn_cast<BlockArgument>(list)) {
+      auto loop = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
+      if (!loop || argument.getArgNumber() == 0)
+        return nullptr;
+      list = loop.getInitArgs()[argument.getArgNumber() - 1];
+      continue;
+    }
+    if (auto loop = list.getDefiningOp<scf::ForOp>()) {
+      list = loop.getInitArgs()[cast<OpResult>(list).getResultNumber()];
+      continue;
+    }
+    return nullptr;
+  }
+  return nullptr;
+}
+
+LogicalResult Coverage::segmentFact(const Obligation &request, double built,
+                                    Value origin) {
+  // A build is its own origin, and a refresh is lowered only over a list
+  // whose storage is in its function, which its empty list gives
+  // (convert-md-exec-to-gpu refuses another first).
+  Operation *start = getSegmentOrigin(origin);
+  assert(start && "a list of units without its empty list or build");
+  std::optional<APFloat> radius;
+  if (auto empty = dyn_cast<EmptySegmentedPairsOp>(start))
+    radius = empty.getRadius();
+  else
+    radius = cast<BuildSegmentedPairsOp>(start).getRadius();
+  double rest = radius ? radius->convertToDouble() : 0.0;
+  Type type = origin.getType();
+  for (auto [f, g] : segments) {
+    double ef = getSegmentRadius(type, f, rest);
+    double eg = getSegmentRadius(type, g, rest);
+    // The requirement, formed apart from the reach it is checked against.
+    double required = cutoff + ef + eg;
+    double reach = getSegmentCoveringReach(built, ef, eg);
+    if (required > reach) {
+      std::string text;
+      llvm::raw_string_ostream message(text);
+      message << "segment (" << f << ", " << g
+              << ") needs pairs of reference points within "
+              << llvm::format("%.6g", required)
+              << ", beyond the cutoff of the list plus the radii, "
+              << llvm::format("%.6g", reach);
+      auto diagnostic = op->emitOpError() << text;
+      if (!request.boundary.empty())
+        diagnostic << " (through " << request.boundary << " boundary)";
+      return failure();
+    }
+  }
+  ++facts;
+  return success();
+}
 
 LogicalResult Coverage::unsupported(Operation *boundary,
                                      StringRef description) {
@@ -239,6 +317,30 @@ LogicalResult Coverage::prove() {
         return failure();
       continue;
     }
+    if (segmented) {
+      // A list of units: its build, or the refresh that renews it, with
+      // the cutoff its segments are valid for.
+      if (auto build =
+              request.neighbors.getDefiningOp<BuildSegmentedPairsOp>()) {
+        if (failed(segmentFact(request, build.getCutoff().convertToDouble(),
+                               request.neighbors)))
+          return failure();
+        continue;
+      }
+      if (auto refresh =
+              request.neighbors.getDefiningOp<RefreshSegmentedPairsOp>()) {
+        if (failed(segmentFact(request, refresh.getCutoff().convertToDouble(),
+                               request.neighbors)))
+          return failure();
+        continue;
+      }
+      if (auto empty =
+              request.neighbors.getDefiningOp<EmptySegmentedPairsOp>()) {
+        // An empty list holds no pair: a consumer of it before any refresh
+        // takes nothing that a build would have given.
+        return unsupported(empty, "md_exec.empty_segmented_pairs");
+      }
+    }
     // A cast of the type is the same structure (D413).
     if (auto weaken = request.neighbors.getDefiningOp<WeakenNeighborsOp>()) {
       append(weaken.getNeighbors(), request.centers, request.boundary);
@@ -285,6 +387,25 @@ LogicalResult mdir::md_exec::verifyNeighborCoverage(PairForOp loop) {
   return Coverage(loop, loop.getNeighbors(), loop.getCenters(),
                   loop.getCutoff().convertToDouble(), loop.getImages())
       .prove();
+}
+
+double mdir::md_exec::getSegmentCoveringReach(double reach, double ef,
+                                               double eg) {
+  return reach + ef + eg;
+}
+
+double mdir::md_exec::getSegmentRadius(Type type, unsigned kind,
+                                       double restRadius) {
+  auto list = cast<mdrt::SegmentedPairsType>(type);
+  if (kind >= list.getNumKinds())
+    return restRadius;
+  return list.getKind(kind).getExtent().getValueAsDouble();
+}
+
+LogicalResult mdir::md_exec::verifySegmentCoverage(
+    Operation *op, Value list, double cutoff,
+    ArrayRef<std::pair<unsigned, unsigned>> segments) {
+  return Coverage(op, list, cutoff, segments).prove();
 }
 
 LogicalResult mdir::md_exec::verifyNeighborCoverage(Operation *op,

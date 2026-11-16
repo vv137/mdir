@@ -1851,6 +1851,9 @@ struct Groups {
      it is noted in the log. */
   bool built;
   int64_t lateGrowths;
+  /* The segments of a list of units, 1 for groups
+     (mdrtGroupsSetSegments). */
+  int64_t segments;
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
@@ -1865,6 +1868,8 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
   case MDRT_GROUPS_WIDE_RUNS: return groups->blocks / 1024 + 1;
   case MDRT_GROUPS_PLACED: return groups->places * 3;
   case MDRT_GROUPS_BLOCKS: return groups->blocks;
+  case MDRT_GROUPS_SEGMENT_LISTS: return groups->places / 16 * groups->segments;
+  case MDRT_GROUPS_SEGMENTS: return groups->segments + 1;
   }
   abort();
 }
@@ -1904,9 +1909,18 @@ int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
   }
   groups->places = (places + 15) / 16 * 16;
   groups->blocks = blocks > 0 ? blocks : 1;
+  groups->segments = 1;
   allocateGroups(groups);
   recordCallHandle(groups);
   return (int64_t)(intptr_t)groups;
+}
+
+/* A list of units in `segments` segments (D417): the buffers of its lists
+   by group and segment, and of its offsets, take that many. Called before
+   the first use of those buffers. */
+void mdrtGroupsSetSegments(int64_t handle, int64_t segments) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  groups->segments = segments > 0 ? segments : 1;
 }
 
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
@@ -1924,6 +1938,60 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
   result->offset = 0;
   result->size = getGroupsLength(groups, (int)which);
   result->stride = 1;
+}
+
+/* For the tests of the lists of units (convert-md-exec-to-gpu with
+   dump-segments, D[md-alg-segments-build]): writes the list of `handle`, of
+   `places` places and `records` records, after `builds` builds of it and
+   `prunes` prunings of every list, to dump_<n>.bin in the directory
+   that MDRT_SEGMENTS_DUMP names, n counting the dumps from 0. The file holds
+   six i64 (n, places, records, segments, the builds and the prunings so
+   far), then for each buffer of SEGMENT_ORDER, SHIFTS, RECORD_ENTRIES,
+   RECORD_MASKS, RECORD_GROUPS, RECORD_COUNTS, SEGMENT_OFFSETS,
+   INNER_ENTRIES, INNER_MASKS, INNER_COUNTS, ACTIVE_UNITS, ACTIVE_COUNT and
+   ORDER (after a build, the reference particle of each place) its length in
+   i32 (0 where the list has not allocated it) and its values. */
+void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
+                      int64_t builds, int64_t prunes) {
+  const char *dir = getenv("MDRT_SEGMENTS_DUMP");
+  if (!dir)
+    return;
+  static int64_t serial = 0;
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  enter();
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  char path[4096];
+  snprintf(path, sizeof path, "%s/dump_%06lld.bin", dir, (long long)serial);
+  FILE *file = fopen(path, "wb");
+  if (!file) {
+    fprintf(stderr, "mdrt: cannot write %s\n", path);
+    abort();
+  }
+  int64_t header[6] = {serial, places, records, groups->segments,
+                       builds, prunes};
+  fwrite(header, sizeof header, 1, file);
+  struct { int slot; int64_t length; } parts[] = {
+      {GROUPS_SEGMENT_ORDER, places},     {GROUPS_SHIFTS, places},
+      {GROUPS_RECORD_ENTRIES, records * 64}, {GROUPS_RECORD_MASKS, records * 64},
+      {GROUPS_RECORD_GROUPS, records},    {GROUPS_RECORD_COUNTS, records},
+      {GROUPS_SEGMENT_OFFSETS, groups->segments + 1},
+      {GROUPS_INNER_ENTRIES, records * 64}, {GROUPS_INNER_MASKS, records * 64},
+      {GROUPS_INNER_COUNTS, records},     {GROUPS_ACTIVE_UNITS, records},
+      {GROUPS_ACTIVE_COUNT, 1},           {GROUPS_ORDER, places}};
+  for (size_t k = 0; k != sizeof parts / sizeof parts[0]; ++k) {
+    int64_t length = groups->data[parts[k].slot] ? parts[k].length : 0;
+    fwrite(&length, sizeof length, 1, file);
+    if (!length)
+      continue;
+    int32_t *host = malloc((size_t)length * sizeof(int32_t));
+    check(cuMemcpyDtoH(host, (CUdeviceptr)groups->data[parts[k].slot],
+                       (size_t)length * sizeof(int32_t)),
+          "cuMemcpyDtoH");
+    fwrite(host, sizeof(int32_t), (size_t)length, file);
+    free(host);
+  }
+  fclose(file);
+  ++serial;
 }
 
 /* Makes room for `places` places and `blocks` blocks, a quarter more than
