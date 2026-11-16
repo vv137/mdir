@@ -505,7 +505,16 @@ candidates in it. The grid is periodic along x alone: a row of the grid
 $t_z$ cells beyond a face of z holds the particles of $t_z\mathbf c$ away,
 x and y with them, and one $t_y$ beyond a face of y those of $t_y\mathbf
 b$, so the window of y moves by $-t_z c_y$ in each row of z and that of x
-by $-t_z c_x - t_y b_x$ in each row of y. The minimum image is taken in one
+by $-t_z c_x - t_y b_x$ in each row of y. A point of a row of z within
+$R'$ of the box of group $g$ has its y within $w_{g,y} + (R'^2 -
+\Delta_z^2)^{1/2}$ of the center, and one of a row of y its x within
+$w_{g,x} + (R'^2 - \Delta_z^2 - \Delta_y^2)^{1/2}$, so each window is
+narrowed to that half-width, and a row with $\Delta_z \ge R'$ is empty.
+Where the range of a group along z is as wide as the grid, a row stands for
+two periods $t_z$; it is visited once, with the hull of the windows of
+both, and, since the center of a window moves linearly with $t_z$, the two
+extremes bound any period between them (D[groups-triclinic-search]). The
+minimum image is taken in one
 pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, which gives the image
 in the brick (the nearest one within half of the least of $a_x$, $b_y$,
 $c_z$, Section 4.3); $\mathbf S_p$, $\mathbf W_p$, and $\mathbf e$ become
@@ -517,7 +526,9 @@ $\mathbf c$, $\mathbf b$ (rounded again), and $\mathbf a$ (rounded again),
 27 in all: every image within three halves of $c_z$, $b_y$, and $a_x$ of
 the center of a box along $z$, $y$, and $x$, so that the theorem holds with
 $L_a$ the diagonal of $H$, and the lists are complete for a reach below
-$\min(a_x, b_y, c_z)$.
+$\min(a_x, b_y, c_z)$. A group takes only the codes that move along its axes of
+$2(w_{g,a} + R') \ge L_a$: along another axis its box and the reach leave
+only the image of the pass (D[groups-triclinic-search]).
 
 ### 4.4.5 The loop
 
