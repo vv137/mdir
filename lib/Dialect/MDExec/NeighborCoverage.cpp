@@ -124,10 +124,11 @@ static Operation *getSegmentOrigin(Value list) {
 
 LogicalResult Coverage::segmentFact(const Obligation &request, double built,
                                     Value origin) {
+  // A build is its own origin, and a refresh is lowered only over a list
+  // whose storage is in its function, which its empty list gives
+  // (convert-md-exec-to-gpu refuses another first).
   Operation *start = getSegmentOrigin(origin);
-  if (!start)
-    return unsupported(origin.getDefiningOp() ? origin.getDefiningOp() : op,
-                       "list of units without its empty list or build");
+  assert(start && "a list of units without its empty list or build");
   std::optional<APFloat> radius;
   if (auto empty = dyn_cast<EmptySegmentedPairsOp>(start))
     radius = empty.getRadius();
@@ -146,8 +147,9 @@ LogicalResult Coverage::segmentFact(const Obligation &request, double built,
       llvm::raw_string_ostream message(text);
       message << "segment (" << f << ", " << g
               << ") needs pairs of reference points within "
-              << llvm::format("%.6g", required) << ", beyond the covering reach "
-              << llvm::format("%.6g", reach) << " of the list of units";
+              << llvm::format("%.6g", required)
+              << ", beyond the cutoff of the list plus the radii, "
+              << llvm::format("%.6g", reach);
       auto diagnostic = op->emitOpError() << text;
       if (!request.boundary.empty())
         diagnostic << " (through " << request.boundary << " boundary)";

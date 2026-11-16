@@ -201,6 +201,20 @@ void mdrtSegmentsStopReach(double reach, double widest, double half) {
   stopWith(message);
 }
 
+/* The excluded pairs of a list of units (D[md-alg-segments-build]) hold
+   `count` pairs that its build cannot leave out: of a particle of the rest
+   and a copy of a taken kind, or of two copies. D405 takes the kinds so that
+   there is none; such a pair would enter the sums. */
+void mdrtSegmentsStopExclusions(int64_t count) {
+  char message[320];
+  snprintf(message, sizeof message,
+           "%lld excluded pairs of the list of units join a taken rigid kind "
+           "to another molecule; the build would compute them (a kind of "
+           "D403 has no exclusion outside its copy)",
+           (long long)count);
+  stopWith(message);
+}
+
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
    hydrogens, left a length off its target or not a number in the step
    `step`: the run has failed (D278). */

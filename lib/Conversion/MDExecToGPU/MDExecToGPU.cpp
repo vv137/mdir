@@ -4900,7 +4900,11 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
   // (D408).
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
   kernels::emitGroupsBuild(*templates, tilted, singlePassGroupScan);
+  // The helpers that the build over units shares are taken once.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto symbol = dyn_cast<SymbolOpInterface>(op);
+    if (symbol && SymbolTable::lookupSymbolIn(module, symbol.getName()))
+      continue;
     op.remove();
     module.push_back(&op);
   }
@@ -5895,6 +5899,35 @@ static void emitAtomicAddI32(OpBuilder &b, Location loc, Value buffer,
 // Lists of units (D417, D[md-alg-segments-build])
 //===----------------------------------------------------------------------===//
 
+/// The positions that the list `list` is refreshed at: those of a refresh
+/// of it, through the values that loops carry (md-exec-reuse-neighbors's
+/// form) and the refreshes of refreshes, as feedsEdges walks them.
+static Value findSegmentPositions(Value list) {
+  SmallVector<Value> pending = {list};
+  llvm::DenseSet<Value> seen;
+  while (!pending.empty()) {
+    Value next = pending.pop_back_val();
+    if (!seen.insert(next).second)
+      continue;
+    for (OpOperand &use : next.getUses()) {
+      Operation *user = use.getOwner();
+      if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
+        return refresh.getPositions();
+      if (auto loop = dyn_cast<scf::ForOp>(user)) {
+        if (use.getOperandNumber() >= loop.getNumControlOperands()) {
+          unsigned index = use.getOperandNumber() - loop.getNumControlOperands();
+          pending.push_back(loop.getRegionIterArgs()[index]);
+          pending.push_back(loop.getResult(index));
+        }
+      }
+      if (auto yield = dyn_cast<scf::YieldOp>(user))
+        if (auto loop = dyn_cast<scf::ForOp>(yield->getParentOp()))
+          pending.push_back(loop.getResult(use.getOperandNumber()));
+    }
+  }
+  return Value();
+}
+
 /// The state of a list of units. Its units are topology: they are formed
 /// once, on the host, from the relations of the kinds and the anchors, and
 /// kept on the device. The units of the rest come first, in the order of
@@ -5907,6 +5940,11 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   OpBuilder builder(op);
   auto type = cast<mdrt::SegmentedPairsType>(op.getResult().getType());
   unsigned K = type.getNumKinds();
+  if (K == 0)
+    return op.emitOpError()
+           << "is a list of units of no taken kind: the rest alone is a "
+              "structure of groups ('md_exec.empty_neighbors' with "
+              "kind(groups))";
   Type narrow = builder.getI32Type();
   Type wide = builder.getI64Type();
   Value excluded = op.getExcluded();
@@ -5974,9 +6012,12 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
                })
         .getResults();
   };
-  // Every particle of the rest until the kinds mark theirs.
+  // Every particle of the rest until the kinds mark theirs; the copy of a
+  // taken kind that holds each particle, for the check of the exclusions.
+  Value copyOfH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{N});
   loop(N, {}, [&](OpBuilder &in, Value p, ValueRange) {
     memref::StoreOp::create(in, loc, c0i, unitOfH, ValueRange{p});
+    memref::StoreOp::create(in, loc, none, copyOfH, ValueRange{p});
     return SmallVector<Value>{};
   });
   for (unsigned f = 0; f < K; ++f) {
@@ -5985,10 +6026,12 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
       for (unsigned k = 0; k < size; ++k) {
         Value particle = memref::LoadOp::create(
             in, loc, tuples[f], ValueRange{c, createIndex(in, loc, k)});
-        memref::StoreOp::create(
-            in, loc, none, unitOfH,
-            ValueRange{arith::IndexCastOp::create(in, loc, in.getIndexType(),
-                                                  particle)});
+        Value at = arith::IndexCastOp::create(in, loc, in.getIndexType(),
+                                              particle);
+        memref::StoreOp::create(in, loc, none, unitOfH, ValueRange{at});
+        Value copy = arith::IndexCastOp::create(
+            in, loc, narrow, arith::AddIOp::create(in, loc, memberBase[f], c));
+        memref::StoreOp::create(in, loc, copy, copyOfH, ValueRange{at});
       }
       return SmallVector<Value>{};
     });
@@ -6112,8 +6155,15 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
           memref::LoadOp::create(in, loc, pairs,
                                  ValueRange{t, createIndex(in, loc, k)}));
     };
-    // The count of each row, at the row after it; then the offsets.
-    loop(P, {}, [&](OpBuilder &in, Value t, ValueRange) {
+    // The count of each row, at the row after it; then the offsets. An
+    // excluded pair that the build cannot remove is counted: one of the
+    // rest and a copy of a taken kind, or of two copies (D405 says there is
+    // none; the build would list it).
+    Type wide = builder.getI64Type();
+    Value zero64 = arith::ConstantOp::create(builder, loc, wide,
+                                             builder.getI64IntegerAttr(0));
+    Value outside = loop(P, {zero64}, [&](OpBuilder &in, Value t,
+                                          ValueRange carried) {
       for (int64_t k = 0; k != 2; ++k) {
         Value at = arith::AddIOp::create(in, loc, member(in, t, k),
                                          createIndex(in, loc, 1));
@@ -6122,7 +6172,35 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
                                 arith::AddIOp::create(in, loc, had, c1i),
                                 rowsH, ValueRange{at});
       }
-      return SmallVector<Value>{};
+      Value ci = memref::LoadOp::create(in, loc, copyOfH,
+                                        ValueRange{member(in, t, 0)});
+      Value cj = memref::LoadOp::create(in, loc, copyOfH,
+                                        ValueRange{member(in, t, 1)});
+      auto taken = [&](Value c) {
+        return arith::CmpIOp::create(in, loc, arith::CmpIPredicate::sge, c,
+                                     c0i);
+      };
+      Value ti = taken(ci), tj = taken(cj);
+      Value either = arith::OrIOp::create(in, loc, ti, tj);
+      Value apart = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::ne,
+                                          ci, cj);
+      Value bad = arith::AndIOp::create(in, loc, either, apart);
+      Value one64 = arith::ConstantOp::create(in, loc, wide,
+                                              in.getI64IntegerAttr(1));
+      Value next = arith::AddIOp::create(
+          in, loc, carried[0],
+          arith::SelectOp::create(in, loc, bad, one64, zero64));
+      return SmallVector<Value>{next};
+    })[0];
+    Value any = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                      outside, zero64);
+    scf::IfOp::create(builder, loc, any, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare("mdrtSegmentsStopExclusions",
+                       then.getFunctionType({wide}, {})),
+          ValueRange{outside});
+      scf::YieldOp::create(then, loc);
     });
     loop(N, {}, [&](OpBuilder &in, Value p, ValueRange) {
       Value next = arith::AddIOp::create(in, loc, p, createIndex(in, loc, 1));
@@ -6196,6 +6274,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
     createTransfer(builder, loc, excluded, raggedH);
     memref::DeallocOp::create(builder, loc, raggedH);
   }
+  memref::DeallocOp::create(builder, loc, copyOfH);
   auto toDevice = [&](Value host, Value size) {
     Value device = createDeviceBuffer(builder, loc, deviceI32, ValueRange{size});
     createTransfer(builder, loc, device, host);
@@ -6248,10 +6327,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
 
   // The configuration of the last build, for the test of validity, and the
   // state on the host, as for the groups.
-  Value positionsBuffer;
-  for (Operation *user : op.getResult().getUsers())
-    if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
-      positionsBuffer = refresh.getPositions();
+  Value positionsBuffer = findSegmentPositions(op.getResult());
   if (!positionsBuffer)
     return op.emitOpError()
            << "has no refresh, which gives the positions it is built at";
@@ -6350,10 +6426,9 @@ LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
                                           const Neighbors &structure,
                                           Value positions, Value box,
                                           double reach) {
-  Type real = cast<MemRefType>(positions.getType()).getElementType();
-  if (!real.isF64())
-    return module.emitError()
-           << "lists of units are built from positions in f64, not " << real;
+  // The refresh, the only caller, refuses positions in another type.
+  assert(cast<MemRefType>(positions.getType()).getElementType().isF64() &&
+         "a list of units built from positions that are not in f64");
   const SegmentedState &units = *structure.segmented;
   bool tilted = isTriclinic(box);
   unsigned K = units.kinds;
@@ -6507,9 +6582,10 @@ LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
 
 /// A refresh: one test of the units' reference points against the last
 /// build renews every segment (#799). A barostat scales the reference with
-/// the cell, m = L / L_ref, and the test takes the least half-margin of the
-/// segments, half of min(m) (R + 2 e) - (r_c + 2 e) for the largest radius
-/// e, which is that of the groups (D80) when e = 0. A dual list (D114)
+/// the cell, m = L / L_ref (the least ratio of the edges), and the test
+/// takes the least half-margin of the segments, half of the least over s of
+/// m (R + E_s) - (r_c + E_s), E_s = e_f + e_g, which is that of the groups
+/// (D80) when every E_s is 0. A dual list (D114)
 /// tests the same points against its last pruning, with the inner reach in
 /// place of R: where the outer list is not valid it is built and pruned;
 /// where only the inner one is not, it is pruned again.
@@ -6536,9 +6612,6 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
   bool dual = pruneSkin < skin;
   double reach = cutoff + skin;
   double innerReach = cutoff + pruneSkin;
-  double widest = 0.0;
-  for (double e : units.extents)
-    widest = std::max(widest, e);
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   Type f64 = builder.getF64Type();
 
@@ -6555,12 +6628,24 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
                                        VectorType::get({3}, f64), edges));
     Value least = vector::ReductionOp::create(
         builder, loc, vector::CombiningKind::MINNUMF, scale);
-    Value margin = arith::SubFOp::create(
-        builder, loc,
-        arith::MulFOp::create(
-            builder, loc, least,
-            createReal(builder, loc, f64, getSegmentReach(of, widest, widest))),
-        createReal(builder, loc, f64, getSegmentReach(cutoff, widest, widest)));
+    // The least half-margin of the segments: m (r + E_s) - (r_c + E_s),
+    // E_s = e_f + e_g, is linear in E_s with the slope m - 1, so a cell that
+    // shrinks (m < 1) takes it at the largest E_s and one that grows at the
+    // least; each segment's is formed, and the least taken.
+    Value margin;
+    unsigned K = units.kinds;
+    for (unsigned f = 0; f <= K; ++f)
+      for (unsigned g = 0; g <= f; ++g) {
+        double ef = units.extents[K - f], eg = units.extents[K - g];
+        Value segment = arith::SubFOp::create(
+            builder, loc,
+            arith::MulFOp::create(
+                builder, loc, least,
+                createReal(builder, loc, f64, getSegmentReach(of, ef, eg))),
+            createReal(builder, loc, f64, getSegmentReach(cutoff, ef, eg)));
+        margin = margin ? arith::MinimumFOp::create(builder, loc, margin, segment)
+                        : segment;
+      }
     Value halfMargin = arith::MulFOp::create(
         builder, loc,
         arith::MaximumFOp::create(builder, loc, margin,
@@ -9609,7 +9694,63 @@ LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
   return success();
 }
 
+/// A list of units in the storage form is refreshed where it is: a loop
+/// that carries it (md-exec-reuse-neighbors's form, which
+/// md-exec-assign-storage keeps) carries the same list, so its argument and
+/// its result are the list it begins with, and the loop stops carrying it.
+static void uncarrySegmentedLists(func::FuncOp function) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    function.walk([&](scf::ForOp loop) {
+      if (changed)
+        return;
+      for (unsigned k = 0, e = loop.getInitArgs().size(); k != e; ++k) {
+        if (!isa<mdrt::SegmentedPairsType>(loop.getInitArgs()[k].getType()))
+          continue;
+        Value init = loop.getInitArgs()[k];
+        loop.getRegionIterArgs()[k].replaceAllUsesWith(init);
+        loop.getResult(k).replaceAllUsesWith(init);
+        auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+        SmallVector<Value> yielded, inits;
+        for (unsigned j = 0; j != e; ++j)
+          if (j != k) {
+            yielded.push_back(yield.getOperand(j));
+            inits.push_back(loop.getInitArgs()[j]);
+          }
+        OpBuilder builder(loop);
+        auto replacement = scf::ForOp::create(
+            builder, loop.getLoc(), loop.getLowerBound(), loop.getUpperBound(),
+            loop.getStep(), inits);
+        replacement->setAttrs(loop->getAttrs());
+        Block *body = replacement.getBody();
+        body->getTerminator()->erase();
+        Block *old = loop.getBody();
+        // The old body, its argument k dropped, into the new loop.
+        SmallVector<Value> arguments = {replacement.getInductionVar()};
+        unsigned kept = 0;
+        for (unsigned j = 0; j != e; ++j)
+          arguments.push_back(j != k ? replacement.getRegionIterArgs()[kept++]
+                                     : init);
+        builder.setInsertionPointToEnd(body);
+        yield->setOperands(yielded);
+        body->getOperations().splice(body->end(), old->getOperations());
+        for (auto [from, to] : llvm::zip(old->getArguments(), arguments))
+          from.replaceAllUsesWith(to);
+        unsigned r = 0;
+        for (unsigned j = 0; j != e; ++j)
+          if (j != k)
+            loop.getResult(j).replaceAllUsesWith(replacement.getResult(r++));
+        loop.erase();
+        changed = true;
+        return;
+      }
+    });
+  }
+}
+
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
+  uncarrySegmentedLists(function);
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({getCellSize()}, Float64Type::get(context));
   auto convertType = [&](Type type) -> Type {

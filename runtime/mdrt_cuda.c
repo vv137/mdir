@@ -1948,9 +1948,9 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
    six i64 (n, places, records, segments, the builds and the prunings so
    far), then for each buffer of SEGMENT_ORDER, SHIFTS, RECORD_ENTRIES,
    RECORD_MASKS, RECORD_GROUPS, RECORD_COUNTS, SEGMENT_OFFSETS,
-   INNER_ENTRIES, INNER_MASKS, INNER_COUNTS, ACTIVE_UNITS and ACTIVE_COUNT
-   its length in i32 (0 where the list has not allocated it) and its
-   values. */
+   INNER_ENTRIES, INNER_MASKS, INNER_COUNTS, ACTIVE_UNITS, ACTIVE_COUNT and
+   ORDER (after a build, the reference particle of each place) its length in
+   i32 (0 where the list has not allocated it) and its values. */
 void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
                       int64_t builds, int64_t prunes) {
   const char *dir = getenv("MDRT_SEGMENTS_DUMP");
@@ -1977,7 +1977,7 @@ void mdrtSegmentsDump(int64_t handle, int64_t places, int64_t records,
       {GROUPS_SEGMENT_OFFSETS, groups->segments + 1},
       {GROUPS_INNER_ENTRIES, records * 64}, {GROUPS_INNER_MASKS, records * 64},
       {GROUPS_INNER_COUNTS, records},     {GROUPS_ACTIVE_UNITS, records},
-      {GROUPS_ACTIVE_COUNT, 1}};
+      {GROUPS_ACTIVE_COUNT, 1},           {GROUPS_ORDER, places}};
   for (size_t k = 0; k != sizeof parts / sizeof parts[0]; ++k) {
     int64_t length = groups->data[parts[k].slot] ? parts[k].length : 0;
     fwrite(&length, sizeof length, 1, file);

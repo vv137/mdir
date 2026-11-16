@@ -33,7 +33,7 @@ The tables are topology, so they are formed once, on the host, when the empty li
   - Its group's box is then as wide as the brick, so the images kernel of D115 runs for it, over windows of the whole grid.
   - Before the cubes, the images kernel took 400 to 730 µs a build on the solvated systems. With them it takes a few µs.
   - The rest's cubes give a scattered ion a chunk of its own, which costs places, not time.
-- **The kinds in descending rank in the places.** The groups' rule takes a candidate at place $q$ only if $q \ge 16g$. In this order, that rule alone visits each segment $s(f, g)$, $g \le f$, from the groups of kind $f$.
+- **The ranks in ascending order in the places,** the rest (rank 0) first, then the kinds from $K - 1$ to 0. The groups' rule takes a candidate at place $q$ only if $q \ge 16g$. In this order, that rule alone visits each segment $s(f, g)$, $g \le f$, from the groups of kind $f$.
 
 ## 2. The segments
 
@@ -53,14 +53,35 @@ The tables are topology, so they are formed once, on the host, when the empty li
 - **The stop of the reach against the cell** is #795's. At every build, the largest covering reach must be at most half the least face width of the cell, or the run stops with both lengths.
 - **The groups' instance keeps D404's bytes.** The build over units has its own name, `mdrt_gpu_build_segmented_pairs_k<K>` (with `_triclinic`). The helpers that both builds share are taken once in a module.
 
+### Refusals and checks
+
+- **No taken kind.** A list of units of no taken kind ($K = 0$) is refused: the rest alone is a structure of groups.
+- **Exclusions that join kinds.** The lowering counts, on the host, the excluded pairs that join a particle of the rest to a copy of a taken kind, or two copies. Such a pair cannot be left out by the build, since its exclusions apply in segment $(K, K)$ alone. If there is one, the run stops with the count. D405 takes the kinds so that there is none.
+- **Shared helpers.** The build over units and the groups' build share their helpers. Each adds only those that the module lacks, so a module holds both lists in either order (`segments-and-groups.mlir`).
+- **The coverage check.** The exact check (`segments_coverage.py`) also requires:
+  - each pair of units in each image listed once at most;
+  - each entry in the segment of the kinds of its units, read from the reference particle of each place;
+  - no excluded pair and no pair within a unit.
+- **Mutants.** Each of these fails the check:
+  - the images kernel taking the nearest image again, on the small dodecahedron under NPT whose groups take that kernel: 943,429 pairs listed twice;
+  - the exclusions of the rest dropped: 11,760 excluded pairs listed;
+  - the records sorted by the next segment: 9,449,788 entries in a wrong segment;
+  - the validity limit at the largest radii alone, on the growing cell: a pair without an entry.
+- **Two taken kinds.** TIP3P and OPC with its site, with ions, in the rhombic dodecahedron ($K = 2$, six segments), run through the coverage check and the forces.
+
 ## 3. The refresh, the pruning, and the reuse
 
-- **The test.** A refresh tests the units' reference points against those of the last build (#799). Its limit is half of $\min(m)(R + 2e) - (r_c + 2e)$, $e$ the largest radius. This is D80's limit for the groups when $e = 0$, and the least half-margin of the segments under a barostat.
+- **The test.** A refresh tests the units' reference points against those of the last build (#799). Its limit is half the least margin of the segments under a barostat, $\min_s \bigl(m(R + E_s) - (r_c + E_s)\bigr)$, with $E_s = e_f + e_g$ and $m$ the least ratio of the edges to those of the build. The margin is linear in $E_s$ with the slope $m - 1$, so a cell that shrinks takes it at the largest $E_s$ and one that grows at the least. Each segment's is formed and the least is taken. This is D80's limit for the groups when every $E_s$ is 0.
+  - `test/Integration/segments-build-coverage-gpu.test` (growth) grows a cell by half while two waters move towards each other. They move by more than the least half-margin, but less than the half-margin at the largest $E_s$.
+  - With the limit at the largest $E_s$ alone, the list stays valid and a pair is missing.
 - **The pruning.** With `prune_skin` below the skin the list is dual (D114).
   - The refresh tests the same points against the last pruning, with the inner reach.
   - A warp a record re-tests each entry at the positions of the reference points in the frames of their groups, against its segment's inner reach. The entries it keeps fill the front of the inner record.
   - The records that keep entries are the active units of D268.
-- **`md-exec-reuse-neighbors`** turns a build of a list of units in a loop over steps into an empty list before the loop and a refresh in it. With its `prune-skin` below the skin, the refresh is dual.
+- **`md-exec-reuse-neighbors`** turns a build of a list of units in a loop over steps into an empty list before the loop and a refresh in it, carried through the loop's values. With its `prune-skin` below the skin, the refresh is dual.
+  - `md-exec-assign-storage` keeps that shape.
+  - `convert-md-exec-to-gpu` finds the positions of the list through the loops that carry it, then stops carrying it, since a list in the storage form is refreshed where it is.
+  - `test/Conversion/MDExecToGPU/segments-reuse-lower.mlir` chains the three passes.
 
 ## 4. Coverage (D357)
 
@@ -76,7 +97,7 @@ with $e$ from the type's kinds and from the radius of the list's empty list or b
 
 All runs are on an RTX 5090, by the timing protocol: two jobs of two rounds each, interleaved, the second round reversed. The six systems are those of #894's step 1, as real unit systems.
 
-- **Units.** The list replays a trajectory of 2000 steps of `main`'s general GROUPS run of each system, with its integrator, cutoff, skin, and pruned distance. A harness refreshes the list at every frame, in the form that `md-exec-reuse-neighbors` gives a loop over steps: an empty list, then a refresh with its own test.
+- **Units.** The list replays a trajectory of 2000 steps of `main`'s general GROUPS run of each system, with its integrator, cutoff, skin, and pruned distance. A harness refreshes the list at every frame with its own test. For these timings the harness refreshed the empty list directly in the loop. The form that `md-exec-reuse-neighbors` gives carries the list through the loop's values, and `convert-md-exec-to-gpu` lowers that form to the same code (Section 3).
 - **#795.** The binary at 004a0735, `water.template` on, 10,000 steps.
 - **main.** 75d22231, the general groups build over all particles, 10,000 steps.
 
@@ -127,6 +148,7 @@ All runs are on an RTX 5090, by the timing protocol: two jobs of two rounds each
 - **Dodecahedron.** All 9672 particles: the largest difference is 0.013 of the bound of a reordered sum.
 - **Alanine dipeptide in TIP3P.** All 1168 particles, with the bonded terms set to 0 on both sides: 0.0015 of the bound.
 - **Mutants.** The test fails with a record left out (294 components outside), and with one excluded pair of the solute left out of the list (6 components outside, by up to $3\times10^{16}$ times the bound).
+- **Two taken kinds.** TIP3P, OPC and ions: all 10,737 particles, OPC's site placed from the device's records, 0.022 of the bound.
 - **#795.** Its route takes mixed precision only. On the dodecahedron, at its own positions, the largest difference is 0.018 of the bound of mixed precision.
 
 ## 6. Not in this slice

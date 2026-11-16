@@ -14,7 +14,7 @@ func.func @beyond(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.1) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
-  // expected-error @+1 {{segment (1, 1) needs pairs of reference points within 1, beyond the covering reach 0.9 of the list of units}}
+  // expected-error @+1 {{segment (1, 1) needs pairs of reference points within 1, beyond the cutoff of the list plus the radii, 0.9}}
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
@@ -39,7 +39,7 @@ func.func @water(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.85) skin(0.15) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.85) skin(0.15) prune_skin(0.15) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
-  // expected-error @+1 {{segment (0, 0) needs pairs of reference points within 1.1, beyond the covering reach 1.05 of the list of units}}
+  // expected-error @+1 {{segment (0, 0) needs pairs of reference points within 1.1, beyond the cutoff of the list plus the radii, 1.05}}
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)

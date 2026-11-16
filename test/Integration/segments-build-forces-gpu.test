@@ -55,7 +55,25 @@
 # RUN: mdir-opt %t/unexcluded/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/unexcluded/values.txt
 # RUN: not %mdir_python %S/Inputs/segments_forces.py compare %t/dipeptide/oracle.top %t/dipeptide/system.gro WAT %t/dipeptide/positions.txt %t/unexcluded/values.txt %t/dipeptide/forces.txt double 0.8 --excluded=%t/dipeptide/excluded.npy | FileCheck %s --check-prefix=UNEXCLUDED
 #
+# Two taken kinds of different extents, TIP3P and OPC with its site, and
+# sodium ions, in the rhombic dodecahedron (D417's K = 2): the list's six
+# segments, and the placement of OPC's site from the device's records.
+# RUN: mkdir -p %t/mixture/dumps
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system mixture %S/../Driver/Inputs %t/mixture 1 --forces
+# RUN: cd %t/mixture && mdir run control.toml > run.log && mdir checkpoint out.h5 --print=forces > forces.txt && mdir checkpoint out.h5 --print=positions > positions.txt
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit mixture %S/../Driver/Inputs %t/mixture --positions=%t/mixture/positions.txt
+# RUN: mdir-opt %t/mixture/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/mixture/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: mdir emit --stage=module %t/mixture/control.toml > %t/mixture/module.mlir
+# RUN: mdir-kind-pairs-test generate %t/mixture/control.toml %t/mixture/module.mlir 1,2 0.09582,0.0873433 --func-entry > %t/mixture/entry.mlir
+# RUN: mdir-opt %t/mixture/entry.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/mixture/alg.mlir
+# RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/mixture/system.top %t/mixture/system.gro %t/mixture/alg.mlir SOL,OPC %t/mixture/probe.mlir %t/mixture/dumps/dump_000000.bin %t/mixture/positions.txt
+# RUN: mdir-opt %t/mixture/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/mixture/values.txt
+# RUN: %mdir_python %S/Inputs/segments_forces.py compare %t/mixture/system.top %t/mixture/system.gro SOL,OPC %t/mixture/positions.txt %t/mixture/values.txt %t/mixture/forces.txt double 0.8 | FileCheck %s --check-prefix=MIXTURE
+#
 # DODECAHEDRON: double: 9672 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 29016 components outside
 # DROP: double: 9672 particles, {{.*}}, {{[1-9][0-9]*}} of 29016 components outside
+# MIXTURE: double: 10737 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 32211 components outside
 # DIPEPTIDE: double: 1168 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 3504 components outside
 # UNEXCLUDED: double: 1168 particles, {{.*}}, {{[1-9][0-9]*}} of 3504 components outside
