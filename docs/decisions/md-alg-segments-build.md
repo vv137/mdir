@@ -72,11 +72,54 @@ with $e$ from the type's kinds and from the radius of the list's empty list or b
 
 ## 5. Measurements
 
-Which kernel dominates a build: the list kernel, then the stable sort within the cells of the candidate grid (`md_alg.sort_by_key`, insertion, a thread a cell, D404's own stage).
-- ubq-opc: the list kernel takes 101 µs of 214 µs (72 registers), the sort within the cells 63 µs.
-- charmm-tip3p: the list kernel takes 138 µs of 300 µs, the sort within the cells 77 µs. Its cells are larger, since the reach is 1.5 nm, so they are fewer and hold more places for each thread.
+### Setup
 
-On an RTX 5090, the six systems of #894's step 1 as real unit systems. Each list replays a trajectory of 2000 steps of `main`'s general GROUPS run of the same system, its integrator, cutoff, and skin: the harness refreshes it at every frame, with its own test. The results are in PR #897; they are added here at the gate.
+All runs are on an RTX 5090, by the timing protocol: two jobs of two rounds each, interleaved, the second round reversed. The six systems are those of #894's step 1, as real unit systems.
+
+- **Units.** The list replays a trajectory of 2000 steps of `main`'s general GROUPS run of each system, with its integrator, cutoff, skin, and pruned distance. A harness refreshes the list at every frame, in the form that `md-exec-reuse-neighbors` gives a loop over steps: an empty list, then a refresh with its own test.
+- **#795.** The binary at 004a0735, `water.template` on, 10,000 steps.
+- **main.** 75d22231, the general groups build over all particles, 10,000 steps.
+
+| System | Build | Builds every, steps | Prunes every, steps | List a step, µs | Test a step, µs | A build, µs | A pruning, µs | Slowest build kernel a call, µs (registers) |
+|---|---|---|---|---|---|---|---|---|
+| rd-opc | #795 | 58.2 (57.8–58.5) | 8.7 (8.6–8.7) | 8.57 (8.51–8.65) | in the writer | 397.8 (396.1–399.6) | 15.1 (14.9–15.2) | 219.7 (168) |
+| rd-opc | main | 21.1 (21.0–21.3) | 2.8 (2.8–2.8) | 20.75 (20.72–20.78) | in the integrator | 216.8 (215.9–217.4) | 29.7 (29.6–29.8) | 151.0 (96) |
+| rd-opc | units | 57.1 (57.1–57.1) | 8.6 (8.6–8.6) | 3.13 (3.13–3.14) | 4.50 (4.50–4.51) | 135.8 (135.6–136.3) | 6.5 (6.5–6.5) | 89.0 (128) |
+| rd-tip3p | #795 | 53.6 (53.2–54.1) | 8.6 (8.5–8.6) | 9.19 (9.13–9.26) | in the writer | 392.4 (392.1–392.8) | 16.0 (15.8–16.1) | 212.0 (168) |
+| rd-tip3p | main | 16.9 (16.8–16.9) | 2.8 (2.8–2.8) | 19.71 (19.61–19.81) | in the integrator | 183.6 (182.4–184.3) | 24.7 (24.7–24.8) | 133.9 (96) |
+| rd-tip3p | units | 54.1 (54.1–54.1) | 8.6 (8.6–8.6) | 3.43 (3.43–3.43) | 4.45 (4.44–4.46) | 145.4 (145.4–145.5) | 6.4 (6.4–6.4) | 97.4 (128) |
+| ubq-opc | #795 | 56.7 (56.5–56.8) | 8.5 (8.5–8.6) | 8.74 (8.61–8.90) | in the writer | 95.1 (94.9–95.3) | 60.3 (59.3–61.3) | 66.2 (167) |
+| ubq-opc | main | 20.5 (20.4–20.5) | 2.8 (2.8–2.8) | 22.52 (22.44–22.60) | in the integrator | 242.1 (241.7–242.6) | 30.3 (30.1–30.4) | 170.0 (64) |
+| ubq-opc | units | 55.6 (55.6–55.6) | 8.5 (8.5–8.5) | 3.62 (3.61–3.62) | 4.51 (4.50–4.51) | 152.3 (151.9–152.7) | 7.4 (7.4–7.5) | 97.9 (72) |
+| ubq-tip3p | #795 | 52.3 (52.1–52.6) | 8.5 (8.4–8.5) | 9.61 (9.56–9.69) | in the writer | 96.1 (96.0–96.3) | 65.9 (65.3–66.3) | 66.7 (167) |
+| ubq-tip3p | main | 16.5 (16.4–16.6) | 2.8 (2.8–2.8) | 19.58 (19.55–19.63) | in the integrator | 181.3 (180.9–181.6) | 24.1 (24.0–24.2) | 129.1 (64) |
+| ubq-tip3p | units | 52.6 (52.6–52.6) | 8.5 (8.5–8.5) | 3.68 (3.68–3.69) | 4.46 (4.45–4.46) | 149.3 (149.0–149.7) | 7.2 (7.2–7.2) | 97.3 (72) |
+| opc-large | #795 | 52.4 (52.1–52.9) | 8.2 (8.1–8.3) | 5.26 (5.22–5.30) | in the writer | 143.1 (142.9–143.5) | 20.7 (20.6–20.9) | 49.3 (168) |
+| opc-large | main | 18.3 (18.2–18.4) | 2.8 (2.8–2.8) | 27.24 (27.17–27.38) | in the integrator | 270.8 (270.2–271.3) | 34.5 (34.4–34.6) | 196.1 (64) |
+| opc-large | units | 54.1 (54.1–54.1) | 8.4 (8.4–8.4) | 3.74 (3.73–3.74) | 4.57 (4.54–4.66) | 136.1 (135.8–136.3) | 10.2 (10.2–10.3) | 85.5 (72) |
+| charmm-tip3p | #795 | 52.0 (51.8–52.4) | 8.4 (8.4–8.5) | 11.83 (11.76–11.87) | in the writer | 130.4 (130.0–130.9) | 78.6 (77.4–79.5) | 93.9 (167) |
+| charmm-tip3p | main | 16.5 (16.4–16.6) | 2.8 (2.8–2.8) | 33.24 (33.18–33.30) | in the integrator | 316.4 (314.5–317.9) | 39.3 (39.1–39.4) | 201.2 (64) |
+| charmm-tip3p | units | 52.6 (52.6–52.6) | 8.5 (8.5–8.5) | 5.04 (5.02–5.07) | 4.49 (4.45–4.57) | 200.7 (199.6–202.2) | 10.5 (10.4–10.6) | 142.4 (72) |
+
+### What it shows
+
+- **Build frequency.** The units rebuild and prune as often as #795 does, within 1%. Both use the same reference points, the same skin, and one mobility group. `main` rebuilds every 16–21 steps and prunes every 2.8, since its hydrogens move.
+- **The list a step** is the build plus the pruning: 3.1–5.0 µs, against #795's 5.3–11.8 µs.
+- **The test of validity** runs as three kernels of its own, about 4.5 µs a step. #795 does it in its writer, and so does S4a; its gate is in D417, Section 11.
+- **Which kernel dominates a build.** The list kernel takes 98 µs of a 152 µs build on ubq-opc, and 142 µs of 201 µs on charmm-tip3p. Its cells are larger there, since the reach is 1.5 nm.
+  - The places of the cells of the candidates are ranked a thread a place (StableRank, #231). By insertion, a thread a cell, that sort took 63 µs (ubq-opc) and 77 µs (charmm-tip3p) a build.
+- **Registers.** The list kernel takes 128 registers in a triclinic cell and 72 in an orthorhombic one. #795's search kernels take 167–168.
+- **Entries at the first frame** (all frames in the direct check):
+
+  | System | Units | #795 |
+  |---|---|---|
+  | rd-opc | 229,931 | 202,919 |
+  | ubq-opc | 285,909 | 236,129 |
+  | charmm-tip3p | 466,603 | 379,608 |
+
+  - The pairs listed beyond the covering reach are 0.01–0.02% of the pairs within it.
+  - The entries are more than #795's because the cubes leave groups partly filled: on ubq-opc 13,056 places hold 7,397 units.
+  - Cubes of two widths took 5–12% fewer entries, but on rd-opc a build took 360 µs instead of 135 (`kUnitCubeHeight`).
 
 ## 6. Not in this slice
 

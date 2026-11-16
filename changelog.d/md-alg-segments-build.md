@@ -5,4 +5,4 @@
   - `md-exec-reuse-neighbors` moves its build out of the loop over steps.
   - The coverage query of D357 checks each segment that a loop visits.
   - The serial definition runs over the device's lists with `traverse-oracle=serial`. The SIMT schedule and the route are later slices.
-  - On the RTX 5090, replaying trajectories of #795's six systems, the list's build and pruning take 3.1–5.1 µs a step, against 5.3–11.7 µs for #795's list maintenance. They rebuild as often as #795's.
+  - On the RTX 5090, replaying trajectories of #795's six systems, the list's build and pruning take 3.1–5.0 µs a step, against 5.3–11.8 µs for #795's list maintenance. They rebuild as often as #795's.
