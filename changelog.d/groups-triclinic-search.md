@@ -1,0 +1,3 @@
+### Performance
+
+- **The groups build of a triclinic cell bounds the windows of its rows** (D[groups-triclinic-search], #895). A range of z or y as wide as the grid no longer makes the windows of the other axes the whole grid: each row takes the hull of the windows of its extreme periods, narrowed to the slice of the reach that the row cuts. The images kernel of D115 moves only along the axes where a group needs another image. On the units proxies of the solvated rhombic dodecahedra (RTX 5090) the build takes 313 and 383 µs instead of 623 and 832 µs. The dodecahedra as they run keep their rate. The lists hold the same pairs.

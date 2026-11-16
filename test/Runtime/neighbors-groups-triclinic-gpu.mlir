@@ -693,6 +693,19 @@ func.func @main() {
   %dodec = arith.constant dense<[12.0, 12.0, 8.485281374238571, 0.0, 6.0, 6.0]> : vector<6xf64>
   call @run(%dodec, %reach, %none, %no, %n2000) : (vector<6xf64>, f64, index, i1, index) -> ()
 
+  // The same dodecahedron with the reach in the proportion of the solvated
+  // dodecahedra of #795 (13.9 A of c_z = 44.5 A): the range of z of most
+  // groups is as wide as the grid of six cells, so that each row of z is
+  // visited once for its two periods, in the hull of their windows narrowed
+  // to the slices of the reach (D[groups-triclinic-search]).
+  // CHECK-NEXT: 127147
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  %reachWide = arith.constant 2.65 : f64
+  call @run(%dodec, %reachWide, %none, %no, %n2000) : (vector<6xf64>, f64, index, i1, index) -> ()
+
   // A cell narrower than twice the reach and the extent of a group, with
   // tilts of both signs: some pairs need images a lattice vector away from
   // the one nearest to the center of the group (D115).
