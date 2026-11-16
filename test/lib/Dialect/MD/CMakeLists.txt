@@ -9,6 +9,7 @@ add_mlir_library(MDIRTestPasses
   TestWarpHelpers.cpp
   TestCollectionAnalysis.cpp
   TestStorageLiveness.cpp
+  TestSegmentCoverage.cpp
 
   EXCLUDE_FROM_LIBMLIR
 
@@ -17,6 +18,7 @@ add_mlir_library(MDIRTestPasses
   MDIRMDAlg
   MDIRMDExecKernels
   MDIRMDExec
+  MDIRMDRT
   MDIRMDTransforms
   MLIRArithDialect
   MLIRFuncDialect
