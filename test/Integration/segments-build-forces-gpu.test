@@ -1,0 +1,47 @@
+# REQUIRES: cuda
+# The serial definition of D417 over the lists of units that the device
+# builds (D[md-alg-segments-build]) against the general build of groups in
+# double precision, at the positions of its checkpoint: the forces of the
+# pair term (rigid water, Coulomb cut off), within the error model of two
+# evaluations of one sum in different orders (Inputs/segments_forces.py).
+# TIP3P in a rhombic dodecahedron, and alanine dipeptide in TIP3P, with
+# anchors and excluded pairs, whose waters' forces are those of the pair term
+# alone. With the first record of the list left out,
+# the comparison fails. The oracle's reader of topologies takes them without
+# the lines of the preprocessor (the flexible water that they leave out).
+#
+# RUN: rm -rf %t && mkdir -p %t/dodecahedron/dumps %t/dipeptide/dumps
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dodecahedron %S/../Driver/Inputs %t/dodecahedron 1 --forces
+# RUN: cd %t/dodecahedron && mdir run control.toml > run.log && mdir checkpoint out.h5 --print=forces > forces.txt && mdir checkpoint out.h5 --print=positions > positions.txt
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dodecahedron %S/../Driver/Inputs %t/dodecahedron --positions=%t/dodecahedron/positions.txt
+# RUN: mdir-opt %t/dodecahedron/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dodecahedron/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: mdir emit --stage=module %t/dodecahedron/control.toml > %t/dodecahedron/module.mlir
+# RUN: mdir-kind-pairs-test generate %t/dodecahedron/control.toml %t/dodecahedron/module.mlir 1 0.09582 --func-entry > %t/dodecahedron/entry.mlir
+# RUN: mdir-opt %t/dodecahedron/entry.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/dodecahedron/alg.mlir
+# RUN: sed "/^#/d" %t/dodecahedron/system.top > %t/dodecahedron/oracle.top
+# RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/dodecahedron/oracle.top %t/dodecahedron/system.gro %t/dodecahedron/alg.mlir SOL %t/dodecahedron/probe.mlir %t/dodecahedron/dumps/dump_000000.bin %t/dodecahedron/positions.txt
+# RUN: mdir-opt %t/dodecahedron/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/dodecahedron/values.txt
+# RUN: %mdir_python %S/Inputs/segments_forces.py compare %t/dodecahedron/oracle.top %t/dodecahedron/system.gro SOL %t/dodecahedron/positions.txt %t/dodecahedron/values.txt %t/dodecahedron/forces.txt double 0.8 | FileCheck %s --check-prefix=DODECAHEDRON
+# RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/dodecahedron/oracle.top %t/dodecahedron/system.gro %t/dodecahedron/alg.mlir SOL %t/dodecahedron/drop.mlir %t/dodecahedron/dumps/dump_000000.bin %t/dodecahedron/positions.txt --drop-record
+# RUN: mdir-opt %t/dodecahedron/drop.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/dodecahedron/drop.txt
+# RUN: not %mdir_python %S/Inputs/segments_forces.py compare %t/dodecahedron/oracle.top %t/dodecahedron/system.gro SOL %t/dodecahedron/positions.txt %t/dodecahedron/drop.txt %t/dodecahedron/forces.txt double 0.8 | FileCheck %s --check-prefix=DROP
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dipeptide-gro %S/../Driver/Inputs %t/dipeptide 1 --forces
+# RUN: cd %t/dipeptide && mdir run control.toml > run.log && mdir checkpoint out.h5 --print=forces > forces.txt && mdir checkpoint out.h5 --print=positions > positions.txt
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-gro %S/../Driver/Inputs %t/dipeptide --positions=%t/dipeptide/positions.txt
+# RUN: mdir-opt %t/dipeptide/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dipeptide/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: mdir emit --stage=module %t/dipeptide/control.toml > %t/dipeptide/module.mlir
+# RUN: mdir-kind-pairs-test generate %t/dipeptide/control.toml %t/dipeptide/module.mlir 1 0.09582 --func-entry > %t/dipeptide/entry.mlir
+# RUN: mdir-opt %t/dipeptide/entry.mlir --pass-pipeline="builtin.module(md-check-exchange,md-differentiate,md-expand-truncation,md-inline,convert-md-to-md-exec{skin=0.1},md-exec-fuse-loops,md-exec-accumulate-destinations,md-exec-assign-precision{mode=double},md-exec-assign-algebra,md-exec-assign-storage,convert-md-exec-to-md-alg)" > %t/dipeptide/alg.mlir
+# RUN: sed "/^#/d" %t/dipeptide/system.top > %t/dipeptide/oracle.top
+# RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/dipeptide/oracle.top %t/dipeptide/system.gro %t/dipeptide/alg.mlir WAT %t/dipeptide/probe.mlir %t/dipeptide/dumps/dump_000000.bin %t/dipeptide/positions.txt
+# RUN: mdir-opt %t/dipeptide/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/dipeptide/values.txt
+# RUN: %mdir_python %S/Inputs/segments_forces.py compare %t/dipeptide/oracle.top %t/dipeptide/system.gro WAT %t/dipeptide/positions.txt %t/dipeptide/values.txt %t/dipeptide/forces.txt double 0.8 --taken-only | FileCheck %s --check-prefix=DIPEPTIDE
+#
+# DODECAHEDRON: double: 9672 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 29016 components outside
+# DROP: double: 9672 particles, {{.*}}, {{[1-9][0-9]*}} of 29016 components outside
+# DIPEPTIDE: double: {{[0-9]+}} particles, largest difference {{.*}} of its bound {{.*}}, 0 of {{[0-9]+}} components outside

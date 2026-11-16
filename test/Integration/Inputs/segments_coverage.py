@@ -7,7 +7,10 @@ image of every pair of reference points in f64.
       or dipeptide-tip3p (alanine dipeptide in water, NVT): WORK/control.toml,
       a general run of groups whose trajectory (DCD, every step) the harness
       replays. --cell keeps the small dodecahedron of Inputs/triclinic.
-  segments_coverage.py emit KIND ROOT WORK [--frames N]
+      --forces: one step in double precision with Coulomb cut off, NVE, and
+      a checkpoint (segments_forces.py); dipeptide-gro is alanine dipeptide
+      in TIP3P from its GROMACS files.
+  segments_coverage.py emit KIND ROOT WORK [--frames=N | --positions=FILE]
       WORK/harness.mlir: an empty list of units and, for each frame of
       WORK/traj.dcd, a refresh at its positions and cell
       (md-exec-reuse-neighbors's form), for convert-md-exec-to-gpu with
@@ -73,6 +76,54 @@ method = "V-RESCALE"
 time_constant = 1.0
 interval = 1
 '''
+    if '--forces' in flags:
+        # One step in double precision with Coulomb cut off and no coupling:
+        # the forces of the checkpoint, at its positions, are those of the
+        # pair term alone for rigid water.
+        common = f'''
+[output]
+energy_interval = 1
+checkpoint = "out.h5"
+checkpoint_interval = 1
+[energy]
+cutoff = {10 * CUTOFF}
+pairlist_distance = {pairlist}
+pruned_distance = {10 * PRUNED}
+electrostatics = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.002
+steps = 1
+[constraints]
+rigid_water = true
+hydrogen_bonds = true
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "GPU"
+precision = "DOUBLE"
+neighbor_structure = "GROUPS"
+'''
+    if kind == 'dipeptide-gro':
+        (work / 'system.top').write_text((root / 'dipeptide' / 'dipeptide.top').read_text())
+        # The coordinates in the columns of 8.3 that the oracle's reader takes.
+        rows = (root / 'dipeptide' / 'dipeptide.gro').read_text().splitlines()
+        count = int(rows[1])
+        out = rows[:2]
+        for row in rows[2:2 + count]:
+            fields = row[20:].split()
+            out.append(row[:20] + ''.join(f'{float(v):8.3f}' for v in fields[:3]))
+        out.append(rows[2 + count])
+        (work / 'system.gro').write_text('\n'.join(out) + '\n')
+        (work / 'control.toml').write_text(f'''
+[input]
+topology = "{work / 'system.top'}"
+coordinates = "{work / 'system.gro'}"
+[ensemble]
+ensemble = "NVE"
+temperature = 300.0
+''' + common)
+        return
     if kind == 'dodecahedron':
         source = (root / 'triclinic' / 'dodecahedron.gro').read_text().splitlines()
         count = int(source[1])
@@ -94,13 +145,13 @@ interval = 1
         (work / 'system.gro').write_text('\n'.join(out) + '\n')
         top = (root / 'triclinic' / 'water.top').read_text()
         (work / 'system.top').write_text(top.replace('SOL 403', f'SOL {copies ** 3 * count // 3}'))
-        npt = '--cell' not in flags
+        npt = '--cell' not in flags and '--forces' not in flags
         (work / 'control.toml').write_text(f'''
 [input]
 topology = "{work / 'system.top'}"
 coordinates = "{work / 'system.gro'}"
 [ensemble]
-ensemble = "{'NPT' if npt else 'NVT'}"
+ensemble = "{'NPT' if npt else 'NVE' if '--forces' in flags else 'NVT'}"
 temperature = 300.0
 {'pressure = 1.0' if npt else ''}
 {'[barostat]' if npt else ''}
@@ -129,6 +180,7 @@ def topology():
         waters = np.arange(n, dtype=np.int64).reshape(-1, 3)
         return waters, np.zeros((0, 2), np.int64), np.zeros((0, 2), np.int64), n, 'tip3p'
     import parmed
+    # dipeptide-gro: the GROMACS files of the same system, in the same order.
     files = root / ('opc/opc' if kind == 'dipeptide-opc' else 'dipeptide/dipeptide')
     parm = parmed.load_file(f'{files}.prmtop')
     n = len(parm.atoms)
@@ -210,8 +262,22 @@ skin, prune_skin = pairlist - CUTOFF, PRUNED - CUTOFF
 R0, U = len(rest), len(rest) + len(waters)
 refs = np.unique(ref)
 
+def gro_cell():
+    box = [float(v) for v in (work / 'system.gro').read_text().splitlines()[-1].split()]
+    box += [0.0] * (9 - len(box))
+    # v1(x) v2(y) v3(z) v1(y) v1(z) v2(x) v2(z) v3(x) v3(y)
+    return np.array([box[0], box[1], box[2], box[5], box[7], box[8]])
+
+
 if mode == 'emit':
-    pos, cells = frames(int(options['frames']) if 'frames' in options else None)
+    if 'positions' in options:
+        # One frame: the positions that `mdir checkpoint --print=positions`
+        # prints (particle, mass, x, y, z in nm), in the cell of the input.
+        rows = [line.split() for line in Path(options['positions']).read_text().splitlines() if line.strip()]
+        pos = np.array([[[float(r[2]), float(r[3]), float(r[4])] for r in rows]], np.float32)
+        cells = np.array([gro_cell()])
+    else:
+        pos, cells = frames(int(options['frames']) if 'frames' in options else None)
     T, M, n = len(pos), len(refs), waters.shape[1]
     np.save(work / 'frames.npy', pos)
     np.save(work / 'cells.npy', cells)
