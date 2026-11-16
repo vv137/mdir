@@ -60,9 +60,15 @@
 // brick. Across a face of z the row of the grid t_z cells beyond it is that
 // of c t_z away, x and y with it, and across a face of y that of b t_y
 // away: the window of y of each row of z, and of x of each row of y, moves
-// by those tilts. A range of z wider than the grid makes those of y and x
-// the whole grid, and one of y that of x, so that each cell is visited once
-// and the image of a candidate is the one nearest to the center of the box.
+// by those tilts. A range of z as wide as the grid visits each row once,
+// for all the periods t_z of the row within the range: the window of y of
+// the row is the hull of the windows of those periods, which its two
+// extreme periods bound, since the window moves linearly with t_z; a range
+// of y as wide as the grid does the same for the windows of x, over the
+// periods t_z and t_y. Each cell is then visited once, the window being
+// the whole grid only when the hull is as wide, and the image of a
+// candidate is the one nearest to the center of the box
+// (D[groups-triclinic-search]).
 // The minimum image is taken in one pass along c, b, and a, and the shifts
 // of the frames and of the entries are lattice vectors n, applied as n H;
 // the shift of an entry takes five bits a lattice vector, (e + 16) in bits
@@ -189,6 +195,45 @@ public:
   MDIR_BINARY(maxnumf, MaxNumFOp)
   MDIR_BINARY(minnumf, MinNumFOp)
 #undef MDIR_BINARY
+  /// The gap along an axis between the slab of the cells `row` (signed, in
+  /// cells of `cell`) and the box of center `center` and half width
+  /// `half`: zero where they overlap.
+  Value gapOf(Value row, Value center, Value half, Value cell) {
+    Value rowF = sitofp(f32, row);
+    Value lo = mulf(rowF, cell);
+    Value hi = addf(lo, cell);
+    Value top = addf(center, half);
+    Value bottom = subf(center, half);
+    Value above = subf(lo, top);
+    Value below = subf(bottom, hi);
+    Value zero = cf(0.0);
+    Value most = maximumf(above, below);
+    return maximumf(most, zero);
+  }
+  Value notNarrow(Value narrow) {
+    Value yes = cb(true);
+    return xori(narrow, yes);
+  }
+  Value sqrt(Value v) { return math::SqrtOp::create(b, loc, v); }
+  /// The floor and the ceiling of a / n, for n > 0, in signed integers.
+  Value floorDiv(Value a, Value n) {
+    Value q = divsi(a, n);
+    Value r = remsi(a, n);
+    Value zero = ci(0);
+    Value one = ci(1);
+    Value negative = cmpi(CmpIPredicate::slt, r, zero);
+    Value down = subi(q, one);
+    return select(negative, down, q);
+  }
+  Value ceilDiv(Value a, Value n) {
+    Value q = divsi(a, n);
+    Value r = remsi(a, n);
+    Value zero = ci(0);
+    Value one = ci(1);
+    Value positive = cmpi(CmpIPredicate::sgt, r, zero);
+    Value up = addi(q, one);
+    return select(positive, up, q);
+  }
   Value cmpi(CmpIPredicate p, Value x, Value y) {
     return arith::CmpIOp::create(b, loc, p, x, y);
   }
@@ -1270,7 +1315,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
   Value places32 = load(sizesDevice, c0w);
   Value places = indexCast(index, places32);
   Value groups = divui(places, c16w);
-  Value realGroup;
+  Value realGroup, qualX, qualY, qualZ;
   if (!images) {
     realGroup = cmpi(P::ult, g, groups);
   } else {
@@ -1305,6 +1350,9 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value nz = cmpf(F::OGE, ez, flz);
     Value nxy = ori(nx, ny);
     Value nxyz = ori(nxy, nz);
+    qualX = nx;
+    qualY = ny;
+    qualZ = nz;
     realGroup = andi(realGroup0, nxyz);
   }
   ifThen(realGroup, [&] {
@@ -1544,6 +1592,19 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     Value fy1 = select(wideY, gny1, c1y0);
     Value fz1 = select(wideZ, gnz1, c1z0);
     Value reach2 = mulf(freach, freach);
+    // The cells of the grid along z and y, and the square of the reach that
+    // narrows the windows of a tilted cell, widened by 2^-12 so that the
+    // rounding of a window never takes a candidate that the test of its
+    // box keeps.
+    Value cellZ, cellY, reachWin2;
+    if (tilted) {
+      Value gnzW = sitofp(f32, gnz32);
+      Value gnyW = sitofp(f32, gny32);
+      cellZ = divf(flz, gnzW);
+      cellY = divf(fly, gnyW);
+      Value widen = cf(1.0 + 1.0 / 4096.0);
+      reachWin2 = mulf(reach2, widen);
+    }
     Value below = kernels::emitLanesBelow(b, loc, lane32, oneI);
     Value first16 = addi(first32, c16i);
     Value unitCapacityW = dim(units, c0w);
@@ -2033,6 +2094,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
       ResultRange r = forLoop(
           zeroI, imN27, oneI, {cs, csb, qn},
           [&](Value imgS, ValueRange ia) -> Values {
+           auto body = [&]() -> Values {
             Value irx, iry, irz;
             if (!tilted) {
               Value iqx = remui(imgS, imThree);
@@ -2081,6 +2143,34 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
             Value qimg = ori(cand, imgBits);
             Value nearq = select(takeImg, qimg, noneQ);
             return round(nearq, ia[0], ia[1], ia[2]);
+           };
+           if (!tilted)
+             return body();
+           // In a tilted cell the codes that move along a lattice vector
+           // only along the axes where the group needs another image: along
+           // an axis whose box and reach are less than its edge of the
+           // brick, the image that the pass and the rounding give is the
+           // only one within the reach (D115), so its move is 0. The test
+           // is the group's, uniform over the warp.
+           Value aThree = ci(3);
+           Value aNine = ci(9);
+           Value aOne = ci(1);
+           Value aqc = divui(imgS, aNine);
+           Value aq3 = divui(imgS, aThree);
+           Value aqb = remui(aq3, aThree);
+           Value aqa = remui(imgS, aThree);
+           Value stayC = cmpi(P::eq, aqc, aOne);
+           Value stayB = cmpi(P::eq, aqb, aOne);
+           Value stayA = cmpi(P::eq, aqa, aOne);
+           Value okC = ori(stayC, qualZ);
+           Value okB = ori(stayB, qualY);
+           Value okA = ori(stayA, qualX);
+           Value okCB = andi(okC, okB);
+           Value allowed = andi(okCB, okA);
+           ResultRange taken = ifElse(
+               {i32, i32, i32}, allowed, body,
+               [&]() -> Values { return {ia[0], ia[1], ia[2]}; });
+           return Values(taken.begin(), taken.end());
           });
       return Values(r.begin(), r.end());
     };
@@ -2100,34 +2190,92 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
           Value zneg = cmpi(P::slt, zm, zeroI);
           Value zw = addi(zm, gnz32);
           Value iz = select(zneg, zw, zm);
-          Value yFrom = fy0, yTo = fy1p, czx, twideY;
+          Value yFrom = fy0, yTo = fy1p, twideY, tc0y, tc1y, tzLo, tzHi;
+          Value narrowZ;
+          // A period t_z of the row: the center of its window of x and y,
+          // the square of the gap of its slab, and whether the reach
+          // reaches it; recomputed where it is needed, so that the loops
+          // within hold no more of it than the period.
+          auto zPeriod = [&](Value t, Value &cxOut, Value &cyOut, Value &gap2,
+                             Value &ok) {
+            Value tF = sitofp(f32, t);
+            Value tX = mulf(tF, ftcx);
+            Value tY = mulf(tF, ftcy);
+            cxOut = subf(cxb, tX);
+            cyOut = subf(cyb, tY);
+            Value tRows = muli(t, gnz32);
+            Value row = addi(iz, tRows);
+            Value g = gapOf(row, czb, hz, cellZ);
+            gap2 = mulf(g, g);
+            Value rest = subf(reachWin2, gap2);
+            Value zeroG = cf(0.0);
+            Value inside = cmpf(F::OGT, rest, zeroG);
+            Value wide = notNarrow(narrowZ);
+            ok = ori(inside, wide);
+          };
           if (tilted) {
             // The row t_z cells of the grid beyond the faces of z is that
             // of c t_z away: the window of y, and of x, moves by -t_z
-            // (c_x, c_y).
+            // (c_x, c_y). A range of z as wide as the grid visits each row
+            // once, for every period t_z of it within the range, and takes
+            // the hull of their windows. The window of a period is narrowed
+            // to the slice of the reach that the row's slab cuts: half
+            // widths h + sqrt(R^2 - g^2), g the gap between the slab and
+            // the box along z, and none where g >= R. Two periods at most
+            // are narrowed (their extremes bound the hull); more take the
+            // whole window.
             Value tzD = subi(zz, iz);
             Value tzI = divsi(tzD, gnz32);
-            Value tzF = sitofp(f32, tzI);
-            Value tzX = mulf(tzF, ftcx);
-            Value tzY = mulf(tzF, ftcy);
-            czx = subf(cxb, tzX);
-            Value czy = subf(cyb, tzY);
-            Value tloy = subf(czy, ecy);
-            Value thiy = addf(czy, ecy);
+            Value tzFrom = subi(c0z, iz);
+            Value tzLo0 = ceilDiv(tzFrom, gnz32);
+            Value tzTo = subi(c1z0, iz);
+            Value tzHi0 = floorDiv(tzTo, gnz32);
+            tzLo = select(wideZ, tzLo0, tzI);
+            tzHi = select(wideZ, tzHi0, tzI);
+            Value tzSpan = subi(tzHi, tzLo);
+            narrowZ = cmpi(P::sle, tzSpan, oneI);
+            auto period = [&](Value t, Value &ok, Value &lo, Value &hi) {
+              Value cxT, cyT, gap2;
+              zPeriod(t, cxT, cyT, gap2, ok);
+              Value rest = subf(reachWin2, gap2);
+              Value zeroG = cf(0.0);
+              Value restPos = maximumf(rest, zeroG);
+              Value slice = sqrt(restPos);
+              Value half0 = addf(hy, slice);
+              Value half = select(narrowZ, half0, ecy);
+              lo = subf(cyT, half);
+              hi = addf(cyT, half);
+            };
+            Value okZLo, okZHi, loA, hiA, loB, hiB;
+            period(tzLo, okZLo, loA, hiA);
+            period(tzHi, okZHi, loB, hiB);
+            Value anyY = ori(okZLo, okZHi);
+            Value bigF = cf(3.0e+38);
+            Value smallF = cf(-3.0e+38);
+            Value loAk = select(okZLo, loA, bigF);
+            Value loBk = select(okZHi, loB, bigF);
+            Value hiAk = select(okZLo, hiA, smallF);
+            Value hiBk = select(okZHi, hiB, smallF);
+            Value tloy0 = minimumf(loAk, loBk);
+            Value thiy0 = maximumf(hiAk, hiBk);
+            Value tloy = select(anyY, tloy0, cyb);
+            Value thiy = select(anyY, thiy0, cyb);
             Value tsy0 = mulf(tloy, fily);
             Value tsy1 = mulf(tsy0, gnyf);
             Value tty0 = mulf(thiy, fily);
             Value tty1 = mulf(tty0, gnyf);
             Value tsyf = floor(tsy1);
             Value ttyf = floor(tty1);
-            Value tc0y = fptosi(i32, tsyf);
-            Value tc1y = fptosi(i32, ttyf);
+            tc0y = fptosi(i32, tsyf);
+            tc1y = fptosi(i32, ttyf);
             Value twy = subi(tc1y, tc0y);
-            Value twideY0 = cmpi(P::sge, twy, gny32);
-            twideY = ori(twideY0, wideZ);
-            yFrom = select(twideY, zeroI, tc0y);
+            twideY = cmpi(P::sge, twy, gny32);
+            Value yFrom0 = select(twideY, zeroI, tc0y);
             Value tfy1 = select(twideY, gny1, tc1y);
-            yTo = addi(tfy1, oneI);
+            Value yTo0 = addi(tfy1, oneI);
+            // No period of the row within the reach: no row of y.
+            yFrom = select(anyY, yFrom0, zeroI);
+            yTo = select(anyY, yTo0, zeroI);
           }
           ResultRange ry = forLoop(
               yFrom, yTo, oneI, {za[0], za[1], za[2]},
@@ -2137,16 +2285,73 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                 Value yw = addi(ym, gny32);
                 Value iy = select(yneg, yw, ym);
                 Value xFrom = fx0, xTo = fx1;
+                Value anyX;
                 if (tilted) {
                   // Across the faces of y, the row is that of b t_y away:
-                  // the window of x moves by -t_y b_x.
+                  // the window of x moves by -t_y b_x. A range of y as
+                  // wide as the grid visits each row once, for every
+                  // period t_y of it within the range. The window of x is
+                  // the hull, over the extreme periods t_z and t_y, of the
+                  // slices of the reach that the row cuts, as for y.
                   Value tyD = subi(yy, iy);
                   Value tyI = divsi(tyD, gny32);
-                  Value tyF = sitofp(f32, tyI);
-                  Value tyX = mulf(tyF, ftbx);
-                  Value czyx = subf(czx, tyX);
-                  Value tlox = subf(czyx, ecx);
-                  Value thix = addf(czyx, ecx);
+                  Value tyFrom = subi(tc0y, iy);
+                  Value tyLo0 = ceilDiv(tyFrom, gny32);
+                  Value tyTo = subi(tc1y, iy);
+                  Value tyHi0 = floorDiv(tyTo, gny32);
+                  Value tyLo = select(twideY, tyLo0, tyI);
+                  Value tyHi = select(twideY, tyHi0, tyI);
+                  Value tySpan = subi(tyHi, tyLo);
+                  Value narrowY0 = cmpi(P::sle, tySpan, oneI);
+                  Value narrowY = andi(narrowY0, narrowZ);
+                  Value bigX = cf(3.0e+38);
+                  Value smallX = cf(-3.0e+38);
+                  auto combo = [&](Value ty, Value czxT, Value czyT,
+                                   Value gz2, Value okz, Value &lo,
+                                   Value &hi) -> Value {
+                    Value tF = sitofp(f32, ty);
+                    Value tX = mulf(tF, ftbx);
+                    Value centerX = subf(czxT, tX);
+                    Value tRows = muli(ty, gny32);
+                    Value row = addi(iy, tRows);
+                    Value g = gapOf(row, czyT, hy, cellY);
+                    Value g2 = mulf(g, g);
+                    Value rest0 = subf(reachWin2, gz2);
+                    Value rest = subf(rest0, g2);
+                    Value zeroG = cf(0.0);
+                    Value inside = cmpf(F::OGT, rest, zeroG);
+                    Value inside2 = ori(inside, notNarrow(narrowY));
+                    Value ok = andi(okz, inside2);
+                    Value restPos = maximumf(rest, zeroG);
+                    Value slice = sqrt(restPos);
+                    Value half0 = addf(hx, slice);
+                    Value half = select(narrowY, half0, ecx);
+                    Value lo0 = subf(centerX, half);
+                    Value hi0 = addf(centerX, half);
+                    lo = select(ok, lo0, bigX);
+                    hi = select(ok, hi0, smallX);
+                    return ok;
+                  };
+                  Value czxLo, czyLoC, gzLo2, okZLo, czxHi, czyHiC, gzHi2,
+                      okZHi;
+                  zPeriod(tzLo, czxLo, czyLoC, gzLo2, okZLo);
+                  zPeriod(tzHi, czxHi, czyHiC, gzHi2, okZHi);
+                  Value l1, h1, l2, h2, l3, h3, l4, h4;
+                  Value o1 = combo(tyLo, czxLo, czyLoC, gzLo2, okZLo, l1, h1);
+                  Value o2 = combo(tyHi, czxLo, czyLoC, gzLo2, okZLo, l2, h2);
+                  Value o3 = combo(tyLo, czxHi, czyHiC, gzHi2, okZHi, l3, h3);
+                  Value o4 = combo(tyHi, czxHi, czyHiC, gzHi2, okZHi, l4, h4);
+                  Value o12 = ori(o1, o2);
+                  Value o34 = ori(o3, o4);
+                  anyX = ori(o12, o34);
+                  Value l12 = minimumf(l1, l2);
+                  Value l34 = minimumf(l3, l4);
+                  Value cLo0 = minimumf(l12, l34);
+                  Value h12 = maximumf(h1, h2);
+                  Value h34 = maximumf(h3, h4);
+                  Value cHi0 = maximumf(h12, h34);
+                  Value tlox = select(anyX, cLo0, cxb);
+                  Value thix = select(anyX, cHi0, cxb);
                   Value tsx0 = mulf(tlox, filx);
                   Value tsx1 = mulf(tsx0, gnxf);
                   Value ttx0 = mulf(thix, filx);
@@ -2156,8 +2361,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                   Value tc0x = fptosi(i32, tsxf);
                   Value tc1x = fptosi(i32, ttxf);
                   Value twx = subi(tc1x, tc0x);
-                  Value twideX0 = cmpi(P::sge, twx, gnx32);
-                  Value twideX = ori(twideX0, twideY);
+                  Value twideX = cmpi(P::sge, twx, gnx32);
                   // The window moved by whole periods of a, which moves
                   // nothing else, to begin within the grid: the run along
                   // x then goes around the edge once at most, however far
@@ -2185,6 +2389,8 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
                 Value to2a = subi(xTo, gnx32);
                 Value to2 = select(under, xTo, to2a);
                 Value pieces = select(twoPieces, c2i, oneI);
+                if (tilted)
+                  pieces = select(anyX, pieces, zeroI);
                 ResultRange rp = forLoop(
                     zeroI, pieces, oneI, {ya[0], ya[1], ya[2]},
                     [&](Value piece, ValueRange pa) -> Values {
