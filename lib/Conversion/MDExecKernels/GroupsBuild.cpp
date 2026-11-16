@@ -405,7 +405,7 @@ public:
 };
 
 /// The height of a cube of the build over units, in widths of its column
-/// (D[md-alg-segments-build]): a chunk holds the units of one cube. On the
+/// (D419): a chunk holds the units of one cube. On the
 /// RTX 5090 (PR #897), cubes of two widths took 5-12% fewer entries than
 /// cubes of one, but their taller chunks in the short brick of a rhombic
 /// dodecahedron sent groups to the images kernel: 360 against 135 us a build
@@ -426,7 +426,7 @@ public:
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass)
       : Code(b, loc), tilted(tilted), singlePass(singlePass) {}
   /// The build over units of `kinds` taken rigid kinds and the rest
-  /// (D[md-alg-segments-build]).
+  /// (D419).
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
               unsigned kinds)
       : Code(b, loc), tilted(tilted), singlePass(singlePass), unitsMode(true),
@@ -1716,7 +1716,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     // named `listName` (the group for the groups) whose count and last
     // block are at `slot` (the group). Over units each segment is one
     // search of the cells of the partners' rank, into records of its own
-    // (D[md-alg-segments-build]).
+    // (D419).
     auto searchSegment = [&](Value segReach, Value cellOffset, Value listName,
                              Value slot) {
     Value ecx = addf(hx, segReach);

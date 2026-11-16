@@ -474,7 +474,7 @@ def ConvertMDExecToGPU
            "the runtime stops the run if the counts differ "
            "(MDIR_CHECK_PRUNING, D268)">,
     Option<"dumpSegments", "dump-segments", "bool", /*default=*/"false",
-           "For the tests of the lists of units (D[md-alg-segments-build]): "
+           "For the tests of the lists of units (D419): "
            "each refresh of a list of units writes its records, the order "
            "and the shifts of its places, its inner records, and its active "
            "units, through the runtime, to the directory that "
@@ -616,7 +616,7 @@ def AddGroupsBuild : Pass<"add-groups-build", "::mlir::ModuleOp"> {
            "(D321) in place of the three-launch scan">,
     Option<"kinds", "kinds", "int", /*default=*/"-1",
            "With 0 or more, the build over the units of that many taken "
-           "rigid kinds and the rest (D[md-alg-segments-build]), "
+           "rigid kinds and the rest (D419), "
            "`@mdrt_gpu_build_segmented_pairs_k<kinds>`, in place of the "
            "groups' build">
   ];

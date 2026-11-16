@@ -1,5 +1,5 @@
 // A module with a list of units and a structure of groups, built in either
-// order (D[md-alg-segments-build]): the build over units and the groups'
+// order (D419): the build over units and the groups'
 // build share their helpers, which the module defines once.
 //
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu | FileCheck %s

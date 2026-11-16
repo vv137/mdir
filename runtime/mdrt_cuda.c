@@ -1941,7 +1941,7 @@ void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
 }
 
 /* For the tests of the lists of units (convert-md-exec-to-gpu with
-   dump-segments, D[md-alg-segments-build]): writes the list of `handle`, of
+   dump-segments, D419): writes the list of `handle`, of
    `places` places and `records` records, after `builds` builds of it and
    `prunes` prunings of every list, to dump_<n>.bin in the directory
    that MDRT_SEGMENTS_DUMP names, n counting the dumps from 0. The file holds

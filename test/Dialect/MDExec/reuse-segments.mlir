@@ -1,5 +1,5 @@
 // md-exec-reuse-neighbors carries a list of units through the loop over
-// steps (D[md-alg-segments-build]): its build in the loop becomes an empty
+// steps (D419): its build in the loop becomes an empty
 // list before the loop, of the same kinds, excluded pairs, anchors, cutoff,
 // and skin, and a refresh where the build was, dual with prune-skin below
 // the skin (D114); an empty list that a loop within the body starts from

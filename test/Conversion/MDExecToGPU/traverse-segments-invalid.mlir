@@ -1,5 +1,5 @@
 // The refusals of convert-md-exec-to-gpu for a list of units and the loops
-// over its segments (D417, D[md-alg-segments-build]), each with its own
+// over its segments (D417, D419), each with its own
 // message. The lists are lowered; their SIMT traversal is slice S3's, and the
 // serial definition runs over them with traverse-oracle=serial.
 //

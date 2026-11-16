@@ -24,7 +24,7 @@ enum MdrtGroupsSlot {
   GROUPS_ACTIVE_RUNS = 13,
   GROUPS_ACTIVE_WIDE_RUNS = 14,
   GROUPS_PLACED = 15,
-  /* A list of units (D417, D[md-alg-segments-build]): the count and the
+  /* A list of units (D417, D419): the count and the
      last block of each list of a group in a segment (g S + s), the order of
      the places as the traversal reads it, the records in the order of the
      segments (entries, masks, groups, counts), and the first record of each

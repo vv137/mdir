@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The stop of the covering reach against the cell (D[md-alg-segments-build],
+# The stop of the covering reach against the cell (D419,
 # as #795's): the 403 waters of Inputs/triclinic, whose least face width
 # c_z = 1.8385 nm leaves half of it, 0.919 nm, below the largest covering
 # reach of the list, 0.9 + 2 (0.09582) nm. The first build stops the run

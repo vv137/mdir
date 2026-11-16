@@ -36,7 +36,7 @@ void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
                      bool singlePassScan);
 
 /// The name of the build over the units of `kinds` taken rigid kinds and
-/// the rest (D[md-alg-segments-build]):
+/// the rest (D419):
 /// `mdrt_gpu_build_segmented_pairs_k<kinds>`, with `_triclinic`.
 std::string getSegmentsBuildName(bool triclinic, unsigned kinds);
 

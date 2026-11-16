@@ -1,5 +1,5 @@
 """The serial definition of D417 over the lists of units that the device
-builds (D[md-alg-segments-build]), against the forces of another build at the
+builds (D419), against the forces of another build at the
 same positions: `main`'s general groups in double precision, or #795's
 template in mixed precision.
 

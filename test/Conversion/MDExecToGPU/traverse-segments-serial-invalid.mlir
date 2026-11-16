@@ -1,6 +1,6 @@
 // The refusals of the serial definition over a list of units that the
 // device builds (convert-md-exec-to-gpu with traverse-oracle=serial;
-// D[md-alg-segments-build]), each with its own message: the coverage query
+// D419), each with its own message: the coverage query
 // of each segment (D357, D417 Section 3), and the records that a loop reads,
 // the outer ones of a list or the inner ones of a dual list (D114).
 //

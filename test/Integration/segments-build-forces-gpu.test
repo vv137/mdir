@@ -1,6 +1,6 @@
 # REQUIRES: cuda
 # The serial definition of D417 over the lists of units that the device
-# builds (D[md-alg-segments-build]) against the general build of groups in
+# builds (D419) against the general build of groups in
 # double precision, at the positions of its checkpoint: the forces of the
 # pair term (rigid water, Coulomb cut off), within the error model of two
 # evaluations of one sum in different orders (Inputs/segments_forces.py).

@@ -184,7 +184,7 @@ void mdrtStopNotNumbers(int64_t count) {
   stopWith(message);
 }
 
-/* A build of a list of units (D417, D[md-alg-segments-build]) found its
+/* A build of a list of units (D417, D419) found its
    largest covering reach, the pair list distance plus twice the largest
    covering radius of its kinds and the rest, beyond half the least face
    width of the cell: a pair could have two images within it, and the list
@@ -201,7 +201,7 @@ void mdrtSegmentsStopReach(double reach, double widest, double half) {
   stopWith(message);
 }
 
-/* The excluded pairs of a list of units (D[md-alg-segments-build]) hold
+/* The excluded pairs of a list of units (D419) hold
    `count` pairs that its build cannot leave out: of a particle of the rest
    and a copy of a taken kind, or of two copies. D405 takes the kinds so that
    there is none; such a pair would enter the sums. */

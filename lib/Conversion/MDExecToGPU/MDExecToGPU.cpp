@@ -181,7 +181,7 @@ struct Neighbors {
   /// The number that the runtime gave the last build of the slots, on the
   /// host: no two builds in a process have the same.
   Value edgeSerial;
-  /// A list of units (D417, D[md-alg-segments-build]): a structure of
+  /// A list of units (D417, D419): a structure of
   /// groups over units (SegmentedState), held apart so that the structure
   /// stays small.
   std::shared_ptr<struct SegmentedState> segmented;
@@ -324,7 +324,7 @@ private:
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   /// The state of a list of units, its unit tables formed once from the
-  /// relations of its kinds and anchors (D[md-alg-segments-build]).
+  /// relations of its kinds and anchors (D419).
   LogicalResult lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op);
   LogicalResult lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op);
   LogicalResult lowerBuildSegmentedPairs(md_exec::BuildSegmentedPairsOp op);
@@ -3923,7 +3923,7 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
               "contract is in the type";
   if (op.isSegmented()) {
     // The serial definition, D417's oracle, runs on the host over copies of
-    // the lists that the device built (D[md-alg-segments-build]); the SIMT
+    // the lists that the device built (D419); the SIMT
     // schedule is slice S3's.
     if (traverseOracle == "simt")
       return op.emitOpError()
@@ -5896,7 +5896,7 @@ static void emitAtomicAddI32(OpBuilder &b, Location loc, Value buffer,
                              Value index, Value value);
 
 //===----------------------------------------------------------------------===//
-// Lists of units (D417, D[md-alg-segments-build])
+// Lists of units (D417, D419)
 //===----------------------------------------------------------------------===//
 
 /// The positions that the list `list` is refreshed at: those of a refresh
@@ -8970,7 +8970,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   }
 
   // The loops over lists of units are lowered on a device by slice S3 of
-  // D417; their lists by this one (D[md-alg-segments-build]).
+  // D417; their lists by this one (D419).
   if (isa<md_exec::SegmentForOp>(op))
     return op->emitOpError()
            << "is a loop over a list of units, which this pass does not "

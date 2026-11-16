@@ -1,5 +1,5 @@
 """The coverage of the lists of units that the device builds
-(D[md-alg-segments-build]; D417, Section 8, the gate of S2), against every
+(D419; D417, Section 8, the gate of S2), against every
 image of every pair of reference points in f64.
 
   segments_coverage.py system SYSTEM ROOT WORK STEPS [--cell] [--npt] [--forces] [--cutoff=Å] [--pairlist=Å] [--pruned=Å]

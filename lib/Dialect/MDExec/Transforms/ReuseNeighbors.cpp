@@ -459,7 +459,7 @@ static bool hasWork(scf::ForOp loop) {
 }
 
 //===----------------------------------------------------------------------===//
-// Lists of units (D417, D[md-alg-segments-build])
+// Lists of units (D417, D419)
 //===----------------------------------------------------------------------===//
 
 /// Returns true if every operand of `op` but `except` is defined outside

@@ -445,7 +445,7 @@ octahedron, a dodecahedron (also with a reach in the proportion of a
 solvated one, whose ranges of z span the grid), a hexagonal cell, and a
 cell of D115 against every image of every pair in f64.
 
-## 5.3 Lists of units (D417, D[md-alg-segments-build])
+## 5.3 Lists of units (D417, D419)
 
 A list of units, `!mdrt.segmented_pairs`, is built by this build with units for particles.
 
@@ -456,7 +456,7 @@ A list of units, `!mdrt.segmented_pairs`, is built by this build with units for 
 - **The refresh** tests the units' reference points (one mobility group) and stops the run if the largest covering reach exceeds half the least face width.
 - **The pruning** re-tests a record a warp against its segment's inner reach.
 
-`test/Integration/segments-build-coverage-gpu.test` checks the lists against every image of every pair of reference points in f64, after the refresh of every frame of a trajectory. `test/Integration/segments-build-forces-gpu.test` checks the forces of the serial definition over the device's lists against the general groups build in double. The design and the measurements are in [D[md-alg-segments-build]](decisions/md-alg-segments-build.md).
+`test/Integration/segments-build-coverage-gpu.test` checks the lists against every image of every pair of reference points in f64, after the refresh of every frame of a trajectory. `test/Integration/segments-build-forces-gpu.test` checks the forces of the serial definition over the device's lists against the general groups build in double. The design and the measurements are in [D419](decisions/D419.md).
 
 ## 5.2 How far the lists reach (D242)
 
@@ -1445,7 +1445,7 @@ drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 | D291 | The table of a block, measured and refused | 6.1 |
 | D294 | A model in stages keeps the matrix | 6.3 |
 | D357 | Coverage across IR boundaries | 10.1 |
-| D[md-alg-segments-build] | The build over units: lists of units in segments | 5.3 |
+| D419 | The build over units: lists of units in segments | 5.3 |
 
 **Where the sections moved** (2026-11-11). This document had the structure
 in Section 2, the loop in Section 3, what the loop reads in Section 4, the

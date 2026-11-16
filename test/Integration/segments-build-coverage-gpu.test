@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The lists of units that the device builds (D[md-alg-segments-build];
+# The lists of units that the device builds (D419;
 # D417, Section 8, the gate of S2) against every image of every pair of
 # reference points in f64 (Inputs/segments_coverage.py), after the refresh of
 # every frame of a trajectory that a general run of groups writes: just

@@ -1,6 +1,6 @@
 // The form that md-exec-reuse-neighbors gives a loop over steps, a list of
 // units carried through the loop's values, lowers on a device
-// (D[md-alg-segments-build]). The build of a list of units in a loop over
+// (D419). The build of a list of units in a loop over
 // steps becomes an empty list before it and a refresh in it, carried; on
 // the device's buffers md-exec-assign-storage keeps that shape, and
 // convert-md-exec-to-gpu finds the positions through the loop, stops
