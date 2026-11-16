@@ -13,9 +13,9 @@ if len(sys.argv) == 4:
     getter(None, 0, int(sys.argv[2]))
     raise SystemExit("invalid selector unexpectedly returned")
 
-for slot in (-1, 16, 2**63 - 1):
+for slot in (-1, 24, 2**63 - 1):
     result = subprocess.run([sys.executable, __file__, sys.argv[1],
                              str(slot), "child"], capture_output=True, text=True)
     assert result.returncode == -signal.SIGABRT, (slot, result)
-    assert f"invalid groups buffer slot {slot} (expected 0..15)" in result.stderr
+    assert f"invalid groups buffer slot {slot} (expected 0..23)" in result.stderr
 print("Three invalid slots diagnosed before any handle or array access")

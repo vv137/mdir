@@ -1851,6 +1851,9 @@ struct Groups {
      it is noted in the log. */
   bool built;
   int64_t lateGrowths;
+  /* The segments of a list of units, 1 for groups
+     (mdrtGroupsSetSegments). */
+  int64_t segments;
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
@@ -1865,6 +1868,8 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
   case MDRT_GROUPS_WIDE_RUNS: return groups->blocks / 1024 + 1;
   case MDRT_GROUPS_PLACED: return groups->places * 3;
   case MDRT_GROUPS_BLOCKS: return groups->blocks;
+  case MDRT_GROUPS_SEGMENT_LISTS: return groups->places / 16 * groups->segments;
+  case MDRT_GROUPS_SEGMENTS: return groups->segments + 1;
   }
   abort();
 }
@@ -1904,9 +1909,18 @@ int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
   }
   groups->places = (places + 15) / 16 * 16;
   groups->blocks = blocks > 0 ? blocks : 1;
+  groups->segments = 1;
   allocateGroups(groups);
   recordCallHandle(groups);
   return (int64_t)(intptr_t)groups;
+}
+
+/* A list of units in `segments` segments (D417): the buffers of its lists
+   by group and segment, and of its offsets, take that many. Called before
+   the first use of those buffers. */
+void mdrtGroupsSetSegments(int64_t handle, int64_t segments) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  groups->segments = segments > 0 ? segments : 1;
 }
 
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,

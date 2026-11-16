@@ -184,6 +184,23 @@ void mdrtStopNotNumbers(int64_t count) {
   stopWith(message);
 }
 
+/* A build of a list of units (D417, D[md-alg-segments-build]) found its
+   largest covering reach, the pair list distance plus twice the largest
+   covering radius of its kinds and the rest, beyond half the least face
+   width of the cell: a pair could have two images within it, and the list
+   states one. The run has failed. Lengths inside MDIR are nm; the message
+   gives Ang. */
+void mdrtSegmentsStopReach(double reach, double widest, double half) {
+  char message[512];
+  snprintf(message, sizeof message,
+           "the covering reach of the list of units, %.4g Ang (the pair list "
+           "distance plus twice %.4g Ang, the largest covering radius of its "
+           "units), exceeds half the least face width of the cell, %.4g Ang; "
+           "the run has failed (use a larger cell)",
+           10.0 * reach, 10.0 * widest, 10.0 * half);
+  stopWith(message);
+}
+
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
    hydrogens, left a length off its target or not a number in the step
    `step`: the run has failed (D278). */

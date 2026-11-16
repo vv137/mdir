@@ -180,6 +180,28 @@ struct Neighbors {
   /// The number that the runtime gave the last build of the slots, on the
   /// host: no two builds in a process have the same.
   Value edgeSerial;
+  /// A list of units (D417, D[md-alg-segments-build]): a structure of
+  /// groups over units (SegmentedState), held apart so that the structure
+  /// stays small.
+  std::shared_ptr<struct SegmentedState> segmented;
+};
+
+/// The units of a list of units: `units` units of `kinds` taken kinds and
+/// the rest, over the structure's `size` particles. Each unit's reference
+/// particle, the value of the traversal's `order` at its place, and the
+/// unit of each particle of the rest (-1 for another) are on the device,
+/// with the members of the units of the taken kinds; the end of the units
+/// of each rank (the rest rank 0, kind f rank K - f) and the covering
+/// radius of each rank are on the host. `moved` and `farthest` take the
+/// test of a refresh.
+struct SegmentedState {
+  unsigned kinds = 0;
+  Value units;
+  SmallVector<Value> rankEnd;
+  SmallVector<double> extents;
+  Value unitRef, unitValue, unitOfParticle, members;
+  Value moved, farthest, movedInner, farthestInner;
+  double cutoff = 0.0;
 };
 
 using kernels::GroupBuffers;
@@ -299,6 +321,21 @@ private:
   LogicalResult lowerOp(Operation *op);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
+  /// The state of a list of units, its unit tables formed once from the
+  /// relations of its kinds and anchors (D[md-alg-segments-build]).
+  LogicalResult lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op);
+  LogicalResult lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op);
+  LogicalResult lowerBuildSegmentedPairs(md_exec::BuildSegmentedPairsOp op);
+  /// The build of a list of units at `positions` (emitSegmentsBuild of
+  /// GroupsBuild.h), with its reach checked against the cell.
+  LogicalResult emitSegmentsBuild(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure, Value positions,
+                                  Value box, double reach);
+  /// Prunes the records of a dual list of units into its inner records,
+  /// each segment with its inner reach (D114).
+  void emitSegmentsPrune(OpBuilder &builder, Location loc,
+                         const Neighbors &structure, Value positions,
+                         Value box, double innerReach);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
   void lowerPermute(md_exec::PermuteOp op);
   void lowerNonzero(md_exec::NonzeroOp op);
@@ -694,6 +731,9 @@ private:
   /// Adds the build of the groups (GroupsBuild.h), or with `tilted` that
   /// of a triclinic cell.
   LogicalResult addGroupsBuild(bool tilted);
+  /// Adds the build over the units of `kinds` taken kinds
+  /// (emitSegmentsBuild), with the helpers that the module lacks.
+  LogicalResult addSegmentsBuild(bool tilted, unsigned kinds);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// Adds the template of particle mesh Ewald for these types, with
   /// `tilted` the kernels of a triclinic cell as well, and with
@@ -4826,6 +4866,23 @@ LogicalResult Lowering::addGroupsBuild(bool tilted) {
   return success();
 }
 
+LogicalResult Lowering::addSegmentsBuild(bool tilted, unsigned kinds) {
+  if (SymbolTable::lookupSymbolIn(
+          module, kernels::getSegmentsBuildName(tilted, kinds)))
+    return success();
+  OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
+  kernels::emitSegmentsBuild(*templates, tilted, singlePassGroupScan, kinds);
+  // The helpers that the groups' build shares are taken once.
+  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto symbol = dyn_cast<SymbolOpInterface>(op);
+    if (symbol && SymbolTable::lookupSymbolIn(module, symbol.getName()))
+      continue;
+    op.remove();
+    module.push_back(&op);
+  }
+  return success();
+}
+
 /// Unrolls, in the kernels of `root`, every loop whose trip count is a
 /// constant of at most `limit`, innermost first, folding constants between
 /// the rounds so that a loop whose bounds were the induction variables of
@@ -5788,6 +5845,962 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   }
   structure.excluded = op.getExcluded();
   neighbors[op.getResult()] = structure;
+}
+
+static void emitAtomicAddI32(OpBuilder &b, Location loc, Value buffer,
+                             Value index, Value value);
+
+//===----------------------------------------------------------------------===//
+// Lists of units (D417, D[md-alg-segments-build])
+//===----------------------------------------------------------------------===//
+
+/// The state of a list of units. Its units are topology: they are formed
+/// once, on the host, from the relations of the kinds and the anchors, and
+/// kept on the device. The units of the rest come first, in the order of
+/// their particles; then the copies of each taken kind from K - 1 to 0, in
+/// the order of the relation. The structure is one of groups (D89), whose
+/// runtime buffers take the segments' (GroupsABI.h).
+LogicalResult
+Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  auto type = cast<mdrt::SegmentedPairsType>(op.getResult().getType());
+  unsigned K = type.getNumKinds();
+  Type narrow = builder.getI32Type();
+  Type wide = builder.getI64Type();
+  Value excluded = op.getExcluded();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value N = memref::DimOp::create(builder, loc, op.getUniverse(), zero);
+
+  // The relations on the host.
+  auto toHost = [&](Value device) -> Value {
+    auto deviceType = cast<MemRefType>(device.getType());
+    auto hostType =
+        MemRefType::get(deviceType.getShape(), deviceType.getElementType());
+    SmallVector<Value> sizes;
+    for (int64_t d = 0; d < deviceType.getRank(); ++d)
+      if (deviceType.isDynamicDim(d))
+        sizes.push_back(memref::DimOp::create(
+            builder, loc, device, createIndex(builder, loc, d)));
+    Value host = memref::AllocOp::create(builder, loc, hostType, sizes);
+    createTransfer(builder, loc, host, device);
+    return host;
+  };
+  SmallVector<Value> tuples, copies;
+  Value takenUnits = zero, takenParticles = zero, memberCount = zero;
+  SmallVector<Value> memberBase;
+  for (unsigned f = 0; f < K; ++f) {
+    Value relation = op.getKinds()[f];
+    Value host = toHost(relation);
+    tuples.push_back(host);
+    Value c = memref::DimOp::create(builder, loc, relation, zero);
+    copies.push_back(c);
+    takenUnits = arith::AddIOp::create(builder, loc, takenUnits, c);
+    Value places = arith::MulIOp::create(
+        builder, loc, c,
+        createIndex(builder, loc, type.getKind(f).getSize()));
+    takenParticles = arith::AddIOp::create(builder, loc, takenParticles,
+                                           places);
+    memberBase.push_back(memberCount);
+    Value members = arith::MulIOp::create(
+        builder, loc, c, createIndex(builder, loc, type.getNumMembers(f)));
+    memberCount = arith::AddIOp::create(builder, loc, memberCount, members);
+  }
+  // The rest: the particles of no copy of a taken kind (D403's kinds hold
+  // each particle once at most).
+  Value restCount = arith::SubIOp::create(builder, loc, N, takenParticles);
+  Value U = arith::AddIOp::create(builder, loc, restCount, takenUnits);
+  auto hostI32 = MemRefType::get({ShapedType::kDynamic}, narrow);
+  Value refH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{U});
+  Value valueH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{U});
+  Value unitOfH = memref::AllocOp::create(builder, loc, hostI32, ValueRange{N});
+  Value membersSize = arith::MaxUIOp::create(builder, loc, memberCount, one);
+  Value membersH =
+      memref::AllocOp::create(builder, loc, hostI32, ValueRange{membersSize});
+  Value c0i = arith::ConstantOp::create(builder, loc, narrow,
+                                        builder.getI32IntegerAttr(0));
+  Value none = arith::ConstantOp::create(builder, loc, narrow,
+                                         builder.getI32IntegerAttr(-1));
+  auto loop = [&](Value count, ValueRange inits,
+                  function_ref<SmallVector<Value>(OpBuilder &, Value,
+                                                  ValueRange)>
+                      body) {
+    return scf::ForOp::create(
+               builder, loc, zero, count, one, inits,
+               [&](OpBuilder &in, Location, Value i, ValueRange carried) {
+                 scf::YieldOp::create(in, loc, body(in, i, carried));
+               })
+        .getResults();
+  };
+  // Every particle of the rest until the kinds mark theirs.
+  loop(N, {}, [&](OpBuilder &in, Value p, ValueRange) {
+    memref::StoreOp::create(in, loc, c0i, unitOfH, ValueRange{p});
+    return SmallVector<Value>{};
+  });
+  for (unsigned f = 0; f < K; ++f) {
+    unsigned size = type.getKind(f).getSize();
+    loop(copies[f], {}, [&](OpBuilder &in, Value c, ValueRange) {
+      for (unsigned k = 0; k < size; ++k) {
+        Value particle = memref::LoadOp::create(
+            in, loc, tuples[f], ValueRange{c, createIndex(in, loc, k)});
+        memref::StoreOp::create(
+            in, loc, none, unitOfH,
+            ValueRange{arith::IndexCastOp::create(in, loc, in.getIndexType(),
+                                                  particle)});
+      }
+      return SmallVector<Value>{};
+    });
+  }
+  // The units of the rest, in the order of their particles.
+  loop(N, {c0i}, [&](OpBuilder &in, Value p, ValueRange carried) {
+    Value mark = memref::LoadOp::create(in, loc, unitOfH, ValueRange{p});
+    Value rest = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                       mark, c0i);
+    Value p32 = arith::IndexCastOp::create(in, loc, narrow, p);
+    auto branch = scf::IfOp::create(in, loc, TypeRange{narrow}, rest,
+                                    /*withElseRegion=*/true);
+    {
+      OpBuilder then = OpBuilder::atBlockEnd(branch.thenBlock());
+      Value u = carried[0];
+      Value ui = arith::IndexCastOp::create(then, loc, then.getIndexType(), u);
+      memref::StoreOp::create(then, loc, u, unitOfH, ValueRange{p});
+      memref::StoreOp::create(then, loc, p32, refH, ValueRange{ui});
+      memref::StoreOp::create(then, loc, p32, valueH, ValueRange{ui});
+      Value next = arith::AddIOp::create(
+          then, loc, u,
+          arith::ConstantOp::create(then, loc, narrow,
+                                    then.getI32IntegerAttr(1)));
+      scf::YieldOp::create(then, loc, ValueRange{next});
+      OpBuilder otherwise = OpBuilder::atBlockEnd(branch.elseBlock());
+      memref::StoreOp::create(otherwise, loc, none, unitOfH, ValueRange{p});
+      scf::YieldOp::create(otherwise, loc, ValueRange{carried[0]});
+    }
+    return SmallVector<Value>{branch.getResult(0)};
+  });
+  // The anchors of the rest (#799): its reference particle.
+  if (Value anchored = op.getAnchored()) {
+    Value pairs = toHost(anchored);
+    Value count = memref::DimOp::create(builder, loc, anchored, zero);
+    loop(count, {}, [&](OpBuilder &in, Value k, ValueRange) {
+      Value member = memref::LoadOp::create(
+          in, loc, pairs, ValueRange{k, createIndex(in, loc, 0)});
+      Value anchor = memref::LoadOp::create(
+          in, loc, pairs, ValueRange{k, createIndex(in, loc, 1)});
+      Value unit = memref::LoadOp::create(
+          in, loc, unitOfH,
+          ValueRange{arith::IndexCastOp::create(in, loc, in.getIndexType(),
+                                                member)});
+      Value rest = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::sge,
+                                         unit, c0i);
+      scf::IfOp::create(in, loc, rest, [&](OpBuilder &then, Location) {
+        memref::StoreOp::create(
+            then, loc, anchor, refH,
+            ValueRange{arith::IndexCastOp::create(
+                then, loc, then.getIndexType(), unit)});
+        scf::YieldOp::create(then, loc);
+      });
+      return SmallVector<Value>{};
+    });
+    memref::DeallocOp::create(builder, loc, pairs);
+  }
+  // The units of the taken kinds by rank, K - 1 first: the reference
+  // particle is the anchor, the first frame atom; the value of `order` is
+  // the slot of the first member in `members`.
+  Neighbors structure;
+  structure.segmented = std::make_shared<SegmentedState>();
+  SegmentedState &units = *structure.segmented;
+  units.kinds = K;
+  units.cutoff = op.getCutoff().convertToDouble();
+  units.rankEnd.push_back(restCount);
+  double radius = op.getRadius() ? op.getRadius()->convertToDouble() : 0.0;
+  units.extents.push_back(radius);
+  Value start = restCount;
+  for (unsigned r = 1; r <= K; ++r) {
+    unsigned f = K - r;
+    md::RigidKindAttr kind = type.getKind(f);
+    ArrayRef<int64_t> frame = kind.getFrame().asArrayRef();
+    units.extents.push_back(kind.getExtent().getValueAsDouble());
+    Value first = start;
+    loop(copies[f], {}, [&](OpBuilder &in, Value c, ValueRange) {
+      Value unit = arith::AddIOp::create(in, loc, first, c);
+      Value slot = arith::AddIOp::create(
+          in, loc, memberBase[f],
+          arith::MulIOp::create(in, loc, c,
+                                createIndex(in, loc, frame.size())));
+      for (unsigned k = 0; k < frame.size(); ++k) {
+        Value particle = memref::LoadOp::create(
+            in, loc, tuples[f], ValueRange{c, createIndex(in, loc, frame[k])});
+        memref::StoreOp::create(
+            in, loc, particle, membersH,
+            ValueRange{arith::AddIOp::create(in, loc, slot,
+                                             createIndex(in, loc, k))});
+        if (k == 0)
+          memref::StoreOp::create(in, loc, particle, refH, ValueRange{unit});
+      }
+      memref::StoreOp::create(
+          in, loc, arith::IndexCastOp::create(in, loc, narrow, slot), valueH,
+          ValueRange{unit});
+      return SmallVector<Value>{};
+    });
+    start = arith::AddIOp::create(builder, loc, start, copies[f]);
+    units.rankEnd.push_back(start);
+  }
+  for (Value host : tuples)
+    memref::DeallocOp::create(builder, loc, host);
+  auto deviceI32 = getDeviceType({ShapedType::kDynamic}, narrow);
+  // The excluded pairs as the incidence structure that the build reads
+  // (RaggedRows.h): for each particle, an entry (pair, place, i, j) of
+  // each pair of it, in the order of the pairs.
+  if (excluded) {
+    Value pairs = toHost(excluded);
+    Value P = memref::DimOp::create(builder, loc, excluded, zero);
+    Value rowsH = memref::AllocOp::create(builder, loc, hostI32,
+                                          ValueRange{arith::AddIOp::create(
+                                              builder, loc, N, one)});
+    loop(arith::AddIOp::create(builder, loc, N, one), {},
+         [&](OpBuilder &in, Value p, ValueRange) {
+           memref::StoreOp::create(in, loc, c0i, rowsH, ValueRange{p});
+           return SmallVector<Value>{};
+         });
+    Value c1i = arith::ConstantOp::create(builder, loc, narrow,
+                                          builder.getI32IntegerAttr(1));
+    auto member = [&](OpBuilder &in, Value t, int64_t k) {
+      return arith::IndexCastOp::create(
+          in, loc, in.getIndexType(),
+          memref::LoadOp::create(in, loc, pairs,
+                                 ValueRange{t, createIndex(in, loc, k)}));
+    };
+    // The count of each row, at the row after it; then the offsets.
+    loop(P, {}, [&](OpBuilder &in, Value t, ValueRange) {
+      for (int64_t k = 0; k != 2; ++k) {
+        Value at = arith::AddIOp::create(in, loc, member(in, t, k),
+                                         createIndex(in, loc, 1));
+        Value had = memref::LoadOp::create(in, loc, rowsH, ValueRange{at});
+        memref::StoreOp::create(in, loc,
+                                arith::AddIOp::create(in, loc, had, c1i),
+                                rowsH, ValueRange{at});
+      }
+      return SmallVector<Value>{};
+    });
+    loop(N, {}, [&](OpBuilder &in, Value p, ValueRange) {
+      Value next = arith::AddIOp::create(in, loc, p, createIndex(in, loc, 1));
+      Value sum = arith::AddIOp::create(
+          in, loc, memref::LoadOp::create(in, loc, rowsH, ValueRange{p}),
+          memref::LoadOp::create(in, loc, rowsH, ValueRange{next}));
+      memref::StoreOp::create(in, loc, sum, rowsH, ValueRange{next});
+      return SmallVector<Value>{};
+    });
+    // N, the offsets, 4 values an entry, and an entry of zeros.
+    Value entries2 = arith::MulIOp::create(builder, loc, P,
+                                           createIndex(builder, loc, 2));
+    Value size = arith::AddIOp::create(
+        builder, loc,
+        arith::AddIOp::create(builder, loc, N, createIndex(builder, loc, 6)),
+        arith::MulIOp::create(builder, loc, entries2,
+                              createIndex(builder, loc, 4)));
+    Value raggedH =
+        memref::AllocOp::create(builder, loc, hostI32, ValueRange{size});
+    loop(size, {}, [&](OpBuilder &in, Value k, ValueRange) {
+      memref::StoreOp::create(in, loc, c0i, raggedH, ValueRange{k});
+      return SmallVector<Value>{};
+    });
+    memref::StoreOp::create(builder, loc,
+                            arith::IndexCastOp::create(builder, loc, narrow, N),
+                            raggedH, ValueRange{zero});
+    loop(arith::AddIOp::create(builder, loc, N, one), {},
+         [&](OpBuilder &in, Value p, ValueRange) {
+           memref::StoreOp::create(
+               in, loc, memref::LoadOp::create(in, loc, rowsH, ValueRange{p}),
+               raggedH,
+               ValueRange{arith::AddIOp::create(in, loc, p,
+                                                createIndex(in, loc, 1))});
+           return SmallVector<Value>{};
+         });
+    // The entries, at the cursor of each row (the offsets, moved on).
+    Value header = arith::AddIOp::create(builder, loc, N,
+                                         createIndex(builder, loc, 2));
+    loop(P, {}, [&](OpBuilder &in, Value t, ValueRange) {
+      Value t32 = arith::IndexCastOp::create(in, loc, narrow, t);
+      Value i = memref::LoadOp::create(in, loc, pairs,
+                                       ValueRange{t, createIndex(in, loc, 0)});
+      Value j = memref::LoadOp::create(in, loc, pairs,
+                                       ValueRange{t, createIndex(in, loc, 1)});
+      for (int64_t k = 0; k != 2; ++k) {
+        Value row = member(in, t, k);
+        Value cursor = memref::LoadOp::create(in, loc, rowsH, ValueRange{row});
+        memref::StoreOp::create(in, loc,
+                                arith::AddIOp::create(in, loc, cursor, c1i),
+                                rowsH, ValueRange{row});
+        Value at = arith::AddIOp::create(
+            in, loc, header,
+            arith::MulIOp::create(
+                in, loc,
+                arith::IndexCastOp::create(in, loc, in.getIndexType(), cursor),
+                createIndex(in, loc, 4)));
+        Value place = arith::ConstantOp::create(in, loc, narrow,
+                                                in.getI32IntegerAttr(k));
+        Value values[] = {t32, place, i, j};
+        for (int64_t v = 0; v != 4; ++v)
+          memref::StoreOp::create(
+              in, loc, values[v], raggedH,
+              ValueRange{arith::AddIOp::create(in, loc, at,
+                                               createIndex(in, loc, v))});
+      }
+      return SmallVector<Value>{};
+    });
+    memref::DeallocOp::create(builder, loc, rowsH);
+    memref::DeallocOp::create(builder, loc, pairs);
+    excluded = createDeviceBuffer(builder, loc, deviceI32, ValueRange{size});
+    createTransfer(builder, loc, excluded, raggedH);
+    memref::DeallocOp::create(builder, loc, raggedH);
+  }
+  auto toDevice = [&](Value host, Value size) {
+    Value device = createDeviceBuffer(builder, loc, deviceI32, ValueRange{size});
+    createTransfer(builder, loc, device, host);
+    memref::DeallocOp::create(builder, loc, host);
+    return device;
+  };
+  units.unitRef = toDevice(refH, U);
+  units.unitValue = toDevice(valueH, U);
+  units.unitOfParticle = toDevice(unitOfH, N);
+  units.members = toDevice(membersH, membersSize);
+  units.units = U;
+  structure.size = N;
+
+  // The structure of groups over the units. Places for a quarter more than
+  // the units and a chunk for each rank, which its columns pad; a block for
+  // each group, which the first build sizes (D331).
+  structure.groups = true;
+  Value places = arith::AddIOp::create(
+      builder, loc,
+      arith::AddIOp::create(
+          builder, loc, U,
+          arith::DivUIOp::create(builder, loc, U,
+                                 createIndex(builder, loc, 4))),
+      createIndex(builder, loc, 64 * (K + 1)));
+  Value blocks = arith::AddIOp::create(
+      builder, loc,
+      arith::DivUIOp::create(builder, loc, U, createIndex(builder, loc, 16)),
+      one);
+  structure.handle =
+      func::CallOp::create(
+          builder, loc,
+          getOrDeclare(createGroupsName,
+                       builder.getFunctionType({wide, wide}, {wide})),
+          ValueRange{arith::IndexCastOp::create(builder, loc, wide, places),
+                     arith::IndexCastOp::create(builder, loc, wide, blocks)})
+          .getResult(0);
+  func::CallOp::create(
+      builder, loc,
+      getOrDeclare("mdrtGroupsSetSegments",
+                   builder.getFunctionType({wide, wide}, {})),
+      ValueRange{structure.handle,
+                 arith::ConstantOp::create(
+                     builder, loc, wide,
+                     builder.getI64IntegerAttr(type.getNumSegments()))});
+  structure.placeOf = createDeviceBuffer(builder, loc, deviceI32, ValueRange{U});
+  structure.sizes =
+      memref::AllocOp::create(builder, loc, MemRefType::get({5}, narrow));
+  structure.excluded = excluded;
+
+  // The configuration of the last build, for the test of validity, and the
+  // state on the host, as for the groups.
+  Value positionsBuffer;
+  for (Operation *user : op.getResult().getUsers())
+    if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
+      positionsBuffer = refresh.getPositions();
+  if (!positionsBuffer)
+    return op.emitOpError()
+           << "has no refresh, which gives the positions it is built at";
+  auto positions = cast<MemRefType>(positionsBuffer.getType());
+  structure.reference =
+      createDeviceBuffer(builder, loc, positions, ValueRange{N});
+  {
+    Value reference = structure.reference;
+    Type element = positions.getElementType();
+    launchOver(builder, loc, N, [&](OpBuilder &body, Value particle) {
+      Value zeroV = createZero(body, loc, VectorType::get({3}, element));
+      storeElement(body, loc, zeroV, reference, particle);
+    });
+  }
+  // The displacements of the reference points and their maximum, for the
+  // test of each refresh.
+  auto scratchType =
+      getDeviceType({ShapedType::kDynamic}, positions.getElementType());
+  units.moved = createDeviceBuffer(builder, loc, scratchType, ValueRange{U});
+  units.farthest =
+      createDeviceBuffer(builder, loc, scratchType, ValueRange{U});
+  units.movedInner =
+      createDeviceBuffer(builder, loc, scratchType, ValueRange{U});
+  units.farthestInner =
+      createDeviceBuffer(builder, loc, scratchType, ValueRange{U});
+  // The configuration and the cell of the last pruning of a dual list
+  // (D114): the cell is not a number until then.
+  structure.prunedReference =
+      createDeviceBuffer(builder, loc, positions, ValueRange{N});
+  {
+    Value pruned = structure.prunedReference;
+    Type element = positions.getElementType();
+    launchOver(builder, loc, N, [&](OpBuilder &body, Value particle) {
+      Value zeroV = createZero(body, loc, VectorType::get({3}, element));
+      storeElement(body, loc, zeroV, pruned, particle);
+    });
+  }
+  structure.prunedBox = memref::AllocOp::create(
+      builder, loc, MemRefType::get({getCellSize()}, builder.getF64Type()));
+  {
+    Value notNumber = arith::ConstantOp::create(
+        builder, loc, builder.getF64Type(),
+        builder.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()));
+    for (int64_t c = 0; c < getCellSize(); ++c)
+      memref::StoreOp::create(builder, loc, notNumber, structure.prunedBox,
+                              ValueRange{createIndex(builder, loc, c)});
+  }
+  structure.prunedNow = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI1Type()));
+  memref::StoreOp::create(
+      builder, loc,
+      arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                builder.getBoolAttr(false)),
+      structure.prunedNow, ValueRange{});
+  structure.box = memref::AllocOp::create(
+      builder, loc, MemRefType::get({getCellSize()}, builder.getF64Type()));
+  structure.valid = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI1Type()));
+  structure.builds = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI64Type()));
+  structure.age = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI64Type()));
+  Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                       builder.getBoolAttr(false));
+  Value noBuilds = arith::ConstantOp::create(builder, loc, wide,
+                                             builder.getI64IntegerAttr(0));
+  memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
+  memref::StoreOp::create(builder, loc, noBuilds, structure.builds,
+                          ValueRange{});
+  memref::StoreOp::create(builder, loc, noBuilds, structure.age, ValueRange{});
+  neighbors[op.getResult()] = structure;
+  return success();
+}
+
+/// The covering reach of segment s(f, g) of a list built for the reach
+/// `reach` = r_c + skin: R + e_f + e_g, added in this order, the larger
+/// kind's radius first (the rank of f is not above that of g). The build,
+/// the pruning, and the coverage query take it from here (#795, U1).
+static double getSegmentReach(double reach, double ef, double eg) {
+  return reach + ef + eg;
+}
+
+LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
+                                          const Neighbors &structure,
+                                          Value positions, Value box,
+                                          double reach) {
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  if (!real.isF64())
+    return module.emitError()
+           << "lists of units are built from positions in f64, not " << real;
+  const SegmentedState &units = *structure.segmented;
+  bool tilted = isTriclinic(box);
+  unsigned K = units.kinds;
+  if (failed(addSegmentsBuild(tilted, K)))
+    return failure();
+  Type wide = builder.getI64Type();
+  Type f64 = builder.getF64Type();
+
+  // The reach against the cell (#795): the largest covering reach, R plus
+  // twice the largest radius, must be at most half the least face width,
+  // so that a pair has one image within it and `minimum` holds. Checked at
+  // every build, where the cell is read.
+  double widest = 0.0;
+  for (double e : units.extents)
+    widest = std::max(widest, e);
+  double largest = getSegmentReach(reach, widest, widest);
+  {
+    Value widths = tilted ? emitFaceWidths(builder, loc, box) : box;
+    Value least = vector::ExtractOp::create(builder, loc, widths, 0);
+    for (int64_t axis = 1; axis != 3; ++axis)
+      least = arith::MinimumFOp::create(
+          builder, loc, least,
+          vector::ExtractOp::create(builder, loc, widths, axis));
+    Value half = arith::MulFOp::create(builder, loc,
+                                       createReal(builder, loc, f64, 0.5),
+                                       least);
+    Value largestValue = createReal(builder, loc, f64, largest);
+    Value exceeds = arith::CmpFOp::create(
+        builder, loc, arith::CmpFPredicate::UGT, largestValue, half);
+    scf::IfOp::create(builder, loc, exceeds, [&](OpBuilder &stop, Location) {
+      func::CallOp::create(
+          stop, loc,
+          getOrDeclare("mdrtSegmentsStopReach",
+                       stop.getFunctionType({f64, f64, f64}, {})),
+          ValueRange{largestValue, createReal(stop, loc, f64, widest), half});
+      scf::YieldOp::create(stop, loc);
+    });
+  }
+
+  Value excluded = structure.excluded;
+  Value noExcluded;
+  if (!excluded) {
+    MemRefType type =
+        getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
+    noExcluded = createDeviceBuffer(builder, loc, type,
+                                    ValueRange{createIndex(builder, loc, 0)});
+    excluded = noExcluded;
+  }
+  auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, kernels::getSegmentsBuildName(tilted, K)));
+  Value reachValue = createReal(builder, loc, f64, reach);
+
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  {
+    Block *before = builder.createBlock(&again.getBefore());
+    OpBuilder at = OpBuilder::atBlockEnd(before);
+    GroupBuffers buffers = getGroupsBuffers(at, loc, structure.handle);
+    auto slot = [&](MdrtGroupsSlot which) {
+      return getGroupsBuffer(at, loc, structure.handle, which);
+    };
+    SmallVector<Value> operands = {positions, box, reachValue};
+    for (double e : units.extents)
+      operands.push_back(createReal(at, loc, f64, e));
+    for (Value end : units.rankEnd)
+      operands.push_back(end);
+    operands.append({excluded, buffers.order, structure.placeOf,
+                     buffers.entries, buffers.masks,
+                     slot(GROUPS_SEGMENT_COUNTS), buffers.units,
+                     buffers.ordinals, buffers.shifts, units.unitRef,
+                     units.unitValue, units.unitOfParticle,
+                     slot(GROUPS_SEGMENT_LAST), slot(GROUPS_SEGMENT_ORDER),
+                     slot(GROUPS_RECORD_ENTRIES), slot(GROUPS_RECORD_MASKS),
+                     slot(GROUPS_RECORD_GROUPS), slot(GROUPS_RECORD_COUNTS),
+                     slot(GROUPS_SEGMENT_OFFSETS), structure.sizes});
+    func::CallOp::create(at, loc, build, operands);
+    auto load = [&](int64_t which) -> Value {
+      return arith::ExtUIOp::create(
+          at, loc, wide,
+          memref::LoadOp::create(at, loc, structure.sizes,
+                                 ValueRange{createIndex(at, loc, which)}));
+    };
+    auto capacity = [&](Value buffer) -> Value {
+      return arith::IndexCastOp::create(
+          at, loc, wide,
+          memref::DimOp::create(at, loc, buffer, createIndex(at, loc, 0)));
+    };
+    Value places = load(0), blocks = load(2);
+    Value more = arith::OrIOp::create(
+        at, loc,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ugt, places,
+                              capacity(buffers.order)),
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ugt, blocks,
+                              capacity(buffers.units)));
+    scf::IfOp::create(at, loc, more, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(growGroupsName,
+                       then.getFunctionType({wide, wide, wide}, {})),
+          ValueRange{structure.handle, places, blocks});
+      scf::YieldOp::create(then, loc);
+    });
+    Value complete = arith::XOrIOp::create(
+        at, loc, more,
+        arith::ConstantOp::create(at, loc, at.getBoolAttr(true)));
+    scf::IfOp::create(at, loc, complete, [&](OpBuilder &then, Location) {
+      Value late =
+          func::CallOp::create(
+              then, loc,
+              getOrDeclare(builtGroupsName,
+                           then.getFunctionType({wide}, {wide})),
+              ValueRange{structure.handle})
+              .getResult(0);
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(noteGroupsName,
+                       then.getFunctionType({wide, wide, wide, wide, wide},
+                                            {})),
+          ValueRange{blocks, capacity(buffers.units), load(1), load(3),
+                     late});
+      scf::YieldOp::create(then, loc);
+    });
+    scf::ConditionOp::create(at, loc, more, ValueRange());
+    Block *after = builder.createBlock(&again.getAfter());
+    OpBuilder close = OpBuilder::atBlockEnd(after);
+    scf::YieldOp::create(close, loc);
+  }
+  builder.setInsertionPointAfter(again);
+  func::CallOp::create(
+      builder, loc,
+      getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
+      ValueRange());
+  emitStopNotNumbers(
+      builder, loc,
+      arith::ExtUIOp::create(
+          builder, loc, wide,
+          memref::LoadOp::create(builder, loc, structure.sizes,
+                                 ValueRange{createIndex(builder, loc, 4)})));
+  if (noExcluded) {
+    Value plain = memref::MemorySpaceCastOp::create(
+        builder, loc,
+        MemRefType::get({ShapedType::kDynamic}, builder.getI32Type()),
+        noExcluded);
+    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
+  }
+  return success();
+}
+
+/// A refresh: one test of the units' reference points against the last
+/// build renews every segment (#799). A barostat scales the reference with
+/// the cell, m = L / L_ref, and the test takes the least half-margin of the
+/// segments, half of min(m) (R + 2 e) - (r_c + 2 e) for the largest radius
+/// e, which is that of the groups (D80) when e = 0. A dual list (D114)
+/// tests the same points against its last pruning, with the inner reach in
+/// place of R: where the outer list is not valid it is built and pruned;
+/// where only the inner one is not, it is pruned again.
+LogicalResult
+Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Neighbors structure;
+  if (failed(getNeighbors(op, op.getList(), structure)))
+    return failure();
+  if (!structure.segmented)
+    return op.emitOpError() << "refreshes a structure that is not a list of "
+                               "units";
+  const SegmentedState &units = *structure.segmented;
+  Value positions = op.getPositions();
+  Value box = op.getCellMutable().get();
+  double cutoff = op.getCutoff().convertToDouble();
+  double skin = op.getSkin().convertToDouble();
+  double pruneSkin = op.getPruneSkin().convertToDouble();
+  bool dual = pruneSkin < skin;
+  double reach = cutoff + skin;
+  double innerReach = cutoff + pruneSkin;
+  double widest = 0.0;
+  for (double e : units.extents)
+    widest = std::max(widest, e);
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Type f64 = builder.getF64Type();
+
+  // The square of the half-margin of a reach `of` against the cell `then`
+  // that the reference was taken in, and the scale of that reference.
+  auto limits = [&](Value then, double of) -> std::pair<Value, Value> {
+    SmallVector<Value, 3> edges;
+    for (int64_t c = 0; c < 3; ++c)
+      edges.push_back(memref::LoadOp::create(
+          builder, loc, then, ValueRange{createIndex(builder, loc, c)}));
+    Value scale = arith::DivFOp::create(
+        builder, loc, getEdges(builder, loc, box),
+        vector::FromElementsOp::create(builder, loc,
+                                       VectorType::get({3}, f64), edges));
+    Value least = vector::ReductionOp::create(
+        builder, loc, vector::CombiningKind::MINNUMF, scale);
+    Value margin = arith::SubFOp::create(
+        builder, loc,
+        arith::MulFOp::create(
+            builder, loc, least,
+            createReal(builder, loc, f64, getSegmentReach(of, widest, widest))),
+        createReal(builder, loc, f64, getSegmentReach(cutoff, widest, widest)));
+    Value halfMargin = arith::MulFOp::create(
+        builder, loc,
+        arith::MaximumFOp::create(builder, loc, margin,
+                                  createReal(builder, loc, f64, 0.0)),
+        createReal(builder, loc, f64, 0.5));
+    Value limit2 = arith::MulFOp::create(builder, loc, halfMargin, halfMargin);
+    Value scaleReal = scale, limitReal = limit2;
+    if (!real.isF64()) {
+      scaleReal = arith::TruncFOp::create(builder, loc,
+                                          VectorType::get({3}, real), scale);
+      limitReal = arith::TruncFOp::create(builder, loc, real, limit2);
+    }
+    return {scaleReal, limitReal};
+  };
+  auto [scaleOuter, limitOuter] = limits(structure.box, reach);
+  Value scaleInner, limitInner;
+  if (dual)
+    std::tie(scaleInner, limitInner) = limits(structure.prunedBox, innerReach);
+  // The displacements of the reference points, in one kernel.
+  Value unitRef = units.unitRef, reference = structure.reference;
+  Value prunedReference = structure.prunedReference;
+  Value moved = units.moved, movedInner = units.movedInner;
+  launchOver(builder, loc, units.units, [&](OpBuilder &body, Value unit) {
+    Value particle = arith::IndexCastOp::create(
+        body, loc, body.getIndexType(),
+        memref::LoadOp::create(body, loc, unitRef, ValueRange{unit}));
+    Value now = loadElement(body, loc, positions, particle);
+    auto distance2 = [&](Value from, Value scale) {
+      Value then = arith::MulFOp::create(
+          body, loc, loadElement(body, loc, from, particle), scale);
+      Value change = arith::SubFOp::create(body, loc, now, then);
+      Value squares = arith::MulFOp::create(body, loc, change, change);
+      return vector::ReductionOp::create(body, loc,
+                                         vector::CombiningKind::ADD, squares);
+    };
+    memref::StoreOp::create(body, loc, distance2(reference, scaleOuter),
+                            moved, ValueRange{unit});
+    if (dual)
+      memref::StoreOp::create(body, loc,
+                              distance2(prunedReference, scaleInner),
+                              movedInner, ValueRange{unit});
+  });
+  SmallVector<Value> sources = {moved}, partials = {units.farthest};
+  if (dual) {
+    sources.push_back(movedInner);
+    partials.push_back(units.farthestInner);
+  }
+  SmallVector<Value> farthest = emitReductions(
+      builder, loc, sources, partials, units.units, kernels::Combiner::Max);
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+  Value near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
+                                     farthest[0], limitOuter);
+  Value valid =
+      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
+  Value stale = arith::XOrIOp::create(
+      builder, loc, arith::AndIOp::create(builder, loc, valid, near), yes);
+  auto rebuild = scf::IfOp::create(builder, loc, stale,
+                                   /*withElseRegion=*/dual);
+  OpBuilder then(rebuild.thenBlock()->getTerminator());
+  if (failed(emitSegmentsBuild(then, loc, structure, positions, box, reach)))
+    return failure();
+  if (failed(finishBuild(then, loc, structure, positions, box)))
+    return failure();
+  if (dual) {
+    emitSegmentsPrune(then, loc, structure, positions, box, innerReach);
+    // A cell that is not a number before the first pruning fails the
+    // test, which a valid outer list then prunes.
+    OpBuilder otherwise(rebuild.elseBlock()->getTerminator());
+    Value nearInner = arith::CmpFOp::create(
+        otherwise, loc, arith::CmpFPredicate::OLE, farthest[1], limitInner);
+    Value staleInner = arith::XOrIOp::create(otherwise, loc, nearInner, yes);
+    auto again = scf::IfOp::create(otherwise, loc, staleInner,
+                                   /*withElseRegion=*/false);
+    OpBuilder prune(again.thenBlock()->getTerminator());
+    emitSegmentsPrune(prune, loc, structure, positions, box, innerReach);
+    structure.dual = true;
+  }
+  neighbors[op.getResult()] = structure;
+  return success();
+}
+
+/// The pruning of the records: a warp a record, each entry tested at the
+/// positions of the reference points in the frames of their groups
+/// (emitPruneFrames) against the inner reach of the record's segment,
+/// r_c + prune_skin + e_f + e_g widened as the build widens its reach; the
+/// entries kept fill the front of the inner record, in their order. The
+/// records that keep entries are the active units (D268).
+void Lowering::emitSegmentsPrune(OpBuilder &builder, Location loc,
+                                 const Neighbors &structure, Value positions,
+                                 Value box, double innerReach) {
+  const SegmentedState &units = *structure.segmented;
+  unsigned K = units.kinds;
+  unsigned S = (K + 1) * (K + 2) / 2;
+  emitPruneFrames(builder, loc, structure, positions, box);
+  PruneContext ctx = getPruneContext(builder, loc, structure, box, innerReach);
+  Type i32 = builder.getI32Type();
+  Type f32 = builder.getF32Type();
+  Type f64 = builder.getF64Type();
+  auto vector3 = VectorType::get({3}, f32);
+  // The widening of the build, 3e-6 of the sum of the edges (and of the
+  // magnitudes of the tilts), and the square of each segment's inner reach.
+  Value sum = vector::ReductionOp::create(
+      builder, loc, vector::CombiningKind::ADD,
+      ctx.triclinic ? Value(math::AbsFOp::create(builder, loc, box)) : box);
+  Value widening = arith::MulFOp::create(builder, loc, sum,
+                                         createReal(builder, loc, f64, 3.0e-6));
+  SmallVector<Value> reach2;
+  for (unsigned f = 0; f <= K; ++f)
+    for (unsigned g = 0; g <= f; ++g) {
+      // Kind f at rank K - f; the rest, kind K, at rank 0.
+      double ef = units.extents[K - f], eg = units.extents[K - g];
+      Value widened = arith::AddFOp::create(
+          builder, loc,
+          createReal(builder, loc, f64, getSegmentReach(innerReach, ef, eg)),
+          widening);
+      reach2.push_back(arith::TruncFOp::create(
+          builder, loc, f32,
+          arith::MulFOp::create(builder, loc, widened, widened)));
+    }
+  Value records = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, structure.sizes,
+                             ValueRange{createIndex(builder, loc, 2)}));
+  auto slot = [&](MdrtGroupsSlot which) {
+    return getGroupsBuffer(builder, loc, structure.handle, which);
+  };
+  Value entries = slot(GROUPS_RECORD_ENTRIES), masks = slot(GROUPS_RECORD_MASKS);
+  Value groupsOf = slot(GROUPS_RECORD_GROUPS);
+  Value countsOf = slot(GROUPS_RECORD_COUNTS);
+  Value offsets = slot(GROUPS_SEGMENT_OFFSETS);
+  const InnerLists &inner = ctx.inner;
+  const PruneBuffers &prune = ctx.prune;
+  Value placed = ctx.placed, box32 = ctx.box32;
+  bool triclinic = ctx.triclinic;
+  Value warp32 = createIndex(builder, loc, 32);
+  launchOver(
+      builder, loc, arith::MulIOp::create(builder, loc, records, warp32),
+      [&](OpBuilder &b, Value thread) {
+        auto constant32 = [&](OpBuilder &c, int64_t v) -> Value {
+          return arith::ConstantOp::create(c, loc, i32,
+                                           c.getI32IntegerAttr(v));
+        };
+        auto toIndex = [&](OpBuilder &c, Value v) -> Value {
+          return arith::IndexCastOp::create(c, loc, c.getIndexType(), v);
+        };
+        Value w = arith::DivUIOp::create(b, loc, thread, warp32);
+        Value lane = arith::IndexCastOp::create(
+            b, loc, i32, arith::RemUIOp::create(b, loc, thread, warp32));
+        Value w32 = arith::IndexCastOp::create(b, loc, i32, w);
+        // The segment of the record.
+        Value segment = createIndex(b, loc, 0);
+        for (unsigned t = 1; t < S; ++t) {
+          Value begins = memref::LoadOp::create(
+              b, loc, offsets, ValueRange{createIndex(b, loc, t)});
+          Value past = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
+                                             w32, begins);
+          segment = arith::SelectOp::create(b, loc, past,
+                                            createIndex(b, loc, t), segment);
+        }
+        Value r2 = reach2[0];
+        for (unsigned t = 1; t < S; ++t)
+          r2 = arith::SelectOp::create(
+              b, loc,
+              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, segment,
+                                    createIndex(b, loc, t)),
+              reach2[t], r2);
+        Value group = memref::LoadOp::create(b, loc, groupsOf, ValueRange{w});
+        Value count = memref::LoadOp::create(b, loc, countsOf, ValueRange{w});
+        // The reference points of the group, in every lane.
+        Value u = arith::AndIOp::create(b, loc, lane, constant32(b, 15));
+        Value member = toIndex(
+            b, arith::AddIOp::create(
+                   b, loc,
+                   arith::MulIOp::create(b, loc, group, constant32(b, 16)), u));
+        Value mine = loadElement(b, loc, placed, member);
+        SmallVector<Value> members;
+        for (int64_t p = 0; p != 16; ++p) {
+          SmallVector<Value> parts;
+          for (int64_t c = 0; c != 3; ++c)
+            parts.push_back(
+                gpu::ShuffleOp::create(
+                    b, loc, vector::ExtractOp::create(b, loc, mine, c),
+                    constant32(b, p), constant32(b, 32), gpu::ShuffleMode::IDX)
+                    .getShuffleResult());
+          members.push_back(
+              vector::FromElementsOp::create(b, loc, vector3, parts));
+        }
+        Value below = kernels::emitLanesBelow(b, loc, lane);
+        Value base = arith::MulIOp::create(b, loc, w, createIndex(b, loc, 64));
+        Value kept = constant32(b, 0);
+        for (int64_t half = 0; half != 2; ++half) {
+          Value e = arith::AddIOp::create(b, loc, lane,
+                                          constant32(b, 32 * half));
+          Value has = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::slt,
+                                            e, count);
+          Value at = arith::AddIOp::create(
+              b, loc, base,
+              toIndex(b, arith::SelectOp::create(b, loc, has, e,
+                                                 constant32(b, 0))));
+          Value entry = arith::SelectOp::create(
+              b, loc, has,
+              memref::LoadOp::create(b, loc, entries, ValueRange{at}),
+              constant32(b, 0));
+          Value mask = arith::SelectOp::create(
+              b, loc, has,
+              memref::LoadOp::create(b, loc, masks, ValueRange{at}),
+              constant32(b, 0));
+          Value position = loadElement(b, loc, placed, toIndex(b, entry));
+          int64_t width = getEntryShiftBits(triclinic);
+          int64_t offset = getEntryShiftOffset(triclinic);
+          SmallVector<Value> cells;
+          for (int64_t axis = 0; axis != 3; ++axis) {
+            Value bits = arith::AndIOp::create(
+                b, loc,
+                arith::ShRUIOp::create(b, loc, mask,
+                                       constant32(b, 16 + width * axis)),
+                constant32(b, (1 << width) - 1));
+            cells.push_back(arith::SIToFPOp::create(
+                b, loc, f32,
+                arith::SubIOp::create(b, loc, bits, constant32(b, offset))));
+          }
+          position = arith::AddFOp::create(
+              b, loc, position,
+              emitLatticeShift(
+                  b, loc, vector::FromElementsOp::create(b, loc, vector3, cells),
+                  box32));
+          Value kept16 = constant32(b, 0);
+          for (int64_t p = 0; p != 16; ++p) {
+            Value d = arith::SubFOp::create(b, loc, members[p], position);
+            Value dd = vector::ReductionOp::create(
+                b, loc, vector::CombiningKind::ADD,
+                arith::MulFOp::create(b, loc, d, d));
+            Value within = arith::CmpFOp::create(
+                b, loc, arith::CmpFPredicate::OLE, dd, r2);
+            Value bit = constant32(b, 1 << p);
+            Value had = arith::CmpIOp::create(
+                b, loc, arith::CmpIPredicate::ne,
+                arith::AndIOp::create(b, loc, mask, bit), constant32(b, 0));
+            kept16 = arith::SelectOp::create(
+                b, loc, arith::AndIOp::create(b, loc, had, within),
+                arith::OrIOp::create(b, loc, kept16, bit), kept16);
+          }
+          Value keep = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                             kept16, constant32(b, 0));
+          Value ballot = kernels::emitWarpBallot(b, loc, keep);
+          Value before = kernels::emitWarpRank(b, loc, ballot, below);
+          Value from = kept;
+          scf::IfOp::create(b, loc, keep, [&](OpBuilder &d, Location) {
+            Value to = arith::AddIOp::create(
+                d, loc, base,
+                toIndex(d, arith::AddIOp::create(d, loc, from, before)));
+            memref::StoreOp::create(d, loc, entry, inner.entries,
+                                    ValueRange{to});
+            memref::StoreOp::create(
+                d, loc,
+                arith::OrIOp::create(
+                    d, loc,
+                    arith::AndIOp::create(d, loc, mask,
+                                          constant32(d, ~0xFFFF)),
+                    kept16),
+                inner.masks, ValueRange{to});
+            scf::YieldOp::create(d, loc);
+          });
+          kept = arith::AddIOp::create(b, loc, kept,
+                                       kernels::emitWarpCount(b, loc, ballot));
+        }
+        Value lead = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                           lane, constant32(b, 0));
+        scf::IfOp::create(b, loc, lead, [&](OpBuilder &c, Location) {
+          memref::StoreOp::create(c, loc, kept, inner.counts, ValueRange{w});
+          scf::IfOp::create(
+              c, loc,
+              arith::CmpIOp::create(c, loc, arith::CmpIPredicate::sgt, kept,
+                                    constant32(c, 0)),
+              [&](OpBuilder &d, Location) {
+                emitAtomicAddI32(
+                    d, loc, prune.runSums,
+                    arith::DivUIOp::create(d, loc, w, createIndex(d, loc, 32)),
+                    constant32(d, 1));
+                emitAtomicAddI32(
+                    d, loc, prune.wideSums,
+                    arith::DivUIOp::create(d, loc, w,
+                                           createIndex(d, loc, 1024)),
+                    constant32(d, 1));
+                scf::YieldOp::create(d, loc);
+              });
+          scf::YieldOp::create(c, loc);
+        });
+      });
+  emitActiveUnits(builder, loc, ctx);
+}
+
+/// A build in the storage form, where no loop over steps carries the list
+/// (md-exec-reuse-neighbors moves the others out): the state and one build
+/// at the op.
+LogicalResult
+Lowering::lowerBuildSegmentedPairs(md_exec::BuildSegmentedPairsOp op) {
+  return op.emitOpError()
+         << "builds a list of units in place; run 'md-exec-reuse-neighbors' "
+            "to give it an empty list and a refresh";
 }
 
 void Lowering::emitStopNotNumbers(OpBuilder &builder, Location loc,
@@ -7786,13 +8799,26 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "'md-exec-assign-storage' with 'memory=device'";
   }
 
-  // The lists of units and the loops over them are lowered on a device by
-  // later slices of D417 (S2, S3).
-  if (isa<md_exec::BuildSegmentedPairsOp, md_exec::EmptySegmentedPairsOp,
-          md_exec::RefreshSegmentedPairsOp, md_exec::SegmentForOp>(op))
+  // The loops over lists of units are lowered on a device by slice S3 of
+  // D417; their lists by this one (D[md-alg-segments-build]).
+  if (isa<md_exec::SegmentForOp>(op))
     return op->emitOpError()
-           << "is an op of a list of units, which this pass does not lower "
-              "yet (D417, slices S2 and S3)";
+           << "is a loop over a list of units, which this pass does not "
+              "lower yet (D417, slice S3)";
+  if (isa<md_exec::EmptySegmentedPairsOp, md_exec::RefreshSegmentedPairsOp,
+          md_exec::BuildSegmentedPairsOp>(op)) {
+    LogicalResult status = success();
+    if (auto empty = dyn_cast<md_exec::EmptySegmentedPairsOp>(op))
+      status = lowerEmptySegmentedPairs(empty);
+    else if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(op))
+      status = lowerRefreshSegmentedPairs(refresh);
+    else
+      status = lowerBuildSegmentedPairs(cast<md_exec::BuildSegmentedPairsOp>(op));
+    if (failed(status))
+      return failure();
+    lowered.push_back(op);
+    return success();
+  }
 
   if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())
