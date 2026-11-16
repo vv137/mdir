@@ -37,4 +37,19 @@ Along an axis where the group's box and the reach are narrower than the brick, $
 
 - An orthorhombic cell: none of this code is in its program.
 - The minimum image, the lattice shifts of the places and of the entries, the encoding of the entries, and the blocks.
-- The grid of cells of half the reach. A grid of a third of the reach was measured and was slower, with more rows and more runs (Section "Measurements").
+- The grid of cells of half the reach. A grid of a third of the reach was measured and was slower, with more rows and more runs.
+
+## Measurements
+
+These are on an RTX 5090, by the timing protocol: two jobs, two rounds each, interleaved, the second reversed. The proxies are those of D417's step 1. The times are the build's kernels per build.
+
+| System | 265afc4b, µs | This change, µs | #795's search in the same jobs, µs |
+|---|---|---|---|
+| rd-opc (proxy) | 612–642 | 299–334 | 497–502 |
+| rd-tip3p (proxy) | 823–845 | 376–402 | 490–496 |
+| ubq-opc | 224–238 | 217–233 | |
+| ubq-tip3p | 205–266 | 213–256 | |
+| opc-large | 123.7–124.2 | 123.5–124.0 | |
+| charmm-tip3p | 422–491 | 368–489 | |
+
+The list kernel of the proxies takes 96 registers instead of 80, and the images kernel 28 instead of 96. On the dodecahedra as they run, rd-opc keeps its list kernel (151 µs a call), and rd-tip3p's takes 134 µs instead of 130. The time per step is unchanged: 0.1127 and 0.0954 ms.
