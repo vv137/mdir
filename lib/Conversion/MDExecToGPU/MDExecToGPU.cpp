@@ -19,6 +19,7 @@
 #include "mdir/Dialect/MDAlg/MDAlgDialect.h"
 #include "mdir/Dialect/MDAlg/MDAlgOps.h"
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
+#include "mdir/Dialect/MDRT/SegmentRegions.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -3919,10 +3920,34 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
            << "takes its list as buffers, a form for the serial oracle and "
               "the tests; the pipeline takes the structure form, whose "
               "contract is in the type";
-  if (op.isSegmented())
-    return op.emitOpError()
-           << "visits the segments of a list of units, whose SIMT schedule "
-              "this pass does not lower yet (D417, slice S3)";
+  if (op.isSegmented()) {
+    // The serial definition, D417's oracle, runs on the host over copies of
+    // the lists that the device built (D[md-alg-segments-build]); the SIMT
+    // schedule is slice S3's.
+    if (traverseOracle == "simt")
+      return op.emitOpError()
+             << "visits the segments of a list of units, whose SIMT schedule "
+                "this pass does not lower yet (D417, slice S3); its serial "
+                "definition runs with traverse-oracle=serial";
+    Neighbors structure;
+    if (failed(getNeighbors(op, op.getNeighbors(), structure)))
+      return failure();
+    assert(structure.segmented && "a loop of segments over groups");
+    if (op.getInner() != structure.dual)
+      return op.emitOpError()
+             << (op.getInner() ? "reads the inner records of a list of units "
+                                 "that its refresh does not keep dual"
+                               : "reads the outer records of a dual list of "
+                                 "units, which the loops take through the "
+                                 "inner records");
+    SmallVector<std::pair<unsigned, unsigned>> visited;
+    for (unsigned r = 0, e = op.getSegmentKernels().size(); r != e; ++r)
+      visited.push_back(mdrt::getSegmentKinds(op.getSegmentsAttr(), r));
+    if (failed(md_exec::verifySegmentCoverage(
+            op, op.getNeighbors(), op.getCutoff().convertToDouble(), visited)))
+      return failure();
+    return lowerTraversePairsSerial(op, structure);
+  }
   // The loops over a matrix stay md_exec.pair_for in this step.
   if (op.getMultiplicity() != md_alg::Multiplicity::Unique)
     return op.emitOpError()
@@ -3984,10 +4009,25 @@ Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
   };
   kernels::SerialLists lists;
   GroupBuffers buffers = getGroupsBuffers(builder, loc, structure.handle);
-  lists.groups = {toHost(buffers.order),   toHost(buffers.counts),
-                  toHost(buffers.entries), toHost(buffers.masks),
-                  toHost(buffers.units),   toHost(buffers.ordinals),
-                  toHost(buffers.shifts)};
+  if (structure.segmented) {
+    // The records in the order of the segments, the order of the places
+    // as the traversal reads it, the offsets of the segments, and the
+    // members of the units.
+    auto slot = [&](MdrtGroupsSlot which) {
+      return toHost(getGroupsBuffer(builder, loc, structure.handle, which));
+    };
+    lists.groups = {slot(GROUPS_SEGMENT_ORDER),  slot(GROUPS_RECORD_COUNTS),
+                    slot(GROUPS_RECORD_ENTRIES), slot(GROUPS_RECORD_MASKS),
+                    slot(GROUPS_RECORD_GROUPS),  toHost(buffers.ordinals),
+                    toHost(buffers.shifts)};
+    lists.segments = slot(GROUPS_SEGMENT_OFFSETS);
+    lists.members = toHost(structure.segmented->members);
+  } else {
+    lists.groups = {toHost(buffers.order),   toHost(buffers.counts),
+                    toHost(buffers.entries), toHost(buffers.masks),
+                    toHost(buffers.units),   toHost(buffers.ordinals),
+                    toHost(buffers.shifts)};
+  }
   lists.dual = structure.dual;
   if (structure.dual) {
     InnerLists inner = getInnerLists(builder, loc, structure.handle);
@@ -6168,8 +6208,9 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   units.units = U;
   structure.size = N;
 
-  // The structure of groups over the units. Places for a quarter more than
-  // the units and a chunk for each rank, which its columns pad; a block for
+  // The structure of groups over the units. Places for half more than the
+  // units and a chunk for each rank, which the columns of the ranks and the
+  // cubes of the rest pad (a build that needs more grows it); a block for
   // each group, which the first build sizes (D331).
   structure.groups = true;
   Value places = arith::AddIOp::create(
@@ -6177,7 +6218,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
       arith::AddIOp::create(
           builder, loc, U,
           arith::DivUIOp::create(builder, loc, U,
-                                 createIndex(builder, loc, 4))),
+                                 createIndex(builder, loc, 2))),
       createIndex(builder, loc, 64 * (K + 1)));
   Value blocks = arith::AddIOp::create(
       builder, loc,
@@ -6285,11 +6326,23 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
 }
 
 /// The covering reach of segment s(f, g) of a list built for the reach
-/// `reach` = r_c + skin: R + e_f + e_g, added in this order, the larger
-/// kind's radius first (the rank of f is not above that of g). The build,
-/// the pruning, and the coverage query take it from here (#795, U1).
+/// `reach` (D417, Section 1): the build, the pruning, and the coverage query
+/// take it from md_exec::getSegmentCoveringReach.
 static double getSegmentReach(double reach, double ef, double eg) {
-  return reach + ef + eg;
+  return md_exec::getSegmentCoveringReach(reach, ef, eg);
+}
+
+/// The covering reaches of the segments of a list of units for `reach`, in
+/// the order of s(f, g); `extents` by rank (the rest rank 0, kind f rank
+/// K - f).
+static SmallVector<double> getSegmentReaches(double reach,
+                                             ArrayRef<double> extents) {
+  unsigned K = extents.size() - 1;
+  SmallVector<double> reaches;
+  for (unsigned f = 0; f <= K; ++f)
+    for (unsigned g = 0; g <= f; ++g)
+      reaches.push_back(getSegmentReach(reach, extents[K - f], extents[K - g]));
+  return reaches;
 }
 
 LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
@@ -6315,7 +6368,10 @@ LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
   double widest = 0.0;
   for (double e : units.extents)
     widest = std::max(widest, e);
-  double largest = getSegmentReach(reach, widest, widest);
+  SmallVector<double> reaches = getSegmentReaches(reach, units.extents);
+  double largest = 0.0;
+  for (double r : reaches)
+    largest = std::max(largest, r);
   {
     Value widths = tilted ? emitFaceWidths(builder, loc, box) : box;
     Value least = vector::ExtractOp::create(builder, loc, widths, 0);
@@ -6361,8 +6417,8 @@ LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
       return getGroupsBuffer(at, loc, structure.handle, which);
     };
     SmallVector<Value> operands = {positions, box, reachValue};
-    for (double e : units.extents)
-      operands.push_back(createReal(at, loc, f64, e));
+    for (double r : reaches)
+      operands.push_back(createReal(at, loc, f64, r));
     for (Value end : units.rankEnd)
       operands.push_back(end);
     operands.append({excluded, buffers.order, structure.placeOf,
@@ -6463,11 +6519,15 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getList(), structure)))
     return failure();
-  if (!structure.segmented)
-    return op.emitOpError() << "refreshes a structure that is not a list of "
-                               "units";
+  // The type of the op makes the structure a list of units.
+  assert(structure.segmented && "a refresh of units over another structure");
   const SegmentedState &units = *structure.segmented;
   Value positions = op.getPositions();
+  if (!cast<MemRefType>(positions.getType()).getElementType().isF64())
+    return op.emitOpError()
+           << "builds a list of units from positions in "
+           << cast<MemRefType>(positions.getType()).getElementType()
+           << "; lists of units are built from positions in f64";
   Value box = op.getCellMutable().get();
   double cutoff = op.getCutoff().convertToDouble();
   double skin = op.getSkin().convertToDouble();

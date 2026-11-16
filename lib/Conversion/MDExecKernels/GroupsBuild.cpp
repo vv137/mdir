@@ -435,16 +435,17 @@ private:
   // The units: the reference particle of each unit, the value of `order`
   // that S1's layout gives its place (the particle of the rest, the slot of
   // the first member of a taken kind), and the unit of each particle of the
-  // rest; the end of the units of each rank, the covering radius of each
-  // rank, and the places where each rank begins (on the device, K + 2).
+  // rest; the end of the units of each rank, the covering reach of each
+  // segment (md_exec::getSegmentCoveringReach, in the order of s), and the
+  // places where each rank begins (on the device, K + 2).
   Value unitRef, unitValue, unitOfParticle, rankPlaces;
-  SmallVector<Value> rankEnd, extentOf, rankNcx64, rankNcy64, rankNcx,
+  SmallVector<Value> rankEnd, segmentReach, rankNcx64, rankNcy64, rankNcx,
       rankNcy, colBase;
   // The records by segment: the last block of each list of a group in a
   // segment, the translated order, the records in the order of the
   // segments, and the offsets of the segments.
   Value lastOf, outOrder, finalEntries, finalMasks, finalUnits, finalCounts,
-      segmentsOut, freachMax, reachMargin, gridCells;
+      segmentsOut, freachMax, reachMargin, gridCells, cubes, cubes64;
   /// The rank of a unit (an i32 or index value of its number).
   Value rankOfUnit(Value u);
   /// The rank of the group whose first place is `first` (index).
@@ -484,7 +485,8 @@ private:
   void sortByKey(Value count, Value bins, Value keys, Value counts,
                  Value start, Value cursor, Value out, ValueRange writes,
                  ValueRange adds, Value grid, Value binGrid,
-                 function_ref<void(Value)> key);
+                 function_ref<void(Value)> key,
+                 md_alg::Order order = md_alg::Order::Stable);
   /// The image of the displacements (dx, dy, dz) nearest to the center:
   /// three calls of the image of an axis, or in a triclinic cell one of
   /// the image in the cell, whose last three results are the lattice
@@ -747,16 +749,22 @@ void GroupsBuild::scan(Value countsOf, Value start, Value cursor,
 void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
                             Value start, Value cursor, Value out,
                             ValueRange writes, ValueRange adds, Value grid,
-                            Value binGrid, function_ref<void(Value)> key) {
+                            Value binGrid, function_ref<void(Value)> key,
+                            md_alg::Order order) {
   auto [scratch, launch] = scanExecution(bins);
   auto op = md_alg::SortByKeyOp::create(
       b, loc, count, bins,
-      md_alg::OrderAttr::get(context, md_alg::Order::Stable), keys, counts, start, cursor, out, /*by=*/Value(),
+      md_alg::OrderAttr::get(context, order), keys, counts, start, cursor, out, /*by=*/Value(),
       writes, adds, b.getUnitAttr(), /*every_key=*/UnitAttr(),
       ValueRange{grid, block, c1}, scanStrategy(context, singlePass), scratch,
       launch,
-      md_alg::SortStrategyAttr::get(context, md_alg::SortStrategy::Insertion),
-      /*sort_buffer=*/Value(), ValueRange{binGrid, block, c1},
+      order == md_alg::Order::Stable
+          ? md_alg::SortStrategyAttr::get(context,
+                                          md_alg::SortStrategy::Insertion)
+          : md_alg::SortStrategyAttr(),
+      /*sort_buffer=*/Value(),
+      order == md_alg::Order::Stable ? ValueRange{binGrid, block, c1}
+                                     : ValueRange{},
       /*determinism=*/nullptr);
   {
     OpBuilder::InsertionGuard guard(b);
@@ -919,9 +927,20 @@ void GroupsBuild::emitKeys(Value item) {
   Value column = addi(colY, kx);
   if (unitsMode) {
     // The columns of the ranks one after another, the rest first: the
-    // chunks, and so the groups, hold one kind.
+    // chunks, and so the groups, hold one kind. They are cut into cubes
+    // along z.
+    Value cubesF = sitofp(f64, cubes64);
+    Value cz0 = mulf(uz, cubesF);
+    Value cz64 = fptosi(i64, cz0);
+    Value czI = indexCast(index, cz64);
+    Value cubes1 = subi(cubes, i1c);
+    Value cz1 = minsi(czI, cubes1);
+    Value cz = maxsi(cz1, i0);
+    Value plane = muli(keyNcx, keyNcy);
+    Value stack = muli(cz, plane);
+    Value inCube = addi(column, stack);
     Value base = pick(rank, colBase);
-    column = addi(base, column);
+    column = addi(base, inCube);
   }
   Value colZ = muli(column, nzb);
   Value k = addi(colZ, kz);
@@ -1165,7 +1184,15 @@ void GroupsBuild::emitChunks(gpu::LaunchOp op) {
       Value inChunkI = indexCast(index, inChunk);
       Value place = addi(chunkPlace0, inChunkI);
       Value id = i2[0];
-      ifThen(has, [&] {
+      Value keep = has;
+      if (unitsMode) {
+        // The chunks of the rest's cubes can leave more places than the
+        // structure holds: a place beyond it is not written, and the
+        // caller grows the structure and builds again.
+        Value fits = cmpi(CmpIPredicate::ult, place, capacity);
+        keep = andi(has, fits);
+      }
+      ifThen(keep, [&] {
         store(id, order, place);
         Value ii = indexCast(index, id);
         Value place32 = indexCast(i32, place);
@@ -1207,6 +1234,11 @@ void GroupsBuild::emitBoxes(gpu::LaunchOp op) {
   Value zero = ci(0);
   Value places32 = load(sizesDevice, c0w);
   Value places = indexCast(index, places32);
+  if (unitsMode) {
+    // A build whose places did not fit holds the groups that do; the
+    // caller builds again.
+    places = minui(places, capacity);
+  }
   Value groups = divui(places, c16w);
   Value g = divui(item, c16w);
   Value u = remui(item, c16w);
@@ -1405,6 +1437,11 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
   Value warp = divui(tx, c32w);
   Value places32 = load(sizesDevice, c0w);
   Value places = indexCast(index, places32);
+  if (unitsMode) {
+    // A build whose places did not fit holds the groups that do; the
+    // caller builds again.
+    places = minui(places, capacity);
+  }
   Value groups = divui(places, c16w);
   Value realGroup, qualX, qualY, qualZ;
   if (!images) {
@@ -2608,16 +2645,13 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
     }
     // Over units: a segment for each rank of the partners from the
     // group's on, whose places follow the group's. The segment s(f, g) of
-    // the group's kind f = K - rank and the partners' g; its reach
-    // R + e_f + e_g, in that order of the additions (segmentReach), widened
-    // as the groups' reach is.
+    // the group's kind f = K - rank and the partners' g, with its covering
+    // reach, widened as the groups' reach is.
     Value kindsK = cx(K);
     Value kindF = subi(kindsK, rankG);
     Value kindF1 = addi(kindF, c1w);
     Value triangle0 = muli(kindF, kindF1);
     Value triangle = divui(triangle0, c2w);
-    Value eF = pick(rankG, extentOf);
-    Value groupReach = addf(reach, eF);
     for (unsigned rp = 0; rp <= K; ++rp) {
       Value partnerRank = cx(rp);
       Value active = cmpi(P::ule, rankG, partnerRank);
@@ -2628,7 +2662,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
         Value gS = muli(g, segCount);
         Value slotS = addi(gS, s0);
         Value name = indexCast(i32, slotS);
-        Value segReachD = addf(groupReach, extentOf[rp]);
+        Value segReachD = pick(s0, segmentReach);
         Value segReachW = addf(segReachD, reachMargin);
         Value segReachF = truncf(segReachW);
         Value offset = cx(rp);
@@ -2645,8 +2679,8 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
 
 // The list kernels take blocks of 64 entries in the order of their atomics,
 // each named by its group and segment, g S + s, and its ordinal in that
-// list. A stable counting sort of the blocks by segment gives the records
-// in the order of the segments: record w is the block of the sort's place
+// list. A counting sort of the blocks by segment gives the records in the
+// order of the segments, in any order within each: record w is the block of the sort's place
 // w, copied, with its group and its own count; `segments[s]` is the first
 // record of segment s, and `segments[S]` their number.
 void GroupsBuild::emitSegments(Value gridOfCapacity) {
@@ -2677,7 +2711,10 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
                     md_alg::BinOp::create(b, loc, seg);
                   },
                   [&] { md_alg::NoBinOp::create(b, loc); });
-            });
+            },
+            // The blocks came in the order of the atomics that took them:
+            // no order within a segment is kept.
+            md_alg::Order::Unordered);
   // A record a warp: its 64 entries a lane two at a time.
   Value c32r = cx(32);
   Value recordThreads = muli(blockCapacity, c32r);
@@ -2688,8 +2725,11 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
     Value item = addi(base, tx);
     Value w = divui(item, c32r);
     Value lane = remui(item, c32r);
+    // The records that the blocks hold: those taken, of a build whose
+    // blocks did not all fit those that do.
     Value taken32 = load(sizesDevice, c2s);
-    Value taken = indexCast(index, taken32);
+    Value taken0 = indexCast(index, taken32);
+    Value taken = minui(taken0, blockCapacity);
     Value used = cmpi(P::ult, w, taken);
     ifThen(used, [&] {
       Value from32 = md_alg::BinItemOp::create(b, loc, segSorted, w);
@@ -2780,11 +2820,11 @@ void GroupsBuild::emitBuild() {
                               buffer,    buffer, buffer, buffer, buffer,
                               buffer,    buffer, hostSizes};
   if (unitsMode) {
-    // After the reach: the covering radius of each rank and the end of the
-    // units of each rank; after the shifts, the buffers of the units and of
-    // the records by segment.
-    inputs.insert(inputs.begin() + 3, K + 1, f64);
-    inputs.insert(inputs.begin() + 3 + (K + 1), K + 1, index);
+    // After the reach: the covering reach of each segment and the end of
+    // the units of each rank; after the shifts, the buffers of the units
+    // and of the records by segment.
+    inputs.insert(inputs.begin() + 3, S, f64);
+    inputs.insert(inputs.begin() + 3 + S, K + 1, index);
     inputs.insert(inputs.end() - 1, 10, buffer);
   }
   std::string name = unitsMode ? kernels::getSegmentsBuildName(tilted, K)
@@ -2794,11 +2834,11 @@ void GroupsBuild::emitBuild() {
       [&](ValueRange a0) {
         SmallVector<Value> a(a0.begin(), a0.end());
         if (unitsMode) {
+          for (unsigned t = 0; t < S; ++t)
+            segmentReach.push_back(a[3 + t]);
           for (unsigned r = 0; r <= K; ++r)
-            extentOf.push_back(a[3 + r]);
-          for (unsigned r = 0; r <= K; ++r)
-            rankEnd.push_back(a[3 + (K + 1) + r]);
-          a.erase(a.begin() + 3, a.begin() + 3 + 2 * (K + 1));
+            rankEnd.push_back(a[3 + S + r]);
+          a.erase(a.begin() + 3, a.begin() + 3 + S + (K + 1));
           unitRef = a[12], unitValue = a[13], unitOfParticle = a[14],
           lastOf = a[15], outOrder = a[16], finalEntries = a[17],
           finalMasks = a[18], finalUnits = a[19], finalCounts = a[20],
@@ -2866,15 +2906,13 @@ void GroupsBuild::emitBuild() {
         Value reachWide = addf(reach, margin);
         freach = truncf(reachWide);
         // Over units, the reach of the cells is the largest of the
-        // segments, R + 2 max e (D417, Section 1).
+        // segments' (D417, Section 1).
         Value cellReach = reach;
         if (unitsMode) {
           reachMargin = margin;
-          Value widest = extentOf[0];
-          for (unsigned r = 1; r <= K; ++r)
-            widest = maximumf(widest, extentOf[r]);
-          Value twice = addf(widest, widest);
-          cellReach = addf(reach, twice);
+          cellReach = segmentReach[0];
+          for (unsigned t = 1; t < S; ++t)
+            cellReach = maximumf(cellReach, segmentReach[t]);
           Value cellReachWide = addf(cellReach, margin);
           freachMax = truncf(cellReachWide);
         }
@@ -2897,23 +2935,31 @@ void GroupsBuild::emitBuild() {
         ncy = indexCast(index, ncy64);
         columns = muli(ncx, ncy);
         if (unitsMode) {
-          // A plan of the columns for each rank, of its own units, the
-          // ranks' columns one after another.
+          // The columns of each rank are those of the plan of all the
+          // units, one after another: a rank of few units, such as a
+          // solute in water, keeps columns of the width of the dense one,
+          // so that its chunks stay compact along z where it is.
+          // The columns are also cut along z into cubes of their width, so
+          // that a chunk holds the units of one cube: a kind is sparse where
+          // the others are (a solute among water, water about a solute, or
+          // scattered ions), and a chunk of a whole column would span it.
+          Value cube = divf(lx, sitofp(f64, ncx64));
+          Value along = divf(lz, cube);
+          Value alongUp = math::CeilOp::create(b, loc, along);
+          Value oneCube = cd(1.0);
+          Value most = cd(256.0);
+          Value cubes0 = maxnumf(alongUp, oneCube);
+          Value cubes1 = minnumf(cubes0, most);
+          cubes64 = fptosi(i64, cubes1);
+          cubes = indexCast(index, cubes64);
           Value base = cx(0);
           for (unsigned r = 0; r <= K; ++r) {
-            Value from = r ? rankEnd[r - 1] : c0;
-            Value count = subi(rankEnd[r], from);
-            auto plan = md_alg::GridPlanOp::create(
-                b, loc, TypeRange{i64, i64}, ValueRange{lx, ly},
-                /*width=*/Value(), volume, b.getF64FloatAttr(64.0), count,
-                b.getF64FloatAttr(1.0), b.getF64FloatAttr(256.0),
-                /*determinism=*/nullptr);
-            rankNcx64.push_back(plan.getCounts()[0]);
-            rankNcy64.push_back(plan.getCounts()[1]);
-            rankNcx.push_back(indexCast(index, rankNcx64.back()));
-            rankNcy.push_back(indexCast(index, rankNcy64.back()));
+            rankNcx64.push_back(ncx64);
+            rankNcy64.push_back(ncy64);
+            rankNcx.push_back(ncx);
+            rankNcy.push_back(ncy);
             colBase.push_back(base);
-            Value own = muli(rankNcx.back(), rankNcy.back());
+            Value own = muli(columns, cubes);
             base = addi(base, own);
           }
           columns = base;

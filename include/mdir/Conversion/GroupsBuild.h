@@ -48,8 +48,9 @@ std::string getSegmentsBuildName(bool triclinic, unsigned kinds);
 /// if the module does not hold them.
 ///
 /// Its arguments, after those of the groups' build up to the reach: the
-/// covering radius of each rank (the rest's, then the kinds' from K - 1 to
-/// 0), and the end of the units of each rank; then the excluded pairs, the
+/// covering reach of each segment in the order of s (getSegmentCoveringReach
+/// of NeighborCoverage.h), and the end of the units of each rank (the rest,
+/// then the kinds from K - 1 to 0); then the excluded pairs, the
 /// order of the places by unit, the place of each unit, the staging
 /// entries and masks, the count of each list (group g, segment s at
 /// g S + s), the blocks' names and ordinals, the shifts of the places, the
