@@ -404,6 +404,14 @@ public:
   }
 };
 
+/// The height of a cube of the build over units, in widths of its column
+/// (D[md-alg-segments-build]): a chunk holds the units of one cube. On the
+/// RTX 5090 (PR #897), cubes of two widths took 5-12% fewer entries than
+/// cubes of one, but their taller chunks in the short brick of a rhombic
+/// dodecahedron sent groups to the images kernel: 360 against 135 us a build
+/// on rd-opc.
+constexpr double kUnitCubeHeight = 1.0;
+
 /// The names of the functions of the build.
 constexpr StringLiteral kGrid = "mdrt_gpu_groups_grid";
 constexpr StringLiteral kPartner = "mdrt_gpu_groups_partner";
@@ -486,7 +494,8 @@ private:
                  Value start, Value cursor, Value out, ValueRange writes,
                  ValueRange adds, Value grid, Value binGrid,
                  function_ref<void(Value)> key,
-                 md_alg::Order order = md_alg::Order::Stable);
+                 md_alg::Order order = md_alg::Order::Stable,
+                 md_alg::SortStrategy strategy = md_alg::SortStrategy::Insertion);
   /// The image of the displacements (dx, dy, dz) nearest to the center:
   /// three calls of the image of an axis, or in a triclinic cell one of
   /// the image in the cell, whose last three results are the lattice
@@ -750,8 +759,12 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
                             Value start, Value cursor, Value out,
                             ValueRange writes, ValueRange adds, Value grid,
                             Value binGrid, function_ref<void(Value)> key,
-                            md_alg::Order order) {
+                            md_alg::Order order, md_alg::SortStrategy strategy) {
   auto [scratch, launch] = scanExecution(bins);
+  // The stable rank takes a thread an item, into a buffer of its own.
+  bool rank = order == md_alg::Order::Stable &&
+              strategy == md_alg::SortStrategy::StableRank;
+  Value sortBuffer = rank ? alloc(buffer, count) : Value();
   auto op = md_alg::SortByKeyOp::create(
       b, loc, count, bins,
       md_alg::OrderAttr::get(context, order), keys, counts, start, cursor, out, /*by=*/Value(),
@@ -759,12 +772,12 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
       ValueRange{grid, block, c1}, scanStrategy(context, singlePass), scratch,
       launch,
       order == md_alg::Order::Stable
-          ? md_alg::SortStrategyAttr::get(context,
-                                          md_alg::SortStrategy::Insertion)
+          ? md_alg::SortStrategyAttr::get(context, strategy)
           : md_alg::SortStrategyAttr(),
-      /*sort_buffer=*/Value(),
-      order == md_alg::Order::Stable ? ValueRange{binGrid, block, c1}
-                                     : ValueRange{},
+      sortBuffer,
+      order != md_alg::Order::Stable ? ValueRange{}
+      : rank                         ? ValueRange{grid, block, c1}
+                                     : ValueRange{binGrid, block, c1},
       /*determinism=*/nullptr);
   {
     OpBuilder::InsertionGuard guard(b);
@@ -772,6 +785,8 @@ void GroupsBuild::sortByKey(Value count, Value bins, Value keys, Value counts,
     key(body->getArgument(0));
   }
   dealloc(scratch);
+  if (sortBuffer)
+    dealloc(sortBuffer);
 }
 
 Value GroupsBuild::pick(Value rank, ArrayRef<Value> values) {
@@ -2943,7 +2958,9 @@ void GroupsBuild::emitBuild() {
           // that a chunk holds the units of one cube: a kind is sparse where
           // the others are (a solute among water, water about a solute, or
           // scattered ions), and a chunk of a whole column would span it.
-          Value cube = divf(lx, sitofp(f64, ncx64));
+          Value width = divf(lx, sitofp(f64, ncx64));
+          Value height = cd(kUnitCubeHeight);
+          Value cube = mulf(width, height);
           Value along = divf(lz, cube);
           Value alongUp = math::CeilOp::create(b, loc, along);
           Value oneCube = cd(1.0);
@@ -3121,6 +3138,11 @@ void GroupsBuild::emitBuild() {
         clear(gridOfGcells, gcount, gcells, 0);
         // The cell of each place in the grid of the candidates, and the
         // places of each cell in order.
+        // Over units, the cells hold the units of one rank among the cells
+        // of all ranks, and the places of a cell are ranked a thread a
+        // place (StableRank, #231) instead of a thread a cell.
+        auto cellSort = unitsMode ? md_alg::SortStrategy::StableRank
+                                  : md_alg::SortStrategy::Insertion;
         sortByKey(capacity, gcells, gkey, gcount, gstart, gcursor, gplace,
                   {xp}, {}, gridOfCapacity, gridOfGcells, [&](Value item) {
             Value i0 = cx(0);
@@ -3187,7 +3209,7 @@ void GroupsBuild::emitBuild() {
                   store(far, xp, {item, i1c});
                   store(far, xp, {item, i2c});
                 });
-        });
+        }, md_alg::Order::Stable, cellSort);
 
 
         //===------------------------------------------------------------===//
