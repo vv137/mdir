@@ -16,7 +16,8 @@
 # TIP3P in a rhombic dodecahedron under NPT (C-RESCALE at every step, which
 # moves the cell and its tilts); alanine dipeptide in OPC under NVT and in
 # TIP3P under NPT, with anchors and excluded pairs and two covering radii;
-# TIP3P and OPC with its site and ions in the dodecahedron under NPT, two
+# TIP3P and OPC with its site, ions, and a molecule of the rest with anchors
+# and excluded pairs (#898) in the dodecahedron under NPT, two
 # taken kinds of different extents (K = 2, six segments); the small
 # dodecahedron of Inputs/triclinic under NPT with a cutoff of 6 Å, whose
 # groups take the images kernel of D115 at every build; and a cell that

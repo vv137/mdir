@@ -95,10 +95,13 @@ private:
 
 /// The op that a list of units began at, through its refreshes and the
 /// values that loops carry: its empty list or its build, which hold the
-/// rest's radius.
-static Operation *getSegmentOrigin(Value list) {
+/// rest's radius. Null when the walk ends elsewhere; `last` is then the
+/// value it ended at (a function argument, the result of another op, or a
+/// value it has seen).
+static Operation *getSegmentOrigin(Value list, Value &last) {
   llvm::DenseSet<Value> seen;
   while (list && seen.insert(list).second) {
+    last = list;
     if (auto refresh = list.getDefiningOp<RefreshSegmentedPairsOp>()) {
       list = refresh.getList();
       continue;
@@ -124,11 +127,34 @@ static Operation *getSegmentOrigin(Value list) {
 
 LogicalResult Coverage::segmentFact(const Obligation &request, double built,
                                     Value origin) {
-  // A build is its own origin, and a refresh is lowered only over a list
-  // whose storage is in its function, which its empty list gives
-  // (convert-md-exec-to-gpu refuses another first).
-  Operation *start = getSegmentOrigin(origin);
-  assert(start && "a list of units without its empty list or build");
+  // A build is its own origin; a refresh's chain ends at its empty list or
+  // at a build. This is a public query (#898): a chain that ends at a
+  // function argument or at the result of another op is refused here, not
+  // only by convert-md-exec-to-gpu.
+  Value last;
+  Operation *start = getSegmentOrigin(origin, last);
+  if (!start) {
+    std::string where;
+    llvm::raw_string_ostream text(where);
+    Location at = op->getLoc();
+    if (auto argument = dyn_cast_or_null<BlockArgument>(last)) {
+      Operation *owner = argument.getOwner()->getParentOp();
+      text << "an argument of '" << owner->getName() << "'";
+      at = owner->getLoc();
+    } else if (Operation *producer = last ? last.getDefiningOp() : nullptr) {
+      text << "a result of '" << producer->getName() << "'";
+      at = producer->getLoc();
+    } else {
+      text << "a cycle of refreshes";
+    }
+    auto diagnostic =
+        op->emitOpError()
+        << "takes a list of units whose empty list or build is not found: "
+           "its refreshes begin at "
+        << where << ", which does not give the radius of the rest";
+    diagnostic.attachNote(at) << "the list of units begins here";
+    return failure();
+  }
   std::optional<APFloat> radius;
   if (auto empty = dyn_cast<EmptySegmentedPairsOp>(start))
     radius = empty.getRadius();

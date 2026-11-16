@@ -9,9 +9,13 @@ image of every pair of reference points in f64.
                          small one of Inputs/triclinic, NVT, or NPT with
                          --npt; with --cutoff=6 --pairlist=7 --pruned=6.6
                          its groups take the images kernel of D115)
-        mixture          the same dodecahedron, a third of its waters OPC and
-                         four of them sodium ions: two taken kinds of
-                         different extents, one with a site, and the rest
+        mixture          the same dodecahedron, a third of its waters OPC,
+                         four of them sodium ions, and four of them a
+                         molecule of the rest (MOL: a heavy atom X, its
+                         hydrogen H, and a second heavy atom Y, with three
+                         excluded pairs and the anchor of H to X): two taken
+                         kinds of different extents, one with a site, and a
+                         rest with anchors and exclusions
         dipeptide-opc, dipeptide-tip3p
                          alanine dipeptide in water, NVT (--npt: C-rescale),
                          with the anchors and the excluded pairs of the rest
@@ -31,7 +35,8 @@ image of every pair of reference points in f64.
       (md-exec-reuse-neighbors's form), for convert-md-exec-to-gpu with
       dump-segments. --drop-exclusion leaves the first excluded pair of the
       rest out of the list's exclusions; --join-exclusion adds an excluded
-      pair of the rest and a water.
+      pair of the rest and a water; --join-copies adds one of the first
+      atoms of two copies of the first taken kind.
   segments_coverage.py check SYSTEM ROOT WORK DUMPS [--scale=S] [--limit=L] [--expect-missing] [--any-points]
       Each dump is the list after the refresh of a frame. Over its records:
         - each pair of units in each image at most once (`unique`);
@@ -224,6 +229,9 @@ MIXTURE_TOP = '''[ defaults ]
   HP  1   1.008    0.0  A  0.0       0.0
   EP  0   0.0      0.0  D  0.0       0.0
   NA  11  22.99    0.0  A  0.24      0.37
+  XM  8   15.9994  0.0  A  0.315061  0.636386
+  HM  1   1.008    0.0  A  0.0       0.0
+  YM  6   12.011   0.0  A  0.0       0.0
 
 [ moleculetype ]
   SOL  2
@@ -260,14 +268,30 @@ MIXTURE_TOP = '''[ defaults ]
 [ atoms ]
   1  NA  1  NA  NA  1  1.0  22.99
 
+[ moleculetype ]
+  MOL  3
+[ atoms ]
+  1  XM  1  MOL  X  1  -0.6  15.9994
+  2  HM  1  MOL  H  1  0.3  1.008
+  3  YM  1  MOL  Y  1  0.3  12.011
+[ bonds ]
+  1  2  1  {xh!r}  345000.0
+  1  3  1  {xy!r}  345000.0
+[ angles ]
+  2  1  3  1  104.52  383.0
+
 [ system ]
-waters of two kinds and ions
+waters of two kinds, ions, and a molecule of the rest
 
 [ molecules ]
   SOL  {sol}
   OPC  {opc}
   NA   {na}
+  MOL  {mol}
 '''
+# MOL's bonds (nm): X-H, which hydrogen_bonds keeps, at most the rest's
+# covering radius RADIUS; X-Y, the water's O-H.
+MOL_XH, MOL_XY = 0.109, 0.09572
 
 
 def system():
@@ -287,16 +311,29 @@ def system():
     elif name == 'mixture':
         waters, box = dodecahedron_rows(2)
         ions = {len(waters) * k // 4 + 7 for k in range(4)}
-        sol, opc, na = [], [], []
+        # The molecules of the rest, at waters that stay TIP3P otherwise
+        # (k % 3 != 1), so that the count of particles is the same.
+        mols = {3 * (len(waters) * k // 12) + 30 for k in range(4)}
+        assert not mols & ions and all(k % 3 != 1 for k in mols)
+        sol, opc, na, mol = [], [], [], []
         for k, w in enumerate(waters):
             if k in ions:
                 na.append(('NA', [('NA', w[0])]))
+            elif k in mols:
+                o, h1, h2 = (np.array(v) for v in w)
+                x = o
+                h = o + MOL_XH * (h1 - o) / np.linalg.norm(h1 - o)
+                y = o + MOL_XY * (h2 - o) / np.linalg.norm(h2 - o)
+                mol.append(('MOL', [('X', x), ('H', h), ('Y', y)]))
             elif k % 3 == 1:
                 opc.append(('OPC', list(zip(('O', 'H1', 'H2', 'EP'), opc_geometry(w)))))
             else:
                 sol.append(('SOL', list(zip(('OW', 'HW1', 'HW2'), w))))
-        write_gro(work / 'system.gro', 'waters of two kinds and ions', sol + opc + na, box)
-        (work / 'system.top').write_text(MIXTURE_TOP.format(a=OPC_A, sol=len(sol), opc=len(opc), na=len(na)))
+        write_gro(work / 'system.gro', 'waters of two kinds, ions, and a molecule of the rest',
+                  sol + opc + na + mol, box)
+        top = MIXTURE_TOP.format(a=OPC_A, sol=len(sol), opc=len(opc), na=len(na), mol=len(mol),
+                                 xh=MOL_XH, xy=MOL_XY)
+        (work / 'system.top').write_text(without_bonded(top) if '--forces' in flags else top)
         (work / 'control.toml').write_text(
             f'[input]\ntopology = "{work / "system.top"}"\ncoordinates = "{work / "system.gro"}"\n'
             + ensemble('--forces' not in flags) + common(steps))
@@ -369,9 +406,13 @@ def topology():
         resnames = [r[5:10].strip() for r in rows[2:2 + n]]
         sol = [k for k, r in enumerate(resnames) if r == 'SOL']
         opc = [k for k, r in enumerate(resnames) if r == 'OPC']
+        # MOL: X, H, Y; H anchored to X, and its three pairs excluded.
+        mol = np.array([k for k, r in enumerate(resnames) if r == 'MOL'], np.int64).reshape(-1, 3)
+        anchors = np.stack([mol[:, 1], mol[:, 0]], 1)
+        excluded = np.concatenate([mol[:, [0, 1]], mol[:, [0, 2]], mol[:, [1, 2]]])
+        excluded = excluded[np.lexsort((excluded[:, 1], excluded[:, 0]))]
         return [('tip3p', np.array(sol, np.int64).reshape(-1, 3)),
-                ('opc', np.array(opc, np.int64).reshape(-1, 4))], \
-            np.zeros((0, 2), np.int64), np.zeros((0, 2), np.int64), n
+                ('opc', np.array(opc, np.int64).reshape(-1, 4))], anchors, excluded, n
     if name == 'growth':
         return [('tip3p', np.arange(6, dtype=np.int64).reshape(-1, 3))], \
             np.array([[7, 6]], np.int64), np.array([[6, 7]], np.int64), 8
@@ -493,6 +534,9 @@ if mode == 'emit':
         excluded = excluded[1:]
     if '--join-exclusion' in flags:
         excluded = np.concatenate([excluded, [[int(rest[0]), int(kinds[0][1][0][0])]]])
+    if '--join-copies' in flags:
+        excluded = np.concatenate([excluded.reshape(-1, 2),
+                                   [[int(kinds[0][1][0][0]), int(kinds[0][1][1][0])]]])
     refs = np.unique(unit_ref)
     M = len(refs)
 
@@ -626,12 +670,16 @@ segkind = [(f, g) for f in range(K + 1) for g in range(f + 1)]
 wbits, woff = (5, 16) if TRICLINIC else (4, 4)
 excluded_units = {(min(unit_of_rest[int(a)], unit_of_rest[int(b)]), max(unit_of_rest[int(a)], unit_of_rest[int(b)]))
                   for a, b in excluded if int(a) in unit_of_rest and int(b) in unit_of_rest}
+# The value of `order` of a copy: the slot of its first member in the
+# table of the members, which holds the frame atoms of each copy, kind by
+# kind (empty_segmented_pairs).
 slot_of = {}
 base = 0
 for f, (model, tuples) in enumerate(kinds):
+    members = len(MODELS[model]['frame'])
     for c, tup in enumerate(tuples):
-        slot_of[unit_first[int(tup[0])]] = base + 3 * c
-    base += 3 * len(tuples)
+        slot_of[unit_first[int(tup[0])]] = base + members * c
+    base += members * len(tuples)
 
 
 def listed(parts, inner, faults):

@@ -24,3 +24,12 @@
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=JOINED
 # JOINED: 1 excluded pairs of the list of units join a taken rigid kind to another molecule; the build would compute them (a kind of D403 has no exclusion outside its copy)
+#
+# An excluded pair of two copies of the taken kind, the two waters of
+# growth: the host counts it with those of the rest and a kind (#898).
+# RUN: mkdir -p %t/copies
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system growth %S/../Driver/Inputs %t/copies 1
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit growth %S/../Driver/Inputs %t/copies --join-copies
+# RUN: mdir-opt %t/copies/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s --check-prefix=JOINED

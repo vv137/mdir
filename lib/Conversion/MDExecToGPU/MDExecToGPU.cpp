@@ -9698,20 +9698,61 @@ LogicalResult Lowering::inlineFrameReadbacks(func::FuncOp function) {
 /// that carries it (md-exec-reuse-neighbors's form, which
 /// md-exec-assign-storage keeps) carries the same list, so its argument and
 /// its result are the list it begins with, and the loop stops carrying it.
-static void uncarrySegmentedLists(func::FuncOp function) {
+/// That holds only for a loop that yields its argument through refreshes of
+/// it, and only scf.for is uncarried: a loop that yields another list, and
+/// a list that passes through the results or the block arguments of
+/// another op with regions (scf.if, scf.while), are refused here, naming
+/// the op (#898).
+static LogicalResult uncarrySegmentedLists(func::FuncOp function) {
+  auto isList = [](Type type) { return isa<mdrt::SegmentedPairsType>(type); };
+  WalkResult regions = function.walk([&](Operation *op) {
+    if (op == function.getOperation() || isa<scf::ForOp>(op) ||
+        op->getNumRegions() == 0)
+      return WalkResult::advance();
+    bool carries = llvm::any_of(op->getResultTypes(), isList);
+    for (Region &region : op->getRegions())
+      for (Block &block : region)
+        carries |= llvm::any_of(block.getArgumentTypes(), isList);
+    if (!carries)
+      return WalkResult::advance();
+    op->emitOpError()
+        << "passes a list of units through its results or its block "
+           "arguments; only scf.for carries one, refreshed where it is "
+           "(md-exec-reuse-neighbors's form)";
+    return WalkResult::interrupt();
+  });
+  if (regions.wasInterrupted())
+    return failure();
   bool changed = true;
-  while (changed) {
+  bool refused = false;
+  while (changed && !refused) {
     changed = false;
     function.walk([&](scf::ForOp loop) {
-      if (changed)
+      if (changed || refused)
         return;
       for (unsigned k = 0, e = loop.getInitArgs().size(); k != e; ++k) {
         if (!isa<mdrt::SegmentedPairsType>(loop.getInitArgs()[k].getType()))
           continue;
         Value init = loop.getInitArgs()[k];
+        // The yielded list must be the argument, through its refreshes:
+        // the loop then carries one list. Inner loops are uncarried first
+        // (the walk is post-order), so their results are their inits here.
+        auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+        Value chain = yield.getOperand(k);
+        while (auto refresh =
+                   chain.getDefiningOp<md_exec::RefreshSegmentedPairsOp>())
+          chain = refresh.getList();
+        if (chain != loop.getRegionIterArgs()[k]) {
+          loop.emitOpError()
+              << "yields a list of units as its value " << k
+              << " that is not its argument through refreshes of it; a loop "
+                 "carries one list, refreshed where it is "
+                 "(md-exec-reuse-neighbors's form)";
+          refused = true;
+          return;
+        }
         loop.getRegionIterArgs()[k].replaceAllUsesWith(init);
         loop.getResult(k).replaceAllUsesWith(init);
-        auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
         SmallVector<Value> yielded, inits;
         for (unsigned j = 0; j != e; ++j)
           if (j != k) {
@@ -9747,10 +9788,12 @@ static void uncarrySegmentedLists(func::FuncOp function) {
       }
     });
   }
+  return failure(refused);
 }
 
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
-  uncarrySegmentedLists(function);
+  if (failed(uncarrySegmentedLists(function)))
+    return failure();
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({getCellSize()}, Float64Type::get(context));
   auto convertType = [&](Type type) -> Type {
