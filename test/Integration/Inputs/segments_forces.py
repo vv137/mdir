@@ -121,7 +121,7 @@ from scipy.spatial import cKDTree  # noqa: E402
 frac = x @ Hinv
 wrapped = (frac - np.floor(frac)) @ H
 M = np.zeros((n, 3))
-D = np.zeros((n, 3))
+curvature = np.zeros((n, 3))
 images = [np.array([a, b, c]) for a in (-1, 0, 1) for b in (-1, 0, 1) for c in (-1, 0, 1)]
 tree = cKDTree(wrapped)
 for img in images:
@@ -142,11 +142,11 @@ for img in images:
             dmag = (12 * abs(lj12) + 6 * abs(lj6) + abs(coulomb)) / r
             ddmag = (156 * abs(lj12) + 42 * abs(lj6) + 2 * abs(coulomb)) / (r * r)
             M[i] += dmag * np.abs(d) / r
-            D[i] += ddmag + dmag / r
+            curvature[i] += ddmag + dmag / r
 u = 2.0 ** -53 if precision == 'double' else 2.0 ** -24
 gamma = (TERMS - 1) * u / (1 - (TERMS - 1) * u)
 dx = 8 * u * float(np.abs(x).max())
-bound = 2 * gamma * M + 32 * u * M + dx * D + 4 * u * float(M.max())
+bound = 2 * gamma * M + 32 * u * M + dx * curvature + 4 * u * float(M.max())
 difference = np.abs(probe - reference)
 ratio = difference / bound
 if taken_only:
