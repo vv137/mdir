@@ -89,6 +89,11 @@ top, gro, kinds, positions, values, forces, precision, cutoff = sys.argv[2:10]
 # --taken-only: the components of the particles of the taken kinds alone,
 # whose forces in a run are those of the pair term (the rest has bonded terms).
 taken_only = '--taken-only' in sys.argv
+# --excluded=FILE: the excluded pairs of the rest (excluded.npy of
+# segments_coverage.py), for the magnitudes; without it a molecule of the rest
+# excludes all its pairs.
+excluded_file = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--excluded=')), None)
+excluded_pairs = ({(int(a), int(b)) for a, b in np.load(excluded_file)} if excluded_file else None)
 cutoff = float(cutoff)
 system = System(top, gro, kinds.split(','))
 x = read_rows(positions)
@@ -130,7 +135,9 @@ for img in images:
     for i, js in enumerate(tree.query_ball_tree(other, cutoff)):
         for j in js:
             if excluded_molecule[i] == excluded_molecule[j]:
-                continue
+                rest_pair = excluded_molecule[i][0] == 'rest'
+                if not rest_pair or excluded_pairs is None or (min(i, j), max(i, j)) in excluded_pairs:
+                    continue
             d = wrapped[i] - (wrapped[j] + shift)
             r = math.sqrt(d @ d)
             if r == 0.0 or r >= cutoff:

@@ -5,8 +5,10 @@
 # pair term (rigid water, Coulomb cut off), within the error model of two
 # evaluations of one sum in different orders (Inputs/segments_forces.py).
 # TIP3P in a rhombic dodecahedron, and alanine dipeptide in TIP3P, with
-# anchors and excluded pairs, whose waters' forces are those of the pair term
-# alone. With the first record of the list left out,
+# anchors and excluded pairs, all its particles, its bonded terms set to 0 in
+# the run (segments_coverage.py, without_bonded) so that the forces are those
+# of the pair term alone. A list built without one excluded pair of the solute
+# fails. With the first record of the list left out,
 # the comparison fails. The oracle's reader of topologies takes them without
 # the lines of the preprocessor (the flexible water that they leave out).
 #
@@ -40,8 +42,20 @@
 # RUN: sed "/^#/d" %t/dipeptide/system.top > %t/dipeptide/oracle.top
 # RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/dipeptide/oracle.top %t/dipeptide/system.gro %t/dipeptide/alg.mlir WAT %t/dipeptide/probe.mlir %t/dipeptide/dumps/dump_000000.bin %t/dipeptide/positions.txt
 # RUN: mdir-opt %t/dipeptide/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/dipeptide/values.txt
-# RUN: %mdir_python %S/Inputs/segments_forces.py compare %t/dipeptide/oracle.top %t/dipeptide/system.gro WAT %t/dipeptide/positions.txt %t/dipeptide/values.txt %t/dipeptide/forces.txt double 0.8 --taken-only | FileCheck %s --check-prefix=DIPEPTIDE
+# RUN: %mdir_python %S/Inputs/segments_forces.py compare %t/dipeptide/oracle.top %t/dipeptide/system.gro WAT %t/dipeptide/positions.txt %t/dipeptide/values.txt %t/dipeptide/forces.txt double 0.8 --excluded=%t/dipeptide/excluded.npy | FileCheck %s --check-prefix=DIPEPTIDE
+#
+# The list built without the first excluded pair of the solute: its pair
+# enters the sums, and the forces of the solute differ.
+# RUN: mkdir -p %t/unexcluded/dumps && cp %t/dipeptide/system.top %t/dipeptide/system.gro %t/unexcluded/
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-gro %S/../Driver/Inputs %t/unexcluded --positions=%t/dipeptide/positions.txt --drop-exclusion
+# RUN: mdir-opt %t/unexcluded/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/unexcluded/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_forces.py emit %t/dipeptide/oracle.top %t/dipeptide/system.gro %t/dipeptide/alg.mlir WAT %t/unexcluded/probe.mlir %t/unexcluded/dumps/dump_000000.bin %t/dipeptide/positions.txt
+# RUN: mdir-opt %t/unexcluded/probe.mlir --convert-md-alg-to-scf | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/unexcluded/values.txt
+# RUN: not %mdir_python %S/Inputs/segments_forces.py compare %t/dipeptide/oracle.top %t/dipeptide/system.gro WAT %t/dipeptide/positions.txt %t/unexcluded/values.txt %t/dipeptide/forces.txt double 0.8 --excluded=%t/dipeptide/excluded.npy | FileCheck %s --check-prefix=UNEXCLUDED
 #
 # DODECAHEDRON: double: 9672 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 29016 components outside
 # DROP: double: 9672 particles, {{.*}}, {{[1-9][0-9]*}} of 29016 components outside
-# DIPEPTIDE: double: {{[0-9]+}} particles, largest difference {{.*}} of its bound {{.*}}, 0 of {{[0-9]+}} components outside
+# DIPEPTIDE: double: 1168 particles, largest difference {{.*}} of its bound {{.*}}, 0 of 3504 components outside
+# UNEXCLUDED: double: 1168 particles, {{.*}}, {{[1-9][0-9]*}} of 3504 components outside

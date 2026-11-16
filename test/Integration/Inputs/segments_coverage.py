@@ -9,7 +9,9 @@ image of every pair of reference points in f64.
       replays. --cell keeps the small dodecahedron of Inputs/triclinic.
       --forces: one step in double precision with Coulomb cut off, NVE, and
       a checkpoint (segments_forces.py); dipeptide-gro is alanine dipeptide
-      in TIP3P from its GROMACS files.
+      in TIP3P from its GROMACS files, whose bonded terms --forces sets to 0
+      (without_bonded). emit --drop-exclusion leaves the first excluded pair
+      of the rest out of the list's exclusions.
   segments_coverage.py emit KIND ROOT WORK [--frames=N | --positions=FILE]
       WORK/harness.mlir: an empty list of units and, for each frame of
       WORK/traj.dcd, a refresh at its positions and cell
@@ -43,6 +45,31 @@ options = dict(a[2:].split('=', 1) for a in sys.argv[5:] if a.startswith('--') a
 flags = {a for a in sys.argv[5:] if a.startswith('--') and '=' not in a}
 CUTOFF, PRUNED = 0.8, 0.86
 RADIUS = 0.10901
+
+
+def without_bonded(top):
+    """The topology with the force constants of its bonds, angles, and
+    dihedrals 0 and no pairs of 1-4: its forces are those of the pair term,
+    with the same exclusions (the bonds still make them)."""
+    out, section = [], None
+    column = {'bonds': 4, 'angles': 5, 'dihedrals': 6}
+    for line in top.splitlines():
+        stripped = line.split(';')[0].strip()
+        if stripped.startswith('['):
+            section = stripped.strip('[] ')
+            out.append(line)
+            continue
+        if not stripped or stripped.startswith('#'):
+            out.append(line)
+            continue
+        if section == 'pairs':
+            continue
+        fields = stripped.split()
+        if section in column and len(fields) > column[section]:
+            fields[column[section]] = '0.0'
+            line = ' '.join(fields)
+        out.append(line)
+    return '\n'.join(out) + '\n'
 
 
 def system():
@@ -105,7 +132,10 @@ precision = "DOUBLE"
 neighbor_structure = "GROUPS"
 '''
     if kind == 'dipeptide-gro':
-        (work / 'system.top').write_text((root / 'dipeptide' / 'dipeptide.top').read_text())
+        top = (root / 'dipeptide' / 'dipeptide.top').read_text()
+        if '--forces' in flags:
+            top = without_bonded(top)
+        (work / 'system.top').write_text(top)
         # The coordinates in the columns of 8.3 that the oracle's reader takes.
         rows = (root / 'dipeptide' / 'dipeptide.gro').read_text().splitlines()
         count = int(rows[1])
@@ -298,6 +328,11 @@ if mode == 'emit':
     nc = 6 if tri else 3
     tuples = dense(waters.ravel(), '%d')
     anchors_ = anchors if len(anchors) else np.zeros((1, 2), np.int64)
+    np.save(work / 'excluded.npy', excluded)
+    if '--drop-exclusion' in flags:
+        # For the test of the test: the first excluded pair of the rest is
+        # left out of the list's exclusions.
+        excluded = excluded[1:]
     excluded_ = excluded if len(excluded) else np.array([[waters[0, 0], waters[0, 1]]])
     cellmake = (f'md.triclinic_cell %c0v, %c1v, %c2v, %c3v, %c4v, %c5v' if tri else
                 f'md.orthorhombic_cell %c0v, %c1v, %c2v')

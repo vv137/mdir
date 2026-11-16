@@ -121,6 +121,14 @@ All runs are on an RTX 5090, by the timing protocol: two jobs of two rounds each
   - The entries are more than #795's because the cubes leave groups partly filled: on ubq-opc 13,056 places hold 7,397 units.
   - Cubes of two widths took 5–12% fewer entries, but on rd-opc a build took 360 µs instead of 135 (`kUnitCubeHeight`).
 
+### Forces
+
+`test/Integration/segments-build-forces-gpu.test` runs the serial definition over the device's records against the general groups build in double, at the positions of its checkpoint.
+- **Dodecahedron.** All 9672 particles: the largest difference is 0.013 of the bound of a reordered sum.
+- **Alanine dipeptide in TIP3P.** All 1168 particles, with the bonded terms set to 0 on both sides: 0.0015 of the bound.
+- **Mutants.** The test fails with a record left out (294 components outside), and with one excluded pair of the solute left out of the list (6 components outside, by up to $3\times10^{16}$ times the bound).
+- **#795.** Its route takes mixed precision only. On the dodecahedron, at its own positions, the largest difference is 0.018 of the bound of mixed precision.
+
 ## 6. Not in this slice
 
 - The SIMT schedule (S3).
