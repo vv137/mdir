@@ -1,0 +1,99 @@
+# The test-only route of the pair term over the segments of rigid kinds
+# (MDIR_RIGID_UNITS_TEST, D[md-alg-segments-simt]): every combination that
+# it does not take is refused, naming it. S4b replaces the variable by
+# `[performance] rigid_units` and removes it. Without the variable the
+# programs are unchanged (the corpus of D406 checks it); with it, the
+# program builds the pair term over the segments of the kinds it names.
+#
+# RUN: rm -rf %t && mkdir -p %t && cd %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- base.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 mdir emit --stage=module %t/base.toml | FileCheck %s --check-prefix=ROUTE
+# RUN: mdir emit --stage=module %t/base.toml | FileCheck %s --check-prefix=GENERAL
+#
+# ROUTE: md.tuple_set @kind_0 on(@atoms) arity(4) orientation(ordered) disjoint
+# ROUTE: md.tuple_set @kind_anchors on(@atoms) arity(2) orientation(ordered)
+# ROUTE: md.tuple_set @segment_1_1 on(@atoms) arity(2) orientation(unordered)
+# ROUTE: md.kind_pairs
+# GENERAL-NOT: md.kind_pairs
+# GENERAL-NOT: @kind_0
+#
+# RUN: sed 's/"GPU"/"CPU"/' %t/base.toml > %t/cpu.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU
+# CPU: MDIR_RIGID_UNITS_TEST (for tests only) does not take the CPU target: lists of units run on a GPU
+#
+# RUN: sed 's/"MIXED"/"DOUBLE"/' %t/base.toml > %t/double.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/double.toml 2>&1 | FileCheck %s --check-prefix=DOUBLE
+# DOUBLE: does not take this precision: the segmented schedule takes MIXED
+#
+# RUN: cp %t/base.toml %t/deterministic.toml && echo 'deterministic = true' >> %t/deterministic.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/deterministic.toml 2>&1 | FileCheck %s --check-prefix=DETERMINISTIC
+# DETERMINISTIC: does not take the deterministic mode
+#
+# RUN: sed -e 's/\[dynamics\]/[minimize]/' -e '/integrator/d' -e '/time_step/d' %t/base.toml > %t/minimize.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/minimize.toml 2>&1 | FileCheck %s --check-prefix=MINIMIZE
+# MINIMIZE: does not take a minimization
+#
+# RUN: sed -e 's/"PME"/"CUTOFF"/' -e 's/"PERIODIC"/"NONE"/' %t/base.toml > %t/open.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/open.toml 2>&1 | FileCheck %s --check-prefix=OPEN
+# OPEN: does not take a cell that is not periodic
+#
+# RUN: cp %t/base.toml %t/fe.toml && printf '[free_energy]\ncouple = ":1-3"\nstate = 0\n[free_energy.lambdas]\ncoulomb = [1.0, 0.0]\nvdw = [1.0, 1.0]\n' >> %t/fe.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/fe.toml 2>&1 | FileCheck %s --check-prefix=FE
+# FE: does not take [free_energy]
+#
+# RUN: sed 's/^electrostatics = "PME"/electrostatics = "PME"\nlennard_jones = "PME"/' %t/base.toml > %t/ljpme.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/ljpme.toml 2>&1 | FileCheck %s --check-prefix=LJPME
+# LJPME: does not take LJPME
+#
+# RUN: cp %t/base.toml %t/prolate.toml && printf '[pme]\nkernel = "PROLATE"\n' >> %t/prolate.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/prolate.toml 2>&1 | FileCheck %s --check-prefix=PROLATE
+# PROLATE: does not take a kernel of PME other than the Gaussian
+#
+# RUN: sed 's/^\[energy\]/[output]\nobservables = "obs.txt"\n\n[energy]/' %t/base.toml > %t/observe.toml
+# RUN: printf '[[energy.external]]\nname = "wall"\nexpression = "k*max(0, z - z0)^2"\nselection = ":1-3"\nk = 2.0\nz0 = 13.0\nobserve = ["k"]\n' >> %t/observe.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/observe.toml 2>&1 | FileCheck %s --check-prefix=OBSERVE
+# OBSERVE: does not take frame, tunable, or derivative programs
+#
+# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' -e 's/target    = "CPU"/target    = "GPU"/' \
+# RUN:     -e 's/precision = "DOUBLE"/precision = "MIXED"/' %S/../../examples/argon/argon.toml > %t/argon.toml
+# RUN: env MDIR_RIGID_UNITS_TEST=1 not mdir emit --stage=module %t/argon.toml 2>&1 | FileCheck %s --check-prefix=ARGON
+# ARGON: does not take a system without a topology
+#
+# RUN: env MDIR_RIGID_UNITS_TEST=2 not mdir emit --stage=module %t/base.toml 2>&1 | FileCheck %s --check-prefix=KIND
+# KIND: does not take '2': the kinds of rigid groups of the system are numbered from 1 to 1
+# RUN: env MDIR_RIGID_UNITS_TEST=x not mdir emit --stage=module %t/base.toml 2>&1 | FileCheck %s --check-prefix=NUMBER
+# NUMBER: does not take 'x': the kinds of rigid groups of the system are numbered from 1 to 1
+# RUN: env MDIR_RIGID_UNITS_TEST=1,1 not mdir emit --stage=module %t/base.toml 2>&1 | FileCheck %s --check-prefix=TWICE
+# TWICE: does not take kind 1 twice
+
+#--- base.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 10
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+#--- end
