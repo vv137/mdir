@@ -177,7 +177,7 @@ def ChooseScatter
     The thresholds, the edge, the probes, the block size, and the 48 KiB
     of block memory are the entries of the tuning policies for `arch`
     (include/mdir/Dialect/MDExec/DevicePolicy.h,
-    D[tuning-policies]); an option other than -1 overrides its entry.
+    D420); an option other than -1 overrides its entry.
 
     With `explain`, each choice and each refusal is a remark on its op; a
     choice by a threshold of a default entry that was not measured on

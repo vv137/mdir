@@ -1,5 +1,5 @@
 // The entries of the tuning policies that an architecture selects
-// (D[tuning-policies]), printed for device-policy.test:
+// (D420), printed for device-policy.test:
 //
 //   mdir-device-policy-test ARCH [CLASS]
 //

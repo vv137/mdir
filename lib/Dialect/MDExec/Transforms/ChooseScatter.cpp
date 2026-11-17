@@ -44,7 +44,7 @@ public:
       return signalPassFailure();
     }
     // The values that the options leave to the policy of the
-    // architecture (-1), from its entries (D[tuning-policies]).
+    // architecture (-1), from its entries (D420).
     policy = policy::getDevicePolicy(arch);
     auto chosen = [](int64_t option, int64_t entry) {
       return option == -1 ? entry : option;

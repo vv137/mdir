@@ -1673,7 +1673,7 @@ public:
             loops.push_back(loop);
         });
         // The block that the option leaves to the launch policy of the
-        // architecture (-1), from its entry (D[tuning-policies]).
+        // architecture (-1), from its entry (D420).
         int64_t block =
             blockSize == -1
                 ? md_exec::policy::getDevicePolicy(arch).launch.stageBlockSize

@@ -638,7 +638,7 @@ cannot meet it refuses the strategy with a reason and takes a legal
 fallback. A target without measurements takes a conservative stated
 policy, not a threshold inferred from another architecture. The policy
 records are tables, one for each strategy, keyed by the architecture and
-a device class (D[tuning-policies]): the pruning in the loop over pairs
+a device class (D420): the pruning in the loop over pairs
 has an entry for the architectures of major version 12, and every other
 value has only the default entry. Step 1 keeps today's values, so an
 architecture without an entry of its own still takes the default entry,

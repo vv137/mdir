@@ -1,4 +1,4 @@
-# The tuning policies of the device lowering (D[tuning-policies], #433):
+# The tuning policies of the device lowering (D420, #433):
 # each architecture takes the entries of its tables, which the pipeline and
 # the chooser of the scatter-accumulates show. The pruning in the loop over
 # pairs takes 4096 groups by default and 20,480 on every architecture of

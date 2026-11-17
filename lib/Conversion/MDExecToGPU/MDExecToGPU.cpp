@@ -284,7 +284,7 @@ public:
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
   /// The entry of the launch policy for the target's architecture
-  /// (DevicePolicy.h, D[tuning-policies]): the block memory of the
+  /// (DevicePolicy.h, D420): the block memory of the
   /// strategies and the lanes of PME's gathering.
   md_exec::policy::LaunchPolicy launch = md_exec::policy::kDefaultLaunch;
   /// An opt-in compiler strategy for the integer scans of the groups build.
@@ -10186,7 +10186,7 @@ public:
     if (!stated)
       return signalPassFailure();
     // The block and the lanes that the options leave to the launch policy
-    // of the architecture (-1), from its entry (D[tuning-policies]).
+    // of the architecture (-1), from its entry (D420).
     md_exec::policy::DevicePolicy policy =
         md_exec::policy::getDevicePolicy(arch);
     Lowering lowering(

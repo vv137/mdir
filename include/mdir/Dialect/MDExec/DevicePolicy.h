@@ -1,4 +1,4 @@
-// The tuning policies of the device lowering (D[tuning-policies],
+// The tuning policies of the device lowering (D420,
 // issue #433, docs/device-primitives.md, Section 8).
 //
 // Every threshold and launch parameter that a chooser or a lowering of a

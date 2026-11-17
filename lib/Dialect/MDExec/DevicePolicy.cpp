@@ -1,4 +1,4 @@
-// The tuning policies of the device lowering (D[tuning-policies]).
+// The tuning policies of the device lowering (D420).
 //
 // See include/mdir/Dialect/MDExec/DevicePolicy.h and
 // docs/device-primitives.md, Section 8. Adding an architecture adds

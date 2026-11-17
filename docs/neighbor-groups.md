@@ -775,8 +775,8 @@ units as before.
 of the last build (`takesFusedPruning`, one test for the refresh and the
 loop): from 4096 groups, and from 20,480 where the kernels are compiled for
 `sm_12x`, the entries of the pruning policy
-([device-primitives.md](device-primitives.md#8-tuning-policies-dtuning-policies),
-D[tuning-policies]); `MDIR_FUSED_PRUNE=off` never, `=always` at any number. The count
+([device-primitives.md](device-primitives.md#8-tuning-policies-d420),
+D420); `MDIR_FUSED_PRUNE=off` never, `=always` at any number. The count
 is that of the code, the places of the last build over 16, empty places
 included, which is at least $N/16$ and at most $(N + 63N_\text{col})/16$
 (Section 8.1); the tables of Section 11.7 give $N/16$. The reason: a warp a

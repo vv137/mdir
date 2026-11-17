@@ -72,7 +72,7 @@ of #567 checks completion and buffer borrows while retaining current waits.
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 | Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D340 |
-| Tuning policies: the thresholds and launch parameters of the device lowering, one table a strategy (Section 8) | the dispatch policies (`Policy800`, `Policy900`, ...) | #433 | Step 1 built, behavior-preserving: the pruning in the loop, the scatter-accumulates, and the launches read their entries for the architecture; no value changed. The entries for the RTX PRO 6000 by measurement are the next steps | D[tuning-policies] |
+| Tuning policies: the thresholds and launch parameters of the device lowering, one table a strategy (Section 8) | the dispatch policies (`Policy800`, `Policy900`, ...) | #433 | Step 1 built, behavior-preserving: the pruning in the loop, the scatter-accumulates, and the launches read their entries for the architecture; no value changed. The entries for the RTX PRO 6000 by measurement are the next steps | D420 |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
@@ -1687,7 +1687,7 @@ CPU row emit the same code as before.
   properties of output independence, of Python against `mdir run` in
   segments, and of checkpoints in both directions, with the lanes.
 
-## 8. Tuning policies (D[tuning-policies])
+## 8. Tuning policies (D420)
 
 The device lowering takes every threshold and launch parameter that a
 measurement chose from one table for each strategy, after CUB's dispatch
@@ -1749,7 +1749,7 @@ and the lowering pass the same entry, so they check the same bound.
 Capabilities of the device, such as the subgroup width, are not tuning and
 are not in the tables; they come from the target description of #558. The
 geometry of one emitter or template, such as the parts of a reduction or
-the threads of the tile kernel, stays with it (D[tuning-policies],
+the threads of the tile kernel, stays with it (D420,
 Section 6).
 
 ### 8.4 Tests

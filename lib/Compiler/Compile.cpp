@@ -104,7 +104,7 @@ static std::string getStageBodiesPass(StringRef arch) {
     options += "short-reductions=true";
   }
   // The block of a body's kernel from the launch policy of the
-  // architecture (D[tuning-policies]).
+  // architecture (D420).
   if (!arch.empty()) {
     if (!options.empty())
       options += " ";
@@ -270,7 +270,7 @@ static std::string getHostPairsOptions() {
 
 /// The architecture that the options of `mdir-gpu-lower-to-nvvm` compile
 /// for (`cubin-chip=`, getGpuPipelineOptions), whose entries of the tuning
-/// policies the device lowering takes (D[tuning-policies]), or an empty
+/// policies the device lowering takes (D420), or an empty
 /// name where they name none (PTX for the default architecture).
 static std::string getTargetArchitecture(StringRef gpuOptions) {
   llvm::SmallVector<StringRef> words;
@@ -283,7 +283,7 @@ static std::string getTargetArchitecture(StringRef gpuOptions) {
 
 /// The options of the pruning in the loop over pairs (D284): on
 /// from the groups of the pruning policy for the architecture of
-/// `gpuOptions` (D[tuning-policies]), unless MDIR_FUSED_PRUNE is `off`;
+/// `gpuOptions` (D420), unless MDIR_FUSED_PRUNE is `off`;
 /// `always` takes it at any number of groups.
 /// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
 /// (`simt`, `serial`, `serial-reversed`, `serial-magnitudes`, `omitted`),
@@ -303,7 +303,7 @@ static std::string getTraverseOracleOption() {
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   // The groups from which the loop prunes: the entry of the pruning policy
   // for the architecture that the kernels are compiled for
-  // (D284, D[tuning-policies]; 4096, and 20,480 for every architecture
+  // (D284, D420; 4096, and 20,480 for every architecture
   // of the major version 12).
   int64_t groups =
       md_exec::policy::getDevicePolicy(getTargetArchitecture(gpuOptions))
@@ -382,7 +382,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
   if (control.target == Target::GPU) {
     // The architecture that the kernels are compiled for, whose entries of
     // the tuning policies the choosers and the lowering take
-    // (D[tuning-policies]); none for PTX of the default architecture,
+    // (D420); none for PTX of the default architecture,
     // which takes the default entries.
     std::string arch = getTargetArchitecture(gpuOptions);
     std::string archOption = arch.empty() ? "" : "arch=" + arch + " ";
