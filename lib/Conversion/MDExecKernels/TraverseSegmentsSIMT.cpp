@@ -492,6 +492,32 @@ void Schedule::emitPack(OpBuilder &b, Value box, Value room) {
     Value held = load(body, lists.order, place);
     Value holds = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::sge,
                                         held, ci(body, 0));
+    // An empty place packs zeros: a record reads the places of its groups
+    // before their masks select them, so that what it reads was written.
+    auto empty = [&](OpBuilder &at, Location) {
+      Value zero3 = createZero(at, loc, VectorType::get({3}, f32));
+      storeElement(at, loc, zero3, anchors, place);
+      for (unsigned k = 1; k < maxMembers; ++k)
+        storeElement(
+            at, loc, zero3, offsets,
+            arith::AddIOp::create(
+                at, loc,
+                arith::MulIOp::create(at, loc, place, ix(at, maxMembers - 1)),
+                ix(at, k - 1)));
+      for (auto [j, in] : llvm::enumerate(op.getIns())) {
+        if (!fields[j])
+          continue;
+        Value zero = createZero(at, loc, getElementTypeOrSelf(in.getType()));
+        for (unsigned k = 0; k != maxMembers; ++k)
+          storeElement(
+              at, loc, zero, fields[j],
+              arith::AddIOp::create(
+                  at, loc,
+                  arith::MulIOp::create(at, loc, place, ix(at, maxMembers)),
+                  ix(at, k)));
+      }
+      scf::YieldOp::create(at, loc);
+    };
     scf::IfOp::create(body, loc, holds, [&](OpBuilder &in, Location) {
       // The rank of the place's group, from the places where the ranks
       // begin: the rest rank 0, kind f rank K - f.
@@ -547,7 +573,7 @@ void Schedule::emitPack(OpBuilder &b, Value box, Value room) {
         });
       }
       scf::YieldOp::create(in, loc);
-    });
+    }, empty);
   });
 }
 
