@@ -958,7 +958,7 @@ list.
 
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`, `SingleBlock`
 
-Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`
+Interfaces: `LoopEffectOpInterface`, `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 #### Attributes:
 
@@ -1887,7 +1887,7 @@ are those of `md_exec.pair_for`.
 
 Traits: `AttrSizedOperandSegments`, `RecursiveMemoryEffects`
 
-Interfaces: `MemoryEffectOpInterface`
+Interfaces: `MemoryEffectOpInterface`, `PairKernelBodyOpInterface`
 
 #### Attributes:
 
