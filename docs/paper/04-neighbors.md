@@ -1097,3 +1097,64 @@ and under stochastic cell rescaling, through the builds that these cause
 barostat). With the exact list the step of 12,288 atoms on an RTX 4090
 takes 6.10 s against 6.70 s with the search; MDIR's list costs about 1 ms a
 step at every size measured (`docs/metatomic-ml1.md`, Section 12.8).
+
+## 4.7 Lists of rigid units and their traversal
+
+A rigid group of D403, a water for example, moves as a body: SETTLE keeps
+its frame, and a massless site is a fixed combination of its frame atoms.
+A list of units (D417, D419) lists pairs of such molecules, and pairs of a
+molecule and a particle of the rest, and its traversal forms each site
+pair from them.
+
+**Places and forces.** With the anchor $\mathbf x_0$ of a unit, its frame
+offsets $\mathbf h_k = \mathbf x_k - \mathbf x_0$ and the weights $w_{pk}$
+of its kind, place $p$ is at $\mathbf x_p = \mathbf x_0 + \mathbf c_p$,
+$\mathbf c_p = \sum_{k\ge1} w_{pk}\mathbf h_k$, which is
+$\sum_k w_{pk}\mathbf x_k$ since each row of the weights sums to 1. The
+energy of the pair term is a sum over site pairs, $U = \sum u(\mathbf x_p -
+\mathbf x_q)$. With $\mathbf F_p = -\partial U/\partial\mathbf x_p$ the
+chain rule gives the force on frame atom $k$,
+
+$$
+\mathbf F_k = -\frac{\partial U}{\partial\mathbf x_k}
+= \sum_p w_{pk}\,\mathbf F_p ,
+$$
+
+exactly, for the function of the frame that the kernel evaluates (rule A of
+D417). The traversal adds the forces of a unit's places in registers and
+applies these weights once, when the unit's turn ends.
+
+**The virial.** Under a strain $\mathbf x \to (\mathsf 1 +
+\boldsymbol\varepsilon)\mathbf x$ the places move with their frame, since
+they are linear in it, so the virial of the site pairs is that of the forces
+on the frame atoms:
+$\sum_k \mathbf x_k\otimes\mathbf F_k = \sum_p (\sum_k w_{pk}\mathbf x_k)
+\otimes\mathbf F_p = \sum_p \mathbf x_p\otimes\mathbf F_p$.
+
+**A site that a topology defines otherwise.** Amber's extra point of a
+four-site water is $\mathbf x_s = \mathbf x_O + a\,(\mathbf u +
+\mathbf v)/\lVert\mathbf u + \mathbf v\rVert$, not linear in its frame,
+though equal to $\sum_k w_{sk}\mathbf x_k$ on the constrained frame. A
+program that moves $\mathbf F_s$ by its Jacobian, $\mathsf J_k^{\mathsf
+T}\mathbf F_s$, and one that moves it by the weights differ by $\Delta
+\mathbf F_k = (\mathsf J_k^{\mathsf T} - w_{sk}\mathsf 1)\mathbf F_s$. Both
+placements move the site with any rigid motion of the frame, so
+$\sum_k\Delta\mathbf F_k\cdot\delta\mathbf x_k = 0$ for every translation
+and rotation $\delta\mathbf x_k$: $\Delta\mathbf F$ lies in the span of the
+gradients of the frame's three constraints, and the forces of constraint
+take it up. The constrained motion is the same; the virial of the forces
+and that of the constraints differ by $\pm\sum_k\mathbf h_k\otimes\Delta
+\mathbf F_k$, and their sum, which the pressure takes, does not.
+
+**The schedule** (D[md-alg-segments-simt]). A warp takes a record of one
+segment, lanes $u$ and $u + 16$ the unit at place $16g + u$ of its group.
+The partners' anchors, offsets, fields, masks, and the accumulators of
+their places turn through the half-warp in 16 shuffle steps; each forms its
+places from its offsets at each step, so that a stored site is never read.
+Each site pair of a segment's table has its own test of the cutoff and its
+own slice of the region, and a pair that the table omits has no code. A
+unit's places reach its frame atoms as above, a partner once for each
+entry and the lane's unit once for each record. Where the refresh prunes,
+the traversal prunes too: each warp prunes the records of its row and keeps
+its 64 survivors, so that the inner records of a row hold full batches.
+
