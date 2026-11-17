@@ -2698,16 +2698,21 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
 
 // The list kernels take blocks of 64 entries in the order of their atomics,
 // each named by its group and segment, g S + s, and its ordinal in that
-// list. A counting sort of the blocks by segment gives the records in the
-// order of the segments, in any order within each: record w is the block of the sort's place
-// w, copied, with its group and its own count; `segments[s]` is the first
-// record of segment s, and `segments[S]` their number.
+// list. A counting sort of the blocks by segment, and by group within a
+// segment, gives the records in the order of the segments, the records of
+// each row (a group in a segment) one after another, in any order within
+// the row: record w is the block of the sort's place w, copied, with its
+// group and its own count; `segments[s]` is the first record of segment s,
+// and `segments[S]` their number. A pruning re-chunks the survivors of a
+// row into its first records (#795's U10, D[md-alg-segments-simt]).
 void GroupsBuild::emitSegments(Value gridOfCapacity) {
   using P = CmpIPredicate;
   Value c2s = cx(2);
   Value blockCapacity = dim(units, c0);
-  Value segCount = cx(S);
-  Value segCount1 = cx(S + 1);
+  // A bin for each row: segment s, group g at s G + g.
+  Value groupCount = divui(capacity, cx(16));
+  Value segCount = muli(cx(S), groupCount);
+  Value segCount1 = addi(segCount, cx(1));
   Value segKey = alloc(buffer, blockCapacity);
   Value segOf = alloc(buffer, segCount);
   Value segStart = alloc(buffer, segCount1);
@@ -2727,12 +2732,15 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
                     Value name = load(units, item);
                     Value segCount32 = ci(S);
                     Value seg = remui(name, segCount32);
-                    md_alg::BinOp::create(b, loc, seg);
+                    Value group = divui(name, segCount32);
+                    Value row = addi(
+                        muli(seg, indexCast(i32, groupCount)), group);
+                    md_alg::BinOp::create(b, loc, row);
                   },
                   [&] { md_alg::NoBinOp::create(b, loc); });
             },
             // The blocks came in the order of the atomics that took them:
-            // no order within a segment is kept.
+            // no order within a row is kept.
             md_alg::Order::Unordered);
   // A record a warp: its 64 entries a lane two at a time.
   Value c32r = cx(32);
@@ -2795,7 +2803,8 @@ void GroupsBuild::emitSegments(Value gridOfCapacity) {
     Value zeroS = cx(0);
     for (unsigned seg = 0; seg <= S; ++seg) {
       Value at = cx(seg);
-      auto span = md_alg::BinSpanOp::create(b, loc, segStart, zeroS, at);
+      auto span = md_alg::BinSpanOp::create(b, loc, segStart, zeroS,
+                                            muli(at, groupCount));
       store(span.getEnd(), segmentsOut, at);
     }
   });
