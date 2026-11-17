@@ -52,17 +52,18 @@ int64_t scatter::getTileBytes(int64_t edge, int64_t order, Type element) {
 }
 
 Refusal scatter::checkTile(int64_t edge, int64_t order, ArrayRef<int64_t> grid,
-                           Type element, std::optional<Algebra> algebra) {
+                           Type element, std::optional<Algebra> algebra,
+                           int64_t budget) {
   if (Refusal refused = checkReorder(element, algebra))
     return refused;
   if (!isTileEdge(edge))
     return "the template has no kernels of bins of " + std::to_string(edge) +
            " points, only of 4, 8, and 16";
   int64_t bytes = getTileBytes(edge, order, element);
-  if (bytes > kBlockMemoryBytes)
+  if (bytes > budget)
     return "a tile with the particles of a round takes " +
            std::to_string(bytes) + " bytes of block memory, more than " +
-           std::to_string(kBlockMemoryBytes);
+           std::to_string(budget);
   int64_t side = getTileSide(edge, order);
   for (int64_t length : grid)
     if (length < side)
@@ -72,7 +73,7 @@ Refusal scatter::checkTile(int64_t edge, int64_t order, ArrayRef<int64_t> grid,
   return std::nullopt;
 }
 
-Refusal scatter::checkTile(ReciprocalOp op, int64_t edge) {
+Refusal scatter::checkTile(ReciprocalOp op, int64_t edge, int64_t budget) {
   // The grid is in the type of the forces (D271): the field of the value
   // form, or its buffer in the storage form.
   Type element;
@@ -87,7 +88,7 @@ Refusal scatter::checkTile(ReciprocalOp op, int64_t edge) {
     return std::string("the sum yields no forces, whose type the grid takes");
   // The spreading is the first value that the sum reduces (Algebra.h).
   return checkTile(edge, op.getOrder(), op.getGrid(), element,
-                   algebra::getAlgebra(op, 0));
+                   algebra::getAlgebra(op, 0), budget);
 }
 
 int64_t scatter::getHashSlots(int64_t blockSize, int64_t arity) {
@@ -123,6 +124,7 @@ int64_t scatter::getHashBytes(int64_t slots, ArrayRef<Destination> outs) {
 
 Refusal scatter::checkHash(int64_t slots, TypeRange outs,
                            const std::optional<SmallVector<Algebra>> &algebras,
+                           int64_t budget,
                            SmallVectorImpl<Destination> *destinations) {
   if (outs.empty())
     return std::string("the loop adds to no field");
@@ -139,10 +141,10 @@ Refusal scatter::checkHash(int64_t slots, TypeRange outs,
     found.push_back(destination);
   }
   int64_t bytes = getHashBytes(slots, found);
-  if (bytes > kBlockMemoryBytes)
+  if (bytes > budget)
     return "a table of " + std::to_string(slots) + " slots takes " +
            std::to_string(bytes) + " bytes of block memory, more than " +
-           std::to_string(kBlockMemoryBytes);
+           std::to_string(budget);
   if (destinations)
     destinations->append(found.begin(), found.end());
   return std::nullopt;

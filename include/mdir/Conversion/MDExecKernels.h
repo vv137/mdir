@@ -403,9 +403,12 @@ mlir::LogicalResult resolveTemplateConversions(mlir::Operation *root);
 /// `shared_add_E` the atomic additions of a value of `real`, the type of the
 /// forces, to global memory and to a tile in the memory of the block; and a
 /// load or a store marked `mdir.template.real_alignment` takes the bytes of
-/// `real` as its alignment. The declarations are removed.
+/// `real` as its alignment. The declarations are removed. `lanes` is the
+/// threads of a particle in the gathering, from the launch policy
+/// (`LaunchPolicy::getGatherLanes`, DevicePolicy.h).
 mlir::LogicalResult resolveTemplateParameters(mlir::Operation *root,
-                                              mlir::Type real, int64_t order);
+                                              mlir::Type real, int64_t order,
+                                              int64_t lanes);
 std::string getPMEInstanceName(llvm::StringRef name, mlir::Type position,
                                mlir::Type charge, mlir::Type force,
                                int64_t order);

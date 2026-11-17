@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -87,7 +88,7 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
 /// shape of a GEMM in the bodies (D302) from
 /// `MDIR_STAGE_CONTRACTIONS`, for comparing the strategies: `gemm` calls of
 /// cuBLAS, `loops` MDIR's loops; another value, or none, is the default.
-static std::string getStageBodiesPass() {
+static std::string getStageBodiesPass(StringRef arch) {
   StringRef chosen = std::getenv("MDIR_STAGE_CONTRACTIONS")
                          ? std::getenv("MDIR_STAGE_CONTRACTIONS")
                          : "";
@@ -101,6 +102,13 @@ static std::string getStageBodiesPass() {
     if (!options.empty())
       options += " ";
     options += "short-reductions=true";
+  }
+  // The block of a body's kernel from the launch policy of the
+  // architecture (D[tuning-policies]).
+  if (!arch.empty()) {
+    if (!options.empty())
+      options += " ";
+    options += ("arch=" + arch).str();
   }
   if (!options.empty())
     return "md-exec-lower-stage-bodies{" + options + "},";
@@ -261,8 +269,8 @@ static std::string getHostPairsOptions() {
 }
 
 /// The options of the pruning in the loop over pairs (D284): on
-/// from the groups of `getFusedPruningGroups` for the architecture of
-/// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
+/// from the groups of the pruning policy for the architecture of
+/// `gpuOptions` (D[tuning-policies]), unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
 /// number of groups.
 /// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
 /// (`simt`, `serial`, `serial-reversed`, `serial-magnitudes`, `omitted`),
@@ -280,15 +288,14 @@ static std::string getTraverseOracleOption() {
 }
 
 static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
-  // The groups from which the pruning in the loop took no more time a step
-  // than the pruning of the refresh. On an RTX 4090 (sm_89), water boxes of
-  // 52,686 and 103,158 sites: 3,292 groups equal, 6,447 groups 4% less. On
-  // an RTX PRO 6000 Blackwell Max-Q (sm_120) the kernel takes the sum of
-  // the two it replaces, and a step is equal from about 19,000 groups
-  // (+1.0% at 6,447, +0.2% at 19,367, -0.2% at 25,538, -1.1% at 66,693).
-  int64_t groups = 4096;
-  if (gpuOptions.contains("cubin-chip=sm_12"))
-    groups = 20480;
+  // The groups from which the loop prunes: the entry of the pruning policy
+  // for the architecture that the kernels are compiled for
+  // (D284, D[tuning-policies]; 4096, and 20,480 for every architecture
+  // of the major version 12).
+  int64_t groups =
+      md_exec::policy::getDevicePolicy(
+          md_exec::policy::getTargetArchitecture(gpuOptions))
+          .pruning.fusedGroups;
   llvm::StringRef value = mdir::compiler::getFusedPruningSetting();
   // The serial oracle takes the pruning in the refresh.
   const char *oracle = std::getenv("MDIR_TRAVERSE_ORACLE");
@@ -361,22 +368,29 @@ std::string mdir::compiler::getPipeline(const Control &control,
      << (control.deterministic ? "{deterministic=true}" : "") << ",";
 
   if (control.target == Target::GPU) {
+    // The architecture that the kernels are compiled for, whose entries of
+    // the tuning policies the choosers and the lowering take
+    // (D[tuning-policies]); none for PTX of the default architecture,
+    // which takes the default entries.
+    std::string arch = md_exec::policy::getTargetArchitecture(gpuOptions);
+    std::string archOption = arch.empty() ? "" : "arch=" + arch + " ";
     // The strategy of each scatter-accumulate: the tiles of the spreading
     // of PME by the size of its grid (D282), the tables of the tuples
     // evaluated once from 100,000 tuples (D283); MDIR_PME_SPREAD and
     // MDIR_TUPLE_SUMS override the choice, to compare the strategies
     // (D285).
-    os << "md-exec-choose-scatter{" << getScatterOptions(control) << "},";
+    os << "md-exec-choose-scatter{" << archOption << getScatterOptions(control)
+       << "},";
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
-       << (control.stagedModels.empty() ? "" : getStageBodiesPass())
+       << (control.stagedModels.empty() ? "" : getStageBodiesPass(arch))
        // The loops over pairs over groups become md_alg.traverse_pairs
        // (D415).
        << "convert-md-exec-to-md-alg,"
-       << "convert-md-exec-to-gpu{"
+       << "convert-md-exec-to-gpu{" << archOption
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the

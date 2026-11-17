@@ -26,12 +26,6 @@ namespace scatter {
 /// Why a strategy does not apply, or nothing where it does.
 using Refusal = std::optional<std::string>;
 
-/// The block memory that a kernel may take without asking for more: the
-/// static limit of a block on every device of compute capability 7.0 or
-/// later. Neither strategy asks for more, so this bound is also what keeps
-/// a block's occupancy where the measurements of D282 and D283 put it.
-constexpr int64_t kBlockMemoryBytes = 48 * 1024;
-
 /// Whether the values may be added in another order than the atomics of
 /// the device add them. A privatized sum adds the values of a block first
 /// and the block's sums afterwards: exact for integers in any order, but
@@ -62,14 +56,17 @@ int64_t getTileSide(int64_t edge, int64_t order);
 int64_t getTileBytes(int64_t edge, int64_t order, mlir::Type element);
 /// The preconditions of `tile(edge)` on a reciprocal sum of order `order`
 /// on `grid` with its grid in `element`: the reordering, an edge of the
-/// template, the block memory, and a footprint that wraps around the grid
-/// once at most (every edge of the grid at least the side of a tile).
+/// template, the block memory (at most `budget` bytes, the launch policy's
+/// `blockMemoryBytes`, DevicePolicy.h), and a footprint that wraps around
+/// the grid once at most (every edge of the grid at least the side of a
+/// tile).
 Refusal checkTile(int64_t edge, int64_t order, llvm::ArrayRef<int64_t> grid,
-                  mlir::Type element, std::optional<Algebra> algebra);
+                  mlir::Type element, std::optional<Algebra> algebra,
+                  int64_t budget);
 /// The same for `op`, its grid in the type of its forces (D271), in the
 /// value or the storage form, and the algebra that it states for its
 /// spreading.
-Refusal checkTile(ReciprocalOp op, int64_t edge);
+Refusal checkTile(ReciprocalOp op, int64_t edge, int64_t budget);
 
 //===----------------------------------------------------------------------===//
 // hash(S, P, L): the table of a block (D283)
@@ -101,10 +98,12 @@ Refusal getHashDestination(mlir::Type fieldOrBuffer, Destination &out);
 int64_t getHashBytes(int64_t slots, llvm::ArrayRef<Destination> outs);
 /// The preconditions of `hash` with `slots` on destinations `outs`, whose
 /// stated algebras are `algebras` (nothing where the op states none): the
-/// reordering, the fallback of each destination, and the block memory.
+/// reordering, the fallback of each destination, and the block memory (at
+/// most `budget` bytes, as for checkTile).
 /// `destinations` takes the destinations where they are given.
 Refusal checkHash(int64_t slots, mlir::TypeRange outs,
                   const std::optional<llvm::SmallVector<Algebra>> &algebras,
+                  int64_t budget,
                   llvm::SmallVectorImpl<Destination> *destinations = nullptr);
 
 } // namespace scatter

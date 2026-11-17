@@ -174,7 +174,14 @@ def ChooseScatter
       `scatter-hash=on` takes the table at any count, `scatter-hash=off`
       never.
 
-    With `explain`, each choice and each refusal is a remark on its op.
+    The thresholds, the edge, the probes, the block size, and the 48 KiB
+    of block memory are the entries of the tuning policies for `arch`
+    (include/mdir/Dialect/MDExec/DevicePolicy.h,
+    D[tuning-policies]); an option other than -1 overrides its entry.
+
+    With `explain`, each choice and each refusal is a remark on its op; a
+    choice by a threshold of a default entry that was not measured on
+    `arch` says so.
 
     ```mlir
     %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
@@ -185,33 +192,40 @@ def ChooseScatter
   let options = [
     Option<"tile", "tile", "std::string", /*default=*/"\"auto\"",
            "The tiles of PME: auto, on, or off">,
-    Option<"tileEdge", "tile-edge", "int64_t", /*default=*/"8",
-           "The points of an edge of a bin of the tiles: 4, 8, or 16">,
+    Option<"arch", "arch", "std::string", /*default=*/"\"\"",
+           "The architecture that the kernels are compiled for (sm_89), "
+           "whose entry of the tuning policies gives each value of -1; "
+           "none takes the default entry">,
+    Option<"tileEdge", "tile-edge", "int64_t", /*default=*/"-1",
+           "The points of an edge of a bin of the tiles: 4, 8, or 16; -1 "
+           "the policy's (8)">,
     Option<"tileMinPoints", "tile-min-points", "int64_t",
-           /*default=*/"500000",
+           /*default=*/"-1",
            "With tile=auto, the least number of points of a grid that is "
-           "tiled">,
+           "tiled; -1 the policy's (500000)">,
     Option<"hash", "hash", "std::string", /*default=*/"\"auto\"",
            "The tables of the tuples: auto, on (at any count), or off">,
-    Option<"hashLeast", "hash-least", "int64_t", /*default=*/"100000",
+    Option<"hashLeast", "hash-least", "int64_t", /*default=*/"-1",
            "With hash=auto, the fewest tuples of a launch that take the "
-           "table; a launch of fewer keeps the atomics">,
+           "table; a launch of fewer keeps the atomics; -1 the policy's "
+           "(100000)">,
     Option<"pairHash", "pair-hash", "std::string", /*default=*/"\"off\"",
            "The tables of the loops over pairs that add at both ends: "
            "auto (the atomics, as measured faster), on, or off">,
-    Option<"pairHashLeast", "pair-hash-least", "int64_t", /*default=*/"0",
+    Option<"pairHashLeast", "pair-hash-least", "int64_t", /*default=*/"-1",
            "The fewest units of work of a launch of a loop over pairs that "
-           "take the table; a launch of fewer keeps the atomics">,
+           "take the table; a launch of fewer keeps the atomics; -1 the "
+           "policy's (0)">,
     Option<"scatterHash", "scatter-hash", "std::string",
            /*default=*/"\"auto\"",
            "The tables of md_exec.scatter_add: auto (from hash-least "
            "values), on (at any count), or off">,
-    Option<"hashProbes", "hash-probes", "int64_t", /*default=*/"8",
+    Option<"hashProbes", "hash-probes", "int64_t", /*default=*/"-1",
            "The slots that a search of the table tries before the value "
-           "goes to the destination with an atomic">,
-    Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
+           "goes to the destination with an atomic; -1 the policy's (8)">,
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"-1",
            "The threads of a block of the tuples, as convert-md-exec-to-gpu "
-           "launches them">,
+           "launches them; -1 the launch policy's (128)">,
     Option<"explain", "explain", "bool", /*default=*/"false",
            "A remark on each op for its choice or the reason of a refusal">
   ];

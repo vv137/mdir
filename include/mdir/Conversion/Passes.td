@@ -324,8 +324,13 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
   let options = [
     Option<"device", "device", "bool", /*default=*/"true",
            "Run the bodies' loops as kernels of the device">,
-    Option<"blockSize", "block-size", "int64_t", /*default=*/"256",
-           "The threads of a block of a body's kernel">,
+    Option<"arch", "arch", "std::string", /*default=*/"\"\"",
+           "The architecture that the kernels are compiled for (sm_89), "
+           "whose entry of the launch policy (DevicePolicy.h) gives a "
+           "block-size of -1; none takes the default entry">,
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"-1",
+           "The threads of a block of a body's kernel; -1 the launch "
+           "policy's (256)">,
     Option<"fuse", "fuse", "bool", /*default=*/"true",
            "Fold unit dimensions and fuse elementwise producers of several "
            "uses into their consumers; false fuses producers of one use only "
@@ -418,11 +423,17 @@ def ConvertMDExecToGPU
     of the GPU modules replaced by `mdir-gpu-module-to-binary`.
   }];
   let options = [
-    Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
-           "The number of threads in a block">,
-    Option<"rowLanes", "row-lanes", "int64_t", /*default=*/"16",
+    Option<"arch", "arch", "std::string", /*default=*/"\"\"",
+           "The architecture that the kernels are compiled for (sm_89), "
+           "whose entry of the launch policy (DevicePolicy.h) gives each "
+           "value of -1, the block memory of the strategies, and the lanes "
+           "of PME's gathering; none takes the default entry">,
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"-1",
+           "The number of threads in a block; -1 the launch policy's (128)">,
+    Option<"rowLanes", "row-lanes", "int64_t", /*default=*/"-1",
            "The threads that share the neighbors or tuples of a particle, "
-           "a power of two up to 32; 1 gives a thread to each particle">,
+           "a power of two up to 32; 1 gives a thread to each particle; -1 "
+           "the launch policy's (16)">,
     Option<"fuseRows", "fuse-rows", "bool", /*default=*/"true",
            "Whether consecutive loops over pairs and tuples of the same "
            "positions become one kernel">,

@@ -21,6 +21,7 @@
 #include "mdir/Dialect/MDExec/NeighborCoverage.h"
 #include "mdir/Dialect/MDRT/SegmentRegions.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -282,6 +283,10 @@ public:
   /// `fusePruningGroups` groups (`fuse-pruning`, D284).
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
+  /// The entry of the launch policy for the target's architecture
+  /// (DevicePolicy.h, D[tuning-policies]): the block memory of the
+  /// strategies and the lanes of PME's gathering.
+  md_exec::policy::LaunchPolicy launch = md_exec::policy::kDefaultLaunch;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
@@ -1638,7 +1643,8 @@ FailureOr<bool> Lowering::launchTupleBlocks(
       return false;
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
             scatter.getSlots(), loop.getOuts().getTypes(),
-            md_exec::algebra::getDestinationAlgebras(loop)))
+            md_exec::algebra::getDestinationAlgebras(loop),
+            launch.blockMemoryBytes))
       return loop->emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
@@ -1668,7 +1674,8 @@ FailureOr<bool> Lowering::launchTupleBlocks(
   // then the run keeps the atomics.
   SmallVector<md_exec::scatter::Destination> destinations;
   if (md_exec::scatter::checkHash(slots, ValueRange(outs).getTypes(),
-                                  algebras, &destinations))
+                                  algebras, launch.blockMemoryBytes,
+                                  &destinations))
     return false;
   SmallVector<Type> attributions =
       kernels::getHashAttributions(context, slots, destinations);
@@ -1789,7 +1796,8 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
   SmallVector<md_exec::scatter::Destination> destinations;
   if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
           scatter.getSlots(), TypeRange{destType},
-          md_exec::algebra::getDestinationAlgebras(op), &destinations))
+          md_exec::algebra::getDestinationAlgebras(op),
+          launch.blockMemoryBytes, &destinations))
     return op.emitOpError()
            << "takes the strategy 'hash', whose precondition does not hold: "
            << *refused;
@@ -3688,7 +3696,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   if (tabled) {
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
             scatter.getSlots(), op.getOuts().getTypes(),
-            md_exec::algebra::getDestinationAlgebras(op), &destinations))
+            md_exec::algebra::getDestinationAlgebras(op),
+            launch.blockMemoryBytes, &destinations))
       return op.emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
@@ -3845,6 +3854,9 @@ public:
       : lowering(lowering), op(op), structure(structure) {}
 
   int64_t getBlockSize() override { return lowering.blockSize; }
+  int64_t getBlockMemoryBytes() override {
+    return lowering.launch.blockMemoryBytes;
+  }
   void bringIn(gpu::LaunchOp launch) override { lowering.bringIn(launch); }
   void launchOver(OpBuilder &builder, Location loc, Value count,
                   function_ref<void(OpBuilder &, Value)> body) override {
@@ -5019,7 +5031,8 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return failure();
   // The parameters of the instance: the order, the constants of the
   // tiles, and the atomic additions (D369, #739).
-  if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
+  if (failed(kernels::resolveTemplateParameters(*templates, force, order,
+                                               launch.getGatherLanes(order))))
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
@@ -5103,7 +5116,8 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
     return failure();
   // The parameters of the instance: the order, the constants of the
   // tiles, and the atomic additions (D369, #739).
-  if (failed(kernels::resolveTemplateParameters(*templates, force, order)))
+  if (failed(kernels::resolveTemplateParameters(*templates, force, order,
+                                               launch.getGatherLanes(order))))
     return failure();
   if (failed(kernels::resolveTemplateConversions(*templates)))
     return failure();
@@ -5359,7 +5373,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value bins = getBins(op);
   if (tiles) {
     if (md_exec::scatter::Refusal refused =
-            md_exec::scatter::checkTile(op, tiles))
+            md_exec::scatter::checkTile(op, tiles, launch.blockMemoryBytes))
       return op->emitOpError()
              << "takes the strategy 'tile', whose precondition does not "
                 "hold: "
@@ -10171,9 +10185,15 @@ public:
     });
     if (!stated)
       return signalPassFailure();
-    Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      fuseIntegration, deterministic, tuplesOnce,
-                      fuseCenters);
+    // The block and the lanes that the options leave to the launch policy
+    // of the architecture (-1), from its entry (D[tuning-policies]).
+    md_exec::policy::DevicePolicy policy =
+        md_exec::policy::getDevicePolicy(arch);
+    Lowering lowering(
+        getOperation(), blockSize == -1 ? policy.launch.blockSize : blockSize,
+        rowLanes == -1 ? policy.launch.rowLanes : rowLanes, fuseRows,
+        fuseIntegration, deterministic, tuplesOnce, fuseCenters);
+    lowering.launch = policy.launch;
     lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
