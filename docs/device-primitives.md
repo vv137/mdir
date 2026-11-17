@@ -1719,8 +1719,15 @@ it, the RTX 5090 included. No input selects a class yet, and every entry
 has the empty one. A target that names no architecture (PTX for the
 default one) takes the default entries.
 
-The default entry of the scatter table was measured on `sm_89` and
-`sm_120`, and that of the pruning table on `sm_89`. With `explain`,
+Each entry names the architectures that its measurement covered: the
+default entry of the scatter table `sm_89` and `sm_120`, that of the
+pruning table `sm_89`, and the pruning's entry of the major version 12
+`sm_120` alone, so that `sm_121` takes its 20,480 groups as a fallback. A
+selected entry not measured on the architecture is a fallback
+(`pruningFallback` and the others of `DevicePolicy`). The policy follows
+the compile options, not the device: with `MDIR_GPU_BINARY=ptx` and no
+`MDIR_GPU_ARCH` the options name no architecture, and the default entries
+apply. With `explain`,
 `md-exec-choose-scatter` adds to a choice that a value of a default entry
 made, on another architecture, `(the default of the policy: sm_80 was
 not measured)`; without an architecture the remarks are those of before.
@@ -1743,12 +1750,13 @@ Capabilities of the device, such as the subgroup width, are not tuning and
 are not in the tables; they come from the target description of #558. The
 geometry of one emitter or template, such as the parts of a reduction or
 the threads of the tile kernel, stays with it (D[tuning-policies],
-Section 5).
+Section 6).
 
 ### 8.4 Tests
 
-`test/Driver/device-policy.test` prints the pipeline
-for `sm_120`, `sm_121a`, `sm_89`, `sm_80`, and no architecture and checks
+`test/Driver/device-policy.test` prints each table's values and fallback
+for `sm_120`, `sm_121a`, `sm_89`, `sm_80`, and no architecture
+(`mdir-device-policy-test`), and the pipeline for the same and checks
 the pruning's groups and the option `arch`. It also checks the scatter
 entries and the fallback remark of the chooser. The corpus of D406 is
 identical to that of the base on `sm_89` and `sm_120` (PR #900).

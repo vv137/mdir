@@ -75,6 +75,10 @@ add_llvm_executable(mdir-kind-pairs-test Driver/KindPairsTest.cpp)
 llvm_update_compile_flags(mdir-kind-pairs-test)
 target_link_libraries(mdir-kind-pairs-test PRIVATE MDIRDriver MLIRParser)
 
+add_llvm_executable(mdir-device-policy-test Driver/DevicePolicyTest.cpp)
+llvm_update_compile_flags(mdir-device-policy-test)
+target_link_libraries(mdir-device-policy-test PRIVATE MDIRMDExec)
+
 add_llvm_executable(mdir-compile-test Driver/CompileTest.cpp)
 llvm_update_compile_flags(mdir-compile-test)
 target_link_libraries(mdir-compile-test PRIVATE MDIRCompiler)
@@ -102,6 +106,7 @@ set(MDIR_TEST_DEPENDS
   mdir-neighbor-count-test
   mdir-rigid-groups-test
   mdir-kind-pairs-test
+  mdir-device-policy-test
   mdir
   mdir-opt
   mdrt

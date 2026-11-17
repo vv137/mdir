@@ -19,17 +19,24 @@ Recorded at its merge.
 - **The architecture** is the name that the target states, `sm_<major><minor>` with an optional suffix of letters (`sm_120a`). It is parsed into a major and a minor version. A name that does not parse, and no name (PTX for the default architecture), take the default entries.
 - **The device class** is a string, empty for every device of the architecture. The RTX 5090 and the RTX PRO 6000 are both `sm_120`, and D284's 20,480 was measured on the PRO 6000 Max-Q. Every entry has the empty class for now, and nothing selects another: no key, option, or variable is added. A later step adds the classes that measurements tell apart, and the input that selects them.
 - **The order** is: an entry of the architecture and the class, then one of the architecture, then one of its major version, then the default entry. The pruning's entry of the major version 12 is what `contains("cubin-chip=sm_12")` matched: `sm_120`, `sm_120a`, `sm_121`, and `sm_121a`.
-- **A fallback** is a selection of the default entry for an architecture that the default was not measured on. The explain remarks of `md-exec-choose-scatter`, the only chooser that has them, say so on a choice made by a value of the scatter table: `(the default of the policy: sm_80 was not measured)`. Without an architecture, as in `mdir-opt` and for PTX of the default architecture, the remarks are those of before.
+- **The coverage.** Each entry, the defaults included, names the architectures that its measurement covered. The pruning's entry of the major version 12 covered `sm_120` alone (the RTX PRO 6000 Max-Q): `sm_121` and `sm_121a` take its 20,480 groups, as before, but as a fallback.
+- **A fallback** is a selected entry that was not measured on the architecture: the default entry of an architecture without one of its own, or an entry of its major version that covered another minor one. The explain remarks of `md-exec-choose-scatter`, the only chooser that has them, say so on a choice made by a value of the scatter table: `(the default of the policy: sm_80 was not measured)`. Without an architecture, as in `mdir-opt` and for PTX of the default architecture, the remarks are those of before.
 
 ## 3. How the passes read it
 
 `getPipeline()` takes the architecture from the options of `mdir-gpu-lower-to-nvvm` (`getTargetArchitecture`, the value of `cubin-chip=`). It passes it as the option `arch` of `md-exec-choose-scatter`, `convert-md-exec-to-gpu`, and `md-exec-lower-stage-bodies` when there is one. Each option of these passes that a table now gives defaults to -1, "the entry for `arch`": `tile-edge`, `tile-min-points`, `hash-least`, `hash-probes`, `pair-hash-least`, and both `block-size` and `row-lanes`. An explicit value overrides the entry, as before. The 48 KiB of block memory is a parameter of `checkTile` and `checkHash` (`Scatter.h`), and the chooser and the lowering pass the same entry. `kernels::resolveTemplateParameters` takes the gathering's lanes from the lowering's entry.
 
-## 4. The overrides
+## 4. Step 1 and the principle of the policy records
+
+A target without measurements is to take a conservative stated policy, not a threshold inferred from another architecture (the maintainer, 2026-11-17, docs/paper/08-gpu.md, Section 8.6). Step 1 keeps today's values, so an architecture without an entry of its own still takes the default entry, which was measured on other architectures (`sm_89`, and `sm_120` for the scatter table), and the chooser's remarks say so. Conservative entries for the architectures that were not measured are set in a later step of #433.
+
+The policy follows the compile options (`cubin-chip=`), not the device: with `MDIR_GPU_BINARY=ptx` and no `MDIR_GPU_ARCH`, the options name no architecture, and the default entries apply even on a device whose chip is known (an RTX 5090 then prunes in the loop from 4096 groups), as the string test did before; keying the policy on the device's chip there changes a value and belongs to a later step.
+
+## 5. The overrides
 
 They keep their names and effects (docs/environment.md). `MDIR_FUSED_PRUNE=off` and `always` still give no option and `fuse-pruning-groups=0`. `MDIR_PME_SPREAD`, `MDIR_TUPLE_SUMS`, and `MDIR_PAIR_SUMS` still give `tile=`, `tile-edge=`, `hash=`, and `pair-hash=`. `MDIR_GPU_ARCH` names the architecture, and so the entries that it selects.
 
-## 5. Not moved
+## 6. Not moved
 
 These stay where they are. They are the geometry of one emitter or template, or a capability of the device, not a tuning:
 
@@ -40,6 +47,6 @@ These stay where they are. They are the geometry of one emitter or template, or 
 - `kPairHashReach` (D291), which is a count of particles;
 - the warp width of 32 in the NVIDIA emitters, which is a capability and comes from the target description of #558.
 
-## 6. Validation
+## 7. Validation
 
-The gate is the corpus of D406, identical between the base and this branch, on `sm_89` and on `sm_120`. The PR names the runs and which run covers which threshold. A lit test checks the entries for each architecture through the printed pipeline and the remarks of the chooser, including 20,480 on `sm_120` and `sm_121a`, 4096 on `sm_89`, `sm_80`, and no architecture, and the fallback remark.
+The gate is the corpus of D406, identical between the base and this branch, on `sm_89` and on `sm_120`. The PR names the runs and which run covers which threshold. A lit test checks the entries for each architecture through the printed pipeline and the remarks of the chooser, including 20,480 on `sm_120` and `sm_121a`, 4096 on `sm_89`, `sm_80`, and no architecture, and the fallback remark; `mdir-device-policy-test` prints each table's values and fallback, so that `sm_121a` takes 20,480 as a fallback and `sm_120` does not.

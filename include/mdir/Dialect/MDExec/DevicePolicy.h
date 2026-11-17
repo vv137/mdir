@@ -8,9 +8,11 @@
 // algorithm reads its parameters only from the selected record). A table
 // is keyed by the target's architecture and by a device class, where the
 // measurements differ within one architecture. An architecture without
-// an entry of its own takes the table's default entry, and the selection
-// says so (`DevicePolicy::fallback`). Each entry names the measurement
-// behind it: the decision, the systems, the devices, and the date.
+// an entry of its own takes the table's default entry. Each entry names
+// the measurement behind it (the decision, the systems, the devices, and
+// the date) and the architectures that it covered; a selected entry that
+// was not measured on the architecture is a fallback, and the selection
+// says so (`DevicePolicy::pruningFallback` and the others).
 //
 // The architecture is the name that the target states (`sm_89`,
 // `sm_120a`); the tables do not assume a vendor beyond that name, and a
@@ -113,8 +115,9 @@ struct DevicePolicy {
   LaunchPolicy launch;
   /// The measurement behind each selected entry.
   Measurement pruningBasis, scatterBasis, launchBasis;
-  /// The tables whose entry for the architecture is the default, because
-  /// it has none of its own and the default was not measured on it.
+  /// The tables whose selected entry was not measured on the
+  /// architecture: the default where it has no entry of its own, or an
+  /// entry of its major version that covered another minor one.
   bool pruningFallback = true, scatterFallback = true, launchFallback = true;
   /// The architecture and class as given.
   std::string arch, deviceClass;
