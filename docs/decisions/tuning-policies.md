@@ -19,7 +19,7 @@ Recorded at its merge.
 - **The architecture** is the name that the target states, `sm_<major><minor>` with an optional suffix of letters (`sm_120a`). It is parsed into a major and a minor version. A name that does not parse, and no name (PTX for the default architecture), take the default entries.
 - **The device class** is a string, empty for every device of the architecture. The RTX 5090 and the RTX PRO 6000 are both `sm_120`, and D284's 20,480 was measured on the PRO 6000 Max-Q. Every entry has the empty class for now, and nothing selects another: no key, option, or variable is added. A later step adds the classes that measurements tell apart, and the input that selects them.
 - **The order** is: an entry of the architecture and the class, then one of the architecture, then one of its major version, then the default entry. The pruning's entry of the major version 12 is what `contains("cubin-chip=sm_12")` matched: `sm_120`, `sm_120a`, `sm_121`, and `sm_121a`.
-- **A fallback** is a selection of the default entry for an architecture that the default was not measured on. The explain remarks of `md-exec-choose-scatter`, the only chooser that has them, say so on a choice made by a value of the scatter table: `(the default of the policy: sm_80 was not measured)`, or `no architecture given`.
+- **A fallback** is a selection of the default entry for an architecture that the default was not measured on. The explain remarks of `md-exec-choose-scatter`, the only chooser that has them, say so on a choice made by a value of the scatter table: `(the default of the policy: sm_80 was not measured)`. Without an architecture, as in `mdir-opt` and for PTX of the default architecture, the remarks are those of before.
 
 ## 3. How the passes read it
 

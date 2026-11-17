@@ -121,7 +121,8 @@ struct DevicePolicy {
 
   /// The words of an explain remark for a choice from the table of
   /// `fallback`: nothing where the entry was measured on the
-  /// architecture, else that the default was taken.
+  /// architecture or no architecture is given, else that the default was
+  /// taken.
   std::string describeFallback(bool fallback) const;
 };
 

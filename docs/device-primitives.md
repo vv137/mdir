@@ -1723,7 +1723,7 @@ The default entry of the scatter table was measured on `sm_89` and
 `sm_120`, and that of the pruning table on `sm_89`. With `explain`,
 `md-exec-choose-scatter` adds to a choice that a value of a default entry
 made, on another architecture, `(the default of the policy: sm_80 was
-not measured)`, or `no architecture given`.
+not measured)`; without an architecture the remarks are those of before.
 
 ### 8.3 How the passes read them
 

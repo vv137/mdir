@@ -57,7 +57,7 @@
 # MEASURED: remark: scatter: hash(256, 8, 100000){{$}}
 # FALLBACK: remark: scatter: no tile: the grid has 64000 points, fewer than tile-min-points, too few bins to occupy a device (tile=auto) (the default of the policy: sm_80 was not measured){{$}}
 # FALLBACK: remark: scatter: hash(256, 8, 100000) (the default of the policy: sm_80 was not measured){{$}}
-# NONE: remark: scatter: hash(256, 8, 100000) (the default of the policy: no architecture given){{$}}
+# NONE: remark: scatter: hash(256, 8, 100000){{$}}
 # GIVEN: remark: scatter: tile(8) (the default of the policy: sm_80 was not measured){{$}}
 # GIVEN: remark: scatter: hash(256, 4, 5){{$}}
 # OTHER: remark: scatter: hash(256, 8, 100000) (the default of the policy: gfx90a was not measured){{$}}

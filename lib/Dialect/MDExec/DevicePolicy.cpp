@@ -172,10 +172,10 @@ std::optional<DeviceKey> mdir::md_exec::policy::parseArchitecture(
 }
 
 std::string DevicePolicy::describeFallback(bool fallback) const {
-  if (!fallback)
+  // Without an architecture (mdir-opt, PTX for the default architecture)
+  // the remarks are those of before the tables.
+  if (!fallback || arch.empty())
     return "";
-  if (arch.empty())
-    return " (the default of the policy: no architecture given)";
   return " (the default of the policy: " + arch + " was not measured)";
 }
 
