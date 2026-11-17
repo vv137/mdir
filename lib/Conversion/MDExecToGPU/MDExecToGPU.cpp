@@ -388,11 +388,14 @@ private:
                                  double innerReach);
   /// The warp's pruning of record `w` (index) in its lanes (`lane`, i32):
   /// the entries that keep a pair within the reach of their segment are
-  /// written to the inner records from `base` + `cursor` (index, i32), in
-  /// the order of the record. Returns their number, in every lane.
+  /// numbered from `cursor` (i32), in the order of the record, and entry n
+  /// is written to the inner records at `base` + n (index); with `low` and
+  /// `high` (i32), only those with n in [low, high), at `base` + n - low.
+  /// Returns their number, in every lane.
   Value emitSegmentsPruneRecord(OpBuilder &b, Location loc,
                                 const SegmentsPrune &prune, Value w,
-                                Value lane, Value base, Value cursor);
+                                Value lane, Value base, Value cursor,
+                                Value low = Value(), Value high = Value());
   /// Counts record `w` as active where `kept` (i32) is not zero, for the
   /// active units (D268).
   void emitSegmentsRecordActive(OpBuilder &b, Location loc,
@@ -4083,8 +4086,9 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
             innerReach);
       };
       fused.pruneRecord = [=](OpBuilder &b, Value w, Value lane, Value base,
-                              Value cursor) {
-        return emitSegmentsPruneRecord(b, loc, *state, w, lane, base, cursor);
+                              Value cursor, Value low, Value high) {
+        return emitSegmentsPruneRecord(b, loc, *state, w, lane, base, cursor,
+                                       low, high);
       };
       fused.recordActive = [=](OpBuilder &b, Value w, Value kept) {
         emitSegmentsRecordActive(b, loc, *state, w, kept);
@@ -7008,7 +7012,8 @@ Lowering::getSegmentsPrune(OpBuilder &builder, Location loc,
 
 Value Lowering::emitSegmentsPruneRecord(OpBuilder &b, Location loc,
                                         const SegmentsPrune &prune, Value w,
-                                        Value lane, Value base, Value cursor) {
+                                        Value lane, Value base, Value cursor,
+                                        Value low, Value high) {
   Type i32 = b.getI32Type();
   Type f32 = b.getF32Type();
   auto vector3 = VectorType::get({3}, f32);
@@ -7114,9 +7119,22 @@ Value Lowering::emitSegmentsPruneRecord(OpBuilder &b, Location loc,
     Value ballot = kernels::emitWarpBallot(b, loc, keep);
     Value before = kernels::emitWarpRank(b, loc, ballot, below);
     Value from = arith::AddIOp::create(b, loc, cursor, kept);
-    scf::IfOp::create(b, loc, keep, [&](OpBuilder &d, Location) {
+    Value number = arith::AddIOp::create(b, loc, from, before);
+    Value writes = keep;
+    if (low)
+      writes = arith::AndIOp::create(
+          b, loc, keep,
+          arith::AndIOp::create(
+              b, loc,
+              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge, number,
+                                    low),
+              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::slt, number,
+                                    high)));
+    scf::IfOp::create(b, loc, writes, [&](OpBuilder &d, Location) {
       Value to = arith::AddIOp::create(
-          d, loc, base, toIndex(d, arith::AddIOp::create(d, loc, from, before)));
+          d, loc, base,
+          toIndex(d, low ? Value(arith::SubIOp::create(d, loc, number, low))
+                         : number));
       memref::StoreOp::create(d, loc, entry, inner.entries, ValueRange{to});
       memref::StoreOp::create(
           d, loc,

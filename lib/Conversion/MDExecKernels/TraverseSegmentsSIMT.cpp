@@ -1152,50 +1152,69 @@ LogicalResult Schedule::run() {
                 arith::MulIOp::create(body, loc, toIndex(body, record),
                                       ix(body, 64)));
           } else {
+            // The row of the record: its records one after another from the
+            // row's first. The warp prunes them all, numbering their
+            // survivors in that order, and keeps its window of them, the
+            // 64 from 64 times its place in the row: the row's first inner
+            // records then hold full batches (#795's U10), each warp
+            // evaluating its own.
             Value w32 = arith::IndexCastOp::create(body, loc, i32, w);
             Value segment = segmentOf(body, w32);
             Value group = load(body, lists.groups, w);
-            // The first record of a row: the first of its segment, or one
-            // whose group differs from the record's before it.
             Value first = load(body, lists.offsets, toIndex(body, segment));
-            Value atFirst = arith::CmpIOp::create(
-                body, loc, arith::CmpIPredicate::eq, w32, first);
-            Value previous = arith::SelectOp::create(
-                body, loc, atFirst, w32,
-                arith::SubIOp::create(body, loc, w32, ci(body, 1)));
-            Value starts = arith::OrIOp::create(
-                body, loc, atFirst,
-                arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ne,
-                                      load(body, lists.groups, previous),
-                                      group));
-            SmallVector<Value> none;
-            for (Value initial : op.getReduce())
-              none.push_back(createZero(body, loc, initial.getType()));
-            auto row = branch(body, ValueRange(none).getTypes(), starts);
-            OpBuilder r = OpBuilder::atBlockEnd(row.thenBlock());
             Value last = load(
-                r, lists.offsets,
-                toIndex(r, arith::AddIOp::create(r, loc, segment, ci(r, 1))));
-            Value base = arith::MulIOp::create(r, loc, w, ix(r, 64));
-            // The records of the row, pruned one after another, their
-            // survivors written on from the row's first inner record.
+                body, lists.offsets,
+                toIndex(body, arith::AddIOp::create(body, loc, segment,
+                                                    ci(body, 1))));
+            auto sameRow = [&](OpBuilder &at, Value record) {
+              return arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
+                                           load(at, lists.groups, record),
+                                           group);
+            };
+            auto back = scf::WhileOp::create(
+                body, loc, TypeRange{i32}, ValueRange{w32},
+                [&](OpBuilder &cond, Location, ValueRange args) {
+                  Value above = arith::CmpIOp::create(
+                      cond, loc, arith::CmpIPredicate::sgt, args[0], first);
+                  Value before = arith::SelectOp::create(
+                      cond, loc, above,
+                      arith::SubIOp::create(cond, loc, args[0], ci(cond, 1)),
+                      args[0]);
+                  scf::ConditionOp::create(
+                      cond, loc,
+                      arith::AndIOp::create(cond, loc, above,
+                                            sameRow(cond, before)),
+                      args);
+                },
+                [&](OpBuilder &next, Location, ValueRange args) {
+                  scf::YieldOp::create(
+                      next, loc,
+                      ValueRange{arith::SubIOp::create(next, loc, args[0],
+                                                       ci(next, 1))});
+                });
+            Value start = back.getResult(0);
+            Value low = arith::MulIOp::create(
+                body, loc, arith::SubIOp::create(body, loc, w32, start),
+                ci(body, 64));
+            Value high = arith::AddIOp::create(body, loc, low, ci(body, 64));
+            Value base = arith::MulIOp::create(body, loc, w, ix(body, 64));
             auto walk = scf::WhileOp::create(
-                r, loc, TypeRange{i32, i32}, ValueRange{w32, ci(r, 0)},
+                body, loc, TypeRange{i32, i32}, ValueRange{start, ci(body, 0)},
                 [&](OpBuilder &cond, Location, ValueRange args) {
                   Value inside = arith::CmpIOp::create(
                       cond, loc, arith::CmpIPredicate::slt, args[0], last);
                   Value at = arith::SelectOp::create(cond, loc, inside, args[0],
                                                      w32);
-                  Value same = arith::CmpIOp::create(
-                      cond, loc, arith::CmpIPredicate::eq,
-                      load(cond, lists.groups, at), group);
                   scf::ConditionOp::create(
-                      cond, loc, arith::AndIOp::create(cond, loc, inside, same),
+                      cond, loc,
+                      arith::AndIOp::create(cond, loc, inside,
+                                            sameRow(cond, at)),
                       args);
                 },
                 [&](OpBuilder &next, Location, ValueRange args) {
                   Value kept = fused->pruneRecord(next, toIndex(next, args[0]),
-                                                  lane, base, args[1]);
+                                                  lane, base, args[1], low,
+                                                  high);
                   scf::YieldOp::create(
                       next, loc,
                       ValueRange{arith::AddIOp::create(next, loc, args[0],
@@ -1203,41 +1222,25 @@ LogicalResult Schedule::run() {
                                  arith::AddIOp::create(next, loc, args[1],
                                                        kept)});
                 });
-            Value after = walk.getResult(0), total = walk.getResult(1);
-            // The count of each inner record of the row: 64 but the last,
-            // and none past the survivors; a record that keeps entries is
-            // active for the steps that follow.
-            Value records = arith::SubIOp::create(r, loc, after, w32);
-            scf::ForOp::create(
-                r, loc, ci(r, 0), records, ci(r, 32), ValueRange(),
-                [&](OpBuilder &c, Location, Value k0, ValueRange) {
-                  Value k = arith::AddIOp::create(c, loc, k0, lane);
-                  Value inRow = arith::CmpIOp::create(
-                      c, loc, arith::CmpIPredicate::slt, k, records);
-                  scf::IfOp::create(c, loc, inRow, [&](OpBuilder &d, Location) {
-                    Value left = arith::SubIOp::create(
-                        d, loc, total,
-                        arith::MulIOp::create(d, loc, k, ci(d, 64)));
-                    Value own = arith::MaxSIOp::create(
-                        d, loc, ci(d, 0),
-                        arith::MinSIOp::create(d, loc, left, ci(d, 64)));
-                    Value record = toIndex(d, arith::AddIOp::create(d, loc,
-                                                                    w32, k));
-                    memref::StoreOp::create(d, loc, own, lists.inner.counts,
-                                            ValueRange{record});
-                    fused->recordActive(d, record, own);
-                    scf::YieldOp::create(d, loc);
-                  });
-                  scf::YieldOp::create(c, loc);
-                });
+            Value total = walk.getResult(1);
+            // The record's own count: 64 but in the row's last records.
+            Value own = arith::MaxSIOp::create(
+                body, loc, ci(body, 0),
+                arith::MinSIOp::create(
+                    body, loc, arith::SubIOp::create(body, loc, total, low),
+                    ci(body, 64)));
+            Value lead = arith::CmpIOp::create(body, loc,
+                                               arith::CmpIPredicate::eq, lane,
+                                               ci(body, 0));
+            scf::IfOp::create(body, loc, lead, [&](OpBuilder &d, Location) {
+              memref::StoreOp::create(d, loc, own, lists.inner.counts,
+                                      ValueRange{w});
+              fused->recordActive(d, w, own);
+              scf::YieldOp::create(d, loc);
+            });
             // The entries that other lanes of the warp wrote.
-            NVVM::SyncWarpOp::create(r, loc, ci(r, -1));
-            scf::YieldOp::create(
-                r, loc, evaluate(r, segment, lane, group, total, base));
-            OpBuilder skip = OpBuilder::atBlockEnd(row.elseBlock());
-            scf::YieldOp::create(skip, loc, none);
-            contributions.assign(row.getResults().begin(),
-                                 row.getResults().end());
+            NVVM::SyncWarpOp::create(body, loc, ci(body, -1));
+            contributions = evaluate(body, segment, lane, group, own, base);
           }
           SmallVector<Value> next;
           for (auto [sum, value] : llvm::zip(sums, contributions))

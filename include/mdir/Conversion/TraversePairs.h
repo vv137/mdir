@@ -152,8 +152,9 @@ struct SegmentLists {
 /// The pruning of a dual list of units in the loop that takes its refresh
 /// (D284; D417, Section 6), from the pass that calls the schedule: whether
 /// the refresh pruned at this step (`now`, on the host), what the kernels
-/// take, made on the host (`prepare`), the warp's pruning of a record into
-/// the inner records from an entry on (`pruneRecord`, the number kept), a
+/// take, made on the host (`prepare`), the warp's pruning of a record, the
+/// survivors numbered from a cursor and those in [low, high) written to the
+/// inner records from an entry on (`pruneRecord`, the number kept), a
 /// record's count as an active one (`recordActive`), and the active units
 /// after the launch (`finish`).
 struct SegmentsFusedPruning {
@@ -161,7 +162,8 @@ struct SegmentsFusedPruning {
   std::function<void(mlir::OpBuilder &)> prepare;
   std::function<mlir::Value(mlir::OpBuilder &, mlir::Value record,
                             mlir::Value lane, mlir::Value base,
-                            mlir::Value cursor)>
+                            mlir::Value cursor, mlir::Value low,
+                            mlir::Value high)>
       pruneRecord;
   std::function<void(mlir::OpBuilder &, mlir::Value record, mlir::Value kept)>
       recordActive;
