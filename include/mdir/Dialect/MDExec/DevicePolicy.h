@@ -105,11 +105,6 @@ struct DeviceKey {
 /// suffix of letters (`sm_120a`), or nothing for another name or none.
 std::optional<DeviceKey> parseArchitecture(llvm::StringRef arch);
 
-/// The architecture that the options of `mdir-gpu-lower-to-nvvm` compile
-/// for (`cubin-chip=`), or an empty name where they name none (PTX for the
-/// default architecture).
-std::string getTargetArchitecture(llvm::StringRef gpuOptions);
-
 /// The entries of every table selected for one architecture and device
 /// class.
 struct DevicePolicy {

@@ -268,10 +268,23 @@ static std::string getHostPairsOptions() {
          " vector-bits=" + std::to_string(host->vectorBits);
 }
 
+/// The architecture that the options of `mdir-gpu-lower-to-nvvm` compile
+/// for (`cubin-chip=`, getGpuPipelineOptions), whose entries of the tuning
+/// policies the device lowering takes (D[tuning-policies]), or an empty
+/// name where they name none (PTX for the default architecture).
+static std::string getTargetArchitecture(StringRef gpuOptions) {
+  llvm::SmallVector<StringRef> words;
+  gpuOptions.split(words, ' ', -1, /*KeepEmpty=*/false);
+  for (StringRef word : words)
+    if (word.consume_front("cubin-chip="))
+      return word.str();
+  return "";
+}
+
 /// The options of the pruning in the loop over pairs (D284): on
 /// from the groups of the pruning policy for the architecture of
-/// `gpuOptions` (D[tuning-policies]), unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
-/// number of groups.
+/// `gpuOptions` (D[tuning-policies]), unless MDIR_FUSED_PRUNE is `off`;
+/// `always` takes it at any number of groups.
 /// The lowering of md_alg.traverse_pairs that MDIR_TRAVERSE_ORACLE names
 /// (`simt`, `serial`, `serial-reversed`, `serial-magnitudes`, `omitted`),
 /// for the contract test of D415; by default its SIMT
@@ -293,8 +306,7 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   // (D284, D[tuning-policies]; 4096, and 20,480 for every architecture
   // of the major version 12).
   int64_t groups =
-      md_exec::policy::getDevicePolicy(
-          md_exec::policy::getTargetArchitecture(gpuOptions))
+      md_exec::policy::getDevicePolicy(getTargetArchitecture(gpuOptions))
           .pruning.fusedGroups;
   llvm::StringRef value = mdir::compiler::getFusedPruningSetting();
   // The serial oracle takes the pruning in the refresh.
@@ -372,7 +384,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // the tuning policies the choosers and the lowering take
     // (D[tuning-policies]); none for PTX of the default architecture,
     // which takes the default entries.
-    std::string arch = md_exec::policy::getTargetArchitecture(gpuOptions);
+    std::string arch = getTargetArchitecture(gpuOptions);
     std::string archOption = arch.empty() ? "" : "arch=" + arch + " ";
     // The strategy of each scatter-accumulate: the tiles of the spreading
     // of PME by the size of its grid (D282), the tables of the tuples

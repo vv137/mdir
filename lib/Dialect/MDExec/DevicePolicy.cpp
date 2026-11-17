@@ -8,7 +8,6 @@
 #include "mdir/Dialect/MDExec/DevicePolicy.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 
 using namespace llvm;
 using namespace mdir::md_exec::policy;
@@ -170,15 +169,6 @@ std::optional<DeviceKey> mdir::md_exec::policy::parseArchitecture(
   key.major = number / 10;
   key.minor = number % 10;
   return key;
-}
-
-std::string mdir::md_exec::policy::getTargetArchitecture(StringRef gpuOptions) {
-  SmallVector<StringRef> words;
-  gpuOptions.split(words, ' ', -1, /*KeepEmpty=*/false);
-  for (StringRef word : words)
-    if (word.consume_front("cubin-chip="))
-      return word.str();
-  return "";
 }
 
 std::string DevicePolicy::describeFallback(bool fallback) const {
