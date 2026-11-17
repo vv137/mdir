@@ -82,6 +82,7 @@
 // emitters' code, emitted where they stand (CompactionEmitter.h).
 
 #include "mdir/Conversion/GroupsBuild.h"
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 
 #include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/Passes.h"
@@ -428,13 +429,15 @@ public:
   /// The build over units of `kinds` taken rigid kinds and the rest
   /// (D419).
   GroupsBuild(OpBuilder &b, Location loc, bool tilted, bool singlePass,
-              unsigned kinds)
+              unsigned kinds, double columnUnits)
       : Code(b, loc), tilted(tilted), singlePass(singlePass), unitsMode(true),
-        K(kinds), S((kinds + 1) * (kinds + 2) / 2) {}
+        K(kinds), S((kinds + 1) * (kinds + 2) / 2), columnUnits(columnUnits) {}
 
   void emit();
 
 private:
+  /// Over units, the units of a column of the plan of the columns.
+  double columnUnits = 64.0;
   bool tilted, singlePass;
   // Over units: K taken kinds, the rest rank 0 and kind f at rank K - f,
   // and S = (K + 1)(K + 2) / 2 segments.
@@ -2954,9 +2957,12 @@ void GroupsBuild::emitBuild() {
         // counts that are defined and fit memory (#168).
         Value lxy = mulf(lx, ly);
         Value volume = mulf(lxy, lz);
+        // Over units, the units of a column are an entry of the policy
+        // (SegmentsPolicy::columnUnits, D420).
+        double perCube = unitsMode ? columnUnits : 64.0;
         auto columnPlan = md_alg::GridPlanOp::create(
             b, loc, TypeRange{i64, i64}, ValueRange{lx, ly}, /*width=*/Value(),
-            volume, b.getF64FloatAttr(64.0), n, b.getF64FloatAttr(1.0),
+            volume, b.getF64FloatAttr(perCube), n, b.getF64FloatAttr(1.0),
             b.getF64FloatAttr(256.0), /*determinism=*/nullptr);
         ncx64 = columnPlan.getCounts()[0];
         ncy64 = columnPlan.getCounts()[1];
@@ -3309,9 +3315,12 @@ std::string kernels::getSegmentsBuildName(bool triclinic, unsigned kinds) {
 }
 
 void kernels::emitSegmentsBuild(ModuleOp module, bool triclinic,
-                                bool singlePassScan, unsigned kinds) {
+                                bool singlePassScan, unsigned kinds,
+                                double columnUnits) {
   OpBuilder b = OpBuilder::atBlockEnd(module.getBody());
-  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, kinds).emit();
+  GroupsBuild(b, module.getLoc(), triclinic, singlePassScan, kinds,
+              columnUnits)
+      .emit();
 }
 
 namespace mdir {
@@ -3337,7 +3346,9 @@ public:
       declared.erase();
     }
     if (kinds >= 0)
-      kernels::emitSegmentsBuild(module, triclinic, singlePassScan, kinds);
+      kernels::emitSegmentsBuild(
+          module, triclinic, singlePassScan, kinds,
+          mdir::md_exec::policy::kDefaultSegments.columnUnits);
     else
       kernels::emitGroupsBuild(module, triclinic, singlePassScan);
   }

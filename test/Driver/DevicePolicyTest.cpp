@@ -34,6 +34,10 @@ int main(int argc, char **argv) {
                << " gather-lanes=" << policy.launch.getGatherLanes(4) << ","
                << policy.launch.getGatherLanes(6) << ","
                << policy.launch.getGatherLanes(8)
-               << " fallback=" << policy.launchFallback << "\n";
+               << " fallback=" << policy.launchFallback << "\n"
+               << "segments block-size=" << policy.segments.blockSize
+               << " rotation=" << policy.segments.rotationLanes
+               << " column-units=" << int64_t(policy.segments.columnUnits)
+               << " fallback=" << policy.segmentsFallback << "\n";
   return 0;
 }

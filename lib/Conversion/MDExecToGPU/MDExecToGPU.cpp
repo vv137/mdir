@@ -318,6 +318,9 @@ public:
   /// The entry of the schedule of lists of units (D[md-alg-segments-simt]).
   md_exec::policy::SegmentsPolicy segmentsPolicy =
       md_exec::policy::kDefaultSegments;
+  /// The units of a column of the build over units: the policy's, or the
+  /// option's (`segments-column-units`).
+  double segmentsColumnUnits = md_exec::policy::kDefaultSegments.columnUnits;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
@@ -5068,7 +5071,8 @@ LogicalResult Lowering::addSegmentsBuild(bool tilted, unsigned kinds) {
           module, kernels::getSegmentsBuildName(tilted, kinds)))
     return success();
   OwningOpRef<ModuleOp> templates = ModuleOp::create(module.getLoc());
-  kernels::emitSegmentsBuild(*templates, tilted, singlePassGroupScan, kinds);
+  kernels::emitSegmentsBuild(*templates, tilted, singlePassGroupScan, kinds,
+                             segmentsColumnUnits);
   // The helpers that the groups' build shares are taken once.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto symbol = dyn_cast<SymbolOpInterface>(op);
@@ -10434,6 +10438,9 @@ public:
         fuseIntegration, deterministic, tuplesOnce, fuseCenters);
     lowering.launch = policy.launch;
     lowering.segmentsPolicy = policy.segments;
+    lowering.segmentsColumnUnits = segmentsColumnUnits > 0
+                                       ? double(segmentsColumnUnits)
+                                       : policy.segments.columnUnits;
     lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;

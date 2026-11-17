@@ -160,19 +160,25 @@ static const ArrayRef<Entry<LaunchPolicy>> kLaunchTable = {};
 // The SIMT schedule of a list of units (D[md-alg-segments-simt])
 //===----------------------------------------------------------------------===//
 
-// The values of #795's schedule at 745c9f12, whose mechanisms are
-// requirements (D417): blocks of 128 threads and the 16 units of a group
-// turned through the 16 lanes of a half-warp. Measured with the schedule of
-// this decision on the six systems of #795 on an RTX 5090 (sm_120),
-// 2026-11-17; every other architecture takes it as a fallback.
+// The block and the rotation are those of #795's schedule at 745c9f12,
+// whose mechanisms are requirements (D417): blocks of 128 threads and the
+// 16 units of a group turned through the 16 lanes of a half-warp. The
+// units of a column of the build over units were swept over 64 (the
+// groups' value, D404), 96, 128, 192, and 256 on the six systems of #795;
+// 128 gave the least time a call of the loop over pairs on each of them,
+// or one within 0.3% of it, with the places held raised from 55-66% to
+// 70-85% and the build's time a step unchanged. Measured with the timing
+// protocol of D417 on RTX 4090s (sm_89), 2026-11-18; every other
+// architecture takes it as a fallback.
 const SegmentsPolicy mdir::md_exec::policy::kDefaultSegments = {
-    /*blockSize=*/128, /*rotationLanes=*/16};
+    /*blockSize=*/128, /*rotationLanes=*/16, /*columnUnits=*/128.0};
 static const Measurement kSegmentsDefaultBasis = {
     "D[md-alg-segments-simt]",
-    "the six systems of #795 (rhombic dodecahedra and boxes of OPC and "
-    "TIP3P, ubiquitin in OPC and TIP3P, a CHARMM protein in TIP3P), RTX 5090",
-    "2026-11-17"};
-static const Measured kSegmentsDefaultMeasured[] = {{12, 0}};
+    "the six systems of #795 (rhombic dodecahedra of OPC and TIP3P, "
+    "ubiquitin in OPC and TIP3P, a box of OPC, a CHARMM protein in TIP3P), "
+    "RTX 4090",
+    "2026-11-18"};
+static const Measured kSegmentsDefaultMeasured[] = {{8, 9}};
 static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
 
 //===----------------------------------------------------------------------===//

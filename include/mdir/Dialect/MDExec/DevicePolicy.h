@@ -101,6 +101,10 @@ struct SegmentsPolicy {
   /// The lanes through which the partners turn, the units of a group that
   /// a half-warp holds (`rotate(L)`).
   int64_t rotationLanes;
+  /// The units of a column of the plan of the columns of the build over
+  /// units (D419), which the cubes of the column's width cut along z: the
+  /// fill of its groups.
+  double columnUnits;
 };
 
 /// The key of an entry: an architecture, as a major version and a minor
