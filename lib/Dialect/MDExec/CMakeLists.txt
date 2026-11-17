@@ -8,6 +8,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDExecOps.cpp
   NeighborContract.cpp
   NeighborCoverage.cpp
+  PairKernelBody.cpp
   ProfileMap.cpp
   SegmentedPairs.cpp
   Scatter.cpp
@@ -23,6 +24,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDExecEnumsIncGen
   MDIRMDExecAttrsIncGen
   MDIRMDExecLoopEffectsIncGen
+  MDIRMDExecPairKernelBodyIncGen
   MDIRMDAlgIncGen
 
   LINK_LIBS PUBLIC
