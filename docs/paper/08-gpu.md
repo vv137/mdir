@@ -636,7 +636,16 @@ capability record for preconditions and a policy record for thresholds.
 The chooser and the lowering use the same precondition. A target that
 cannot meet it refuses the strategy with a reason and takes a legal
 fallback. A target without measurements takes a conservative stated
-policy, not a threshold inferred from another architecture.
+policy, not a threshold inferred from another architecture. The policy
+records are tables, one for each strategy, keyed by the architecture and
+a device class (D[tuning-policies]): the pruning in the loop over pairs
+has an entry for the architectures of major version 12, and every other
+value has only the default entry. Step 1 keeps today's values, so an
+architecture without an entry of its own still takes the default entry,
+which was measured on other architectures (`sm_89`, and `sm_120` for the
+scatter table), and the chooser's remarks say so. Conservative entries for
+the architectures that were not measured are set in a later step of
+#433.
 
 The proposed compilation plan records the selected target, precision,
 neighbor and scatter strategies, and determinism with a reason and

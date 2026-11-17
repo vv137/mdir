@@ -59,6 +59,9 @@ public:
 
   /// The number of threads of a block.
   virtual int64_t getBlockSize() = 0;
+  /// The block memory that a strategy's kernel may take (the launch
+  /// policy's `blockMemoryBytes`, DevicePolicy.h).
+  virtual int64_t getBlockMemoryBytes() = 0;
   /// Names the kernel `launch` and brings the constants and the vectors it
   /// uses into it.
   virtual void bringIn(mlir::gpu::LaunchOp launch) = 0;

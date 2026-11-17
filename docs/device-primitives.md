@@ -72,6 +72,7 @@ of #567 checks completion and buffer borrows while retaining current waits.
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 | Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D340 |
+| Tuning policies: the thresholds and launch parameters of the device lowering, one table a strategy (Section 8) | the dispatch policies (`Policy800`, `Policy900`, ...) | #433 | Step 1 built, behavior-preserving: the pruning in the loop, the scatter-accumulates, and the launches read their entries for the architecture; no value changed. The entries for the RTX PRO 6000 by measurement are the next steps | D[tuning-policies] |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
@@ -270,7 +271,10 @@ last.
 
 ### 2.4 The choice
 
-Where the preconditions hold, the pass chooses by cost:
+Where the preconditions hold, the pass chooses by cost. The thresholds,
+the edge, the probes, and the block below are the entries of the scatter
+and launch policies for the target's architecture (Section 8); every
+architecture takes the same entries today.
 
 - **`tile`** for a sum in f32 whose grid has at least 500,000 points
   (`tile-min-points`). A smaller grid has too few bins to occupy a device:
@@ -313,6 +317,7 @@ or the reason for a refusal.
 | Switch | Effect |
 |---|---|
 | `md-exec-choose-scatter{tile=auto\|on\|off}` | `auto` the rule above; `on` every sum that can be tiled; `off` none |
+| `arch` | The architecture whose entries of the policies give every option left at -1, the default of each below (Section 8) |
 | `tile-edge`, `tile-min-points` | The points of an edge of a bin (4, 8, 16; 8 by default) and the threshold of `auto` |
 | `hash=auto\|on\|off` | `on` takes the table at any count ($L$ = 0) |
 | `hash-least`, `hash-probes`, `block-size` | $L$, the slots tried `P`, and the threads of a block, as `convert-md-exec-to-gpu` launches them |
@@ -1681,3 +1686,77 @@ CPU row emit the same code as before.
   `-deterministic-run.test`, `-thermostats.test`: the deterministic
   properties of output independence, of Python against `mdir run` in
   segments, and of checkpoints in both directions, with the lanes.
+
+## 8. Tuning policies (D[tuning-policies])
+
+The device lowering takes every threshold and launch parameter that a
+measurement chose from one table for each strategy, after CUB's dispatch
+policies. CUB keeps one policy record for each algorithm and architecture
+and selects one for the target, and the algorithm reads its parameters
+only from that record. The tables are in
+`include/mdir/Dialect/MDExec/DevicePolicy.h` and
+`lib/Dialect/MDExec/DevicePolicy.cpp`, the host's counterpart beside
+`HostPairs.h` (D402).
+
+### 8.1 The tables
+
+| Table | Values | Default entry | Other entries | Measured |
+|---|---|---|---|---|
+| Pruning in the loop over pairs | `fusedGroups` | 4096 | major version 12: 20,480 | D284, 2026-10-18: TIP3P boxes of 52,686 and 103,158 sites on an RTX 4090; TIP3P boxes, Factor IX, Cellulose, and STMV on an RTX PRO 6000 Blackwell Max-Q at 300 W |
+| Scatter-accumulates | `tileMinPoints`, `tileEdge`, `hashLeast`, `hashProbes`, `pairHashLeast` | 500,000, 8, 100,000, 8, 0 | none | D282 and D283, 2026-10-18: the Amber suite on an RTX 4090 and an RTX PRO 6000; D291 for the loops over pairs |
+| Launches | `blockSize`, `rowLanes`, `stageBlockSize`, `blockMemoryBytes`, the gathering's lanes | 128, 16, 256, 48 KiB, 4 a particle up to order 4 and 8 above | none | Not measured as a choice; the lanes of the gathering in the prototype of #334 (Cellulose, RTX 4090; #411) |
+
+### 8.2 Key, selection, and fallback
+
+The key of an entry is an architecture, a major and a minor version
+parsed from the target's name (`sm_120a` is 12 and 0, the minor -1 for
+every minor), and a device class, empty for every device of the
+architecture. The selection takes an entry of the architecture and the
+class, then one of the architecture, then one of its major version, then
+the default entry. The RTX 5090 and the RTX PRO 6000 are both `sm_120`;
+D284's 20,480 was measured on the PRO 6000, and every `sm_12x` device takes
+it, the RTX 5090 included. No input selects a class yet, and every entry
+has the empty one. A target that names no architecture (PTX for the
+default one) takes the default entries.
+
+Each entry names the architectures that its measurement covered: the
+default entry of the scatter table `sm_89` and `sm_120`, that of the
+pruning table `sm_89`, and the pruning's entry of the major version 12
+`sm_120` alone, so that `sm_121` takes its 20,480 groups as a fallback. A
+selected entry not measured on the architecture is a fallback
+(`pruningFallback` and the others of `DevicePolicy`). The policy follows
+the compile options, not the device: with `MDIR_GPU_BINARY=ptx` and no
+`MDIR_GPU_ARCH` the options name no architecture, and the default entries
+apply. With `explain`,
+`md-exec-choose-scatter` adds to a choice that a value of a default entry
+made, on another architecture, `(the default of the policy: sm_80 was
+not measured)`; without an architecture the remarks are those of before.
+
+### 8.3 How the passes read them
+
+`getPipeline()` takes the architecture from the option `cubin-chip=` of
+`mdir-gpu-lower-to-nvvm`. It passes it as `arch` to
+`md-exec-choose-scatter`, `convert-md-exec-to-gpu`, and
+`md-exec-lower-stage-bodies`, and it writes the pruning's
+`fuse-pruning-groups` as before. An option of these passes that a table
+gives defaults to -1, the entry for `arch`; any other value overrides the
+entry. `MDIR_FUSED_PRUNE`, `MDIR_PME_SPREAD`, `MDIR_TUPLE_SUMS`, and
+`MDIR_PAIR_SUMS` set these options as before, and `MDIR_GPU_ARCH` names the
+architecture ([environment.md](environment.md)). The block memory of the
+strategies is a parameter of the preconditions of `Scatter.h`. The chooser
+and the lowering pass the same entry, so they check the same bound.
+
+Capabilities of the device, such as the subgroup width, are not tuning and
+are not in the tables; they come from the target description of #558. The
+geometry of one emitter or template, such as the parts of a reduction or
+the threads of the tile kernel, stays with it (D[tuning-policies],
+Section 6).
+
+### 8.4 Tests
+
+`test/Driver/device-policy.test` prints each table's values and fallback
+for `sm_120`, `sm_121a`, `sm_89`, `sm_80`, and no architecture
+(`mdir-device-policy-test`), and the pipeline for the same and checks
+the pruning's groups and the option `arch`. It also checks the scatter
+entries and the fallback remark of the chooser. The corpus of D406 is
+identical to that of the base on `sm_89` and `sm_120` (PR #900).

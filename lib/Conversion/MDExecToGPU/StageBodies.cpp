@@ -13,6 +13,7 @@
 // intermediate buffers are allocated on the device for the call, from the
 // runtime's pool of blocks.
 
+#include "mdir/Dialect/MDExec/DevicePolicy.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 
@@ -1671,8 +1672,14 @@ public:
           if (!loop->getParentOfType<scf::ParallelOp>())
             loops.push_back(loop);
         });
+        // The block that the option leaves to the launch policy of the
+        // architecture (-1), from its entry (D[tuning-policies]).
+        int64_t block =
+            blockSize == -1
+                ? md_exec::policy::getDevicePolicy(arch).launch.stageBlockSize
+                : static_cast<int64_t>(blockSize);
         for (scf::ParallelOp loop : loops)
-          if (failed(launchLoop(loop, blockSize)))
+          if (failed(launchLoop(loop, block)))
             return signalPassFailure();
         function.walk([](gpu::LaunchOp launch) { readGlobalsInside(launch); });
         if (failed(moveToDevice(function)))

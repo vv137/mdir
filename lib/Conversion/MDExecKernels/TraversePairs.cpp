@@ -692,7 +692,8 @@ LogicalResult kernels::lowerTraversePairsSIMT(md_alg::TraversePairsOp op,
   if (hashed)
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
             scatter.getSlots(), op.getOuts().getTypes(),
-            getDestinationAlgebras(op), &destinations))
+            getDestinationAlgebras(op), host.getBlockMemoryBytes(),
+            &destinations))
       return op.emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "

@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MDIRMDExec
   Algebra.cpp
+  DevicePolicy.cpp
   HostPairs.cpp
   MDExecDialect.cpp
   Independence.cpp

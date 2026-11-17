@@ -2288,7 +2288,7 @@ LogicalResult kernels::resolveTemplateConversions(Operation *root) {
 }
 
 LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,
-                                                 int64_t order) {
+                                                 int64_t order, int64_t lanes) {
   // The calls `@mdir.template.NAME.TYPE()` and `@mdir.template.NAME(...)`
   // of the templates of particle mesh Ewald on a device, each replaced
   // where it stands by what the instance takes for it
@@ -2355,15 +2355,16 @@ LogicalResult kernels::resolveTemplateParameters(Operation *root, Type real,
         call.getCallee().drop_front(prefix.size()).split('.').first;
     if (call.getNumResults() == 1) {
       // The order of the splines, the threads of a particle in the gather
-      // (the least power of 2 not below the order, so that they are aligned
-      // within a warp), the bytes of a value of the type of the forces, and
+      // (`lanes`, from the launch policy: the least power of 2 not below
+      // the order up to 8, so that they are aligned within a warp), the
+      // bytes of a value of the type of the forces, and
       // the points of a side, E + P - 1, and of a tile, (E + P - 1)^3, of
       // the spreading of bins of E points (D282).
       int64_t value = 0;
       if (name == "order")
         value = order;
       else if (name == "lanes")
-        value = order <= 4 ? 4 : 8;
+        value = lanes;
       else if (name == "real_bytes")
         value = bytes;
       else if (int64_t edge = edgeOf(name, "tile_side_"))

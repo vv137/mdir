@@ -1,0 +1,111 @@
+# The tuning policies of the device lowering (D[tuning-policies], #433):
+# each architecture takes the entries of its tables, which the pipeline and
+# the chooser of the scatter-accumulates show. The pruning in the loop over
+# pairs takes 4096 groups by default and 20,480 on every architecture of
+# the major version 12 (D284), the RTX 5090 and the RTX PRO 6000 alike; a
+# target that names no architecture takes the defaults. No device is
+# needed: the kernels are PTX for the architecture named.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM120
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_121a mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM121A
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM89
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_80 mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SM80
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=NOARCH
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH= mdir emit run.toml --stage=pipeline | not grep -q 'arch='
+#
+# The overrides keep their effect over the entries.
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 MDIR_FUSED_PRUNE=always mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=ALWAYS
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 MDIR_FUSED_PRUNE=off mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=OFF
+# RUN: cd %t && env MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_120 MDIR_PME_SPREAD=tiles4 MDIR_TUPLE_SUMS=blocks mdir emit run.toml --stage=pipeline | FileCheck %s --check-prefix=SCATTER
+#
+# The scatter table's default entry, measured on sm_89 and sm_120, gives the
+# thresholds and the edge; on another architecture, or none, the remarks
+# say that the default was taken; an option of its own overrides the entry
+# and takes no such words.
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="arch=sm_120 explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEASURED
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="arch=sm_89 explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEASURED
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="arch=sm_80 explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=FALLBACK
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=NONE
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="arch=sm_80 tile-min-points=100000 hash-least=5 hash-probes=4 explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=GIVEN
+# RUN: mdir-opt %S/../Dialect/MDExec/Transforms/choose-scatter.mlir --md-exec-assign-algebra --md-exec-choose-scatter="arch=gfx90a explain=true" \
+# RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=OTHER
+
+# Each entry states the architectures it was measured on: the pruning's
+# entry of the major version 12 covered sm_120 alone (the RTX PRO 6000
+# Max-Q), so sm_121a takes its 20,480 groups as a fallback, and an
+# architecture without an entry takes the defaults, a fallback where they
+# were not measured on it.
+# RUN: mdir-device-policy-test sm_120 | FileCheck %s --check-prefix=T120
+# RUN: mdir-device-policy-test sm_120a | FileCheck %s --check-prefix=T120
+# RUN: mdir-device-policy-test sm_121a | FileCheck %s --check-prefix=T121
+# RUN: mdir-device-policy-test sm_89 | FileCheck %s --check-prefix=T89
+# RUN: mdir-device-policy-test sm_80 | FileCheck %s --check-prefix=T80
+# RUN: mdir-device-policy-test "" | FileCheck %s --check-prefix=T80
+# T120: pruning fused-groups=20480 fallback=0 (D284)
+# T120-NEXT: scatter tile-min-points=500000 tile-edge=8 hash-least=100000 hash-probes=8 pair-hash-least=0 fallback=0
+# T120-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
+# T121: pruning fused-groups=20480 fallback=1 (D284)
+# T121-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
+# T89: pruning fused-groups=4096 fallback=0 (D284)
+# T89-NEXT: scatter tile-min-points=500000 tile-edge=8 hash-least=100000 hash-probes=8 pair-hash-least=0 fallback=0
+# T89-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
+# T80: pruning fused-groups=4096 fallback=1 (D284)
+# T80-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
+
+# SM120: md-exec-choose-scatter{arch=sm_120 }
+# SM120-SAME: convert-md-exec-to-gpu{arch=sm_120 {{.*}}fuse-pruning=true fuse-pruning-groups=20480 
+# SM120-SAME: mdir-gpu-lower-to-nvvm{cubin-chip=sm_120 cubin-format=isa binary=ptx}
+# SM121A: md-exec-choose-scatter{arch=sm_121a }
+# SM121A-SAME: fuse-pruning-groups=20480 
+# SM89: md-exec-choose-scatter{arch=sm_89 }
+# SM89-SAME: convert-md-exec-to-gpu{arch=sm_89 {{.*}}fuse-pruning-groups=4096 
+# SM80: convert-md-exec-to-gpu{arch=sm_80 {{.*}}fuse-pruning-groups=4096 
+# NOARCH: md-exec-choose-scatter{}
+# NOARCH-SAME: convert-md-exec-to-gpu{kept-tuples=true {{.*}}fuse-pruning-groups=4096 
+# NOARCH-SAME: mdir-gpu-lower-to-nvvm{cubin-format=isa binary=ptx}
+# ALWAYS: fuse-pruning=true fuse-pruning-groups=0 
+# OFF-NOT: fuse-pruning
+# SCATTER: md-exec-choose-scatter{arch=sm_120 tile=on tile-edge=4 hash=on }
+
+# MEASURED: remark: scatter: no tile: the grid has 64000 points, fewer than tile-min-points, too few bins to occupy a device (tile=auto){{$}}
+# MEASURED: remark: scatter: hash(256, 8, 100000){{$}}
+# FALLBACK: remark: scatter: no tile: the grid has 64000 points, fewer than tile-min-points, too few bins to occupy a device (tile=auto) (the default of the policy: sm_80 was not measured){{$}}
+# FALLBACK: remark: scatter: hash(256, 8, 100000) (the default of the policy: sm_80 was not measured){{$}}
+# NONE: remark: scatter: hash(256, 8, 100000){{$}}
+# GIVEN: remark: scatter: tile(8) (the default of the policy: sm_80 was not measured){{$}}
+# GIVEN: remark: scatter: hash(256, 4, 5){{$}}
+# OTHER: remark: scatter: hash(256, 8, 100000) (the default of the policy: gfx90a was not measured){{$}}
+
+#--- run.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff       = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 20
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "gpu"
+#--- end
