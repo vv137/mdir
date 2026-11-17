@@ -5989,12 +5989,35 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
     if (llvm::is_contained(hostCopies, host))
       memref::DeallocOp::create(builder, loc, host);
   };
+  // A relation whose members the program renumbers on the device
+  // (`device-tuples`, D257) holds them on the host in the order of the
+  // files. They are renumbered here, on the host, by the ids of the order
+  // that the device holds, as a renumbering on the host does: the device's
+  // renumbered copy is the runtime's to keep and to fill.
+  auto relationOnHost = [&](Value relation) -> Value {
+    if (deviceTuples)
+      if (auto found = deviceTuplesOf.find(relation);
+          found != deviceTuplesOf.end() && found->second.ids) {
+        Value ids = found->second.ids;
+        auto type = cast<MemRefType>(ids.getType());
+        Value hostIds = memref::AllocOp::create(
+            builder, loc,
+            MemRefType::get(type.getShape(), type.getElementType()),
+            ValueRange{memref::DimOp::create(builder, loc, ids, zero)});
+        createTransfer(builder, loc, hostIds, ids);
+        Value members = emitRenumber(builder, loc, relation, hostIds);
+        memref::DeallocOp::create(builder, loc, hostIds);
+        hostCopies.push_back(members);
+        return members;
+      }
+    return toHost(relation);
+  };
   SmallVector<Value> tuples, copies;
   Value takenUnits = zero, takenParticles = zero, memberCount = zero;
   SmallVector<Value> memberBase;
   for (unsigned f = 0; f < K; ++f) {
     Value relation = op.getKinds()[f];
-    Value host = toHost(relation);
+    Value host = relationOnHost(relation);
     tuples.push_back(host);
     Value c = memref::DimOp::create(builder, loc, relation, zero);
     copies.push_back(c);
@@ -6087,7 +6110,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   });
   // The anchors of the rest (#799): its reference particle.
   if (Value anchored = op.getAnchored()) {
-    Value pairs = toHost(anchored);
+    Value pairs = relationOnHost(anchored);
     Value count = memref::DimOp::create(builder, loc, anchored, zero);
     loop(count, {}, [&](OpBuilder &in, Value k, ValueRange) {
       Value member = memref::LoadOp::create(
@@ -6160,7 +6183,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   // (RaggedRows.h): for each particle, an entry (pair, place, i, j) of
   // each pair of it, in the order of the pairs.
   if (excluded) {
-    Value pairs = toHost(excluded);
+    Value pairs = relationOnHost(excluded);
     Value P = memref::DimOp::create(builder, loc, excluded, zero);
     Value rowsH = memref::AllocOp::create(builder, loc, hostI32,
                                           ValueRange{arith::AddIOp::create(
