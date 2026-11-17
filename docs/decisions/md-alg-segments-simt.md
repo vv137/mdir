@@ -90,7 +90,46 @@ Each has a negative case (`test/Conversion/MDExecToGPU/traverse-segments-simt-in
 
 ## 7. Gates
 
-To be filled with the measurements.
+**The contract** (D415's five modes, mixed precision, the bound of D417, Section 6, with $n = 4096$; `test/Integration/md-alg-segments-contract-gpu.test`): the dodecahedron of TIP3P (outer and dual), the mixture of TIP3P, OPC, ions, and molecules of the rest ($K = 2$), and the dipeptide in OPC and in TIP3P. The largest difference is 0.0022 of its bound; the potential and the total virial against the general run 0.0041 of theirs. **D415's mutation** (the serial definition ignoring the sign of an antisymmetric destination) fails it: 3,720 times the bound on the dodecahedron (a force of 960.1, $3.28\times10^5$ against 88.1), while the reversed visit, which has the same mutation, stays within its bound. Tried once and reverted.
+
+**The mechanism table** as structural checks (`test/Driver/segments-schedule-ptx.test`): no lookup in the windows of two waters (E3; with the folding removed, the test fails), 12 loads of f64 positions in the packing and none of a stored site, one guard for each site pair of a kernel's tables (3, 13, 15), and 53 index shuffles of the rotation.
+
+**Refusals**: each a case of `traverse-segments-simt-invalid.mlir`, `traverse-segments-serial-invalid.mlir` (also under the schedule), and `test/Driver/rigid-units-test-invalid.test`.
+
+**Sanitizer** (`test/Sanitizer/segments-traverse-gpu.test`, with `-Dsanitize=1`): memcheck, racecheck, and initcheck on the dipeptide in OPC and the rigid dodecahedron, which prune in the loop. initcheck found reads of the places of a group that the packing had left unwritten (11,140 on the dipeptide), read before the masks select them; the packing writes zeros there now. The test held the device for 72 s (RTX 4090).
+
+**Performance** (RTX 4090, `sm_89`; the RTX 5090 that the first measurements used went down during the protocol, and its preliminary numbers are on the PR, not here). The protocol: two jobs on two devices, #795 at 745c9f12, `main` at bab3f1fe, and the units interleaved, two rounds each, the second reversed; wall runs of 200,000 steps (100 intervals; the start trimmed by tenths until the mean of the rest moves by less than 0.3%) and captures of 60,000 steps (trimmed alike, to 0.5%); every run became stationary. The evaluation a call, units against #795, paired within a job and round:
+
+| System | Round 1 | Round 2 (`columnUnits` 128) | Wall, round 2 |
+|---|---:|---:|---:|
+| rd-opc | 0.930 (0.924–0.938) | 0.885 (0.879–0.889) | 1.031 |
+| rd-tip3p | 1.063 (1.054–1.074) | 1.027 (1.017–1.035) | 1.081 |
+| ubq-opc | 1.014 (1.004–1.026) | 0.878 (0.873–0.885) | 1.027 |
+| ubq-tip3p | 1.073 (1.068–1.079) | 0.999 (0.991–1.007) | 1.055 |
+| opc-large | 1.073 (1.015–1.132) | 0.996 (0.945–1.043) | 1.047 |
+| charmm-tip3p | 1.062 (1.050–1.079) | 0.937 (0.933–0.945) | 1.007 |
+
+Round 1 ported #795's tunings and the pruning in the loop; round 2 the column units. On rd-tip3p the gap remains beyond the spread after round 2, so the stop rule applies (the PR, `needs-decision`). Per kernel on rd-tip3p: the loop of a step, 72 registers, 1,176 SASS instructions, 36.57 µs a call, against #795's 96, 2,448, and 37.25; the loop of the steps that prune (one in 8.6), 96 registers and 49.78 µs. On ubiquitin in OPC: 96 registers, 1,288 instructions, 38.22 µs, against 128, 2,456, and 44.98. The kernels a step are fewer than #795's on every system; the lists cost 8 to 9 µs a step against #795's 11 to 16.
+
+**The step** (nsys, the middle 80% of the steps):
+
+| | #795 | `main` | units |
+|---|---:|---:|---:|
+| ubq-opc NVE: a step, µs | 151.2 | 174.2 | 168.5 |
+| device idle a step, µs | 19.5 | 18.4 | 38.9 |
+| kernels a step (launches) | 26.9 | 27.4 | 28.9 |
+| graph launches; streams | 0; 1 | 0; 1 | 0; 1 |
+| blocking copies a step (µs) | 0.06 (10.0) | 0.10 (9.4) | 1.04 (60.1) |
+| overlap of direct and reciprocal sums | 0 | 0 | 0 |
+| integration and constraints a step, µs | 22.6 | 22.6 | 22.6 |
+| ubq-opc NPT (C-rescale): a step, µs | 436.5 | 274.6 | 276.6 |
+| blocking copies a step under NPT (µs) | 0.83 (215.5) | 0.88 (38.3) | 2.06 (86.7) |
+
+The units' copy of every step is the refresh's test of D419, whose reduction the host reads; S4a's test in the writer removes it. Under NPT the readbacks after a change of the cell come on top, in `main` as in the units. S3's code adds no copy. Candidates for issues, not opened: the test of the refresh on the device (S4a; 19 µs a step of idle device on ubiquitin in OPC, about 13% of the step); the reciprocal sum on a second stream beside the direct sum (D87, off by default; at most the smaller of the two, 34 µs a step on ubiquitin, if they overlapped fully); a graph of the step's 27 to 29 launches (the idle time between kernels that remains with the copy gone, about 19 µs a step on #795 as on `main`).
+
+**The rest with itself.** Segment $(0, 0)$, the rest with the rest, runs this schedule's body, not D415's: one schedule over every segment. Making the groups schedule the instance $K = 0$ is S5; the measurement here does not decide whether it comes before or after S4.
+
+**Corpus** (D406, `check.py compare ... --stages lowered --targets cpu,gpu --kinds run,segments --precisions mixed,double --execution neighbor_structure=GROUPS --instances`, `MDIR_GPU_BINARY=ptx`, against `main`'s tree): see the PR for `sm_89` and `sm_120` at the head.
 
 ## 8. Not in this slice
 
