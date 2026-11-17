@@ -40,18 +40,135 @@
 #include "mdir/Dialect/MDRT/SegmentRegions.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include <functional>
 
 using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
+
+
+// The unsigned bounds [lo, hi] of minui(maxui(x, lo), hi), constants.
+static std::optional<std::pair<uint64_t, uint64_t>> unsignedClamp(Value value) {
+  auto upper = value.getDefiningOp<arith::MinUIOp>();
+  if (!upper)
+    return std::nullopt;
+  for (unsigned side = 0; side != 2; ++side) {
+    APInt hi, lo;
+    auto lower = upper->getOperand(1 - side).getDefiningOp<arith::MaxUIOp>();
+    if (!lower || !matchPattern(upper->getOperand(side), m_ConstantInt(&hi)))
+      continue;
+    for (unsigned inner = 0; inner != 2; ++inner)
+      if (matchPattern(lower->getOperand(inner), m_ConstantInt(&lo)))
+        return std::make_pair(std::min(lo.getZExtValue(), hi.getZExtValue()),
+                              hi.getZExtValue());
+  }
+  return std::nullopt;
+}
+
+// An index of a read that a clamp keeps in [0, extent - width]: a constant,
+// min(max(x, lo), hi) with 0 <= lo and hi <= extent - width, or
+// (minui(maxui(x, lo), hi) >> s) - b, the form of a radial table's index,
+// with b <= lo >> s and (hi >> s) - b <= extent - width (#795).
+static bool clampedInto(Value index, int64_t extent, int64_t width) {
+  if (auto cast = index.getDefiningOp<arith::IndexCastOp>())
+    index = cast.getIn();
+  APInt value;
+  if (matchPattern(index, m_ConstantInt(&value)))
+    return value.getSExtValue() >= 0 && value.getSExtValue() + width <= extent;
+  if (auto offset = index.getDefiningOp<arith::SubIOp>()) {
+    APInt base, shift;
+    auto key = offset.getLhs().getDefiningOp<arith::ShRUIOp>();
+    if (!key || !matchPattern(offset.getRhs(), m_ConstantInt(&base)) ||
+        !matchPattern(key.getRhs(), m_ConstantInt(&shift)) ||
+        shift.getZExtValue() >= key.getType().getIntOrFloatBitWidth())
+      return false;
+    auto bounds = unsignedClamp(key.getLhs());
+    if (!bounds || base.isNegative())
+      return false;
+    uint64_t lo = bounds->first >> shift.getZExtValue();
+    uint64_t hi = bounds->second >> shift.getZExtValue();
+    uint64_t b = base.getZExtValue();
+    return b <= lo && int64_t(hi - b) + width <= extent;
+  }
+  auto upper = index.getDefiningOp<arith::MinSIOp>();
+  if (!upper)
+    return false;
+  for (unsigned side = 0; side != 2; ++side) {
+    APInt hi, lo;
+    auto lower = upper->getOperand(1 - side).getDefiningOp<arith::MaxSIOp>();
+    if (!lower || !matchPattern(upper->getOperand(side), m_ConstantInt(&hi)))
+      continue;
+    for (unsigned inner = 0; inner != 2; ++inner)
+      if (matchPattern(lower->getOperand(inner), m_ConstantInt(&lo)))
+        return lo.getSExtValue() >= 0 && hi.getSExtValue() >= 0 &&
+               hi.getSExtValue() + width <= extent;
+  }
+  return false;
+}
+
+// A read of a constant global table whose every index is clamped into its
+// static shape: it cannot fault and sees no store.
+static bool isBoundedTableRead(Operation *op) {
+  Value base;
+  ValueRange indices;
+  SmallVector<int64_t> widths;
+  if (auto read = dyn_cast<vector::LoadOp>(op)) {
+    base = read.getBase();
+    indices = read.getIndices();
+    auto type = read.getVectorType();
+    widths.assign(indices.size() - type.getRank(), 1);
+    llvm::append_range(widths, type.getShape());
+  } else if (auto read = dyn_cast<memref::LoadOp>(op)) {
+    base = read.getMemRef();
+    indices = read.getIndices();
+    widths.assign(indices.size(), 1);
+  } else {
+    return false;
+  }
+  auto global = base.getDefiningOp<memref::GetGlobalOp>();
+  auto type = dyn_cast<MemRefType>(base.getType());
+  if (!global || !type || !type.hasStaticShape() ||
+      type.getRank() != int64_t(indices.size()))
+    return false;
+  auto definition = SymbolTable::lookupNearestSymbolFrom<memref::GlobalOp>(
+      global, global.getNameAttr());
+  if (!definition || !definition.getConstant())
+    return false;
+  for (auto [index, extent, width] :
+       llvm::zip(indices, type.getShape(), widths))
+    if (!clampedInto(index, extent, width))
+      return false;
+  return true;
+}
+
+// Whether `value` of `block` is computed by pure ops and bounded table reads
+// alone, so that it may be computed before a guard.
+static bool isSpeculatable(Value value, Block &block,
+                           llvm::DenseSet<Value> &known) {
+  Operation *definition = value.getDefiningOp();
+  if (!definition || definition->getBlock() != &block || known.contains(value))
+    return true;
+  if (definition->getNumRegions() ||
+      !(isPure(definition) || isBoundedTableRead(definition)))
+    return false;
+  for (Value operand : definition->getOperands())
+    if (!isSpeculatable(operand, block, known))
+      return false;
+  known.insert(value);
+  return true;
+}
 
 namespace {
 
@@ -79,6 +196,7 @@ struct Schedule {
   TraverseHost &host;
   const SegmentLists &lists;
   int64_t blockSize, rotation;
+  const SegmentsFusedPruning *fused;
   Location loc;
   mdrt::SegmentedPairsType type;
   unsigned K = 0, S = 0, numOuts = 0, numValues = 0, maxMembers = 1;
@@ -91,9 +209,10 @@ struct Schedule {
   SmallVector<Value> fields;
 
   Schedule(md_alg::TraversePairsOp op, TraverseHost &host,
-           const SegmentLists &lists, int64_t blockSize, int64_t rotation)
+           const SegmentLists &lists, int64_t blockSize, int64_t rotation,
+           const SegmentsFusedPruning *fused)
       : op(op), host(host), lists(lists), blockSize(blockSize),
-        rotation(rotation), loc(op.getLoc()) {}
+        rotation(rotation), fused(fused), loc(op.getLoc()) {}
 
   Value ci(OpBuilder &b, int64_t v) {
     return arith::ConstantOp::create(b, loc, b.getI32Type(),
@@ -241,8 +360,11 @@ struct Schedule {
 
   LogicalResult analyze();
   void emitPack(OpBuilder &b, Value box, Value room);
+  /// The entries of a row of `count` entries of group `group` from entry
+  /// `base` (index) of the records, of the region's segment.
   SmallVector<Value> emitRecord(OpBuilder &b, const Region &region,
-                                Value record, Value lane, Value box32);
+                                Value group, Value count, Value base,
+                                Value lane, Value box32);
   LogicalResult run();
 };
 
@@ -430,7 +552,8 @@ void Schedule::emitPack(OpBuilder &b, Value box, Value room) {
 }
 
 SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
-                                        Value record, Value lane, Value box32) {
+                                        Value group, Value count, Value base,
+                                        Value lane, Value box32) {
   bool triclinic = isTriclinic(box32);
   int64_t width = getEntryShiftBits(triclinic);
   int64_t shiftOffset = getEntryShiftOffset(triclinic);
@@ -440,8 +563,6 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
   Operation *yield = region.kernel->getTerminator();
   Value cutoff2 = createCutoff2(b, loc, f32, op.getCutoff().convertToDouble());
 
-  Value group = load(b, lists.groups, record);
-  Value count = load(b, lists.dual ? lists.inner.counts : lists.counts, record);
   Value entries = lists.dual ? lists.inner.entries : lists.entries;
   Value masks = lists.dual ? lists.inner.masks : lists.masks;
 
@@ -525,7 +646,6 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
       b, loc, arith::AddIOp::create(b, loc, u, ci(b, rotation - 1)),
       ci(b, rotation - 1));
   Value source = arith::OrIOp::create(b, loc, half, previous);
-  Value base = arith::MulIOp::create(b, loc, toIndex(b, record), ix(b, 64));
 
   auto batches = scf::ForOp::create(
       b, loc, ci(b, 0), count, ci(b, 32), initial,
@@ -601,20 +721,125 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                 for (unsigned q : region.placesG)
                   cJ[q] = placeOffset(then, region.g, q, hJ);
                 ValueRange fieldsJ = now.slice(1 + numH, numFieldsJ);
-                unsigned begin = 0;
-                for (unsigned m = 0; m != M; ++m) {
+                // Each site pair's slice: its geometry, its mapping, and
+                // the ops already emitted for it.
+                struct Slice {
+                  unsigned begin = 0, end = 0;
+                  Value d, r2;
+                  IRMapping mapping;
+                  llvm::DenseSet<Operation *> emitted;
+                };
+                std::vector<Slice> slices(M);
+                {
+                  unsigned begin = 0;
+                  for (unsigned m = 0; m != M; ++m) {
+                    slices[m].begin = begin;
+                    begin += region.table[m].values.size();
+                    slices[m].end = begin;
+                  }
+                }
+                auto geometry = [&](unsigned m) {
+                  Slice &slice = slices[m];
+                  if (slice.d)
+                    return;
                   const mdrt::SitePair &sites = region.table[m];
-                  unsigned end = begin + sites.values.size();
                   Value d = d0;
                   if (Value c = cI.lookup(sites.p))
                     d = arith::AddFOp::create(then, loc, d, c);
                   if (Value c = cJ.lookup(sites.q))
                     d = arith::SubFOp::create(then, loc, d, c);
-                  Value r2 = vector::ReductionOp::create(
+                  slice.d = d;
+                  slice.r2 = vector::ReductionOp::create(
                       then, loc, vector::CombiningKind::ADD,
                       arith::MulFOp::create(then, loc, d, d));
+                  slice.mapping.map(region.kernel->getArgument(2 * m),
+                                    slice.r2);
+                  slice.mapping.map(region.kernel->getArgument(2 * m + 1), d);
+                  unsigned iField = 0, jField = 0;
+                  for (unsigned j = 0; j != numFields; ++j)
+                    for (unsigned k = 0; k != members; ++k) {
+                      if (!region.reads[j][k])
+                        continue;
+                      Value value =
+                          k < region.mf ? fieldsI[iField++] : fieldsJ[jField++];
+                      slice.mapping.map(
+                          region.kernel->getArgument(2 * M + j * members + k),
+                          value);
+                    }
+                };
+                // Emits the ops of slice m that `value` depends on, where
+                // `at` is, once each.
+                std::function<void(OpBuilder &, unsigned, Value)> emit =
+                    [&](OpBuilder &at, unsigned m, Value value) {
+                      Operation *definition = value.getDefiningOp();
+                      if (!definition ||
+                          definition->getBlock() != region.kernel ||
+                          slices[m].emitted.contains(definition))
+                        return;
+                      definition->walk([&](Operation *nested) {
+                        for (Value operand : nested->getOperands())
+                          if (operand.getDefiningOp() != nested)
+                            emit(at, m, operand);
+                      });
+                      at.clone(*definition, slices[m].mapping);
+                      slices[m].emitted.insert(definition);
+                    };
+                // The bounded reads of slice m's tables (the radial tables
+                // of D94) are issued before the guard of the pair before it,
+                // so that a read is in flight while that pair is evaluated
+                // (#795's schedule).
+                // A region that adds to sums too (the kernel of the steps
+                // that write the energy) keeps its reads in its guards, as
+                // #795's sums do: issued ahead they take it above the
+                // registers of #795's kernel.
+                auto issueReads = [&](unsigned m) {
+                  if (!sumsYielded.empty())
+                    return;
+                  geometry(m);
+                  llvm::DenseSet<Value> known;
+                  for (Operation *nested : mdrt::getSiteSlice(
+                           *region.kernel, m, slices[m].begin, slices[m].end))
+                    if (isBoundedTableRead(nested) &&
+                        isSpeculatable(nested->getResult(0), *region.kernel,
+                                       known))
+                      emit(then, m, nested->getResult(0));
+                };
+                // The pairs in an order where consecutive pairs add to
+                // different places, so that neighboring guards are
+                // independent (#795's schedule).
+                SmallVector<unsigned> order;
+                {
+                  SmallVector<bool> taken(M, false);
+                  int lastP = -1, lastQ = -1;
+                  for (unsigned step = 0; step != M; ++step) {
+                    unsigned next = M;
+                    for (unsigned m = 0; m != M; ++m) {
+                      if (taken[m])
+                        continue;
+                      if (next == M)
+                        next = m;
+                      if (int(region.table[m].p) != lastP &&
+                          int(region.table[m].q) != lastQ) {
+                        next = m;
+                        break;
+                      }
+                    }
+                    taken[next] = true;
+                    order.push_back(next);
+                    lastP = region.table[next].p;
+                    lastQ = region.table[next].q;
+                  }
+                }
+                if (!order.empty())
+                  issueReads(order.front());
+                for (auto [position, m] : llvm::enumerate(order)) {
+                  if (position + 1 < order.size())
+                    issueReads(order[position + 1]);
+                  geometry(m);
+                  Slice &slice = slices[m];
+                  const mdrt::SitePair &sites = region.table[m];
                   Value within = arith::CmpFOp::create(
-                      then, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+                      then, loc, arith::CmpFPredicate::OLT, slice.r2, cutoff2);
                   // The accumulators that the slice adds to.
                   SmallVector<unsigned> touched;
                   for (unsigned value : sites.values) {
@@ -631,36 +856,18 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                   SmallVector<Value> before;
                   for (unsigned t : touched)
                     before.push_back(values[t]);
-                  auto guard =
-                      branch(then, ValueRange(before).getTypes(), within);
-                  {
-                    OpBuilder in = OpBuilder::atBlockEnd(guard.thenBlock());
-                    IRMapping mapping;
-                    mapping.map(region.kernel->getArgument(2 * m), r2);
-                    mapping.map(region.kernel->getArgument(2 * m + 1), d);
-                    unsigned iField = 0, jField = 0;
-                    for (unsigned j = 0; j != numFields; ++j)
-                      for (unsigned k = 0; k != members; ++k) {
-                        if (!region.reads[j][k])
-                          continue;
-                        Value value = k < region.mf ? fieldsI[iField++]
-                                                    : fieldsJ[jField++];
-                        mapping.map(
-                            region.kernel->getArgument(2 * M + j * members + k),
-                            value);
-                      }
-                    for (Operation *nested :
-                         mdrt::getSiteSlice(*region.kernel, m, begin, end))
-                      in.clone(*nested, mapping);
+                  // The slice's terms added to `before`, where `in` is.
+                  auto accumulate = [&](OpBuilder &in) {
                     SmallVector<Value> after(before);
                     unsigned t = 0;
-                    for (unsigned n = begin; n != end; ++n) {
-                      unsigned value = sites.values[n - begin];
+                    for (unsigned n = slice.begin; n != slice.end; ++n) {
+                      unsigned value = sites.values[n - slice.begin];
                       Value yielded = yield->getOperand(n);
                       if (region.narrowed.contains(n))
                         yielded =
                             yielded.getDefiningOp<arith::ExtFOp>().getIn();
-                      Value k = mapping.lookupOrDefault(yielded);
+                      emit(in, m, yielded);
+                      Value k = slice.mapping.lookupOrDefault(yielded);
                       if (value < numOuts) {
                         bool antisymmetric =
                             op.getExchangeOf(value) == "antisymmetric";
@@ -678,14 +885,50 @@ SmallVector<Value> Schedule::emitRecord(OpBuilder &b, const Region &region,
                       after[t] = arith::AddFOp::create(in, loc, after[t], k);
                       ++t;
                     }
-                    scf::YieldOp::create(in, loc, after);
-                    OpBuilder out = OpBuilder::atBlockEnd(guard.elseBlock());
-                    scf::YieldOp::create(out, loc, before);
+                    return after;
+                  };
+                  // The next-to-last pair, where it reads a table and is
+                  // otherwise pure, is computed in every lane and kept by a
+                  // select instead of a guard (#795's schedule, U9: the
+                  // compiler branched around that pair alone and moved its
+                  // read below the branch).
+                  // A slice that also adds to the sums (the kernel of the
+                  // steps that write the energy) keeps its guard, as #795's
+                  // sums keep theirs.
+                  bool forcesOnly = llvm::all_of(
+                      sites.values, [&](unsigned v) { return v < numOuts; });
+                  bool predicated = false;
+                  if (forcesOnly && order.size() >= 3 &&
+                      position + 2 == order.size()) {
+                    llvm::DenseSet<Value> known;
+                    bool reads = false;
+                    predicated = true;
+                    for (Operation *nested : mdrt::getSiteSlice(
+                             *region.kernel, m, slice.begin, slice.end)) {
+                      reads |= isBoundedTableRead(nested);
+                      for (Value result : nested->getResults())
+                        predicated &=
+                            isSpeculatable(result, *region.kernel, known);
+                    }
+                    predicated &= reads;
                   }
+                  if (predicated) {
+                    SmallVector<Value> after = accumulate(then);
+                    for (auto [t, sum, old] :
+                         llvm::zip(touched, after, before))
+                      values[t] =
+                          arith::SelectOp::create(then, loc, within, sum, old);
+                    continue;
+                  }
+                  auto guard =
+                      branch(then, ValueRange(before).getTypes(), within);
+                  OpBuilder in = OpBuilder::atBlockEnd(guard.thenBlock());
+                  scf::YieldOp::create(in, loc, accumulate(in));
+                  OpBuilder out = OpBuilder::atBlockEnd(guard.elseBlock());
+                  scf::YieldOp::create(out, loc, before);
                   for (auto [t, result] :
                        llvm::zip(touched, guard.getResults()))
                     values[t] = result;
-                  begin = end;
                 }
                 scf::YieldOp::create(then, loc, values);
                 OpBuilder otherwise = OpBuilder::atBlockEnd(pairing.elseBlock());
@@ -832,84 +1075,206 @@ LogicalResult Schedule::run() {
       builder, loc,
       arith::AddIOp::create(builder, loc, threads, ix(builder, blockSize - 1)),
       block);
-  auto launch = gpu::LaunchOp::create(builder, loc, grid, one, one, block, one,
-                                      one);
-  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-  Value thread = arith::AddIOp::create(
-      kernel, loc,
-      arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
-      launch.getThreadIds().x);
-  Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
-  Value lane = arith::IndexCastOp::create(
-      kernel, loc, i32, arith::RemUIOp::create(kernel, loc, thread, warp32));
-  Value valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
-                                      warp, warps);
-  Value end = lists.dual ? load(kernel, lists.activeCount, ix(kernel, 0))
-                         : load(kernel, lists.offsets, ix(kernel, S));
-  end = toIndex(kernel, end);
-  Value start = arith::SelectOp::create(kernel, loc, valid, warp, end);
-  SmallVector<Value> zeros;
-  for (Value initial : op.getReduce())
-    zeros.push_back(createZero(kernel, loc, initial.getType()));
-  auto loop = scf::ForOp::create(
-      kernel, loc, start, end, warps, zeros,
-      [&](OpBuilder &body, Location, Value w, ValueRange sums) {
-        Value record = lists.dual
-                           ? Value(load(body, lists.active, w))
+  // The segment of the record `record` (i32): uniform in the warp.
+  auto segmentOf = [&](OpBuilder &at, Value record) {
+    Value segment = ci(at, 0);
+    for (unsigned t = 1; t < S; ++t) {
+      Value past = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::sge,
+                                         record,
+                                         load(at, lists.offsets, ix(at, t)));
+      segment = arith::SelectOp::create(at, loc, past, ci(at, t), segment);
+    }
+    return segment;
+  };
+  // A segment that the op names is a branch of its own; another
+  // contributes nothing and has no code.
+  auto evaluate = [&](OpBuilder &at, Value segment, Value lane, Value group,
+                      Value count, Value base) {
+    std::function<SmallVector<Value>(OpBuilder &, unsigned)> chain =
+        [&](OpBuilder &in, unsigned r) -> SmallVector<Value> {
+      SmallVector<Value> none;
+      for (Value initial : op.getReduce())
+        none.push_back(createZero(in, loc, initial.getType()));
+      if (r == regions.size())
+        return none;
+      Value here = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                         segment, ci(in, regions[r].s));
+      auto choice = branch(in, ValueRange(none).getTypes(), here);
+      OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+      scf::YieldOp::create(
+          then, loc,
+          emitRecord(then, regions[r], group, count, base, lane, box32));
+      OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
+      scf::YieldOp::create(otherwise, loc, chain(otherwise, r + 1));
+      return SmallVector<Value>(choice.getResults());
+    };
+    return chain(at, 0);
+  };
+  // The launch: with `pruning`, a warp a row (a group in a segment) prunes
+  // its records into the row's first inner records, full but the last
+  // (#795's U10), and evaluates them, at the step of the pruning of its
+  // refresh (D284); otherwise a warp a record of the inner records that
+  // hold entries, or of the records.
+  auto emitLaunch = [&](OpBuilder &at, bool pruning) {
+    auto launch = gpu::LaunchOp::create(at, loc, grid, one, one, block, one,
+                                        one);
+    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    Value thread = arith::AddIOp::create(
+        kernel, loc,
+        arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
+        launch.getThreadIds().x);
+    Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
+    Value lane = arith::IndexCastOp::create(
+        kernel, loc, i32, arith::RemUIOp::create(kernel, loc, thread, warp32));
+    Value valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                        warp, warps);
+    Value end = lists.dual && !pruning
+                    ? load(kernel, lists.activeCount, ix(kernel, 0))
+                    : load(kernel, lists.offsets, ix(kernel, S));
+    end = toIndex(kernel, end);
+    Value start = arith::SelectOp::create(kernel, loc, valid, warp, end);
+    SmallVector<Value> zeros;
+    for (Value initial : op.getReduce())
+      zeros.push_back(createZero(kernel, loc, initial.getType()));
+    auto loop = scf::ForOp::create(
+        kernel, loc, start, end, warps, zeros,
+        [&](OpBuilder &body, Location, Value w, ValueRange sums) {
+          SmallVector<Value> contributions;
+          if (!pruning) {
+            Value record =
+                lists.dual ? Value(load(body, lists.active, w))
                            : Value(arith::IndexCastOp::create(body, loc, i32, w));
-        // The record's segment, from the first record of each: uniform in
-        // the warp.
-        Value segment = ci(body, 0);
-        for (unsigned t = 1; t < S; ++t) {
-          Value past = arith::CmpIOp::create(
-              body, loc, arith::CmpIPredicate::sge, record,
-              load(body, lists.offsets, ix(body, t)));
-          segment = arith::SelectOp::create(body, loc, past, ci(body, t),
-                                            segment);
-        }
-        // A segment that the op names is a branch of its own; another
-        // contributes nothing and has no code.
-        std::function<SmallVector<Value>(OpBuilder &, unsigned)> chain =
-            [&](OpBuilder &at, unsigned r) -> SmallVector<Value> {
-          SmallVector<Value> none;
-          for (Value initial : op.getReduce())
-            none.push_back(createZero(at, loc, initial.getType()));
-          if (r == regions.size())
-            return none;
-          Value here = arith::CmpIOp::create(
-              at, loc, arith::CmpIPredicate::eq, segment,
-              ci(at, regions[r].s));
-          auto choice = branch(at, ValueRange(none).getTypes(), here);
-          OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
-          scf::YieldOp::create(then, loc,
-                               emitRecord(then, regions[r], record, lane,
-                                          box32));
-          OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
-          scf::YieldOp::create(otherwise, loc, chain(otherwise, r + 1));
-          return SmallVector<Value>(choice.getResults());
-        };
-        SmallVector<Value> contributions = chain(body, 0);
-        SmallVector<Value> next;
-        for (auto [sum, value] : llvm::zip(sums, contributions))
-          next.push_back(arith::AddFOp::create(body, loc, sum, value));
-        scf::YieldOp::create(body, loc, next);
+            Value count = load(
+                body, lists.dual ? lists.inner.counts : lists.counts, record);
+            contributions = evaluate(
+                body, segmentOf(body, record), lane,
+                load(body, lists.groups, record), count,
+                arith::MulIOp::create(body, loc, toIndex(body, record),
+                                      ix(body, 64)));
+          } else {
+            Value w32 = arith::IndexCastOp::create(body, loc, i32, w);
+            Value segment = segmentOf(body, w32);
+            Value group = load(body, lists.groups, w);
+            // The first record of a row: the first of its segment, or one
+            // whose group differs from the record's before it.
+            Value first = load(body, lists.offsets, toIndex(body, segment));
+            Value atFirst = arith::CmpIOp::create(
+                body, loc, arith::CmpIPredicate::eq, w32, first);
+            Value previous = arith::SelectOp::create(
+                body, loc, atFirst, w32,
+                arith::SubIOp::create(body, loc, w32, ci(body, 1)));
+            Value starts = arith::OrIOp::create(
+                body, loc, atFirst,
+                arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ne,
+                                      load(body, lists.groups, previous),
+                                      group));
+            SmallVector<Value> none;
+            for (Value initial : op.getReduce())
+              none.push_back(createZero(body, loc, initial.getType()));
+            auto row = branch(body, ValueRange(none).getTypes(), starts);
+            OpBuilder r = OpBuilder::atBlockEnd(row.thenBlock());
+            Value last = load(
+                r, lists.offsets,
+                toIndex(r, arith::AddIOp::create(r, loc, segment, ci(r, 1))));
+            Value base = arith::MulIOp::create(r, loc, w, ix(r, 64));
+            // The records of the row, pruned one after another, their
+            // survivors written on from the row's first inner record.
+            auto walk = scf::WhileOp::create(
+                r, loc, TypeRange{i32, i32}, ValueRange{w32, ci(r, 0)},
+                [&](OpBuilder &cond, Location, ValueRange args) {
+                  Value inside = arith::CmpIOp::create(
+                      cond, loc, arith::CmpIPredicate::slt, args[0], last);
+                  Value at = arith::SelectOp::create(cond, loc, inside, args[0],
+                                                     w32);
+                  Value same = arith::CmpIOp::create(
+                      cond, loc, arith::CmpIPredicate::eq,
+                      load(cond, lists.groups, at), group);
+                  scf::ConditionOp::create(
+                      cond, loc, arith::AndIOp::create(cond, loc, inside, same),
+                      args);
+                },
+                [&](OpBuilder &next, Location, ValueRange args) {
+                  Value kept = fused->pruneRecord(next, toIndex(next, args[0]),
+                                                  lane, base, args[1]);
+                  scf::YieldOp::create(
+                      next, loc,
+                      ValueRange{arith::AddIOp::create(next, loc, args[0],
+                                                       ci(next, 1)),
+                                 arith::AddIOp::create(next, loc, args[1],
+                                                       kept)});
+                });
+            Value after = walk.getResult(0), total = walk.getResult(1);
+            // The count of each inner record of the row: 64 but the last,
+            // and none past the survivors; a record that keeps entries is
+            // active for the steps that follow.
+            Value records = arith::SubIOp::create(r, loc, after, w32);
+            scf::ForOp::create(
+                r, loc, ci(r, 0), records, ci(r, 32), ValueRange(),
+                [&](OpBuilder &c, Location, Value k0, ValueRange) {
+                  Value k = arith::AddIOp::create(c, loc, k0, lane);
+                  Value inRow = arith::CmpIOp::create(
+                      c, loc, arith::CmpIPredicate::slt, k, records);
+                  scf::IfOp::create(c, loc, inRow, [&](OpBuilder &d, Location) {
+                    Value left = arith::SubIOp::create(
+                        d, loc, total,
+                        arith::MulIOp::create(d, loc, k, ci(d, 64)));
+                    Value own = arith::MaxSIOp::create(
+                        d, loc, ci(d, 0),
+                        arith::MinSIOp::create(d, loc, left, ci(d, 64)));
+                    Value record = toIndex(d, arith::AddIOp::create(d, loc,
+                                                                    w32, k));
+                    memref::StoreOp::create(d, loc, own, lists.inner.counts,
+                                            ValueRange{record});
+                    fused->recordActive(d, record, own);
+                    scf::YieldOp::create(d, loc);
+                  });
+                  scf::YieldOp::create(c, loc);
+                });
+            // The entries that other lanes of the warp wrote.
+            NVVM::SyncWarpOp::create(r, loc, ci(r, -1));
+            scf::YieldOp::create(
+                r, loc, evaluate(r, segment, lane, group, total, base));
+            OpBuilder skip = OpBuilder::atBlockEnd(row.elseBlock());
+            scf::YieldOp::create(skip, loc, none);
+            contributions.assign(row.getResults().begin(),
+                                 row.getResults().end());
+          }
+          SmallVector<Value> next;
+          for (auto [sum, value] : llvm::zip(sums, contributions))
+            next.push_back(arith::AddFOp::create(body, loc, sum, value));
+          scf::YieldOp::create(body, loc, next);
+        });
+    SmallVector<Value> totals(loop.getResults());
+    for (Value &total : totals)
+      total = emitWarpReduce(kernel, loc, total, Combiner::Add);
+    if (!totals.empty()) {
+      Value leader = arith::AndIOp::create(
+          kernel, loc, valid,
+          arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
+                                ci(kernel, 0)));
+      scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
+        for (auto [index, total] : llvm::enumerate(totals))
+          storeElement(then, loc, total, op.getScratch()[2 * index], warp);
+        scf::YieldOp::create(then, loc);
       });
-  SmallVector<Value> totals(loop.getResults());
-  for (Value &total : totals)
-    total = emitWarpReduce(kernel, loc, total, Combiner::Add);
-  if (!totals.empty()) {
-    Value leader = arith::AndIOp::create(
-        kernel, loc, valid,
-        arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
-                              ci(kernel, 0)));
-    scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
-      for (auto [index, total] : llvm::enumerate(totals))
-        storeElement(then, loc, total, op.getScratch()[2 * index], warp);
-      scf::YieldOp::create(then, loc);
-    });
+    }
+    gpu::TerminatorOp::create(kernel, loc);
+    host.bringIn(launch);
+  };
+  if (fused) {
+    Value now = memref::LoadOp::create(builder, loc, fused->now, ValueRange{});
+    auto choice = branch(builder, TypeRange(), now);
+    OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+    fused->prepare(then);
+    emitLaunch(then, /*pruning=*/true);
+    fused->finish(then);
+    scf::YieldOp::create(then, loc);
+    OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
+    emitLaunch(otherwise, /*pruning=*/false);
+    scf::YieldOp::create(otherwise, loc);
+  } else {
+    emitLaunch(builder, /*pruning=*/false);
   }
-  gpu::TerminatorOp::create(kernel, loc);
-  host.bringIn(launch);
   (void)context;
 
   // The packed frames are freed once the loop has read them.
@@ -933,7 +1298,7 @@ LogicalResult Schedule::run() {
 
 LogicalResult kernels::lowerTraversePairsSegmentsSIMT(
     md_alg::TraversePairsOp op, TraverseHost &host, const SegmentLists &lists,
-    int64_t blockSize, int64_t rotation) {
+    int64_t blockSize, int64_t rotation, const SegmentsFusedPruning *fused) {
   if (op.isBufferForm())
     return op.emitOpError()
            << "takes its list of units as buffers, which only its serial "
@@ -962,5 +1327,5 @@ LogicalResult kernels::lowerTraversePairsSegmentsSIMT(
     return op.emitOpError() << "runs a warp for each record, which needs "
                                "blocks of whole warps, not "
                             << blockSize << " threads";
-  return Schedule(op, host, lists, blockSize, rotation).run();
+  return Schedule(op, host, lists, blockSize, rotation, fused).run();
 }

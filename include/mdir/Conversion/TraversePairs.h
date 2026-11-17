@@ -13,6 +13,8 @@
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <functional>
+
 namespace mdir::kernels {
 
 /// The inner list of a dual list of groups (D114), as the runtime holds it:
@@ -147,6 +149,25 @@ struct SegmentLists {
   bool dual = false;
 };
 
+/// The pruning of a dual list of units in the loop that takes its refresh
+/// (D284; D417, Section 6), from the pass that calls the schedule: whether
+/// the refresh pruned at this step (`now`, on the host), what the kernels
+/// take, made on the host (`prepare`), the warp's pruning of a record into
+/// the inner records from an entry on (`pruneRecord`, the number kept), a
+/// record's count as an active one (`recordActive`), and the active units
+/// after the launch (`finish`).
+struct SegmentsFusedPruning {
+  mlir::Value now;
+  std::function<void(mlir::OpBuilder &)> prepare;
+  std::function<mlir::Value(mlir::OpBuilder &, mlir::Value record,
+                            mlir::Value lane, mlir::Value base,
+                            mlir::Value cursor)>
+      pruneRecord;
+  std::function<void(mlir::OpBuilder &, mlir::Value record, mlir::Value kept)>
+      recordActive;
+  std::function<void(mlir::OpBuilder &)> finish;
+};
+
 /// The SIMT schedule of a list of units (D[md-alg-segments-simt], D417,
 /// Section 6): a warp for each record of one segment, lanes u and u + 16
 /// holding the unit at place 16 g + u, the partners' frames, fields, masks,
@@ -154,11 +175,10 @@ struct SegmentLists {
 /// one guard and one slice of the region for each site pair of a segment's
 /// table; W^T at the write. `blockSize` and `rotation` are the entry of the
 /// tuning policy (D420). Refuses what the schedule does not take, by name.
-mlir::LogicalResult lowerTraversePairsSegmentsSIMT(md_alg::TraversePairsOp op,
-                                                   TraverseHost &host,
-                                                   const SegmentLists &lists,
-                                                   int64_t blockSize,
-                                                   int64_t rotation);
+mlir::LogicalResult lowerTraversePairsSegmentsSIMT(
+    md_alg::TraversePairsOp op, TraverseHost &host, const SegmentLists &lists,
+    int64_t blockSize, int64_t rotation,
+    const SegmentsFusedPruning *fused = nullptr);
 
 /// The buffers that the serial definition of md_alg.traverse_pairs reads,
 /// all where the loop runs: the layout of the groups, the inner list and

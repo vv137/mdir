@@ -32,7 +32,11 @@ most 4: n = 4096.
 
 It prints the largest ratio of a difference to its bound, and fails if one
 exceeds 1, if the traversal contributes nothing, or if the magnitudes do not
-bound the sums.
+bound the sums. The potential and the total virial (its constraint part
+included) of the general groups run are held to the serial definition's
+within the same bound: they do not depend on the route, while the forces of
+the atoms and the virial without its constraint part do where a site is not
+a linear function of its frame (D[md-alg-segments-simt], Section 5).
 """
 import os
 import sys
@@ -85,6 +89,13 @@ def evaluate(oracle):
 
 runs = {oracle: evaluate(oracle)
         for oracle in ("simt", "serial", "serial-reversed", "serial-magnitudes", "omitted")}
+# The general groups run, for the quantities that do not depend on how the
+# forces of the sites reach the atoms: the potential and the total virial,
+# its constraint part included (the parts are split otherwise where a site
+# is not a linear function of its frame, as Amber's extra points are).
+os.environ.pop("MDIR_RIGID_UNITS_TEST")
+general = evaluate("simt")
+os.environ["MDIR_RIGID_UNITS_TEST"] = kinds
 terms = runs["serial"] - runs["omitted"]
 magnitude = runs["serial-magnitudes"] - runs["omitted"]
 u = 2.0 ** -24
@@ -114,6 +125,17 @@ for other in ("simt", "serial-reversed"):
         failed = True
         print(f"{name} {what} {other}: beyond the bound at {where}: "
               f"{float(difference[worst]):.3g} > {float(slack[worst]):.3g}")
+# The general run differs in the order of its sums and in how it forms the
+# displacements of the sites, within the same model of a reordered sum.
+difference = np.abs(general[-2:] - runs["serial"][-2:])
+for k, what_ in ((0, "potential"), (1, "total virial")):
+    ratio = float(difference[k] / slack[-2 + k])
+    print(f"{name} {what} general: {what_} differs by {ratio:.3g} of its bound",
+          file=sys.stderr)
+    if ratio > 1.0:
+        failed = True
+        print(f"{name} {what} general: the {what_} is beyond the bound: "
+              f"{float(difference[k]):.6g} > {float(slack[-2 + k]):.6g}")
 if failed:
     sys.exit(1)
 print(f"{name} {what}: the schedule and the reversed visit keep the serial "
