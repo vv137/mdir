@@ -635,8 +635,13 @@ legal strategies (#433). One target description supplies both: a
 capability record for preconditions and a policy record for thresholds.
 The chooser and the lowering use the same precondition. A target that
 cannot meet it refuses the strategy with a reason and takes a legal
-fallback. A target without measurements takes a conservative stated
-policy, not a threshold inferred from another architecture.
+fallback. The policy records are tables, one for each strategy, keyed by
+the architecture and a device class (D[tuning-policies]): the pruning in
+the loop over pairs has an entry for the architectures of major version
+12, and every other value has only the default entry. An architecture
+without an entry of its own takes the stated default, and the chooser's
+remarks say that it was not measured there. Measured entries replace the
+default architecture by architecture.
 
 The proposed compilation plan records the selected target, precision,
 neighbor and scatter strategies, and determinism with a reason and
