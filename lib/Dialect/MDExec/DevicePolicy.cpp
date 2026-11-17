@@ -157,6 +157,25 @@ static const Measurement kLaunchDefaultBasis = {
 static const ArrayRef<Entry<LaunchPolicy>> kLaunchTable = {};
 
 //===----------------------------------------------------------------------===//
+// The SIMT schedule of a list of units (D[md-alg-segments-simt])
+//===----------------------------------------------------------------------===//
+
+// The values of #795's schedule at 745c9f12, whose mechanisms are
+// requirements (D417): blocks of 128 threads and the 16 units of a group
+// turned through the 16 lanes of a half-warp. Measured with the schedule of
+// this decision on the six systems of #795 on an RTX 5090 (sm_120),
+// 2026-11-17; every other architecture takes it as a fallback.
+const SegmentsPolicy mdir::md_exec::policy::kDefaultSegments = {
+    /*blockSize=*/128, /*rotationLanes=*/16};
+static const Measurement kSegmentsDefaultBasis = {
+    "D[md-alg-segments-simt]",
+    "the six systems of #795 (rhombic dodecahedra and boxes of OPC and "
+    "TIP3P, ubiquitin in OPC and TIP3P, a CHARMM protein in TIP3P), RTX 5090",
+    "2026-11-17"};
+static const Measured kSegmentsDefaultMeasured[] = {{12, 0}};
+static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
+
+//===----------------------------------------------------------------------===//
 // Selection
 //===----------------------------------------------------------------------===//
 
@@ -220,6 +239,15 @@ DevicePolicy mdir::md_exec::policy::getDevicePolicy(StringRef arch,
     policy.launch = entry->values;
     policy.launchBasis = entry->basis;
     policy.launchFallback = !covers(entry->measured, key);
+  }
+
+  policy.segments = kDefaultSegments;
+  policy.segmentsBasis = kSegmentsDefaultBasis;
+  policy.segmentsFallback = !covers(kSegmentsDefaultMeasured, key);
+  if (const auto *entry = find<SegmentsPolicy>(kSegmentsTable, key)) {
+    policy.segments = entry->values;
+    policy.segmentsBasis = entry->basis;
+    policy.segmentsFallback = !covers(entry->measured, key);
   }
   return policy;
 }

@@ -7,6 +7,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   MDExecKernels.cpp
   TraversePairs.cpp
   TraverseSegments.cpp
+  TraverseSegmentsSIMT.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
   ScatterEmitter.cpp

@@ -93,6 +93,16 @@ struct LaunchPolicy {
   }
 };
 
+/// The SIMT schedule of `md_alg.traverse_pairs` over a list of units
+/// (D[md-alg-segments-simt]): its launches and its rotation.
+struct SegmentsPolicy {
+  /// The threads of a block of the traversal, whole warps.
+  int64_t blockSize;
+  /// The lanes through which the partners turn, the units of a group that
+  /// a half-warp holds (`rotate(L)`).
+  int64_t rotationLanes;
+};
+
 /// The key of an entry: an architecture, as a major version and a minor
 /// one (`sm_120` is 12 and 0), the minor -1 for every minor version of
 /// the major; and a device class, empty for every device of the
@@ -113,12 +123,14 @@ struct DevicePolicy {
   PruningPolicy pruning;
   ScatterPolicy scatter;
   LaunchPolicy launch;
+  SegmentsPolicy segments;
   /// The measurement behind each selected entry.
-  Measurement pruningBasis, scatterBasis, launchBasis;
+  Measurement pruningBasis, scatterBasis, launchBasis, segmentsBasis;
   /// The tables whose selected entry was not measured on the
   /// architecture: the default where it has no entry of its own, or an
   /// entry of its major version that covered another minor one.
-  bool pruningFallback = true, scatterFallback = true, launchFallback = true;
+  bool pruningFallback = true, scatterFallback = true, launchFallback = true,
+       segmentsFallback = true;
   /// The architecture and class as given.
   std::string arch, deviceClass;
 
@@ -142,6 +154,7 @@ DevicePolicy getDevicePolicy(llvm::StringRef arch,
 extern const PruningPolicy kDefaultPruning;
 extern const ScatterPolicy kDefaultScatter;
 extern const LaunchPolicy kDefaultLaunch;
+extern const SegmentsPolicy kDefaultSegments;
 
 } // namespace policy
 } // namespace md_exec

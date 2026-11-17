@@ -5,12 +5,14 @@
 // the outer ones of a list or the inner ones of a dual list (D114).
 //
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu="traverse-oracle=serial" --verify-diagnostics
+// The same refusals come before the SIMT schedule (D[md-alg-segments-simt]):
+// RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu --verify-diagnostics
 
 // The loop's cutoff beyond the cutoff that the list was built with: segment
 // (1, 1), the rest with itself (radius 0), needs pairs within 1.0.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @beyond(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @beyond(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.1) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
@@ -18,6 +20,7 @@ func.func @beyond(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(1.0) weights [0.5]
@@ -35,7 +38,7 @@ func.func @beyond(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf
 // covering reach for it is 0.85 + 2 (0.1).
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @water(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @water(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.85) skin(0.15) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.85) skin(0.15) prune_skin(0.15) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
@@ -43,6 +46,7 @@ func.func @water(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]
@@ -59,7 +63,7 @@ func.func @water(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
 // A loop over a list that no refresh has built.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @empty(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @empty(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   // expected-note @+1 {{unresolved coverage boundary}}
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.1) : !sp, memref<?x3xf64, 1>
@@ -68,6 +72,7 @@ func.func @empty(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
   %u = md_alg.traverse_pairs structure %l0 : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]
@@ -84,7 +89,7 @@ func.func @empty(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
 // The inner records of a list that its refresh does not keep dual.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @inner(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @inner(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.1) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
@@ -92,6 +97,7 @@ func.func @inner(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
   %u = md_alg.traverse_pairs structure %l : !sp inner
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]
@@ -108,7 +114,7 @@ func.func @inner(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
 // The outer records of a dual list.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @outer(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @outer(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.05) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
@@ -116,6 +122,7 @@ func.func @outer(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]
@@ -134,13 +141,14 @@ func.func @outer(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf6
 // reach that leaves out a radius (reach + e_f) fails here.
 !sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [], weights = [], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
 md.particle_set @atoms
-func.func @covered(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>) -> f64 {
+func.func @covered(%t: memref<?xi32, 1>, %k: memref<?x3xi32, 1>, %x: memref<?x3xf64, 1>, %cell: !md.cell, %f: memref<?x3xf32, 1>, %s0: memref<?xf64, 1>, %s1: memref<?xf64, 1>) -> f64 {
   %l0 = md_exec.empty_segmented_pairs %t kinds(%k : memref<?x3xi32, 1>) cutoff(0.9) skin(0.1) : memref<?xi32, 1> -> !sp
   %l = md_exec.refresh_segmented_pairs %l0 at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.1) : !sp, memref<?x3xf64, 1>
   %u0 = arith.constant 0.0 : f64
   %u = md_alg.traverse_pairs structure %l : !sp
       positions(%x : memref<?x3xf64, 1>) cell(%cell : !md.cell)
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%s0, %s1 : memref<?xf64, 1>, memref<?xf64, 1>)
       unique visit unordered combine atomic
       algebra ["any_order", "any_order"] exchange ["antisymmetric", "symmetric"]
       cutoff(0.9) weights [0.5]

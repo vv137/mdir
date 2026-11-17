@@ -2841,10 +2841,11 @@ void GroupsBuild::emitBuild() {
   if (unitsMode) {
     // After the reach: the covering reach of each segment and the end of
     // the units of each rank; after the shifts, the buffers of the units
-    // and of the records by segment.
+    // and of the records by segment, and the place where each rank begins,
+    // which the traversal reads (K + 2).
     inputs.insert(inputs.begin() + 3, S, f64);
     inputs.insert(inputs.begin() + 3 + S, K + 1, index);
-    inputs.insert(inputs.end() - 1, 10, buffer);
+    inputs.insert(inputs.end() - 1, 11, buffer);
   }
   std::string name = unitsMode ? kernels::getSegmentsBuildName(tilted, K)
                                : kernels::getGroupsBuildName(tilted);
@@ -2861,8 +2862,8 @@ void GroupsBuild::emitBuild() {
           unitRef = a[12], unitValue = a[13], unitOfParticle = a[14],
           lastOf = a[15], outOrder = a[16], finalEntries = a[17],
           finalMasks = a[18], finalUnits = a[19], finalCounts = a[20],
-          segmentsOut = a[21];
-          a.erase(a.begin() + 12, a.begin() + 22);
+          segmentsOut = a[21], rankPlaces = a[22];
+          a.erase(a.begin() + 12, a.begin() + 23);
         }
         x = a[0], box = a[1], reach = a[2], excluded = a[3], order = a[4],
         placeOf = a[5], entries = a[6], masks = a[7], counts = a[8],
@@ -3040,10 +3041,6 @@ void GroupsBuild::emitBuild() {
         columnChunks = alloc(buffer, columns);
         Value gridOfColumns = call1(kGrid, index, {columns, block});
         sizesDevice = alloc(sizesType, {});
-        if (unitsMode) {
-          Value rankCount = cx(K + 2);
-          rankPlaces = alloc(buffer, rankCount);
-        }
         xp = alloc(placesType, capacity);
         gkey = alloc(buffer, capacity);
         gcount = alloc(buffer, gcells);
@@ -3251,8 +3248,6 @@ void GroupsBuild::emitBuild() {
         gpu::WaitOp::create(b, loc, Type(), copied);
 
         dealloc(wrapped);
-        if (unitsMode)
-          dealloc(rankPlaces);
         dealloc(sizesDevice);
         dealloc(xp);
         dealloc(gkey);

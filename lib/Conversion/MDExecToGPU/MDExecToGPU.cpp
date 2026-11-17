@@ -202,6 +202,10 @@ struct SegmentedState {
   SmallVector<Value> rankEnd;
   SmallVector<double> extents;
   Value unitRef, unitValue, unitOfParticle, members;
+  /// The place where each rank begins, and the end of the places (K + 2),
+  /// on the device: the build writes it, and the traversal takes the kind
+  /// of a place from it.
+  Value rankPlaces;
   Value moved, farthest, movedInner, farthestInner;
   double cutoff = 0.0;
 };
@@ -287,6 +291,9 @@ public:
   /// (DevicePolicy.h, D420): the block memory of the
   /// strategies and the lanes of PME's gathering.
   md_exec::policy::LaunchPolicy launch = md_exec::policy::kDefaultLaunch;
+  /// The entry of the schedule of lists of units (D[md-alg-segments-simt]).
+  md_exec::policy::SegmentsPolicy segmentsPolicy =
+      md_exec::policy::kDefaultSegments;
   /// An opt-in compiler strategy for the integer scans of the groups build.
   bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
@@ -3934,14 +3941,9 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
               "the tests; the pipeline takes the structure form, whose "
               "contract is in the type";
   if (op.isSegmented()) {
-    // The serial definition, D417's oracle, runs on the host over copies of
-    // the lists that the device built (D419); the SIMT
-    // schedule is slice S3's.
-    if (traverseOracle == "simt")
-      return op.emitOpError()
-             << "visits the segments of a list of units, whose SIMT schedule "
-                "this pass does not lower yet (D417, slice S3); its serial "
-                "definition runs with traverse-oracle=serial";
+    // The SIMT schedule of the segments (D[md-alg-segments-simt]), or the
+    // serial definition, D417's oracle, on the host over copies of the
+    // lists that the device built (D419).
     Neighbors structure;
     if (failed(getNeighbors(op, op.getNeighbors(), structure)))
       return failure();
@@ -3959,7 +3961,65 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
     if (failed(md_exec::verifySegmentCoverage(
             op, op.getNeighbors(), op.getCutoff().convertToDouble(), visited)))
       return failure();
-    return lowerTraversePairsSerial(op, structure);
+    if (traverseOracle != "simt")
+      return lowerTraversePairsSerial(op, structure);
+    if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
+      return failure();
+    OpBuilder at(op);
+    Location loc = op.getLoc();
+    auto slot = [&](MdrtGroupsSlot which) {
+      return getGroupsBuffer(at, loc, structure.handle, which);
+    };
+    GroupBuffers buffers = getGroupsBuffers(at, loc, structure.handle);
+    kernels::SegmentLists lists;
+    lists.order = slot(GROUPS_SEGMENT_ORDER);
+    lists.shifts = buffers.shifts;
+    lists.entries = slot(GROUPS_RECORD_ENTRIES);
+    lists.masks = slot(GROUPS_RECORD_MASKS);
+    lists.groups = slot(GROUPS_RECORD_GROUPS);
+    lists.counts = slot(GROUPS_RECORD_COUNTS);
+    lists.offsets = slot(GROUPS_SEGMENT_OFFSETS);
+    lists.members = structure.segmented->members;
+    lists.rankPlaces = structure.segmented->rankPlaces;
+    lists.dual = structure.dual;
+    if (structure.dual) {
+      lists.inner = getInnerLists(at, loc, structure.handle);
+      PruneBuffers prune = getPruneBuffers(at, loc, structure.handle);
+      lists.active = prune.activeUnits;
+      lists.activeCount = prune.activeCount;
+    }
+    // The rotation of the op, or that of the policy's entry, which the op
+    // then records (D417, Section 4.2); with the block, in the module's
+    // record of the policies, for the log and the manifest (D408).
+    int64_t rotation = op.getRotate() ? int64_t(*op.getRotate())
+                                      : segmentsPolicy.rotationLanes;
+    if (!op.getRotate())
+      op.setRotateAttr(at.getI64IntegerAttr(rotation));
+    {
+      SmallVector<Attribute> policy;
+      if (auto recorded = module->getAttrOfType<ArrayAttr>(
+              kernels::kPolicyAttrName))
+        llvm::append_range(policy, recorded.getValue());
+      SmallVector<NamedAttribute> fields = {
+          at.getNamedAttr("function",
+                          at.getStringAttr(op->getParentOfType<func::FuncOp>()
+                                               .getSymName())),
+          at.getNamedAttr("op", at.getStringAttr("traverse_pairs")),
+          at.getNamedAttr("determinism", at.getStringAttr("unordered")),
+          at.getNamedAttr("strategy",
+                          at.getStringAttr("segments rotate(" +
+                                           std::to_string(rotation) + ")")),
+          at.getNamedAttr("launch",
+                          at.getStringAttr("(?," +
+                                           std::to_string(
+                                               segmentsPolicy.blockSize) +
+                                           ",1)"))};
+      policy.push_back(at.getDictionaryAttr(fields));
+      module->setAttr(kernels::kPolicyAttrName, at.getArrayAttr(policy));
+    }
+    GroupsHost host(*this, op, structure);
+    return kernels::lowerTraversePairsSegmentsSIMT(
+        op, host, lists, segmentsPolicy.blockSize, rotation);
   }
   // The loops over a matrix stay md_exec.pair_for in this step.
   if (op.getMultiplicity() != md_alg::Multiplicity::Unique)
@@ -6333,6 +6393,8 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   units.unitValue = toDevice(valueH, U);
   units.unitOfParticle = toDevice(unitOfH, N);
   units.members = toDevice(membersH, membersSize);
+  units.rankPlaces = createDeviceBuffer(
+      builder, loc, deviceI32, ValueRange{createIndex(builder, loc, K + 2)});
   units.units = U;
   structure.size = N;
 
@@ -6553,7 +6615,8 @@ LogicalResult Lowering::emitSegmentsBuild(OpBuilder &builder, Location loc,
                      slot(GROUPS_SEGMENT_LAST), slot(GROUPS_SEGMENT_ORDER),
                      slot(GROUPS_RECORD_ENTRIES), slot(GROUPS_RECORD_MASKS),
                      slot(GROUPS_RECORD_GROUPS), slot(GROUPS_RECORD_COUNTS),
-                     slot(GROUPS_SEGMENT_OFFSETS), structure.sizes});
+                     slot(GROUPS_SEGMENT_OFFSETS), units.rankPlaces,
+                     structure.sizes});
     func::CallOp::create(at, loc, build, operands);
     auto load = [&](int64_t which) -> Value {
       return arith::ExtUIOp::create(
@@ -9022,12 +9085,13 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "'md-exec-assign-storage' with 'memory=device'";
   }
 
-  // The loops over lists of units are lowered on a device by slice S3 of
-  // D417; their lists by this one (D419).
+  // A loop over a list of units is lowered as the traversal that
+  // convert-md-exec-to-md-alg makes of it (D417, D[md-alg-segments-simt]).
   if (isa<md_exec::SegmentForOp>(op))
     return op->emitOpError()
-           << "is a loop over a list of units, which this pass does not "
-              "lower yet (D417, slice S3)";
+           << "is a loop over a list of units, which this pass lowers as "
+              "'md_alg.traverse_pairs': run 'convert-md-exec-to-md-alg' "
+              "first";
   if (isa<md_exec::EmptySegmentedPairsOp, md_exec::RefreshSegmentedPairsOp,
           md_exec::BuildSegmentedPairsOp>(op)) {
     LogicalResult status = success();
@@ -10236,6 +10300,7 @@ public:
         rowLanes == -1 ? policy.launch.rowLanes : rowLanes, fuseRows,
         fuseIntegration, deterministic, tuplesOnce, fuseCenters);
     lowering.launch = policy.launch;
+    lowering.segmentsPolicy = policy.segments;
     lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
