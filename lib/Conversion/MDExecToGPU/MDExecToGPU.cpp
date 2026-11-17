@@ -9779,7 +9779,10 @@ static LogicalResult uncarrySegmentedLists(func::FuncOp function) {
             loop.getStep(), inits);
         replacement->setAttrs(loop->getAttrs());
         Block *body = replacement.getBody();
-        body->getTerminator()->erase();
+        // The builder ends the body with a yield only where the loop carries
+        // nothing else.
+        if (!body->empty())
+          body->getTerminator()->erase();
         Block *old = loop.getBody();
         // The old body, its argument k dropped, into the new loop.
         SmallVector<Value> arguments = {replacement.getInductionVar()};
