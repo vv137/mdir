@@ -4067,12 +4067,14 @@ Lowering::lowerTraversePairsSerial(md_alg::TraversePairsOp op,
     lists.outs.push_back(toHost(out));
   // The tables that the region reads, from outside it.
   llvm::SetVector<Value> captured;
-  op.getKernel().walk([&](Operation *nested) {
-    for (Value operand : nested->getOperands())
-      if (isDeviceType(operand.getType()) &&
-          !op.getKernel().isAncestor(operand.getParentRegion()))
-        captured.insert(operand);
-  });
+  // Those of every region: the groups' one, or each segment's.
+  for (Region &region : op->getRegions())
+    region.walk([&](Operation *nested) {
+      for (Value operand : nested->getOperands())
+        if (isDeviceType(operand.getType()) &&
+            !region.isAncestor(operand.getParentRegion()))
+          captured.insert(operand);
+    });
   for (Value value : captured)
     lists.captures.push_back({value, toHost(value)});
   kernels::SerialOptions options;
