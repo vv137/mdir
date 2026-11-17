@@ -5966,8 +5966,12 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   Value one = createIndex(builder, loc, 1);
   Value N = memref::DimOp::create(builder, loc, op.getUniverse(), zero);
 
-  // The relations on the host.
+  // The relations on the host: a program's tuples are there already
+  // (D253); a copy is made of those on the device.
+  SmallVector<Value> hostCopies;
   auto toHost = [&](Value device) -> Value {
+    if (!isDeviceType(device.getType()))
+      return device;
     auto deviceType = cast<MemRefType>(device.getType());
     auto hostType =
         MemRefType::get(deviceType.getShape(), deviceType.getElementType());
@@ -5978,7 +5982,12 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
             builder, loc, device, createIndex(builder, loc, d)));
     Value host = memref::AllocOp::create(builder, loc, hostType, sizes);
     createTransfer(builder, loc, host, device);
+    hostCopies.push_back(host);
     return host;
+  };
+  auto release = [&](Value host) {
+    if (llvm::is_contained(hostCopies, host))
+      memref::DeallocOp::create(builder, loc, host);
   };
   SmallVector<Value> tuples, copies;
   Value takenUnits = zero, takenParticles = zero, memberCount = zero;
@@ -6100,7 +6109,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
       });
       return SmallVector<Value>{};
     });
-    memref::DeallocOp::create(builder, loc, pairs);
+    release(pairs);
   }
   // The units of the taken kinds by rank, K - 1 first: the reference
   // particle is the anchor, the first frame atom; the value of `order` is
@@ -6145,7 +6154,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
     units.rankEnd.push_back(start);
   }
   for (Value host : tuples)
-    memref::DeallocOp::create(builder, loc, host);
+    release(host);
   auto deviceI32 = getDeviceType({ShapedType::kDynamic}, narrow);
   // The excluded pairs as the incidence structure that the build reads
   // (RaggedRows.h): for each particle, an entry (pair, place, i, j) of
@@ -6283,7 +6292,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
       return SmallVector<Value>{};
     });
     memref::DeallocOp::create(builder, loc, rowsH);
-    memref::DeallocOp::create(builder, loc, pairs);
+    release(pairs);
     excluded = createDeviceBuffer(builder, loc, deviceI32, ValueRange{size});
     createTransfer(builder, loc, excluded, raggedH);
     memref::DeallocOp::create(builder, loc, raggedH);
@@ -8976,6 +8985,11 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op))
       if (auto positions = empty.getPositions())
         onHost |= !isDeviceType(*positions);
+    // The relations of a list of units, its kinds' copies, its excluded
+    // pairs, and its anchors, are read on the host when it is lowered, as
+    // a program's tuples are (D419).
+    if (auto empty = dyn_cast<md_exec::EmptySegmentedPairsOp>(op))
+      onHost = !isDeviceType(empty.getUniverse().getType());
     if (onHost)
       return op->emitOpError()
              << "has its buffers on the host; use "
