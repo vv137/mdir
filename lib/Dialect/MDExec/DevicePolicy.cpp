@@ -182,7 +182,7 @@ static const Measured kSegmentsDefaultMeasured[] = {{8, 9}};
 static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
 
 //===----------------------------------------------------------------------===//
-// The build of the groups (D[groups-columns])
+// The build of the groups (D423)
 //===----------------------------------------------------------------------===//
 
 // The default is D89's value, 64 particles a column, the first build's and
@@ -207,7 +207,7 @@ static const Measured kGroups89Measured[] = {{8, 9}};
 static const Entry<GroupsPolicy> kGroupsTable[] = {
     {{8, 9, ""},
      {/*columnParticles=*/96.0},
-     {"D[groups-columns]",
+     {"D423",
       "JAC, Factor IX, Cellulose, STMV, and TIP3P (309,876 sites), NPT, RTX "
       "4090",
       "2026-11-18"},

@@ -2954,7 +2954,7 @@ void GroupsBuild::emitBuild() {
         }
 
         // The columns: `columnParticles` particles in a cube of their
-        // width, about 96 (GroupsPolicy, D[groups-columns]).
+        // width, about 96 (GroupsPolicy, D423).
         // At least one column and at most 256 along an edge
         // (md_alg.grid_plan), with maxnumf and minnumf, which take the
         // other operand for one that is not a number: a cell that is not a

@@ -29,7 +29,7 @@ std::string getGroupsBuildName(bool triclinic);
 /// takes the decoupled look-back scan for the three counting sorts (D321)
 /// in place of the three-launch scan. `columnParticles` is the number of
 /// particles of a column of the compact order, in a cube of the column's
-/// width (GroupsPolicy, D[groups-columns]).
+/// width (GroupsPolicy, D423).
 ///
 /// Its scans, scatters, sorts within bins, and reads of the ragged rows are
 /// left as md_alg ops (D406), which kernels::lowerAlgToSIMT

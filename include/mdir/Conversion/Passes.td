@@ -505,7 +505,7 @@ def ConvertMDExecToGPU
            /*default=*/"-1",
            "The particles of a column of the compact order of the groups' "
            "build, in a cube of the column's width; -1 takes the entry of "
-           "the policy for `arch` (GroupsPolicy, D[groups-columns])">,
+           "the policy for `arch` (GroupsPolicy, D423)">,
     Option<"segmentsColumnUnits", "segments-column-units", "int64_t",
            /*default=*/"-1",
            "The units of a column of the build over units (D419), which "

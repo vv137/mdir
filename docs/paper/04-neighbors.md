@@ -309,7 +309,7 @@ build sorts the particles into a *compact order*:
 1. Columns of a grid in $x$–$y$ of side $d_\text{col} =
    (n_\text{col}/\rho)^{1/3}$, the edge of a cube that holds $n_\text{col}$
    particles on average, $n_\text{col} = 96$ (an entry of the tuning
-   policies, D[groups-columns], measured on the RTX 4090; 64, the first
+   policies, D423, measured on the RTX 4090; 64, the first
    build's value, on every architecture where it was not measured):
    $N_\text{col} = \lfloor L_x/d_\text{col}\rfloor\lfloor
    L_y/d_\text{col}\rfloor$ columns, each count clamped to $[1, 256]$.

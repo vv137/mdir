@@ -150,7 +150,7 @@ f32:
 1. **Columns.** The density is $\rho = N/V$, and the side of a column is
    $d_\text{col} = (n_\text{col}/\rho)^{1/3}$, the edge of a cube that holds
    $n_\text{col}$ particles on average: $n_\text{col} = 96$, an entry of the
-   tuning policies (`GroupsPolicy::columnParticles`, D[groups-columns]) on
+   tuning policies (`GroupsPolicy::columnParticles`, D423) on
    `sm_89`, where it was measured, and D89's 64 on every other
    architecture, the default, not measured as a choice; the option
    `groups-column-particles` of `convert-md-exec-to-gpu` overrides it). There are $N_x = \lfloor L_x/d_\text{col}\rfloor$
@@ -223,7 +223,7 @@ $4.9 \times 4.9 \times 6.6$ Å has a half-diagonal of 4.8 Å. With
 $n_\text{col} = 64$ the groups were 1:1:2 prisms of $4.3 \times 4.3 \times
 8.6$ Å (half-diagonal 5.3 Å); a cube is $n_\text{col} = 128$.
 
-**Why 96** (D[groups-columns], #912, Section 11.9). A shorter, wider box
+**Why 96** (D423, #912, Section 11.9). A shorter, wider box
 lowers the volume within $R$ of a group (Section 8.4), and so the entries
 of the lists and the atomic reductions of the loop over pairs, which bound
 the loop (Section 6.1); wider columns also leave fewer chunks to sort. On
@@ -1449,7 +1449,7 @@ On JAC, without the keys and at constant energy over 1 ns (11 / 8.6 Å),
 the total energy changed by $1.7\times10^{-5}$ of its value: a fitted
 drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 
-### 11.9 What the loop's time is made of, and the columns (#912, D[groups-columns])
+### 11.9 What the loop's time is made of, and the columns (#912, D423)
 
 RTX 4090, mixed precision; every comparison in two jobs with the variants
 interleaved, against `main` of the same job (`docs/workflow.md`,
@@ -1515,7 +1515,7 @@ a double-precision reference is unchanged (3.978e-4 and 4.203e-4).
 
 The entry is for `sm_89`. Every other architecture, the RTX 5090 and the
 RTX PRO 6000 Blackwell among them, keeps D89's 64, the default, until the
-same comparison runs there and adds an entry of its own (D[groups-columns]).
+same comparison runs there and adds an entry of its own (D423).
 
 ## 12. History and status
 
@@ -1547,7 +1547,7 @@ same comparison runs there and adds an entry of its own (D[groups-columns]).
 | D294 | A model in stages keeps the matrix | 6.3 |
 | D357 | Coverage across IR boundaries | 10.1 |
 | D419 | The build over units: lists of units in segments | 5.3 |
-| D[groups-columns] | Columns of 96 particles, an entry of the tuning policies | 2, 11.9 |
+| D423 | Columns of 96 particles, an entry of the tuning policies | 2, 11.9 |
 
 **Where the sections moved** (2026-11-11). This document had the structure
 in Section 2, the loop in Section 3, what the loop reads in Section 4, the

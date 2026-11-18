@@ -1,5 +1,5 @@
 // The particles of a column of the compact order of the groups' build are an
-// entry of the tuning policies (GroupsPolicy, D[groups-columns]): 96 on
+// entry of the tuning policies (GroupsPolicy, D423): 96 on
 // sm_89, where they were measured, and D89's 64 everywhere else (sm_86,
 // sm_120, no architecture), which no measurement covered. The option
 // `groups-column-particles` overrides the entry; it takes -1 (the entry) or
