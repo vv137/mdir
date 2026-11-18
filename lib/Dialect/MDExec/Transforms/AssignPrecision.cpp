@@ -426,6 +426,10 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(refresh.getPositions());
     return success();
   }
+  if (auto writer = dyn_cast<WriteUnitFramesOp>(op)) {
+    positions.push_back(writer.getPositions());
+    return success();
+  }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
     if (failed(checkForm(loop)))
       return failure();

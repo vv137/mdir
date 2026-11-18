@@ -208,6 +208,8 @@ struct SegmentedState {
   Value rankPlaces;
   Value moved, farthest, movedInner, farthestInner;
   double cutoff = 0.0;
+  /// The type of the list, with its kinds' shapes and extents.
+  mdrt::SegmentedPairsType type;
 };
 
 using kernels::GroupBuffers;
@@ -264,6 +266,36 @@ getFusedPruning(md_exec::RefreshNeighborsOp refresh) {
       if (loop.getPruneGroups())
         return loop;
   return {};
+}
+
+/// Whether `op`, or an op within it, may write `buffer`: by its memory
+/// effects, or, for an op that does not state them, by taking it.
+static bool writesBuffer(Operation *op, Value buffer) {
+  bool writes = false;
+  op->walk<WalkOrder::PreOrder>([&](Operation *inner) {
+    if (writes)
+      return WalkResult::interrupt();
+    if (auto effects = dyn_cast<MemoryEffectOpInterface>(inner)) {
+      SmallVector<MemoryEffects::EffectInstance> list;
+      effects.getEffects(list);
+      for (const MemoryEffects::EffectInstance &effect : list)
+        if (isa<MemoryEffects::Write>(effect.getEffect()) &&
+            (effect.getValue()
+                 ? effect.getValue() == buffer
+                 : llvm::is_contained(inner->getOperands(), buffer)))
+          writes = true;
+      // The effects of an op with regions of its own kernel are its own.
+      return inner->hasTrait<OpTrait::HasRecursiveMemoryEffects>()
+                 ? WalkResult::advance()
+                 : WalkResult::skip();
+    }
+    if (inner->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
+      return WalkResult::advance();
+    if (llvm::is_contained(inner->getOperands(), buffer))
+      writes = true;
+    return WalkResult::advance();
+  });
+  return writes;
 }
 
 class Lowering {
@@ -367,6 +399,63 @@ private:
   LogicalResult lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op);
   LogicalResult lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op);
   LogicalResult lowerBuildSegmentedPairs(md_exec::BuildSegmentedPairsOp op);
+  /// The writer of a list of units (D[md-alg-segments-writer]): one kernel,
+  /// a thread a unit, that packs the frames, tests the reference points, and
+  /// checks the extents; its results are flags read where the refresh
+  /// takes them.
+  LogicalResult lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op);
+  /// The frames of a list of units, as the runtime holds them: the anchors,
+  /// the offsets of the members, and the fields of `sources`, `maxMembers`
+  /// rows a place.
+  struct UnitFrameBuffers {
+    Value anchors, offsets;
+    SmallVector<Value> fields, sources;
+    unsigned maxMembers = 1;
+  };
+  /// The cell of a writer: its box and inverse in f64 and in f32, and the
+  /// shifts of the places.
+  struct UnitCell {
+    Value box, inverse, box32, inverse32, shifts;
+  };
+  /// What a frame was formed from: the particles of the members, the
+  /// anchor's position, and the members' offsets in f64 and f32.
+  struct UnitFrameValues {
+    SmallVector<Value> particles;
+    Value x0;
+    SmallVector<Value> h64, h32;
+  };
+  /// The frames that the refresh of a list left, by the refresh's result:
+  /// at which positions and cell, with which fields.
+  struct UnitFramesAt {
+    Value positions, cell;
+    SmallVector<Value> fields;
+  };
+  llvm::DenseMap<Value, UnitFramesAt> unitFrames;
+  /// The loops over lists of units that read their writer's frames, and the
+  /// check of the rule of the writer before any op is lowered: after the
+  /// last writer of the positions, before the first reader of the frames.
+  llvm::DenseSet<Operation *> framedLoops;
+  LogicalResult checkUnitFrames(func::FuncOp function);
+  SmallVector<Value> getFramedFields(md_exec::RefreshSegmentedPairsOp refresh);
+  Value getUnitFrame(OpBuilder &builder, Location loc, Value handle,
+                     int64_t which, int64_t rows);
+  Value getUnitFrameField(OpBuilder &builder, Location loc, Value handle,
+                          int64_t which, int64_t rows, Type element);
+  UnitFrameBuffers getUnitFrameBuffers(OpBuilder &builder, Location loc,
+                                       const Neighbors &structure,
+                                       ArrayRef<Value> fields);
+  UnitCell getUnitCell(OpBuilder &builder, Location loc,
+                       const Neighbors &structure, Value box);
+  /// Writes the frame of the unit `held` of kind `kind` at `place`.
+  UnitFrameValues emitUnitFrame(OpBuilder &at, Location loc,
+                                const Neighbors &structure,
+                                const UnitFrameBuffers &frames,
+                                const UnitCell &cell, unsigned kind,
+                                Value held, Value place, Value positions);
+  /// Packs the frames of every place of the list, an empty place as zeros.
+  void emitPackUnitFrames(OpBuilder &builder, Location loc,
+                          const Neighbors &structure, Value positions,
+                          Value box, ArrayRef<Value> fields);
   /// The build of a list of units at `positions` (emitSegmentsBuild of
   /// GroupsBuild.h), with its reach checked against the cell.
   LogicalResult emitSegmentsBuild(OpBuilder &builder, Location loc,
@@ -4039,6 +4128,27 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
     lists.members = structure.segmented->members;
     lists.rankPlaces = structure.segmented->rankPlaces;
     lists.dual = structure.dual;
+    // The frames that the list's refresh left, at these positions and in
+    // this cell (D[md-alg-segments-writer]). An op between the refresh and
+    // the loop that writes the positions would leave frames that the
+    // writer did not check, so it is refused.
+    auto framed = unitFrames.find(op.getNeighbors());
+    auto refreshOp =
+        op.getNeighbors().getDefiningOp<md_exec::RefreshSegmentedPairsOp>();
+    (void)refreshOp;
+    if (framed != unitFrames.end() && framedLoops.contains(op)) {
+      UnitFrameBuffers frames =
+          getUnitFrameBuffers(at, loc, structure, framed->second.fields);
+      lists.frameAnchors = frames.anchors;
+      lists.frameOffsets = frames.offsets;
+      for (Value in : op.getIns()) {
+        Value packed;
+        for (auto [source, buffer] : llvm::zip(frames.sources, frames.fields))
+          if (source == in)
+            packed = buffer;
+        lists.frameFields.push_back(packed);
+      }
+    }
     if (structure.dual) {
       lists.inner = getInnerLists(at, loc, structure.handle);
       PruneBuffers prune = getPruneBuffers(at, loc, structure.handle);
@@ -6285,6 +6395,7 @@ Lowering::lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op) {
   structure.segmented = std::make_shared<SegmentedState>();
   SegmentedState &units = *structure.segmented;
   units.kinds = K;
+  units.type = type;
   units.cutoff = op.getCutoff().convertToDouble();
   units.rankEnd.push_back(restCount);
   double radius = op.getRadius() ? op.getRadius()->convertToDouble() : 0.0;
@@ -6810,7 +6921,7 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
 
   // The square of the half-margin of a reach `of` against the cell `then`
   // that the reference was taken in, and the scale of that reference.
-  auto limits = [&](Value then, double of) -> std::pair<Value, Value> {
+  auto limits = [&](Value then, double of) -> std::array<Value, 4> {
     SmallVector<Value, 3> edges;
     for (int64_t c = 0; c < 3; ++c)
       edges.push_back(memref::LoadOp::create(
@@ -6851,12 +6962,33 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
                                           VectorType::get({3}, real), scale);
       limitReal = arith::TruncFOp::create(builder, loc, real, limit2);
     }
-    return {scaleReal, limitReal};
+    return {scaleReal, limitReal, scale, halfMargin};
   };
-  auto [scaleOuter, limitOuter] = limits(structure.box, reach);
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+  Value valid =
+      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
+  Value stale, nearInnerOf;
+  if (Value writerMoved = op.getMoved()) {
+    // The writer has made the test (D[md-alg-segments-writer]): `moved`
+    // and `stale` are its flags, which the host takes here.
+    stale = arith::XOrIOp::create(
+        builder, loc,
+        arith::AndIOp::create(
+            builder, loc, valid,
+            arith::XOrIOp::create(builder, loc, writerMoved, yes)),
+        yes);
+  } else {
+  auto [scaleOuter, limitOuter, scaleOuter64, halfOuter64] =
+      limits(structure.box, reach);
+  (void)scaleOuter64;
+  (void)halfOuter64;
   Value scaleInner, limitInner;
-  if (dual)
-    std::tie(scaleInner, limitInner) = limits(structure.prunedBox, innerReach);
+  if (dual) {
+    auto inner = limits(structure.prunedBox, innerReach);
+    scaleInner = inner[0];
+    limitInner = inner[1];
+  }
   // The displacements of the reference points, in one kernel.
   Value unitRef = units.unitRef, reference = structure.reference;
   Value prunedReference = structure.prunedReference;
@@ -6888,14 +7020,15 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
   }
   SmallVector<Value> farthest = emitReductions(
       builder, loc, sources, partials, units.units, kernels::Combiner::Max);
-  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
-                                        builder.getBoolAttr(true));
   Value near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
                                      farthest[0], limitOuter);
-  Value valid =
-      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
-  Value stale = arith::XOrIOp::create(
+  stale = arith::XOrIOp::create(
       builder, loc, arith::AndIOp::create(builder, loc, valid, near), yes);
+  if (dual)
+    nearInnerOf = arith::CmpFOp::create(builder, loc,
+                                        arith::CmpFPredicate::OLE,
+                                        farthest[1], limitInner);
+  }
   // A pruning below says that it pruned (D268).
   if (dual)
     memref::StoreOp::create(
@@ -6910,6 +7043,10 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
     return failure();
   if (failed(finishBuild(then, loc, structure, positions, box)))
     return failure();
+  // The frames of every place, at the places of the build
+  // (D[md-alg-segments-writer]).
+  SmallVector<Value> framedFields = getFramedFields(op);
+  emitPackUnitFrames(then, loc, structure, positions, box, framedFields);
   if (dual) {
     // Where the first traversal that takes the result prunes in its loop
     // (D284, D421), the refresh moves the reference
@@ -6929,15 +7066,21 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
     // A cell that is not a number before the first pruning fails the
     // test, which a valid outer list then prunes.
     OpBuilder otherwise(rebuild.elseBlock()->getTerminator());
-    Value nearInner = arith::CmpFOp::create(
-        otherwise, loc, arith::CmpFPredicate::OLE, farthest[1], limitInner);
-    Value staleInner = arith::XOrIOp::create(otherwise, loc, nearInner, yes);
+    Value staleInner =
+        op.getMoved()
+            ? op.getStale()
+            : Value(arith::XOrIOp::create(otherwise, loc, nearInnerOf, yes));
     auto again = scf::IfOp::create(otherwise, loc, staleInner,
                                    /*withElseRegion=*/false);
     OpBuilder prune(again.thenBlock()->getTerminator());
     emitPrune(prune);
     structure.dual = true;
   }
+  // Without a writer, the frames of every place at these positions, so
+  // that the loops read the list's frames as after any refresh.
+  if (!op.getMoved())
+    emitPackUnitFrames(builder, loc, structure, positions, box, framedFields);
+  unitFrames[op.getResult()] = {positions, box, framedFields};
   // For the tests: the list as the refresh leaves it.
   if (dumpSegments) {
     Type wide = builder.getI64Type();
@@ -6963,6 +7106,689 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
         ValueRange{structure.handle, size(0), size(2), builds, prunes});
   }
   neighbors[op.getResult()] = structure;
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// The writer of a list of units (D[md-alg-segments-writer])
+//===----------------------------------------------------------------------===//
+
+/// The f32 at most `limit` nearest it.
+static float floatAtMost(double limit) {
+  float narrow = static_cast<float>(limit);
+  while (static_cast<double>(narrow) > limit)
+    narrow = std::nextafter(narrow, 0.0f);
+  return narrow;
+}
+
+SmallVector<Value>
+Lowering::getFramedFields(md_exec::RefreshSegmentedPairsOp refresh) {
+  // The fields that the loops over the refresh's result read, in the
+  // order in which the loops name them, each once.
+  SmallVector<Value> fields;
+  for (Operation *user : refresh.getResult().getUsers()) {
+    auto loop = dyn_cast<md_alg::TraversePairsOp>(user);
+    if (!loop || !loop.isSegmented() || loop.isBufferForm())
+      continue;
+    SmallVector<bool> read = kernels::getSegmentFieldsRead(loop);
+    for (auto [j, in] : llvm::enumerate(loop.getIns()))
+      if (read[j] && !llvm::is_contained(fields, in) &&
+          getElementTypeOrSelf(in.getType()).getIntOrFloatBitWidth() == 32)
+        fields.push_back(in);
+  }
+  if (fields.size() > MDRT_GROUPS_FRAMES - 2)
+    fields.resize(MDRT_GROUPS_FRAMES - 2);
+  return fields;
+}
+
+Value Lowering::getUnitFrame(OpBuilder &builder, Location loc, Value handle,
+                             int64_t which, int64_t rows) {
+  Type wide = builder.getI64Type();
+  MemRefType type =
+      getDeviceType({ShapedType::kDynamic, 3}, builder.getF32Type());
+  func::FuncOp getter = getOrDeclare(
+      "mdrtGroupsFrame", builder.getFunctionType({wide, wide, wide}, {type}));
+  getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto constant = [&](int64_t v) -> Value {
+    return arith::ConstantOp::create(builder, loc, wide,
+                                     builder.getI64IntegerAttr(v));
+  };
+  return func::CallOp::create(builder, loc, getter,
+                              ValueRange{handle, constant(which),
+                                         constant(rows)})
+      .getResult(0);
+}
+
+Value Lowering::getUnitFrameField(OpBuilder &builder, Location loc,
+                                  Value handle, int64_t which, int64_t rows,
+                                  Type element) {
+  Type wide = builder.getI64Type();
+  MemRefType type = getDeviceType({ShapedType::kDynamic}, element);
+  func::FuncOp getter = getOrDeclare(
+      element.isF32() ? "mdrtGroupsFrameFieldF32" : "mdrtGroupsFrameFieldI32",
+      builder.getFunctionType({wide, wide, wide}, {type}));
+  getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto constant = [&](int64_t v) -> Value {
+    return arith::ConstantOp::create(builder, loc, wide,
+                                     builder.getI64IntegerAttr(v));
+  };
+  return func::CallOp::create(builder, loc, getter,
+                              ValueRange{handle, constant(which),
+                                         constant(rows)})
+      .getResult(0);
+}
+
+Lowering::UnitFrameBuffers
+Lowering::getUnitFrameBuffers(OpBuilder &builder, Location loc,
+                              const Neighbors &structure,
+                              ArrayRef<Value> fields) {
+  UnitFrameBuffers frames;
+  frames.maxMembers =
+      kernels::getSegmentMaxMembers(structure.segmented->type);
+  frames.anchors = getUnitFrame(builder, loc, structure.handle, 0, 1);
+  if (frames.maxMembers > 1)
+    frames.offsets = getUnitFrame(builder, loc, structure.handle, 1,
+                                  frames.maxMembers - 1);
+  for (auto [j, field] : llvm::enumerate(fields))
+    frames.fields.push_back(getUnitFrameField(
+        builder, loc, structure.handle, 2 + j, frames.maxMembers,
+        getElementTypeOrSelf(field.getType())));
+  frames.sources.assign(fields.begin(), fields.end());
+  return frames;
+}
+
+/// The shift of a place, ten bits an axis from -512 (GROUPS_SHIFTS), in the
+/// type of `box`.
+static Value emitPlaceShift(OpBuilder &b, Location loc, Value packed,
+                            Value box) {
+  Type real = getElementTypeOrSelf(box.getType());
+  Type i32 = b.getI32Type();
+  auto ci = [&](int64_t v) -> Value {
+    return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+  };
+  SmallVector<Value> cells;
+  for (int64_t k = 0; k != 3; ++k) {
+    Value bits = arith::AndIOp::create(
+        b, loc, arith::ShRUIOp::create(b, loc, packed, ci(10 * k)), ci(1023));
+    cells.push_back(arith::SIToFPOp::create(
+        b, loc, real, arith::SubIOp::create(b, loc, bits, ci(512))));
+  }
+  return emitLatticeShift(
+      b, loc,
+      vector::FromElementsOp::create(b, loc, VectorType::get({3}, real),
+                                     cells),
+      box);
+}
+
+/// The minimum image of `raw` (f64), narrowed to f32: found in f32, and in
+/// f64 only where the f32 image moves it (a bond split by a face of the
+/// cell). Returns the image in f64 and in f32.
+template <typename Cell>
+static std::pair<Value, Value> emitBondImage(OpBuilder &b, Location loc,
+                                             Value raw, const Cell &cell) {
+  Type f32 = b.getF32Type(), f64 = b.getF64Type();
+  auto v3 = [&](Type t) { return VectorType::get({3}, t); };
+  Value narrow = arith::TruncFOp::create(b, loc, v3(f32), raw);
+  Value imaged = emitMinimumImage(b, loc, narrow, cell.box32, cell.inverse32);
+  Value moved = vector::ReductionOp::create(
+      b, loc, vector::CombiningKind::OR,
+      arith::CmpFOp::create(b, loc, arith::CmpFPredicate::UNE, imaged,
+                            narrow));
+  auto choice = scf::IfOp::create(b, loc, TypeRange{v3(f64), v3(f32)}, moved,
+                                  /*withElseRegion=*/true);
+  {
+    OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+    Value wide = emitMinimumImage(then, loc, raw, cell.box, cell.inverse);
+    scf::YieldOp::create(
+        then, loc,
+        ValueRange{wide, arith::TruncFOp::create(then, loc, v3(f32), wide)});
+    OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
+    scf::YieldOp::create(otherwise, loc, ValueRange{raw, narrow});
+  }
+  return {choice.getResult(0), choice.getResult(1)};
+}
+
+Lowering::UnitFrameValues Lowering::emitUnitFrame(
+    OpBuilder &at, Location loc, const Neighbors &structure,
+    const UnitFrameBuffers &frames, const UnitCell &cell, unsigned kind,
+    Value held, Value place, Value positions) {
+  const SegmentedState &units = *structure.segmented;
+  mdrt::SegmentedPairsType type = units.type;
+  unsigned K = units.kinds;
+  unsigned m = type.getNumMembers(kind);
+  Type f32 = at.getF32Type();
+  auto index = [&](Value v) -> Value {
+    return arith::IndexCastOp::create(at, loc, at.getIndexType(), v);
+  };
+  auto ix = [&](int64_t v) { return createIndex(at, loc, v); };
+  UnitFrameValues values;
+  for (unsigned k = 0; k != m; ++k)
+    values.particles.push_back(
+        kind == K ? index(held)
+                  : index(memref::LoadOp::create(
+                        at, loc, units.members,
+                        ValueRange{index(arith::AddIOp::create(
+                            at, loc, held,
+                            arith::ConstantOp::create(
+                                at, loc, at.getI32Type(),
+                                at.getI32IntegerAttr(k))))})));
+  Value x0 = loadElement(at, loc, positions, values.particles[0]);
+  values.x0 = x0;
+  Value shift = emitPlaceShift(
+      at, loc, memref::LoadOp::create(at, loc, cell.shifts, ValueRange{place}),
+      cell.box);
+  storeElement(at, loc,
+               convertReal(at, loc, arith::AddFOp::create(at, loc, x0, shift),
+                           f32),
+               frames.anchors, place);
+  for (unsigned k = 1; k < m; ++k) {
+    Value xk = loadElement(at, loc, positions, values.particles[k]);
+    auto [wide, narrow] = emitBondImage(
+        at, loc, arith::SubFOp::create(at, loc, xk, x0), cell);
+    values.h64.push_back(wide);
+    values.h32.push_back(narrow);
+    Value row = arith::AddIOp::create(
+        at, loc,
+        arith::MulIOp::create(at, loc, place, ix(frames.maxMembers - 1)),
+        ix(k - 1));
+    storeElement(at, loc, narrow, frames.offsets, row);
+  }
+  for (auto [source, packed] : llvm::zip(frames.sources, frames.fields))
+    for (unsigned k = 0; k != m; ++k) {
+      Value row = arith::AddIOp::create(
+          at, loc, arith::MulIOp::create(at, loc, place, ix(frames.maxMembers)),
+          ix(k));
+      storeElement(at, loc, loadElement(at, loc, source, values.particles[k]),
+                   packed, row);
+    }
+  return values;
+}
+
+Lowering::UnitCell Lowering::getUnitCell(OpBuilder &builder, Location loc,
+                                         const Neighbors &structure,
+                                         Value box) {
+  UnitCell cell;
+  cell.box = box;
+  cell.inverse = createInverse(builder, loc, box);
+  cell.box32 = convertReal(builder, loc, box, builder.getF32Type());
+  cell.inverse32 = createInverse(builder, loc, cell.box32);
+  cell.shifts = getGroupsBuffers(builder, loc, structure.handle).shifts;
+  return cell;
+}
+
+void Lowering::emitPackUnitFrames(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure, Value positions,
+                                  Value box, ArrayRef<Value> fields) {
+  const SegmentedState &units = *structure.segmented;
+  unsigned K = units.kinds;
+  UnitFrameBuffers frames =
+      getUnitFrameBuffers(builder, loc, structure, fields);
+  UnitCell cell = getUnitCell(builder, loc, structure, box);
+  Value order =
+      getGroupsBuffer(builder, loc, structure.handle, GROUPS_SEGMENT_ORDER);
+  Value rankPlaces = units.rankPlaces;
+  Type f32 = builder.getF32Type();
+  Type i32 = builder.getI32Type();
+  Value places = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, structure.sizes,
+                             ValueRange{createIndex(builder, loc, 0)}));
+  launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
+    auto ci = [&](OpBuilder &b, int64_t v) -> Value {
+      return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+    };
+    auto ix = [&](OpBuilder &b, int64_t v) { return createIndex(b, loc, v); };
+    Value held = memref::LoadOp::create(body, loc, order, ValueRange{place});
+    Value holds = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::sge,
+                                        held, ci(body, 0));
+    // An empty place packs zeros: a record reads the places of its groups
+    // before their masks select them, so that what it reads was written.
+    auto empty = [&](OpBuilder &at, Location) {
+      Value zero3 = createZero(at, loc, VectorType::get({3}, f32));
+      storeElement(at, loc, zero3, frames.anchors, place);
+      for (unsigned k = 1; k < frames.maxMembers; ++k)
+        storeElement(
+            at, loc, zero3, frames.offsets,
+            arith::AddIOp::create(
+                at, loc,
+                arith::MulIOp::create(at, loc, place,
+                                      ix(at, frames.maxMembers - 1)),
+                ix(at, k - 1)));
+      for (Value packed : frames.fields) {
+        Value zero = createZero(at, loc, getElementTypeOrSelf(packed.getType()));
+        for (unsigned k = 0; k != frames.maxMembers; ++k)
+          storeElement(at, loc, zero, packed,
+                       arith::AddIOp::create(
+                           at, loc,
+                           arith::MulIOp::create(at, loc, place,
+                                                 ix(at, frames.maxMembers)),
+                           ix(at, k)));
+      }
+      scf::YieldOp::create(at, loc);
+    };
+    scf::IfOp::create(body, loc, holds, [&](OpBuilder &in, Location) {
+      // The rank of the place's group: the rest rank 0, kind f rank K - f.
+      Value place32 = arith::IndexCastOp::create(in, loc, i32, place);
+      Value rank = ci(in, 0);
+      for (unsigned r = 1; r <= K; ++r) {
+        Value past = arith::CmpIOp::create(
+            in, loc, arith::CmpIPredicate::sge, place32,
+            memref::LoadOp::create(in, loc, rankPlaces,
+                                   ValueRange{ix(in, r)}));
+        rank = arith::SelectOp::create(in, loc, past, ci(in, r), rank);
+      }
+      for (unsigned kind = 0; kind <= K; ++kind) {
+        Value is = arith::CmpIOp::create(in, loc, arith::CmpIPredicate::eq,
+                                         rank, ci(in, K - kind));
+        scf::IfOp::create(in, loc, is, [&](OpBuilder &at, Location) {
+          emitUnitFrame(at, loc, structure, frames, cell, kind, held, place,
+                        positions);
+          scf::YieldOp::create(at, loc);
+        });
+      }
+      scf::YieldOp::create(in, loc);
+    }, empty);
+  });
+}
+
+LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Neighbors structure;
+  if (failed(getNeighbors(op, op.getList(), structure)))
+    return failure();
+  // The op's type makes the list one of units.
+  assert(structure.segmented && "a writer of a list of groups");
+  const SegmentedState &units = *structure.segmented;
+  mdrt::SegmentedPairsType type = units.type;
+  unsigned K = units.kinds;
+  Value positions = op.getPositions();
+  // The verifier takes positions in f64 alone.
+  assert(cast<MemRefType>(positions.getType()).getElementType().isF64() &&
+         "a writer of positions in another type");
+  // The refresh that takes the test: the next op in the block that uses
+  // `moved`, at the same positions and cell, and nothing between that
+  // writes the positions (the rule of the writer: after the last writer
+  // of the positions and before the first reader of the frames).
+  md_exec::RefreshSegmentedPairsOp refresh;
+  for (Operation *user : op.getMoved().getUsers())
+    if (auto r = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
+      if (r->getBlock() == op->getBlock())
+        refresh = r;
+  // checkUnitFrames refused a writer without one, before any op was lowered.
+  assert(refresh && "a writer without a refresh in its block");
+  Value box = op.getCellMutable().get();
+  double cutoff = op.getCutoff().convertToDouble();
+  double skin = op.getSkin().convertToDouble();
+  double pruneSkin = op.getPruneSkin().convertToDouble();
+  bool dual = pruneSkin < skin;
+  Type f32 = builder.getF32Type(), f64 = builder.getF64Type();
+  Type i32 = builder.getI32Type();
+  auto v3 = [&](Type t) { return VectorType::get({3}, t); };
+
+  // The least half-margin of the segments against the cell `then` of the
+  // reference, and the scale of that reference, on the host (D419,
+  // Section 3): the half-margin narrowed below itself to f32.
+  auto limits = [&](Value then, double of) -> std::pair<Value, Value> {
+    SmallVector<Value, 3> edges;
+    for (int64_t c = 0; c < 3; ++c)
+      edges.push_back(memref::LoadOp::create(
+          builder, loc, then, ValueRange{createIndex(builder, loc, c)}));
+    Value scale = arith::DivFOp::create(
+        builder, loc, getEdges(builder, loc, box),
+        vector::FromElementsOp::create(builder, loc, v3(f64), edges));
+    Value least = vector::ReductionOp::create(
+        builder, loc, vector::CombiningKind::MINNUMF, scale);
+    Value margin;
+    for (unsigned f = 0; f <= K; ++f)
+      for (unsigned g = 0; g <= f; ++g) {
+        double ef = units.extents[K - f], eg = units.extents[K - g];
+        Value segment = arith::SubFOp::create(
+            builder, loc,
+            arith::MulFOp::create(
+                builder, loc, least,
+                createReal(builder, loc, f64, getSegmentReach(of, ef, eg))),
+            createReal(builder, loc, f64, getSegmentReach(cutoff, ef, eg)));
+        margin = margin ? arith::MinimumFOp::create(builder, loc, margin, segment)
+                        : segment;
+      }
+    Value half = arith::MulFOp::create(
+        builder, loc,
+        arith::MaximumFOp::create(builder, loc, margin,
+                                  createReal(builder, loc, f64, 0.0)),
+        createReal(builder, loc, f64, 0.5 * (1.0 - std::ldexp(1.0, -22))));
+    return {arith::TruncFOp::create(builder, loc, v3(f32), scale),
+            arith::TruncFOp::create(builder, loc, f32, half)};
+  };
+  auto [scaleOuter, zetaOuter] = limits(structure.box, cutoff + skin);
+  Value scaleInner, zetaInner;
+  if (dual)
+    std::tie(scaleInner, zetaInner) =
+        limits(structure.prunedBox, cutoff + pruneSkin);
+
+  SmallVector<Value> fields = getFramedFields(refresh);
+  SmallVector<Flag, 3> used;
+  for (unsigned i = 0; i != 3; ++i)
+    used.push_back(getFlag(flags.size(), loc));
+  Value valid =
+      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
+  // The bounds of the checks of the extents, at most e^2 (1 - 2^-20) in
+  // f32: an f32 square of an offset narrowed from f64 is within 11 2^-24 of
+  // the true square, so a place beyond its radius never passes (#795, U5).
+  auto bound32 = [&](double e) {
+    return floatAtMost(e * e * (1.0 - std::ldexp(1.0, -20)));
+  };
+  // The branch is filled once it is in the function: the launch looks up
+  // where it is.
+  auto guard = scf::IfOp::create(builder, loc, valid, /*withElseRegion=*/false);
+  {
+    OpBuilder host(guard.thenBlock()->getTerminator());
+    UnitFrameBuffers frames =
+        getUnitFrameBuffers(host, loc, structure, fields);
+    UnitCell cell = getUnitCell(host, loc, structure, box);
+    Value reference = structure.reference;
+    Value pruned = structure.prunedReference;
+    // A thread for each member of each unit, M = the members of a unit at
+    // most: thread M u + k takes member k of unit u. The thread of the
+    // anchor (k = 0) writes the anchor and tests the reference point; the
+    // thread of member k >= 1 writes its offset and checks its extent. Three
+    // threads to a water hide the latency of the loads that one thread a
+    // unit leaves exposed.
+    unsigned M = frames.maxMembers;
+    Value threads = arith::MulIOp::create(host, loc, units.units,
+                                          createIndex(host, loc, M));
+    launchOver(host, loc, threads, [&](OpBuilder &body, Value thread) {
+      auto ci = [&](OpBuilder &b, int64_t v) -> Value {
+        return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+      };
+      auto ix = [&](OpBuilder &b, int64_t v) { return createIndex(b, loc, v); };
+      auto index = [&](OpBuilder &b, Value v) -> Value {
+        return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+      };
+      auto setFlag = [&](OpBuilder &b, Value condition, unsigned which) {
+        scf::IfOp::create(b, loc, condition, [&](OpBuilder &then, Location) {
+          memref::StoreOp::create(then, loc, ci(then, 1), used[which].device,
+                                  ValueRange{createIndex(then, loc, 0)});
+          scf::YieldOp::create(then, loc);
+        });
+      };
+      // In 32 bits, where a division by a constant is a multiplication.
+      Value thread32 = arith::IndexCastOp::create(body, loc, i32, thread);
+      Value unit = M == 1 ? thread
+                          : index(body, arith::DivUIOp::create(
+                                            body, loc, thread32, ci(body, M)));
+      Value k = M == 1 ? ix(body, 0)
+                       : index(body, arith::RemUIOp::create(body, loc, thread32,
+                                                            ci(body, M)));
+      // The rank of the unit: the rest first, then kinds K - 1 to 0.
+      Value rank = ci(body, 0);
+      for (unsigned r = 1; r <= K; ++r) {
+        Value past = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::uge,
+                                           unit, units.rankEnd[r - 1]);
+        rank = arith::SelectOp::create(body, loc, past, ci(body, r), rank);
+      }
+      Value place = arith::IndexCastOp::create(
+          body, loc, body.getIndexType(),
+          memref::LoadOp::create(body, loc, structure.placeOf,
+                                 ValueRange{unit}));
+      Value held =
+          memref::LoadOp::create(body, loc, units.unitValue, ValueRange{unit});
+      // The displacement of the reference point x from m ⊙ x_ref, in f32
+      // (D80; D419, Section 3): with a = fl(x), t = fl(fl(x_ref) fl(m)), and
+      // d = fl(a - t), each component of d is within 8 u (|a_c| + |t_c|) of
+      // the exact one (u = 2^-24), so |d_exact| <= |d| + delta with
+      // delta = 2^-20 (|a|_1 + |t|_1). The test passes where
+      // fl(d . d) <= fl(fl(z z) c), z = fl(zeta - delta) > 0, c = 1 - 2^-18:
+      // the factor c takes the roundings of the squares and of z, so
+      // |d| + delta < zeta, and zeta is the half-margin narrowed below
+      // itself. A displacement or a margin that is not a number fails.
+      // |v| as max(v, -v), which needs no library of the device.
+      auto magnitude = [&](OpBuilder &b, Value v) -> Value {
+        return arith::MaximumFOp::create(b, loc, v,
+                                         arith::NegFOp::create(b, loc, v));
+      };
+      auto far = [&](OpBuilder &b, Value a, Value ref, Value from, Value scale,
+                     Value zeta) -> Value {
+        Value t = arith::MulFOp::create(
+            b, loc,
+            arith::TruncFOp::create(b, loc, v3(f32),
+                                    loadElement(b, loc, from, ref)),
+            scale);
+        Value d = arith::SubFOp::create(b, loc, a, t);
+        Value sizes = vector::ReductionOp::create(
+            b, loc, vector::CombiningKind::ADD,
+            arith::AddFOp::create(b, loc, magnitude(b, a), magnitude(b, t)));
+        Value delta = arith::MulFOp::create(
+            b, loc, sizes, createReal(b, loc, f32, std::ldexp(1.0, -20)));
+        Value z = arith::SubFOp::create(b, loc, zeta, delta);
+        Value d2 = vector::ReductionOp::create(
+            b, loc, vector::CombiningKind::ADD,
+            arith::MulFOp::create(b, loc, d, d));
+        Value bound = arith::MulFOp::create(
+            b, loc, arith::MulFOp::create(b, loc, z, z),
+            createReal(b, loc, f32, 1.0 - std::ldexp(1.0, -18)));
+        Value ok = arith::AndIOp::create(
+            b, loc,
+            arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, z,
+                                  createReal(b, loc, f32, 0.0)),
+            arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLE, d2,
+                                  bound));
+        return arith::XOrIOp::create(
+            b, loc, ok,
+            arith::ConstantOp::create(b, loc, b.getI1Type(),
+                                      b.getBoolAttr(true)));
+      };
+      auto beyond32 = [&](OpBuilder &b, Value h32, double e) -> Value {
+        Value q = vector::ReductionOp::create(
+            b, loc, vector::CombiningKind::ADD,
+            arith::MulFOp::create(b, loc, h32, h32));
+        return arith::CmpFOp::create(b, loc, arith::CmpFPredicate::UGT, q,
+                                     createReal(b, loc, f32, bound32(e)));
+      };
+      auto tests = [&](OpBuilder &b, Value x0, Value ref) {
+        Value a = arith::TruncFOp::create(b, loc, v3(f32), x0);
+        setFlag(b, far(b, a, ref, reference, scaleOuter, zetaOuter), 0);
+        if (dual)
+          setFlag(b, far(b, a, ref, pruned, scaleInner, zetaInner), 1);
+      };
+      // The particle of member `which` of a unit of a taken kind.
+      auto memberOf = [&](OpBuilder &b, Value which) -> Value {
+        return index(b, memref::LoadOp::create(
+                            b, loc, units.members,
+                            ValueRange{index(b, arith::AddIOp::create(
+                                                    b, loc, held,
+                                                    arith::IndexCastOp::create(
+                                                        b, loc, i32, which)))}));
+      };
+      auto storeFields = [&](OpBuilder &b, Value particle, Value member) {
+        for (auto [source, packed] : llvm::zip(frames.sources, frames.fields))
+          storeElement(
+              b, loc, loadElement(b, loc, source, particle), packed,
+              arith::AddIOp::create(
+                  b, loc, arith::MulIOp::create(b, loc, place, ix(b, M)),
+                  member));
+      };
+      Value isAnchor = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                             k, ix(body, 0));
+      for (unsigned kind = 0; kind <= K; ++kind) {
+        unsigned m = type.getNumMembers(kind);
+        Value is = arith::AndIOp::create(
+            body, loc,
+            arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq, rank,
+                                  ci(body, K - kind)),
+            arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult, k,
+                                  ix(body, m)));
+        scf::IfOp::create(body, loc, is, [&](OpBuilder &at, Location) {
+          if (kind == K) {
+            // A particle of the rest: its own reference point, or a member
+            // whose anchor's unit tests the anchor, within rho of it.
+            Value particle = index(at, held);
+            Value x = loadElement(at, loc, positions, particle);
+            Value shift = emitPlaceShift(
+                at, loc,
+                memref::LoadOp::create(at, loc, cell.shifts, ValueRange{place}),
+                cell.box);
+            storeElement(
+                at, loc,
+                convertReal(at, loc, arith::AddFOp::create(at, loc, x, shift),
+                            f32),
+                frames.anchors, place);
+            storeFields(at, particle, ix(at, 0));
+            Value ref = index(at, memref::LoadOp::create(
+                                      at, loc, units.unitRef, ValueRange{unit}));
+            Value own = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
+                                              particle, ref);
+            scf::IfOp::create(
+                at, loc, own,
+                [&](OpBuilder &self, Location) {
+                  tests(self, x, ref);
+                  scf::YieldOp::create(self, loc);
+                },
+                [&](OpBuilder &member, Location) {
+                  Value anchor = loadElement(member, loc, positions, ref);
+                  auto [wide, narrow] = emitBondImage(
+                      member, loc,
+                      arith::SubFOp::create(member, loc, x, anchor), cell);
+                  (void)wide;
+                  setFlag(member, beyond32(member, narrow, units.extents[0]),
+                          2);
+                  scf::YieldOp::create(member, loc);
+                });
+            scf::YieldOp::create(at, loc);
+            return;
+          }
+          double e = units.extents[K - kind];
+          // The sites that the convex rule does not cover (D417, Section
+          // 3): a weight outside [0, 1]. The anchor's thread forms them.
+          SmallVector<unsigned> outside;
+          for (unsigned p = m, n = type.getNumPlaces(kind); p != n; ++p) {
+            SmallVector<double> weights = type.getPlaceWeights(kind, p);
+            if (!llvm::all_of(weights,
+                              [](double w) { return w >= 0.0 && w <= 1.0; }))
+              outside.push_back(p);
+          }
+          Value x0 = loadElement(at, loc, positions, memberOf(at, ix(at, 0)));
+          scf::IfOp::create(
+              at, loc, isAnchor,
+              [&](OpBuilder &anchor, Location) {
+                Value shift = emitPlaceShift(
+                    anchor, loc,
+                    memref::LoadOp::create(anchor, loc, cell.shifts,
+                                           ValueRange{place}),
+                    cell.box);
+                storeElement(anchor, loc,
+                             convertReal(anchor, loc,
+                                         arith::AddFOp::create(anchor, loc, x0,
+                                                               shift),
+                                         f32),
+                             frames.anchors, place);
+                storeFields(anchor, memberOf(anchor, ix(anchor, 0)),
+                            ix(anchor, 0));
+                tests(anchor, x0,
+                      index(anchor, memref::LoadOp::create(
+                                        anchor, loc, units.unitRef,
+                                        ValueRange{unit})));
+                if (!outside.empty()) {
+                  SmallVector<Value> h64;
+                  for (unsigned j = 1; j < m; ++j)
+                    h64.push_back(
+                        emitBondImage(anchor, loc,
+                                      arith::SubFOp::create(
+                                          anchor, loc,
+                                          loadElement(anchor, loc, positions,
+                                                      memberOf(anchor,
+                                                               ix(anchor, j))),
+                                          x0),
+                                      cell)
+                            .first);
+                  Value out = arith::ConstantOp::create(
+                      anchor, loc, anchor.getI1Type(),
+                      anchor.getBoolAttr(false));
+                  for (unsigned p : outside) {
+                    SmallVector<double> weights = type.getPlaceWeights(kind, p);
+                    Value c;
+                    for (unsigned j = 1; j < m; ++j) {
+                      if (weights[j] == 0.0)
+                        continue;
+                      Value term = arith::MulFOp::create(
+                          anchor, loc,
+                          vector::BroadcastOp::create(
+                              anchor, loc, v3(f64),
+                              createReal(anchor, loc, f64, weights[j])),
+                          h64[j - 1]);
+                      c = c ? Value(arith::AddFOp::create(anchor, loc, c, term))
+                            : term;
+                    }
+                    if (!c)
+                      continue;
+                    Value q = vector::ReductionOp::create(
+                        anchor, loc, vector::CombiningKind::ADD,
+                        arith::MulFOp::create(anchor, loc, c, c));
+                    out = arith::OrIOp::create(
+                        anchor, loc, out,
+                        arith::CmpFOp::create(
+                            anchor, loc, arith::CmpFPredicate::UGT, q,
+                            createReal(anchor, loc, f64,
+                                       e * e * (1.0 - std::ldexp(1.0, -40)))));
+                  }
+                  setFlag(anchor, out, 2);
+                }
+                scf::YieldOp::create(anchor, loc);
+              },
+              [&](OpBuilder &member, Location) {
+                // Member k >= 1: its offset, the image of its bond nearest
+                // the anchor, and its distance from the anchor against the
+                // kind's radius, which covers every site whose weights lie
+                // in [0, 1] (the convex rule).
+                Value particle = memberOf(member, k);
+                auto [wide, narrow] = emitBondImage(
+                    member, loc,
+                    arith::SubFOp::create(
+                        member, loc, loadElement(member, loc, positions, particle),
+                        x0),
+                    cell);
+                (void)wide;
+                storeElement(
+                    member, loc, narrow, frames.offsets,
+                    arith::SubIOp::create(
+                        member, loc,
+                        arith::AddIOp::create(
+                            member, loc,
+                            arith::MulIOp::create(member, loc, place,
+                                                  ix(member, M - 1)),
+                            k),
+                        ix(member, 1)));
+                storeFields(member, particle, k);
+                setFlag(member, beyond32(member, narrow, e), 2);
+                scf::YieldOp::create(member, loc);
+              });
+          scf::YieldOp::create(at, loc);
+        });
+      }
+    });
+  }
+  // The flags are read where the refresh needs them, after the launches
+  // that come between (the reciprocal sum): U3 of #795. A unit beyond its
+  // radius stops the run there.
+  OpBuilder before(refresh);
+  Value placeholder = arith::ConstantOp::create(
+      before, loc, before.getI1Type(), before.getBoolAttr(false));
+  scf::IfOp::create(before, loc, placeholder, [&](OpBuilder &stop, Location) {
+    func::CallOp::create(stop, loc,
+                         getOrDeclare("mdrtSegmentsStopExtent",
+                                      stop.getFunctionType({}, {})),
+                         ValueRange());
+    scf::YieldOp::create(stop, loc);
+  });
+  Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                       builder.getBoolAttr(false));
+  Value unbuilt = arith::XOrIOp::create(
+      builder, loc, valid,
+      arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                builder.getBoolAttr(true)));
+  replaceWithFlags(builder, loc, used, {unbuilt, no, no},
+                   {op.getMoved(), op.getStale(), placeholder});
+  placeholder.getDefiningOp()->erase();
   return success();
 }
 
@@ -9230,9 +10056,11 @@ LogicalResult Lowering::lowerOp(Operation *op) {
               "'md_alg.traverse_pairs': run 'convert-md-exec-to-md-alg' "
               "first";
   if (isa<md_exec::EmptySegmentedPairsOp, md_exec::RefreshSegmentedPairsOp,
-          md_exec::BuildSegmentedPairsOp>(op)) {
+          md_exec::BuildSegmentedPairsOp, md_exec::WriteUnitFramesOp>(op)) {
     LogicalResult status = success();
-    if (auto empty = dyn_cast<md_exec::EmptySegmentedPairsOp>(op))
+    if (auto writer = dyn_cast<md_exec::WriteUnitFramesOp>(op))
+      status = lowerWriteUnitFrames(writer);
+    else if (auto empty = dyn_cast<md_exec::EmptySegmentedPairsOp>(op))
       status = lowerEmptySegmentedPairs(empty);
     else if (auto refresh = dyn_cast<md_exec::RefreshSegmentedPairsOp>(op))
       status = lowerRefreshSegmentedPairs(refresh);
@@ -10048,8 +10876,74 @@ static LogicalResult uncarrySegmentedLists(func::FuncOp function) {
   return failure(refused);
 }
 
+LogicalResult Lowering::checkUnitFrames(func::FuncOp function) {
+  // The ops between `from` and `to` in a block that write `positions`.
+  auto written = [&](Operation *from, Operation *to,
+                     Value positions) -> Operation * {
+    for (Operation *at = from->getNextNode(); at && at != to;
+         at = at->getNextNode())
+      if (writesBuffer(at, positions))
+        return at;
+    return nullptr;
+  };
+  auto refuse = [&](Operation *op, Operation *writer,
+                    StringRef what) -> LogicalResult {
+    InFlightDiagnostic diagnostic = op->emitOpError() << what;
+    diagnostic.attachNote(writer->getLoc()) << "the op that writes them";
+    return diagnostic;
+  };
+  WalkResult result = function.walk([&](Operation *op) {
+    if (auto writer = dyn_cast<md_exec::WriteUnitFramesOp>(op)) {
+      md_exec::RefreshSegmentedPairsOp refresh;
+      for (Operation *user : writer.getMoved().getUsers())
+        if (auto r = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
+          if (r->getBlock() == writer->getBlock())
+            refresh = r;
+      if (!refresh) {
+        writer.emitOpError() << "has no refresh in its block that takes its "
+                                "test";
+        return WalkResult::interrupt();
+      }
+      if (Operation *at = written(writer, refresh, writer.getPositions())) {
+        (void)refuse(writer, at,
+                     "is followed by an op that writes the positions before "
+                     "the refresh that takes its test; the writer comes after "
+                     "the last writer of the positions");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    auto loop = dyn_cast<md_alg::TraversePairsOp>(op);
+    if (!loop || !loop.isSegmented() || loop.isBufferForm())
+      return WalkResult::advance();
+    auto refresh =
+        loop.getNeighbors().getDefiningOp<md_exec::RefreshSegmentedPairsOp>();
+    if (!refresh || refresh->getBlock() != loop->getBlock() ||
+        refresh.getPositions() != loop.getPositions() ||
+        refresh.getCellMutable().get() != loop.getCell())
+      return WalkResult::advance();
+    // An op between the refresh and the loop that writes the positions
+    // would leave frames that the writer did not check.
+    if (Operation *at = written(refresh, loop, loop.getPositions())) {
+      if (refresh.getMoved()) {
+        (void)refuse(loop, at,
+                     "reads the frames of a list of units whose positions an "
+                     "op writes after its writer; the writer of the list "
+                     "comes after the last writer of the positions");
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    framedLoops.insert(loop);
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
+
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   if (failed(uncarrySegmentedLists(function)))
+    return failure();
+  if (failed(checkUnitFrames(function)))
     return failure();
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({getCellSize()}, Float64Type::get(context));

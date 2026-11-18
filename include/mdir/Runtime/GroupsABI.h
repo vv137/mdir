@@ -5,7 +5,7 @@
 #ifndef MDIR_RUNTIME_GROUPS_ABI_H
 #define MDIR_RUNTIME_GROUPS_ABI_H
 
-#define MDRT_GROUPS_ABI_VERSION 2
+#define MDRT_GROUPS_ABI_VERSION 3
 
 enum MdrtGroupsSlot {
   GROUPS_ORDER = 0,
@@ -40,6 +40,14 @@ enum MdrtGroupsSlot {
   GROUPS_SEGMENT_OFFSETS = 23,
   GROUPS_BUFFERS = 24
 };
+
+/* The frames of a list of units (D[md-alg-segments-writer]): buffers of
+   32-bit values, `rows` a place times their width, which the writer and
+   the refresh write and the loops over the list read
+   (mdrtGroupsFrame, mdrtGroupsFrameField*). Frame 0 holds the anchors and
+   frame 1 the offsets of the members; the fields that the loops read
+   follow. A growth of the places drops them with the other buffers. */
+#define MDRT_GROUPS_FRAMES 16
 
 enum MdrtGroupsElement { MDRT_GROUPS_I32, MDRT_GROUPS_F32 };
 /* Shapes count physical elements, including padding. PLACED is exposed

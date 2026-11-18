@@ -179,11 +179,64 @@ LogicalResult RefreshSegmentedPairsOp::verify() {
   if (!vector || vector.getShape() != ArrayRef<int64_t>{3} ||
       !isa<FloatType>(vector.getElementType()))
     return emitOpError() << "expected positions of 3 components";
+  if (getStale() && !getMoved())
+    return emitOpError() << "takes 'stale' without 'moved'";
+  if (Value moved = getMoved()) {
+    // The test is the writer's: at this refresh's positions, cell, list, and
+    // reaches (D[md-alg-segments-writer]).
+    auto writer = moved.getDefiningOp<WriteUnitFramesOp>();
+    if (!writer || writer.getMoved() != moved ||
+        (getStale() && getStale() != writer.getStale()))
+      return emitOpError() << "takes 'moved' and 'stale' from the writer of "
+                              "its list (md_exec.write_unit_frames) alone";
+    if (writer.getList() != getList() ||
+        writer.getPositions() != getPositions() ||
+        writer.getCell() != getCell())
+      return emitOpError() << "takes the test of a writer of another list, "
+                              "positions, or cell";
+    if (writer.getCutoffAttr() != getCutoffAttr() ||
+        writer.getSkinAttr() != getSkinAttr() ||
+        writer.getPruneSkinAttr() != getPruneSkinAttr())
+      return emitOpError() << "takes the test of a writer of other reaches";
+  }
   return success();
 }
 
 void RefreshSegmentedPairsOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  if (!isa<MemRefType>(getPositions().getType()))
+    return;
+  addEffect<MemoryEffects::Read>(effects, getListMutable());
+  addEffect<MemoryEffects::Write>(effects, getListMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+}
+
+LogicalResult WriteUnitFramesOp::verify() {
+  double cutoff = getCutoff().convertToDouble();
+  double skin = getSkin().convertToDouble();
+  double prune = getPruneSkin().convertToDouble();
+  if (!std::isfinite(cutoff) || !(cutoff > 0.0))
+    return emitOpError() << "expected a positive finite cutoff";
+  if (!std::isfinite(skin) || !std::isfinite(prune) || skin < 0.0 ||
+      prune < 0.0 || prune > skin)
+    return emitOpError() << "expected finite skins with 0 <= prune_skin <= "
+                            "skin";
+  Type positions = getPositions().getType();
+  if (auto field = dyn_cast<FieldType>(positions))
+    if (field.getParticleSet() != getList().getType().getParticleSet())
+      return emitOpError() << "expected the positions on the list's set";
+  auto vector = dyn_cast<VectorType>(getKernelValueType(positions));
+  if (!vector || vector.getShape() != ArrayRef<int64_t>{3} ||
+      !vector.getElementType().isF64())
+    return emitOpError() << "expected positions of 3 components in f64, "
+                            "from which the frames are formed";
+  return success();
+}
+
+void WriteUnitFramesOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  // In the value form the frames are the list's own state, which only the
+  // loops over the list read, after the refresh that takes the results.
   if (!isa<MemRefType>(getPositions().getType()))
     return;
   addEffect<MemoryEffects::Read>(effects, getListMutable());

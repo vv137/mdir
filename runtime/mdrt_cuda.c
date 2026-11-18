@@ -1854,6 +1854,10 @@ struct Groups {
   /* The segments of a list of units, 1 for groups
      (mdrtGroupsSetSegments). */
   int64_t segments;
+  /* The frames of a list of units and their rows of 32-bit values a place
+     (mdrtGroupsFrame). */
+  void *frames[MDRT_GROUPS_FRAMES];
+  int64_t frameValues[MDRT_GROUPS_FRAMES];
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
@@ -1894,6 +1898,10 @@ static void releaseGroups(struct Groups *groups) {
   for (int which = 0; which != GROUPS_BUFFERS; ++which) {
     releaseReplaced(groups->data[which]);
     groups->data[which] = NULL;
+  }
+  for (int which = 0; which != MDRT_GROUPS_FRAMES; ++which) {
+    releaseReplaced(groups->frames[which]);
+    groups->frames[which] = NULL;
   }
 }
 
@@ -2043,6 +2051,69 @@ void mdrtGroupsReserveBlockOf(int64_t handle, int64_t length) {
     groups->data[GROUPS_BLOCK_OF] = NULL;
   }
   allocateGroup(groups, GROUPS_BLOCK_OF);
+}
+
+/* Frame `which` of a list of units (D[md-alg-segments-writer]),
+   `values` 32-bit values a place, allocated at its first use after a
+   growth. Its rows are of `width` values. */
+static void *getGroupsFrame(struct Groups *groups, int64_t which,
+                            int64_t values) {
+  if (which < 0 || which >= MDRT_GROUPS_FRAMES || values <= 0) {
+    fprintf(stderr, "mdrt: invalid frame %lld of %lld values a place\n",
+            (long long)which, (long long)values);
+    abort();
+  }
+  if (groups->frames[which] && groups->frameValues[which] != values) {
+    fprintf(stderr, "mdrt: frame %lld taken with %lld and %lld values a "
+                    "place\n",
+            (long long)which, (long long)groups->frameValues[which],
+            (long long)values);
+    abort();
+  }
+  if (!groups->frames[which]) {
+    allocationTag = "units: frames";
+    groups->frames[which] = mgpuMemAlloc(
+        (uint64_t)(groups->places * values) * sizeof(int32_t), NULL, false);
+    allocationTag = NULL;
+    groups->frameValues[which] = values;
+  }
+  return groups->frames[which];
+}
+
+/* A frame of `rows` rows of three f32 a place, as a memref of rank 2. */
+void _mlir_ciface_mdrtGroupsFrame(struct Buffer2 *result, int64_t handle,
+                                  int64_t which, int64_t rows) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  void *data = getGroupsFrame(groups, which, 3 * rows);
+  result->allocated = data;
+  result->aligned = data;
+  result->offset = 0;
+  result->sizes[0] = groups->places * rows;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}
+
+/* A frame of `rows` values a place, f32 or i32, as a memref of rank 1. */
+static void getGroupsFrameField(struct Buffer1 *result, int64_t handle,
+                                int64_t which, int64_t rows) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  void *data = getGroupsFrame(groups, which, rows);
+  result->allocated = data;
+  result->aligned = data;
+  result->offset = 0;
+  result->size = groups->places * rows;
+  result->stride = 1;
+}
+void _mlir_ciface_mdrtGroupsFrameFieldF32(struct Buffer1 *result,
+                                          int64_t handle, int64_t which,
+                                          int64_t rows) {
+  getGroupsFrameField(result, handle, which, rows);
+}
+void _mlir_ciface_mdrtGroupsFrameFieldI32(struct Buffer1 *result,
+                                          int64_t handle, int64_t which,
+                                          int64_t rows) {
+  getGroupsFrameField(result, handle, which, rows);
 }
 
 /* The positions of the places in the frames of their groups, f32 and three

@@ -1006,6 +1006,23 @@ LogicalResult Assignment::convertSegmentedList(Operation *op, Scope &scope) {
     buffer = found.front();
     return success();
   };
+  if (auto writer = dyn_cast<WriteUnitFramesOp>(op)) {
+    Value positions;
+    if (failed(getBuffer(writer.getPositions(), scope, positions)))
+      return failure();
+    Value list = mapping.lookupOrNull(writer.getList());
+    if (!list)
+      return op->emitOpError() << "writes the frames of a list that has no "
+                                  "storage";
+    auto next = WriteUnitFramesOp::create(
+        builder, op->getLoc(), builder.getI1Type(), builder.getI1Type(), list,
+        positions,
+        mapping.lookup(writer.getCell()), writer.getCutoffAttr(),
+        writer.getSkinAttr(), writer.getPruneSkinAttr());
+    mapping.map(writer.getMoved(), next.getMoved());
+    mapping.map(writer.getStale(), next.getStale());
+    return success();
+  }
   if (auto refresh = dyn_cast<RefreshSegmentedPairsOp>(op)) {
     Value positions;
     if (failed(getBuffer(refresh.getPositions(), scope, positions)))
@@ -1015,7 +1032,10 @@ LogicalResult Assignment::convertSegmentedList(Operation *op, Scope &scope) {
       return op->emitOpError() << "refreshes a list that has no storage";
     auto next = RefreshSegmentedPairsOp::create(
         builder, op->getLoc(), refresh.getResult().getType(), list, positions,
-        mapping.lookup(refresh.getCell()), refresh.getCutoffAttr(),
+        mapping.lookup(refresh.getCell()),
+        refresh.getMoved() ? mapping.lookup(refresh.getMoved()) : Value(),
+        refresh.getStale() ? mapping.lookup(refresh.getStale()) : Value(),
+        refresh.getCutoffAttr(),
         refresh.getSkinAttr(), refresh.getPruneSkinAttr());
     mapping.map(refresh.getResult(), next.getResult());
     return success();
@@ -1042,7 +1062,8 @@ LogicalResult Assignment::convertSegmentedList(Operation *op, Scope &scope) {
           source.getSkinAttr(), source.getRadiusAttr());
       result = RefreshSegmentedPairsOp::create(
           builder, op->getLoc(), source.getResult().getType(), empty,
-          positions, mapping.lookup(source.getCell()), source.getCutoffAttr(),
+          positions, mapping.lookup(source.getCell()), /*moved=*/Value(),
+          /*stale=*/Value(), source.getCutoffAttr(),
           source.getSkinAttr(), /*prune_skin, not dual=*/source.getSkinAttr());
     } else {
       result = EmptySegmentedPairsOp::create(
@@ -2402,7 +2423,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   if (auto loop = dyn_cast<TupleForOp>(op))
     return convertTupleFor(loop, scope, position);
   if (isa<BuildSegmentedPairsOp, EmptySegmentedPairsOp,
-          RefreshSegmentedPairsOp>(op))
+          RefreshSegmentedPairsOp, WriteUnitFramesOp>(op))
     return convertSegmentedList(op, scope);
   if (auto loop = dyn_cast<SegmentForOp>(op))
     return convertSegmentFor(loop, scope, position);

@@ -1,0 +1,21 @@
+# REQUIRES: python-api, cuda
+# The short trajectories of #795 (D[md-alg-segments-writer]; D417,
+# Section 8, S4a): the list of units on the test route, with its writer,
+# against the general path in double precision, for both integrators, NVE
+# and NPT, under #795's declared bounds (the positions, the velocities at the
+# step projected onto the constraints, and the volume of the units within 3
+# times the largest difference of 5 general mixed runs from the double one,
+# recorded in Inputs/segments_trajectory_bounds.json, or 1e-5 of the scale;
+# Inputs/segments_trajectory.py), on three waters of OPC and of TIP3P. Each
+# case passed 10 of 10 runs at the head of the PR.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py OPC VELOCITY_VERLET NVE %S/Inputs %t/1 | FileCheck %s -DCASE="OPC VELOCITY_VERLET NVE"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py OPC VELOCITY_VERLET NPT %S/Inputs %t/2 | FileCheck %s -DCASE="OPC VELOCITY_VERLET NPT"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py OPC LEAPFROG NVE %S/Inputs %t/3 | FileCheck %s -DCASE="OPC LEAPFROG NVE"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py OPC LEAPFROG NPT %S/Inputs %t/4 | FileCheck %s -DCASE="OPC LEAPFROG NPT"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py TIP3P VELOCITY_VERLET NVE %S/Inputs %t/5 | FileCheck %s -DCASE="TIP3P VELOCITY_VERLET NVE"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py TIP3P VELOCITY_VERLET NPT %S/Inputs %t/6 | FileCheck %s -DCASE="TIP3P VELOCITY_VERLET NPT"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py TIP3P LEAPFROG NVE %S/Inputs %t/7 | FileCheck %s -DCASE="TIP3P LEAPFROG NVE"
+# RUN: %mdir_python %S/Inputs/segments_trajectory.py TIP3P LEAPFROG NPT %S/Inputs %t/8 | FileCheck %s -DCASE="TIP3P LEAPFROG NPT"
+# CHECK: [[CASE]]: 10 samples of 100 steps within the declared bounds

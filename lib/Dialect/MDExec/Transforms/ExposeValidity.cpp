@@ -93,6 +93,41 @@ static void exposeTest(RefreshNeighborsOp refresh) {
     refresh.getStaleMutable().assign(emitTest(refresh, /*pruned=*/true));
 }
 
+/// Gives a refresh of a list of units the test of its writer
+/// (D[md-alg-segments-writer]): the writer comes right after the op that
+/// gives the refresh's positions, the last op that writes them, in the
+/// refresh's block (or where the block begins, for positions from outside
+/// it), so that it follows every update of the step, the constraints and a
+/// barostat's scaling included, and comes before the reciprocal sum and the
+/// loops over the list. An empty list is built whatever has moved.
+static void exposeWriter(RefreshSegmentedPairsOp refresh) {
+  if (refresh.getList().getDefiningOp<EmptySegmentedPairsOp>())
+    return;
+  // After the latest of the ops in the block that define its operands.
+  Block *block = refresh->getBlock();
+  Operation *last = nullptr;
+  Value operands[] = {refresh.getPositions(), refresh.getList(),
+                      refresh.getCellMutable().get()};
+  for (Value value : operands) {
+    Operation *def = value.getDefiningOp();
+    if (def && def->getBlock() == block &&
+        (!last || last->isBeforeInBlock(def)))
+      last = def;
+  }
+  OpBuilder builder(refresh->getContext());
+  if (last)
+    builder.setInsertionPointAfter(last);
+  else
+    builder.setInsertionPointToStart(block);
+  auto writer = WriteUnitFramesOp::create(
+      builder, refresh.getLoc(), builder.getI1Type(), builder.getI1Type(),
+      refresh.getList(), refresh.getPositions(), refresh.getCellMutable().get(),
+      refresh.getCutoffAttr(), refresh.getSkinAttr(),
+      refresh.getPruneSkinAttr());
+  refresh.getMovedMutable().assign(writer.getMoved());
+  refresh.getStaleMutable().assign(writer.getStale());
+}
+
 namespace mdir {
 namespace md_exec {
 
@@ -111,6 +146,15 @@ public:
           refresh.getPolicy() == RebuildPolicy::Check)
         refreshes.push_back(refresh);
     });
+
+    SmallVector<RefreshSegmentedPairsOp> lists;
+    getOperation()->walk([&](RefreshSegmentedPairsOp refresh) {
+      if (!isa<MemRefType>(refresh.getPositions().getType()) &&
+          !refresh.getMoved())
+        lists.push_back(refresh);
+    });
+    for (RefreshSegmentedPairsOp refresh : lists)
+      exposeWriter(refresh);
 
     for (RefreshNeighborsOp refresh : refreshes) {
       // An empty structure is built whatever has moved.
