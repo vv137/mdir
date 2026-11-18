@@ -7506,6 +7506,9 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
         return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
       };
       auto ix = [&](OpBuilder &b, int64_t v) { return createIndex(b, loc, v); };
+      auto index = [&](OpBuilder &b, Value v) -> Value {
+        return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+      };
       auto setFlag = [&](OpBuilder &b, Value condition, unsigned which) {
         scf::IfOp::create(b, loc, condition, [&](OpBuilder &then, Location) {
           memref::StoreOp::create(then, loc, ci(then, 1), used[which].device,
@@ -7513,12 +7516,14 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
           scf::YieldOp::create(then, loc);
         });
       };
+      // In 32 bits, where a division by a constant is a multiplication.
+      Value thread32 = arith::IndexCastOp::create(body, loc, i32, thread);
       Value unit = M == 1 ? thread
-                          : Value(arith::DivUIOp::create(body, loc, thread,
-                                                         ix(body, M)));
+                          : index(body, arith::DivUIOp::create(
+                                            body, loc, thread32, ci(body, M)));
       Value k = M == 1 ? ix(body, 0)
-                       : Value(arith::RemUIOp::create(body, loc, thread,
-                                                      ix(body, M)));
+                       : index(body, arith::RemUIOp::create(body, loc, thread32,
+                                                            ci(body, M)));
       // The rank of the unit: the rest first, then kinds K - 1 to 0.
       Value rank = ci(body, 0);
       for (unsigned r = 1; r <= K; ++r) {
@@ -7585,9 +7590,6 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
         setFlag(b, far(b, a, ref, reference, scaleOuter, zetaOuter), 0);
         if (dual)
           setFlag(b, far(b, a, ref, pruned, scaleInner, zetaInner), 1);
-      };
-      auto index = [&](OpBuilder &b, Value v) -> Value {
-        return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
       };
       // The particle of member `which` of a unit of a taken kind.
       auto memberOf = [&](OpBuilder &b, Value which) -> Value {
