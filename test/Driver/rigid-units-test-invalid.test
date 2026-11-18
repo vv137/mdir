@@ -1,5 +1,5 @@
 # The test-only route of the pair term over the segments of rigid kinds
-# (MDIR_RIGID_UNITS_TEST, D[md-alg-segments-simt]): every combination that
+# (MDIR_RIGID_UNITS_TEST, D421): every combination that
 # it does not take is refused, naming it. S4b replaces the variable by
 # `[performance] rigid_units` and removes it. Without the variable the
 # programs are unchanged (the corpus of D406 checks it); with it, the

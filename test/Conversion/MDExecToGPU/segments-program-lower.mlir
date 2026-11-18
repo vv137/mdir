@@ -1,5 +1,5 @@
 // The lists of units of a real program lower on a device
-// (D[md-alg-segments-simt], fixes of D419's lowering that the test route
+// (D421, fixes of D419's lowering that the test route
 // reached first):
 //   - a loop over steps that carries other values besides the list;
 //   - the members of the kinds, the excluded pairs, and the anchors on the

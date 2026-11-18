@@ -1,5 +1,5 @@
 # REQUIRES: cuda-toolkit
-# The mechanism table of the segmented SIMT schedule (D[md-alg-segments-simt];
+# The mechanism table of the segmented SIMT schedule (D421;
 # D417, Section 8, S3), as structural checks of the module and of the PTX
 # of its lowered program (Inputs/segments_ptx.py), on alanine dipeptide in
 # OPC (387 waters of four places, the solute the rest) on the test route,

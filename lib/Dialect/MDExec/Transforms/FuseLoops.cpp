@@ -1018,7 +1018,7 @@ static void fuse(SegmentForOp first, SegmentForOp second) {
 
 /// Two sums of a loop over a list of units that no segment both yields, and
 /// whose results are only added together, become one sum, whose initial
-/// value is the sum of theirs (D[md-alg-segments-simt]). The pair term over
+/// value is the sum of theirs (D421). The pair term over
 /// segments is one sum for each segment (D405's generator); added in the
 /// loop, the segments' energies and virials take one accumulator each
 /// instead of one a segment. Returns whether it combined two.

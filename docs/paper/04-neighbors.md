@@ -1146,7 +1146,7 @@ take it up. The constrained motion is the same; the virial of the forces
 and that of the constraints differ by $\pm\sum_k\mathbf h_k\otimes\Delta
 \mathbf F_k$, and their sum, which the pressure takes, does not.
 
-**The schedule** (D[md-alg-segments-simt]). A warp takes a record of one
+**The schedule** (D421). A warp takes a record of one
 segment, lanes $u$ and $u + 16$ the unit at place $16g + u$ of its group.
 The partners' anchors, offsets, fields, masks, and the accumulators of
 their places turn through the half-warp in 16 shuffle steps; each forms its

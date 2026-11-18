@@ -1,5 +1,5 @@
 // The SIMT schedule of md_alg.traverse_pairs over the segments of a list of
-// units (D[md-alg-segments-simt], D417, Section 6); see
+// units (D421, D417, Section 6); see
 // include/mdir/Conversion/TraversePairs.h. It is a second schedule, chosen
 // at compile time by the type of the list: the schedule of the groups (D415,
 // TraversePairs.cpp) is not touched, so a program of groups keeps its bytes.

@@ -5,7 +5,7 @@
 // the outer ones of a list or the inner ones of a dual list (D114).
 //
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu="traverse-oracle=serial" --verify-diagnostics
-// The same refusals come before the SIMT schedule (D[md-alg-segments-simt]):
+// The same refusals come before the SIMT schedule (D421):
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu --verify-diagnostics
 
 // The loop's cutoff beyond the cutoff that the list was built with: segment

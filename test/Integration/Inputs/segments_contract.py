@@ -1,5 +1,5 @@
 """The contract of md_alg.traverse_pairs over a list of units
-(D[md-alg-segments-simt]; D417, Section 6): its SIMT schedule on a device
+(D421; D417, Section 6): its SIMT schedule on a device
 against its serial definition, which convert-md-exec-to-gpu runs on the host
 over copies of the same lists (MDIR_TRAVERSE_ORACLE), in D415's five modes,
 on the test route of the pair term over the segments of rigid kinds
@@ -36,7 +36,7 @@ bound the sums. The potential and the total virial (its constraint part
 included) of the general groups run are held to the serial definition's
 within the same bound: they do not depend on the route, while the forces of
 the atoms and the virial without its constraint part do where a site is not
-a linear function of its frame (D[md-alg-segments-simt], Section 5).
+a linear function of its frame (D421, Section 5).
 """
 import os
 import sys

@@ -1,7 +1,7 @@
 // The refusals of convert-md-exec-to-gpu for a list of units and the loops
 // over its segments (D417, D419), each with its own
 // message. Those of the SIMT schedule of the traversal are in
-// traverse-segments-simt-invalid.mlir (D[md-alg-segments-simt]).
+// traverse-segments-simt-invalid.mlir (D421).
 //
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu --verify-diagnostics
 

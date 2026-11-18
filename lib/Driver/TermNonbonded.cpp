@@ -1414,7 +1414,7 @@ static TermIRValues buildNonbondedPrimary(mlir::OpBuilder &builder, mlir::ValueR
 // `mdir check` numbers them from 1, comma-separated, the primary pair term
 // is built over the segments of those kinds (D405's generator), so that a
 // run takes the list of units of D417 and D419 and its traversal. It is the
-// route of D[md-alg-segments-simt] for the measurements and the contract of
+// route of D421 for the measurements and the contract of
 // slice S3, before S4b: S4b replaces it by `[performance] rigid_units` and
 // removes it, with no alias. Without it no program changes.
 

@@ -170,7 +170,7 @@ struct SegmentsFusedPruning {
   std::function<void(mlir::OpBuilder &)> finish;
 };
 
-/// The SIMT schedule of a list of units (D[md-alg-segments-simt], D417,
+/// The SIMT schedule of a list of units (D421, D417,
 /// Section 6): a warp for each record of one segment, lanes u and u + 16
 /// holding the unit at place 16 g + u, the partners' frames, fields, masks,
 /// and the accumulators of their places turning through the half-warps;

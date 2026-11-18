@@ -1,5 +1,5 @@
 // The refusals of the SIMT schedule of a list of units
-// (D[md-alg-segments-simt]), each with its own message: what the schedule
+// (D421), each with its own message: what the schedule
 // does not take is refused by name, never lowered otherwise.
 //
 // RUN: mdir-opt %s --split-input-file --convert-md-exec-to-gpu --verify-diagnostics

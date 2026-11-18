@@ -2707,7 +2707,7 @@ void GroupsBuild::emitLists(gpu::LaunchOp op, bool images) {
 // the row: record w is the block of the sort's place w, copied, with its
 // group and its own count; `segments[s]` is the first record of segment s,
 // and `segments[S]` their number. A pruning re-chunks the survivors of a
-// row into its first records (#795's U10, D[md-alg-segments-simt]).
+// row into its first records (#795's U10, D421).
 void GroupsBuild::emitSegments(Value gridOfCapacity) {
   using P = CmpIPredicate;
   Value c2s = cx(2);

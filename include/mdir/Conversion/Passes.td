@@ -505,7 +505,7 @@ def ConvertMDExecToGPU
            /*default=*/"-1",
            "The units of a column of the build over units (D419), which "
            "its cubes cut along z; -1 takes the entry of the policy for "
-           "`arch` (SegmentsPolicy, D[md-alg-segments-simt])">,
+           "`arch` (SegmentsPolicy, D421)">,
     Option<"traverseOracle", "traverse-oracle", "std::string",
            /*default=*/"\"simt\"",
            "How md_alg.traverse_pairs is lowered: 'simt', its schedule; "

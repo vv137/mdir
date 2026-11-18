@@ -1,5 +1,5 @@
 """segments_ptx.py MODULE LOWERED: the structural facts of the segmented SIMT
-schedule (D[md-alg-segments-simt], the mechanism table of D417, Section 8,
+schedule (D421, the mechanism table of D417, Section 8,
 S3), from the module that `mdir emit` prints and the PTX of its lowered
 program (MDIR_GPU_BINARY=ptx).
 

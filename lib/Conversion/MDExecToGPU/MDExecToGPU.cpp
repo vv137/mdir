@@ -232,7 +232,7 @@ struct Flag {
 };
 
 /// The traversal of a list of units that prunes for the refresh `refresh`
-/// in its loop (D[md-alg-segments-simt], as D284 for the groups): the first
+/// in its loop (D421, as D284 for the groups): the first
 /// op that takes the refresh's result, in its block, at its positions and
 /// in its cell, reading the inner records; or null.
 static md_alg::TraversePairsOp
@@ -315,7 +315,7 @@ public:
   /// (DevicePolicy.h, D420): the block memory of the
   /// strategies and the lanes of PME's gathering.
   md_exec::policy::LaunchPolicy launch = md_exec::policy::kDefaultLaunch;
-  /// The entry of the schedule of lists of units (D[md-alg-segments-simt]).
+  /// The entry of the schedule of lists of units (D421).
   md_exec::policy::SegmentsPolicy segmentsPolicy =
       md_exec::policy::kDefaultSegments;
   /// The units of a column of the build over units: the policy's, or the
@@ -405,7 +405,7 @@ private:
                                 const SegmentsPrune &prune, Value w,
                                 Value kept);
   /// The traversal that prunes for each refresh of a dual list of units in
-  /// its loop (D[md-alg-segments-simt]), and the inner reach.
+  /// its loop (D421), and the inner reach.
   DenseMap<Operation *, double> fusedSegmentsPruning;
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
   void lowerPermute(md_exec::PermuteOp op);
@@ -3998,7 +3998,7 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
               "the tests; the pipeline takes the structure form, whose "
               "contract is in the type";
   if (op.isSegmented()) {
-    // The SIMT schedule of the segments (D[md-alg-segments-simt]), or the
+    // The SIMT schedule of the segments (D421), or the
     // serial definition, D417's oracle, on the host over copies of the
     // lists that the device built (D419).
     Neighbors structure;
@@ -6912,7 +6912,7 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
     return failure();
   if (dual) {
     // Where the first traversal that takes the result prunes in its loop
-    // (D284, D[md-alg-segments-simt]), the refresh moves the reference
+    // (D284, D421), the refresh moves the reference
     // points into their frames and leaves the pruning to it.
     md_alg::TraversePairsOp fusedLoop =
         traverseOracle == "simt" ? getSegmentsFusedLoop(op)
@@ -9223,7 +9223,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   }
 
   // A loop over a list of units is lowered as the traversal that
-  // convert-md-exec-to-md-alg makes of it (D417, D[md-alg-segments-simt]).
+  // convert-md-exec-to-md-alg makes of it (D417, D421).
   if (isa<md_exec::SegmentForOp>(op))
     return op->emitOpError()
            << "is a loop over a list of units, which this pass lowers as "

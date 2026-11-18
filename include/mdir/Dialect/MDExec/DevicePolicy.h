@@ -94,7 +94,7 @@ struct LaunchPolicy {
 };
 
 /// The SIMT schedule of `md_alg.traverse_pairs` over a list of units
-/// (D[md-alg-segments-simt]): its launches and its rotation.
+/// (D421): its launches and its rotation.
 struct SegmentsPolicy {
   /// The threads of a block of the traversal, whole warps.
   int64_t blockSize;

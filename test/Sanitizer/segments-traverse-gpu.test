@@ -1,5 +1,5 @@
 # The segmented SIMT schedule of md_alg.traverse_pairs and its pruning in
-# the loop (D[md-alg-segments-simt]) under compute-sanitizer, on the test
+# the loop (D421) under compute-sanitizer, on the test
 # route of the pair term over the segments of rigid kinds
 # (MDIR_RIGID_UNITS_TEST): alanine dipeptide in OPC (the waters taken, the
 # solute the rest, with anchors and excluded pairs), 10 / 9.5 Angstrom with

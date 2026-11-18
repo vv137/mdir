@@ -157,7 +157,7 @@ static const Measurement kLaunchDefaultBasis = {
 static const ArrayRef<Entry<LaunchPolicy>> kLaunchTable = {};
 
 //===----------------------------------------------------------------------===//
-// The SIMT schedule of a list of units (D[md-alg-segments-simt])
+// The SIMT schedule of a list of units (D421)
 //===----------------------------------------------------------------------===//
 
 // The block and the rotation are those of #795's schedule at 745c9f12,
@@ -173,7 +173,7 @@ static const ArrayRef<Entry<LaunchPolicy>> kLaunchTable = {};
 const SegmentsPolicy mdir::md_exec::policy::kDefaultSegments = {
     /*blockSize=*/128, /*rotationLanes=*/16, /*columnUnits=*/128.0};
 static const Measurement kSegmentsDefaultBasis = {
-    "D[md-alg-segments-simt]",
+    "D421",
     "the six systems of #795 (rhombic dodecahedra of OPC and TIP3P, "
     "ubiquitin in OPC and TIP3P, a box of OPC, a CHARMM protein in TIP3P), "
     "RTX 4090",
