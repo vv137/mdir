@@ -4,7 +4,7 @@ Recorded 2026-11-18.
 
 **Slice S4b of D417. The driver takes the pair term over the segments of the rigid kinds of D403 by the key `[performance] rigid_units = "AUTO" | "ON" | "OFF"` (D417, Section 9, ruling 7), with no alias. `ON` takes the most numerous eligible kinds, at most two (D405), and refuses, naming the reason, a program where the route cannot apply. `OFF` is `main`'s general route. `AUTO` takes the general route until its rule is measured. One resolution before the build, next to that of `neighbor_structure` (D261), decides the route and records it: `mdir check`, the log, the manifest, and the fingerprint's execution part state, for each kind, whether it is taken and why. The covering radius of a taken kind is measured again at the positions that the run begins with and widened to them where the input lies beyond it (#795, ruling 5), so that the first evaluation, before any constraint, misses no pair. The test route `MDIR_RIGID_UNITS_TEST` is removed.** Issue #914, after D422.
 
-Status: design, in a draft pull request, before the implementation.
+Status: design accepted (Section 7); the implementation is in progress.
 
 ## 1. The key
 
@@ -29,7 +29,7 @@ The candidates are the rigid kinds of D403, numbered as `mdir check` numbers the
 - some of its molecules have a pair of their own that is not excluded (D403's fact; the segment would leave the pair out);
 - some of its molecules have an excluded pair with a particle outside the molecule.
 
-`ON` takes the eligible kinds with the most molecules, at most two (D405's `MaxPairKinds`), ties by their number. An eligible kind beyond the two is not taken, with the reason "the segments take at most two kinds (D405)". The particles of no taken kind are the rest. The rest's anchors (#799) and its radius are those of D421, Section 3.
+A kind of one particle (an ion) is not taken, with the reason "one particle": its units would give the segmented loop nothing that the rest does not. `ON` takes the eligible kinds of two or more particles in a fixed order, by their count of molecules and then by their first particle (D403's order, which is `mdir check`'s numbering), at most two (D405's `MaxPairKinds`). An eligible kind after the two is not taken, with the reason "beyond the two most populous". The particles of no taken kind are the rest. The rest's anchors (#799) and its radius are those of D421, Section 3.
 
 A kind that is not taken is a report, not a refusal. `ON` refuses where no kind is taken.
 
@@ -56,17 +56,17 @@ Each names the key and the reason, in this form:
 | no rigid kind (the system has no rigid group of D403) | the system |
 | no kind is eligible, followed by each kind's reason | the system |
 | the covering reach, X Å (the pair list distance plus twice Y Å, the largest covering radius of the units), exceeds half the least face width of the cell, Z Å | the system and its cell at the input |
-| a run that writes the forces of its frames (Python's `reports(forces=True)`) where a taken kind has a site | the reports (Section 7, question 3) |
+| a run that writes the forces of its frames (Python's `reports(forces=True)`) where a taken kind has a site: its written forces would not take the general transpose of the site (#916) | the reports (Section 7, ruling 3) |
 
 The reach is also checked at every build, as since S2; a run whose cell shrinks below it stops there with the message of `mdrtSegmentsStopReach`.
 
-The refusals of the control file are made by the reader of the control file, as `neighbor_structure = "GROUPS"` on the CPU is, so that `mdir check` reports them as errors of the file. Under `AUTO` and `OFF` none applies.
+Every refusal but that of the written forces is made by the resolution, which `mdir run`, `mdir emit`, `mdir check`, and `mdir.compile` all call before anything is built; the model of Python sets some of its conditions (tunables, observed constants) after the reader's checks, so the reader does not make them. The written forces are refused where a simulation's reports ask for them. Under `AUTO` and `OFF` none applies.
 
 ## 4. The radius at the input
 
 D422 left the first evaluation of a run open: it packs the frames at the input positions, before any constraint, and the refresh that builds checks no extents. A place beyond its covering radius there may lose a pair within the cutoff at step 0.
 
-The resolution measures, at the positions that the run begins with (the input's, or the checkpoint's), the distance of each place of each copy of a taken kind from its anchor, and of each anchored member of the rest from its anchor. A bond is taken in its image nearest the anchor; a site is placed by the kind's weights. Where the largest distance of a kind, or of the rest, exceeds its nominal radius (the constrained distances of the frame plus the margin of $10^{-4}$ nm, D421, Section 3), the radius of that kind becomes the measured distance plus the margin, for the whole run. `mdir check` and the log give both radii. The reach against the cell is checked with the widened radii, so an input far from its constraints is refused (`ON`) by the reach.
+The resolution measures, at the positions that the run begins with (the input's, or the checkpoint's), the distance of each place of each copy of a taken kind from its anchor, and of each anchored member of the rest from its anchor. A bond is taken in its image nearest the anchor; a site is placed by the kind's weights. Where the largest distance of a kind, or of the rest, exceeds its nominal radius (the constrained distances of the frame plus the margin of $10^{-4}$ nm, D421, Section 3), the radius of that kind becomes the measured distance plus the margin, for the whole run. `mdir check` (text and JSON) and the log's header give, for each kind and the rest, both radii and the measured excess, so that a file of rounded coordinates is visible as such. The reach against the cell is checked with the widened radii, so an input far from its constraints is refused (`ON`) by the reach.
 
 The measurement is on the host, in f64, once. It changes no device code.
 
@@ -100,11 +100,12 @@ The JSON report has an object `rigid_units`: `requested`, `route` (`units` or `g
 - `test/Driver/rigid-units-test-invalid.test` becomes the test of the key's refusals, one case for each row of Section 3, and the cases of the numbers of kinds, which no longer exist, become the cases of Section 2 (no kind, no eligible kind, a third eligible kind);
 - `segments_contract.py`, `segments_trajectory.py`, `segments-schedule-ptx.test`, and the sanitizer's `segments-traverse-gpu.test` take `rigid_units = "ON"` (Python: `Execution.rigid_units`).
 
-## 7. Questions for the maintainer
+## 7. The maintainer's ruling (2026-11-18, on #915)
 
-1. **The radius at the input (Section 4).** The issue and the brief wrote "the input-extents stop". This design widens instead, as #795's ruling 5 did, because a stop refuses the dodecahedron fixture and any input at the precision of GROMACS's format. The stop remains where the widened reach does not fit the cell, and after the first constraint step (D422). Is widening accepted, or is a stop at the input wanted, and then with what tolerance?
-2. **Which kinds `ON` takes (Section 2):** the two most numerous eligible kinds, others reported, rather than a refusal where more than two are eligible.
-3. **Written forces.** #795's ruling 6 has written frames use the general transpose of a site (the Jacobian of its placement), not the weights. Neither S4a nor this slice ports that evaluation. The forces that a run on the units carries differ from the general route's by $\Delta\mathbf F$ (D421, Section 5), which lies along the constraints. This design refuses `ON` where a run writes the forces of its frames and a taken kind has a site, and leaves the general evaluation of written forces to an issue of its own. The checkpoints keep the carried forces, as on every route.
+The recommendations were accepted:
+1. **The radius at the input is widened, not a stop** (Section 4), as #795's ruling 5 did. The widening and the measured excess are reported for each kind by `mdir check`, in text and JSON, and in the log's header. The run stops only where the widened reach does not fit the cell, and at the writer after the first constrained step (D422).
+2. **More than two eligible kinds: two are taken and the rest reported**, with no refusal (Section 2). Kinds of two or more particles come first; a kind of one particle is not taken by `ON`. Then by count, then by first particle. The reasons are "one particle" and "beyond the two most populous". A negative test has three eligible kinds of several particles and one kind of ions.
+3. **Written frame forces with a taken kind that has a site: `ON` refuses**, with its reason (Section 3). The general transpose of #795's ruling 6 is #916.
 
 ## 8. Gates
 
