@@ -8,17 +8,23 @@ A trajectory of `rigid_units = ON` in mixed precision gives FRAMES frames,
 the first the input itself (before any constraint, whose covering radii the
 resolution widens where the input lies beyond them) and then one every STEPS
 steps. At each frame three programs evaluate the forces and the potential at
-the same positions and cell: the units (ON, mixed), and the general route in
-mixed and in double precision. The units must agree with the general double
-route within 1.5 times the general mixed route's own difference, or 1e-5 of
-the largest force (the forces) and 1e-6 of the potential (the energy), where
-those are larger (#795's criterion).
+the same positions and cell: the units (ON, mixed), and the general route of
+the groups (D415) in mixed and in double precision. The units must agree with the general double
+route within 1.5 times the general mixed route's own difference, the
+largest of 5 runs at each frame and over the frames of the system, or 1e-5 of the largest force (the
+forces) and 1e-6 of the potential (the energy), where those are larger
+(#795's criterion, with D422's baseline over several samples). The sums of
+both routes in mixed precision are made in f32 and widened once (D415's
+rule), so their energies differ from the double route's by the rounding of
+those sums.
 
 --after-input leaves the input out of the comparison, for a site that is
 not linear in its frame (Amber's extra point): the input lies off the
 constraints, where the weights of D403 and the topology's placement put the
 site in different places, so the two routes evaluate different positions
 there (D421, Section 5); from the first step on the frame is constrained.
+The test also takes it for the dodecahedron with PME, whose input the plain
+cutoffs compare against the oracle (rigid-units-frames-gpu.test).
 
 The forces are compared projected onto the constraints of the rigid waters
 (P a = a - M^-1 G^T (G M^-1 G^T)^-1 G a for a = F/m, then m P a): the units
@@ -34,12 +40,7 @@ molecules within the cutoff in the minimum image, a site placed by its
 weights and its force moved by them), against which the general double
 route must agree within 1e-9 of the largest force and of the potential, and
 the units and the general mixed route are compared in the same way as
-against the general double one, the floor of the energy then the error
-model of one evaluation in f32 (2 gamma_n M + 8 u L D: M and D the sums of
-the magnitudes of the terms and of their derivatives in r, n their number,
-L the largest coordinate, u = 2^-24) in place of 1e-6 of the potential,
-which a small system's cancelling sum makes too small; the forces then need
-no projection, since
+against the general double one; the forces then need no projection, since
 the sites of [ virtual_sites3 ] of type 1 are linear in their frames.
 
 It prints, for each frame, the largest difference of each route and the
@@ -101,17 +102,27 @@ def build(units, precision, state=None):
     x.target = mdir.Target.GPU
     x.precision = precision
     x.rigid_units = mdir.RigidUnits.On if units else mdir.RigidUnits.Off
+    # The general route that the units replace: the groups of D415, whose
+    # sums in mixed precision are made as the units' are (D415's rule).
+    x.neighbor_structure = mdir.NeighborStructure.Groups
     program = mdir.compile(system, initial, i, e, x, mdir.Schedule())
     assert (program.plan["rigid_units"] == "units") == units, program.plan["rigid_units_reason"]
     return mdir.Simulation(program), program
 
 
-def evaluate(units, precision, state):
+def evaluate(units, precision, state, runs=1):
+    """The forces and the potential of `runs` simulations of one program from
+    the same state: the sums of the groups in mixed precision add with
+    atomics in no fixed order, so their rounding changes from run to run."""
     simulation, program = build(units, precision, state)
-    simulation.run(0, energy=True)
-    at = simulation.state()
-    return (np.asarray(at.forces, dtype=np.float64), float(at.energies["potential"]),
-            program)
+    results = []
+    for k in range(runs):
+        if k:
+            simulation = mdir.Simulation(program)
+        simulation.run(0, energy=True)
+        at = simulation.state()
+        results.append((np.asarray(at.forces, dtype=np.float64), float(at.energies["potential"])))
+    return results
 
 
 # The frames: the input, then every STEPS steps of the units.
@@ -182,10 +193,6 @@ def oracle(state):
     n = len(x)
     forces = np.zeros((n, 3))
     energy = 0.0
-    # The error model of an evaluation in f32 (D405's oracle): the sum of
-    # the magnitudes of the terms M, of their derivatives in r D, and the
-    # number of terms.
-    magnitude, slope, terms = 0.0, 0.0, 0
     for i in range(n):
         for j in range(i + 1, n):
             if molecule[i] == molecule[j]:
@@ -201,15 +208,9 @@ def oracle(state):
                 sr6 = (sig / r) ** 6
                 energy += 4 * eps * (sr6 * sr6 - sr6)
                 du += 4 * eps * (-12 * sr6 * sr6 + 6 * sr6) / r
-                magnitude += 4 * eps * (sr6 * sr6 + sr6)
-                slope += 4 * eps * (12 * sr6 * sr6 + 6 * sr6) / r
-                terms += 1
             if charge[i] != 0.0 and charge[j] != 0.0:
                 energy += COULOMB * charge[i] * charge[j] / r
                 du += -COULOMB * charge[i] * charge[j] / (r * r)
-                magnitude += abs(COULOMB * charge[i] * charge[j] / r)
-                slope += abs(COULOMB * charge[i] * charge[j]) / (r * r)
-                terms += 1
             f = -du * d / r
             forces[i] += f
             forces[j] -= f
@@ -219,26 +220,28 @@ def oracle(state):
         forces[j] += wj * f
         forces[k] += wk * f
         forces[s] = 0.0
-    u = 2.0 ** -24
-    gamma = terms * u / (1 - terms * u)
-    scale = float(np.abs(x).max())
-    floor = 2 * gamma * magnitude + 8 * u * scale * slope
-    return forces, energy, floor
+    return forces, energy
 
 
+RUNS = 5
 failed = False
 worst = 0.0
+# Each frame's differences from each reference; the baseline of the general
+# mixed route is its largest difference over RUNS runs at each frame and over
+# the frames of the system, so that one sample where mixed happens to round
+# close does not make the bound (a baseline of one sample flickers, D422).
+rows = []
 for index, state in enumerate(states):
     if index == 0 and "--after-input" in flags:
         continue
     x = np.asarray(state.positions, dtype=np.float64)
     H = cell_matrix(state)
-    fu, eu, _ = evaluate(True, mdir.Precision.Mixed, state)
-    fm, em, _ = evaluate(False, mdir.Precision.Mixed, state)
-    fd, ed, _ = evaluate(False, mdir.Precision.Double, state)
+    (fu, eu), = evaluate(True, mdir.Precision.Mixed, state)
+    mixed = evaluate(False, mdir.Precision.Mixed, state, RUNS)
+    (fd, ed), = evaluate(False, mdir.Precision.Double, state)
     references = [("double", fd, ed)]
     if "--oracle" in flags:
-        fo, eo, floor = oracle(state)
+        fo, eo = oracle(state)
         scale = float(np.abs(fo).max())
         df, de = float(np.abs(fd - fo).max()), abs(ed - eo)
         ok = df <= 1e-9 * scale and de <= 1e-9 * max(1.0, abs(eo))
@@ -246,21 +249,24 @@ for index, state in enumerate(states):
               f"(bound {1e-9 * scale:.3e}), energy {de:.3e} of {eo:.6f}")
         failed |= not ok
         references.append(("oracle", fo, eo))
-        print(f"frame {index}: the floor of the energy from the error model {floor:.3e}")
     for label, fr, er in references:
         if label == "double":
-            pu, pm, pr = project(fu, x, H), project(fm, x, H), project(fr, x, H)
+            pu, pr = project(fu, x, H), project(fr, x, H)
+            pms = [project(fm, x, H) for fm, _ in mixed]
         else:
-            pu, pm, pr = fu, fm, fr
-        scale = float(np.abs(pr).max())
-        du, dm = float(np.abs(pu - pr).max()), float(np.abs(pm - pr).max())
-        bound = max(1.5 * dm, 1e-5 * scale)
-        eu_d, em_d = abs(eu - er), abs(em - er)
-        # With the oracle, the floor of the energy is the error model of one
-        # evaluation in f32: 2 gamma_n M for the order of the sum and
-        # 8 u L D for the rounding of the displacements, L the largest
-        # coordinate (D405's oracle); 1e-6 of the potential otherwise.
-        ebound = max(1.5 * em_d, floor if "--oracle" in flags else 1e-6 * abs(er))
+            pu, pr = fu, fr
+            pms = [fm for fm, _ in mixed]
+        rows.append((index, label, float(np.abs(pu - pr).max()),
+                     max(float(np.abs(pm - pr).max()) for pm in pms),
+                     float(np.abs(pr).max()), abs(eu - er),
+                     max(abs(em - er) for _, em in mixed), abs(er)))
+for label in sorted({r[1] for r in rows}):
+    mine = [r for r in rows if r[1] == label]
+    dm_all = max(r[3] for r in mine)
+    em_all = max(r[6] for r in mine)
+    for index, _, du, dm, scale, eu_d, em_d, er in mine:
+        bound = max(1.5 * dm_all, 1e-5 * scale)
+        ebound = max(1.5 * em_all, 1e-6 * er)
         ok = du <= bound and eu_d <= ebound
         worst = max(worst, du / bound, eu_d / ebound)
         print(f"frame {index} against {label}: forces units {du:.3e}, mixed {dm:.3e}, "
