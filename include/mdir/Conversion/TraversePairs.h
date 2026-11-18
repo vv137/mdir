@@ -148,7 +148,7 @@ struct SegmentLists {
   mlir::Value active, activeCount;
   bool dual = false;
   /// The frames that the writer of the list packed at the loop's positions
-  /// (D[md-alg-segments-writer]): the anchors, the offsets of the members,
+  /// (D422): the anchors, the offsets of the members,
   /// and, by the index of `ins`, each field that it packed (null for one it
   /// did not). Without the anchors the schedule packs the frames itself.
   mlir::Value frameAnchors, frameOffsets;
@@ -157,7 +157,7 @@ struct SegmentLists {
 
 /// Which fields of `ins` of the traversal over a list of units `op` some
 /// slice reads, at any member (D421; the writer packs those,
-/// D[md-alg-segments-writer]).
+/// D422).
 llvm::SmallVector<bool> getSegmentFieldsRead(md_alg::TraversePairsOp op);
 
 /// The members of a unit at most, over the kinds of `type` and the rest.

@@ -41,7 +41,7 @@ enum MdrtGroupsSlot {
   GROUPS_BUFFERS = 24
 };
 
-/* The frames of a list of units (D[md-alg-segments-writer]): buffers of
+/* The frames of a list of units (D422): buffers of
    32-bit values, `rows` a place times their width, which the writer and
    the refresh write and the loops over the list read
    (mdrtGroupsFrame, mdrtGroupsFrameField*). Frame 0 holds the anchors and

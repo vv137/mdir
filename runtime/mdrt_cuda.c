@@ -2053,7 +2053,7 @@ void mdrtGroupsReserveBlockOf(int64_t handle, int64_t length) {
   allocateGroup(groups, GROUPS_BLOCK_OF);
 }
 
-/* Frame `which` of a list of units (D[md-alg-segments-writer]),
+/* Frame `which` of a list of units (D422),
    `values` 32-bit values a place, allocated at its first use after a
    growth. Its rows are of `width` values. */
 static void *getGroupsFrame(struct Groups *groups, int64_t which,

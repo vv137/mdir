@@ -94,7 +94,7 @@ static void exposeTest(RefreshNeighborsOp refresh) {
 }
 
 /// Gives a refresh of a list of units the test of its writer
-/// (D[md-alg-segments-writer]): the writer comes right after the op that
+/// (D422): the writer comes right after the op that
 /// gives the refresh's positions, the last op that writes them, in the
 /// refresh's block (or where the block begins, for positions from outside
 /// it), so that it follows every update of the step, the constraints and a

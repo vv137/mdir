@@ -657,7 +657,7 @@ def MDExec_RefreshSegmentedPairsOp : MDExec_Op<"refresh_segmented_pairs", [
     With `moved` and `stale`, the results of the writer of the list
     (`md_exec.write_unit_frames`) at the same positions, cell, and reaches,
     the op makes no test of its own: `moved` tells that the list is not
-    valid, `stale` that its inner list is not (D[md-alg-segments-writer]).
+    valid, `stale` that its inner list is not (D422).
 
     ```mlir
     %moved, %stale = md_exec.write_unit_frames %l0 at(%x, %cell)
@@ -688,7 +688,7 @@ def MDExec_WriteUnitFramesOp : MDExec_Op<"write_unit_frames", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Writes the frames of the units of a list and tests it";
   let description = [{
-    The writer of a list of units (D[md-alg-segments-writer]; D417,
+    The writer of a list of units (D422; D417,
     Section 8, S4a). At the positions `positions` in `cell`, it writes the
     list's frames, which the loops over the list read: for each unit the
     position of its anchor in the frame of its place and the offsets of its

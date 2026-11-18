@@ -1,5 +1,5 @@
 // The allowed order of the writer of a list of units
-// (D[md-alg-segments-writer]): the op that writes the positions, then the
+// (D422): the op that writes the positions, then the
 // writer, the refresh that takes its test, and the loop that reads the
 // frames. It lowers, the writer to a kernel and flags read at the refresh,
 // and the loop reads the list's frames (segments-writer-invalid.mlir holds

@@ -1,6 +1,6 @@
 # REQUIRES: cuda
 # The check of the extents of the writer of a list of units
-# (D[md-alg-segments-writer]; D417, Section 8, S4a): after the positions of
+# (D422; D417, Section 8, S4a): after the positions of
 # a step every place of a unit must lie within its covering radius
 # (Inputs/segments_writer.py). Two frames: the first builds the list, the
 # writer of the second checks it.

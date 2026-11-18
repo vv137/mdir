@@ -399,7 +399,7 @@ private:
   LogicalResult lowerEmptySegmentedPairs(md_exec::EmptySegmentedPairsOp op);
   LogicalResult lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op);
   LogicalResult lowerBuildSegmentedPairs(md_exec::BuildSegmentedPairsOp op);
-  /// The writer of a list of units (D[md-alg-segments-writer]): one kernel,
+  /// The writer of a list of units (D422): one kernel,
   /// a thread a unit, that packs the frames, tests the reference points, and
   /// checks the extents; its results are flags read where the refresh
   /// takes them.
@@ -4129,7 +4129,7 @@ LogicalResult Lowering::lowerTraversePairs(md_alg::TraversePairsOp op) {
     lists.rankPlaces = structure.segmented->rankPlaces;
     lists.dual = structure.dual;
     // The frames that the list's refresh left, at these positions and in
-    // this cell (D[md-alg-segments-writer]). An op between the refresh and
+    // this cell (D422). An op between the refresh and
     // the loop that writes the positions would leave frames that the
     // writer did not check, so it is refused.
     auto framed = unitFrames.find(op.getNeighbors());
@@ -6970,7 +6970,7 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
       memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
   Value stale, nearInnerOf;
   if (Value writerMoved = op.getMoved()) {
-    // The writer has made the test (D[md-alg-segments-writer]): `moved`
+    // The writer has made the test (D422): `moved`
     // and `stale` are its flags, which the host takes here.
     stale = arith::XOrIOp::create(
         builder, loc,
@@ -7044,7 +7044,7 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
   if (failed(finishBuild(then, loc, structure, positions, box)))
     return failure();
   // The frames of every place, at the places of the build
-  // (D[md-alg-segments-writer]).
+  // (D422).
   SmallVector<Value> framedFields = getFramedFields(op);
   emitPackUnitFrames(then, loc, structure, positions, box, framedFields);
   if (dual) {
@@ -7110,7 +7110,7 @@ Lowering::lowerRefreshSegmentedPairs(md_exec::RefreshSegmentedPairsOp op) {
 }
 
 //===----------------------------------------------------------------------===//
-// The writer of a list of units (D[md-alg-segments-writer])
+// The writer of a list of units (D422)
 //===----------------------------------------------------------------------===//
 
 /// The f32 at most `limit` nearest it.

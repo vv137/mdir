@@ -37,7 +37,7 @@ image of every pair of reference points in f64.
       rest out of the list's exclusions; --join-exclusion adds an excluded
       pair of the rest and a water; --join-copies adds one of the first
       atoms of two copies of the first taken kind. --writer gives the
-      refresh the test of the writer of the list (D[md-alg-segments-writer],
+      refresh the test of the writer of the list (D422,
       the form that md-exec-expose-validity gives a loop over steps), at the
       positions of every particle.
   segments_coverage.py check SYSTEM ROOT WORK DUMPS [--scale=S] [--limit=L] [--expect-missing] [--any-points]

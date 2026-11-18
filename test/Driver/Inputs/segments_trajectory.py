@@ -1,6 +1,6 @@
 """segments_trajectory.py MODEL INTEGRATOR ENSEMBLE INPUTS WORK [--record=N]:
 the short trajectories of #795, the units against the general path
-(D[md-alg-segments-writer]; D417, Section 8, S4a).
+(D422; D417, Section 8, S4a).
 
 Three waters near each other in a cubic cell of 4 nm (OPC: Inputs/opc/three,
 from three.py; TIP3P: the three waters of Inputs/triclinic nearest the first,

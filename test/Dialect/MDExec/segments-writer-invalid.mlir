@@ -1,5 +1,5 @@
 // The refusals of the writer of a list of units and of the refresh that
-// takes its test (D[md-alg-segments-writer]): the refresh takes `moved` and
+// takes its test (D422): the refresh takes `moved` and
 // `stale` from one writer of its own list, positions, cell, and reaches; the
 // writer forms the frames from positions in f64 (convert-md-exec-to-gpu then
 // takes that as given), with a positive cutoff, on the list's set.

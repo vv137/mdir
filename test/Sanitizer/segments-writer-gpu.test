@@ -1,4 +1,4 @@
-# The writer of a list of units (D[md-alg-segments-writer]) under
+# The writer of a list of units (D422) under
 # compute-sanitizer: alanine dipeptide in TIP3P, with anchors and excluded
 # pairs, over 12 frames of a general run, the refresh taking the writer's
 # test at the positions of every particle; and the probe of

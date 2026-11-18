@@ -201,7 +201,7 @@ void mdrtSegmentsStopReach(double reach, double widest, double half) {
   stopWith(message);
 }
 
-/* The writer of a list of units (D[md-alg-segments-writer]) found a
+/* The writer of a list of units (D422) found a
    place of a unit beyond the covering radius of its unit after the
    position constraints of a step: a site or frame atom of a copy of a rigid
    kind, or a member of the rest farther from its anchor than the radius of

@@ -1,5 +1,5 @@
 // The refusals of the rule of the writer of a list of units
-// (D[md-alg-segments-writer]), which convert-md-exec-to-gpu checks before it
+// (D422), which convert-md-exec-to-gpu checks before it
 // lowers any op: the writer comes after the last writer of the positions and
 // before the first loop that reads the frames. Each names the op that writes
 // the positions. The allowed order lowers (segments-writer-lower.mlir).

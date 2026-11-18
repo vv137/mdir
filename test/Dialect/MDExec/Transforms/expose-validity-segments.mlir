@@ -1,4 +1,4 @@
-// The writer of a list of units (D[md-alg-segments-writer]): for a refresh
+// The writer of a list of units (D422): for a refresh
 // of a list of units in a loop over steps, md-exec-expose-validity makes the
 // writer right after the op that gives the refresh's positions, the last op
 // that writes them, so that it comes before the ops that read them (the

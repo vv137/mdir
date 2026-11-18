@@ -22,7 +22,7 @@
 # No load of a stored extra point: after a build the refresh packs the
 # frames from three members of a water and one particle of the rest, 12
 # loads of f64 positions; the water's fourth place, the stored site, is not
-# among them. The writer of each step (D[md-alg-segments-writer]), a thread a
+# among them. The writer of each step (D422), a thread a
 # member, loads 18: for a water the anchor, the member of its thread, and
 # the anchor's reference point; for a particle of the rest itself, its
 # reference point, and the anchor of an anchored member (each three). The

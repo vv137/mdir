@@ -1082,7 +1082,7 @@ LogicalResult Schedule::run() {
   }
 
   // The frames and fields of the places: those that the writer of the list
-  // packed at these positions (D[md-alg-segments-writer]), or packed here,
+  // packed at these positions (D422), or packed here,
   // in the room of the structure's places (D312).
   bool framed = static_cast<bool>(lists.frameAnchors) &&
                 (maxMembers == 1 || lists.frameOffsets);

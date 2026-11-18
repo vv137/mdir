@@ -1198,7 +1198,7 @@ frame atoms within $e_f$ cover it. A site with a weight outside $[0, 1]$ can
 lie beyond every frame atom, and its own $\lVert\mathbf c_p\rVert$ is
 checked; which sites need it follows from the kind at compile time.
 
-**The writer** (D[md-alg-segments-writer]). After the last op of a step
+**The writer** (D422). After the last op of a step
 that writes the positions (the constraints, and a barostat's scaling), one
 kernel, a thread for each member of each unit, writes the frames that the
 loops read (the anchor moved into the frame of its place in f64 and

@@ -183,7 +183,7 @@ LogicalResult RefreshSegmentedPairsOp::verify() {
     return emitOpError() << "takes 'stale' without 'moved'";
   if (Value moved = getMoved()) {
     // The test is the writer's: at this refresh's positions, cell, list, and
-    // reaches (D[md-alg-segments-writer]).
+    // reaches (D422).
     auto writer = moved.getDefiningOp<WriteUnitFramesOp>();
     if (!writer || writer.getMoved() != moved ||
         (getStale() && getStale() != writer.getStale()))

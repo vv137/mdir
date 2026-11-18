@@ -1,4 +1,4 @@
-"""Probes of the writer of a list of units (D[md-alg-segments-writer]):
+"""Probes of the writer of a list of units (D422):
 its check of the extents after the positions of a step (R5, the convex rule
 of D417, Section 3).
 

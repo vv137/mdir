@@ -1,6 +1,6 @@
 # REQUIRES: cuda
 # The coverage of the lists of units along trajectories with the test of
-# the writer (D[md-alg-segments-writer]; D417, Section 8, S4a): the gate of
+# the writer (D422; D417, Section 8, S4a): the gate of
 # S2 (segments-build-coverage-gpu.test, Inputs/segments_coverage.py) with
 # the refresh taking `moved` and `stale` from md_exec.write_unit_frames at
 # the positions of every particle, as md-exec-expose-validity gives a loop

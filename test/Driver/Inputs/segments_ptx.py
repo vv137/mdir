@@ -8,7 +8,7 @@ program (MDIR_GPU_BINARY=ptx).
   - No load of a stored extra point: the loads of 64 bits (the f64
     positions) of the kernel that packs the frames after a build, three a
     member of each shape packed, and of the writer of each step
-    (D[md-alg-segments-writer]), the stored site of a kind not among them.
+    (D422), the stored site of a kind not among them.
   - The rotation of the partners by shuffles, and no instruction for a site
     pair outside the table: for each kernel of the schedule, its index
     shuffles and its guards of the cutoff of a site pair (setp.geu.f32,
@@ -38,7 +38,7 @@ for m in re.finditer(r'gpu\.binary @(\S+)\s+\[#gpu\.object<[^>]*>, properties = 
     kernels.append((m.group(1), ptx))
 schedule = [(n, p) for n, p in kernels if n.startswith('mdir_run_pair_for')]
 # The packing: the kernels that load the f64 positions and narrow them, a
-# thread a place (the refresh's after a build, D[md-alg-segments-writer]),
+# thread a place (the refresh's after a build, D422),
 # and the writer of the frames of each step, a thread a member.
 packers = schedule + [(n, p) for n, p in kernels
                       if n.startswith('mdir_run_refresh_segmented_pairs')]

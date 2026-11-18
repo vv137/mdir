@@ -1,6 +1,6 @@
 ### Added
 
-- **The writer of a list of rigid units** (D[md-alg-segments-writer], slice S4a of D417, #905). `md_exec.write_unit_frames` runs after the last op of a step that writes the positions. It is one kernel, a thread for each member of a unit, and it:
+- **The writer of a list of rigid units** (D422, slice S4a of D417, #905). `md_exec.write_unit_frames` runs after the last op of a step that writes the positions. It is one kernel, a thread for each member of a unit, and it:
   - packs the f32 frames that the loops over the list read;
   - checks every place against its unit's covering radius by the convex rule, and stops the run where one lies beyond it;
   - tests the units' reference points against the least half-margin of the segments, in f32 with a counted margin of rounding.
