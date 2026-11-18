@@ -20,7 +20,7 @@ image of every pair of reference points in f64.
                          alanine dipeptide in water, NVT (--npt: C-rescale),
                          with the anchors and the excluded pairs of the rest
         dipeptide-gro    the dipeptide in TIP3P from its GROMACS files
-        growth           no run: two frames written here, two waters and a
+        growth           (--rigid: each molecule moved whole) no run: two frames written here, two waters and a
                          molecule of two atoms whose second is anchored,
                          the cell grown by half at the second and the waters
                          moved towards each other by more than the least
@@ -29,14 +29,17 @@ image of every pair of reference points in f64.
       --forces: one step in double precision with Coulomb cut off, NVE, and a
       checkpoint (segments_forces.py), the bonded terms of the dipeptide set
       to 0 (without_bonded).
-  segments_coverage.py emit SYSTEM ROOT WORK [--frames=N | --positions=FILE] [--drop-exclusion]
+  segments_coverage.py emit SYSTEM ROOT WORK [--frames=N | --positions=FILE] [--drop-exclusion] [--writer]
       WORK/harness.mlir: an empty list of units carried through a loop over
       the frames, a refresh at each frame's positions and cell
       (md-exec-reuse-neighbors's form), for convert-md-exec-to-gpu with
       dump-segments. --drop-exclusion leaves the first excluded pair of the
       rest out of the list's exclusions; --join-exclusion adds an excluded
       pair of the rest and a water; --join-copies adds one of the first
-      atoms of two copies of the first taken kind.
+      atoms of two copies of the first taken kind. --writer gives the
+      refresh the test of the writer of the list (D[md-alg-segments-writer],
+      the form that md-exec-expose-validity gives a loop over steps), at the
+      positions of every particle.
   segments_coverage.py check SYSTEM ROOT WORK DUMPS [--scale=S] [--limit=L] [--expect-missing] [--any-points]
       Each dump is the list after the refresh of a frame. Over its records:
         - each pair of units in each image at most once (`unique`);
@@ -386,6 +389,13 @@ def growth():
     rest = [np.array([2.0, 2.5, 2.6]), np.array([2.0, 2.5, 2.6 + 0.109])]
     first = np.array(a + b + rest)
     second = first * 1.5
+    if '--rigid' in flags:
+        # Each molecule moved whole with its first atom, so that its
+        # lengths, and the extents of its units, stay those of the first
+        # frame (for the writer's check of the extents).
+        second = first.copy()
+        for group in ([0, 1, 2], [3, 4, 5], [6, 7]):
+            second[group] = first[group] + 0.5 * first[group[0]]
     d = 0.326
     second[0:3] += [d, 0.0, 0.0]
     second[3:6] -= [d, 0.0, 0.0]
@@ -537,7 +547,9 @@ if mode == 'emit':
     if '--join-copies' in flags:
         excluded = np.concatenate([excluded.reshape(-1, 2),
                                    [[int(kinds[0][1][0][0]), int(kinds[0][1][1][0])]]])
-    refs = np.unique(unit_ref)
+    # With --writer, every particle's position: the writer forms the frames
+    # of the units from all their members.
+    refs = np.arange(N) if '--writer' in flags else np.unique(unit_ref)
     M = len(refs)
 
     def hexed(array):
@@ -627,8 +639,13 @@ if mode == 'emit':
     for k in range(nc):
         body.append(f'''      %k{k} = arith.constant {k} : index
       %c{k}v = memref.load %ce[%t, %k{k}] : memref<{T}x{nc}xf64>''')
+    writer, tested = '', ''
+    if '--writer' in flags:
+        writer = (f'%moved, %stale = md_exec.write_unit_frames %l at(%dp, %cell) cutoff({CUTOFF}) '
+                  f'skin({skin:.9f}) prune_skin({prune_skin:.9f}) : {sp}, memref<?x3xf64, 1>\n      ')
+        tested = 'moved(%moved) stale(%stale) '
     body.append(f'''      %cell = {cellmake}
-      %l1 = md_exec.refresh_segmented_pairs %l at(%dp, %cell) cutoff({CUTOFF}) skin({skin:.9f}) prune_skin({prune_skin:.9f}) : {sp}, memref<?x3xf64, 1>
+      {writer}%l1 = md_exec.refresh_segmented_pairs %l at(%dp, %cell) {tested}cutoff({CUTOFF}) skin({skin:.9f}) prune_skin({prune_skin:.9f}) : {sp}, memref<?x3xf64, 1>
       scf.yield %l1 : {sp}
     }}
     return

@@ -1,0 +1,63 @@
+# REQUIRES: cuda
+# The check of the extents of the writer of a list of units
+# (D[md-alg-segments-writer]; D417, Section 8, S4a): after the positions of
+# a step every place of a unit must lie within its covering radius
+# (Inputs/segments_writer.py). Two frames: the first builds the list, the
+# writer of the second checks it.
+#   - ok: every place within its radius, the site of a kind of weights
+#     (1.8, -0.4, -0.4) 0.047 nm from its anchor; the run ends.
+#   - convex: a hydrogen of a water 0.11 nm from its oxygen, beyond the
+#     kind's 0.09582 nm: a frame atom, which covers every site whose
+#     weights lie in [0, 1] (the convex rule).
+#   - hull: the site of weights (3, -1, -1) 0.117 nm from its anchor, beyond
+#     the kind's 0.1 nm, with its frame atoms within it: a site outside the
+#     hull of its frame, which the writer forms and checks itself.
+#   - anchor: an anchored member of the rest 0.12 nm from its anchor,
+#     beyond rho = 0.10901 nm.
+# Each probe fails when its check is removed (tried once each and reverted):
+# without the check of a frame atom the convex probe ends, with every site
+# taken as convex the hull probe ends, and without the check of an anchored
+# member the anchor probe ends; the others still stop.
+#
+# RUN: rm -rf %t && mkdir -p %t/ok %t/convex %t/hull %t/anchor
+# RUN: %mdir_python %S/Inputs/segments_writer.py ok %t/ok
+# RUN: mdir-opt %t/ok/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_writer.py convex %t/convex
+# RUN: mdir-opt %t/convex/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/segments_writer.py hull %t/hull
+# RUN: mdir-opt %t/hull/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/segments_writer.py anchor %t/anchor
+# RUN: mdir-opt %t/anchor/harness.mlir --convert-md-exec-to-gpu --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | not mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 | FileCheck %s
+# CHECK: a unit of the list of units lies beyond its covering radius after the constraints of a step
+#
+# The direction of the test of the reference points in f32 with its counted
+# margin: eight waters moved whole by zeta (1 + 2^-23), zeta = 0.05 nm the
+# least half-margin of the segments, must build the list again; moved by
+# zeta (1 - 2^-10), farther inside than the counted margin, must not. The
+# directions of the first are chosen so that the f32 test without its margin
+# (z = zeta, c = 1) passes every one of them, as the generator's simulation
+# of the kernel's arithmetic prints: with the margin removed from the
+# kernel (tried once and reverted) the list is not built again.
+# RUN: mkdir -p %t/beyond/dumps %t/inside/dumps
+# RUN: %mdir_python %S/Inputs/segments_writer.py beyond %t/beyond | FileCheck %s --check-prefix=SIMBEYOND
+# RUN: mdir-opt %t/beyond/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/beyond/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_writer.py builds %t/beyond/dumps | FileCheck %s --check-prefix=BEYOND
+# RUN: %mdir_python %S/Inputs/segments_writer.py inside %t/inside | FileCheck %s --check-prefix=SIMINSIDE
+# RUN: mdir-opt %t/inside/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/inside/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_writer.py builds %t/inside/dumps | FileCheck %s --check-prefix=INSIDE
+# SIMBEYOND: beyond: of 8 units, the f32 test passes 0 with its counted margin and 8 without it
+# SIMINSIDE: inside: of 8 units, the f32 test passes 8 with its counted margin and 8 without it
+# BEYOND: builds 2
+# INSIDE: builds 1

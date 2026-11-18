@@ -7546,6 +7546,11 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
       // the factor c takes the roundings of the squares and of z, so
       // |d| + delta < zeta, and zeta is the half-margin narrowed below
       // itself. A displacement or a margin that is not a number fails.
+      // |v| as max(v, -v), which needs no library of the device.
+      auto magnitude = [&](OpBuilder &b, Value v) -> Value {
+        return arith::MaximumFOp::create(b, loc, v,
+                                         arith::NegFOp::create(b, loc, v));
+      };
       auto far = [&](OpBuilder &b, Value a, Value ref, Value from, Value scale,
                      Value zeta) -> Value {
         Value t = arith::MulFOp::create(
@@ -7556,8 +7561,7 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
         Value d = arith::SubFOp::create(b, loc, a, t);
         Value sizes = vector::ReductionOp::create(
             b, loc, vector::CombiningKind::ADD,
-            arith::AddFOp::create(b, loc, math::AbsFOp::create(b, loc, a),
-                                  math::AbsFOp::create(b, loc, t)));
+            arith::AddFOp::create(b, loc, magnitude(b, a), magnitude(b, t)));
         Value delta = arith::MulFOp::create(
             b, loc, sizes, createReal(b, loc, f32, std::ldexp(1.0, -20)));
         Value z = arith::SubFOp::create(b, loc, zeta, delta);

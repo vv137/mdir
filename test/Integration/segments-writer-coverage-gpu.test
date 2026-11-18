@@ -1,0 +1,61 @@
+# REQUIRES: cuda
+# The coverage of the lists of units along trajectories with the test of
+# the writer (D[md-alg-segments-writer]; D417, Section 8, S4a): the gate of
+# S2 (segments-build-coverage-gpu.test, Inputs/segments_coverage.py) with
+# the refresh taking `moved` and `stale` from md_exec.write_unit_frames at
+# the positions of every particle, as md-exec-expose-validity gives a loop
+# over steps. The writer tests the reference points in f32 with a counted
+# margin of rounding, and checks the extents of every unit at each frame.
+#   - TIP3P in the rhombic dodecahedron under NPT (C-rescale every step);
+#   - alanine dipeptide in OPC (NVT) and in TIP3P (NPT), with anchors;
+#   - the mixture of TIP3P, OPC, ions, and molecules of the rest (K = 2);
+#   - growth, each molecule moved whole: the cell grown by half while two
+#     waters move towards each other by more than the least half-margin of
+#     the segments and less than that of the largest radii, so that only
+#     the least half-margin builds the list again (D419, Section 3).
+#
+# RUN: rm -rf %t && mkdir -p %t/dodecahedron/dumps %t/dipeptide-opc/dumps %t/dipeptide-tip3p/dumps %t/mixture/dumps %t/growth/dumps
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dodecahedron %S/../Driver/Inputs %t/dodecahedron 40
+# RUN: cd %t/dodecahedron && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dodecahedron %S/../Driver/Inputs %t/dodecahedron --writer
+# RUN: mdir-opt %t/dodecahedron/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dodecahedron/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dodecahedron %S/../Driver/Inputs %t/dodecahedron %t/dodecahedron/dumps | FileCheck %s --check-prefix=DODECAHEDRON
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc 60
+# RUN: cd %t/dipeptide-opc && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc --writer
+# RUN: mdir-opt %t/dipeptide-opc/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dipeptide-opc/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dipeptide-opc %S/../Driver/Inputs %t/dipeptide-opc %t/dipeptide-opc/dumps | FileCheck %s --check-prefix=OPC
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p 60 --npt
+# RUN: cd %t/dipeptide-tip3p && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p --writer
+# RUN: mdir-opt %t/dipeptide-tip3p/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/dipeptide-tip3p/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check dipeptide-tip3p %S/../Driver/Inputs %t/dipeptide-tip3p %t/dipeptide-tip3p/dumps --npt | FileCheck %s --check-prefix=TIP3P
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system mixture %S/../Driver/Inputs %t/mixture 30
+# RUN: cd %t/mixture && mdir run control.toml > run.log
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit mixture %S/../Driver/Inputs %t/mixture --writer
+# RUN: mdir-opt %t/mixture/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/mixture/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check mixture %S/../Driver/Inputs %t/mixture %t/mixture/dumps | FileCheck %s --check-prefix=MIXTURE
+#
+# RUN: %mdir_python %S/Inputs/segments_coverage.py system growth %S/../Driver/Inputs %t/growth 1 --rigid
+# RUN: %mdir_python %S/Inputs/segments_coverage.py emit growth %S/../Driver/Inputs %t/growth --writer
+# RUN: mdir-opt %t/growth/harness.mlir --convert-md-exec-to-gpu="dump-segments=true" --convert-md-alg-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | env MDRT_SEGMENTS_DUMP=%t/growth/dumps mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda
+# RUN: %mdir_python %S/Inputs/segments_coverage.py check growth %S/../Driver/Inputs %t/growth %t/growth/dumps --any-points | FileCheck %s --check-prefix=GROWTH
+#
+# DODECAHEDRON: dodecahedron: 40 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry; 0 pairs listed twice, 0 in a wrong segment, 0 excluded, 0 places of a wrong order
+# OPC: dipeptide-opc: 60 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry; 0 pairs listed twice, 0 in a wrong segment, 0 excluded, 0 places of a wrong order
+# TIP3P: dipeptide-tip3p: 60 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry; 0 pairs listed twice, 0 in a wrong segment, 0 excluded, 0 places of a wrong order
+# MIXTURE: mixture: 30 refreshes checked, {{[0-9]+}} right after a build, {{[1-9][0-9]*}} just before a build, {{[1-9][0-9]*}} just before a pruning; cutoff 0.8 nm: 0 pairs without an entry; 0 pairs listed twice, 0 in a wrong segment, 0 excluded, 0 places of a wrong order
+# GROWTH: growth: 2 refreshes checked, 2 right after a build, 0 just before a build, 0 just before a pruning; cutoff 0.8 nm: 0 pairs without an entry; 0 pairs listed twice, 0 in a wrong segment, 0 excluded, 0 places of a wrong order
