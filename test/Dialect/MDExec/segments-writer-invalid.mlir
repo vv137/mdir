@@ -1,7 +1,8 @@
 // The refusals of the writer of a list of units and of the refresh that
 // takes its test (D[md-alg-segments-writer]): the refresh takes `moved` and
 // `stale` from one writer of its own list, positions, cell, and reaches; the
-// writer forms the frames from positions in f64.
+// writer forms the frames from positions in f64 (convert-md-exec-to-gpu then
+// takes that as given), with a positive cutoff, on the list's set.
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics
 
@@ -124,5 +125,32 @@ md.particle_set @atoms
 func.func @f(%x: !x, %cell: !md.cell, %l: !sp) {
   // expected-error @+1 {{expected finite skins with 0 <= prune_skin <= skin}}
   %m, %s = md_exec.write_unit_frames %l at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.2) : !sp, !x
+  return
+}
+
+// -----
+
+// A writer with a cutoff that is not positive.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+md.particle_set @atoms
+!x = !md.field<@atoms, 3 x f64>
+!x32 = !md.field<@atoms, 3 x f32>
+func.func @f(%x: !x, %cell: !md.cell, %l: !sp) {
+  // expected-error @+1 {{expected a positive finite cutoff}}
+  %m, %s = md_exec.write_unit_frames %l at(%x, %cell) cutoff(0.0) skin(0.1) prune_skin(0.05) : !sp, !x
+  return
+}
+
+// -----
+
+// A writer of positions on another set than the list's.
+!sp = !mdrt.segmented_pairs<@atoms, kinds [#md.rigid_kind<frame = [0, 1, 2], sites = [3], weights = [0.5, 0.25, 0.25], extent = 0.1>], segments [(0, 0) unique, minimum, removed, grouped_by(group), (1, 0) unique, minimum, removed, grouped_by(group), (1, 1) unique, minimum, removed, grouped_by(group)]>
+md.particle_set @atoms
+!x = !md.field<@atoms, 3 x f64>
+!x32 = !md.field<@atoms, 3 x f32>
+md.particle_set @others
+func.func @f(%x: !md.field<@others, 3 x f64>, %cell: !md.cell, %l: !sp) {
+  // expected-error @+1 {{expected the positions on the list's set}}
+  %m, %s = md_exec.write_unit_frames %l at(%x, %cell) cutoff(0.9) skin(0.1) prune_skin(0.05) : !sp, !md.field<@others, 3 x f64>
   return
 }

@@ -7397,18 +7397,15 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getList(), structure)))
     return failure();
-  if (!structure.segmented)
-    return op.emitOpError() << "writes the frames of a list that is not a "
-                               "list of units";
+  // The op's type makes the list one of units.
+  assert(structure.segmented && "a writer of a list of groups");
   const SegmentedState &units = *structure.segmented;
   mdrt::SegmentedPairsType type = units.type;
   unsigned K = units.kinds;
   Value positions = op.getPositions();
-  if (!cast<MemRefType>(positions.getType()).getElementType().isF64())
-    return op.emitOpError() << "forms the frames from positions in "
-                            << cast<MemRefType>(positions.getType())
-                                   .getElementType()
-                            << "; the writer forms them from positions in f64";
+  // The verifier takes positions in f64 alone.
+  assert(cast<MemRefType>(positions.getType()).getElementType().isF64() &&
+         "a writer of positions in another type");
   // The refresh that takes the test: the next op in the block that uses
   // `moved`, at the same positions and cell, and nothing between that
   // writes the positions (the rule of the writer: after the last writer
@@ -7418,9 +7415,8 @@ LogicalResult Lowering::lowerWriteUnitFrames(md_exec::WriteUnitFramesOp op) {
     if (auto r = dyn_cast<md_exec::RefreshSegmentedPairsOp>(user))
       if (r->getBlock() == op->getBlock())
         refresh = r;
-  if (!refresh)
-    return op.emitOpError() << "has no refresh in its block that takes its "
-                               "test";
+  // checkUnitFrames refused a writer without one, before any op was lowered.
+  assert(refresh && "a writer without a refresh in its block");
   Value box = op.getCellMutable().get();
   double cutoff = op.getCutoff().convertToDouble();
   double skin = op.getSkin().convertToDouble();
