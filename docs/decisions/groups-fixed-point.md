@@ -1,5 +1,7 @@
 # D[groups-fixed-point]
 
+Recorded 2026-11-19.
+
 Proposed for #917. The force reductions of the groups and segmented traversals share one binary scale per evaluation. The runtime chooses the layout from the precision and the D420 device policy. The control file, checkpoint format, and output paths keep their existing interfaces.
 
 ## Pair forces and range
