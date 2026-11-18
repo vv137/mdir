@@ -43,7 +43,9 @@
 # Max-Q), so sm_121a takes its 20,480 groups as a fallback, and an
 # architecture without an entry takes the defaults, a fallback where they
 # were not measured on it. The schedule of a list of units was measured on
-# sm_89 alone, so sm_120 takes its entry as a fallback.
+# sm_89 alone, so sm_120 takes its entry as a fallback. The groups' build
+# takes 96 particles a column, measured on sm_89; the major version 12 keeps
+# 64, an entry measured on none of its devices.
 # RUN: mdir-device-policy-test sm_120 | FileCheck %s --check-prefix=T120
 # RUN: mdir-device-policy-test sm_120a | FileCheck %s --check-prefix=T120
 # RUN: mdir-device-policy-test sm_121a | FileCheck %s --check-prefix=T121
@@ -54,15 +56,19 @@
 # T120-NEXT: scatter tile-min-points=500000 tile-edge=8 hash-least=100000 hash-probes=8 pair-hash-least=0 fallback=0
 # T120-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
 # T120-NEXT: segments block-size=128 rotation=16 column-units=128 fallback=1
+# T120-NEXT: groups column-particles=64 fallback=1 (D[groups-columns])
 # T121: pruning fused-groups=20480 fallback=1 (D284)
 # T121-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
 # T89: pruning fused-groups=4096 fallback=0 (D284)
 # T89-NEXT: scatter tile-min-points=500000 tile-edge=8 hash-least=100000 hash-probes=8 pair-hash-least=0 fallback=0
 # T89-NEXT: launch block-size=128 row-lanes=16 stage-block-size=256 block-memory=49152 gather-lanes=4,8,8 fallback=1
 # T89-NEXT: segments block-size=128 rotation=16 column-units=128 fallback=0
+# T89-NEXT: groups column-particles=96 fallback=0 (D[groups-columns])
 # T80: pruning fused-groups=4096 fallback=1 (D284)
 # T80-NEXT: scatter tile-min-points=500000 {{.*}} fallback=1
 # T80: segments block-size=128 rotation=16 column-units=128 fallback=1
+# T80-NEXT: groups column-particles=96 fallback=1 (D[groups-columns])
+# T121: groups column-particles=64 fallback=1 (D[groups-columns])
 
 # SM120: md-exec-choose-scatter{arch=sm_120 }
 # SM120-SAME: convert-md-exec-to-gpu{arch=sm_120 {{.*}}fuse-pruning=true fuse-pruning-groups=20480 

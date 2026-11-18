@@ -201,7 +201,18 @@ static const Measurement kGroupsDefaultBasis = {
     "4090",
     "2026-11-18"};
 static const Measured kGroupsDefaultMeasured[] = {{8, 9}};
-static const ArrayRef<Entry<GroupsPolicy>> kGroupsTable = {};
+// The major version 12 (the RTX 5090 and the RTX PRO 6000 Blackwell) keeps
+// D89's 64 until a measurement on one of them shows that 96 gains there:
+// the comparison of #912 could not run on either device when the entry was
+// made, so the entry was measured on none (a fallback on every sm_12x).
+static const Entry<GroupsPolicy> kGroupsTable[] = {
+    {{12, -1, ""},
+     {/*columnParticles=*/64.0},
+     {"D[groups-columns]",
+      "not measured on sm_12x: D89's value, kept until a measurement",
+      "2026-11-18"},
+     {}},
+};
 
 //===----------------------------------------------------------------------===//
 // Selection
