@@ -3020,7 +3020,8 @@ Error Reader::read(const toml::table &root) {
            "dynamics",
            "minimize",
            "ensemble", "thermostat", "barostat",
-           "boundary", "execution", "constraints", "restraints"},
+           "boundary", "execution", "constraints", "restraints",
+           "performance"},
           {}))
     return error;
 
@@ -3225,6 +3226,23 @@ Error Reader::read(const toml::table &root) {
   if (table)
     if (Error error = readExecution(*table))
       return error;
+
+  // Execution choices of the "same accuracy" class (#790). The rigid
+  // units (D[rigid-units-route]): `ON` is refused where the route cannot
+  // apply when the program is resolved for its system (resolveRigidUnits).
+  if (Error error = getTable("performance", /*required=*/false, table))
+    return error;
+  if (table) {
+    if (Error error = checkKeywords(*table, "performance", {"rigid_units"}))
+      return error;
+    control.rigidUnitsGiven = table->contains("rigid_units");
+    if (Error error = readChoice<RigidUnits>(
+            *table, "rigid_units", control.rigidUnits,
+            {{"AUTO", RigidUnits::Auto},
+             {"ON", RigidUnits::On},
+             {"OFF", RigidUnits::Off}}))
+      return error;
+  }
 
   return validateControl(control, path);
 }
@@ -3685,6 +3703,13 @@ deterministic = false           # on a GPU, sums in an order the threads do
                                 # systems, else the matrix; MATRIX;
                                 # GROUPS: groups of 16 that share a
                                 # list, each pair once
+
+# Execution choices of the same accuracy.
+# [performance]
+# rigid_units = "AUTO"          # ON: the pairs of the rigid kinds by
+                                # units on a GPU in MIXED, refused where
+                                # they cannot apply; OFF; AUTO: as OFF
+                                # until its rule is measured
 )TOML";
 }
 
@@ -3833,6 +3858,13 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
                                 # systems, else the matrix; MATRIX;
                                 # GROUPS: groups of 16 that share a
                                 # list, each pair once
+
+# Execution choices of the same accuracy.
+# [performance]
+# rigid_units = "AUTO"          # ON: the pairs of the rigid kinds by
+                                # units on a GPU in MIXED, refused where
+                                # they cannot apply; OFF; AUTO: as OFF
+                                # until its rule is measured
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]

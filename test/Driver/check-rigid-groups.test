@@ -31,6 +31,15 @@
 # CHECK-NEXT: types: NA
 # CHECK-NEXT: charges: 1 e
 # CHECK-NEXT: left out: 2 molecules with a pair of massive atoms without a constrained distance
+# The route of the rigid units (D[rigid-units-route]): AUTO is general, and
+# ON would take the two most populous kinds of several particles.
+# CHECK-NEXT: rigid units: AUTO: general (AUTO takes the general route until its rule is measured)
+# CHECK-NEXT: kind 1: ON would take: 3 units of 3 places (3 in the frame, 0 sites), radius 0.9582 Ang
+# CHECK-NEXT: kind 2: ON would take: 2 units of 4 places (3 in the frame, 1 site), radius 0.9582 Ang
+# CHECK-NEXT: kind 3: not taken: beyond the two most populous
+# CHECK-NEXT: kind 4: not taken: one particle
+# CHECK-NEXT: the rest: 10 particles, 2 anchored, radius 1.2010 Ang
+# CHECK-NEXT: reach: 12.4 Ang, half the least face width 15 Ang
 # CHECK-NEXT: ensemble:
 
 # JSON: "rigid_groups": {
@@ -98,10 +107,12 @@
 # OPC-NEXT: frame: 0.872433 0.872433 1.37121 Ang
 # OPC-NEXT: site 4: 0.704559 0.147721 0.147721 of the frame
 # OPC-NEXT: left out: 1 molecule with a pair of massive atoms without a constrained distance
-# OPC-NEXT: ensemble:
+# OPC-NEXT: rigid units: AUTO: general
+# OPC: ensemble:
 #
 # FLEXIBLE: rigid groups: 0 of 388 molecules, 0 kinds
 # FLEXIBLE-NEXT: left out: 388 molecules with a pair of massive atoms without a constrained distance
+# FLEXIBLE-NEXT: rigid units: AUTO: general
 # FLEXIBLE-NEXT: ensemble:
 
 #--- run.toml

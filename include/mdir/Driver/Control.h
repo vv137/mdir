@@ -145,6 +145,53 @@ inline const char *getNeighborStructureName(NeighborStructure structure) {
          : structure == NeighborStructure::Auto ? "auto"
                                                 : "matrix";
 }
+/// `[performance] rigid_units` (D[rigid-units-route]; D417, Section 9,
+/// ruling 7): whether the pairs of the rigid kinds of D403 are evaluated by
+/// units, over segmented lists. `Auto` is resolved before a program is
+/// built (`resolveRigidUnits`).
+enum class RigidUnits { Auto, On, Off };
+/// "AUTO", "ON", or "OFF", as the control file names them.
+inline const char *getRigidUnitsName(RigidUnits choice) {
+  return choice == RigidUnits::On    ? "ON"
+         : choice == RigidUnits::Off ? "OFF"
+                                     : "AUTO";
+}
+/// The route of the rigid units that `resolveRigidUnits` chose, and why:
+/// what the build takes, and the words of `mdir check`, the log, and the
+/// manifest. Lengths are in nm.
+struct RigidUnitsRoute {
+  /// Whether the resolution ran.
+  bool resolved = false;
+  /// Whether the pair term is built over the segments of `kinds` taken.
+  bool units = false;
+  std::string reason;
+  /// A rigid kind of D403, numbered from 1 as `mdir check` numbers them.
+  struct Kind {
+    unsigned number = 0;
+    size_t molecules = 0;
+    unsigned places = 0, frame = 0, sites = 0;
+    bool taken = false;
+    /// Why it is not taken; empty for a taken kind.
+    std::string reason;
+    /// The covering radius of the constrained frame plus the margin, and
+    /// the radius that the run takes: the larger of that and the largest
+    /// distance of a place from its anchor at the input plus the margin.
+    double constrained = 0.0, radius = 0.0;
+    /// The largest distance of a place from its anchor at the input.
+    double measured = 0.0;
+  };
+  /// Every rigid kind, in the order of their numbers.
+  std::vector<Kind> kinds;
+  /// The particles of no taken kind; those of them in a unit of their
+  /// anchor (#799); the radius of the rest as for a kind, 0 without
+  /// anchored members.
+  size_t restParticles = 0, anchored = 0;
+  double restConstrained = 0.0, restRadius = 0.0, restMeasured = 0.0;
+  /// The largest covering reach, the pair list distance plus twice the
+  /// largest radius, and half the least face width of the input cell; 0
+  /// for an open cell.
+  double reach = 0.0, halfWidth = 0.0;
+};
 enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 /// How the reference positions of restraints follow a barostat (D124): their
 /// center scales with the cell and the offsets from it stay, or each
@@ -371,6 +418,11 @@ struct Control {
   /// log, the manifest, and `mdir check`.
   NeighborStructure neighborStructureRequested = NeighborStructure::Auto;
   std::string neighborStructureReason;
+  /// `[performance] rigid_units`, whether it was given, and its route
+  /// once resolved (`resolveRigidUnits`).
+  RigidUnits rigidUnits = RigidUnits::Auto;
+  bool rigidUnitsGiven = false;
+  RigidUnitsRoute rigidUnitsRoute;
   /// Whether `pairlist_distance` and `pruned_distance` were given: under
   /// `AUTO` the groups take their own defaults for those that were not.
   bool pairlistDistanceGiven = false;

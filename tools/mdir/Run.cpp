@@ -28,6 +28,7 @@
 #include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
+#include "mdir/Driver/RigidUnits.h"
 #include "mdir/Driver/System.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
@@ -543,6 +544,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // checkpoint does not continue it.
   if (fromPositions)
     control->restartInput.clear();
+  // `rigid_units` is resolved for the system at the positions and the cell
+  // that the run begins with, the input's or the checkpoint's
+  // (D[rigid-units-route]).
+  if (llvm::Error error = resolveRigidUnits(*control, *system))
+    return fail(std::move(error));
   // The reaches that are "AUTO" (D281): the defaults, the cache, or
   // candidates measured from the state the run begins with, before its own
   // program is built. What the search printed goes to the log once its
@@ -1153,6 +1159,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
          getNeighborStructureName(control->neighborStructureRequested)},
         {"neighbor_structure", getNeighborStructureName(control->neighborStructure)},
         {"neighbor_structure_reason", control->neighborStructureReason},
+        // The route of the rigid units and why (D[rigid-units-route]).
+        {"rigid_units_requested", getRigidUnitsName(control->rigidUnits)},
+        {"rigid_units",
+         control->rigidUnitsRoute.units ? "units" : "general"},
+        {"rigid_units_reason", control->rigidUnitsRoute.reason},
+        {"rigid_units_route", getRigidUnitsJSON(*control)},
         {"pairlist_distance_angstrom", control->pairlistDistance},
         {"pruned_distance_angstrom", control->prunedDistance != 0.0
              ? llvm::json::Value(control->prunedDistance) : llvm::json::Value(nullptr)},
@@ -1526,6 +1538,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       output.log.print(", pruned to %g Ang", control->prunedDistance);
     output.log.print(" (AUTO: %s)\n",
                      control->neighborStructureReason.c_str());
+  }
+  // The route of the rigid units, where the key was given or the units
+  // are taken, with the radii widened at the input (D[rigid-units-route]).
+  if (control->rigidUnitsGiven || control->rigidUnitsRoute.units) {
+    output.log.print("MDIR: rigid units: %s\n",
+                     describeRigidUnitsRoute(*control).c_str());
+    if (control->rigidUnitsRoute.units)
+      for (const std::string &line : describeRigidUnitsKinds(*control))
+        output.log.print("MDIR:   %s\n", line.c_str());
   }
   // The reaches that "AUTO" took, and how (D281): given ones and
   // the defaults of keys not given are not repeated.

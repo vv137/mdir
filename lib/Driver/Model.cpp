@@ -1,4 +1,5 @@
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/RigidUnits.h"
 #include "mdir/Driver/Fingerprint.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
@@ -494,6 +495,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       execution.neighborStructure != driver::NeighborStructure::Auto)
     return unsupported("unsupported neighbor structure");
   c.neighborStructure = execution.neighborStructure;
+  c.rigidUnits = execution.rigidUnits;
+  c.rigidUnitsGiven = execution.rigidUnits != driver::RigidUnits::Auto;
   if (c.neighborStructure == driver::NeighborStructure::Groups &&
       (c.target != driver::Target::GPU || c.deterministic))
     return input("model: 'neighbor_structure = \"GROUPS\"' needs 'target = "
@@ -718,6 +721,10 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // `NeighborStructure.Auto` is resolved for the system, as `mdir run`
   // resolves it (D261).
   driver::resolveNeighborStructure(c, *prepared);
+  // `RigidUnits`, as `mdir run` resolves it, at the positions of the state
+  // (D[rigid-units-route]).
+  if (llvm::Error e = driver::resolveRigidUnits(c, *prepared))
+    return typed(std::move(e));
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }
 llvm::Expected<InitialState> mdir::model::drawVelocities(

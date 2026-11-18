@@ -2065,6 +2065,22 @@ llvm::Error Simulation::setReports(const Reports &given) {
     }
   }
   out.observablesPeriod = given.observablesPeriod;
+  // The forces that the units carry move the force of a site to its frame
+  // by the constant weights of D403, not by the Jacobian of its placement
+  // that #795's ruling 6 asks of written frames (#916): refused where a
+  // taken kind has a site (the maintainer's ruling on #915).
+  if (given.frameForces && !given.trajectoryPath.empty()) {
+    const driver::RigidUnitsRoute &route = prepared.control.rigidUnitsRoute;
+    if (route.units)
+      for (const driver::RigidUnitsRoute::Kind &kind : route.kinds)
+        if (kind.taken && kind.sites)
+          return inputError(
+              "'rigid_units = \"ON\"' cannot apply: frames that write their "
+              "forces, where a taken kind has a site: kind " +
+              std::to_string(kind.number) +
+              " has one, and the written forces would not take the general "
+              "transpose of its placement (#916)");
+  }
   if (given.trajectoryPath != reports.trajectoryPath ||
       given.trajectoryFormat != reports.trajectoryFormat ||
       given.frameSingle != reports.frameSingle ||

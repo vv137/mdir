@@ -1,7 +1,7 @@
 # The segmented SIMT schedule of md_alg.traverse_pairs and its pruning in
 # the loop (D421) under compute-sanitizer, on the test
 # route of the pair term over the segments of rigid kinds
-# (MDIR_RIGID_UNITS_TEST): alanine dipeptide in OPC (the waters taken, the
+# (`rigid_units = "ON"`): alanine dipeptide in OPC (the waters taken, the
 # solute the rest, with anchors and excluded pairs), 10 / 9.5 Angstrom with
 # PME, and the rhombic dodecahedron of TIP3P of test/Driver/triclinic.test,
 # rigid, 7 / 6.6 Angstrom (its cell takes no more), over 20 steps each,
@@ -24,12 +24,13 @@
 # RUN:         -e 's/^target .*/target = "GPU"\nneighbor_structure = "GROUPS"/' -e 's/^precision .*/precision = "MIXED"/' \
 # RUN:         -e '/^defines/d' -e 's/^cutoff .*/cutoff = 6.0/' -e 's/^pairlist_distance .*/pairlist_distance = 7.0\npruned_distance = 6.6/' \
 # RUN:         -e 's/^hydrogen_bonds .*/hydrogen_bonds = true/' -e 's/^rigid_water .*/rigid_water = true/' > %t/triclinic.toml
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s --check-prefix=RACE
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s --check-prefix=RACE
-# RUN: cd %t && env MDIR_RIGID_UNITS_TEST=1 %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
+# RUN: printf '[performance]\nrigid_units = "ON"\n' | tee -a %t/opc.toml >> %t/triclinic.toml
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run opc.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
 
 # CHECK: md_alg.traverse_pairs{determinism=unordered strategy=segments rotate(16)
 # CHECK: the inner lists were pruned {{[1-9][0-9]*}} times

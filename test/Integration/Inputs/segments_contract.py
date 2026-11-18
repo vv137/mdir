@@ -2,14 +2,15 @@
 (D421; D417, Section 6): its SIMT schedule on a device
 against its serial definition, which convert-md-exec-to-gpu runs on the host
 over copies of the same lists (MDIR_TRAVERSE_ORACLE), in D415's five modes,
-on the test route of the pair term over the segments of rigid kinds
-(MDIR_RIGID_UNITS_TEST).
+with the pair term over the segments of rigid kinds
+(`Execution.rigid_units = RigidUnits.On`).
 
 Usage: segments_contract.py NAME TOPOLOGY COORDINATES KINDS WHAT [CUTOFF PAIRLIST PRUNED]
 
   TOPOLOGY     a topology of GROMACS (.top) or of Amber (.prmtop), and its
                coordinates (.gro or .inpcrd)
-  KINDS        the rigid kinds taken, as `mdir check` numbers them
+  KINDS        the rigid kinds that the route must take, as `mdir check`
+               numbers them
   WHAT         outer or dual: the records of the list, or the inner records
                of a dual list pruned in its refresh
   CUTOFF ...   the cutoff, the pair list distance, and the pruned distance
@@ -50,7 +51,7 @@ name, topology, coordinates, kinds, what = sys.argv[1:6]
 cutoff, pairlist, pruned = (map(float, sys.argv[6:9]) if len(sys.argv) > 8
                             else (0.8, 1.0, 0.86))
 TERMS = 4 * 1024
-os.environ["MDIR_RIGID_UNITS_TEST"] = kinds
+ROUTE = mdir.RigidUnits.On
 
 
 def build():
@@ -73,12 +74,15 @@ def build():
     execution.target = mdir.Target.GPU
     execution.precision = mdir.Precision.Mixed
     execution.neighbor_structure = mdir.NeighborStructure.Groups
+    execution.rigid_units = ROUTE
     return system, state, integrator, ensemble, execution
 
 
 def evaluate(oracle):
     os.environ["MDIR_TRAVERSE_ORACLE"] = oracle
     program = mdir.compile(*build(), mdir.Schedule())
+    taken = ",".join(str(k) for k in program.plan["rigid_units_kinds"])
+    assert taken == (kinds if ROUTE == mdir.RigidUnits.On else ""), (taken, kinds)
     simulation = mdir.Simulation(program)
     simulation.run(0, energy=True)
     at = simulation.state()
@@ -93,9 +97,9 @@ runs = {oracle: evaluate(oracle)
 # forces of the sites reach the atoms: the potential and the total virial,
 # its constraint part included (the parts are split otherwise where a site
 # is not a linear function of its frame, as Amber's extra points are).
-os.environ.pop("MDIR_RIGID_UNITS_TEST")
+ROUTE = mdir.RigidUnits.Off
 general = evaluate("simt")
-os.environ["MDIR_RIGID_UNITS_TEST"] = kinds
+ROUTE = mdir.RigidUnits.On
 terms = runs["serial"] - runs["omitted"]
 magnitude = runs["serial-magnitudes"] - runs["omitted"]
 u = 2.0 ** -24

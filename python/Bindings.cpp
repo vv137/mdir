@@ -241,6 +241,11 @@ PYBIND11_MODULE(_core, m) {
     .value("Matrix", driver::NeighborStructure::Matrix)
     .value("Groups", driver::NeighborStructure::Groups)
     .value("Auto", driver::NeighborStructure::Auto);
+  // `[performance] rigid_units` (D[rigid-units-route]).
+  py::enum_<driver::RigidUnits>(m, "RigidUnits")
+    .value("Auto", driver::RigidUnits::Auto)
+    .value("On", driver::RigidUnits::On)
+    .value("Off", driver::RigidUnits::Off);
   // `mdir.Auto`, the value of a reach that the run chooses, as "AUTO" of
   // the control file (D281).
   py::class_<AutoValue>(m, "AutoType")
@@ -719,6 +724,7 @@ PYBIND11_MODULE(_core, m) {
   property(execution, "fast_math", &model::Execution::fastMath);
   property(execution, "neighbor_capacity", &model::Execution::neighborCapacity);
   property(execution, "neighbor_structure", &model::Execution::neighborStructure);
+  property(execution, "rigid_units", &model::Execution::rigidUnits);
   auto schedule = input<model::Schedule>(m, "Schedule");
   property(schedule, "steps", &model::Schedule::steps);
   property(schedule, "energy_period", &model::Schedule::energyPeriod);
@@ -832,6 +838,16 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_structure_requested"] =
           driver::getNeighborStructureName(resolved.neighborStructureRequested);
       d["neighbor_structure_reason"] = resolved.neighborStructureReason;
+      // The route of the rigid units and why (D[rigid-units-route]).
+      d["rigid_units"] = resolved.rigidUnitsRoute.units ? "units" : "general";
+      d["rigid_units_requested"] = driver::getRigidUnitsName(resolved.rigidUnits);
+      d["rigid_units_reason"] = resolved.rigidUnitsRoute.reason;
+      py::list rigidKinds;
+      if (resolved.rigidUnitsRoute.units)
+        for (const auto &kind : resolved.rigidUnitsRoute.kinds)
+          if (kind.taken)
+            rigidKinds.append(kind.number);
+      d["rigid_units_kinds"] = rigidKinds;
       d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
       d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
       // Where the reaches came from (D281).

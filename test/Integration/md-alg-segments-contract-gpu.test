@@ -4,7 +4,7 @@
 # against its serial definition on the host over the same lists, and the
 # serial definition with its visit reversed, within the bound of the error
 # model of the transpose and a reordered sum (Inputs/segments_contract.py),
-# in mixed precision, on the test route (MDIR_RIGID_UNITS_TEST):
+# in mixed precision, with `rigid_units = "ON"`:
 #   - the rhombic dodecahedron of TIP3P of test/Driver/triclinic.test (one
 #     kind, three segments), the records and the inner records of a dual
 #     list, with a cutoff of 6 Angstrom, which its small cell takes;

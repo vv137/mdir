@@ -269,6 +269,9 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
   addTables("coupling", {"dynamics", "ensemble", "thermostat", "barostat"},
             {"steps"});
   addTables("execution", {"execution"});
+  // The execution choices of the "same accuracy" class (#790), which a
+  // continuation may change as it may [execution] (D[rigid-units-route]).
+  addTables("execution", {"performance"});
 
   // The files that define the topology, by their contents: another name
   // for the same file is not a change.

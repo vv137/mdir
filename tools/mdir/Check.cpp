@@ -10,6 +10,7 @@
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/RigidGroups.h"
+#include "mdir/Driver/RigidUnits.h"
 #include "mdir/Driver/System.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -243,6 +244,12 @@ static void describeTopology(const Control &control, const System &system) {
     std::printf("restrained:         %zu particles\n", restrained);
   }
   describeRigidGroups(topology);
+  // The route of the rigid units, and for each kind whether it is taken
+  // and why (D[rigid-units-route]).
+  std::printf("rigid units:        %s\n",
+              describeRigidUnitsRoute(control).c_str());
+  for (const std::string &line : describeRigidUnitsKinds(control))
+    std::printf("  %s\n", line.c_str());
 }
 
 static void describeParticles(const Control &control, const System &system) {
@@ -798,6 +805,7 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
       {"target", control.target == Target::GPU ? "gpu" : "cpu"},
       {"precision", getName(control.precision)},
       {"threads", control.threads},
+      {"rigid_units", getRigidUnitsJSON(control)},
       {"neighbors",
        Object{{"requested",
                getNeighborStructureName(control.neighborStructureRequested)},
@@ -867,6 +875,10 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(system.takeError(), json);
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
+  // As `mdir run` resolves it, at the input's positions
+  // (D[rigid-units-route]); a refusal of `ON` is an error of the file.
+  if (llvm::Error error = resolveRigidUnits(*control, *system))
+    return fail(std::move(error), json);
   compiler::SkinChoice skins =
       compiler::chooseSkins(*control, *system, /*search=*/false);
   if (llvm::Error error = checkManifestPath(control->manifestFile,

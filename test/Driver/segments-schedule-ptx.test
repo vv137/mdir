@@ -2,14 +2,16 @@
 # The mechanism table of the segmented SIMT schedule (D421;
 # D417, Section 8, S3), as structural checks of the module and of the PTX
 # of its lowered program (Inputs/segments_ptx.py), on alanine dipeptide in
-# OPC (387 waters of four places, the solute the rest) on the test route,
+# OPC (387 waters of four places, the solute the rest) with
+# `rigid_units = "ON"`,
 # with Coulomb cut off. `mdir emit` uses no device.
 #
 # RUN: rm -rf %t && mkdir -p %t && cd %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
-# RUN: env MDIR_RIGID_UNITS_TEST=1 MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off mdir emit --stage=module %t/run.toml > %t/module.mlir
-# RUN: env MDIR_RIGID_UNITS_TEST=1 MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit --stage=lowered %t/run.toml > %t/lowered.mlir
+# RUN: printf '[performance]\nrigid_units = "ON"\n' >> %t/run.toml
+# RUN: env MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off mdir emit --stage=module %t/run.toml > %t/module.mlir
+# RUN: env MDIR_SKIN_SEARCH=never MDIR_SKIN_CACHE=off MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=ptx MDIR_GPU_ARCH=sm_89 mdir emit --stage=lowered %t/run.toml > %t/lowered.mlir
 # RUN: %python %S/Inputs/segments_ptx.py %t/module.mlir %t/lowered.mlir | FileCheck %s
 #
 # The constants of a slice inline (E3): the coefficients of the waters'
