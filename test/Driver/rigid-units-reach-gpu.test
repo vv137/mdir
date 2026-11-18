@@ -1,0 +1,76 @@
+# REQUIRES: cuda
+# The reach's stop of the route of the rigid units (D[rigid-units-route];
+# #795's validation table): the covering reach, the pair list distance plus
+# twice the largest covering radius, is checked against half the least face
+# width of the cell when the route is resolved, with the input cell (a
+# refusal of `ON`, rigid-units-route.test), and again at every build of the
+# list, with the current cell (D419). Alanine dipeptide in OPC, whose least
+# face width is 25.16 Ang, half 12.58 Ang; the rest's radius, 1.091 Ang, is
+# the largest. Under NPT at 2000 atm with a barostat of 0.1 ps the cell
+# shrinks: a reach of 12.38 Ang (10.2 + 2 x 1.091) passes the resolution,
+# and a later build stops the run, naming both lengths.
+#
+# RUN: rm -rf %t && mkdir -p %t && cd %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- shrink.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/shrink.toml
+# RUN: mdir check %t/shrink.toml | FileCheck %s --check-prefix=CHECK
+# CHECK: reach: 12.38 Ang, half the least face width 12.58 Ang
+# RUN: not mdir run %t/shrink.toml > %t/run.log 2>&1
+# RUN: FileCheck %s --check-prefix=SHRINK < %t/run.log
+# SHRINK: MDIR: rigid units: ON: the units (ON was given)
+# SHRINK: the covering reach of the list of units, 12.38 Ang (the pair list distance plus twice 1.091 Ang, the largest covering radius of its units), exceeds half the least face width of the cell, 12.{{[0-5][0-9]*}} Ang; the run has failed
+# The same under OFF runs to its end.
+# RUN: sed 's/rigid_units = "ON"/rigid_units = "OFF"/' %t/shrink.toml > %t/off.toml
+# RUN: mdir run %t/off.toml > %t/off.log 2>&1
+# RUN: FileCheck %s --check-prefix=OFF < %t/off.log
+# OFF: MDIR: rigid units: OFF: general (OFF was given)
+# OFF-NOT: covering reach
+
+#--- shrink.toml
+[input]
+topology    = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 40
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 10.2
+pruned_distance   = 8.6
+electrostatics    = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 400
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 2000.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 1.0
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 0.1
+interval      = 10
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+
+[performance]
+rigid_units = "ON"
+#--- end

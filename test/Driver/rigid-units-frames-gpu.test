@@ -1,0 +1,33 @@
+# REQUIRES: python-api, cuda
+# Same-frame forces and energies of `rigid_units = "ON"` (D[rigid-units-route];
+# #795's validation table, moved to the key; Inputs/rigid_units_frames.py):
+# at the input and at later frames of a trajectory of the units, the units
+# (mixed) against the general route in double precision within 1.5 times
+# the general mixed route's difference, or 1e-5 of the largest force and
+# 1e-6 of the potential; the forces projected onto the constraints of the
+# waters.
+#
+# The physical fixture, against an independent f64 all-pairs oracle as
+# well: D405's mixture (three waters of TIP3P, two of four sites with a
+# linear site, two rigid molecules of three Lennard-Jones atoms, and an
+# ion; the two waters taken, the rest anchored), plain cutoffs of 0.9 nm.
+# RUN: rm -rf %t && mkdir -p %t/mixture
+# RUN: %python %S/Inputs/kind_pairs_mixture.py %t/mixture
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
+#
+# The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
+# (Amber's extra point, not linear in its frame) and in TIP3P under NVT.
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dipeptide-opc %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd 4 25 --pme --npt --cutoff=0.8 --pairlist=1.0 --pruned=0.86 | FileCheck %s -DS=dipeptide-opc
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dipeptide-tip3p %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd 4 25 --pme --cutoff=0.8 --pairlist=1.0 --pruned=0.86 | FileCheck %s -DS=dipeptide-tip3p
+#
+# The triclinic cell: the rhombic dodecahedron of 403 TIP3P waters, whose
+# input lies beyond the constrained frame (its radius widened at the
+# input), PME, a cutoff of 0.6 nm.
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dodecahedron %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro 3 25 --pme --cutoff=0.6 --pairlist=0.7 --pruned=0.66 | FileCheck %s -DS=dodecahedron
+#
+# CHECK: [[S]]: kinds taken
+# ORACLE: frame 0: general double against the oracle
+# CHECK: frame 0 against double: {{.*}} ok
+# ORACLE: frame 0 against oracle: {{.*}} ok
+# CHECK-NOT: FAILED
+# CHECK: [[S]]: rigid units frames passed
