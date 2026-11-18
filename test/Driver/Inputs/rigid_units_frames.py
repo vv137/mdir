@@ -2,7 +2,7 @@
 (D[rigid-units-route]; #795's validation table, moved to the key).
 
   rigid_units_frames.py NAME TOPOLOGY COORDINATES FRAMES STEPS [--pme] [--npt]
-                        [--oracle] [--cutoff=nm] [--pairlist=nm] [--pruned=nm]
+                        [--oracle] [--after-input] [--cutoff=nm] [--pairlist=nm] [--pruned=nm]
 
 A trajectory of `rigid_units = ON` in mixed precision gives FRAMES frames,
 the first the input itself (before any constraint, whose covering radii the
@@ -13,6 +13,12 @@ mixed and in double precision. The units must agree with the general double
 route within 1.5 times the general mixed route's own difference, or 1e-5 of
 the largest force (the forces) and 1e-6 of the potential (the energy), where
 those are larger (#795's criterion).
+
+--after-input leaves the input out of the comparison, for a site that is
+not linear in its frame (Amber's extra point): the input lies off the
+constraints, where the weights of D403 and the topology's placement put the
+site in different places, so the two routes evaluate different positions
+there (D421, Section 5); from the first step on the frame is constrained.
 
 The forces are compared projected onto the constraints of the rigid waters
 (P a = a - M^-1 G^T (G M^-1 G^T)^-1 G a for a = F/m, then m P a): the units
@@ -223,6 +229,8 @@ def oracle(state):
 failed = False
 worst = 0.0
 for index, state in enumerate(states):
+    if index == 0 and "--after-input" in flags:
+        continue
     x = np.asarray(state.positions, dtype=np.float64)
     H = cell_matrix(state)
     fu, eu, _ = evaluate(True, mdir.Precision.Mixed, state)

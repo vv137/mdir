@@ -16,8 +16,9 @@
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py mixture %t/mixture/system.top %t/mixture/system.gro 3 10 --oracle | FileCheck %s -DS=mixture --check-prefixes=CHECK,ORACLE
 #
 # The anchors of the rest, with PME: alanine dipeptide in OPC under NPT
-# (Amber's extra point, not linear in its frame) and in TIP3P under NVT.
-# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dipeptide-opc %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd 4 25 --pme --npt --cutoff=0.8 --pairlist=1.0 --pruned=0.86 | FileCheck %s -DS=dipeptide-opc
+# (Amber's extra point, not linear in its frame, so compared from the first
+# step on, where the frame is constrained) and in TIP3P under NVT.
+# RUN: %mdir_python %S/Inputs/rigid_units_frames.py dipeptide-opc %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd 4 25 --after-input --pme --npt --cutoff=0.8 --pairlist=1.0 --pruned=0.86 | FileCheck %s -DS=dipeptide-opc
 # RUN: %mdir_python %S/Inputs/rigid_units_frames.py dipeptide-tip3p %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd 4 25 --pme --cutoff=0.8 --pairlist=1.0 --pruned=0.86 | FileCheck %s -DS=dipeptide-tip3p
 #
 # The triclinic cell: the rhombic dodecahedron of 403 TIP3P waters, whose
@@ -27,7 +28,7 @@
 #
 # CHECK: [[S]]: kinds taken
 # ORACLE: frame 0: general double against the oracle
-# CHECK: frame 0 against double: {{.*}} ok
+# CHECK: frame {{[01]}} against double: {{.*}} ok
 # ORACLE: frame 0 against oracle: {{.*}} ok
 # CHECK-NOT: FAILED
 # CHECK: [[S]]: rigid units frames passed
