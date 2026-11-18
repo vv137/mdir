@@ -67,6 +67,28 @@
 # RUN: mdir check %t/split-c.toml | FileCheck %s --check-prefix=WIDENED
 # RUN: mdir check %t/split-a.toml | FileCheck %s --check-prefix=WIDENED
 #
+# Amber's extra point at an input off the constraints (the maintainer's
+# ruling on #915): its definition is not linear in the frame, so where the
+# input does not hold the constraints the units' weights place it
+# elsewhere than the general route, and the first evaluation differs. ON
+# warns, in the text and the JSON of `mdir check`, naming the kind, the
+# largest violation, and how far the sites move; the input is not changed.
+# The dipeptide's inpcrd is off by 2.5e-3; the three waters put on their
+# constraints (Inputs/constrain_opc.py) give no warning; AUTO does not warn.
+# RUN: mdir check %t/base.toml 2>&1 | FileCheck %s --check-prefix=OFFC
+# OFFC: mdir: warning: kind 1: 387 of 387 molecules lie off their constraints at the input, the largest by 0.00254 (|r^2/d^2 - 1|, beyond the tolerance 0.0001); its sites are placed by a definition that is not linear in the frame, which the units take by its weights, so the first evaluation places them up to 0.000288 Ang from the topology's place
+# RUN: mdir check --json %t/base.toml | %python -c "import json, sys; d = json.load(sys.stdin); o = d['run']['rigid_units']['kinds'][0]['input_off_constraints']; print([w['code'] for w in d['warnings'] if w['code'].startswith('rigid')], o['molecules'], '%%.3g %%.3g' %% (o['largest_violation'], o['site_offset_angstrom']))" | FileCheck %s --check-prefix=OFFC-JSON
+# OFFC-JSON: ['rigid_units_off_constraints'] 387 0.00254 0.000288
+# RUN: mdir check %t/auto.toml 2>&1 | FileCheck %s --check-prefix=OFFC-AUTO
+# OFFC-AUTO-NOT: off their constraints
+# RUN: cp %S/Inputs/opc/three.prmtop %t && %python %S/Inputs/constrain_opc.py %S/Inputs/opc/three.inpcrd %t/held.inpcrd
+# RUN: sed -e 's/"opc.prmtop"/"three.prmtop"/' -e 's/"opc.inpcrd"/"held.inpcrd"/' %t/base.toml > %t/held.toml
+# RUN: mdir check %t/held.toml 2>&1 | FileCheck %s --check-prefix=HELD
+# HELD: rigid units: ON: the units
+# HELD-NOT: off their constraints
+# RUN: mdir check --json %t/held.toml | %python -c "import json, sys; d = json.load(sys.stdin); o = d['run']['rigid_units']['kinds'][0]['input_off_constraints']; print([w['code'] for w in d['warnings'] if w['code'].startswith('rigid')], o['molecules'])" | FileCheck %s --check-prefix=HELD-JSON
+# HELD-JSON: [] 0
+#
 # A value that is not a choice.
 # RUN: sed 's/"ON"/"YES"/' %t/base.toml > %t/yes.toml
 # RUN: not mdir check %t/yes.toml 2>&1 | FileCheck %s --check-prefix=VALUE

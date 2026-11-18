@@ -179,6 +179,14 @@ struct RigidUnitsRoute {
     double constrained = 0.0, radius = 0.0;
     /// The largest distance of a place from its anchor at the input.
     double measured = 0.0;
+    /// At the input, for a taken kind whose sites the topology places by a
+    /// definition that is not linear in the frame (Amber's extra point):
+    /// the copies whose constrained distances are off by more than the
+    /// tolerance of the constraints, the largest |r^2 / d^2 - 1|, and the
+    /// largest distance of such a site from the place of its weights.
+    bool nonlinearSites = false;
+    size_t offConstraints = 0;
+    double largestViolation = 0.0, siteOffset = 0.0;
   };
   /// Every rigid kind, in the order of their numbers.
   std::vector<Kind> kinds;
@@ -187,6 +195,9 @@ struct RigidUnitsRoute {
   /// anchored members.
   size_t restParticles = 0, anchored = 0;
   double restConstrained = 0.0, restRadius = 0.0, restMeasured = 0.0;
+  /// Diagnoses of the input: (code, message) pairs for `mdir check`'s and the
+  /// run's warnings.
+  std::vector<std::pair<std::string, std::string>> warnings;
   /// The largest covering reach, the pair list distance plus twice the
   /// largest radius, and half the least face width of the input cell; 0
   /// for an open cell.

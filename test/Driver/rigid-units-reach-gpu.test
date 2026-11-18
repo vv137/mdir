@@ -18,6 +18,7 @@
 # RUN: not mdir run %t/shrink.toml > %t/run.log 2>&1
 # RUN: FileCheck %s --check-prefix=SHRINK < %t/run.log
 # SHRINK: MDIR: rigid units: ON: the units (ON was given)
+# SHRINK: MDIR: warning: kind 1: 387 of 387 molecules lie off their constraints at the input
 # SHRINK: the covering reach of the list of units, 12.38 Ang (the pair list distance plus twice 1.091 Ang, the largest covering radius of its units), exceeds half the least face width of the cell, 12.{{[0-5][0-9]*}} Ang; the run has failed
 # The same under OFF runs to its end.
 # RUN: sed 's/rigid_units = "ON"/rigid_units = "OFF"/' %t/shrink.toml > %t/off.toml
@@ -25,6 +26,17 @@
 # RUN: FileCheck %s --check-prefix=OFF < %t/off.log
 # OFF: MDIR: rigid units: OFF: general (OFF was given)
 # OFF-NOT: covering reach
+# OFF-NOT: off their constraints
+# The warning of an input off the constraints is absent where the input
+# holds them: three waters of OPC put on their constraints
+# (Inputs/constrain_opc.py), 20 steps.
+# RUN: cp %S/Inputs/opc/three.prmtop %t && %python %S/Inputs/constrain_opc.py %S/Inputs/opc/three.inpcrd %t/held.inpcrd
+# RUN: sed -e 's/"opc.prmtop"/"three.prmtop"/' -e 's/"opc.inpcrd"/"held.inpcrd"/' -e 's/^steps .*/steps      = 20/' -e 's/^energy_interval = 40/energy_interval = 10/' -e 's/^ensemble    = "NPT"/ensemble    = "NVT"/' -e '/^pressure/d' -e '/^\[barostat\]/,/^interval      = 10$/d' %t/shrink.toml > %t/held.toml
+# RUN: mdir run %t/held.toml > %t/held.log 2>&1
+# RUN: FileCheck %s --check-prefix=HELD < %t/held.log
+# HELD: MDIR: rigid units: ON: the units (ON was given)
+# HELD-NOT: off their constraints
+# HELD: MDIR: neighbor structures were built
 
 #--- shrink.toml
 [input]

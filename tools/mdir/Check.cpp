@@ -901,6 +901,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   for (const auto &[code, message] : system->warnings)
     report.warnings.push_back({code, message});
   checkCutoffJump(*control, *system, report.warnings);
+  for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
+    report.warnings.push_back({code, message});
   if (json) {
     printJSON(makeJSON(*control, *system, report));
   } else {

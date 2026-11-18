@@ -549,6 +549,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // (D[rigid-units-route]).
   if (llvm::Error error = resolveRigidUnits(*control, *system))
     return fail(std::move(error));
+  for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
+    warn(message);
   // The reaches that are "AUTO" (D281): the defaults, the cache, or
   // candidates measured from the state the run begins with, before its own
   // program is built. What the search printed goes to the log once its
@@ -1137,6 +1139,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       neighbors.push_back(kind);
     for (const auto &[code, message] : system->warnings)
       warnings.push_back(llvm::json::Object{{"code", code}, {"message", message}});
+    for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
+      warnings.push_back(llvm::json::Object{{"code", code}, {"message", message}});
     llvm::json::Value pme = nullptr;
     if (program->pme)
       pme = llvm::json::Object{{"beta_inverse_angstrom", program->pmeBeta * units::length},
@@ -1547,6 +1551,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (control->rigidUnitsRoute.units)
       for (const std::string &line : describeRigidUnitsKinds(*control))
         output.log.print("MDIR:   %s\n", line.c_str());
+    for (const auto &[code, message] : control->rigidUnitsRoute.warnings)
+      output.log.print("MDIR: warning: %s\n", message.c_str());
   }
   // The reaches that "AUTO" took, and how (D281): given ones and
   // the defaults of keys not given are not repeated.

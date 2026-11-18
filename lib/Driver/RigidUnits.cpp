@@ -128,6 +128,82 @@ double getMeasuredExtent(const RigidKind &kind, const System &system,
   return largest;
 }
 
+/// The tolerance of the position constraints in mixed precision, on
+/// |r^2 / d^2 - 1| (BuilderDynamics.cpp), which the units take.
+constexpr double constraintTolerance = 1.0e-4;
+
+/// For a kind whose sites the topology places by a definition that is not
+/// linear in the frame, how far its copies lie off their constraints at the
+/// input and how far that moves the sites from the place of their weights.
+void diagnoseNonlinearSites(const RigidKind &kind, const Topology &topology,
+                            const System &system, bool periodic,
+                            RigidUnitsRoute::Kind &entry) {
+  std::vector<const Topology::VirtualSite *> definition(
+      topology.getNumParticles(), nullptr);
+  for (const Topology::VirtualSite &site : topology.virtualSites)
+    if (site.kind == Topology::VirtualSite::AmberWater)
+      definition[site.site] = &site;
+  unsigned m = kind.frame.size();
+  for (size_t copy = 0, e = kind.getCount(); copy != e; ++copy) {
+    const unsigned *members = &kind.members[copy * kind.size];
+    bool nonlinear = llvm::any_of(kind.sites, [&](const RigidKind::Site &s) {
+      return definition[members[s.place]] != nullptr;
+    });
+    if (!nonlinear)
+      continue;
+    entry.nonlinearSites = true;
+    Vec anchor = getPosition(system, members[kind.frame[0]]);
+    std::vector<Vec> h(m);
+    for (unsigned k = 1; k < m; ++k) {
+      Vec x = getPosition(system, members[kind.frame[k]]);
+      h[k] = reduce({x.x - anchor.x, x.y - anchor.y, x.z - anchor.z}, system,
+                    periodic);
+    }
+    double violation = 0.0;
+    for (unsigned a = 0, index = 0; a < m; ++a)
+      for (unsigned b = a + 1; b < m; ++b, ++index) {
+        Vec d{h[b].x - h[a].x, h[b].y - h[a].y, h[b].z - h[a].z};
+        double target = kind.distances[index];
+        double r = norm(d);
+        violation = std::max(violation, std::abs(r * r / (target * target) - 1.0));
+      }
+    entry.largestViolation = std::max(entry.largestViolation, violation);
+    if (violation > constraintTolerance)
+      ++entry.offConstraints;
+    // Each such site at its weights' place against its definition,
+    // x_i + a (u + v) / |u + v| with the unit vectors u, v from i to j, k.
+    for (const RigidKind::Site &s : kind.sites) {
+      const Topology::VirtualSite *site = definition[members[s.place]];
+      if (!site)
+        continue;
+      auto offset = [&](unsigned particle) {
+        for (unsigned k = 0; k < m; ++k)
+          if (members[kind.frame[k]] == particle)
+            return h[k];
+        return Vec{};
+      };
+      Vec oi = offset(site->i), oj = offset(site->j), ok = offset(site->k);
+      Vec uj{oj.x - oi.x, oj.y - oi.y, oj.z - oi.z};
+      Vec uk{ok.x - oi.x, ok.y - oi.y, ok.z - oi.z};
+      double nj = norm(uj), nk = norm(uk);
+      Vec bis{uj.x / nj + uk.x / nk, uj.y / nj + uk.y / nk,
+              uj.z / nj + uk.z / nk};
+      double nb = norm(bis);
+      Vec defined{oi.x + site->a * bis.x / nb, oi.y + site->a * bis.y / nb,
+                  oi.z + site->a * bis.z / nb};
+      Vec weighted;
+      for (unsigned k = 1; k < m; ++k) {
+        weighted.x += s.weights[k] * h[k].x;
+        weighted.y += s.weights[k] * h[k].y;
+        weighted.z += s.weights[k] * h[k].z;
+      }
+      entry.siteOffset = std::max(
+          entry.siteOffset, norm({defined.x - weighted.x, defined.y - weighted.y,
+                                  defined.z - weighted.z}));
+    }
+  }
+}
+
 /// The anchors of the rest (#799): a hydrogen whose bond to a heavy atom
 /// the constraints keep, and the hydrogens of a rigid water that no taken
 /// kind holds, belong to the unit of their heavy atom. Gives the longest
@@ -252,6 +328,25 @@ llvm::Error mdir::driver::resolveRigidUnits(Control &control,
         entry.constrained = getConstrainedExtent(kind) + rigidUnitsMargin;
         entry.measured = getMeasuredExtent(kind, system, control.periodic);
         entry.radius = getRadius(entry.constrained, entry.measured);
+        diagnoseNonlinearSites(kind, topology, system, control.periodic, entry);
+        if (entry.offConstraints && on)
+          route.warnings.push_back(
+              {"rigid_units_off_constraints",
+               llvm::formatv(
+                   "kind {0}: {1} of {2} molecules lie off their constraints "
+                   "at the input, the largest by {3} (|r^2/d^2 - 1|, beyond "
+                   "the tolerance {4}); its sites are placed by a definition "
+                   "that is not linear in the frame, which the units take by "
+                   "its weights, so the first evaluation places them up to "
+                   "{5} Ang from the topology's place, and its potential and "
+                   "forces differ from the general route's by the work and the "
+                   "change of the sites' forces over that distance; from the "
+                   "first constrained step on they agree",
+                   entry.number, entry.offConstraints, entry.molecules,
+                   llvm::format("%.3g", entry.largestViolation),
+                   llvm::format("%g", constraintTolerance),
+                   llvm::format("%.3g", entry.siteOffset / units::length))
+                   .str()});
       }
       route.kinds.push_back(std::move(entry));
     }
@@ -408,6 +503,12 @@ llvm::json::Object mdir::driver::getRigidUnitsJSON(const Control &control) {
                  {"places", kind.places},
                  {"frame", kind.frame},
                  {"sites", kind.sites}};
+    if (kind.nonlinearSites)
+      entry["input_off_constraints"] = Object{
+          {"molecules", static_cast<int64_t>(kind.offConstraints)},
+          {"largest_violation", kind.largestViolation},
+          {"tolerance", 1.0e-4},
+          {"site_offset_angstrom", a(kind.siteOffset)}};
     if (kind.taken) {
       entry["radius_angstrom"] = a(kind.radius);
       entry["constrained_radius_angstrom"] = a(kind.constrained);

@@ -848,6 +848,10 @@ PYBIND11_MODULE(_core, m) {
           if (kind.taken)
             rigidKinds.append(kind.number);
       d["rigid_units_kinds"] = rigidKinds;
+      py::list rigidWarnings;
+      for (const auto &warning : resolved.rigidUnitsRoute.warnings)
+        rigidWarnings.append(warning.second);
+      d["rigid_units_warnings"] = rigidWarnings;
       d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
       d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
       // Where the reaches came from (D281).
