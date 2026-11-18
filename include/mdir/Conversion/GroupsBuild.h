@@ -27,13 +27,15 @@ std::string getGroupsBuildName(bool triclinic);
 /// `vector<6xf64>` (docs/triclinic.md, P3); otherwise the cell is the
 /// `vector<3xf64>` of the edges of an orthorhombic one. `singlePassScan`
 /// takes the decoupled look-back scan for the three counting sorts (D321)
-/// in place of the three-launch scan.
+/// in place of the three-launch scan. `columnParticles` is the number of
+/// particles of a column of the compact order, in a cube of the column's
+/// width (GroupsPolicy, D[groups-columns]).
 ///
 /// Its scans, scatters, sorts within bins, and reads of the ragged rows are
 /// left as md_alg ops (D406), which kernels::lowerAlgToSIMT
 /// (MDAlgLowering.h) replaces with the code of their emitters.
 void emitGroupsBuild(mlir::ModuleOp module, bool triclinic,
-                     bool singlePassScan);
+                     bool singlePassScan, double columnParticles);
 
 /// The name of the build over the units of `kinds` taken rigid kinds and
 /// the rest (D419):

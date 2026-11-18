@@ -182,6 +182,28 @@ static const Measured kSegmentsDefaultMeasured[] = {{8, 9}};
 static const ArrayRef<Entry<SegmentsPolicy>> kSegmentsTable = {};
 
 //===----------------------------------------------------------------------===//
+// The build of the groups (D[groups-columns])
+//===----------------------------------------------------------------------===//
+
+// The particles of a column of the compact order were swept over 64 (D89's
+// value), 80, 96, 112, 128, and 192 (#912), with the timing protocol, in NPT
+// at the force accuracy of the Amber suite's matched settings: JAC, Factor
+// IX, Cellulose, STMV, and a TIP3P box of 309,876 sites. On RTX 4090s
+// (sm_89), 96 took the least time a step on each system or one within
+// 0.1% of it: 0.967 to 0.979 of 64's step on the four of the suite, 0.992
+// on the water box, with fewer entries (2 to 3%, and so fewer atomic
+// reductions, which bound the loop over pairs, #912) and a faster build.
+const GroupsPolicy mdir::md_exec::policy::kDefaultGroups = {
+    /*columnParticles=*/96.0};
+static const Measurement kGroupsDefaultBasis = {
+    "D[groups-columns]",
+    "JAC, Factor IX, Cellulose, STMV, and TIP3P (309,876 sites), NPT, RTX "
+    "4090",
+    "2026-11-18"};
+static const Measured kGroupsDefaultMeasured[] = {{8, 9}};
+static const ArrayRef<Entry<GroupsPolicy>> kGroupsTable = {};
+
+//===----------------------------------------------------------------------===//
 // Selection
 //===----------------------------------------------------------------------===//
 
@@ -254,6 +276,15 @@ DevicePolicy mdir::md_exec::policy::getDevicePolicy(StringRef arch,
     policy.segments = entry->values;
     policy.segmentsBasis = entry->basis;
     policy.segmentsFallback = !covers(entry->measured, key);
+  }
+
+  policy.groups = kDefaultGroups;
+  policy.groupsBasis = kGroupsDefaultBasis;
+  policy.groupsFallback = !covers(kGroupsDefaultMeasured, key);
+  if (const auto *entry = find<GroupsPolicy>(kGroupsTable, key)) {
+    policy.groups = entry->values;
+    policy.groupsBasis = entry->basis;
+    policy.groupsFallback = !covers(entry->measured, key);
   }
   return policy;
 }

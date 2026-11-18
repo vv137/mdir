@@ -30,9 +30,9 @@
 // TRI: func.func private @mdrt_gpu_build_neighbors_groups_triclinic(%{{.*}}: memref<?x3xf64, 1>, %{{.*}}: vector<6xf64>, %{{.*}}: f64,
 // TRI: vector.extract %{{.*}}[5] : f64 from vector<6xf64>
 
-// The plans of the columns (about 64 particles in a cube) and of the grid
+// The plans of the columns (about 96 particles in a cube, GroupsPolicy) and of the grid
 // of the candidates (cells of half the reach, 3 to 256 a side).
-// CHECK: md_alg.grid_plan %{{.*}}, %{{.*}} : f64, f64 volume %{{.*}} : f64 occupancy 6.400000e+01 : f64 of %{{.*}} bounds[1.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64
+// CHECK: md_alg.grid_plan %{{.*}}, %{{.*}} : f64, f64 volume %{{.*}} : f64 occupancy 9.600000e+01 : f64 of %{{.*}} bounds[1.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64
 // CHECK: md_alg.grid_plan %{{.*}}, %{{.*}}, %{{.*}} : f64, f64, f64 width %{{.*}} : f64 bounds[3.000000e+00 : f64, 2.560000e+02 : f64] -> i64, i64, i64
 
 // The counting sort by key, the scan of the chunks of the columns, and the

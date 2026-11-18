@@ -38,6 +38,10 @@ int main(int argc, char **argv) {
                << "segments block-size=" << policy.segments.blockSize
                << " rotation=" << policy.segments.rotationLanes
                << " column-units=" << int64_t(policy.segments.columnUnits)
-               << " fallback=" << policy.segmentsFallback << "\n";
+               << " fallback=" << policy.segmentsFallback << "\n"
+               << "groups column-particles="
+               << int64_t(policy.groups.columnParticles)
+               << " fallback=" << policy.groupsFallback << " ("
+               << policy.groupsBasis.decision << ")\n";
   return 0;
 }

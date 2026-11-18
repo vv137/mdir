@@ -107,6 +107,14 @@ struct SegmentsPolicy {
   double columnUnits;
 };
 
+/// The build of the groups of neighbors (D89, D404): its compact order
+/// (docs/neighbor-groups.md, Section 2).
+struct GroupsPolicy {
+  /// The particles of a column of the compact order, in a cube of the
+  /// column's width; a chunk of 64 of them is cut in four groups of 16.
+  double columnParticles;
+};
+
 /// The key of an entry: an architecture, as a major version and a minor
 /// one (`sm_120` is 12 and 0), the minor -1 for every minor version of
 /// the major; and a device class, empty for every device of the
@@ -128,13 +136,15 @@ struct DevicePolicy {
   ScatterPolicy scatter;
   LaunchPolicy launch;
   SegmentsPolicy segments;
+  GroupsPolicy groups;
   /// The measurement behind each selected entry.
-  Measurement pruningBasis, scatterBasis, launchBasis, segmentsBasis;
+  Measurement pruningBasis, scatterBasis, launchBasis, segmentsBasis,
+      groupsBasis;
   /// The tables whose selected entry was not measured on the
   /// architecture: the default where it has no entry of its own, or an
   /// entry of its major version that covered another minor one.
   bool pruningFallback = true, scatterFallback = true, launchFallback = true,
-       segmentsFallback = true;
+       segmentsFallback = true, groupsFallback = true;
   /// The architecture and class as given.
   std::string arch, deviceClass;
 
@@ -159,6 +169,7 @@ extern const PruningPolicy kDefaultPruning;
 extern const ScatterPolicy kDefaultScatter;
 extern const LaunchPolicy kDefaultLaunch;
 extern const SegmentsPolicy kDefaultSegments;
+extern const GroupsPolicy kDefaultGroups;
 
 } // namespace policy
 } // namespace md_exec

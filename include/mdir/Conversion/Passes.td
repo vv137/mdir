@@ -501,6 +501,11 @@ def ConvertMDExecToGPU
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
            "(D284)">,
+    Option<"groupsColumnParticles", "groups-column-particles", "int64_t",
+           /*default=*/"-1",
+           "The particles of a column of the compact order of the groups' "
+           "build, in a cube of the column's width; -1 takes the entry of "
+           "the policy for `arch` (GroupsPolicy, D[groups-columns])">,
     Option<"segmentsColumnUnits", "segments-column-units", "int64_t",
            /*default=*/"-1",
            "The units of a column of the build over units (D419), which "
